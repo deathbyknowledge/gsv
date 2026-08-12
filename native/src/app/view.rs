@@ -1,22 +1,25 @@
-use std::time::Duration;
+use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use gpui::prelude::FluentBuilder as _;
 use gpui::{
-    div, ease_out_quint, point, px, relative, Animation, AnimationExt as _, AnyElement, Context,
-    Focusable, FontWeight, InteractiveElement as _, IntoElement, MouseButton, ParentElement as _,
-    Render, ScrollWheelEvent, StatefulInteractiveElement, Styled, Window,
+    bounce, div, ease_in_out, ease_out_quint, point, pulsating_between, px, relative, Animation,
+    AnimationExt as _, AnyElement, Context, Focusable, FontWeight, InteractiveElement as _,
+    IntoElement, MouseButton, ParentElement as _, Render, ScrollDelta, ScrollWheelEvent,
+    SharedString, StatefulInteractiveElement, Styled, TouchPhase, Window,
 };
 use gpui_component::input::Input;
 
+use crate::client::ApprovalDecision;
 use crate::content::MediaAttachment;
 use crate::interaction::CanvasLayer;
 use crate::model::{
-    ActivityCategory, ActivitySummaryEntry, ConnectionState, LiveActivityEntry, MomentRole,
-    MomentState, SurfaceMode,
+    approval_scope_description, ActivityCategory, ActivitySummaryEntry, ConnectionState,
+    LiveActivityEntry, MomentRole, MomentState, PendingApproval, SurfaceMode,
 };
-use crate::prepared::{content_revision, PreparedContent};
+use crate::prepared::PreparedContent;
 use crate::theme;
-use crate::typography::{fit_type_layout, TypeLayout};
+use crate::typography::{fit_type_layout, measure_type_layout_at_size, TypeLayout};
 
 use super::media::release_assets;
 use super::rich::{media_descriptors, render_document};
@@ -27,9 +30,25 @@ use super::{type_content_hash, CachedTypeLayout, GsvApp};
 struct CanvasGeometry {
     left: f32,
     right: f32,
-    vertical: f32,
+    top: f32,
+    bottom: f32,
     available_height: f32,
-    footer_extra: f32,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum PresenceMotion {
+    None,
+    Breathe,
+    Search,
+    Read,
+    Mutate,
+    Execute,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct PresenceLine {
+    label: String,
+    motion: PresenceMotion,
 }
 
 fn render_activity_summary(
@@ -85,15 +104,18 @@ fn render_activity_summary(
 
 struct TypeFit<'a> {
     key: &'a str,
-    text: &'a str,
+    text: SharedString,
+    revision: u64,
     available_width: f32,
     available_height: f32,
     maximum_size: Option<f32>,
+    lock_size: bool,
     weight: FontWeight,
 }
 
 struct MessageCanvas {
-    message: String,
+    message: SharedString,
+    approval: Option<PendingApproval>,
     rich_content: Option<PreparedContent>,
     append_plain_text: bool,
     activity_summary: Vec<ActivitySummaryEntry>,
@@ -104,8 +126,16 @@ struct MessageCanvas {
     geometry: CanvasGeometry,
 }
 
-const HISTORY_SCROLL_THRESHOLD: f32 = 36.0;
-const TYPE_LAYOUT_CACHE_LIMIT: usize = 64;
+const HISTORY_SCROLL_THRESHOLD: f32 = 144.0;
+const HISTORY_SCROLL_LINE_HEIGHT: f32 = 16.0;
+const HISTORY_SCROLL_IDLE: Duration = Duration::from_millis(180);
+const TIMELINE_MARKER_WIDTH: f32 = 4.0;
+const TIMELINE_MARKER_HEIGHT: f32 = 8.0;
+const PRESENCE_LANE_HEIGHT: f32 = 84.0;
+const PRESENCE_LANE_TOP: f32 = 12.0;
+const MAX_VISIBLE_ACTIVITY_LINES: usize = 3;
+const TYPE_LAYOUT_CACHE_LIMIT: usize = crate::history::MAX_FETCHED_HISTORY_MESSAGES + 8;
+const TYPE_LAYOUT_POLICY_REVISION: u8 = 2;
 const ACTIVITY_SELECTION_ORDER: u32 = 1_000_000;
 
 #[cfg(target_os = "macos")]
@@ -131,9 +161,93 @@ fn stable_transition_cost(
     candidate
 }
 
-fn message_measurement_text(message: &str, media: &[MediaAttachment]) -> String {
+fn type_fit_hash(
+    revision: u64,
+    available_width: f32,
+    available_height: f32,
+    lock_size: bool,
+) -> u64 {
+    type_content_hash(&(
+        TYPE_LAYOUT_POLICY_REVISION,
+        theme::PROSE_FONT,
+        revision,
+        available_width.to_bits(),
+        available_height.to_bits(),
+        lock_size,
+    ))
+}
+
+fn timeline_marker_geometry(_: bool) -> (f32, f32) {
+    (TIMELINE_MARKER_WIDTH, TIMELINE_MARKER_HEIGHT)
+}
+
+fn normalized_vertical_delta(delta: ScrollDelta) -> Option<f32> {
+    let delta = match delta {
+        ScrollDelta::Pixels(delta) => point(f32::from(delta.x), f32::from(delta.y)),
+        ScrollDelta::Lines(delta) => point(
+            delta.x * HISTORY_SCROLL_LINE_HEIGHT,
+            delta.y * HISTORY_SCROLL_LINE_HEIGHT,
+        ),
+    };
+    (delta.y != 0.0 && delta.y.abs() > delta.x.abs()).then_some(delta.y)
+}
+
+fn prepare_history_scroll_gesture(
+    accumulator: &mut f32,
+    last_event: &mut Option<Instant>,
+    now: Instant,
+) -> bool {
+    if last_event.is_none_or(|previous| now.duration_since(previous) > HISTORY_SCROLL_IDLE) {
+        *accumulator = 0.0;
+    }
+    *last_event = Some(now);
+
+    if accumulator.is_infinite() {
+        return false;
+    }
+    true
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum CanvasWheelAction {
+    ScrollTo(f32),
+    Resist,
+    Navigate(i8),
+}
+
+fn canvas_wheel_action(
+    accumulator: &mut f32,
+    offset: f32,
+    maximum: f32,
+    vertical: f32,
+) -> CanvasWheelAction {
+    let target = (offset + vertical).clamp(-maximum, 0.0);
+    let can_scroll = (vertical > 0.0 && offset < 0.0) || (vertical < 0.0 && offset > -maximum);
+    if can_scroll {
+        *accumulator = 0.0;
+        return CanvasWheelAction::ScrollTo(target);
+    }
+
+    if *accumulator != 0.0 && accumulator.signum() != vertical.signum() {
+        *accumulator = 0.0;
+    }
+    *accumulator += vertical;
+    if accumulator.abs() < HISTORY_SCROLL_THRESHOLD {
+        CanvasWheelAction::Resist
+    } else if *accumulator > 0.0 {
+        CanvasWheelAction::Navigate(-1)
+    } else {
+        CanvasWheelAction::Navigate(1)
+    }
+}
+
+fn latch_history_scroll(accumulator: &mut f32, vertical: f32) {
+    *accumulator = vertical.signum() * f32::INFINITY;
+}
+
+fn message_measurement_text(message: &SharedString, media: &[MediaAttachment]) -> SharedString {
     if !message.is_empty() {
-        return message.to_string();
+        return message.clone();
     }
     media
         .iter()
@@ -143,8 +257,7 @@ fn message_measurement_text(message: &str, media: &[MediaAttachment]) -> String 
                 .as_deref()
                 .or(attachment.filename.as_deref())
         })
-        .unwrap_or("Media")
-        .to_string()
+        .map_or_else(|| "Media".into(), |text| text.to_string().into())
 }
 
 fn live_activity_label(entry: LiveActivityEntry) -> String {
@@ -170,6 +283,38 @@ fn live_activity_label(entry: LiveActivityEntry) -> String {
     }
 }
 
+fn live_activity_motion(category: ActivityCategory) -> PresenceMotion {
+    match category {
+        ActivityCategory::SearchingFiles => PresenceMotion::Search,
+        ActivityCategory::ReadingFiles => PresenceMotion::Read,
+        ActivityCategory::WritingFiles
+        | ActivityCategory::EditingFiles
+        | ActivityCategory::DeletingFiles => PresenceMotion::Mutate,
+        ActivityCategory::RunningCommands | ActivityCategory::RunningCode => {
+            PresenceMotion::Execute
+        }
+    }
+}
+
+fn grouped_live_activity(entries: &[LiveActivityEntry]) -> Vec<PresenceLine> {
+    let mut lines = entries
+        .iter()
+        .take(MAX_VISIBLE_ACTIVITY_LINES)
+        .map(|entry| PresenceLine {
+            label: live_activity_label(*entry),
+            motion: live_activity_motion(entry.category),
+        })
+        .collect::<Vec<_>>();
+    let hidden = entries.len().saturating_sub(MAX_VISIBLE_ACTIVITY_LINES);
+    if hidden > 0 {
+        lines.push(PresenceLine {
+            label: format!("+ {hidden} more"),
+            motion: PresenceMotion::None,
+        });
+    }
+    lines
+}
+
 fn legacy_activity_label(activity: &str) -> String {
     if let Some(attempt) = activity.strip_prefix("RECONNECTING · ") {
         return format!("Reconnecting… attempt {attempt}");
@@ -192,6 +337,73 @@ fn legacy_activity_label(activity: &str) -> String {
         _ => activity,
     }
     .to_string()
+}
+
+fn legacy_presence_line(activity: &str) -> PresenceLine {
+    let motion = match activity {
+        "THINKING" | "CONNECTING" | "RECONNECTING" => PresenceMotion::Breathe,
+        "APPLYING" | "SENDING" | "SENDING PREVIOUS THOUGHT" => PresenceMotion::Mutate,
+        "VERIFYING DELIVERY" | "TRYING ANOTHER PATH" | "TRYING AGAIN" => PresenceMotion::Search,
+        _ => PresenceMotion::None,
+    };
+    PresenceLine {
+        label: legacy_activity_label(activity),
+        motion,
+    }
+}
+
+fn animate_presence(reduced_motion: bool, approval: bool, motion: PresenceMotion) -> bool {
+    !reduced_motion && !approval && motion != PresenceMotion::None
+}
+
+fn presence_lines(
+    live_activity: &[LiveActivityEntry],
+    legacy_activity: Option<&str>,
+    uncertain: bool,
+    approval: bool,
+    voice_notice: Option<&str>,
+) -> Vec<PresenceLine> {
+    if approval {
+        return legacy_activity
+            .filter(|activity| {
+                matches!(
+                    *activity,
+                    "APPLYING"
+                        | "NOT APPLIED · TRY AGAIN"
+                        | "TYPE ALLOW ONCE, ALWAYS ALLOW, OR DENY"
+                )
+            })
+            .map(legacy_presence_line)
+            .into_iter()
+            .collect();
+    }
+    let mut lines = if !live_activity.is_empty() {
+        grouped_live_activity(live_activity)
+    } else if let Some(activity) = legacy_activity {
+        vec![legacy_presence_line(activity)]
+    } else {
+        uncertain
+            .then(|| PresenceLine {
+                label: "Delivery not confirmed… checking history".to_string(),
+                motion: PresenceMotion::Search,
+            })
+            .into_iter()
+            .collect()
+    };
+    if let Some(notice) = voice_notice {
+        lines.insert(
+            0,
+            PresenceLine {
+                label: notice.to_string(),
+                motion: if notice.contains("UNAVAILABLE") {
+                    PresenceMotion::None
+                } else {
+                    PresenceMotion::Breathe
+                },
+            },
+        );
+    }
+    lines
 }
 
 fn activity_summary_line(entry: &ActivitySummaryEntry) -> String {
@@ -237,33 +449,54 @@ impl GsvApp {
         let TypeFit {
             key,
             text,
+            revision,
             available_width,
             available_height,
             maximum_size,
+            lock_size,
             weight,
         } = request;
-        let content_hash = type_content_hash(text);
+        let content_hash = type_fit_hash(revision, available_width, available_height, lock_size);
+        self.type_layout_clock = self.type_layout_clock.wrapping_add(1);
         if let Some(cached) = self
             .type_layouts
-            .get(key)
-            .copied()
+            .get_mut(key)
             .filter(|cached| cached.matches(content_hash, maximum_size, weight))
         {
+            cached.last_used = self.type_layout_clock;
             return cached.layout;
         }
 
-        let layout = fit_type_layout(
-            window,
-            text,
-            available_width,
-            available_height,
-            maximum_size,
-            weight,
-        );
+        let layout = if lock_size {
+            measure_type_layout_at_size(
+                window,
+                text.clone(),
+                available_width,
+                available_height,
+                maximum_size.expect("a locked type fit requires a retained size"),
+                weight,
+            )
+        } else {
+            fit_type_layout(
+                window,
+                text,
+                available_width,
+                available_height,
+                maximum_size,
+                weight,
+            )
+        };
         if self.type_layouts.len() >= TYPE_LAYOUT_CACHE_LIMIT
             && !self.type_layouts.contains_key(key)
         {
-            self.type_layouts.clear();
+            if let Some(oldest) = self
+                .type_layouts
+                .iter()
+                .min_by_key(|(_, cached)| cached.last_used)
+                .map(|(key, _)| key.clone())
+            {
+                self.type_layouts.remove(&oldest);
+            }
         }
         self.type_layouts.insert(
             key.to_string(),
@@ -271,10 +504,127 @@ impl GsvApp {
                 content_hash,
                 maximum_size: maximum_size.map(f32::to_bits),
                 weight: weight.0.to_bits(),
+                last_used: self.type_layout_clock,
                 layout,
             },
         );
         layout
+    }
+
+    fn render_presence_line(&self, index: usize, line: PresenceLine) -> AnyElement {
+        let motion = line.motion;
+        let indicator = div()
+            .relative()
+            .mt(px(5.0))
+            .size(px(4.0))
+            .flex_shrink_0()
+            .rounded_full()
+            .bg(theme::color(theme::LIVE));
+        let indicator = if animate_presence(self.reduced_motion, false, motion) {
+            match motion {
+                PresenceMotion::Search => indicator
+                    .with_animation(
+                        ("presence-search", index),
+                        Animation::new(Duration::from_millis(1_800))
+                            .repeat()
+                            .with_easing(bounce(ease_in_out)),
+                        |this, delta| this.left(px((delta - 0.5) * 3.0)),
+                    )
+                    .into_any_element(),
+                PresenceMotion::Read => indicator
+                    .with_animation(
+                        ("presence-read", index),
+                        Animation::new(Duration::from_millis(2_200))
+                            .repeat()
+                            .with_easing(pulsating_between(0.45, 1.0)),
+                        |this, delta| this.opacity(delta),
+                    )
+                    .into_any_element(),
+                PresenceMotion::Mutate => indicator
+                    .with_animation(
+                        ("presence-mutate", index),
+                        Animation::new(Duration::from_millis(1_650))
+                            .repeat()
+                            .with_easing(bounce(ease_in_out)),
+                        |this, delta| this.top(px((0.5 - delta) * 2.0)),
+                    )
+                    .into_any_element(),
+                PresenceMotion::Execute => indicator
+                    .with_animation(
+                        ("presence-execute", index),
+                        Animation::new(Duration::from_millis(1_350))
+                            .repeat()
+                            .with_easing(pulsating_between(0.5, 1.0)),
+                        |this, delta| this.opacity(delta),
+                    )
+                    .into_any_element(),
+                PresenceMotion::Breathe | PresenceMotion::None => indicator.into_any_element(),
+            }
+        } else {
+            indicator.into_any_element()
+        };
+        let row = div()
+            .flex()
+            .items_start()
+            .gap(px(8.0))
+            .text_size(px(15.0))
+            .line_height(relative(1.3))
+            .text_color(theme::color(theme::LIVE))
+            .child(indicator)
+            .child(line.label);
+
+        if animate_presence(self.reduced_motion, false, motion) && motion == PresenceMotion::Breathe
+        {
+            row.with_animation(
+                ("presence-breathe", index),
+                Animation::new(Duration::from_millis(2_600))
+                    .repeat()
+                    .with_easing(pulsating_between(0.62, 1.0)),
+                |this, delta| this.opacity(delta),
+            )
+            .into_any_element()
+        } else {
+            row.into_any_element()
+        }
+    }
+
+    fn render_presence_lane(&self, lines: Vec<PresenceLine>, show_stop_hint: bool) -> AnyElement {
+        let activity = lines
+            .into_iter()
+            .enumerate()
+            .map(|(index, line)| self.render_presence_line(index, line))
+            .collect::<Vec<_>>();
+
+        div()
+            .id("presence-lane")
+            .absolute()
+            .top(px(PRESENCE_LANE_TOP))
+            .left(px(82.0))
+            .right(px(82.0))
+            .h(px(PRESENCE_LANE_HEIGHT))
+            .flex()
+            .justify_center()
+            .font_family(theme::MONO_FONT)
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .items_start()
+                    .gap(px(2.0))
+                    .children(activity),
+            )
+            .when(show_stop_hint, |this| {
+                this.child(
+                    div()
+                        .absolute()
+                        .right_0()
+                        .top(px(4.0))
+                        .text_size(px(8.0))
+                        .text_color(theme::color(theme::TEXT_FAINT))
+                        .child(STOP_HINT),
+                )
+            })
+            .into_any_element()
     }
 
     fn render_timeline(&mut self, window: &Window, cx: &mut Context<Self>) -> AnyElement {
@@ -287,6 +637,7 @@ impl GsvApp {
             .enumerate()
             .map(|(index, moment)| {
                 let is_selected = index == selected && !draft_visible;
+                let (marker_width, marker_height) = timeline_marker_geometry(is_selected);
                 let marker_color = match moment.state {
                     MomentState::Sending | MomentState::Streaming => theme::color(theme::LIVE),
                     MomentState::Error | MomentState::Uncertain => theme::color(theme::ERROR),
@@ -310,10 +661,11 @@ impl GsvApp {
                     }))
                     .child(
                         div()
-                            .w(px(if is_selected { 4.5 } else { 3.0 }))
-                            .h(px(if is_selected { 14.0 } else { 3.0 }))
+                            .w(px(marker_width))
+                            .h(px(marker_height))
                             .rounded_full()
                             .bg(marker_color)
+                            .opacity(if is_selected { 1.0 } else { 0.68 })
                             .when(is_selected, |this| this.shadow_sm()),
                     )
                     .into_any_element()
@@ -322,6 +674,7 @@ impl GsvApp {
 
         if !self.interaction.conversation_draft().is_empty() {
             let held = self.interaction.held_draft();
+            let (marker_width, marker_height) = timeline_marker_geometry(draft_visible);
             markers.push(
                 div()
                     .id("held-draft")
@@ -337,14 +690,16 @@ impl GsvApp {
                     }))
                     .child(
                         div()
-                            .w(px(if draft_visible { 4.5 } else { 3.0 }))
-                            .h(px(if draft_visible { 14.0 } else { 7.0 }))
+                            .w(px(marker_width))
+                            .h(px(marker_height))
                             .rounded_full()
+                            .opacity(if draft_visible { 1.0 } else { 0.68 })
                             .when(!held, |this| this.bg(theme::color(theme::ACCENT)))
                             .when(held, |this| {
                                 this.border_1()
                                     .border_color(theme::color(theme::TEXT_QUIET))
-                            }),
+                            })
+                            .when(draft_visible, |this| this.shadow_sm()),
                     )
                     .into_any_element(),
             );
@@ -365,10 +720,12 @@ impl GsvApp {
             .child(
                 div()
                     .id("timeline-scroll")
+                    .w_full()
                     .h_full()
                     .py(px(70.0))
                     .flex()
                     .flex_col()
+                    .items_center()
                     .when(center_markers, |this| this.justify_center())
                     .gap(px(5.0))
                     .overflow_y_scroll()
@@ -380,6 +737,7 @@ impl GsvApp {
                             this.input.focus_handle(cx).focus(window);
                         }),
                     )
+                    .on_scroll_wheel(cx.listener(Self::scroll_timeline))
                     .children(markers),
             )
             .into_any_element()
@@ -404,19 +762,18 @@ impl GsvApp {
         } else {
             self.conversation.live_activity_entries()
         };
-        let footer_extra = live_activity_entries.len().saturating_sub(1) as f32 * 22.0;
         let left_padding = (viewport_width * 0.065).clamp(108.0, 142.0);
         let right_padding = (viewport_width * 0.065).clamp(46.0, 142.0);
         let vertical_padding = (viewport_height * 0.105).clamp(50.0, 108.0);
+        let top_padding = vertical_padding.max(PRESENCE_LANE_TOP + PRESENCE_LANE_HEIGHT + 8.0);
         let available_width = (viewport_width - left_padding - right_padding).max(1.0);
-        let available_height =
-            (viewport_height - vertical_padding * 2.0 - 72.0 - footer_extra).max(1.0);
+        let available_height = (viewport_height - top_padding - vertical_padding - 72.0).max(1.0);
         let geometry = CanvasGeometry {
             left: left_padding,
             right: right_padding,
-            vertical: vertical_padding,
+            top: top_padding,
+            bottom: vertical_padding,
             available_height,
-            footer_extra,
         };
 
         let current = if self.interaction.is_approval() {
@@ -435,35 +792,56 @@ impl GsvApp {
         let activity_summary = current
             .map(|moment| self.conversation.activity_summary_for(moment).to_vec())
             .unwrap_or_default();
-        let (message, media, moment_id, run_id, role, state) = match current {
-            Some(moment) => (
-                moment.text.clone(),
-                moment.media.clone(),
-                moment.id.clone(),
-                moment.run_id.clone(),
-                moment.role,
-                moment.state,
-            ),
-            None if self.conversation.connection == ConnectionState::Connecting => (
-                "Reaching your GSV…".to_string(),
-                Vec::new(),
-                "system:connecting".to_string(),
-                None,
-                MomentRole::System,
-                MomentState::Complete,
-            ),
-            None => (
-                "Begin anywhere.".to_string(),
-                Vec::new(),
-                "system:begin".to_string(),
-                None,
-                MomentRole::Intelligence,
-                MomentState::Complete,
-            ),
+        let local_preparation_candidate = current.and_then(|moment| moment.preparation_candidate());
+        let (display_message, media, moment_id, run_id, role, state, message_revision) =
+            match current {
+                Some(moment) => (
+                    SharedString::new(moment.text.clone()),
+                    moment.media.clone(),
+                    moment.id.clone(),
+                    moment.run_id.clone(),
+                    moment.role,
+                    moment.state,
+                    moment.content_revision,
+                ),
+                None if self.conversation.connection == ConnectionState::Connecting => (
+                    "Reaching your GSV…".into(),
+                    Arc::new(Vec::new()),
+                    "system:connecting".to_string(),
+                    None,
+                    MomentRole::System,
+                    MomentState::Complete,
+                    1,
+                ),
+                None => (
+                    "Begin anywhere.".into(),
+                    Arc::new(Vec::new()),
+                    "system:begin".to_string(),
+                    None,
+                    MomentRole::Intelligence,
+                    MomentState::Complete,
+                    2,
+                ),
+            };
+        let preparation_candidate = self
+            .history_preparations
+            .get(&moment_id)
+            .cloned()
+            .or(local_preparation_candidate);
+        let message_revision = preparation_candidate
+            .as_ref()
+            .map_or(message_revision, |candidate| candidate.revision.get());
+        let prepared_content = if let Some(candidate) = preparation_candidate.as_ref() {
+            self.prepared_content.resolve_history(candidate)
+        } else {
+            self.prepared_content.resolve_or_request(
+                &moment_id,
+                role,
+                state,
+                display_message.as_ref(),
+                media.as_slice(),
+            )
         };
-        let prepared_content = self
-            .prepared_content
-            .resolve_or_request(&moment_id, role, state, &message, &media);
         let append_plain_text = self.prepared_content.appends_plain_text(&moment_id);
         let selection_topology = message_selection_topology(
             prepared_content
@@ -475,8 +853,10 @@ impl GsvApp {
         if self.message_scroll_moment.as_deref() != Some(moment_id.as_str()) {
             self.message_scroll.set_offset(point(px(0.0), px(0.0)));
             self.message_scroll_moment = Some(moment_id.clone());
-            self.history_scroll_accumulator = 0.0;
-            self.history_scroll_last_event = None;
+            if !self.history_scroll_accumulator.is_infinite() {
+                self.history_scroll_accumulator = 0.0;
+                self.history_scroll_last_event = None;
+            }
         }
 
         let message_weight = if role == MomentRole::User {
@@ -503,15 +883,17 @@ impl GsvApp {
             None
         };
         self.stream_type_sizes.clear();
-        let measurement_text = message_measurement_text(&message, &media);
+        let measurement_text = message_measurement_text(&display_message, media.as_slice());
         let message_layout = self.fit_cached_type_layout(
             window,
             TypeFit {
                 key: &moment_type_key,
-                text: &measurement_text,
+                text: measurement_text,
+                revision: message_revision,
                 available_width,
                 available_height,
                 maximum_size,
+                lock_size: maximum_size.is_some(),
                 weight: message_weight,
             },
         );
@@ -548,7 +930,7 @@ impl GsvApp {
             || (prepared_content.is_none()
                 && role == MomentRole::Intelligence
                 && state == MomentState::Complete
-                && (!media.is_empty() || message.len() > 640));
+                && (!media.is_empty() || display_message.len() > 640));
         let transition_costly = stable_transition_cost(
             &mut self.message_transition_cost,
             self.transition_epoch,
@@ -568,7 +950,7 @@ impl GsvApp {
             self.text_selection.prepare(
                 format!(
                     "conversation:{moment_id}:{}:{}",
-                    content_revision(&message, &media).get(),
+                    message_revision,
                     activity_summary_revision(&activity_summary)
                 ),
                 selection_topology,
@@ -587,23 +969,13 @@ impl GsvApp {
         };
         self.cancel_stale_media_preparations();
         release_assets(released, cx);
-        let activity = if live_activity_entries.is_empty() {
-            self.conversation
-                .activity
-                .as_deref()
-                .map(legacy_activity_label)
-                .or_else(|| {
-                    (!draft_visible && state == MomentState::Uncertain)
-                        .then(|| "Delivery not confirmed… checking history".to_string())
-                })
-                .into_iter()
-                .collect::<Vec<_>>()
-        } else {
-            live_activity_entries
-                .into_iter()
-                .map(live_activity_label)
-                .collect::<Vec<_>>()
-        };
+        let activity = presence_lines(
+            &live_activity_entries,
+            self.conversation.activity.as_deref(),
+            !draft_visible && state == MomentState::Uncertain,
+            self.interaction.is_approval(),
+            self.voice_notice.as_deref(),
+        );
         let show_stop_hint = self.conversation.active_run_id.is_some() && !activity.is_empty();
         let show_hint = !self.interaction.has_interacted()
             && activity.is_empty()
@@ -614,10 +986,12 @@ impl GsvApp {
                 window,
                 TypeFit {
                     key: "draft",
-                    text: &draft,
+                    text: draft.clone().into(),
+                    revision: type_content_hash(&draft),
                     available_width,
                     available_height,
                     maximum_size: self.draft_type_size,
+                    lock_size: false,
                     weight: FontWeight::NORMAL,
                 },
             );
@@ -630,7 +1004,8 @@ impl GsvApp {
         } else {
             self.render_message_canvas(
                 MessageCanvas {
-                    message,
+                    message: display_message,
+                    approval: self.conversation.pending_approval.clone(),
                     rich_content: prepared_content.filter(PreparedContent::is_rich),
                     append_plain_text,
                     activity_summary,
@@ -652,10 +1027,12 @@ impl GsvApp {
                 window,
                 TypeFit {
                     key: "draft",
-                    text: &sink_value,
+                    text: sink_value.clone().into(),
+                    revision: type_content_hash(&sink_value),
                     available_width,
                     available_height,
                     maximum_size: self.draft_type_size,
+                    lock_size: false,
                     weight: FontWeight::NORMAL,
                 },
             );
@@ -671,40 +1048,7 @@ impl GsvApp {
                 this.child(self.render_input_sink(sink_layout, geometry))
             })
             .child(canvas)
-            .when(!activity.is_empty(), |this| {
-                this.child(
-                    div()
-                        .absolute()
-                        .bottom(px(27.0))
-                        .left(px(82.0))
-                        .right(px(82.0))
-                        .flex()
-                        .flex_col()
-                        .items_center()
-                        .justify_center()
-                        .gap(px(7.0))
-                        .font_family(theme::MONO_FONT)
-                        .child(
-                            div()
-                                .flex()
-                                .flex_col()
-                                .items_center()
-                                .gap(px(4.0))
-                                .text_size(px(17.0))
-                                .line_height(relative(1.25))
-                                .text_color(theme::color(theme::LIVE))
-                                .children(activity),
-                        )
-                        .when(show_stop_hint, |this| {
-                            this.child(
-                                div()
-                                    .text_size(px(9.0))
-                                    .text_color(theme::color(theme::TEXT_FAINT))
-                                    .child(STOP_HINT),
-                            )
-                        }),
-                )
-            })
+            .child(self.render_presence_lane(activity, show_stop_hint))
             .when(show_hint, |this| {
                 this.child(
                     div()
@@ -749,7 +1093,8 @@ impl GsvApp {
             .inset_0()
             .pl(px(geometry.left))
             .pr(px(geometry.right))
-            .py(px(geometry.vertical))
+            .pt(px(geometry.top))
+            .pb(px(geometry.bottom))
             .flex()
             .items_center()
             .justify_center()
@@ -770,6 +1115,88 @@ impl GsvApp {
             .into_any_element()
     }
 
+    fn render_approval_controls(
+        &self,
+        approval: PendingApproval,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let scope = approval_scope_description(&approval);
+        let submitting = self.interaction.is_approval_submitting();
+        let once_request_id = approval.request_id.clone();
+        let always_request_id = approval.request_id.clone();
+        let deny_request_id = approval.request_id;
+        let choice = |id: &'static str, label: &'static str| {
+            div()
+                .id(id)
+                .cursor_pointer()
+                .px(px(8.0))
+                .py(px(8.0))
+                .text_size(px(15.0))
+                .text_color(theme::color(theme::ACCENT))
+                .hover(|this| this.text_color(theme::color(theme::TEXT)))
+                .child(label)
+        };
+
+        div()
+            .w_full()
+            .pt(px(26.0))
+            .flex()
+            .flex_col()
+            .gap(px(10.0))
+            .font_family(theme::MONO_FONT)
+            .when(submitting, |this| this.opacity(0.42))
+            .child(
+                div()
+                    .flex()
+                    .flex_wrap()
+                    .gap_x(px(24.0))
+                    .gap_y(px(8.0))
+                    .child(choice("approval-once", "ALLOW ONCE").on_click(cx.listener(
+                        move |this, _, window, cx| {
+                            this.apply_approval_decision(
+                                once_request_id.clone(),
+                                "allow once".to_string(),
+                                ApprovalDecision::Approve { remember: false },
+                                window,
+                                cx,
+                            );
+                        },
+                    )))
+                    .child(
+                        choice("approval-always", "ALWAYS ALLOW").on_click(cx.listener(
+                            move |this, _, window, cx| {
+                                this.apply_approval_decision(
+                                    always_request_id.clone(),
+                                    "always allow".to_string(),
+                                    ApprovalDecision::Approve { remember: true },
+                                    window,
+                                    cx,
+                                );
+                            },
+                        )),
+                    )
+                    .child(choice("approval-deny", "DENY").on_click(cx.listener(
+                        move |this, _, window, cx| {
+                            this.apply_approval_decision(
+                                deny_request_id.clone(),
+                                "deny".to_string(),
+                                ApprovalDecision::Deny,
+                                window,
+                                cx,
+                            );
+                        },
+                    ))),
+            )
+            .child(
+                div()
+                    .text_size(px(12.0))
+                    .line_height(relative(1.35))
+                    .text_color(theme::color(theme::TEXT_FAINT))
+                    .child(scope),
+            )
+            .into_any_element()
+    }
+
     fn render_message_canvas(
         &mut self,
         request: MessageCanvas,
@@ -777,6 +1204,7 @@ impl GsvApp {
     ) -> AnyElement {
         let MessageCanvas {
             message,
+            approval,
             rich_content,
             append_plain_text,
             activity_summary,
@@ -801,7 +1229,7 @@ impl GsvApp {
                         "message-plain-prefix",
                         self.text_selection.clone(),
                         0,
-                        message,
+                        message.clone(),
                     )))
                 })
                 .child(render_document(
@@ -831,7 +1259,7 @@ impl GsvApp {
                         "message-plain",
                         self.text_selection.clone(),
                         0,
-                        message,
+                        message.clone(),
                     ))
                 })
                 .child(render_activity_summary(
@@ -852,7 +1280,10 @@ impl GsvApp {
             .text_size(px(layout.size))
             .line_height(relative(layout.line_height))
             .text_color(color)
-            .child(content);
+            .child(content)
+            .when_some(approval, |this, approval| {
+                this.child(self.render_approval_controls(approval, cx))
+            });
         let direction = self.transition_direction;
         let message = if animate_message(self.reduced_motion, transition_costly) {
             message
@@ -875,8 +1306,8 @@ impl GsvApp {
             .inset_0()
             .pl(px(geometry.left))
             .pr(px(geometry.right))
-            .pt(px(geometry.vertical))
-            .pb(px(geometry.vertical + 58.0 + geometry.footer_extra))
+            .pt(px(geometry.top))
+            .pb(px(geometry.bottom + 58.0))
             .flex()
             .justify_center()
             .when(is_long, |this| this.items_start())
@@ -906,56 +1337,96 @@ impl GsvApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let delta = event.delta.pixel_delta(px(16.0));
-        let vertical = f32::from(delta.y);
-        let horizontal = f32::from(delta.x);
-        if vertical.abs() <= horizontal.abs() || vertical == 0.0 {
+        if matches!(event.touch_phase, TouchPhase::Ended) {
+            self.history_scroll_accumulator = 0.0;
+            self.history_scroll_last_event = None;
+            cx.stop_propagation();
             return;
         }
-        let selection_cleared = self.text_selection.clear();
-        let now = std::time::Instant::now();
-        if self
-            .history_scroll_last_event
-            .is_none_or(|previous| now.duration_since(previous) > Duration::from_millis(180))
-        {
-            self.history_scroll_accumulator = 0.0;
-        }
-        self.history_scroll_last_event = Some(now);
-
-        let maximum = f32::from(self.message_scroll.max_offset().height);
-        let offset = f32::from(self.message_scroll.offset().y).clamp(-maximum, 0.0);
-        let target = (offset + vertical).clamp(-maximum, 0.0);
+        let Some(vertical) = normalized_vertical_delta(event.delta) else {
+            return;
+        };
         cx.stop_propagation();
-
-        if (target - offset).abs() > 0.5 {
-            self.message_scroll.set_offset(point(px(0.0), px(target)));
-            self.history_scroll_accumulator = 0.0;
-            cx.notify();
-            return;
-        }
-
-        if self.history_scroll_accumulator != 0.0
-            && self.history_scroll_accumulator.signum() != vertical.signum()
-        {
-            self.history_scroll_accumulator = 0.0;
-        }
-        self.history_scroll_accumulator += vertical;
-
-        if self.history_scroll_accumulator.abs() < HISTORY_SCROLL_THRESHOLD {
+        let selection_cleared = self.text_selection.clear();
+        let now = Instant::now();
+        if !prepare_history_scroll_gesture(
+            &mut self.history_scroll_accumulator,
+            &mut self.history_scroll_last_event,
+            now,
+        ) {
             if selection_cleared {
                 cx.notify();
             }
             return;
         }
-        let direction = if self.history_scroll_accumulator > 0.0 {
+
+        let maximum = f32::from(self.message_scroll.max_offset().height);
+        let offset = f32::from(self.message_scroll.offset().y).clamp(-maximum, 0.0);
+        match canvas_wheel_action(
+            &mut self.history_scroll_accumulator,
+            offset,
+            maximum,
+            vertical,
+        ) {
+            CanvasWheelAction::ScrollTo(target) => {
+                self.message_scroll.set_offset(point(px(0.0), px(target)));
+                cx.notify();
+            }
+            CanvasWheelAction::Resist => {
+                if selection_cleared {
+                    cx.notify();
+                }
+            }
+            CanvasWheelAction::Navigate(direction) => {
+                self.move_moment(direction, window, cx);
+                latch_history_scroll(&mut self.history_scroll_accumulator, vertical);
+                self.history_scroll_last_event = Some(now);
+                if selection_cleared {
+                    cx.notify();
+                }
+            }
+        }
+    }
+
+    fn scroll_timeline(
+        &mut self,
+        event: &ScrollWheelEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        cx.stop_propagation();
+        if matches!(event.touch_phase, TouchPhase::Ended) {
+            self.timeline_scroll_accumulator = 0.0;
+            self.timeline_scroll_last_event = None;
+            return;
+        }
+        let Some(vertical) = normalized_vertical_delta(event.delta) else {
+            return;
+        };
+        let now = Instant::now();
+        if self
+            .timeline_scroll_last_event
+            .is_none_or(|previous| now.duration_since(previous) > HISTORY_SCROLL_IDLE)
+            || (self.timeline_scroll_accumulator != 0.0
+                && self.timeline_scroll_accumulator.signum() != vertical.signum())
+        {
+            self.timeline_scroll_accumulator = 0.0;
+        }
+        self.timeline_scroll_last_event = Some(now);
+        self.timeline_scroll_accumulator += vertical;
+        let steps = (self.timeline_scroll_accumulator.abs() / 48.0).floor() as usize;
+        if steps == 0 {
+            return;
+        }
+        let direction = if self.timeline_scroll_accumulator > 0.0 {
             -1
         } else {
             1
         };
-        self.history_scroll_accumulator = 0.0;
-        self.move_moment(direction, window, cx);
-        if selection_cleared {
-            cx.notify();
+        self.timeline_scroll_accumulator = self.timeline_scroll_accumulator.signum()
+            * (self.timeline_scroll_accumulator.abs() - steps as f32 * 48.0);
+        for _ in 0..steps.min(self.conversation.moments.len()) {
+            self.move_moment(direction, window, cx);
         }
     }
 
@@ -983,8 +1454,8 @@ impl GsvApp {
             .inset_0()
             .pl(px(geometry.left))
             .pr(px(geometry.right))
-            .pt(px(geometry.vertical))
-            .pb(px(geometry.vertical + 24.0 + geometry.footer_extra))
+            .pt(px(geometry.top))
+            .pb(px(geometry.bottom + 24.0))
             .flex()
             .justify_center()
             .when(is_long, |this| this.items_start())
@@ -1196,6 +1667,7 @@ impl Render for GsvApp {
             .on_action(cx.listener(Self::toggle_terminal_action))
             .on_action(cx.listener(Self::previous_moment))
             .on_action(cx.listener(Self::next_moment))
+            .on_action(cx.listener(Self::toggle_dictation_action))
             .capture_action(cx.listener(Self::copy_selection))
             .on_mouse_down(
                 MouseButton::Left,
@@ -1315,6 +1787,174 @@ mod tests {
             "Ran 17 commands"
         );
     }
+
+    #[test]
+    fn wheel_deltas_normalize_mouse_lines_and_touchpad_pixels() {
+        assert_eq!(
+            normalized_vertical_delta(ScrollDelta::Lines(point(0.0, 3.0))),
+            Some(48.0)
+        );
+        assert_eq!(
+            normalized_vertical_delta(ScrollDelta::Pixels(point(px(0.0), px(-48.0)))),
+            Some(-48.0)
+        );
+        assert_eq!(
+            normalized_vertical_delta(ScrollDelta::Lines(point(4.0, 3.0))),
+            None
+        );
+    }
+
+    #[test]
+    fn canvas_requires_fresh_overscroll_after_reaching_the_boundary() {
+        let mut accumulator = 0.0;
+        assert_eq!(
+            canvas_wheel_action(&mut accumulator, -40.0, 100.0, -120.0),
+            CanvasWheelAction::ScrollTo(-100.0)
+        );
+        assert_eq!(accumulator, 0.0);
+
+        assert_eq!(
+            canvas_wheel_action(&mut accumulator, -100.0, 100.0, -48.0),
+            CanvasWheelAction::Resist
+        );
+        assert_eq!(
+            canvas_wheel_action(&mut accumulator, -100.0, 100.0, -48.0),
+            CanvasWheelAction::Resist
+        );
+        assert_eq!(
+            canvas_wheel_action(&mut accumulator, -100.0, 100.0, -48.0),
+            CanvasWheelAction::Navigate(1)
+        );
+    }
+
+    #[test]
+    fn history_gesture_latches_until_idle_while_pre_latch_resistance_reverses() {
+        let start = Instant::now();
+        let mut accumulator = 80.0;
+        let mut last_event = Some(start);
+        assert_eq!(
+            canvas_wheel_action(&mut accumulator, 0.0, 0.0, -30.0),
+            CanvasWheelAction::Resist
+        );
+        assert_eq!(accumulator, -30.0);
+
+        latch_history_scroll(&mut accumulator, -48.0);
+
+        assert!(!prepare_history_scroll_gesture(
+            &mut accumulator,
+            &mut last_event,
+            start + Duration::from_millis(20),
+        ));
+        assert!(!prepare_history_scroll_gesture(
+            &mut accumulator,
+            &mut last_event,
+            start + Duration::from_millis(40),
+        ));
+
+        assert!(prepare_history_scroll_gesture(
+            &mut accumulator,
+            &mut last_event,
+            start + HISTORY_SCROLL_IDLE + Duration::from_millis(50),
+        ));
+        assert_eq!(accumulator, 0.0);
+    }
+
+    #[test]
+    fn timeline_markers_keep_uniform_geometry_when_selected() {
+        assert_eq!(timeline_marker_geometry(false), (4.0, 8.0));
+        assert_eq!(
+            timeline_marker_geometry(false),
+            timeline_marker_geometry(true)
+        );
+    }
+
+    #[test]
+    fn parallel_activity_is_grouped_and_capped_without_details() {
+        let lines = grouped_live_activity(&[
+            LiveActivityEntry {
+                category: ActivityCategory::SearchingFiles,
+                count: 2,
+            },
+            LiveActivityEntry {
+                category: ActivityCategory::ReadingFiles,
+                count: 4,
+            },
+            LiveActivityEntry {
+                category: ActivityCategory::WritingFiles,
+                count: 1,
+            },
+            LiveActivityEntry {
+                category: ActivityCategory::RunningCommands,
+                count: 3,
+            },
+            LiveActivityEntry {
+                category: ActivityCategory::RunningCode,
+                count: 1,
+            },
+        ]);
+
+        assert_eq!(lines.len(), 4);
+        assert_eq!(lines[0].label, "Running 2 file searches…");
+        assert_eq!(lines[0].motion, PresenceMotion::Search);
+        assert_eq!(lines[1].label, "Running 4 read operations…");
+        assert_eq!(lines[1].motion, PresenceMotion::Read);
+        assert_eq!(lines[2].motion, PresenceMotion::Mutate);
+        assert_eq!(lines[3].label, "+ 2 more");
+        assert_eq!(lines[3].motion, PresenceMotion::None);
+    }
+
+    #[test]
+    fn presence_animation_respects_reduced_motion_and_approval() {
+        assert!(animate_presence(false, false, PresenceMotion::Breathe));
+        assert!(!animate_presence(true, false, PresenceMotion::Breathe));
+        assert!(!animate_presence(false, true, PresenceMotion::Breathe));
+        assert!(!animate_presence(false, false, PresenceMotion::None));
+    }
+
+    #[test]
+    fn approval_replaces_live_presence() {
+        let live = [LiveActivityEntry {
+            category: ActivityCategory::RunningCommands,
+            count: 2,
+        }];
+        assert!(presence_lines(&live, Some("THINKING"), true, true, Some("LISTENING")).is_empty());
+        assert_eq!(
+            presence_lines(&live, Some("THINKING"), true, false, None)[0].label,
+            "Running 2 commands…"
+        );
+        assert_eq!(
+            presence_lines(&live, Some("APPLYING"), false, true, None)[0].label,
+            "Applying…"
+        );
+        assert_eq!(
+            presence_lines(&live, Some("NOT APPLIED · TRY AGAIN"), false, true, None,)[0].label,
+            "Not applied. Try again."
+        );
+    }
+
+    #[test]
+    fn voice_notice_leads_normal_presence_without_exposing_implementation() {
+        let live = [LiveActivityEntry {
+            category: ActivityCategory::RunningCode,
+            count: 1,
+        }];
+        let lines = presence_lines(&live, None, false, false, Some("LISTENING"));
+
+        assert_eq!(lines[0].label, "LISTENING");
+        assert_eq!(lines[0].motion, PresenceMotion::Breathe);
+        assert_eq!(lines[1].label, "Running a code task…");
+    }
+
+    #[test]
+    fn type_fit_cache_hash_covers_geometry_and_locking() {
+        let baseline = type_fit_hash(7, 800.0, 500.0, false);
+        assert_eq!(baseline, type_fit_hash(7, 800.0, 500.0, false));
+        assert_ne!(baseline, type_fit_hash(7, 801.0, 500.0, false));
+        assert_ne!(baseline, type_fit_hash(7, 800.0, 501.0, false));
+        assert_ne!(baseline, type_fit_hash(7, 800.0, 500.0, true));
+        assert_ne!(baseline, type_fit_hash(8, 800.0, 500.0, false));
+    }
+
     use crate::app::{bind_keys, HideDraft};
     use crate::client::ClientCommand;
 
@@ -1370,7 +2010,7 @@ mod tests {
     }
 
     #[gpui::test]
-    fn mouse_wheel_moves_between_conversation_moments(cx: &mut TestAppContext) {
+    fn canvas_wheel_requires_three_detents_and_latches_the_gesture(cx: &mut TestAppContext) {
         cx.update(|cx| {
             gpui_component::init(cx);
             bind_keys(cx);
@@ -1404,6 +2044,32 @@ mod tests {
             px(f32::from(viewport.height) / 2.0),
         );
 
+        for detent in 0..2 {
+            cx.cx.update(|cx| {
+                app.update(cx, |app, _| {
+                    app.history_scroll_last_event = Some(Instant::now());
+                });
+            });
+            cx.simulate_event(ScrollWheelEvent {
+                position,
+                delta: ScrollDelta::Lines(point(0.0, 3.0)),
+                ..Default::default()
+            });
+            cx.cx.update(|cx| {
+                let app = app.read(cx);
+                assert_eq!(app.conversation.selected, 2);
+                assert_eq!(
+                    app.audio.request_count(crate::audio::KeySound::Navigate),
+                    0,
+                    "detent {detent} must only build boundary resistance"
+                );
+            });
+        }
+        cx.cx.update(|cx| {
+            app.update(cx, |app, _| {
+                app.history_scroll_last_event = Some(Instant::now());
+            });
+        });
         cx.simulate_event(ScrollWheelEvent {
             position,
             delta: ScrollDelta::Lines(point(0.0, 3.0)),
@@ -1415,6 +2081,29 @@ mod tests {
             assert_eq!(app.audio.request_count(crate::audio::KeySound::Navigate), 1);
         });
 
+        for _ in 0..5 {
+            cx.cx.update(|cx| {
+                app.update(cx, |app, _| {
+                    app.history_scroll_last_event = Some(Instant::now());
+                });
+            });
+            cx.simulate_event(ScrollWheelEvent {
+                position,
+                delta: ScrollDelta::Pixels(point(px(0.0), px(64.0))),
+                ..Default::default()
+            });
+        }
+        cx.cx.update(|cx| {
+            let app = app.read(cx);
+            assert_eq!(app.conversation.selected, 1);
+            assert_eq!(app.audio.request_count(crate::audio::KeySound::Navigate), 1);
+        });
+
+        cx.cx.update(|cx| {
+            app.update(cx, |app, _| {
+                app.history_scroll_last_event = Some(Instant::now());
+            });
+        });
         cx.simulate_event(ScrollWheelEvent {
             position,
             delta: ScrollDelta::Lines(point(0.0, -3.0)),
@@ -1422,19 +2111,73 @@ mod tests {
         });
         cx.cx.update(|cx| {
             let app = app.read(cx);
+            assert_eq!(app.conversation.selected, 1);
+            assert_eq!(app.audio.request_count(crate::audio::KeySound::Navigate), 1);
+        });
+
+        cx.simulate_event(ScrollWheelEvent {
+            position,
+            touch_phase: TouchPhase::Ended,
+            ..Default::default()
+        });
+        for _ in 0..3 {
+            cx.cx.update(|cx| {
+                app.update(cx, |app, _| {
+                    app.history_scroll_last_event = Some(Instant::now());
+                });
+            });
+            cx.simulate_event(ScrollWheelEvent {
+                position,
+                delta: ScrollDelta::Lines(point(0.0, -3.0)),
+                ..Default::default()
+            });
+        }
+        cx.cx.update(|cx| {
+            let app = app.read(cx);
             assert_eq!(app.conversation.selected, 2);
             assert_eq!(app.audio.request_count(crate::audio::KeySound::Navigate), 2);
         });
+    }
+
+    #[gpui::test]
+    fn timeline_wheel_owns_navigation_without_scrolling_the_rail(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            gpui_component::init(cx);
+            bind_keys(cx);
+            crate::register_fonts(cx);
+            crate::configure_theme(cx);
+        });
+
+        let app = Rc::new(RefCell::new(None));
+        let app_for_window = app.clone();
+        let client = crate::client::start(true);
+        let window = cx.update(|cx| {
+            cx.open_window(WindowOptions::default(), move |window, cx| {
+                let view = cx.new(|cx| GsvApp::new(window, cx, client, true, false, true));
+                *app_for_window.borrow_mut() = Some(view.clone());
+                cx.new(|cx| Root::new(view, window, cx))
+            })
+            .expect("the GPUI surface should open")
+        });
+        let mut cx = VisualTestContext::from_window(window.into(), cx);
+        cx.run_until_parked();
+
+        let app = app.borrow().clone().expect("app entity should be retained");
+        let viewport = cx.update(|window, _| window.viewport_size());
+        let message_offset_before = cx.cx.update(|cx| app.read(cx).message_scroll.offset());
+        let rail_offset_before = cx.cx.update(|cx| app.read(cx).timeline_scroll.offset());
 
         cx.simulate_event(ScrollWheelEvent {
             position: point(px(40.0), px(f32::from(viewport.height) / 2.0)),
             delta: ScrollDelta::Lines(point(0.0, 3.0)),
             ..Default::default()
         });
+        cx.run_until_parked();
         cx.cx.update(|cx| {
             let app = app.read(cx);
-            assert_eq!(app.conversation.selected, 2);
-            assert_eq!(app.audio.request_count(crate::audio::KeySound::Navigate), 2);
+            assert_eq!(app.conversation.selected, 1);
+            assert_eq!(app.message_scroll.offset(), message_offset_before);
+            assert_eq!(app.timeline_scroll.offset(), rail_offset_before);
         });
     }
 
@@ -1466,7 +2209,11 @@ mod tests {
         let app = app.borrow().clone().expect("app entity should be retained");
         cx.cx.update(|cx| {
             app.update(cx, |app, cx| {
-                app.conversation.moments[1].text = "A long message. ".repeat(2_000);
+                app.conversation.moments[1] = crate::model::Moment::new(
+                    "demo-2",
+                    MomentRole::User,
+                    "A long message. ".repeat(2_000),
+                );
                 app.conversation.select(1);
                 cx.notify();
             });
@@ -1496,6 +2243,21 @@ mod tests {
             assert_eq!(app.audio.request_count(crate::audio::KeySound::Navigate), 0);
         });
 
+        cx.simulate_event(ScrollWheelEvent {
+            position,
+            delta: ScrollDelta::Lines(point(0.0, -3.0)),
+            ..Default::default()
+        });
+        cx.cx.update(|cx| {
+            let app = app.read(cx);
+            assert_eq!(app.conversation.selected, 1);
+            assert_eq!(app.audio.request_count(crate::audio::KeySound::Navigate), 0);
+        });
+        cx.simulate_event(ScrollWheelEvent {
+            position,
+            delta: ScrollDelta::Lines(point(0.0, -3.0)),
+            ..Default::default()
+        });
         cx.simulate_event(ScrollWheelEvent {
             position,
             delta: ScrollDelta::Lines(point(0.0, -3.0)),
@@ -1536,7 +2298,7 @@ mod tests {
             app.update(cx, |app, cx| {
                 app.conversation.start_run("run-1");
                 app.conversation
-                    .stream_text(Some("run-1"), &"A measured response. ".repeat(160));
+                    .stream_text(Some("run-1"), "A measured response.");
                 cx.notify();
             });
         });
@@ -1548,6 +2310,22 @@ mod tests {
             let size = sizes.next().expect("live stream size should be cached");
             assert!(sizes.all(|other| other == size));
             size
+        });
+
+        cx.cx.update(|cx| {
+            app.update(cx, |app, cx| {
+                app.conversation
+                    .stream_text(Some("run-1"), &" More measured detail.".repeat(160));
+                cx.notify();
+            });
+        });
+        cx.run_until_parked();
+        cx.cx.update(|cx| {
+            assert!(app
+                .read(cx)
+                .stream_type_sizes
+                .values()
+                .all(|size| *size == live_size));
         });
 
         cx.cx.update(|cx| {
@@ -1611,13 +2389,43 @@ mod tests {
             let app = app.read(cx);
             assert!(app.type_layouts.contains_key(latest_key));
             assert!(app.type_layouts.contains_key("moment:demo-2"));
-            app.type_layouts.clone()
+            app.type_layouts
+                .iter()
+                .map(|(key, value)| {
+                    (
+                        key.clone(),
+                        (
+                            value.content_hash,
+                            value.maximum_size,
+                            value.weight,
+                            value.layout,
+                        ),
+                    )
+                })
+                .collect::<std::collections::HashMap<_, _>>()
         });
 
         cx.cx.update(|cx| app.update(cx, |_, cx| cx.notify()));
         cx.run_until_parked();
-        cx.cx
-            .update(|cx| assert_eq!(app.read(cx).type_layouts, cached));
+        cx.cx.update(|cx| {
+            let app = app.read(cx);
+            let current = app
+                .type_layouts
+                .iter()
+                .map(|(key, value)| {
+                    (
+                        key.clone(),
+                        (
+                            value.content_hash,
+                            value.maximum_size,
+                            value.weight,
+                            value.layout,
+                        ),
+                    )
+                })
+                .collect::<std::collections::HashMap<_, _>>();
+            assert_eq!(current, cached);
+        });
     }
 
     #[gpui::test]
@@ -1652,8 +2460,11 @@ mod tests {
         let app = app.borrow().clone().expect("app entity should be retained");
         cx.cx.update(|cx| {
             app.update(cx, |app, cx| {
-                app.conversation.moments[2].text =
-                    "# Result\n\n![map](https://example.com/map.png)".to_string();
+                app.conversation.moments[2] = crate::model::Moment::new(
+                    "demo-3",
+                    MomentRole::Intelligence,
+                    "# Result\n\n![map](https://example.com/map.png)",
+                );
                 cx.notify();
             });
         });

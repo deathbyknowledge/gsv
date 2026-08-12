@@ -1,10 +1,46 @@
 use std::collections::{HashMap, HashSet, VecDeque};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
 
 use serde_json::Value;
 
 use crate::content::{MediaAttachment, MediaKind};
+use crate::history::{
+    HistoryActivity as PreparedHistoryActivity, HistoryActivityCategory, HistoryActivityUnit,
+    HistoryApprovalPreview, HistoryMomentRole, HistoryPendingApproval, HistoryPreparationCandidate,
+    HistorySnapshot, HistoryToolCallState,
+};
+use crate::prepared::{content_revision, ContentRevision};
 
 const RETIRED_RUN_LIMIT: usize = 128;
+static NEXT_MOMENT_REVISION: AtomicU64 = AtomicU64::new(1);
+
+fn next_moment_revision() -> u64 {
+    NEXT_MOMENT_REVISION.fetch_add(1, Ordering::Relaxed).max(1)
+}
+
+// This is an index hint, not an identity check. Keep its work bounded so installing history never
+// scans every user message body merely to reconcile the rare uncertain delivery. Hash matches are
+// always verified against the exact text before they affect delivery state.
+fn text_fingerprint(text: &str) -> u64 {
+    const SAMPLE_BYTES: usize = 32;
+    const FNV_OFFSET: u64 = 0xcbf2_9ce4_8422_2325;
+    const FNV_PRIME: u64 = 0x100_0000_01b3;
+
+    let bytes = text.as_bytes();
+    let mut fingerprint = FNV_OFFSET ^ bytes.len() as u64;
+    let mut mix = |byte: u8| {
+        fingerprint ^= u64::from(byte);
+        fingerprint = fingerprint.wrapping_mul(FNV_PRIME);
+    };
+    for byte in bytes.iter().take(SAMPLE_BYTES) {
+        mix(*byte);
+    }
+    for byte in bytes.iter().skip(bytes.len().saturating_sub(SAMPLE_BYTES)) {
+        mix(*byte);
+    }
+    fingerprint
+}
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum ActivityCategory {
@@ -31,19 +67,6 @@ impl ActivityCategory {
         }
     }
 
-    fn from_tool_name(value: &str) -> Option<Self> {
-        match value {
-            "Search" => Some(Self::SearchingFiles),
-            "Read" => Some(Self::ReadingFiles),
-            "Write" => Some(Self::WritingFiles),
-            "Edit" => Some(Self::EditingFiles),
-            "Delete" => Some(Self::DeletingFiles),
-            "Shell" => Some(Self::RunningCommands),
-            "CodeMode" => Some(Self::RunningCode),
-            _ => None,
-        }
-    }
-
     fn summary_index(self) -> Option<usize> {
         match self {
             Self::SearchingFiles => Some(0),
@@ -53,18 +76,6 @@ impl ActivityCategory {
             Self::DeletingFiles => Some(4),
             Self::RunningCommands => Some(5),
             Self::RunningCode => Some(6),
-        }
-    }
-
-    fn expected_unit(self) -> Option<ActivityUnit> {
-        match self {
-            Self::ReadingFiles => Some(ActivityUnit::Reads),
-            Self::RunningCommands => Some(ActivityUnit::Commands),
-            Self::RunningCode => Some(ActivityUnit::Runs),
-            Self::SearchingFiles
-            | Self::WritingFiles
-            | Self::EditingFiles
-            | Self::DeletingFiles => Some(ActivityUnit::Operations),
         }
     }
 }
@@ -169,22 +180,138 @@ pub enum MomentState {
 pub struct Moment {
     pub id: String,
     pub role: MomentRole,
-    pub text: String,
-    pub media: Vec<MediaAttachment>,
+    /// The immutable presentation snapshot is also the canonical body. GPUI can wrap this in a
+    /// `SharedString` without copying it, so a live update never retains a second full body solely
+    /// for rendering.
+    pub text: Arc<str>,
+    pub content_revision: u64,
+    pub media: Arc<Vec<MediaAttachment>>,
     pub run_id: Option<String>,
     pub state: MomentState,
+    text_fingerprint: u64,
+    preparation_revision: Option<ContentRevision>,
+    preparation_text: Option<Arc<str>>,
+    media_revision: ContentRevision,
 }
 
 impl Moment {
     pub fn new(id: impl Into<String>, role: MomentRole, text: impl Into<String>) -> Self {
+        let text = text.into();
+        let media = Arc::new(Vec::new());
+        let preparation_revision =
+            (role == MomentRole::Intelligence).then(|| content_revision(&text, media.as_slice()));
+        let text: Arc<str> = Arc::from(text);
+        let preparation_text = (role == MomentRole::Intelligence).then(|| text.clone());
         Self {
             id: id.into(),
             role,
-            text: text.into(),
-            media: Vec::new(),
+            text_fingerprint: text_fingerprint(text.as_ref()),
+            text,
+            content_revision: next_moment_revision(),
+            media_revision: content_revision("", media.as_slice()),
+            media,
             run_id: None,
             state: MomentState::Complete,
+            preparation_revision,
+            preparation_text,
         }
+    }
+
+    fn streaming(id: impl Into<String>, text: String, run_id: Option<String>) -> Self {
+        let text_fingerprint = text_fingerprint(&text);
+        Self {
+            id: id.into(),
+            role: MomentRole::Intelligence,
+            text: Arc::from(text),
+            content_revision: next_moment_revision(),
+            media: Arc::new(Vec::new()),
+            run_id,
+            state: MomentState::Streaming,
+            text_fingerprint,
+            preparation_revision: None,
+            preparation_text: None,
+            media_revision: content_revision("", &[]),
+        }
+    }
+
+    fn from_shared_history(
+        id: String,
+        role: MomentRole,
+        render_text: Arc<str>,
+        media: Arc<Vec<MediaAttachment>>,
+        run_id: Option<String>,
+    ) -> Self {
+        Self {
+            id,
+            role,
+            text_fingerprint: text_fingerprint(render_text.as_ref()),
+            text: render_text,
+            content_revision: next_moment_revision(),
+            media_revision: content_revision("", media.as_slice()),
+            media,
+            run_id,
+            state: MomentState::Complete,
+            preparation_revision: None,
+            preparation_text: None,
+        }
+    }
+
+    fn replace_text(&mut self, text: String) {
+        if self.text.as_ref() == text {
+            return;
+        }
+        self.text_fingerprint = text_fingerprint(&text);
+        self.text = Arc::from(text);
+        self.content_revision = next_moment_revision();
+        self.preparation_revision = None;
+        self.preparation_text = None;
+    }
+
+    fn append_text(&mut self, delta: &str) {
+        if delta.is_empty() {
+            return;
+        }
+        let mut text = String::with_capacity(self.text.len() + delta.len());
+        text.push_str(self.text.as_ref());
+        text.push_str(delta);
+        self.text_fingerprint = text_fingerprint(&text);
+        self.text = Arc::from(text);
+        self.content_revision = next_moment_revision();
+        self.preparation_revision = None;
+        self.preparation_text = None;
+    }
+
+    fn replace_media(&mut self, media: Arc<Vec<MediaAttachment>>) {
+        if self.media == media {
+            return;
+        }
+        self.media = media;
+        self.content_revision = next_moment_revision();
+        self.media_revision = content_revision("", self.media.as_slice());
+        self.preparation_revision = None;
+        self.preparation_text = None;
+    }
+
+    fn complete(&mut self) {
+        self.state = MomentState::Complete;
+        self.preparation_revision = (self.role == MomentRole::Intelligence)
+            .then(|| content_revision(self.text.as_ref(), self.media.as_slice()));
+        self.preparation_text = (self.role == MomentRole::Intelligence).then(|| self.text.clone());
+    }
+
+    pub(crate) fn preparation_candidate(&self) -> Option<HistoryPreparationCandidate> {
+        (self.role == MomentRole::Intelligence && self.state == MomentState::Complete)
+            .then_some(self.preparation_revision)
+            .flatten()
+            .zip(self.preparation_text.as_ref())
+            .map(|(revision, text)| HistoryPreparationCandidate {
+                id: Arc::from(self.id.as_str()),
+                revision,
+                media_revision: self.media_revision,
+                text: text.clone(),
+                render_text: self.text.clone(),
+                media: self.media.clone(),
+            })
     }
 }
 
@@ -192,9 +319,27 @@ impl Moment {
 pub struct PendingApproval {
     pub request_id: String,
     pub run_id: String,
-    pub tool_name: String,
     pub syscall: String,
-    pub detail: Option<String>,
+    pub target: String,
+    pub preview: ApprovalPreview,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum ApprovalPreview {
+    Shell {
+        command: Option<String>,
+    },
+    Delete {
+        path: Option<String>,
+    },
+    Fetch {
+        method: Option<String>,
+        url: Option<String>,
+    },
+    Mcp {
+        tool: Option<String>,
+    },
+    Unknown,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -485,12 +630,13 @@ impl Conversation {
             })
             .cloned()
             .collect::<Vec<_>>();
-        let mut history_user_occurrences = HashMap::new();
+        let mut history_user_occurrences = HashMap::<u64, Vec<Arc<str>>>::new();
         for moment in &moments {
             if moment.role == MomentRole::User {
-                *history_user_occurrences
-                    .entry(moment.text.clone())
-                    .or_insert(0) += 1;
+                history_user_occurrences
+                    .entry(moment.text_fingerprint)
+                    .or_default()
+                    .push(moment.text.clone());
             }
         }
         self.moments = moments;
@@ -506,8 +652,13 @@ impl Conversation {
                     .get(&local.id)
                     .is_some_and(|baseline| {
                         history_user_occurrences
-                            .get(&local.text)
-                            .copied()
+                            .get(&local.text_fingerprint)
+                            .map(|candidates| {
+                                candidates
+                                    .iter()
+                                    .filter(|candidate| candidate.as_ref() == local.text.as_ref())
+                                    .count()
+                            })
                             .unwrap_or_default()
                             > *baseline
                     });
@@ -552,13 +703,15 @@ impl Conversation {
 
     pub fn append_user(&mut self, text: impl Into<String>) -> String {
         let text = text.into();
+        let fingerprint = text_fingerprint(&text);
         let occurrence_baseline = self
             .moments
             .iter()
             .filter(|moment| {
                 moment.role == MomentRole::User
                     && moment.state != MomentState::Error
-                    && moment.text == text
+                    && moment.text_fingerprint == fingerprint
+                    && moment.text.as_ref() == text
             })
             .count();
         let id = self.transient_id("user");
@@ -674,14 +827,8 @@ impl Conversation {
 
         let id = self.transient_id("assistant");
         let was_following = self.follow_latest || self.moments.is_empty();
-        self.moments.push(Moment {
-            id,
-            role: MomentRole::Intelligence,
-            text: String::new(),
-            media: Vec::new(),
-            run_id: Some(run_id),
-            state: MomentState::Streaming,
-        });
+        let moment = Moment::streaming(id, String::new(), Some(run_id));
+        self.moments.push(moment);
         if was_following {
             self.selected = self.moments.len().saturating_sub(2);
             self.follow_latest = true;
@@ -711,35 +858,32 @@ impl Conversation {
         });
 
         if let Some(moment) = matching {
-            moment.text.push_str(delta);
+            moment.append_text(delta);
         } else {
             let id = self.transient_id("assistant");
-            self.moments.push(Moment {
-                id,
-                role: MomentRole::Intelligence,
-                text: delta.to_string(),
-                media: Vec::new(),
-                run_id: effective_run_id.clone(),
-                state: MomentState::Streaming,
-            });
+            let moment = Moment::streaming(id, delta.to_string(), effective_run_id.clone());
+            self.moments.push(moment);
         }
         self.activity = None;
         self.clear_live_activity(effective_run_id.as_deref());
         self.follow_after_append(was_following);
     }
 
-    pub fn replace_run_text(&mut self, run_id: Option<&str>, text: &str) {
+    /// Installs an already materialized provider snapshot without first cloning it at the model
+    /// boundary. This is the normal path for streaming providers that include the accumulated
+    /// partial response in each event.
+    pub fn replace_run_text_owned(&mut self, run_id: Option<&str>, text: String) {
         self.replace_run_text_inner(run_id, text, true);
     }
 
     fn restore_run_text(&mut self, run_id: &str, text: &str) {
-        self.replace_run_text_inner(Some(run_id), text, false);
+        self.replace_run_text_inner(Some(run_id), text.to_string(), false);
     }
 
     fn replace_run_text_inner(
         &mut self,
         run_id: Option<&str>,
-        text: &str,
+        text: String,
         clear_live_activity: bool,
     ) {
         if !self.accepts_run(run_id) {
@@ -761,17 +905,11 @@ impl Conversation {
                     .is_none_or(|run_id| moment.run_id.as_deref() == Some(run_id))
         });
         if let Some(moment) = matching {
-            moment.text = text.to_string();
+            moment.replace_text(text);
         } else if !text.is_empty() {
             let id = self.transient_id("assistant");
-            self.moments.push(Moment {
-                id,
-                role: MomentRole::Intelligence,
-                text: text.to_string(),
-                media: Vec::new(),
-                run_id: effective_run_id.clone(),
-                state: MomentState::Streaming,
-            });
+            let moment = Moment::streaming(id, text, effective_run_id.clone());
+            self.moments.push(moment);
         }
         if clear_live_activity {
             self.activity = None;
@@ -780,7 +918,12 @@ impl Conversation {
         self.follow_after_append(was_following);
     }
 
-    pub fn replace_run_media(&mut self, run_id: Option<&str>, media: Vec<MediaAttachment>) {
+    pub fn replace_run_media(
+        &mut self,
+        run_id: Option<&str>,
+        media: impl Into<Arc<Vec<MediaAttachment>>>,
+    ) {
+        let media = media.into();
         if !self.accepts_run(run_id) {
             return;
         }
@@ -800,17 +943,12 @@ impl Conversation {
                     .is_none_or(|run_id| moment.run_id.as_deref() == Some(run_id))
         });
         if let Some(moment) = matching {
-            moment.media = media;
+            moment.replace_media(media);
         } else if !media.is_empty() {
             let id = self.transient_id("assistant");
-            self.moments.push(Moment {
-                id,
-                role: MomentRole::Intelligence,
-                text: String::new(),
-                media,
-                run_id: effective_run_id.clone(),
-                state: MomentState::Streaming,
-            });
+            let mut moment = Moment::streaming(id, String::new(), effective_run_id.clone());
+            moment.replace_media(media);
+            self.moments.push(moment);
         }
         self.activity = None;
         self.clear_live_activity(effective_run_id.as_deref());
@@ -873,20 +1011,21 @@ impl Conversation {
                 MomentState::Complete
             };
             if moment.text.trim().is_empty() && moment.media.is_empty() {
-                moment.text = error
-                    .unwrap_or("The run ended without a response.")
-                    .to_string();
+                moment.replace_text(
+                    error
+                        .unwrap_or("The run ended without a response.")
+                        .to_string(),
+                );
+            }
+            if error.is_none() {
+                moment.complete();
             }
         } else if let Some(error) = error {
             let id = self.transient_id("error");
-            self.moments.push(Moment {
-                id,
-                role: MomentRole::System,
-                text: error.to_string(),
-                media: Vec::new(),
-                run_id: Some(active_run_id.clone()),
-                state: MomentState::Error,
-            });
+            let mut moment = Moment::new(id, MomentRole::System, error);
+            moment.run_id = Some(active_run_id.clone());
+            moment.state = MomentState::Error;
+            self.moments.push(moment);
         }
 
         self.retire_run(active_run_id);
@@ -948,19 +1087,28 @@ impl Conversation {
 
     pub fn show_error(&mut self, message: impl Into<String>) {
         let id = self.transient_id("error");
-        self.moments.push(Moment {
-            id,
-            role: MomentRole::System,
-            text: message.into(),
-            media: Vec::new(),
-            run_id: None,
-            state: MomentState::Error,
-        });
+        let mut moment = Moment::new(id, MomentRole::System, message);
+        moment.state = MomentState::Error;
+        self.moments.push(moment);
         self.activity = None;
         self.select_latest();
     }
 
     pub fn set_approval(&mut self, approval: PendingApproval) -> bool {
+        let preserved_feedback = self
+            .pending_approval
+            .as_ref()
+            .filter(|pending| pending.request_id == approval.request_id)
+            .and(self.activity.as_deref())
+            .filter(|activity| {
+                matches!(
+                    *activity,
+                    "APPLYING"
+                        | "NOT APPLIED · TRY AGAIN"
+                        | "TYPE ALLOW ONCE, ALWAYS ALLOW, OR DENY"
+                )
+            })
+            .map(str::to_string);
         if !approval.run_id.is_empty() {
             if self.active_run_id.is_none() {
                 self.start_run(approval.run_id.clone());
@@ -972,19 +1120,15 @@ impl Conversation {
         let text = approval_prompt(&approval);
         let id = format!("approval:{}", approval.request_id);
         if let Some(existing) = self.moments.iter_mut().find(|moment| moment.id == id) {
-            existing.text = text;
+            existing.replace_text(text);
         } else {
-            self.moments.push(Moment {
-                id,
-                role: MomentRole::System,
-                text,
-                media: Vec::new(),
-                run_id: Some(approval.run_id.clone()),
-                state: MomentState::Approval,
-            });
+            let mut moment = Moment::new(id, MomentRole::System, text);
+            moment.run_id = Some(approval.run_id.clone());
+            moment.state = MomentState::Approval;
+            self.moments.push(moment);
         }
         self.pending_approval = Some(approval);
-        self.activity = Some("APPROVAL REQUIRED".to_string());
+        self.activity = Some(preserved_feedback.unwrap_or_else(|| "APPROVAL REQUIRED".to_string()));
         self.clear_legacy_live_activity(None);
         self.select_latest();
         true
@@ -1028,7 +1172,7 @@ impl Conversation {
             self.moments.remove(index);
             self.prune_response_activity();
         } else {
-            self.moments[index].state = MomentState::Complete;
+            self.moments[index].complete();
         }
     }
 
@@ -1138,283 +1282,202 @@ pub fn parse_tool_finished_activity(value: &Value) -> Option<LiveActivityFinishe
     })
 }
 
+#[cfg(test)]
+pub fn parse_history_with_activity(payload: &Value) -> (Vec<Moment>, HistoryActivity) {
+    let snapshot = crate::history::normalize_history(payload);
+    (
+        moments_from_history(&snapshot),
+        activity_from_history(&snapshot.activity),
+    )
+}
+
+#[cfg(test)]
 fn derive_history_activity(payload: &Value) -> HistoryActivity {
-    let Some(messages) = payload.get("messages").and_then(Value::as_array) else {
-        return HistoryActivity {
-            summaries: Vec::new(),
-            latest_call_states: HashMap::new(),
-            authoritative: false,
-        };
-    };
-    let has_compaction_marker = messages.iter().any(history_is_compaction_marker);
-    let authoritative = history_is_authoritative(payload, messages.len()) && !has_compaction_marker;
-    let mut calls = HashMap::<(String, String), VecDeque<Option<ActivityCategory>>>::new();
-    let mut latest_call_states = HashMap::<(String, String), HistoryCallState>::new();
-    let mut run_boundaries = HashSet::<String>::new();
-    let mut runs_with_call_context = HashSet::<String>::new();
-    let mut incomplete_runs = HashSet::<String>::new();
-    let mut pending_counts = HashMap::<String, [u64; SUMMARY_ACTIVITY_CATEGORIES.len()]>::new();
-    let mut summaries = Vec::new();
-
-    for (index, message) in messages.iter().enumerate() {
-        let Some(run_id) = history_run_id(message) else {
-            continue;
-        };
-        match message.get("role").and_then(Value::as_str) {
-            Some("user") => {
-                run_boundaries.insert(run_id.to_string());
-            }
-            Some("assistant") => {
-                let tool_calls = history_tool_calls(message);
-                if !tool_calls.is_empty() {
-                    runs_with_call_context.insert(run_id.to_string());
-                    for call in tool_calls {
-                        let Some(call_id) = call
-                            .get("id")
-                            .and_then(Value::as_str)
-                            .map(str::trim)
-                            .filter(|call_id| !call_id.is_empty())
-                        else {
-                            continue;
-                        };
-                        let category = call
-                            .get("syscall")
-                            .and_then(Value::as_str)
-                            .and_then(ActivityCategory::from_syscall)
-                            .or_else(|| {
-                                call.get("name")
-                                    .and_then(Value::as_str)
-                                    .and_then(ActivityCategory::from_tool_name)
-                            });
-                        let key = (run_id.to_string(), call_id.to_string());
-                        calls.entry(key.clone()).or_default().push_back(category);
-                        latest_call_states.insert(key, HistoryCallState::Pending);
-                    }
-                    continue;
-                }
-
-                if incomplete_runs.contains(run_id) {
-                    pending_counts.remove(run_id);
-                    continue;
-                }
-                let entries = pending_counts
-                    .remove(run_id)
-                    .map(summary_entries)
-                    .unwrap_or_default();
-                if authoritative || !entries.is_empty() {
-                    summaries.push(HistoryActivitySummary {
-                        moment_id: history_moment_id(message, index),
-                        entries,
-                    });
-                }
-            }
-            Some("toolResult") => {
-                let Some(content) = message.get("content") else {
-                    continue;
-                };
-                let call_id = content
-                    .get("toolCallId")
-                    .and_then(Value::as_str)
-                    .map(str::trim)
-                    .filter(|call_id| !call_id.is_empty());
-                let key = call_id.map(|call_id| (run_id.to_string(), call_id.to_string()));
-                let correlated = key.as_ref().and_then(|key| {
-                    calls
-                        .get_mut(key)
-                        .and_then(VecDeque::pop_front)
-                        .map(|category| (key.clone(), category))
-                });
-                if let Some((key, _)) = &correlated {
-                    if calls.get(key).is_none_or(VecDeque::is_empty) {
-                        latest_call_states.insert(
-                            key.clone(),
-                            HistoryCallState::Terminal {
-                                message_id: history_moment_id(message, index),
-                            },
-                        );
-                    }
-                }
-                if !authoritative && !run_boundaries.contains(run_id) {
-                    incomplete_runs.insert(run_id.to_string());
-                    pending_counts.remove(run_id);
-                    continue;
-                }
-                if content.get("outcome").and_then(Value::as_str) != Some("completed") {
-                    continue;
-                }
-                let category = correlated.and_then(|(_, category)| category).or_else(|| {
-                    (!runs_with_call_context.contains(run_id))
-                        .then(|| {
-                            content
-                                .get("toolName")
-                                .and_then(Value::as_str)
-                                .and_then(ActivityCategory::from_tool_name)
-                        })
-                        .flatten()
-                });
-                let Some(index) = category.and_then(ActivityCategory::summary_index) else {
-                    continue;
-                };
-                let counts = pending_counts.entry(run_id.to_string()).or_default();
-                counts[index] = counts[index].saturating_add(1);
-            }
-            _ => {}
-        }
-    }
-
-    HistoryActivity {
-        summaries,
-        latest_call_states,
-        authoritative,
-    }
+    let snapshot = crate::history::normalize_history(payload);
+    activity_from_history(&snapshot.activity)
 }
 
-fn history_is_authoritative(payload: &Value, visible_message_count: usize) -> bool {
-    if payload.get("truncated").and_then(Value::as_bool) == Some(true) {
-        return false;
-    }
-
-    let has_more_before = payload.get("hasMoreBefore").and_then(Value::as_bool);
-    let has_more_after = payload.get("hasMoreAfter").and_then(Value::as_bool);
-    if has_more_before == Some(true) || has_more_after == Some(true) {
-        return false;
-    }
-    if has_more_before.is_some() || has_more_after.is_some() {
-        return has_more_before == Some(false) && has_more_after == Some(false);
-    }
-
-    if payload.get("truncated").and_then(Value::as_bool) == Some(false) {
-        return true;
-    }
-    payload
-        .get("messageCount")
-        .and_then(Value::as_u64)
-        .is_some_and(|count| count == visible_message_count as u64)
+#[cfg(test)]
+fn history_is_authoritative(payload: &Value, _visible_message_count: usize) -> bool {
+    let snapshot = crate::history::normalize_history(payload);
+    snapshot.activity.authoritative
 }
 
-fn history_is_compaction_marker(message: &Value) -> bool {
-    message.get("role").and_then(Value::as_str) == Some("system")
-        && message
-            .get("content")
-            .and_then(Value::as_str)
-            .is_some_and(|content| content.starts_with("Process history compacted."))
-}
-
-fn history_run_id(message: &Value) -> Option<&str> {
-    message
-        .get("runId")?
-        .as_str()
-        .map(str::trim)
-        .filter(|run_id| !run_id.is_empty())
-}
-
-fn history_tool_calls(message: &Value) -> Vec<&Value> {
-    let content = message.get("content").unwrap_or(&Value::Null);
-    if let Some(tool_calls) = content.get("toolCalls").and_then(Value::as_array) {
-        return tool_calls.iter().collect();
-    }
-    if let Some(tool_calls) = message.get("toolCalls").and_then(Value::as_array) {
-        return tool_calls.iter().collect();
-    }
-    content
-        .as_array()
-        .into_iter()
-        .flatten()
-        .filter(|block| block.get("type").and_then(Value::as_str) == Some("toolCall"))
-        .collect()
-}
-
-fn summary_entries(counts: [u64; SUMMARY_ACTIVITY_CATEGORIES.len()]) -> Vec<ActivitySummaryEntry> {
-    SUMMARY_ACTIVITY_CATEGORIES
-        .into_iter()
-        .enumerate()
-        .filter_map(|(index, category)| {
-            let count = counts[index];
-            let unit = category.expected_unit()?;
-            (count > 0).then_some(ActivitySummaryEntry {
-                category,
-                count,
-                unit,
-            })
+/// Install-ready conversation data produced by the client runtime. Large message and media bodies
+/// remain shared, so applying a fetched history page on the GPUI thread performs no content copy or
+/// Markdown parsing.
+pub fn moments_from_history(snapshot: &HistorySnapshot) -> Vec<Moment> {
+    snapshot
+        .moments
+        .iter()
+        .map(|moment| {
+            let role = match moment.role {
+                HistoryMomentRole::User => MomentRole::User,
+                HistoryMomentRole::Intelligence => MomentRole::Intelligence,
+                HistoryMomentRole::System => MomentRole::System,
+            };
+            Moment::from_shared_history(
+                moment.id.to_string(),
+                role,
+                moment.render_text.clone(),
+                moment.media.clone(),
+                moment.run_id.as_deref().map(str::to_string),
+            )
         })
         .collect()
 }
 
-pub fn parse_history_with_activity(payload: &Value) -> (Vec<Moment>, HistoryActivity) {
-    let activity = derive_history_activity(payload);
-    let summary_owners = activity
-        .summaries
-        .iter()
-        .filter(|summary| !summary.entries.is_empty())
-        .map(|summary| summary.moment_id.as_str())
-        .collect::<HashSet<_>>();
-    let moments = parse_history_moments(payload, &summary_owners);
-    drop(summary_owners);
-    (moments, activity)
+pub fn activity_from_history(history: &PreparedHistoryActivity) -> HistoryActivity {
+    HistoryActivity {
+        summaries: history
+            .summaries
+            .iter()
+            .map(|summary| HistoryActivitySummary {
+                moment_id: summary.moment_id.to_string(),
+                entries: summary
+                    .entries
+                    .iter()
+                    .map(|entry| ActivitySummaryEntry {
+                        category: match entry.category {
+                            HistoryActivityCategory::SearchingFiles => {
+                                ActivityCategory::SearchingFiles
+                            }
+                            HistoryActivityCategory::ReadingFiles => ActivityCategory::ReadingFiles,
+                            HistoryActivityCategory::WritingFiles => ActivityCategory::WritingFiles,
+                            HistoryActivityCategory::EditingFiles => ActivityCategory::EditingFiles,
+                            HistoryActivityCategory::DeletingFiles => {
+                                ActivityCategory::DeletingFiles
+                            }
+                            HistoryActivityCategory::RunningCommands => {
+                                ActivityCategory::RunningCommands
+                            }
+                            HistoryActivityCategory::RunningCode => ActivityCategory::RunningCode,
+                        },
+                        count: entry.count,
+                        unit: match entry.unit {
+                            HistoryActivityUnit::Operations => ActivityUnit::Operations,
+                            HistoryActivityUnit::Reads => ActivityUnit::Reads,
+                            HistoryActivityUnit::Commands => ActivityUnit::Commands,
+                            HistoryActivityUnit::Runs => ActivityUnit::Runs,
+                        },
+                    })
+                    .collect(),
+            })
+            .collect(),
+        latest_call_states: history
+            .latest_call_states
+            .iter()
+            .map(|entry| {
+                (
+                    (entry.run_id.to_string(), entry.call_id.to_string()),
+                    match &entry.state {
+                        HistoryToolCallState::Pending => HistoryCallState::Pending,
+                        HistoryToolCallState::Terminal { message_id } => {
+                            HistoryCallState::Terminal {
+                                message_id: message_id.to_string(),
+                            }
+                        }
+                    },
+                )
+            })
+            .collect(),
+        authoritative: history.authoritative,
+    }
+}
+
+pub fn pending_approval_from_history(approval: &HistoryPendingApproval) -> PendingApproval {
+    PendingApproval {
+        request_id: approval.request_id.to_string(),
+        run_id: approval.run_id.to_string(),
+        syscall: approval.syscall.to_string(),
+        target: approval.target.to_string(),
+        preview: match &approval.preview {
+            HistoryApprovalPreview::Shell { command } => ApprovalPreview::Shell {
+                command: command.as_deref().map(str::to_string),
+            },
+            HistoryApprovalPreview::Delete { path } => ApprovalPreview::Delete {
+                path: path.as_deref().map(str::to_string),
+            },
+            HistoryApprovalPreview::Fetch { method, url } => ApprovalPreview::Fetch {
+                method: method.as_deref().map(str::to_string),
+                url: url.as_deref().map(str::to_string),
+            },
+            HistoryApprovalPreview::Mcp { tool } => ApprovalPreview::Mcp {
+                tool: tool.as_deref().map(str::to_string),
+            },
+            HistoryApprovalPreview::Unknown => ApprovalPreview::Unknown,
+        },
+    }
 }
 
 pub fn approval_prompt(approval: &PendingApproval) -> String {
-    let operation = if approval.tool_name.trim().is_empty() {
-        approval.syscall.as_str()
-    } else {
-        approval.tool_name.as_str()
+    let target = approval_target_label(&approval.target);
+    let request = match &approval.preview {
+        ApprovalPreview::Shell {
+            command: Some(command),
+        } if !command.is_empty() => format!("I want to run this on {target}:\n\n{command}"),
+        ApprovalPreview::Shell { command: Some(_) } => {
+            format!("I want to continue a shell session on {target}.")
+        }
+        ApprovalPreview::Shell { command: None } => {
+            format!("I want to run a shell command on {target}.")
+        }
+        ApprovalPreview::Delete { path: Some(path) } if !path.is_empty() => format!(
+            "I want to delete this from {target}:\n\n{}",
+            visible_approval_text(path)
+        ),
+        ApprovalPreview::Delete { path: _ } => {
+            format!("I want to delete a file from {target}.")
+        }
+        ApprovalPreview::Fetch { method, url } => {
+            let method = method.as_deref().filter(|value| !value.is_empty());
+            let url = url.as_deref().filter(|value| !value.is_empty());
+            match (method, url) {
+                (Some(method), Some(url)) => format!(
+                    "I want to send this web request from {target}:\n\n{} {}",
+                    visible_approval_text(method),
+                    visible_approval_text(url)
+                ),
+                (None, Some(url)) => format!(
+                    "I want to fetch this from {target}:\n\n{}",
+                    visible_approval_text(url)
+                ),
+                _ => format!("I want to make a web request from {target}."),
+            }
+        }
+        ApprovalPreview::Mcp { tool: Some(tool) } if !tool.is_empty() => format!(
+            "I want to use the connected tool “{}” on {target}.",
+            visible_approval_text(tool)
+        ),
+        ApprovalPreview::Mcp { tool: _ } => {
+            format!("I want to use a connected tool on {target}.")
+        }
+        ApprovalPreview::Unknown => {
+            format!("I want to perform a protected action on {target}.")
+        }
     };
-    let detail = approval
-        .detail
-        .as_deref()
-        .map(|detail| format!("\n\n{detail}"))
-        .unwrap_or_default();
-    format!(
-        "GSV wants to use {operation}.{detail}\n\nType “allow once”, “always allow”, or “deny”."
-    )
+    request
+}
+
+pub fn approval_scope_description(approval: &PendingApproval) -> String {
+    let action = match &approval.preview {
+        ApprovalPreview::Shell { .. } => "shell commands",
+        ApprovalPreview::Delete { .. } => "file deletions",
+        ApprovalPreview::Fetch { .. } => "web requests",
+        ApprovalPreview::Mcp { .. } => "connected tool calls",
+        ApprovalPreview::Unknown => "requests for this operation",
+    };
+    let target = match approval.target.as_str() {
+        "gsv" => "on this GSV",
+        "targets/*" => "on connected devices",
+        _ => "on this target only",
+    };
+    format!("“Always allow” covers future {action} {target} in this conversation.")
 }
 
 #[cfg(test)]
 pub fn parse_history(payload: &Value) -> Vec<Moment> {
     parse_history_with_activity(payload).0
-}
-
-fn parse_history_moments(payload: &Value, summary_owners: &HashSet<&str>) -> Vec<Moment> {
-    payload
-        .get("messages")
-        .and_then(Value::as_array)
-        .into_iter()
-        .flatten()
-        .enumerate()
-        .filter_map(|(index, message)| {
-            let role = match message.get("role").and_then(Value::as_str)? {
-                "user" => MomentRole::User,
-                "assistant" => MomentRole::Intelligence,
-                "system" => MomentRole::System,
-                "toolResult" => return None,
-                _ => return None,
-            };
-            let content = message.get("content").unwrap_or(&Value::Null);
-            let text = extract_text(content);
-            let media = message
-                .get("media")
-                .or_else(|| content.get("media"))
-                .map(parse_media)
-                .unwrap_or_default();
-            let id = history_moment_id(message, index);
-            let has_activity_summary =
-                role == MomentRole::Intelligence && summary_owners.contains(id.as_str());
-            if text.trim().is_empty() && media.is_empty() && !has_activity_summary {
-                return None;
-            }
-            Some(Moment {
-                id,
-                role,
-                text,
-                media,
-                run_id: message
-                    .get("runId")
-                    .and_then(Value::as_str)
-                    .map(str::to_string),
-                state: MomentState::Complete,
-            })
-        })
-        .collect()
 }
 
 pub fn parse_media(value: &Value) -> Vec<MediaAttachment> {
@@ -1463,59 +1526,90 @@ fn optional_string(value: Option<&Value>) -> Option<String> {
 }
 
 pub fn parse_pending_approval(value: &Value) -> Option<PendingApproval> {
+    let request_id = value.get("requestId")?.as_str()?.to_string();
+    let run_id = value
+        .get("runId")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_string();
+    let syscall = value
+        .get("syscall")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_string();
+    let target = value.get("target")?.as_str()?.trim();
+    if target.is_empty() {
+        return None;
+    }
     Some(PendingApproval {
-        request_id: value.get("requestId")?.as_str()?.to_string(),
-        run_id: value
-            .get("runId")
-            .and_then(Value::as_str)
-            .unwrap_or_default()
-            .to_string(),
-        tool_name: value
-            .get("toolName")
-            .and_then(Value::as_str)
-            .unwrap_or_default()
-            .to_string(),
-        syscall: value
-            .get("syscall")
-            .and_then(Value::as_str)
-            .unwrap_or("an operation")
-            .to_string(),
-        detail: value.get("args").and_then(approval_detail),
+        request_id,
+        run_id,
+        target: target.to_string(),
+        preview: approval_preview(&syscall, value.get("args")),
+        syscall,
     })
 }
 
-fn approval_detail(args: &Value) -> Option<String> {
-    let record = args.as_object()?;
-    for (key, prefix) in [
-        ("input", "Command"),
-        ("command", "Command"),
-        ("path", "Path"),
-        ("url", "Address"),
-        ("target", "Target"),
-        ("cwd", "Directory"),
-    ] {
-        let Some(value) = record.get(key).and_then(Value::as_str) else {
-            continue;
-        };
-        let value = value.split_whitespace().collect::<Vec<_>>().join(" ");
-        if value.is_empty() {
-            continue;
-        }
-        return Some(format!("{prefix}: {}", truncate_chars(&value, 180)));
+fn approval_preview(syscall: &str, args: Option<&Value>) -> ApprovalPreview {
+    let record = args.and_then(Value::as_object);
+    match syscall {
+        "shell.exec" => ApprovalPreview::Shell {
+            command: record
+                .and_then(|args| args.get("input"))
+                .and_then(Value::as_str)
+                .map(str::to_string),
+        },
+        "fs.delete" => ApprovalPreview::Delete {
+            path: record
+                .and_then(|args| args.get("path"))
+                .and_then(Value::as_str)
+                .map(str::to_string),
+        },
+        "net.fetch" => ApprovalPreview::Fetch {
+            method: record
+                .and_then(|args| args.get("method"))
+                .and_then(Value::as_str)
+                .map(str::to_string),
+            url: record
+                .and_then(|args| args.get("url"))
+                .and_then(Value::as_str)
+                .map(str::to_string),
+        },
+        "sys.mcp.call" => ApprovalPreview::Mcp {
+            tool: record
+                .and_then(|args| args.get("name"))
+                .and_then(Value::as_str)
+                .map(str::to_string),
+        },
+        _ => ApprovalPreview::Unknown,
     }
-    None
 }
 
-fn truncate_chars(value: &str, limit: usize) -> String {
-    if value.chars().count() <= limit {
-        return value.to_string();
+fn approval_target_label(target: &str) -> String {
+    match target {
+        "gsv" => "GSV".to_string(),
+        "targets/*" => "connected devices".to_string(),
+        target if !target.is_empty() => {
+            format!("“{}”", visible_approval_text(target))
+        }
+        _ => unreachable!("approval targets are validated at the protocol boundary"),
     }
-    let mut truncated = value
-        .chars()
-        .take(limit.saturating_sub(1))
-        .collect::<String>();
-    truncated.push('…');
-    truncated
+}
+
+fn visible_approval_text(value: &str) -> String {
+    let mut visible = String::with_capacity(value.len());
+    for character in value.chars() {
+        match character {
+            '\n' => visible.push_str("\\n"),
+            '\r' => visible.push_str("\\r"),
+            '\t' => visible.push_str("\\t"),
+            character if character.is_control() => {
+                visible.extend(character.escape_unicode());
+            }
+            character => visible.push(character),
+        }
+    }
+    visible
 }
 
 pub fn extract_text(value: &Value) -> String {
@@ -1544,20 +1638,6 @@ pub fn extract_text(value: &Value) -> String {
     }
 }
 
-fn value_key(value: &Value) -> String {
-    value
-        .as_str()
-        .map(str::to_string)
-        .unwrap_or_else(|| value.to_string())
-}
-
-fn history_moment_id(message: &Value, index: usize) -> String {
-    message
-        .get("id")
-        .map(value_key)
-        .unwrap_or_else(|| format!("history:{index}"))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1575,7 +1655,7 @@ mod tests {
         });
         let moments = parse_history(&history);
         assert_eq!(moments.len(), 2);
-        assert_eq!(moments[1].text, "Done.");
+        assert_eq!(moments[1].text.as_ref(), "Done.");
     }
 
     #[test]
@@ -1591,7 +1671,7 @@ mod tests {
         let moments = parse_history(&history);
 
         assert_eq!(moments.len(), 1);
-        assert_eq!(moments[0].text, "\n  keep this spacing  \n");
+        assert_eq!(moments[0].text.as_ref(), "\n  keep this spacing  \n");
     }
 
     #[test]
@@ -1642,12 +1722,56 @@ mod tests {
     fn streaming_is_one_mutable_moment() {
         let mut conversation = Conversation::connecting();
         conversation.start_run("run-1");
+        let empty_revision = conversation.moments[0].content_revision;
         conversation.stream_text(Some("run-1"), "Hello");
+        let hello_revision = conversation.moments[0].content_revision;
         conversation.stream_text(Some("run-1"), " there");
         assert_eq!(conversation.moments.len(), 1);
-        assert_eq!(conversation.moments[0].text, "Hello there");
+        assert_eq!(conversation.moments[0].text.as_ref(), "Hello there");
+        assert_ne!(hello_revision, empty_revision);
+        assert_ne!(conversation.moments[0].content_revision, hello_revision);
         conversation.finish_run(Some("run-1"), None);
         assert_eq!(conversation.moments[0].state, MomentState::Complete);
+        let candidate = conversation.moments[0]
+            .preparation_candidate()
+            .expect("completed intelligence is prepared by revision");
+        assert_eq!(candidate.render_text.as_ref(), "Hello there");
+        assert_eq!(candidate.text.as_ref(), "Hello there");
+    }
+
+    #[test]
+    fn owned_stream_snapshot_becomes_the_canonical_gpui_allocation() {
+        let mut conversation = Conversation::connecting();
+        conversation.start_run("run-owned");
+        let snapshot = "provider-owned snapshot".repeat(40);
+        conversation.replace_run_text_owned(Some("run-owned"), snapshot.clone());
+
+        let moment = &conversation.moments[0];
+        assert_eq!(moment.text.as_ref(), snapshot);
+        let render = gpui::SharedString::new(moment.text.clone());
+        let render_arc: Arc<str> = render.into();
+        assert!(Arc::ptr_eq(&moment.text, &render_arc));
+    }
+
+    #[test]
+    fn history_moments_share_the_background_render_snapshot() {
+        let snapshot = crate::history::normalize_history(&json!({
+            "messages": [
+                { "id": 1, "role": "user", "content": "A large immutable thought" },
+                { "id": 2, "role": "assistant", "content": "A prepared answer" }
+            ]
+        }));
+        let moments = moments_from_history(&snapshot);
+
+        assert_eq!(moments.len(), 2);
+        assert!(Arc::ptr_eq(
+            &moments[0].text,
+            &snapshot.moments[0].render_text
+        ));
+        assert!(Arc::ptr_eq(
+            &moments[1].text,
+            &snapshot.moments[1].render_text
+        ));
     }
 
     #[test]
@@ -1660,10 +1784,14 @@ mod tests {
             "key": "home/alice/.gsv/media/archived-media:def"
         }]));
 
+        let empty_revision = conversation.moments[0].content_revision;
         conversation.replace_run_media(Some("run-1"), media.clone());
+        let media_revision = conversation.moments[0].content_revision;
         conversation.replace_run_media(Some("run-1"), media);
         conversation.finish_run(Some("run-1"), None);
 
+        assert_ne!(media_revision, empty_revision);
+        assert_eq!(conversation.moments[0].content_revision, media_revision);
         assert_eq!(conversation.moments.len(), 1);
         assert_eq!(conversation.moments[0].media.len(), 1);
         assert!(conversation.moments[0].text.is_empty());
@@ -1694,10 +1822,10 @@ mod tests {
         conversation.start_run("run-1");
         conversation.stream_text(Some("run-1"), "Hello");
         conversation.stream_text(Some("run-1"), " there");
-        conversation.replace_run_text(Some("run-1"), "Hello there");
+        conversation.replace_run_text_owned(Some("run-1"), "Hello there".to_string());
 
         assert_eq!(conversation.moments.len(), 1);
-        assert_eq!(conversation.moments[0].text, "Hello there");
+        assert_eq!(conversation.moments[0].text.as_ref(), "Hello there");
     }
 
     #[test]
@@ -2484,14 +2612,9 @@ mod tests {
         let mut conversation = Conversation::connecting();
         let moment_id = conversation.append_user("hello");
         conversation.accept_user(&moment_id, "run-1");
-        conversation.replace_history(vec![Moment {
-            id: "message:9".to_string(),
-            role: MomentRole::User,
-            text: "hello".to_string(),
-            media: Vec::new(),
-            run_id: Some("run-1".to_string()),
-            state: MomentState::Complete,
-        }]);
+        let mut history_moment = Moment::new("message:9", MomentRole::User, "hello");
+        history_moment.run_id = Some("run-1".to_string());
+        conversation.replace_history(vec![history_moment]);
 
         assert_eq!(conversation.moments.len(), 1);
         assert_eq!(conversation.moments[0].id, "message:9");
@@ -2512,6 +2635,39 @@ mod tests {
         )]);
         assert_eq!(conversation.moments.len(), 1);
         assert_eq!(conversation.moments[0].id, "message:10");
+    }
+
+    #[test]
+    fn uncertain_delivery_fingerprint_collisions_still_require_exact_text() {
+        let prefix = "p".repeat(32);
+        let suffix = "s".repeat(32);
+        let submitted = format!("{prefix}{}{}", "a".repeat(64), suffix);
+        let collision = format!("{prefix}{}{}", "b".repeat(64), suffix);
+        assert_eq!(submitted.len(), collision.len());
+        assert_eq!(text_fingerprint(&submitted), text_fingerprint(&collision));
+
+        let mut conversation = Conversation::connecting();
+        let local_id = conversation.append_user(submitted.clone());
+        conversation.mark_user_uncertain(&local_id);
+        conversation.replace_history(vec![Moment::new(
+            "message:collision",
+            MomentRole::User,
+            collision,
+        )]);
+        assert!(conversation
+            .moments
+            .iter()
+            .any(|moment| moment.id == local_id));
+
+        conversation.replace_history(vec![Moment::new(
+            "message:exact",
+            MomentRole::User,
+            submitted,
+        )]);
+        assert!(conversation
+            .moments
+            .iter()
+            .all(|moment| !moment.id.starts_with("user:transient:")));
     }
 
     #[test]
@@ -2590,14 +2746,9 @@ mod tests {
         let uncertain_id = conversation.append_user("same thought");
         conversation.mark_user_uncertain(&uncertain_id);
 
-        conversation.replace_history(vec![Moment {
-            id: "message:1".to_string(),
-            role: MomentRole::User,
-            text: "same thought".to_string(),
-            media: Vec::new(),
-            run_id: Some("run-1".to_string()),
-            state: MomentState::Complete,
-        }]);
+        let mut history_moment = Moment::new("message:1", MomentRole::User, "same thought");
+        history_moment.run_id = Some("run-1".to_string());
+        conversation.replace_history(vec![history_moment]);
 
         assert!(conversation
             .moments
@@ -2617,7 +2768,7 @@ mod tests {
         conversation.stream_text(Some("run-1"), " too late");
 
         assert_eq!(conversation.activity.as_deref(), Some("STOPPING"));
-        assert_eq!(conversation.moments[0].text, "enough");
+        assert_eq!(conversation.moments[0].text.as_ref(), "enough");
     }
 
     #[test]
@@ -2627,7 +2778,7 @@ mod tests {
         conversation.stream_text(Some("run-1"), "done");
         conversation.replace_history(Vec::new());
         conversation.reconcile_active_run(None, None);
-        conversation.replace_run_text(Some("run-1"), "stale");
+        conversation.replace_run_text_owned(Some("run-1"), "stale".to_string());
 
         assert!(conversation.moments.is_empty());
         assert!(conversation.active_run_id.is_none());
@@ -2641,7 +2792,7 @@ mod tests {
         conversation.finish_run(Some("run-1"), None);
         conversation.stream_text(Some("run-1"), " stale tail");
         assert_eq!(conversation.moments.len(), 1);
-        assert_eq!(conversation.moments[0].text, "Complete answer");
+        assert_eq!(conversation.moments[0].text.as_ref(), "Complete answer");
         assert!(conversation.active_run_id.is_none());
     }
 
@@ -2654,7 +2805,7 @@ mod tests {
         conversation.stream_text(Some("run-1"), " but not this");
         conversation.abort_run("run-1");
         conversation.stream_text(Some("run-1"), " or this");
-        assert_eq!(conversation.moments[0].text, "Keep this much");
+        assert_eq!(conversation.moments[0].text.as_ref(), "Keep this much");
         assert_eq!(conversation.moments[0].state, MomentState::Complete);
     }
 
@@ -2689,27 +2840,191 @@ mod tests {
         conversation.start_run("run-2");
         conversation.stream_text(Some("run-1"), " stale");
         conversation.stream_text(Some("run-2"), "Second");
-        assert_eq!(conversation.moments[0].text, "First");
+        assert_eq!(conversation.moments[0].text.as_ref(), "First");
         assert_eq!(conversation.moments[0].state, MomentState::Complete);
-        assert_eq!(conversation.moments[1].text, "Second");
+        assert_eq!(conversation.moments[1].text.as_ref(), "Second");
         assert_eq!(conversation.active_run_id.as_deref(), Some("run-2"));
     }
 
     #[test]
-    fn approval_keeps_the_sensitive_operation_inspectable() {
+    fn shell_approval_preserves_the_exact_command_and_correlation() {
+        let command = format!(
+            "  printf 'a  b'\n\t&& echo \"$PATH\"\n{}  ",
+            "x".repeat(220)
+        );
         let approval = parse_pending_approval(&json!({
-            "requestId": "request-1",
-            "runId": "run-1",
+            "requestId": "request:exact",
+            "runId": "run:exact",
             "toolName": "Shell",
             "syscall": "shell.exec",
-            "args": { "input": "deploy --production" }
+            "target": "macbook",
+            "args": {
+                "input": command,
+                "cwd": "/private/workspace",
+                "timeout": 120000
+            }
         }))
         .expect("valid approval");
+
+        assert_eq!(approval.request_id, "request:exact");
+        assert_eq!(approval.run_id, "run:exact");
+        assert_eq!(approval.target, "macbook");
         assert_eq!(
-            approval.detail.as_deref(),
-            Some("Command: deploy --production")
+            approval.preview,
+            ApprovalPreview::Shell {
+                command: Some(command.clone())
+            }
         );
-        assert!(approval_prompt(&approval).contains("deploy --production"));
+        assert_eq!(
+            approval_prompt(&approval),
+            format!("I want to run this on “macbook”:\n\n{command}")
+        );
+        assert_eq!(
+            approval_scope_description(&approval),
+            "“Always allow” covers future shell commands on this target only in this conversation."
+        );
+    }
+
+    #[test]
+    fn guarded_approval_previews_keep_only_action_specific_safe_fields() {
+        let delete = parse_pending_approval(&json!({
+            "requestId": "request-delete",
+            "runId": "run-delete",
+            "syscall": "fs.delete",
+            "target": "gsv",
+            "args": {
+                "path": "/tmp/old file.txt",
+                "content": "unrelated private contents"
+            }
+        }))
+        .expect("valid delete approval");
+        assert_eq!(
+            delete.preview,
+            ApprovalPreview::Delete {
+                path: Some("/tmp/old file.txt".to_string())
+            }
+        );
+        assert_eq!(
+            approval_prompt(&delete),
+            "I want to delete this from GSV:\n\n/tmp/old file.txt"
+        );
+        assert!(!approval_prompt(&delete).contains("private contents"));
+
+        let fetch = parse_pending_approval(&json!({
+            "requestId": "request-fetch",
+            "runId": "run-fetch",
+            "syscall": "net.fetch",
+            "target": "gsv",
+            "args": {
+                "method": "POST",
+                "url": "https://example.com/jobs",
+                "headers": { "authorization": "Bearer private-token" }
+            }
+        }))
+        .expect("valid fetch approval");
+        assert_eq!(
+            fetch.preview,
+            ApprovalPreview::Fetch {
+                method: Some("POST".to_string()),
+                url: Some("https://example.com/jobs".to_string())
+            }
+        );
+        assert_eq!(
+            approval_prompt(&fetch),
+            "I want to send this web request from GSV:\n\nPOST https://example.com/jobs"
+        );
+        assert!(!approval_prompt(&fetch).contains("private-token"));
+
+        let mcp = parse_pending_approval(&json!({
+            "requestId": "request-mcp",
+            "runId": "run-mcp",
+            "syscall": "sys.mcp.call",
+            "target": "gsv",
+            "args": {
+                "serverId": "server-internal-id",
+                "name": "create_issue",
+                "arguments": { "private": "customer data" }
+            }
+        }))
+        .expect("valid MCP approval");
+        assert_eq!(
+            mcp.preview,
+            ApprovalPreview::Mcp {
+                tool: Some("create_issue".to_string())
+            }
+        );
+        assert_eq!(
+            approval_prompt(&mcp),
+            "I want to use the connected tool “create_issue” on GSV."
+        );
+        assert!(!approval_prompt(&mcp).contains("server-internal-id"));
+        assert!(!approval_prompt(&mcp).contains("customer data"));
+        assert_eq!(
+            approval_scope_description(&mcp),
+            "“Always allow” covers future connected tool calls on this GSV in this conversation."
+        );
+    }
+
+    #[test]
+    fn matching_approval_refresh_preserves_feedback_but_a_new_request_resets_it() {
+        let mut conversation = Conversation::connecting();
+        conversation.start_run("run-approval");
+        let request = |request_id: &str| PendingApproval {
+            request_id: request_id.to_string(),
+            run_id: "run-approval".to_string(),
+            syscall: "shell.exec".to_string(),
+            target: "gsv".to_string(),
+            preview: ApprovalPreview::Shell {
+                command: Some("pwd".to_string()),
+            },
+        };
+
+        assert!(conversation.set_approval(request("request-1")));
+        conversation.activity = Some("APPLYING".to_string());
+        assert!(conversation.set_approval(request("request-1")));
+        assert_eq!(conversation.activity.as_deref(), Some("APPLYING"));
+
+        conversation.activity = Some("NOT APPLIED · TRY AGAIN".to_string());
+        assert!(conversation.set_approval(request("request-1")));
+        assert_eq!(
+            conversation.activity.as_deref(),
+            Some("NOT APPLIED · TRY AGAIN")
+        );
+
+        assert!(conversation.set_approval(request("request-2")));
+        assert_eq!(conversation.activity.as_deref(), Some("APPROVAL REQUIRED"));
+    }
+
+    #[test]
+    fn unknown_approval_input_falls_back_without_exposing_raw_arguments() {
+        let missing_target = json!({
+            "requestId": "request-unknown",
+            "runId": "run-unknown",
+            "toolName": "FutureDangerousTool",
+            "syscall": "future.danger",
+            "args": {
+                "input": "do not expose this",
+                "token": "private-token",
+                "nested": { "secret": true }
+            }
+        });
+        assert!(parse_pending_approval(&missing_target).is_none());
+        let mut request = missing_target;
+        request["target"] = json!("gsv");
+        let approval = parse_pending_approval(&request).expect("valid guarded approval");
+
+        assert_eq!(approval.target, "gsv");
+        assert_eq!(approval.preview, ApprovalPreview::Unknown);
+        assert_eq!(
+            approval_prompt(&approval),
+            "I want to perform a protected action on GSV."
+        );
+        assert_eq!(
+            approval_scope_description(&approval),
+            "“Always allow” covers future requests for this operation on this GSV in this conversation."
+        );
+        assert!(!approval_prompt(&approval).contains("do not expose this"));
+        assert!(!approval_prompt(&approval).contains("private-token"));
     }
 
     #[test]
@@ -2721,6 +3036,7 @@ mod tests {
             "runId": "run-1",
             "toolName": "Shell",
             "syscall": "shell.exec",
+            "target": "gsv",
             "args": { "input": "private" }
         }))
         .expect("valid approval");
@@ -2767,6 +3083,7 @@ mod tests {
             "runId": "run-1",
             "toolName": "Shell",
             "syscall": "shell.exec",
+            "target": "gsv",
             "args": { "input": "private" }
         }))
         .expect("valid approval");

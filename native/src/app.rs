@@ -10,9 +10,11 @@ use gpui_component::input::{Copy, InputEvent, InputState};
 
 use crate::audio::{KeySound, TypingAudio};
 use crate::client::{ApprovalDecision, ClientCommand, ClientHandle, MediaTransferLease};
+use crate::history::{HistoryPreparationCandidate, HistoryRevision};
 use crate::interaction::{CanvasInteraction, CanvasLayer, SubmissionFailure};
 use crate::model::{Conversation, SurfaceMode};
 use crate::startup::{LoginDefaults, LoginFlow, LoginProgress, LoginStep};
+use crate::transcription::{coalesce_for_ui, VoiceCommand, VoiceEvent};
 use crate::typography::TypeLayout;
 
 mod login;
@@ -36,7 +38,8 @@ actions!(
         AbortRun,
         ToggleTerminal,
         PreviousMoment,
-        NextMoment
+        NextMoment,
+        ToggleDictation
     ]
 );
 
@@ -54,11 +57,28 @@ struct MediaPreparationResult {
     _lease: MediaTransferLease,
 }
 
+#[derive(Debug)]
+struct VoiceDraft {
+    request_id: u64,
+    before: String,
+    after: String,
+    rendered: String,
+    revision: i32,
+    stopping: bool,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+struct VoiceComposition {
+    value: String,
+    cursor: usize,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 struct CachedTypeLayout {
     content_hash: u64,
     maximum_size: Option<u32>,
     weight: u32,
+    last_used: u64,
     layout: TypeLayout,
 }
 
@@ -75,9 +95,9 @@ impl CachedTypeLayout {
     }
 }
 
-fn type_content_hash(text: &str) -> u64 {
+fn type_content_hash(value: &impl Hash) -> u64 {
     let mut hasher = DefaultHasher::new();
-    text.hash(&mut hasher);
+    value.hash(&mut hasher);
     hasher.finish()
 }
 
@@ -116,15 +136,20 @@ pub struct GsvApp {
     previous_input: String,
     pid: Option<String>,
     client_session_id: Option<u64>,
-    last_history: Option<serde_json::Value>,
+    last_history: Option<HistoryRevision>,
+    last_history_generation: u64,
+    history_preparations: HashMap<String, HistoryPreparationCandidate>,
     terminal: Vec<TerminalExchange>,
     timeline_scroll: ScrollHandle,
     message_scroll: ScrollHandle,
     message_scroll_moment: Option<String>,
     history_scroll_accumulator: f32,
     history_scroll_last_event: Option<Instant>,
+    timeline_scroll_accumulator: f32,
+    timeline_scroll_last_event: Option<Instant>,
     stream_type_sizes: HashMap<String, f32>,
     type_layouts: HashMap<String, CachedTypeLayout>,
+    type_layout_clock: u64,
     prepared_content: PreparedContentCache,
     media_cache: MediaCache,
     media_preparation_results: tokio::sync::mpsc::Sender<MediaPreparationResult>,
@@ -139,12 +164,17 @@ pub struct GsvApp {
     reduced_motion: bool,
     programmatic_input: Option<String>,
     approval_resume_mode: Option<SurfaceMode>,
+    voice_commands: std::sync::mpsc::SyncSender<VoiceCommand>,
+    voice_draft: Option<VoiceDraft>,
+    voice_notice: Option<String>,
+    next_voice_request_id: u64,
     _input_subscription: Subscription,
     _login_subscription: Option<Subscription>,
     _event_task: Task<()>,
     _preparation_worker: Task<()>,
     _preparation_task: Task<()>,
     _media_preparation_task: Task<()>,
+    _voice_task: Task<()>,
 }
 
 impl GsvApp {
@@ -161,6 +191,10 @@ impl GsvApp {
             mut events,
             login: login_defaults,
         } = client;
+        let crate::transcription::VoiceHandle {
+            commands: voice_commands,
+            events: mut voice_events,
+        } = crate::transcription::start();
         let input = cx.new(|cx| InputState::new(window, cx).auto_grow(1, 12).soft_wrap(true));
         let login_focus = cx.focus_handle();
         let input_subscription = cx.subscribe_in(&input, window, |this, _, event, window, cx| {
@@ -187,10 +221,20 @@ impl GsvApp {
             input.focus_handle(cx).focus(window);
         }
         let event_task = cx.spawn_in(window, async move |this, cx| {
-            while let Some(event) = events.recv().await {
+            while let Some(first) = events.recv().await {
+                let mut batch = Vec::with_capacity(16);
+                batch.push(first);
+                while batch.len() < 64 {
+                    let Ok(event) = events.try_recv() else {
+                        break;
+                    };
+                    batch.push(event);
+                }
                 if this
                     .update_in(cx, |this, window, cx| {
-                        this.handle_client_event(event, window, cx);
+                        for event in batch {
+                            this.handle_client_event(event, window, cx);
+                        }
                         cx.notify();
                     })
                     .is_err()
@@ -247,6 +291,30 @@ impl GsvApp {
                 }
             }
         });
+        let voice_task = cx.spawn_in(window, async move |this, cx| {
+            while let Some(first) = voice_events.recv().await {
+                let mut batch = Vec::with_capacity(8);
+                batch.push(first);
+                while batch.len() < 32 {
+                    let Ok(event) = voice_events.try_recv() else {
+                        break;
+                    };
+                    batch.push(event);
+                }
+                let batch = coalesce_for_ui(batch);
+                if this
+                    .update_in(cx, |this, window, cx| {
+                        for event in batch {
+                            this.handle_voice_event(event, window, cx);
+                        }
+                        cx.notify();
+                    })
+                    .is_err()
+                {
+                    break;
+                }
+            }
+        });
 
         Self {
             conversation: if demo {
@@ -267,14 +335,19 @@ impl GsvApp {
             pid: None,
             client_session_id: None,
             last_history: None,
+            last_history_generation: 0,
+            history_preparations: HashMap::new(),
             terminal: Vec::new(),
             timeline_scroll: ScrollHandle::new(),
             message_scroll: ScrollHandle::new(),
             message_scroll_moment: None,
             history_scroll_accumulator: 0.0,
             history_scroll_last_event: None,
+            timeline_scroll_accumulator: 0.0,
+            timeline_scroll_last_event: None,
             stream_type_sizes: HashMap::new(),
             type_layouts: HashMap::new(),
+            type_layout_clock: 0,
             prepared_content,
             media_cache: MediaCache::default(),
             media_preparation_results,
@@ -289,12 +362,17 @@ impl GsvApp {
             reduced_motion,
             programmatic_input: None,
             approval_resume_mode: None,
+            voice_commands,
+            voice_draft: None,
+            voice_notice: None,
+            next_voice_request_id: 1,
             _input_subscription: input_subscription,
             _login_subscription: login_subscription,
             _event_task: event_task,
             _preparation_worker: preparation_worker,
             _preparation_task: preparation_task,
             _media_preparation_task: media_preparation_task,
+            _voice_task: voice_task,
         }
     }
 
@@ -325,7 +403,7 @@ impl GsvApp {
         }
     }
 
-    fn on_input(&mut self, event: &InputEvent, _window: &mut Window, cx: &mut Context<Self>) {
+    fn on_input(&mut self, event: &InputEvent, window: &mut Window, cx: &mut Context<Self>) {
         match event {
             InputEvent::Change => {
                 let value = self.input.read(cx).value().to_string();
@@ -337,6 +415,14 @@ impl GsvApp {
                     self.previous_input = value;
                     return;
                 }
+                if self
+                    .voice_draft
+                    .as_ref()
+                    .is_some_and(|voice| voice.rendered != value)
+                {
+                    self.cancel_dictation(false, window, cx);
+                }
+                self.voice_notice = None;
                 if value != self.previous_input {
                     self.text_selection.clear();
                     if value.len() < self.previous_input.len() {
@@ -567,6 +653,10 @@ impl GsvApp {
             self.submit_login(window, cx);
             return;
         }
+        if self.voice_draft.is_some() {
+            self.finish_dictation(cx);
+            return;
+        }
         let raw = self.input.read(cx).value().to_string();
         if raw.trim().is_empty() {
             if !raw.is_empty() {
@@ -626,6 +716,7 @@ impl GsvApp {
         };
         if self.interaction.is_approval_submitting() {
             self.conversation.activity = Some("APPLYING".to_string());
+            cx.notify();
             return;
         }
         let Some(decision) = approval_decision(&message) else {
@@ -634,7 +725,30 @@ impl GsvApp {
             return;
         };
 
-        let request_id = approval.request_id;
+        self.apply_approval_decision(approval.request_id, message, decision, window, cx);
+    }
+
+    fn apply_approval_decision(
+        &mut self,
+        expected_request_id: String,
+        message: String,
+        decision: ApprovalDecision,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(approval) = self.conversation.pending_approval.clone() else {
+            return;
+        };
+        if approval.request_id != expected_request_id {
+            return;
+        }
+        if self.interaction.is_approval_submitting() {
+            self.conversation.activity = Some("APPLYING".to_string());
+            cx.notify();
+            return;
+        }
+
+        let request_id = expected_request_id;
         if !self
             .interaction
             .begin_approval_submission(request_id.clone(), message.clone())
@@ -655,11 +769,13 @@ impl GsvApp {
                 window,
                 cx,
             );
+            cx.notify();
             return;
         }
         self.audio.play(KeySound::Commit);
         self.conversation.activity = Some("APPLYING".to_string());
         self.set_input_value(String::new(), window, cx);
+        cx.notify();
     }
 
     fn submit_conversation(
@@ -737,11 +853,28 @@ impl GsvApp {
     }
 
     fn set_input_value(&mut self, value: String, window: &mut Window, cx: &mut Context<Self>) {
+        let cursor = value.len();
+        self.set_input_value_at(value, cursor, window, cx);
+    }
+
+    fn set_input_value_at(
+        &mut self,
+        value: String,
+        cursor: usize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         self.draft_type_size = None;
         self.previous_input = value.clone();
         self.programmatic_input = Some(value.clone());
-        let line = value.chars().filter(|character| *character == '\n').count() as u32;
-        let column = value
+        let cursor = cursor.min(value.len());
+        let cursor = value.floor_char_boundary(cursor);
+        let prefix = &value[..cursor];
+        let line = prefix
+            .chars()
+            .filter(|character| *character == '\n')
+            .count() as u32;
+        let column = prefix
             .rsplit('\n')
             .next()
             .unwrap_or_default()
@@ -758,10 +891,215 @@ impl GsvApp {
         self.input.focus_handle(cx).focus(window);
     }
 
+    fn toggle_dictation_action(
+        &mut self,
+        _: &ToggleDictation,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.voice_draft.is_some() {
+            self.finish_dictation(cx);
+            return;
+        }
+        if self.login.is_some()
+            || self.conversation.mode != SurfaceMode::Conversation
+            || self.interaction.is_approval()
+            || self.interaction.is_submitting()
+        {
+            return;
+        }
+
+        let value = self.input.read(cx).value().to_string();
+        let cursor = self.input.read(cx).cursor().min(value.len());
+        let cursor = value.floor_char_boundary(cursor);
+        let request_id = self.next_voice_request_id;
+        self.next_voice_request_id = self.next_voice_request_id.wrapping_add(1).max(1);
+        self.voice_draft = Some(VoiceDraft {
+            request_id,
+            before: value[..cursor].to_string(),
+            after: value[cursor..].to_string(),
+            rendered: value.clone(),
+            revision: -1,
+            stopping: false,
+        });
+        self.voice_notice = Some("PREPARING VOICE INPUT".to_string());
+        if !value.is_empty() {
+            self.interaction.on_input(value);
+            self.input.focus_handle(cx).focus(window);
+        }
+        if self
+            .voice_commands
+            .try_send(VoiceCommand::Start {
+                request_id,
+                locale: "auto".to_string(),
+            })
+            .is_err()
+        {
+            self.voice_draft = None;
+            self.voice_notice = Some("VOICE INPUT UNAVAILABLE · KEEP TYPING".to_string());
+        }
+        cx.notify();
+    }
+
+    fn finish_dictation(&mut self, cx: &mut Context<Self>) {
+        let Some(voice) = self.voice_draft.as_ref() else {
+            return;
+        };
+        if voice.stopping {
+            self.voice_notice = Some("FINISHING VOICE INPUT".to_string());
+            cx.notify();
+            return;
+        }
+        let request_id = voice.request_id;
+        match self
+            .voice_commands
+            .try_send(VoiceCommand::Stop { request_id })
+        {
+            Ok(()) => {
+                if let Some(voice) = self.voice_draft.as_mut() {
+                    voice.stopping = true;
+                }
+                self.voice_notice = Some("FINISHING VOICE INPUT".to_string());
+            }
+            Err(_) => {
+                // A failed terminal command means the supervisor cannot own
+                // this session anymore. Keep the latest visible words and
+                // release the UI state so typing is never held hostage.
+                self.voice_draft = None;
+                self.voice_notice = Some("VOICE INPUT UNAVAILABLE · KEEP TYPING".to_string());
+            }
+        }
+        cx.notify();
+    }
+
+    fn handle_voice_event(
+        &mut self,
+        event: VoiceEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        match event {
+            VoiceEvent::Preparing {
+                request_id,
+                progress,
+            } if self.voice_request_is(request_id) => {
+                if self
+                    .voice_draft
+                    .as_ref()
+                    .is_some_and(|voice| voice.stopping)
+                {
+                    self.voice_notice = Some("FINISHING VOICE INPUT".to_string());
+                } else {
+                    self.voice_notice = Some(progress.map_or_else(
+                        || "PREPARING VOICE INPUT".to_string(),
+                        |progress| format!("PREPARING VOICE INPUT · {:.0}%", progress * 100.0),
+                    ));
+                }
+            }
+            VoiceEvent::Listening { request_id } if self.voice_request_is(request_id) => {
+                self.voice_notice = Some(
+                    if self
+                        .voice_draft
+                        .as_ref()
+                        .is_some_and(|voice| voice.stopping)
+                    {
+                        "FINISHING VOICE INPUT"
+                    } else {
+                        "LISTENING"
+                    }
+                    .to_string(),
+                );
+            }
+            VoiceEvent::Partial {
+                request_id,
+                revision,
+                committed,
+                tentative,
+            } if self.voice_request_is(request_id) => {
+                let Some(voice) = self.voice_draft.as_mut() else {
+                    return;
+                };
+                if revision <= voice.revision {
+                    return;
+                }
+                voice.revision = revision;
+                let transcript = format!("{committed}{tentative}");
+                let composition = compose_voice_text(&voice.before, &transcript, &voice.after);
+                let stopping = voice.stopping;
+                voice.rendered.clone_from(&composition.value);
+                self.interaction.on_input(composition.value.clone());
+                self.set_input_value_at(composition.value, composition.cursor, window, cx);
+                self.voice_notice = Some(
+                    if stopping {
+                        "FINISHING VOICE INPUT"
+                    } else {
+                        "LISTENING"
+                    }
+                    .to_string(),
+                );
+            }
+            VoiceEvent::Final { request_id, text } if self.voice_request_is(request_id) => {
+                let Some(voice) = self.voice_draft.take() else {
+                    return;
+                };
+                let composition = compose_voice_text(&voice.before, &text, &voice.after);
+                self.interaction.on_input(composition.value.clone());
+                self.set_input_value_at(composition.value, composition.cursor, window, cx);
+                self.voice_notice = None;
+            }
+            VoiceEvent::Cancelled { request_id } if self.voice_request_is(request_id) => {
+                self.voice_draft = None;
+                self.voice_notice = None;
+            }
+            VoiceEvent::Error {
+                request_id,
+                message,
+            } if request_id.is_none_or(|request_id| self.voice_request_is(request_id)) => {
+                self.voice_draft = None;
+                self.voice_notice = Some(voice_error_notice(&message).to_string());
+            }
+            _ => {}
+        }
+    }
+
+    fn voice_request_is(&self, request_id: u64) -> bool {
+        self.voice_draft
+            .as_ref()
+            .is_some_and(|voice| voice.request_id == request_id)
+    }
+
+    fn cancel_dictation(
+        &mut self,
+        restore_base: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(voice) = self.voice_draft.take() else {
+            return;
+        };
+        let command_failed = self
+            .voice_commands
+            .try_send(VoiceCommand::Cancel {
+                request_id: voice.request_id,
+            })
+            .is_err();
+        if restore_base && self.input.read(cx).value().as_ref() == voice.rendered {
+            let cursor = voice.before.len();
+            let value = format!("{}{}", voice.before, voice.after);
+            self.interaction.on_input(value.clone());
+            self.set_input_value_at(value, cursor, window, cx);
+        }
+        self.voice_notice =
+            command_failed.then(|| "VOICE INPUT UNAVAILABLE · KEEP TYPING".to_string());
+    }
+
     fn hide_draft(&mut self, _: &HideDraft, window: &mut Window, cx: &mut Context<Self>) {
         if self.login.is_some() {
             self.back_login(window, cx);
             return;
+        }
+        if self.voice_draft.is_some() {
+            self.cancel_dictation(true, window, cx);
         }
         if self.conversation.mode == SurfaceMode::Conversation && self.interaction.hide_draft() {
             self.input
@@ -836,6 +1174,9 @@ impl GsvApp {
     fn toggle_terminal(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.login.is_some() {
             return;
+        }
+        if self.voice_draft.is_some() {
+            self.cancel_dictation(true, window, cx);
         }
         let next = match self.conversation.mode {
             SurfaceMode::Conversation => {
@@ -935,6 +1276,7 @@ impl GsvApp {
 impl Drop for GsvApp {
     fn drop(&mut self) {
         let _ = self.commands.send(ClientCommand::Shutdown);
+        let _ = self.voice_commands.try_send(VoiceCommand::Shutdown);
     }
 }
 
@@ -945,6 +1287,7 @@ pub fn bind_keys(cx: &mut App) {
         KeyBinding::new("enter", SubmitThought, Some("Input")),
         KeyBinding::new("escape", HideDraft, None),
         KeyBinding::new("secondary-.", AbortRun, None),
+        KeyBinding::new("secondary-shift-space", ToggleDictation, None),
         KeyBinding::new("secondary-`", ToggleTerminal, None),
         KeyBinding::new("alt-up", PreviousMoment, None),
         KeyBinding::new("alt-down", NextMoment, None),
@@ -997,6 +1340,107 @@ fn approval_decision(input: &str) -> Option<ApprovalDecision> {
     }
 }
 
+fn compose_voice_text(before: &str, transcript: &str, after: &str) -> VoiceComposition {
+    let transcript = transcript.trim();
+    let leading_space =
+        needs_voice_boundary_space(before.chars().next_back(), transcript.chars().next());
+    let trailing_space =
+        needs_voice_boundary_space(transcript.chars().next_back(), after.chars().next());
+    let mut value = String::with_capacity(
+        before.len()
+            + transcript.len()
+            + after.len()
+            + usize::from(leading_space)
+            + usize::from(trailing_space),
+    );
+    value.push_str(before);
+    if leading_space {
+        value.push(' ');
+    }
+    value.push_str(transcript);
+    let cursor = value.len();
+    if trailing_space {
+        value.push(' ');
+    }
+    value.push_str(after);
+    VoiceComposition { value, cursor }
+}
+
+fn needs_voice_boundary_space(left: Option<char>, right: Option<char>) -> bool {
+    let (Some(left), Some(right)) = (left, right) else {
+        return false;
+    };
+    if left.is_whitespace()
+        || right.is_whitespace()
+        || is_unspaced_script(left)
+        || is_unspaced_script(right)
+        || matches!(
+            right,
+            '.' | ',' | '!' | '?' | ';' | ':' | '%' | ')' | ']' | '}' | '>' | '’' | '”'
+        )
+        || matches!(
+            left,
+            '(' | '[' | '{' | '<' | '‘' | '“' | '/' | '\\' | '-' | '–' | '—' | '_'
+        )
+    {
+        return false;
+    }
+    let left_accepts_space = left.is_alphanumeric()
+        || matches!(
+            left,
+            '.' | ',' | '!' | '?' | ';' | ':' | '%' | ')' | ']' | '}' | '>' | '’' | '”'
+        );
+    let right_accepts_space =
+        right.is_alphanumeric() || matches!(right, '(' | '[' | '{' | '<' | '‘' | '“');
+    left_accepts_space && right_accepts_space
+}
+
+fn is_unspaced_script(character: char) -> bool {
+    matches!(
+        character as u32,
+        0x0E00..=0x0E7F
+            | 0x1100..=0x11FF
+            | 0x2E80..=0x2FFF
+            | 0x3040..=0x30FF
+            | 0x3130..=0x318F
+            | 0x31A0..=0x31BF
+            | 0x31F0..=0x31FF
+            | 0x3400..=0x4DBF
+            | 0x4E00..=0x9FFF
+            | 0xA960..=0xA97F
+            | 0xAC00..=0xD7AF
+            | 0xF900..=0xFAFF
+            | 0x20000..=0x2FA1F
+    )
+}
+
+fn voice_error_notice(message: &str) -> &'static str {
+    let message = message.to_ascii_lowercase();
+    if message.contains("microphone")
+        || message.contains("audio input")
+        || message.contains("input device")
+    {
+        "MICROPHONE UNAVAILABLE · CHECK ACCESS"
+    } else if message.contains("not installed") {
+        "VOICE INPUT ISN'T INSTALLED · KEEP TYPING"
+    } else if message.contains("helper could not start")
+        || message.contains("has no command channel")
+        || message.contains("has no event channel")
+        || message.contains("event reader could not start")
+    {
+        "VOICE INPUT COULDN'T START · KEEP TYPING"
+    } else if message.contains("download")
+        || message.contains("cache")
+        || message.contains("prepared")
+        || message.contains("preparation")
+        || message.contains("integrity")
+    {
+        "VOICE INPUT COULDN'T PREPARE · CHECK CONNECTION"
+    } else {
+        "VOICE INPUT STOPPED · KEEP TYPING"
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::cell::RefCell;
@@ -1031,6 +1475,58 @@ mod tests {
         assert_eq!(classify_change("tail", "t中ail"), KeySound::Character);
         assert_eq!(classify_change("one", "one\ntwo"), KeySound::Character);
         assert_eq!(classify_change("one", "one\n"), KeySound::Commit);
+    }
+
+    #[test]
+    fn voice_insertion_adds_only_semantic_boundary_spaces() {
+        assert_eq!(
+            compose_voice_text("Ask", "GSV", "tomorrow."),
+            VoiceComposition {
+                value: "Ask GSV tomorrow.".to_string(),
+                cursor: "Ask GSV".len(),
+            }
+        );
+        assert_eq!(
+            compose_voice_text("Say ", " hello ", ", please"),
+            VoiceComposition {
+                value: "Say hello, please".to_string(),
+                cursor: "Say hello".len(),
+            }
+        );
+        assert_eq!(compose_voice_text("(", "hello", ")").value, "(hello)");
+        assert_eq!(compose_voice_text("你好", "世界", "！").value, "你好世界！");
+    }
+
+    #[test]
+    fn voice_insertion_caret_is_a_unicode_byte_boundary() {
+        let composition = compose_voice_text("🙂 café", "encore", "!");
+        assert_eq!(composition.value, "🙂 café encore!");
+        assert_eq!(&composition.value[..composition.cursor], "🙂 café encore");
+        assert!(composition.value.is_char_boundary(composition.cursor));
+    }
+
+    #[test]
+    fn voice_errors_are_actionable_without_exposing_internal_details() {
+        assert_eq!(
+            voice_error_notice("microphone permission denied at /dev/snd/controlC0"),
+            "MICROPHONE UNAVAILABLE · CHECK ACCESS"
+        );
+        assert_eq!(
+            voice_error_notice("voice input is not installed; build /tmp/private/helper"),
+            "VOICE INPUT ISN'T INSTALLED · KEEP TYPING"
+        );
+        assert_eq!(
+            voice_error_notice("voice input helper could not start: permission denied"),
+            "VOICE INPUT COULDN'T START · KEEP TYPING"
+        );
+        assert_eq!(
+            voice_error_notice("download failed for https://signed.example/private"),
+            "VOICE INPUT COULDN'T PREPARE · CHECK CONNECTION"
+        );
+        assert_eq!(
+            voice_error_notice("native backend failed at /Users/name/model.gguf"),
+            "VOICE INPUT STOPPED · KEEP TYPING"
+        );
     }
 
     #[gpui::test]
@@ -1416,6 +1912,7 @@ mod tests {
                 "requestId": "request-1",
                 "toolName": "Shell",
                 "syscall": "shell.exec",
+                "target": "gsv",
                 "args": { "input": "deploy" }
             }),
         });
@@ -1431,7 +1928,12 @@ mod tests {
 
         let _ = event_tx.send(crate::client::ClientEvent::History {
             session_id: 7,
-            history: serde_json::json!({ "messages": [] }),
+            history: crate::client::PreparedHistory {
+                generation: 1,
+                snapshot: std::sync::Arc::new(crate::history::normalize_history(
+                    &serde_json::json!({ "messages": [] }),
+                )),
+            },
         });
         cx.run_until_parked();
         cx.update(|cx| {

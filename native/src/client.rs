@@ -18,6 +18,7 @@ use serde_json::{json, Value};
 use tokio::sync::{mpsc as tokio_mpsc, Notify, OwnedSemaphorePermit, Semaphore};
 use tokio::task::{AbortHandle, JoinSet};
 
+use crate::history::{normalize_history, HistorySnapshot, MAX_FETCHED_HISTORY_MESSAGES};
 use crate::startup::{
     resolve_startup, ConnectionSettings, Credential, LoginDefaults, LoginStep, StartupResolution,
     StartupSources,
@@ -88,6 +89,13 @@ pub enum ClientCommand {
     Shutdown,
 }
 
+/// A background-normalized history response. Generations are monotonic within one live session.
+#[derive(Clone, Debug)]
+pub struct PreparedHistory {
+    pub generation: u64,
+    pub snapshot: Arc<HistorySnapshot>,
+}
+
 #[derive(Clone, Debug)]
 pub enum ClientEvent {
     Connecting,
@@ -113,7 +121,7 @@ pub enum ClientEvent {
     },
     History {
         session_id: u64,
-        history: Value,
+        history: PreparedHistory,
     },
     /// The snapshot is intentionally withheld because a newer signal owns the state.
     HistorySuperseded {
@@ -417,8 +425,10 @@ async fn run_live(
             session_id,
             pid: pid.clone(),
         });
-        let initial_history_superseded =
-            signal_lease.handoff_history(history_request_signal_id, history, &events);
+        let initial_history_superseded = matches!(
+            signal_lease.handoff_history(history_request_signal_id, history, &events),
+            HistoryPublication::Superseded | HistoryPublication::Stale
+        );
 
         match run_connected_session(
             ActiveClientSession {
@@ -480,7 +490,7 @@ struct LiveSession {
     client: Arc<KernelClient>,
     media_bodies: ResponseBodyInbox,
     pid: String,
-    history: Value,
+    history: PreparedHistory,
     history_request_signal_id: u64,
     process_exit: Arc<tokio::sync::Notify>,
     signal_lease: SessionSignalLease,
@@ -530,6 +540,7 @@ struct SignalState {
     active: bool,
     released: bool,
     last_signal_id: u64,
+    latest_history_generation: u64,
     selected_pid: Option<String>,
     buffered: Vec<BufferedSignal>,
 }
@@ -537,6 +548,14 @@ struct SignalState {
 struct SessionSignalLease {
     session_id: u64,
     state: Arc<Mutex<SignalState>>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum HistoryPublication {
+    Published,
+    Superseded,
+    Stale,
+    Inactive,
 }
 
 impl SessionSignalLease {
@@ -547,6 +566,7 @@ impl SessionSignalLease {
                 active: true,
                 released: false,
                 last_signal_id: 0,
+                latest_history_generation: 0,
                 selected_pid: None,
                 buffered: Vec::new(),
             })),
@@ -577,18 +597,14 @@ impl SessionSignalLease {
     fn handoff_history(
         &self,
         request_signal_id: u64,
-        history: Value,
+        history: PreparedHistory,
         events: &tokio_mpsc::UnboundedSender<ClientEvent>,
-    ) -> bool {
+    ) -> HistoryPublication {
         let Ok(mut state) = self.state.lock() else {
-            let _ = events.send(ClientEvent::History {
-                session_id: self.session_id,
-                history,
-            });
-            return false;
+            return HistoryPublication::Inactive;
         };
         if !state.active || state.released {
-            return false;
+            return HistoryPublication::Inactive;
         }
 
         // Event enqueueing stays under the same lock as signal observation so
@@ -608,31 +624,35 @@ impl SessionSignalLease {
                 request_signal_id,
                 response_signal_id,
             });
+        } else if history.generation <= state.latest_history_generation {
+            state.released = true;
+            return HistoryPublication::Stale;
         } else {
+            state.latest_history_generation = history.generation;
             let _ = events.send(ClientEvent::History {
                 session_id: self.session_id,
                 history,
             });
         }
         state.released = true;
-        superseded
+        if superseded {
+            HistoryPublication::Superseded
+        } else {
+            HistoryPublication::Published
+        }
     }
 
     fn emit_history_if_current(
         &self,
         request_signal_id: u64,
-        history: Value,
+        history: PreparedHistory,
         events: &tokio_mpsc::UnboundedSender<ClientEvent>,
-    ) -> bool {
-        let Ok(state) = self.state.lock() else {
-            let _ = events.send(ClientEvent::History {
-                session_id: self.session_id,
-                history,
-            });
-            return false;
+    ) -> HistoryPublication {
+        let Ok(mut state) = self.state.lock() else {
+            return HistoryPublication::Inactive;
         };
         if !state.active {
-            return false;
+            return HistoryPublication::Inactive;
         }
 
         // A callback cannot advance the watermark or enqueue its signal between
@@ -644,13 +664,16 @@ impl SessionSignalLease {
                 request_signal_id,
                 response_signal_id,
             });
-            true
+            HistoryPublication::Superseded
+        } else if history.generation <= state.latest_history_generation {
+            HistoryPublication::Stale
         } else {
+            state.latest_history_generation = history.generation;
             let _ = events.send(ClientEvent::History {
                 session_id: self.session_id,
                 history,
             });
-            false
+            HistoryPublication::Published
         }
     }
 
@@ -1095,7 +1118,7 @@ enum ConnectedTaskOutcome {
     Send(Result<ProcSendResult, SendAttemptFailure>),
     Abort(Result<Value, RequestFailure>),
     Approval(Result<Value, RequestFailure>),
-    History(Result<Value, RequestFailure>),
+    History(Result<PreparedHistory, RequestFailure>),
     Shell(Result<ShellResponse, RequestFailure>),
     Media(Result<(MediaResponse, MediaTransferLease), RequestFailure>),
 }
@@ -1180,6 +1203,12 @@ fn next_live_session_id() -> u64 {
             return session_id;
         }
     }
+}
+
+fn reserve_history_generation(next_generation: &mut u64) -> u64 {
+    let generation = (*next_generation).max(1);
+    *next_generation = generation.wrapping_add(1).max(1);
+    generation
 }
 
 fn queue_session_signal(
@@ -1413,6 +1442,7 @@ fn spawn_history_task(
     client: Arc<KernelClient>,
     pid: String,
     request_signal_id: u64,
+    generation: u64,
 ) {
     let operation_id = reserve_operation(
         next_operation_id,
@@ -1422,7 +1452,7 @@ fn spawn_history_task(
     tasks.spawn(async move {
         ConnectedTaskCompletion {
             operation_id,
-            outcome: ConnectedTaskOutcome::History(fetch_history(&client, &pid).await),
+            outcome: ConnectedTaskOutcome::History(fetch_history(&client, &pid, generation).await),
         }
     });
 }
@@ -1430,7 +1460,7 @@ fn spawn_history_task(
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 struct CompletionDisposition {
     completed_history: bool,
-    superseded_history: bool,
+    refresh_history: bool,
 }
 
 fn emit_connected_completion(
@@ -1447,11 +1477,11 @@ fn emit_connected_completion(
     if suppress_history && completed_history {
         return CompletionDisposition {
             completed_history: true,
-            superseded_history: false,
+            refresh_history: false,
         };
     }
 
-    let mut superseded_history = false;
+    let mut refresh_history = false;
 
     match (operation, completion.outcome) {
         (
@@ -1528,8 +1558,10 @@ fn emit_connected_completion(
             ConnectedTaskOutcome::History(result),
         ) => match result {
             Ok(history) => {
-                superseded_history =
-                    signal_lease.emit_history_if_current(request_signal_id, history, events);
+                refresh_history = matches!(
+                    signal_lease.emit_history_if_current(request_signal_id, history, events),
+                    HistoryPublication::Superseded | HistoryPublication::Stale
+                );
             }
             Err(error) => {
                 let _ = events.send(ClientEvent::Error(format!(
@@ -1581,7 +1613,7 @@ fn emit_connected_completion(
     }
     CompletionDisposition {
         completed_history,
-        superseded_history,
+        refresh_history,
     }
 }
 
@@ -1723,7 +1755,7 @@ async fn establish_live_session(
         process_exit.notify_one();
     }
     let history_request_signal_id = signal_lease.signal_watermark();
-    let history = fetch_history(&client, &pid).await.map_err(|error| {
+    let history = fetch_history(&client, &pid, 1).await.map_err(|error| {
         EstablishFailure::session(format!("This process’s history could not be read: {error}"))
     })?;
 
@@ -1795,6 +1827,7 @@ async fn run_connected_session(
     let mut media_tasks = HashMap::new();
     let mut cancelled_task_ids = HashSet::new();
     let mut next_operation_id = 1_u64;
+    let mut next_history_generation = 2_u64;
     let mut history_refresh = HistoryRefresh::default();
     let http_client = reqwest::Client::builder()
         .connect_timeout(CONNECT_TIMEOUT)
@@ -1810,6 +1843,7 @@ async fn run_connected_session(
             client.clone(),
             pid.clone(),
             signal_lease.signal_watermark(),
+            reserve_history_generation(&mut next_history_generation),
         );
     }
 
@@ -1890,6 +1924,7 @@ async fn run_connected_session(
                                 client.clone(),
                                 pid.clone(),
                                 signal_lease.signal_watermark(),
+                                reserve_history_generation(&mut next_history_generation),
                             );
                         }
                     }
@@ -1950,7 +1985,7 @@ async fn run_connected_session(
                             );
                         }
                         if disposition.completed_history {
-                            if disposition.superseded_history {
+                            if disposition.refresh_history {
                                 history_refresh.request();
                             }
                             if history_refresh.complete() {
@@ -1961,6 +1996,7 @@ async fn run_connected_session(
                                     client.clone(),
                                     pid.clone(),
                                     signal_lease.signal_watermark(),
+                                    reserve_history_generation(&mut next_history_generation),
                                 );
                             }
                         }
@@ -1991,6 +2027,7 @@ async fn run_connected_session(
                         client.clone(),
                         pid.clone(),
                         signal_lease.signal_watermark(),
+                        reserve_history_generation(&mut next_history_generation),
                     );
                 }
             }
@@ -2215,13 +2252,32 @@ fn select_existing_process(response: &Value, preferred_pid: Option<&str>) -> Opt
         .map(|(_, pid)| pid)
 }
 
-async fn fetch_history(client: &KernelClient, pid: &str) -> Result<Value, RequestFailure> {
-    request_ok(
+async fn fetch_history(
+    client: &KernelClient,
+    pid: &str,
+    generation: u64,
+) -> Result<PreparedHistory, RequestFailure> {
+    let payload = request_ok(
         client,
         "proc.history",
-        Some(json!({ "pid": pid, "tail": true, "limit": 200 })),
+        Some(json!({
+            "pid": pid,
+            "tail": true,
+            "limit": MAX_FETCHED_HISTORY_MESSAGES,
+        })),
     )
-    .await
+    .await?;
+    let snapshot = tokio::task::spawn_blocking(move || Arc::new(normalize_history(&payload)))
+        .await
+        .map_err(|error| {
+            RequestFailure::transport(format!(
+                "The history preparation worker stopped unexpectedly: {error}"
+            ))
+        })?;
+    Ok(PreparedHistory {
+        generation,
+        snapshot,
+    })
 }
 
 async fn load_media(
@@ -2719,6 +2775,13 @@ fn word_fragments(text: &str) -> Vec<String> {
 mod tests {
     use super::*;
 
+    fn prepared_history(generation: u64, payload: Value) -> PreparedHistory {
+        PreparedHistory {
+            generation,
+            snapshot: Arc::new(normalize_history(&payload)),
+        }
+    }
+
     #[test]
     fn media_body_consumes_frames_that_arrive_before_registration() -> Result<(), String> {
         let sent = Arc::new(Mutex::new(Vec::new()));
@@ -3150,7 +3213,14 @@ mod tests {
         assert!(received.try_recv().is_err());
 
         let request_signal_id = lease.signal_watermark();
-        assert!(!lease.handoff_history(request_signal_id, json!({ "activeRunId": null }), &events,));
+        assert_eq!(
+            lease.handoff_history(
+                request_signal_id,
+                prepared_history(1, json!({ "activeRunId": null })),
+                &events,
+            ),
+            HistoryPublication::Published
+        );
         assert!(queue_session_signal(
             &lease.state,
             77,
@@ -3214,11 +3284,14 @@ mod tests {
             &events,
         ));
 
-        assert!(lease.handoff_history(
-            request_signal_id,
-            json!({ "activeRunId": null, "pendingHil": null }),
-            &events,
-        ));
+        assert_eq!(
+            lease.handoff_history(
+                request_signal_id,
+                prepared_history(1, json!({ "activeRunId": null, "pendingHil": null })),
+                &events,
+            ),
+            HistoryPublication::Superseded
+        );
 
         assert!(matches!(
             received.try_recv(),
@@ -3244,7 +3317,10 @@ mod tests {
         let lease = SessionSignalLease::new(89);
         let (events, mut received) = tokio_mpsc::unbounded_channel();
         lease.select_pid("selected".to_string());
-        assert!(!lease.handoff_history(0, json!({}), &events));
+        assert_eq!(
+            lease.handoff_history(0, prepared_history(1, json!({})), &events),
+            HistoryPublication::Published
+        );
         assert!(matches!(
             received.try_recv(),
             Ok(ClientEvent::History { session_id: 89, .. })
@@ -3258,11 +3334,14 @@ mod tests {
             json!({ "pid": "selected", "runId": "run-1", "requestId": "hil-1" }),
             &events,
         ));
-        assert!(lease.emit_history_if_current(
-            stale_request_signal_id,
-            json!({ "pendingHil": null }),
-            &events,
-        ));
+        assert_eq!(
+            lease.emit_history_if_current(
+                stale_request_signal_id,
+                prepared_history(2, json!({ "pendingHil": null })),
+                &events,
+            ),
+            HistoryPublication::Superseded
+        );
         assert!(matches!(
             received.try_recv(),
             Ok(ClientEvent::Signal { ref name, .. }) if name == "proc.run.hil.requested"
@@ -3277,15 +3356,59 @@ mod tests {
         ));
 
         let fresh_request_signal_id = lease.signal_watermark();
-        assert!(!lease.emit_history_if_current(
-            fresh_request_signal_id,
-            json!({ "pendingHil": { "requestId": "hil-1" } }),
-            &events,
-        ));
+        assert_eq!(
+            lease.emit_history_if_current(
+                fresh_request_signal_id,
+                prepared_history(3, json!({ "pendingHil": { "requestId": "hil-1" } })),
+                &events,
+            ),
+            HistoryPublication::Published
+        );
         assert!(matches!(
             received.try_recv(),
             Ok(ClientEvent::History { session_id: 89, .. })
         ));
+    }
+
+    #[test]
+    fn older_history_generation_cannot_replace_a_published_snapshot() {
+        let lease = SessionSignalLease::new(90);
+        let (events, mut received) = tokio_mpsc::unbounded_channel();
+        lease.select_pid("selected".to_string());
+        assert_eq!(
+            lease.handoff_history(
+                0,
+                prepared_history(4, json!({ "messageCount": 4 })),
+                &events
+            ),
+            HistoryPublication::Published
+        );
+        assert!(matches!(
+            received.try_recv(),
+            Ok(ClientEvent::History {
+                session_id: 90,
+                history: PreparedHistory { generation: 4, .. },
+            })
+        ));
+
+        assert_eq!(
+            lease.emit_history_if_current(
+                0,
+                prepared_history(6, json!({ "messageCount": 6 })),
+                &events,
+            ),
+            HistoryPublication::Published
+        );
+        assert!(received.try_recv().is_ok());
+        assert_eq!(
+            lease.emit_history_if_current(
+                0,
+                prepared_history(5, json!({ "messageCount": 5 })),
+                &events,
+            ),
+            HistoryPublication::Stale
+        );
+        assert!(received.try_recv().is_err());
     }
 
     #[test]
@@ -3302,7 +3425,14 @@ mod tests {
         ));
         assert!(lease.select_pid("selected".to_string()));
         let request_signal_id = lease.signal_watermark();
-        assert!(!lease.handoff_history(request_signal_id, json!({ "activeRunId": null }), &events,));
+        assert_eq!(
+            lease.handoff_history(
+                request_signal_id,
+                prepared_history(1, json!({ "activeRunId": null })),
+                &events,
+            ),
+            HistoryPublication::Published
+        );
 
         assert!(matches!(
             received.try_recv(),

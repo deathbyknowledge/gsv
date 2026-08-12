@@ -1,12 +1,12 @@
 use gpui::{Context, Window};
 use serde_json::Value;
 
-use crate::client::{ClientCommand, ClientEvent};
+use crate::client::{ClientCommand, ClientEvent, PreparedHistory};
 use crate::interaction::{ApprovalSubmissionFailure, CanvasLayer};
 use crate::model::{
-    extract_text, parse_history_with_activity, parse_media, parse_pending_approval,
-    parse_tool_finished_activity, parse_tool_started_activity, ConnectionState, MomentState,
-    PendingApproval,
+    activity_from_history, extract_text, moments_from_history, parse_media, parse_pending_approval,
+    parse_tool_finished_activity, parse_tool_started_activity, pending_approval_from_history,
+    ConnectionState, MomentState, PendingApproval,
 };
 
 use super::media::release_assets;
@@ -41,12 +41,17 @@ impl GsvApp {
                 self.show_setup_required(attempt_id, defaults, message, window, cx);
             }
             ClientEvent::Reconnecting { attempt, message } => {
+                if self.voice_draft.is_some() {
+                    self.cancel_dictation(true, window, cx);
+                }
                 let released = self.media_cache.clear(&self.commands);
                 self.cancel_stale_media_preparations();
                 release_assets(released, cx);
                 self.client_session_id = None;
                 self.pid = None;
                 self.last_history = None;
+                self.last_history_generation = 0;
+                self.history_preparations.clear();
                 self.conversation.connection = ConnectionState::Connecting;
                 let activity = if attempt <= 1 {
                     "RECONNECTING".to_string()
@@ -76,6 +81,8 @@ impl GsvApp {
                 self.client_session_id = Some(session_id);
                 self.pid = Some(pid);
                 self.last_history = None;
+                self.last_history_generation = 0;
+                self.history_preparations.clear();
                 self.conversation.connection = ConnectionState::Connected;
                 self.conversation.activity = None;
                 self.conversation.clear_live_activity(None);
@@ -220,11 +227,21 @@ impl GsvApp {
         }
     }
 
-    fn reconcile_history(&mut self, history: Value, window: &mut Window, cx: &mut Context<Self>) {
-        if self.last_history.as_ref() == Some(&history) {
+    fn reconcile_history(
+        &mut self,
+        history: PreparedHistory,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if history.generation <= self.last_history_generation {
             return;
         }
-        self.last_history = Some(history.clone());
+        self.last_history_generation = history.generation;
+        let snapshot = history.snapshot;
+        if self.last_history == Some(snapshot.revision) {
+            return;
+        }
+        self.last_history = Some(snapshot.revision);
         let live_moment = self
             .conversation
             .moments
@@ -232,15 +249,12 @@ impl GsvApp {
             .rev()
             .find(|moment| moment.state == MomentState::Streaming)
             .cloned();
-        let active_run_id = history
-            .get("activeRunId")
-            .and_then(Value::as_str)
-            .map(str::to_string);
+        let active_run_id = snapshot.active_run_id.as_deref().map(str::to_string);
         let live_text = active_run_id.as_deref().and_then(|run_id| {
             live_moment
                 .as_ref()
                 .filter(|moment| moment.run_id.as_deref() == Some(run_id))
-                .map(|moment| moment.text.as_str())
+                .map(|moment| moment.text.as_ref())
         });
         let live_media = active_run_id.as_deref().and_then(|run_id| {
             live_moment
@@ -248,7 +262,8 @@ impl GsvApp {
                 .filter(|moment| moment.run_id.as_deref() == Some(run_id))
                 .map(|moment| moment.media.clone())
         });
-        let (moments, history_activity) = parse_history_with_activity(&history);
+        let moments = moments_from_history(&snapshot);
+        let history_activity = activity_from_history(&snapshot.activity);
 
         self.conversation.replace_history(moments);
         self.conversation
@@ -259,10 +274,20 @@ impl GsvApp {
             self.conversation
                 .replace_run_media(active_run_id.as_deref(), live_media);
         }
+        let selected_id = self.conversation.current().map(|moment| moment.id.as_str());
         self.prepared_content
-            .preload(&self.conversation.moments, self.conversation.selected);
+            .preload_history(&snapshot.preparation_candidates, selected_id);
+        self.history_preparations = snapshot
+            .preparation_candidates
+            .iter()
+            .map(|candidate| (candidate.id.to_string(), candidate.clone()))
+            .collect();
 
-        if let Some(approval) = history.get("pendingHil").and_then(parse_pending_approval) {
+        if let Some(approval) = snapshot
+            .pending_approval
+            .as_ref()
+            .map(pending_approval_from_history)
+        {
             self.enter_approval(approval, window, cx);
         } else if self.conversation.pending_approval.is_some() {
             self.leave_approval(window, cx);
@@ -312,7 +337,7 @@ impl GsvApp {
                 if event.get("type").and_then(Value::as_str) == Some("text_delta") {
                     let before = self.visible_moment_key();
                     if let Some(partial) = stream_partial_text(event) {
-                        self.conversation.replace_run_text(run_id, &partial);
+                        self.conversation.replace_run_text_owned(run_id, partial);
                     } else if let Some(delta) = event.get("delta").and_then(Value::as_str) {
                         self.conversation.stream_text(run_id, delta);
                     }
@@ -342,7 +367,7 @@ impl GsvApp {
                     .map(extract_text)
                     .unwrap_or_default();
                 if !text.is_empty() {
-                    self.conversation.replace_run_text(run_id, &text);
+                    self.conversation.replace_run_text_owned(run_id, text);
                 }
                 if let Some(media) = payload.get("media") {
                     self.conversation
@@ -401,6 +426,9 @@ impl GsvApp {
             return;
         }
         if is_new_request {
+            if self.voice_draft.is_some() {
+                self.cancel_dictation(true, window, cx);
+            }
             self.approval_resume_mode
                 .get_or_insert(self.conversation.mode);
             if self.conversation.mode == crate::model::SurfaceMode::Terminal {

@@ -95,21 +95,39 @@ pub(crate) struct PreparedLink {
 /// Parse and normalize one completed intelligence response. The function has no GPUI or transport
 /// dependencies, so callers can run it on a background executor and discard a stale result by its
 /// revision before publishing it to the active conversation.
+#[cfg(test)]
 pub(crate) fn prepare_completed_assistant(
     text: String,
     attachments: Vec<MediaAttachment>,
 ) -> PreparedContent {
     let revision = content_revision(&text, &attachments);
-    let document = Arc::new(parse_markdown(&text).with_attachments(&attachments));
+    prepare_completed_assistant_with_revision(revision, &text, &attachments)
+}
+
+pub(crate) fn prepare_completed_assistant_with_revision(
+    revision: ContentRevision,
+    text: &str,
+    attachments: &[MediaAttachment],
+) -> PreparedContent {
+    let document = Arc::new(parse_markdown(text).with_attachments(attachments));
     prepare_document(revision, document)
 }
 
+#[cfg(test)]
 pub(crate) fn prepare_literal_content(
     text: String,
     attachments: Vec<MediaAttachment>,
 ) -> PreparedContent {
     let revision = content_revision(&text, &attachments);
-    let document = Arc::new(RichDocument::literal(&text).with_attachments(&attachments));
+    prepare_literal_content_with_revision(revision, &text, &attachments)
+}
+
+pub(crate) fn prepare_literal_content_with_revision(
+    revision: ContentRevision,
+    text: &str,
+    attachments: &[MediaAttachment],
+) -> PreparedContent {
+    let document = Arc::new(RichDocument::literal(text).with_attachments(attachments));
     prepare_document(revision, document)
 }
 
@@ -447,6 +465,14 @@ mod tests {
         assert_ne!(original, content_revision("changed", &[image.clone()]));
         image.description = Some("A plot".to_string());
         assert_ne!(original, content_revision("result", &[image]));
+    }
+
+    #[test]
+    fn prepared_candidate_reuses_the_supplied_revision() {
+        let revision = content_revision("prepared once", &[]);
+        let prepared = prepare_completed_assistant_with_revision(revision, "prepared once", &[]);
+
+        assert_eq!(prepared.revision(), revision);
     }
 
     #[test]

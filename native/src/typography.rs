@@ -2,8 +2,11 @@ use gpui::{font, px, FontWeight, SharedString, TextRun, Window};
 
 use crate::theme;
 
-const MAX_TYPE_SIZE: f32 = 72.0;
-const MIN_TYPE_SIZE: f32 = 28.0;
+const MAX_TYPE_SIZE: f32 = 54.0;
+const MIN_TYPE_SIZE: f32 = 24.0;
+const MIN_PREFERRED_TYPE_SIZE: f32 = 30.0;
+const MAX_PREFERRED_TYPE_SIZE: f32 = 42.0;
+const MAX_CONTENT_OCCUPANCY: f32 = 0.78;
 const TYPE_STEP: f32 = 2.0;
 const MINIMUM_OVERFLOW_PROBE_RATIO: f32 = 0.85;
 
@@ -25,24 +28,40 @@ struct FittedSize {
 
 pub fn fit_type_layout(
     window: &Window,
-    text: &str,
+    text: SharedString,
     available_width: f32,
     available_height: f32,
     maximum_size: Option<f32>,
     weight: FontWeight,
 ) -> TypeLayout {
-    let width = reading_width(text, available_width);
-    let maximum_size = maximum_size
-        .unwrap_or(MAX_TYPE_SIZE)
-        .clamp(MIN_TYPE_SIZE, MAX_TYPE_SIZE);
-    let maximum_size = quantize_size(maximum_size);
-    let text: SharedString = if text.is_empty() {
-        " ".into()
-    } else {
-        text.to_string().into()
-    };
+    let width = reading_width(text.as_ref(), available_width);
+    let maximum_size = type_size_ceiling(
+        text.as_ref(),
+        width,
+        available_width,
+        available_height,
+        maximum_size,
+    );
+    let fitting_height = available_height * MAX_CONTENT_OCCUPANCY;
+    let text: SharedString = if text.is_empty() { " ".into() } else { text };
     let mut prose_font = font(theme::PROSE_FONT);
     prose_font.weight = weight;
+
+    let estimated_minimum = estimated_height(
+        text.as_ref(),
+        MIN_TYPE_SIZE,
+        line_height_for(MIN_TYPE_SIZE),
+        width,
+    );
+    if estimated_minimum > fitting_height {
+        return TypeLayout {
+            size: MIN_TYPE_SIZE,
+            line_height: line_height_for(MIN_TYPE_SIZE),
+            width,
+            content_height: estimated_minimum,
+            scrolls: estimated_minimum > available_height,
+        };
+    }
 
     let mut measured_minimum = None;
     let mut measure_height = |size| {
@@ -66,8 +85,8 @@ pub fn fit_type_layout(
         }
         height
     };
-    let minimum_overflows = should_probe_minimum(text.as_ref(), width, available_height)
-        && measure_height(MIN_TYPE_SIZE) > available_height;
+    let minimum_overflows = should_probe_minimum(text.as_ref(), width, fitting_height)
+        && measure_height(MIN_TYPE_SIZE) > fitting_height;
     let fitted = if minimum_overflows {
         FittedSize {
             size: MIN_TYPE_SIZE,
@@ -75,7 +94,7 @@ pub fn fit_type_layout(
             fits: false,
         }
     } else {
-        find_fitted_size(maximum_size, available_height, measure_height)
+        find_fitted_size(maximum_size, fitting_height, measure_height)
     };
 
     TypeLayout {
@@ -83,8 +102,91 @@ pub fn fit_type_layout(
         line_height: line_height_for(fitted.size),
         width,
         content_height: fitted.content_height,
-        scrolls: !fitted.fits,
+        scrolls: fitted.content_height > available_height,
     }
+}
+
+pub fn measure_type_layout_at_size(
+    window: &Window,
+    text: SharedString,
+    available_width: f32,
+    available_height: f32,
+    size: f32,
+    weight: FontWeight,
+) -> TypeLayout {
+    let width = reading_width(text.as_ref(), available_width);
+    let size = quantize_size(size.clamp(MIN_TYPE_SIZE, MAX_TYPE_SIZE));
+    let text: SharedString = if text.is_empty() { " ".into() } else { text };
+    let mut prose_font = font(theme::PROSE_FONT);
+    prose_font.weight = weight;
+    let line_height = line_height_for(size);
+    let (content_height, _) = retained_size_content_height(
+        text.as_ref(),
+        size,
+        line_height,
+        width,
+        available_height,
+        || measured_height(window, text.clone(), prose_font, size, line_height, width),
+    );
+
+    TypeLayout {
+        size,
+        line_height,
+        width,
+        content_height,
+        scrolls: content_height > available_height,
+    }
+}
+
+fn retained_size_content_height(
+    text: &str,
+    size: f32,
+    line_height: f32,
+    width: f32,
+    available_height: f32,
+    measure: impl FnOnce() -> Option<f32>,
+) -> (f32, bool) {
+    let estimated = estimated_height(text, size, line_height, width);
+    if estimated > available_height {
+        return (estimated, false);
+    }
+
+    (measure().unwrap_or(estimated), true)
+}
+
+fn type_size_ceiling(
+    text: &str,
+    reading_width: f32,
+    available_width: f32,
+    available_height: f32,
+    maximum_size: Option<f32>,
+) -> f32 {
+    let preferred = preferred_type_size(available_width, available_height);
+    let soft_lines = estimated_soft_lines(text, preferred, reading_width);
+    let short_copy_boost = if soft_lines <= 2.0 {
+        10.0
+    } else if soft_lines <= 4.0 {
+        6.0
+    } else if soft_lines <= 7.0 {
+        2.0
+    } else {
+        0.0
+    };
+    let policy_ceiling = (preferred + short_copy_boost).min(MAX_TYPE_SIZE);
+    quantize_size(
+        maximum_size
+            .unwrap_or(policy_ceiling)
+            .min(policy_ceiling)
+            .clamp(MIN_TYPE_SIZE, MAX_TYPE_SIZE),
+    )
+}
+
+fn preferred_type_size(available_width: f32, available_height: f32) -> f32 {
+    quantize_size(
+        (available_width / 26.0)
+            .min(available_height / 15.0)
+            .clamp(MIN_PREFERRED_TYPE_SIZE, MAX_PREFERRED_TYPE_SIZE),
+    )
 }
 
 fn should_probe_minimum(text: &str, width: f32, available_height: f32) -> bool {
@@ -206,18 +308,20 @@ fn measured_height(
 }
 
 fn estimated_height(text: &str, size: f32, line_height: f32, width: f32) -> f32 {
+    estimated_soft_lines(text, size, width) * size * line_height
+}
+
+fn estimated_soft_lines(text: &str, size: f32, width: f32) -> f32 {
     let average_glyph_width = size * 0.52;
     let characters_per_line = (width / average_glyph_width).max(1.0);
-    let soft_lines = text
-        .lines()
+    text.lines()
         .map(|line| {
             (line.chars().count() as f32 / characters_per_line)
                 .ceil()
                 .max(1.0)
         })
         .sum::<f32>()
-        .max(1.0);
-    soft_lines * size * line_height
+        .max(1.0)
 }
 
 fn reading_width(text: &str, available_width: f32) -> f32 {
@@ -280,8 +384,8 @@ mod tests {
 
     #[test]
     fn type_sizes_stay_on_stable_even_steps() {
-        assert_eq!(quantize_size(71.9), 70.0);
-        assert_eq!(quantize_size(28.0), 28.0);
+        assert_eq!(quantize_size(53.9), 52.0);
+        assert_eq!(quantize_size(24.0), 24.0);
     }
 
     #[test]
@@ -291,7 +395,7 @@ mod tests {
 
     #[test]
     fn banded_search_preserves_linear_fit_at_leading_boundaries() {
-        for maximum_size in (28..=72).step_by(2).map(|size| size as f32) {
+        for maximum_size in (24..=54).step_by(2).map(|size| size as f32) {
             for available_height in (0..=10_000).step_by(5).map(|height| height as f32 / 10.0) {
                 let measure_height = |size: f32| {
                     let wrapped_lines = (size * 7.0 / 120.0).ceil().max(1.0);
@@ -321,7 +425,7 @@ mod tests {
         });
         assert_eq!(overflowing.size, MIN_TYPE_SIZE);
         assert!(!overflowing.fits);
-        assert_eq!(overflowing_measurements, 5);
+        assert_eq!(overflowing_measurements, 4);
 
         for available_height in (0..=10_000).step_by(5).map(|height| height as f32 / 10.0) {
             let mut cold_measurements = 0;
@@ -339,8 +443,76 @@ mod tests {
         assert!(should_probe_minimum(
             &"A measured response. ".repeat(160),
             1_020.0,
-            614.0,
+            614.0 * MAX_CONTENT_OCCUPANCY,
         ));
-        assert!(!should_probe_minimum("A short response.", 1_020.0, 614.0,));
+        assert!(!should_probe_minimum(
+            "A short response.",
+            1_020.0,
+            614.0 * MAX_CONTENT_OCCUPANCY,
+        ));
+    }
+
+    #[test]
+    fn retained_overflow_uses_the_estimate_without_an_extra_shape() {
+        let text = "A response that already extends past the viewport. ".repeat(200);
+        let mut measurements = 0;
+        let (height, measured) =
+            retained_size_content_height(&text, 30.0, line_height_for(30.0), 820.0, 420.0, || {
+                measurements += 1;
+                Some(1.0)
+            });
+
+        assert!(height > 420.0);
+        assert!(!measured);
+        assert_eq!(measurements, 0);
+
+        let (_, measured) = retained_size_content_height(
+            "Short response.",
+            30.0,
+            line_height_for(30.0),
+            820.0,
+            420.0,
+            || {
+                measurements += 1;
+                Some(42.0)
+            },
+        );
+        assert!(measured);
+        assert_eq!(measurements, 1);
+    }
+
+    #[test]
+    fn preferred_scale_tracks_the_viewport_without_becoming_display_type() {
+        assert_eq!(preferred_type_size(520.0, 360.0), 30.0);
+        assert_eq!(preferred_type_size(1_020.0, 614.0), 38.0);
+        assert_eq!(preferred_type_size(1_600.0, 1_000.0), 42.0);
+    }
+
+    #[test]
+    fn short_copy_grows_modestly_while_paragraphs_stay_near_preferred() {
+        let preferred = preferred_type_size(1_020.0, 614.0);
+        let short = type_size_ceiling("Yes.", 820.0, 1_020.0, 614.0, None);
+        let paragraph = type_size_ceiling(
+            &"A normal paragraph should retain a comfortable reading scale. ".repeat(8),
+            820.0,
+            1_020.0,
+            614.0,
+            None,
+        );
+
+        assert_eq!(short, preferred + 10.0);
+        assert!(paragraph >= preferred);
+        assert!(paragraph <= preferred + 2.0);
+    }
+
+    #[test]
+    fn long_copy_reaches_the_readability_floor_then_scrolls() {
+        let fitted = find_fitted_size(MAX_TYPE_SIZE, 400.0 * MAX_CONTENT_OCCUPANCY, |size| {
+            900.0 * size / MIN_TYPE_SIZE
+        });
+
+        assert_eq!(fitted.size, MIN_TYPE_SIZE);
+        assert!(fitted.content_height > 400.0);
+        assert!(!fitted.fits);
     }
 }

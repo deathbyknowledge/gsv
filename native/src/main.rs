@@ -2,11 +2,13 @@ mod app;
 mod audio;
 mod client;
 mod content;
+mod history;
 mod interaction;
 mod model;
 mod prepared;
 mod startup;
 mod theme;
+mod transcription;
 mod typography;
 
 use std::borrow::Cow;

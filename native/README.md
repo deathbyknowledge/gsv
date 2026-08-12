@@ -74,12 +74,18 @@ selected automatically when `WAYLAND_DISPLAY` is present; no Cargo feature is ne
 - `Cmd/Ctrl+Enter` or `Shift+Enter` creates a new line.
 - `Escape` returns to the moment without discarding the draft.
 - The mouse wheel, `Alt+Up`, and `Alt+Down` move through moments; rail markers are also clickable.
+- On a long moment, the wheel scrolls its contents first; at an edge, three continued wheel detents
+  move to the adjacent moment. A wheel gesture over the left rail moves one moment directly.
 - Drag across reply or terminal text to select it; `Cmd/Ctrl+C` copies the exact visible text.
+- `Cmd/Ctrl+Shift+Space` starts local streaming dictation and presses again to finish it. Build the
+  isolated helper first with `cargo build --release --manifest-path native/transcribe-helper/Cargo.toml`.
+  For a distributable build, place that helper and its `THIRD_PARTY.md` beside the app binary.
 - `Cmd/Ctrl+.` stops the active run.
 - `Cmd/Ctrl+\`` switches between conversation and command surfaces.
 
-When GSV asks for capability approval, the only accepted responses are `allow once`, `always
-allow`, and `deny` (with a few direct synonyms). Approval text is not forwarded to the model.
+When GSV asks for capability approval, choose `ALLOW ONCE`, `ALWAYS ALLOW`, or `DENY` directly, or
+type the same phrases. The request uses the Process-resolved target and a safe action preview;
+approval text is not forwarded to the model.
 
 ## Current boundary
 
@@ -95,7 +101,8 @@ allow`, and `deny` (with a few direct synonyms). Approval text is not forwarded 
 - Audio, video, and document attachments currently render as typed metadata cards, including a
   transcription or description when one exists. Native playback and document preview are later
   surfaces.
-- Existing run and tool signals become a prominent, client-derived live footer. Completed tool
+- Existing run and tool signals become a prominent, client-derived live lane above the moment.
+  Parallel work is grouped into a few calm, category-specific status lines. Completed tool
   results from process history are retained as quiet, line-by-line work records on the final
   response; raw tool names, arguments, paths, outputs, and tool cards are not shown.
 - `proc.hil` approval remains a deterministic control boundary.
