@@ -603,16 +603,46 @@ describe("chat transcript rows", () => {
       callId: "call-1",
       toolName: "Shell",
       syscall: "shell.exec",
+      target: "macbook",
       args: { input: "ls" },
       createdAt: 1,
     }, { pid: "pid-1" }).state;
 
     expect(state.runState).toBe("awaiting_hil");
-    expect(state.pendingHil).toMatchObject({ pid: "pid-1", requestId: "hil-1" });
+    expect(state.pendingHil).toMatchObject({
+      pid: "pid-1",
+      requestId: "hil-1",
+      target: "macbook",
+    });
     expect(state.rows).toEqual(expect.arrayContaining([
       expect.objectContaining({ role: "assistant", text: "Hello", streaming: true }),
       expect.objectContaining({ role: "tool", toolCallId: "call-1", status: "running" }),
     ]));
+  });
+
+  it("refreshes history without entering an unanswerable HIL state", () => {
+    const state = {
+      ...emptyChatRuntimeState("pid-1"),
+      activeRunId: "run-1",
+      runState: "running" as const,
+    };
+
+    const result = applyChatSignal(state, "proc.run.hil.requested", {
+      pid: "pid-1",
+      requestId: "hil-legacy",
+      runId: "run-1",
+      callId: "call-1",
+      toolName: "Shell",
+      syscall: "shell.exec",
+      args: { input: "ls", target: "gsv" },
+      createdAt: 1,
+    }, { pid: "pid-1" });
+
+    expect(result.matched).toBe(true);
+    expect(result.refreshHistory).toBe(true);
+    expect(result.state).toBe(state);
+    expect(result.state.runState).toBe("running");
+    expect(result.state.pendingHil).toBeNull();
   });
 
   it("uses stream partial snapshots as authoritative assistant text", () => {

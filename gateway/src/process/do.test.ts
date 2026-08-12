@@ -7804,12 +7804,50 @@ describe("Process DO — mechanical", () => {
         callId: "call-hil-1",
         toolName: "Read",
         syscall: "fs.read",
+        target: "gsv",
       });
 
       await runInDurableObject(stub, (instance: Process) => {
         const process = instance as any;
         expect(process.store.getPendingHilForRun("run-hil-1")).not.toBeNull();
         expect(process.store.getPending("call-hil-1")).toBeNull();
+      });
+    });
+
+    it("exposes the normalized approval target rather than a legacy alias", async () => {
+      const pid = "mech-hil-normalized-target";
+      const stub = await initProcess(pid, ROOT_IDENTITY);
+
+      await runInDurableObject(stub, async (instance: Process) => {
+        const process = instance as any;
+        process.currentRun = {
+          runId: "run-hil-normalized-target",
+          approvalPolicy: {
+            default: "auto",
+            rules: [{ match: "shell.exec", action: "ask" }],
+          },
+        };
+        registerToolBlock(process, "run-hil-normalized-target", [{
+          type: "toolCall",
+          id: "call-hil-normalized-target",
+          name: "Shell",
+          arguments: { input: "pwd", target: "gateway" },
+        }]);
+        await process.processToolCalls("run-hil-normalized-target");
+      });
+
+      const history = (await stub.recvFrame(
+        makeReq("proc.history", {}),
+      )) as ResponseOkFrame;
+
+      expect(history.ok).toBe(true);
+      expect((history.data as any).pendingHil).toMatchObject({
+        pid,
+        runId: "run-hil-normalized-target",
+        callId: "call-hil-normalized-target",
+        syscall: "shell.exec",
+        target: "gsv",
+        args: { input: "pwd", target: "gateway" },
       });
     });
 
@@ -7870,6 +7908,59 @@ describe("Process DO — mechanical", () => {
             reason: "proc.hil.resume",
           }),
         );
+      });
+    });
+
+    it("requires the exact request id before applying an approval decision", async () => {
+      const pid = "mech-hil-exact-request";
+      const stub = await initProcess(pid, ROOT_IDENTITY);
+
+      const requestId = await runInDurableObject(stub, async (instance: Process) => {
+        const process = instance as any;
+        process.currentRun = {
+          runId: "run-hil-exact-request",
+          approvalPolicy: {
+            default: "auto",
+            rules: [{ match: "fs.delete", action: "ask" }],
+          },
+        };
+        registerToolBlock(process, "run-hil-exact-request", [{
+          type: "toolCall",
+          id: "call-hil-exact-request",
+          name: "Delete",
+          arguments: { path: "/tmp/exact-request.txt" },
+        }]);
+        await process.processToolCalls("run-hil-exact-request");
+        return process.store.getPendingHilForRun("run-hil-exact-request").requestId;
+      });
+
+      const stale = (await stub.recvFrame(
+        makeReq("proc.hil", { requestId: `${requestId}-stale`, decision: "approve" }),
+      )) as ResponseOkFrame;
+      expect(stale.ok).toBe(true);
+      expect(stale.data).toEqual({
+        ok: false,
+        error: `Pending tool confirmation not found: ${requestId}-stale`,
+      });
+
+      await runInDurableObject(stub, (instance: Process) => {
+        const process = instance as any;
+        expect(process.store.getPendingHilForRun("run-hil-exact-request")).toMatchObject({
+          requestId,
+          runId: "run-hil-exact-request",
+          toolCallId: "call-hil-exact-request",
+        });
+      });
+
+      const exact = (await stub.recvFrame(
+        makeReq("proc.hil", { requestId, decision: "deny" }),
+      )) as ResponseOkFrame;
+      expect(exact.ok).toBe(true);
+      expect(exact.data).toMatchObject({
+        ok: true,
+        pid,
+        requestId,
+        decision: "deny",
       });
     });
 

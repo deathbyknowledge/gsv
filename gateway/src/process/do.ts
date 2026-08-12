@@ -6536,6 +6536,7 @@ export class Process extends Host<Env> {
       callId: record.toolCallId,
       toolName: record.toolName,
       syscall: record.syscall,
+      target: resolveToolApprovalTarget(record.syscall, record.args),
       args: record.args,
       createdAt: record.createdAt,
     };

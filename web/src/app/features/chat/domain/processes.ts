@@ -16,11 +16,13 @@ import type {
   ProcHilResult,
   ProcHistoryMessage,
   ProcHistoryResult,
+  ProcHilRequest,
   ProcListEntry,
   ProcMediaInput,
   ProcMediaWriteArgs,
   ProcSendArgs,
 } from "@humansandmachines/gsv/protocol";
+import { normalizeHilRequest } from "./hil";
 
 export type ChatRunState = "idle" | "running" | "queued" | "awaiting_hil";
 
@@ -64,7 +66,7 @@ export type ChatHistory = {
   hasMoreAfter: boolean;
   activeRunId: string | null;
   runState: ChatRunState;
-  pendingHil: NonNullable<Extract<ProcHistoryResult, { ok: true }>["pendingHil"]> | null;
+  pendingHil: ProcHilRequest | null;
   context: Extract<ProcHistoryResult, { ok: true }>["context"];
 };
 
@@ -267,6 +269,7 @@ export function normalizeHistoryMessage(message: ProcHistoryMessage, index: numb
 }
 
 export function normalizeHistory(result: Extract<ProcHistoryResult, { ok: true }>): ChatHistory {
+  const pendingHil = normalizeHilRequest(result.pendingHil);
   return {
     pid: result.pid,
     messages: result.messages.map(normalizeHistoryMessage),
@@ -277,9 +280,9 @@ export function normalizeHistory(result: Extract<ProcHistoryResult, { ok: true }
     activeRunId: result.activeRunId ?? null,
     runState: normalizeRunState({
       activeRunId: result.activeRunId,
-      pendingHil: result.pendingHil,
+      pendingHil,
     }),
-    pendingHil: result.pendingHil ?? null,
+    pendingHil,
     context: result.context ?? null,
   };
 }

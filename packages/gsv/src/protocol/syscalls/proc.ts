@@ -95,6 +95,8 @@ export type ProcHilRequest = {
   callId: string;
   toolName: string;
   syscall: string;
+  /** Authoritative normalized execution target resolved by the Process approval policy. */
+  target: string;
   args: Record<string, unknown>;
   createdAt: number;
 };

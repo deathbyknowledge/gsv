@@ -274,6 +274,8 @@ Current role defaults from `buildSignalList()`:
   - Native clients answer with `proc.hil` and the exact `requestId`. Adapter DM
     prompts render the same identity as `hil[requestId]`; bare or stale
     decisions fail closed, and provider reply threading is not authorization.
+    The payload includes the Process-resolved `target` so clients can explain
+    the approval scope without reproducing routing policy from raw arguments.
 - `proc.run.finished`
   - Repeats final-reply `media` references after they have been persisted on the
     assistant history record.

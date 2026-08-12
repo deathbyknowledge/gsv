@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
-import type { ProcListEntry } from "@humansandmachines/gsv/protocol";
-import { normalizeProcessSummary } from "./processes";
+import type {
+  ProcHistoryResult,
+  ProcListEntry,
+} from "@humansandmachines/gsv/protocol";
+import { normalizeHistory, normalizeProcessSummary } from "./processes";
 
 function process(label: string | null): ProcListEntry {
   return {
@@ -27,5 +30,36 @@ describe("normalizeProcessSummary", () => {
   it("uses the generated process label as the task title", () => {
     expect(normalizeProcessSummary(process("Review migration plan")).title)
       .toBe("Review migration plan");
+  });
+});
+
+describe("normalizeHistory", () => {
+  it("preserves the authoritative target on restored approvals", () => {
+    const result: Extract<ProcHistoryResult, { ok: true }> = {
+      ok: true,
+      pid: "proc:task",
+      messages: [],
+      messageCount: 0,
+      activeRunId: "run-1",
+      pendingHil: {
+        pid: "proc:task",
+        requestId: "hil-1",
+        runId: "run-1",
+        callId: "call-1",
+        toolName: "Shell",
+        syscall: "shell.exec",
+        target: "macbook",
+        args: { input: "pwd" },
+        createdAt: 1,
+      },
+    };
+
+    expect(normalizeHistory(result)).toMatchObject({
+      runState: "awaiting_hil",
+      pendingHil: {
+        requestId: "hil-1",
+        target: "macbook",
+      },
+    });
   });
 });
