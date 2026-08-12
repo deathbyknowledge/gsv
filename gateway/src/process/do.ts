@@ -76,6 +76,8 @@ import type {
   ProcContextState,
   ProcUsageCostSource,
   ProcUsageState,
+  ProcRunToolFinishedSignal,
+  ProcRunToolStartedSignal,
   ProcToolResultOutcome,
   ProcResetResult,
   ProcKillResult,
@@ -119,6 +121,7 @@ import {
 } from "../inference/output";
 import {
   ProcessStore,
+  resolvedToolResultOutcome,
   parseAssistantMessageMeta,
   parseMessageMetadata,
   normalizeMessageMetadata,
@@ -1008,21 +1011,25 @@ export class Process extends Host<Env> {
           this.runAbortSignal(pending.runId),
         );
         this.rememberShellSessionTargetFromResult(pending.call, pending.args, result);
-        this.store.resolve(
+        await this.resolveStartedTool(
+          pending.runId,
           frame.id,
           formatAgentToolResponse(pending.call, pending.args, result),
         );
       } catch (error) {
-        this.store.fail(
+        await this.failStartedTool(
+          pending.runId,
           frame.id,
           error instanceof Error ? error.message : String(error),
         );
       }
     } else {
-      this.store.fail(frame.id, frame.error.message);
+      await this.failStartedTool(
+        pending.runId,
+        frame.id,
+        frame.error.message,
+      );
     }
-
-    await this.resumeResolvedToolRun(pending.runId);
   }
 
   /**
@@ -1328,7 +1335,7 @@ export class Process extends Host<Env> {
       if (activeRun) {
         this.cancelPendingRequests(activeRun.runId, USER_SUPERSEDED_TOOL_MESSAGE);
         this.rememberAbortedRun(activeRun.runId);
-        interrupted = this.ingestToolResults(
+        interrupted = await this.ingestToolResults(
           activeRun.runId,
           this.store.getResults(activeRun.runId),
           { interruptPending: USER_SUPERSEDED_TOOL_MESSAGE },
@@ -1816,7 +1823,7 @@ export class Process extends Host<Env> {
       this.cancelPendingRequests(runId, USER_INTERRUPTED_TOOL_MESSAGE);
       this.rememberAbortedRun(runId);
       const pendingHil = this.store.getPendingHilForRun(runId);
-      const interrupted = this.ingestToolResults(runId, this.store.getResults(runId), {
+      const interrupted = await this.ingestToolResults(runId, this.store.getResults(runId), {
         interruptPending: USER_INTERRUPTED_TOOL_MESSAGE,
       });
 
@@ -1881,14 +1888,16 @@ export class Process extends Host<Env> {
       const remembered = args.decision === "approve" && args.remember === true
         ? this.rememberToolApproval(pendingHil, run)
         : false;
+      this.store.clearPendingHil();
       if (args.decision === "deny") {
-        this.store.fail(
-          pendingHil.ownerDispatchId ?? codeModeApproval.dispatchId,
+        const executionId = pendingHil.ownerDispatchId ?? codeModeApproval.dispatchId;
+        await this.failStartedTool(
+          pendingHil.runId,
+          executionId,
           TOOL_EXECUTION_DENIED_BY_USER_MESSAGE,
           "denied",
         );
       }
-      this.store.clearPendingHil();
       this.resolveCodeModeApproval(args.requestId, args.decision === "approve");
       await this.announceRun(pendingHil.runId, "proc.hil.resume");
       return {
@@ -1917,12 +1926,12 @@ export class Process extends Host<Env> {
           : "CodeMode execution was interrupted while waiting for tool approval"
         : `Registered tool call not found: ${pendingHil.runId}/${pendingHil.toolCallId}`;
       if (outerCodeMode) {
-        this.store.fail(
+        await this.failStartedTool(
+          pendingHil.runId,
           outerCodeMode.dispatchId,
           error,
           args.decision === "deny" ? "denied" : "failed",
         );
-        await this.scheduleTick(pendingHil.runId);
         await this.announceRun(pendingHil.runId, "proc.hil.resume");
       }
       if (outerCodeMode && args.decision === "deny") {
@@ -1955,6 +1964,7 @@ export class Process extends Host<Env> {
           syscall: pendingHil.syscall,
           args: pendingHil.args,
           callId: pendingHil.toolCallId,
+          executionId: toolCall.dispatchId,
           pid,
           runId: pendingHil.runId,
         });
@@ -3307,9 +3317,13 @@ export class Process extends Host<Env> {
         throw new Error("Process not initialized — pid missing");
       }
       const shouldArchive = args.archive !== false;
-      if (initialized && this.currentRun) {
+      const activeRun = initialized ? this.currentRun : null;
+      if (initialized) {
+        await this.resetExecutionState("process.kill", false);
+      }
+      if (activeRun) {
         await this.sendSignal("proc.run.finished", this.runFinishedPayload(
-          this.currentRun,
+          activeRun,
           {
             status: "aborted",
             reason: "process.kill",
@@ -3317,9 +3331,6 @@ export class Process extends Host<Env> {
           },
           0,
         ));
-      }
-      if (initialized) {
-        await this.resetExecutionState("process.kill", false);
       }
       const totalMessages = initialized ? this.store.messageCount() : 0;
 
@@ -3360,7 +3371,7 @@ export class Process extends Host<Env> {
     this.rejectCodeModeWaiters(null, "Process execution state was reset");
     if (activeRun) {
       this.rememberAbortedRun(activeRun.runId);
-      this.ingestToolResults(activeRun.runId, this.store.getResults(activeRun.runId), {
+      await this.ingestToolResults(activeRun.runId, this.store.getResults(activeRun.runId), {
         interruptPending: `Process execution was reset: ${reason}`,
       });
       if (emitFinish) {
@@ -3480,8 +3491,11 @@ export class Process extends Host<Env> {
       this.ctx.waitUntil(
         cancelProcessRequests(this.pid, [dispatchId], "Tool execution timed out").catch(() => 0),
       );
-      this.store.fail(dispatchId, `Tool execution timed out after ${TOOL_DISPATCH_TIMEOUT_MS}ms`);
-      await this.resumeResolvedToolRun(runId);
+      await this.failStartedTool(
+        runId,
+        dispatchId,
+        `Tool execution timed out after ${TOOL_DISPATCH_TIMEOUT_MS}ms`,
+      );
     } else if (tool?.status === "registered") {
       await this.scheduleTick(runId);
     }
@@ -3824,7 +3838,7 @@ export class Process extends Host<Env> {
     }
 
     if (toolResults.length > 0) {
-      const ingested = this.ingestToolResults(runId, toolResults);
+      const ingested = await this.ingestToolResults(runId, toolResults);
       if (ingested.appended > 0) {
         await this.emitProcChanged(["messages"], { runId });
       }
@@ -4901,12 +4915,77 @@ export class Process extends Host<Env> {
     }
   }
 
-  private async emitToolStarted(payload: Record<string, unknown>): Promise<void> {
+  private async emitToolStarted(payload: ProcRunToolStartedSignal): Promise<void> {
     try {
       await this.sendSignal("proc.run.tool.started", payload);
     } catch (error) {
       console.warn(`[Process] Failed to emit tool start for ${this.pid}:`, error);
     }
+  }
+
+  private async emitToolFinished(
+    runId: string,
+    executionId: string,
+    callId: string,
+    outcome: ProcToolResultOutcome,
+  ): Promise<void> {
+    const payload: ProcRunToolFinishedSignal = {
+      pid: this.pid,
+      runId,
+      executionId,
+      callId,
+      outcome,
+      timestamp: Date.now(),
+    };
+    try {
+      await this.sendSignal("proc.run.tool.finished", payload);
+    } catch (error) {
+      console.warn(`[Process] Failed to emit tool finish for ${executionId}:`, error);
+    }
+  }
+
+  private async resolveStartedTool(
+    runId: string,
+    executionId: string,
+    result: unknown,
+    outcome: "completed" | "failed" = resolvedToolResultOutcome(result),
+  ): Promise<boolean> {
+    const pending = this.store.getPending(executionId);
+    if (!pending || pending.runId !== runId) {
+      return false;
+    }
+    const wasStarted = pending.status === "pending";
+    const transitioned = this.store.resolve(executionId, result, outcome);
+    const resumeRun = transitioned && this.store.isRunResolved(runId);
+    if (transitioned && wasStarted) {
+      await this.emitToolFinished(runId, executionId, pending.callId, outcome);
+    }
+    if (resumeRun) {
+      await this.resumeResolvedToolRun(runId);
+    }
+    return transitioned;
+  }
+
+  private async failStartedTool(
+    runId: string,
+    executionId: string,
+    error: string,
+    outcome: Exclude<ProcToolResultOutcome, "completed"> = "failed",
+  ): Promise<boolean> {
+    const pending = this.store.getPending(executionId);
+    if (!pending || pending.runId !== runId) {
+      return false;
+    }
+    const wasStarted = pending.status === "pending";
+    const transitioned = this.store.fail(executionId, error, outcome);
+    const resumeRun = transitioned && this.store.isRunResolved(runId);
+    if (transitioned && wasStarted) {
+      await this.emitToolFinished(runId, executionId, pending.callId, outcome);
+    }
+    if (resumeRun) {
+      await this.resumeResolvedToolRun(runId);
+    }
+    return transitioned;
   }
 
   private async emitRunStreamEvent(
@@ -5225,7 +5304,6 @@ export class Process extends Host<Env> {
     if (this.handleRunStopped(runId) || !this.store.getPending(dispatchId)) {
       return;
     }
-
     const reqFrame: RequestFrame = {
       type: "req",
       id: dispatchId,
@@ -5251,15 +5329,21 @@ export class Process extends Host<Env> {
             this.runAbortSignal(runId),
           );
           this.rememberShellSessionTargetFromResult(call, args, result);
-          this.store.resolve(dispatchId, formatAgentToolResponse(call, args, result));
+          await this.resolveStartedTool(
+            runId,
+            dispatchId,
+            formatAgentToolResponse(call, args, result),
+          );
         } catch (error) {
-          this.store.fail(
+          await this.failStartedTool(
+            runId,
             dispatchId,
             error instanceof Error ? error.message : String(error),
           );
         }
       } else {
-        this.store.fail(
+        await this.failStartedTool(
+          runId,
           dispatchId,
           (res as { error: { message: string } }).error.message,
         );
@@ -5630,13 +5714,18 @@ export class Process extends Host<Env> {
     return rewrites;
   }
 
-  private ingestToolResults(
+  private async ingestToolResults(
     runId: string,
     toolResults: ReturnType<ProcessStore["getResults"]>,
     options?: { interruptPending?: string },
-  ): { interrupted: number; appended: number } {
+  ): Promise<{ interrupted: number; appended: number }> {
     let interrupted = 0;
     let appended = 0;
+    const finished: Array<{
+      executionId: string;
+      callId: string;
+      outcome: ProcToolResultOutcome;
+    }> = [];
 
     this.ctx.storage.transactionSync(() => {
       for (const result of toolResults) {
@@ -5672,10 +5761,25 @@ export class Process extends Host<Env> {
           runId,
           outcome,
         );
+        if (result.status === "pending") {
+          finished.push({
+            executionId: result.dispatchId,
+            callId: result.id,
+            outcome,
+          });
+        }
         appended += 1;
       }
       this.store.clearRun(runId);
     });
+    for (const result of finished) {
+      await this.emitToolFinished(
+        runId,
+        result.executionId,
+        result.callId,
+        result.outcome,
+      );
+    }
     return { interrupted, appended };
   }
 
@@ -5750,6 +5854,7 @@ export class Process extends Host<Env> {
         syscall,
         args: toolArgs,
         callId: tc.id,
+        executionId: tc.dispatchId,
         pid: this.pid,
         runId,
       });
@@ -5781,10 +5886,14 @@ export class Process extends Host<Env> {
     this.ctx.waitUntil(execution
       .catch((error) => {
         if (this.store.getPending(dispatchId)) {
-          this.store.fail(dispatchId, errorMessageFromUnknown(error));
+          return this.failStartedTool(
+            runId,
+            dispatchId,
+            errorMessageFromUnknown(error),
+          );
         }
-      })
-      .then(() => this.resumeResolvedToolRun(runId)));
+        return false;
+      }));
   }
 
   private async resumeResolvedToolRun(runId: string): Promise<void> {
@@ -5919,12 +6028,16 @@ export class Process extends Host<Env> {
     if (this.handleRunStopped(runId) || !this.store.getPending(dispatchId)) {
       return;
     }
-
     if (typeof args.code !== "string" || args.code.trim().length === 0) {
-      this.store.resolve(dispatchId, {
-        status: "failed",
-        error: "CodeMode requires a non-empty code string",
-      }, "failed");
+      await this.resolveStartedTool(
+        runId,
+        dispatchId,
+        {
+          status: "failed",
+          error: "CodeMode requires a non-empty code string",
+        },
+        "failed",
+      );
       return;
     }
 
@@ -5949,16 +6062,22 @@ export class Process extends Host<Env> {
           signal,
         },
       );
-      this.store.resolve(
+      await this.resolveStartedTool(
+        runId,
         dispatchId,
         result,
         result.status === "failed" ? "failed" : "completed",
       );
     } catch (error) {
-      this.store.resolve(dispatchId, {
-        status: "failed",
-        error: error instanceof Error ? error.message : String(error),
-      }, "failed");
+      await this.resolveStartedTool(
+        runId,
+        dispatchId,
+        {
+          status: "failed",
+          error: error instanceof Error ? error.message : String(error),
+        },
+        "failed",
+      );
     }
   }
 

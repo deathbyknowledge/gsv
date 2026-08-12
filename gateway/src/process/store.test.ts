@@ -606,7 +606,8 @@ describe("ProcessStore", () => {
         expect(store.getPending("dispatch_1")).not.toBeNull();
         expect(store.isRunResolved("run_1")).toBe(false);
 
-        store.resolve("dispatch_1", { content: "gsv" });
+        expect(store.resolve("dispatch_1", { content: "gsv" })).toBe(true);
+        expect(store.resolve("dispatch_1", { content: "late" })).toBe(false);
         expect(store.getPending("dispatch_1")).toBeNull();
         expect(store.isRunResolved("run_1")).toBe(true);
 

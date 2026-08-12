@@ -16,6 +16,7 @@ The source of truth is:
 - `packages/gsv/src/protocol/request-cancel.ts`
 - `packages/gsv/src/protocol/adapters.ts`
 - `packages/gsv/src/protocol/adapter-media-body.ts`
+- `packages/gsv/src/protocol/syscalls/proc.ts`
 - `packages/gsv/src/protocol/syscalls/system.ts`
 - `gateway/src/kernel/connect.ts`
 - `gateway/src/kernel/dispatch.ts`
@@ -256,6 +257,16 @@ Current role defaults from `buildSignalList()`:
   - Carries assembled assistant text/thinking and, when present, process-owned
     `media` references registered for the automatic final reply.
 - `proc.run.tool.started`
+  - Emitted after a tool execution is durably marked dispatched. Its payload
+    includes `pid`, `runId`, provider `callId`, and the unique `executionId`
+    used for that dispatch, alongside the existing tool name, syscall, and
+    arguments.
+- `proc.run.tool.finished`
+  - Emitted when each started execution first reaches a terminal outcome.
+    Consumers deduplicate by `executionId`. The payload is `{ pid, runId,
+    executionId, callId, outcome, timestamp }`, where `outcome` is `completed`,
+    `failed`, `cancelled`, or `denied`. It carries no tool arguments, output, or
+    error content. Delivery is best effort, like other Process signals.
 - `proc.run.hil.requested`
   - Native clients answer with `proc.hil` and the exact `requestId`. Adapter DM
     prompts render the same identity as `hil[requestId]`; bare or stale

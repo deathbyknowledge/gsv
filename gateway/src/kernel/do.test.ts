@@ -2205,6 +2205,60 @@ describe("Kernel process runtime projection", () => {
     expect(updateRuntimeState).toHaveBeenCalledTimes(2);
     expect(record).toMatchObject({ activeRunId: null, lastActiveAt: 400 });
   });
+
+  it("relays an older run's tool finish without mutating its active successor", async () => {
+    const record = {
+      activeRunId: "run-successor",
+      lastActiveAt: 500,
+      state: "waiting_tool",
+    };
+    let delivered: Promise<void> | null = null;
+    const kernel = Object.create(Kernel.prototype) as any;
+    kernel.ctx = {
+      waitUntil: vi.fn((promise: Promise<void>) => {
+        delivered = promise;
+      }),
+    };
+    kernel.procs = {
+      get: vi.fn(() => record),
+      getOwnerUid: vi.fn(() => 1000),
+      updateRuntimeState: vi.fn((_pid: string, patch: Record<string, unknown>) => {
+        Object.assign(record, patch);
+      }),
+    };
+    kernel.pendingProcessSignals = new Map();
+    kernel.dispatchSignalWatches = vi.fn(async () => {});
+    kernel.runRoutes = { get: vi.fn(() => null), delete: vi.fn() };
+    kernel.broadcastToUserUid = vi.fn();
+    kernel.completeIpcCallsForProcessSignal = vi.fn();
+    const frame = {
+      type: "sig",
+      signal: "proc.run.tool.finished",
+      payload: {
+        pid: "proc-1",
+        runId: "run-older",
+        executionId: "execution-older",
+        callId: "call-older",
+        outcome: "cancelled",
+        timestamp: 600,
+      },
+    } as const;
+
+    await kernel.recvFrame("proc-1", frame);
+    await delivered;
+
+    expect(record).toEqual({
+      activeRunId: "run-successor",
+      lastActiveAt: 500,
+      state: "waiting_tool",
+    });
+    expect(kernel.procs.updateRuntimeState).not.toHaveBeenCalled();
+    expect(kernel.broadcastToUserUid).toHaveBeenCalledWith(
+      1000,
+      frame.signal,
+      frame.payload,
+    );
+  });
 });
 
 describe("Kernel IPC completion", () => {

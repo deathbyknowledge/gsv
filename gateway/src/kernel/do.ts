@@ -995,7 +995,8 @@ export class Kernel extends Host<Env> {
           return false;
         }
       } else {
-        return frame.signal === "proc.run.finished";
+        return frame.signal === "proc.run.finished"
+          || frame.signal === "proc.run.tool.finished";
       }
     }
 
@@ -1017,6 +1018,8 @@ export class Kernel extends Host<Env> {
         return true;
       case "proc.run.tool.started":
         patchForActive("waiting_tool");
+        return true;
+      case "proc.run.tool.finished":
         return true;
       case "proc.run.hil.requested":
         patchForActive("waiting_hil");

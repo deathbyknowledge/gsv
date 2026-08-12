@@ -341,6 +341,20 @@ describe("Process DO — mechanical", () => {
 
       await project({
         type: "sig",
+        signal: "proc.run.tool.finished",
+        payload: {
+          pid,
+          runId: "run-activity",
+          executionId: "execution-1",
+          callId: "call-1",
+          outcome: "completed",
+          timestamp: 1076,
+        },
+      });
+      const stillWaitingTool = k.procs.get(pid);
+
+      await project({
+        type: "sig",
         signal: "proc.changed",
         payload: {
           pid,
@@ -376,7 +390,7 @@ describe("Process DO — mechanical", () => {
       });
       const idle = k.procs.get(pid);
 
-      return { running, retrying, waitingTool, resumed, waiting, idle };
+      return { running, retrying, waitingTool, stillWaitingTool, resumed, waiting, idle };
     });
 
     expect(state.running).toMatchObject({
@@ -392,6 +406,11 @@ describe("Process DO — mechanical", () => {
       lastActiveAt: 1050,
     });
     expect(state.waitingTool).toMatchObject({
+      state: "waiting_tool",
+      activeRunId: "run-activity",
+      lastActiveAt: 1075,
+    });
+    expect(state.stillWaitingTool).toMatchObject({
       state: "waiting_tool",
       activeRunId: "run-activity",
       lastActiveAt: 1075,
@@ -7274,7 +7293,7 @@ describe("Process DO — mechanical", () => {
         pendingHil: null,
       });
 
-      await runInDurableObject(stub, (instance: Process) => {
+      await runInDurableObject(stub, async (instance: Process) => {
         const process = instance as any;
         expect(process.store.getPendingHil()).toBeNull();
         expect(process.store.getResults("run-hil-2")).toMatchObject([{
@@ -7283,7 +7302,7 @@ describe("Process DO — mechanical", () => {
           error: "Tool execution denied by user",
           outcome: "denied",
         }]);
-        process.ingestToolResults("run-hil-2", process.store.getResults("run-hil-2"));
+        await process.ingestToolResults("run-hil-2", process.store.getResults("run-hil-2"));
         const toolResult = process.store.getMessages().at(-1);
         expect(toolResult.role).toBe("toolResult");
         expect(JSON.parse(toolResult.toolCalls).outcome).toBe("denied");
@@ -7372,7 +7391,7 @@ describe("Process DO — mechanical", () => {
           status: "completed",
           result: "still running",
         });
-        process.ingestToolResults(runId, process.store.getResults(runId));
+        await process.ingestToolResults(runId, process.store.getResults(runId));
         const outcomes = process.store.getMessages()
           .filter((message: any) => message.role === "toolResult")
           .map((message: any) => JSON.parse(message.toolCalls).outcome);
@@ -7380,10 +7399,80 @@ describe("Process DO — mechanical", () => {
       });
     });
 
+    it("resumes a sole CodeMode run once after denying its nested approval", async () => {
+      const pid = "mech-hil-codemode-sole-deny";
+      const stub = await initProcess(pid, ROOT_IDENTITY);
+
+      await runInDurableObject(stub, async (instance: Process) => {
+        const process = instance as any;
+        const runId = "run-hil-codemode-sole-deny";
+        const requestId = "approval-codemode-sole-deny";
+        const resolve = vi.fn();
+        process.currentRun = {
+          runId,
+          approvalPolicy: { default: "auto", rules: [] },
+        };
+        registerToolBlock(process, runId, [{
+          id: "call-codemode-sole",
+          name: "CodeMode",
+          arguments: { code: "return await fs.read({ path: '/secret' });" },
+        }]);
+        process.store.markDispatched("dispatch-call-codemode-sole");
+        process.store.setPendingHil({
+          requestId,
+          runId,
+          ownerDispatchId: "dispatch-call-codemode-sole",
+          toolCallId: "codemode-nested-call",
+          toolName: "Read",
+          syscall: "fs.read",
+          args: { path: "/secret" },
+          createdAt: Date.now(),
+        });
+        process.codeModeApprovals.set(requestId, {
+          runId,
+          dispatchId: "dispatch-call-codemode-sole",
+          resolve,
+          timeoutId: setTimeout(() => {}, 60_000),
+        });
+        process.schedule = vi.fn(async () => ({ id: "resume-codemode-sole" }));
+        process.sendSignal = vi.fn(async () => {});
+
+        await process.handleProcHil({ requestId, decision: "deny" });
+
+        expect(resolve).toHaveBeenCalledWith(false);
+        expect(process.store.getPendingHil()).toBeNull();
+        expect(process.store.getResults(runId)).toMatchObject([{
+          id: "call-codemode-sole",
+          status: "error",
+          outcome: "denied",
+        }]);
+        expect(process.schedule).toHaveBeenCalledTimes(1);
+        expect(process.schedule).toHaveBeenCalledWith(
+          expect.any(Date),
+          "tick",
+          { runId, generation: 0 },
+          { idempotent: true },
+        );
+        expect(process.sendSignal).toHaveBeenCalledWith(
+          "proc.run.tool.finished",
+          {
+            pid,
+            runId,
+            executionId: "dispatch-call-codemode-sole",
+            callId: "call-codemode-sole",
+            outcome: "denied",
+            timestamp: expect.any(Number),
+          },
+        );
+        process.store.clearPendingToolCalls();
+        process.currentRun = null;
+      });
+    });
+
     it("does not infer a user denial from a live tool error message", async () => {
       const stub = await initProcess("mech-tool-error-denial-text", ROOT_IDENTITY);
 
-      await runInDurableObject(stub, (instance: Process) => {
+      await runInDurableObject(stub, async (instance: Process) => {
         const process = instance as any;
         const runId = "run-tool-error-denial-text";
         process.store.register(
@@ -7399,7 +7488,7 @@ describe("Process DO — mechanical", () => {
         );
 
         expect(process.store.getResults(runId)[0].outcome).toBe("failed");
-        process.ingestToolResults(runId, process.store.getResults(runId));
+        await process.ingestToolResults(runId, process.store.getResults(runId));
         const toolResult = process.store.getMessages().at(-1);
         expect(JSON.parse(toolResult.toolCalls).outcome).toBe("failed");
       });
@@ -7450,6 +7539,71 @@ describe("Process DO — mechanical", () => {
             action: "auto",
           },
         ]);
+      });
+    });
+
+    it("keeps one execution identity from approved HIL start through finish", async () => {
+      const pid = "mech-hil-approved-execution";
+      const stub = await initProcess(pid, ROOT_IDENTITY);
+
+      await runInDurableObject(stub, async (instance: Process) => {
+        const process = instance as any;
+        const runId = "run-hil-approved-execution";
+        process.currentRun = {
+          runId,
+          approvalPolicy: {
+            default: "auto",
+            rules: [{ match: "fs.read", action: "ask" }],
+          },
+        };
+        process.sendSignal = vi.fn(async () => {});
+        process.schedule = vi.fn(async () => ({ id: "tool-lifecycle" }));
+        process.launchToolDispatch = vi.fn();
+        registerToolBlock(process, runId, [{
+          type: "toolCall",
+          id: "call-hil-approved-execution",
+          name: "Read",
+          arguments: { path: "/private/input" },
+        }]);
+        await process.processToolCalls(runId);
+        const requestId = process.store.getPendingHilForRun(runId).requestId;
+
+        await process.handleProcHil({ requestId, decision: "approve" });
+        await process.resolveStartedTool(
+          runId,
+          "dispatch-call-hil-approved-execution",
+          "private output",
+        );
+
+        expect(process.launchToolDispatch).toHaveBeenCalledWith(
+          runId,
+          "dispatch-call-hil-approved-execution",
+          "fs.read",
+          { path: "/private/input" },
+          process.currentRun.approvalPolicy,
+        );
+        expect(process.sendSignal).toHaveBeenCalledWith(
+          "proc.run.tool.started",
+          expect.objectContaining({
+            pid,
+            runId,
+            executionId: "dispatch-call-hil-approved-execution",
+            callId: "call-hil-approved-execution",
+          }),
+        );
+        expect(process.sendSignal).toHaveBeenCalledWith(
+          "proc.run.tool.finished",
+          {
+            pid,
+            runId,
+            executionId: "dispatch-call-hil-approved-execution",
+            callId: "call-hil-approved-execution",
+            outcome: "completed",
+            timestamp: expect.any(Number),
+          },
+        );
+        process.store.clearPendingToolCalls();
+        process.currentRun = null;
       });
     });
 
@@ -7510,12 +7664,7 @@ describe("Process DO — mechanical", () => {
             error: "CodeMode execution was interrupted while waiting for tool approval",
           },
         ]);
-        expect(process.schedule).toHaveBeenCalledWith(
-          expect.any(Date),
-          "tick",
-          { runId, generation: 0 },
-          { idempotent: true },
-        );
+        expect(process.schedule).not.toHaveBeenCalled();
         expect(process.sendSignal).toHaveBeenCalledWith(
           "proc.run.started",
           expect.objectContaining({
@@ -8247,7 +8396,7 @@ describe("Process DO — mechanical", () => {
           },
           outcome: "failed",
         }]);
-        process.ingestToolResults(runId, process.store.getResults(runId));
+        await process.ingestToolResults(runId, process.store.getResults(runId));
         const toolResult = process.store.getMessages().at(-1);
         expect(JSON.parse(toolResult.toolCalls)).toMatchObject({
           isError: true,
@@ -8459,7 +8608,7 @@ describe("Process DO — mechanical", () => {
       });
     });
 
-    it("does not tear down an active executor when run-finish delivery fails", async () => {
+    it("terminalizes an active executor before reporting run-finish delivery failure", async () => {
       const pid = "mech-kill-finish-failure";
       const stub = await initProcess(pid, ROOT_IDENTITY);
 
@@ -8476,7 +8625,8 @@ describe("Process DO — mechanical", () => {
           error: { message: "finish route unavailable" },
         });
         expect(process.isInitialized()).toBe(true);
-        expect(process.currentRun).toMatchObject({ runId: "run-kill-failure" });
+        expect(process.currentRun).toBeNull();
+        expect(process.store.getResults("run-kill-failure")).toEqual([]);
       });
     });
 
@@ -8499,6 +8649,7 @@ describe("Process DO — mechanical", () => {
           "fs.read",
           { path: "/tmp/test.txt" },
         );
+        process.store.markDispatched("dispatch-kill-1");
         process.store.enqueue("queued-kill", "queued before kill");
         process.store.appendMessage("user", "hello before kill");
         await state.storage.setAlarm(Date.now() + 60_000);
@@ -8537,6 +8688,21 @@ describe("Process DO — mechanical", () => {
           aborted: true,
           queuedCount: 0,
         }),
+      });
+      expect(killed.emitted.map(({ signal }) => signal)).toEqual([
+        "proc.run.tool.finished",
+        "proc.run.finished",
+      ]);
+      expect(killed.emitted[0]).toEqual({
+        signal: "proc.run.tool.finished",
+        payload: {
+          pid,
+          runId,
+          executionId: "dispatch-kill-1",
+          callId: "call-kill-1",
+          outcome: "cancelled",
+          timestamp: expect.any(Number),
+        },
       });
       expect(killed.alarm).toBeNull();
       expect(killed.keys).toEqual([]);
@@ -8809,6 +8975,7 @@ describe("Process DO — mechanical", () => {
 
       await runInDurableObject(stub, async (instance: Process) => {
         const process = instance as any;
+        process.sendSignal = vi.fn(async () => {});
         process.scheduleTick = vi.fn(async () => {});
         process.store.register(
           "dispatch-timeout",
@@ -8832,7 +8999,159 @@ describe("Process DO — mechanical", () => {
           error: expect.stringContaining("Tool execution timed out"),
         }]);
         expect(process.scheduleTick).toHaveBeenCalledWith("run-timeout");
+        const finishes = process.sendSignal.mock.calls
+          .filter(([signal]: [string]) => signal === "proc.run.tool.finished");
+        expect(finishes).toEqual([[
+          "proc.run.tool.finished",
+          {
+            pid,
+            runId: "run-timeout",
+            executionId: "dispatch-timeout",
+            callId: "call-timeout",
+            outcome: "failed",
+            timestamp: expect.any(Number),
+          },
+        ]]);
+        expect(JSON.stringify(finishes[0][1])).not.toContain("timed out");
         process.store.clearPendingToolCalls();
+        process.currentRun = null;
+      });
+    });
+
+    it("emits one sanitized terminal signal for a started execution", async () => {
+      const pid = "mech-res-tool-terminal-signal";
+      const stub = await initProcess(pid, ROOT_IDENTITY);
+
+      await runInDurableObject(stub, async (instance: Process) => {
+        const process = instance as any;
+        process.sendSignal = vi.fn(async () => {});
+        process.scheduleTick = vi.fn(async () => {});
+        process.store.register(
+          "dispatch-terminal",
+          "provider-call",
+          "run-terminal",
+          "fs.read",
+          { path: "/private/input" },
+        );
+        process.store.markDispatched("dispatch-terminal");
+        process.currentRun = { runId: "run-terminal" };
+
+        await process.handleRes({
+          type: "res",
+          id: "dispatch-terminal",
+          ok: true,
+          data: { path: "/private/input", content: "private output" },
+        });
+        await process.handleRes({
+          type: "res",
+          id: "dispatch-terminal",
+          ok: false,
+          error: { code: 500, message: "late private failure" },
+        });
+
+        const finishes = process.sendSignal.mock.calls
+          .filter(([signal]: [string]) => signal === "proc.run.tool.finished");
+        expect(finishes).toHaveLength(1);
+        expect(finishes[0][1]).toEqual({
+          pid,
+          runId: "run-terminal",
+          executionId: "dispatch-terminal",
+          callId: "provider-call",
+          outcome: "completed",
+          timestamp: expect.any(Number),
+        });
+        expect(JSON.stringify(finishes[0][1])).not.toContain("private");
+        process.store.clearPendingToolCalls();
+        process.currentRun = null;
+      });
+    });
+
+    it("emits a failed terminal signal for a transport error", async () => {
+      const pid = "mech-res-tool-transport-error";
+      const stub = await initProcess(pid, ROOT_IDENTITY);
+
+      await runInDurableObject(stub, async (instance: Process) => {
+        const process = instance as any;
+        process.sendSignal = vi.fn(async () => {});
+        process.scheduleTick = vi.fn(async () => {});
+        process.store.register(
+          "dispatch-transport-error",
+          "call-transport-error",
+          "run-transport-error",
+          "fs.read",
+          { path: "/private/input" },
+        );
+        process.store.markDispatched("dispatch-transport-error");
+        process.currentRun = { runId: "run-transport-error" };
+
+        await process.handleRes({
+          type: "res",
+          id: "dispatch-transport-error",
+          ok: false,
+          error: { code: 503, message: "private transport failure" },
+        });
+
+        expect(process.sendSignal).toHaveBeenCalledWith(
+          "proc.run.tool.finished",
+          {
+            pid,
+            runId: "run-transport-error",
+            executionId: "dispatch-transport-error",
+            callId: "call-transport-error",
+            outcome: "failed",
+            timestamp: expect.any(Number),
+          },
+        );
+        const finish = process.sendSignal.mock.calls.find(
+          ([signal]: [string]) => signal === "proc.run.tool.finished",
+        );
+        expect(JSON.stringify(finish?.[1])).not.toContain("private");
+        process.store.clearPendingToolCalls();
+        process.currentRun = null;
+      });
+    });
+
+    it("emits cancelled finish only for dispatched tools during interruption", async () => {
+      const pid = "mech-res-tool-cancelled-signal";
+      const stub = await initProcess(pid, ROOT_IDENTITY);
+
+      await runInDurableObject(stub, async (instance: Process) => {
+        const process = instance as any;
+        process.sendSignal = vi.fn(async () => {});
+        process.currentRun = { runId: "run-cancelled" };
+        process.store.register(
+          "dispatch-started",
+          "call-started",
+          "run-cancelled",
+          "fs.read",
+          {},
+        );
+        process.store.markDispatched("dispatch-started");
+        process.store.register(
+          "dispatch-registered",
+          "call-registered",
+          "run-cancelled",
+          "fs.read",
+          {},
+        );
+
+        await process.ingestToolResults(
+          "run-cancelled",
+          process.store.getResults("run-cancelled"),
+          { interruptPending: "private cancellation reason" },
+        );
+
+        const finishes = process.sendSignal.mock.calls
+          .filter(([signal]: [string]) => signal === "proc.run.tool.finished");
+        expect(finishes).toHaveLength(1);
+        expect(finishes[0][1]).toMatchObject({
+          pid,
+          runId: "run-cancelled",
+          executionId: "dispatch-started",
+          callId: "call-started",
+          outcome: "cancelled",
+        });
+        expect(JSON.stringify(finishes[0][1])).not.toContain("private");
         process.currentRun = null;
       });
     });
