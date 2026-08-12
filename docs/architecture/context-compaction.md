@@ -30,20 +30,29 @@ Provider usage updates the state after a response; preflight always recomputes
 the estimate for the next request.
 
 An unknown model context window produces unknown pressure, not an invented
-limit. The provider may still reject the request; normal generation fallback and
-error handling then apply.
+limit. If the provider reports that the assembled request exceeds its context
+window, the Process applies the same history policy regardless of the estimate.
+Context overflow does not advance the main generation fallback chain.
 
 ## Overflow policy
 
 Each process has an `auto-compact` or `fail` policy, a pressure threshold, and a
-`keepLast` value. The default auto-compacts at `0.9` pressure
+`keepLast` value. The threshold governs proactive preflight compaction. The
+default auto-compacts at `0.9` pressure
 while retaining the newest 80 stored messages. The policy is exposed through
 `proc.history.policy.get` and `proc.history.policy.set`.
 
-- `auto-compact` generates a summary and compacts the old prefix before the
-  model call.
-- `fail` ends the run with a visible system error and leaves the process
-  available for explicit compaction or reset.
+- `auto-compact` generates a summary and compacts the old prefix during
+  preflight or after the first provider-confirmed overflow. It rebuilds the
+  context and retries the same active model configuration once.
+- `fail` ends the run with a visible system error during preflight or after a
+  provider-confirmed overflow, and leaves the process available for explicit
+  compaction or reset.
+
+One generation cycle installs at most one automatic compaction. A later tool
+round may compact again if newly stored results grow the next assembled context.
+If the rebuilt request still overflows, or no older prefix can be archived, the
+current run stops explicitly rather than looping or switching models.
 
 Explicit compaction remains available as an operation; `manual` is not an
 overflow policy.
@@ -56,8 +65,9 @@ overflow policy.
 - `throughMessageId` selects a prefix through a stored message id.
 
 The caller must also provide a summary or set `generateSummary: true`. Explicit
-compaction rejects an active process. Automatic compaction runs in the
-owning run's preflight and stops if that run is superseded or aborted.
+compaction rejects an active process. Automatic compaction runs inside the
+owning run's lifecycle, from preflight or provider-overflow recovery, and stops
+if that run is superseded or aborted.
 
 A successful compaction:
 
