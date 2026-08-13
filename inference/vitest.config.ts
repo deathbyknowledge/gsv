@@ -55,6 +55,7 @@ export default defineConfig({
                     event.version !== 1
                     || typeof event.installationId !== "string"
                     || typeof event.logicalRequestId !== "string"
+                    || !["agent", "mail-intake"].includes(event.purpose)
                     || !Number.isSafeInteger(event.costNanoUsd)
                     || event.totalTokens !== event.inputTokens
                       + event.outputTokens

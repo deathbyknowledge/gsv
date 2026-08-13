@@ -1,4 +1,5 @@
 import { INFERENCE_V001_INITIAL_SCHEMA } from "./v001_initial";
+import { INFERENCE_V002_MAIL_INTAKE } from "./v002_mail_intake";
 
 export type InferenceSqlMigration = {
   id: number;
@@ -17,6 +18,7 @@ const SCHEMA_COMPONENT = "managed_inference";
 
 export const INFERENCE_MIGRATIONS: readonly InferenceSqlMigration[] = [
   INFERENCE_V001_INITIAL_SCHEMA,
+  INFERENCE_V002_MAIL_INTAKE,
 ];
 
 export function runInferenceSqlMigrations(

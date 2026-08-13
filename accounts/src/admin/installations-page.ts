@@ -123,6 +123,7 @@ export function adminInstallationPage(
             <dt>Policy</dt><dd>${stateBadge(installation.inference.enabled ? "enabled" : "disabled")}</dd>
             <dt>Allowance</dt><dd>${formatNanoUsd(installation.inference.monthlyLimitNanoUsd)}</dd>
             <dt>Remaining</dt><dd>${formatNanoUsd(remaining)}</dd>
+            <dt>Mail intake</dt><dd>${formatInteger(installation.inference.mailIntake.requests)} requests · ${formatNanoUsd(installation.inference.mailIntake.costNanoUsd)}</dd>
           </dl>
           <form class="form-actions" method="post" action="${installationPath}/inference">
             <label><span>Monthly USD allowance</span><input name="monthlyLimitUsd" required inputmode="decimal" value="${formatNanoUsdInput(installation.inference.monthlyLimitNanoUsd)}"></label>

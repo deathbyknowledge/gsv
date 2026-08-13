@@ -5,7 +5,10 @@ import {
 } from "cloudflare:test";
 import {
   GSV_INFERENCE_PRODUCT_MODEL,
+  type ManagedInferencePurpose,
   type ManagedInferenceRequest,
+  type ManagedMailSummary,
+  type ManagedMailSummaryRequest,
 } from "@humansandmachines/gsv/protocol";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { InferenceEnv } from "./env";
@@ -32,12 +35,27 @@ function request(
   };
 }
 
-function completion(id: string): Response {
+function mailSummaryRequest(
+  installationId: string,
+  logicalRequestId: string,
+): ManagedMailSummaryRequest {
+  return {
+    version: 1,
+    installationId,
+    logicalRequestId,
+    actor: { localUid: 1_000 },
+    from: "Mike Example <mike@example.com>",
+    subject: "Following up",
+    text: "Mike asked whether we can meet tomorrow.",
+  };
+}
+
+function completion(id: string, text = "pong"): Response {
   return new Response([
     sse({
       id,
       model: "deepseek/deepseek-v4-flash-0731",
-      choices: [{ index: 0, delta: { content: "pong" } }],
+      choices: [{ index: 0, delta: { content: text } }],
     }),
     sse({
       choices: [{ index: 0, delta: {}, finish_reason: "stop" }],
@@ -58,6 +76,181 @@ afterEach(() => {
 });
 
 describe("installation managed inference", () => {
+  it("persists and replays a validated mail summary without another charge", async () => {
+    const installationId = "installation_mail_replay";
+    const logicalRequestId = "mail_replay";
+    const stub = env.INFERENCE_INSTALLATIONS.getByName(installationId);
+    const expected = {
+      summary: "Mike asked to arrange a meeting tomorrow.",
+      category: "work",
+      requiresAttention: true,
+      confidence: 0.94,
+    } as const;
+    const fetchMock = vi.fn<typeof fetch>(async (_url, init) => {
+      const payload = JSON.parse(String(init?.body ?? "{}")) as {
+        messages?: Array<{ role?: string; content?: string }>;
+        tools?: unknown;
+        model?: string;
+        max_completion_tokens?: number;
+      };
+      expect(payload.model).toBe("deepseek/deepseek-v4-flash-0731");
+      expect(payload.max_completion_tokens).toBe(256);
+      expect(payload.tools).toBeUndefined();
+      expect(payload.messages?.some((message) => (
+        message.role === "system"
+        && message.content?.includes("untrusted data")
+      ))).toBe(true);
+      expect(payload.messages?.some((message) => (
+        message.role === "user"
+        && message.content?.includes(mailSummaryRequest(
+          installationId,
+          logicalRequestId,
+        ).text)
+      ))).toBe(true);
+      return completion("gen_mail_replay", JSON.stringify(expected));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const input = mailSummaryRequest(installationId, logicalRequestId);
+
+    const first = await stub.summarizeMail(input);
+    const replay = await stub.summarizeMail(input);
+    const persisted = await runInDurableObject(
+      stub,
+      async (instance, state) => {
+        const object = instance as unknown as { env: InferenceEnv };
+        object.env.MANAGED_INFERENCE_ENABLED = false;
+        let disabledReplay: ManagedMailSummary | undefined;
+        try {
+          disabledReplay = await (instance as InferenceInstallation)
+            .summarizeMail(input);
+        } finally {
+          object.env.MANAGED_INFERENCE_ENABLED = true;
+        }
+        const stored = state.storage.sql.exec<{
+          purpose: string;
+          state: string;
+          request_fingerprint: string | null;
+          result_json: string | null;
+        }>(
+          `SELECT purpose, state, request_fingerprint, result_json
+           FROM inference_requests WHERE logical_request_id = ?`,
+          logicalRequestId,
+        ).one();
+        let exportedPurpose: ManagedInferencePurpose | undefined;
+        const accounts = object.env.ACCOUNTS;
+        object.env.ACCOUNTS = {
+          getManagedInferencePolicy: async (installationId) => (
+            await accounts.getManagedInferencePolicy(installationId)
+          ),
+          recordManagedInferenceUsage: async (events) => {
+            exportedPurpose = events[0]?.purpose;
+          },
+        };
+        try {
+          state.storage.sql.exec(
+            "UPDATE inference_requests SET next_export_at = ?",
+            Date.now(),
+          );
+          await (instance as InferenceInstallation).alarm();
+        } finally {
+          object.env.ACCOUNTS = accounts;
+        }
+        return { disabledReplay, exportedPurpose, stored };
+      },
+    );
+
+    expect(first).toEqual(expected);
+    expect(replay).toEqual(expected);
+    expect(persisted.disabledReplay).toEqual(expected);
+    expect(persisted.exportedPurpose).toBe("mail-intake");
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    await expect(stub.usage()).resolves.toMatchObject({
+      startedRequests: 1,
+      completedRequests: 1,
+      failedRequests: 0,
+      spentNanoUsd: 340,
+    });
+    expect(persisted.stored).toMatchObject({
+      purpose: "mail-intake",
+      state: "completed",
+      request_fingerprint: expect.stringMatching(/^[0-9a-f]{64}$/),
+      result_json: JSON.stringify(expected),
+    });
+  });
+
+  it("rejects reuse of a mail replay key for different parsed content", async () => {
+    const installationId = "installation_mail_conflict";
+    const stub = env.INFERENCE_INSTALLATIONS.getByName(installationId);
+    const fetchMock = vi.fn<typeof fetch>(async () => completion(
+      "gen_mail_conflict",
+      JSON.stringify({
+        summary: "The first message was received.",
+        category: "personal",
+        requiresAttention: false,
+        confidence: 0.8,
+      }),
+    ));
+    vi.stubGlobal("fetch", fetchMock);
+    const input = mailSummaryRequest(installationId, "mail_conflict");
+
+    await stub.summarizeMail(input);
+    const rejection = await runInDurableObject(stub, async (instance) => {
+      try {
+        await (instance as InferenceInstallation).summarizeMail({
+          ...input,
+          text: "This is different parsed content.",
+        });
+      } catch (error) {
+        return error instanceof Error ? error.message : String(error);
+      }
+      return "";
+    });
+
+    expect(rejection).toContain("conflicts with an existing request");
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    await expect(stub.usage()).resolves.toMatchObject({
+      startedRequests: 1,
+      completedRequests: 1,
+    });
+  });
+
+  it("settles an invalid mail summary once and never retries its key", async () => {
+    const installationId = "installation_mail_invalid_result";
+    const stub = env.INFERENCE_INSTALLATIONS.getByName(installationId);
+    const fetchMock = vi.fn<typeof fetch>(async () => completion(
+      "gen_mail_invalid_result",
+      JSON.stringify({
+        summary: "This output is missing required fields.",
+      }),
+    ));
+    vi.stubGlobal("fetch", fetchMock);
+    const input = mailSummaryRequest(installationId, "mail_invalid_result");
+
+    const rejections = await runInDurableObject(stub, async (instance) => {
+      const installation = instance as InferenceInstallation;
+      const messages: string[] = [];
+      for (let attempt = 0; attempt < 2; attempt += 1) {
+        try {
+          await installation.summarizeMail(input);
+        } catch (error) {
+          messages.push(error instanceof Error ? error.message : String(error));
+        }
+      }
+      return messages;
+    });
+
+    expect(rejections[0]).toContain("result fields are invalid");
+    expect(rejections[1]).toContain("was already failed");
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    await expect(stub.usage()).resolves.toMatchObject({
+      spentNanoUsd: 340,
+      reservedNanoUsd: 0,
+      startedRequests: 1,
+      completedRequests: 0,
+      failedRequests: 1,
+    });
+  });
+
   it("settles provider usage into its installation period", async () => {
     expect(env.OPENROUTER_API_KEY === "test-key").toBe(true);
     const installationId = "installation_settlement";

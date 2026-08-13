@@ -44,6 +44,7 @@ export function adminInferencePage(
           <dt>Failed</dt><dd>${formatInteger(inference.failed)}</dd>
           <dt>Aborted</dt><dd>${formatInteger(inference.aborted)}</dd>
           <dt>Abandoned</dt><dd>${formatInteger(inference.abandoned)}</dd>
+          <dt>Mail intake</dt><dd>${formatInteger(inference.mailIntake.requests)} requests · ${formatInteger(inference.mailIntake.tokens)} tokens · ${formatNanoUsd(inference.mailIntake.costNanoUsd)}</dd>
         </dl>
         <form class="form-actions" method="post" action="/admin/inference">
           <button class="${inference.enabled ? "danger" : ""}" type="submit" name="enabled" value="${inference.enabled ? "false" : "true"}">${inference.enabled ? "Pause all inference" : "Enable inference"}</button>

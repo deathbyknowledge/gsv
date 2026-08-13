@@ -71,7 +71,14 @@ export type AdminInstallation = {
     failed: number;
     aborted: number;
     abandoned: number;
+    mailIntake: AdminInferencePurposeUsage;
   };
+};
+
+export type AdminInferencePurposeUsage = {
+  requests: number;
+  tokens: number;
+  costNanoUsd: number;
 };
 
 export type AdminInferenceOverview = {
@@ -83,6 +90,7 @@ export type AdminInferenceOverview = {
   failed: number;
   aborted: number;
   abandoned: number;
+  mailIntake: AdminInferencePurposeUsage;
 };
 
 export type IssuedAdminInstallation = {
@@ -105,6 +113,9 @@ type AdminInstallationRow = {
   inference_failed?: number;
   inference_aborted?: number;
   inference_abandoned?: number;
+  inference_mail_intake_requests?: number;
+  inference_mail_intake_tokens?: number;
+  inference_mail_intake_cost_nano_usd?: number;
   inference_enabled?: number;
   inference_monthly_limit_nano_usd?: number;
 };
@@ -126,6 +137,9 @@ type AdminInferenceUsageRow = {
   failed: number;
   aborted: number;
   abandoned: number;
+  mail_intake_requests: number;
+  mail_intake_tokens: number;
+  mail_intake_cost_nano_usd: number;
 };
 
 export class InstallationAdminService {
@@ -223,7 +237,13 @@ export class InstallationAdminService {
            COALESCE(SUM(CASE WHEN outcome = 'aborted' THEN 1 ELSE 0 END), 0)
              AS aborted,
            COALESCE(SUM(CASE WHEN outcome = 'abandoned' THEN 1 ELSE 0 END), 0)
-             AS abandoned
+             AS abandoned,
+           COALESCE(SUM(CASE WHEN purpose = 'mail-intake' THEN 1 ELSE 0 END), 0)
+             AS mail_intake_requests,
+           COALESCE(SUM(CASE WHEN purpose = 'mail-intake' THEN total_tokens ELSE 0 END), 0)
+             AS mail_intake_tokens,
+           COALESCE(SUM(CASE WHEN purpose = 'mail-intake' THEN cost_nano_usd ELSE 0 END), 0)
+             AS mail_intake_cost_nano_usd
          FROM managed_inference_usage_events
          WHERE period = ?`,
       ).bind(period).first<AdminInferenceUsageRow>(),
@@ -237,6 +257,11 @@ export class InstallationAdminService {
       failed: usage?.failed ?? 0,
       aborted: usage?.aborted ?? 0,
       abandoned: usage?.abandoned ?? 0,
+      mailIntake: {
+        requests: usage?.mail_intake_requests ?? 0,
+        tokens: usage?.mail_intake_tokens ?? 0,
+        costNanoUsd: usage?.mail_intake_cost_nano_usd ?? 0,
+      },
     };
   }
 
@@ -306,6 +331,10 @@ export class InstallationAdminService {
          COALESCE(u.failed, 0) AS inference_failed,
          COALESCE(u.aborted, 0) AS inference_aborted,
          COALESCE(u.abandoned, 0) AS inference_abandoned,
+         COALESCE(u.mail_intake_requests, 0) AS inference_mail_intake_requests,
+         COALESCE(u.mail_intake_tokens, 0) AS inference_mail_intake_tokens,
+         COALESCE(u.mail_intake_cost_nano_usd, 0)
+           AS inference_mail_intake_cost_nano_usd,
          COALESCE(ip.enabled, 0) AS inference_enabled,
          COALESCE(ip.monthly_limit_nano_usd, 0)
            AS inference_monthly_limit_nano_usd
@@ -320,7 +349,13 @@ export class InstallationAdminService {
            SUM(cost_nano_usd) AS cost_nano_usd,
            SUM(CASE WHEN outcome = 'failed' THEN 1 ELSE 0 END) AS failed,
            SUM(CASE WHEN outcome = 'aborted' THEN 1 ELSE 0 END) AS aborted,
-           SUM(CASE WHEN outcome = 'abandoned' THEN 1 ELSE 0 END) AS abandoned
+           SUM(CASE WHEN outcome = 'abandoned' THEN 1 ELSE 0 END) AS abandoned,
+           SUM(CASE WHEN purpose = 'mail-intake' THEN 1 ELSE 0 END)
+             AS mail_intake_requests,
+           SUM(CASE WHEN purpose = 'mail-intake' THEN total_tokens ELSE 0 END)
+             AS mail_intake_tokens,
+           SUM(CASE WHEN purpose = 'mail-intake' THEN cost_nano_usd ELSE 0 END)
+             AS mail_intake_cost_nano_usd
          FROM managed_inference_usage_events
          WHERE period = ? AND installation_id = ?
          GROUP BY installation_id
@@ -430,6 +465,11 @@ function adminInstallationFromRow(
       failed: row.inference_failed ?? 0,
       aborted: row.inference_aborted ?? 0,
       abandoned: row.inference_abandoned ?? 0,
+      mailIntake: {
+        requests: row.inference_mail_intake_requests ?? 0,
+        tokens: row.inference_mail_intake_tokens ?? 0,
+        costNanoUsd: row.inference_mail_intake_cost_nano_usd ?? 0,
+      },
     },
   };
 }

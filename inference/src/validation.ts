@@ -1,5 +1,6 @@
 import {
   GSV_INFERENCE_PRODUCT_MODEL,
+  type ManagedInferenceActor,
   type ManagedInferenceRequest,
 } from "@humansandmachines/gsv/protocol";
 import { MANAGED_INFERENCE_MAX_OUTPUT_TOKENS } from "./pricing";
@@ -15,15 +16,7 @@ export function validateManagedInferenceRequest(
   }
   validateOpaqueId(input.installationId, "installationId");
   validateOpaqueId(input.logicalRequestId, "logicalRequestId");
-  if (
-    !input.actor
-    || !Number.isSafeInteger(input.actor.localUid)
-    || input.actor.localUid < 0
-  ) {
-    throw new Error("Managed inference actor is invalid");
-  }
-  validateOptionalOpaqueId(input.actor.processId, "processId");
-  validateOptionalOpaqueId(input.actor.runId, "runId");
+  validateManagedInferenceActor(input.actor);
   if (input.model !== GSV_INFERENCE_PRODUCT_MODEL) {
     throw new Error("Managed inference model is invalid");
   }
@@ -45,6 +38,22 @@ export function validateManagedInferenceRequest(
     throw new Error("Managed inference timeout is invalid");
   }
   return input;
+}
+
+export function validateManagedInferenceActor(
+  actor: ManagedInferenceActor,
+): ManagedInferenceActor {
+  if (
+    !actor
+    || typeof actor !== "object"
+    || !Number.isSafeInteger(actor.localUid)
+    || actor.localUid < 0
+  ) {
+    throw new Error("Managed inference actor is invalid");
+  }
+  validateOptionalOpaqueId(actor.processId, "processId");
+  validateOptionalOpaqueId(actor.runId, "runId");
+  return actor;
 }
 
 export function validateOpaqueId(value: string, field: string): string {

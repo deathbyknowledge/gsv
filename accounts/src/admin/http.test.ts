@@ -33,6 +33,7 @@ function installation(
       failed: 1,
       aborted: 0,
       abandoned: 0,
+      mailIntake: { requests: 0, tokens: 0, costNanoUsd: 0 },
     },
   };
 }
@@ -76,6 +77,7 @@ function inferenceOverview(): AdminInferenceOverview {
     failed: 1,
     aborted: 2,
     abandoned: 3,
+    mailIntake: { requests: 4, tokens: 20, costNanoUsd: 500_000_000 },
   };
 }
 
@@ -203,6 +205,7 @@ describe("accounts admin HTTP", () => {
     const body = await response?.text();
     expect(body).toContain(action);
     expect(body).toContain("Monthly USD allowance");
+    expect(body).toContain("Mail intake");
     expect(body).toContain("5.00");
     expect(body).toContain("3</strong>");
     expect(body).not.toContain("onboard_secret");
@@ -224,6 +227,8 @@ describe("accounts admin HTTP", () => {
     expect(body).toContain("Managed inference");
     expect(body).toContain("Requests paused");
     expect(body).toContain("$2.00");
+    expect(body).toContain("Mail intake");
+    expect(body).toContain("$0.50");
   });
 
   it("creates through the canonical form and shows the capability once", async () => {

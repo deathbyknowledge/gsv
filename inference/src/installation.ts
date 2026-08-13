@@ -2,12 +2,22 @@ import { DurableObject } from "cloudflare:workers";
 import {
   GSV_INFERENCE_PRODUCT_MODEL,
   type ManagedInferencePolicy,
+  type ManagedInferencePurpose,
   type ManagedInferenceRequest,
   type ManagedInferenceResult,
   type ManagedInferenceUsageEvent,
   type ManagedInferenceUsageOutcome,
+  type ManagedMailSummary,
+  type ManagedMailSummaryRequest,
 } from "@humansandmachines/gsv/protocol";
 import type { InferenceEnv } from "./env";
+import {
+  buildMailSummaryInferenceRequest,
+  managedMailSummaryFingerprint,
+  parseManagedMailSummaryResult,
+  validateManagedMailSummary,
+  validateManagedMailSummaryRequest,
+} from "./mail-summary";
 import { createOpenRouterGeneration } from "./openrouter";
 import { reservationNanoUsd, usageNanoUsd } from "./pricing";
 import { runInferenceSqlMigrations } from "./schema/migrations";
@@ -26,6 +36,12 @@ type ActiveGeneration = {
   abort: () => Promise<void>;
 };
 
+type ActiveMailSummary = {
+  fingerprint: string;
+  promise: Promise<ManagedMailSummary>;
+  abort: () => Promise<void>;
+};
+
 type StoredRequestState =
   | "reserved"
   | "completed"
@@ -37,14 +53,23 @@ type RequestStateRow = {
   logical_request_id: string;
   period: string;
   state: StoredRequestState;
+  purpose: ManagedInferencePurpose;
+  request_fingerprint: string | null;
+  result_json: string | null;
   reserved_nano_usd: number;
 };
+
+type ReservationRow = Pick<
+  RequestStateRow,
+  "logical_request_id" | "period" | "state" | "reserved_nano_usd"
+>;
 
 type ExportRow = {
   logical_request_id: string;
   local_uid: number;
   process_id: string | null;
   run_id: string | null;
+  purpose: ManagedInferencePurpose;
   period: string;
   model: string;
   state: Exclude<StoredRequestState, "reserved">;
@@ -89,6 +114,7 @@ type PeriodRow = {
 export class InferenceInstallation extends DurableObject<InferenceEnv> {
   private readonly installationId: string;
   private readonly activeGenerations = new Map<string, ActiveGeneration>();
+  private readonly activeMailSummaries = new Map<string, ActiveMailSummary>();
   private readonly deploymentMonthlyLimitNanoUsd: number;
 
   constructor(ctx: DurableObjectState, env: InferenceEnv) {
@@ -105,6 +131,9 @@ export class InferenceInstallation extends DurableObject<InferenceEnv> {
   ): Promise<ManagedInferenceResult> {
     const input = validateManagedInferenceRequest(inputValue);
     this.requireOwnedRequest(input);
+    if (this.activeMailSummaries.has(input.logicalRequestId)) {
+      throw new Error("Managed inference request conflicts with mail intake");
+    }
     const existing = this.activeGenerations.get(input.logicalRequestId);
     if (existing) return await existing.promise;
 
@@ -126,12 +155,59 @@ export class InferenceInstallation extends DurableObject<InferenceEnv> {
     }
   }
 
+  async summarizeMail(
+    inputValue: ManagedMailSummaryRequest,
+  ): Promise<ManagedMailSummary> {
+    const input = validateManagedMailSummaryRequest(inputValue);
+    this.requireOwnedRequest(input);
+    const fingerprint = await managedMailSummaryFingerprint(input);
+    if (this.activeGenerations.has(input.logicalRequestId)) {
+      throw new Error("Managed mail summary request conflicts with agent inference");
+    }
+    const existing = this.activeMailSummaries.get(input.logicalRequestId);
+    if (existing) {
+      if (existing.fingerprint !== fingerprint) {
+        throw new Error("Managed mail summary request conflicts with an existing request");
+      }
+      return await existing.promise;
+    }
+    const replay = this.mailSummaryReplay(input.logicalRequestId, fingerprint);
+    if (replay) return replay;
+    if (!this.env.MANAGED_INFERENCE_ENABLED) {
+      throw new Error("Managed inference is disabled");
+    }
+
+    const inferenceInput = buildMailSummaryInferenceRequest(input);
+    const generation = createOpenRouterGeneration(
+      inferenceInput,
+      this.env.OPENROUTER_API_KEY,
+    );
+    const active: ActiveMailSummary = {
+      fingerprint,
+      promise: this.completeMailSummary(
+        inferenceInput,
+        fingerprint,
+        generation,
+      ),
+      abort: generation.abort,
+    };
+    this.activeMailSummaries.set(input.logicalRequestId, active);
+    try {
+      return await active.promise;
+    } finally {
+      if (this.activeMailSummaries.get(input.logicalRequestId) === active) {
+        this.activeMailSummaries.delete(input.logicalRequestId);
+      }
+    }
+  }
+
   async abort(logicalRequestIdValue: string): Promise<void> {
     const logicalRequestId = validateOpaqueId(
       logicalRequestIdValue,
       "logicalRequestId",
     );
     await this.activeGenerations.get(logicalRequestId)?.abort();
+    await this.activeMailSummaries.get(logicalRequestId)?.abort();
   }
 
   async usage(periodValue?: string): Promise<InferenceUsageSnapshot> {
@@ -187,6 +263,8 @@ export class InferenceInstallation extends DurableObject<InferenceEnv> {
       startedAt,
       reservedNanoUsd,
       monthlyLimitNanoUsd,
+      "agent",
+      null,
     );
     await this.scheduleNextAlarm();
 
@@ -202,11 +280,75 @@ export class InferenceInstallation extends DurableObject<InferenceEnv> {
     }
   }
 
+  private async completeMailSummary(
+    input: ManagedInferenceRequest,
+    fingerprint: string,
+    generation: ReturnType<typeof createOpenRouterGeneration>,
+  ): Promise<ManagedMailSummary> {
+    const policy = await this.env.ACCOUNTS.getManagedInferencePolicy(
+      this.installationId,
+    );
+    const monthlyLimitNanoUsd = effectiveMonthlyLimit(
+      policy,
+      this.installationId,
+      this.deploymentMonthlyLimitNanoUsd,
+    );
+    const startedAt = Date.now();
+    const reservedNanoUsd = reservationNanoUsd(input);
+    this.reserve(
+      input,
+      startedAt,
+      reservedNanoUsd,
+      monthlyLimitNanoUsd,
+      "mail-intake",
+      fingerprint,
+    );
+    await this.scheduleNextAlarm();
+
+    let result: ManagedInferenceResult;
+    try {
+      result = await generation.result();
+    } catch (error) {
+      this.settleFailure(input.logicalRequestId, Date.now());
+      await this.scheduleNextAlarm();
+      throw error;
+    }
+    let summary: ManagedMailSummary;
+    try {
+      summary = parseManagedMailSummaryResult(result);
+    } catch (error) {
+      try {
+        this.settleResult(input.logicalRequestId, result, Date.now(), {
+          outcome: failedOutcomeForResult(result),
+          resultJson: null,
+        });
+      } catch {
+        this.settleFailure(input.logicalRequestId, Date.now());
+      }
+      await this.scheduleNextAlarm();
+      throw error;
+    }
+    try {
+      this.settleResult(input.logicalRequestId, result, Date.now(), {
+        outcome: "completed",
+        resultJson: JSON.stringify(summary),
+      });
+    } catch (error) {
+      this.settleFailure(input.logicalRequestId, Date.now());
+      await this.scheduleNextAlarm();
+      throw error;
+    }
+    await this.scheduleNextAlarm();
+    return summary;
+  }
+
   private reserve(
     input: ManagedInferenceRequest,
     startedAt: number,
     reservedNanoUsd: number,
     monthlyLimitNanoUsd: number,
+    purpose: ManagedInferencePurpose,
+    requestFingerprint: string | null,
   ): void {
     const period = inferencePeriod(startedAt);
     const reservationExpiresAt = startedAt
@@ -247,14 +389,17 @@ export class InferenceInstallation extends DurableObject<InferenceEnv> {
       this.ctx.storage.sql.exec(
         `INSERT INTO inference_requests (
            logical_request_id, local_uid, process_id, run_id, period, model,
-           state, reserved_nano_usd, started_at, reservation_expires_at
-         ) VALUES (?, ?, ?, ?, ?, ?, 'reserved', ?, ?, ?)`,
+           purpose, request_fingerprint, state, reserved_nano_usd, started_at,
+           reservation_expires_at
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'reserved', ?, ?, ?)`,
         input.logicalRequestId,
         input.actor.localUid,
         input.actor.processId ?? null,
         input.actor.runId ?? null,
         period,
         input.model,
+        purpose,
+        requestFingerprint,
         reservedNanoUsd,
         startedAt,
         reservationExpiresAt,
@@ -274,8 +419,12 @@ export class InferenceInstallation extends DurableObject<InferenceEnv> {
     logicalRequestId: string,
     result: ManagedInferenceResult,
     completedAt: number,
+    options?: {
+      outcome?: Exclude<ManagedInferenceUsageOutcome, "abandoned">;
+      resultJson?: string | null;
+    },
   ): void {
-    const outcome = outcomeForResult(result);
+    const outcome = options?.outcome ?? outcomeForResult(result);
     const usage = normalizedUsage(result);
     const costNanoUsd = usageNanoUsd(result.usage);
     this.settle(logicalRequestId, {
@@ -290,6 +439,7 @@ export class InferenceInstallation extends DurableObject<InferenceEnv> {
       providerResponseId: result.responseId ?? null,
       stopReason: result.stopReason,
       completedAt,
+      resultJson: options?.resultJson ?? null,
     });
   }
 
@@ -308,6 +458,7 @@ export class InferenceInstallation extends DurableObject<InferenceEnv> {
       providerResponseId: null,
       stopReason: "error",
       completedAt,
+      resultJson: null,
     });
   }
 
@@ -325,6 +476,7 @@ export class InferenceInstallation extends DurableObject<InferenceEnv> {
       providerResponseId: string | null;
       stopReason: ManagedInferenceUsageEvent["stopReason"];
       completedAt: number;
+      resultJson: string | null;
     },
   ): void {
     this.ctx.storage.transactionSync(() => {
@@ -338,7 +490,7 @@ export class InferenceInstallation extends DurableObject<InferenceEnv> {
              output_tokens = ?, cache_read_tokens = ?,
              cache_write_tokens = ?, total_tokens = ?, response_model = ?,
              provider_response_id = ?, stop_reason = ?, completed_at = ?,
-             next_export_at = ?
+             result_json = ?, next_export_at = ?
          WHERE logical_request_id = ? AND state = 'reserved'`,
         settlement.outcome,
         settlement.costNanoUsd,
@@ -351,6 +503,7 @@ export class InferenceInstallation extends DurableObject<InferenceEnv> {
         settlement.providerResponseId,
         settlement.stopReason,
         settlement.completedAt,
+        settlement.resultJson,
         settlement.completedAt + EXPORT_DELAY_MS,
         logicalRequestId,
       );
@@ -373,7 +526,7 @@ export class InferenceInstallation extends DurableObject<InferenceEnv> {
   }
 
   private async abandonExpiredReservations(now: number): Promise<void> {
-    const expired = this.ctx.storage.sql.exec<RequestStateRow>(
+    const expired = this.ctx.storage.sql.exec<ReservationRow>(
       `SELECT logical_request_id, period, state, reserved_nano_usd
        FROM inference_requests
        WHERE state = 'reserved' AND reservation_expires_at <= ?`,
@@ -406,13 +559,14 @@ export class InferenceInstallation extends DurableObject<InferenceEnv> {
     });
     await Promise.all(expired.map(async (request) => {
       await this.activeGenerations.get(request.logical_request_id)?.abort();
+      await this.activeMailSummaries.get(request.logical_request_id)?.abort();
     }));
   }
 
   private async exportCompletedRequests(now: number): Promise<void> {
     const rows = this.ctx.storage.sql.exec<ExportRow>(
       `SELECT
-         logical_request_id, local_uid, process_id, run_id, period, model,
+         logical_request_id, local_uid, process_id, run_id, purpose, period, model,
          state, reserved_nano_usd, cost_nano_usd, input_tokens,
          output_tokens, cache_read_tokens, cache_write_tokens, total_tokens,
          response_model, provider_response_id, stop_reason, started_at,
@@ -475,6 +629,7 @@ export class InferenceInstallation extends DurableObject<InferenceEnv> {
         ...(row.process_id ? { processId: row.process_id } : {}),
         ...(row.run_id ? { runId: row.run_id } : {}),
       },
+      purpose: row.purpose,
       period: row.period,
       model: row.model,
       ...(row.response_model ? { responseModel: row.response_model } : {}),
@@ -517,14 +672,43 @@ export class InferenceInstallation extends DurableObject<InferenceEnv> {
 
   private requestState(logicalRequestId: string): RequestStateRow | undefined {
     return this.ctx.storage.sql.exec<RequestStateRow>(
-      `SELECT logical_request_id, period, state, reserved_nano_usd
+      `SELECT logical_request_id, period, state, purpose, request_fingerprint,
+              result_json, reserved_nano_usd
        FROM inference_requests
        WHERE logical_request_id = ?`,
       logicalRequestId,
     ).toArray()[0];
   }
 
-  private requireOwnedRequest(input: ManagedInferenceRequest): void {
+  private mailSummaryReplay(
+    logicalRequestId: string,
+    fingerprint: string,
+  ): ManagedMailSummary | undefined {
+    const request = this.requestState(logicalRequestId);
+    if (!request) return undefined;
+    if (
+      request.purpose !== "mail-intake"
+      || request.request_fingerprint !== fingerprint
+    ) {
+      throw new Error("Managed mail summary request conflicts with an existing request");
+    }
+    if (request.state !== "completed" || request.result_json === null) {
+      throw new Error(`Managed mail summary request was already ${request.state}`);
+    }
+    let result: unknown;
+    try {
+      result = JSON.parse(request.result_json);
+    } catch {
+      throw new Error("Stored managed mail summary is invalid");
+    }
+    try {
+      return validateManagedMailSummary(result);
+    } catch {
+      throw new Error("Stored managed mail summary is invalid");
+    }
+  }
+
+  private requireOwnedRequest(input: { installationId: string }): void {
     if (input.installationId !== this.installationId) {
       throw new Error("Managed inference request belongs to another installation");
     }
@@ -560,6 +744,13 @@ function outcomeForResult(
   if (result.stopReason === "aborted") return "aborted";
   if (result.stopReason === "error") return "failed";
   return "completed";
+}
+
+function failedOutcomeForResult(
+  result: ManagedInferenceResult,
+): Exclude<ManagedInferenceUsageOutcome, "abandoned" | "completed"> {
+  const outcome = outcomeForResult(result);
+  return outcome === "completed" ? "failed" : outcome;
 }
 
 function parseMonthlyLimit(value: number): number {

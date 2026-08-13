@@ -2,6 +2,7 @@ import { env, exports } from "cloudflare:workers";
 import {
   GSV_INFERENCE_PRODUCT_MODEL,
   type ManagedInferenceRequest,
+  type ManagedMailSummaryRequest,
 } from "@humansandmachines/gsv/protocol";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -18,6 +19,16 @@ const REQUEST: ManagedInferenceRequest = {
   messages: [{ role: "user", content: "ping", timestamp: 1 }],
   maxOutputTokens: 32,
   timeoutMs: 1_000,
+};
+
+const MAIL_REQUEST: ManagedMailSummaryRequest = {
+  version: 1,
+  installationId: "installation_service_mail_rpc",
+  logicalRequestId: "mail_service_rpc",
+  actor: { localUid: 1_000 },
+  from: "mike@example.com",
+  subject: "Checking in",
+  text: "Are we still on for tomorrow?",
 };
 
 afterEach(() => {
@@ -48,14 +59,48 @@ describe("managed inference service RPC", () => {
       completedRequests: 1,
     });
   });
+
+  it("routes fixed mail intake through the same budget coordinator", async () => {
+    const expected = {
+      summary: "Mike asked whether tomorrow's meeting is still scheduled.",
+      category: "work",
+      requiresAttention: true,
+      confidence: 0.9,
+    } as const;
+    const fetchMock = vi.fn<typeof fetch>(async () => completion(
+      JSON.stringify(expected),
+      "generation_service_mail_rpc",
+    ));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(exports.default.summarizeMail(MAIL_REQUEST)).resolves.toEqual(
+      expected,
+    );
+    await expect(exports.default.summarizeMail(MAIL_REQUEST)).resolves.toEqual(
+      expected,
+    );
+
+    const installation = env.INFERENCE_INSTALLATIONS.getByName(
+      MAIL_REQUEST.installationId,
+    );
+    await expect(installation.usage()).resolves.toMatchObject({
+      startedRequests: 1,
+      completedRequests: 1,
+      spentNanoUsd: 340,
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
 });
 
-function completion(): Response {
+function completion(
+  text = "pong",
+  id = "generation_service_rpc",
+): Response {
   return new Response([
     sse({
-      id: "generation_service_rpc",
+      id,
       model: "deepseek/deepseek-v4-flash-0731",
-      choices: [{ index: 0, delta: { content: "pong" } }],
+      choices: [{ index: 0, delta: { content: text } }],
     }),
     sse({
       choices: [{ index: 0, delta: {}, finish_reason: "stop" }],

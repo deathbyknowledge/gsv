@@ -19,6 +19,10 @@ const STOP_REASONS = new Set<NonNullable<ManagedInferenceUsageEvent["stopReason"
   "error",
   "aborted",
 ]);
+const PURPOSES = new Set<ManagedInferenceUsageEvent["purpose"]>([
+  "agent",
+  "mail-intake",
+]);
 
 type UsageEventRow = {
   installation_id: string;
@@ -27,6 +31,7 @@ type UsageEventRow = {
   local_uid: number;
   process_id: string | null;
   run_id: string | null;
+  purpose: ManagedInferenceUsageEvent["purpose"];
   model: string;
   response_model: string | null;
   provider_response_id: string | null;
@@ -56,11 +61,11 @@ export class ManagedInferenceUsageStore {
     const results = await this.db.batch(events.map((event) => this.db.prepare(
       `INSERT INTO managed_inference_usage_events (
          installation_id, logical_request_id, period, local_uid, process_id,
-         run_id, model, response_model, provider_response_id, input_tokens,
+         run_id, purpose, model, response_model, provider_response_id, input_tokens,
          output_tokens, cache_read_tokens, cache_write_tokens, total_tokens,
          reserved_nano_usd, cost_nano_usd, outcome, stop_reason, started_at,
          completed_at, received_at
-       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(installation_id, logical_request_id) DO NOTHING`,
     ).bind(
       event.installationId,
@@ -69,6 +74,7 @@ export class ManagedInferenceUsageStore {
       event.actor.localUid,
       event.actor.processId ?? null,
       event.actor.runId ?? null,
+      event.purpose,
       event.model,
       event.responseModel ?? null,
       event.providerResponseId ?? null,
@@ -93,7 +99,7 @@ export class ManagedInferenceUsageStore {
       const existing = await this.db.prepare(
         `SELECT
            installation_id, logical_request_id, period, local_uid, process_id,
-           run_id, model, response_model, provider_response_id, input_tokens,
+           run_id, purpose, model, response_model, provider_response_id, input_tokens,
            output_tokens, cache_read_tokens, cache_write_tokens, total_tokens,
            reserved_nano_usd, cost_nano_usd, outcome, stop_reason, started_at,
            completed_at
@@ -127,6 +133,10 @@ function validateUsageEvent(
   }
   optionalValue(event.actor.processId, "processId");
   optionalValue(event.actor.runId, "runId");
+  const purpose = event.purpose ?? "agent";
+  if (!PURPOSES.has(purpose)) {
+    throw new Error("Managed inference usage purpose is invalid");
+  }
   if (
     !/^\d{4}-\d{2}$/.test(event.period)
     || event.period !== new Date(event.startedAt).toISOString().slice(0, 7)
@@ -170,7 +180,7 @@ function validateUsageEvent(
   ) {
     throw new Error("Managed inference usage timestamps are invalid");
   }
-  return event;
+  return purpose === event.purpose ? event : { ...event, purpose };
 }
 
 function optionalValue(value: string | undefined, field: string): void {
@@ -198,6 +208,7 @@ function usageEventFingerprint(event: ManagedInferenceUsageEvent): string {
     event.actor.localUid,
     event.actor.processId ?? null,
     event.actor.runId ?? null,
+    event.purpose,
     event.model,
     event.responseModel ?? null,
     event.providerResponseId ?? null,
@@ -223,6 +234,7 @@ function rowFingerprint(row: UsageEventRow): string {
     row.local_uid,
     row.process_id,
     row.run_id,
+    row.purpose,
     row.model,
     row.response_model,
     row.provider_response_id,

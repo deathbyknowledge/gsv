@@ -37,6 +37,7 @@ function usageEvent(
       processId: `process_${suffix}`,
       runId: `run_${suffix}`,
     },
+    purpose: suffix.includes("mail") ? "mail-intake" : "agent",
     period: new Date(startedAt).toISOString().slice(0, 7),
     model: GSV_INFERENCE_PRODUCT_MODEL,
     responseModel: "deepseek/deepseek-v4-flash-0731",
@@ -63,20 +64,36 @@ describe("managed inference usage store", () => {
     await new ManagedInferenceUsageStore(env.ACCOUNT_DB).record([event]);
 
     const row = await env.ACCOUNT_DB.prepare(
-      `SELECT installation_id, logical_request_id, total_tokens, cost_nano_usd
+      `SELECT installation_id, logical_request_id, purpose, total_tokens,
+              cost_nano_usd
        FROM managed_inference_usage_events`,
     ).first<{
       installation_id: string;
       logical_request_id: string;
+      purpose: string;
       total_tokens: number;
       cost_nano_usd: number;
     }>();
     expect(row).toEqual({
       installation_id: installationId,
       logical_request_id: event.logicalRequestId,
+      purpose: "agent",
       total_tokens: 3,
       cost_nano_usd: 340,
     });
+  });
+
+  it("records mail intake as a distinct usage purpose", async () => {
+    const installationId = await installation("mail");
+    const event = usageEvent(installationId, "mail");
+
+    await new ManagedInferenceUsageStore(env.ACCOUNT_DB).record([event]);
+
+    const row = await env.ACCOUNT_DB.prepare(
+      `SELECT purpose FROM managed_inference_usage_events
+       WHERE installation_id = ? AND logical_request_id = ?`,
+    ).bind(installationId, event.logicalRequestId).first<{ purpose: string }>();
+    expect(row).toEqual({ purpose: "mail-intake" });
   });
 
   it("accepts an exact replay without double counting", async () => {

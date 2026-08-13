@@ -81,6 +81,7 @@ describe("installation admin service", () => {
       installationId: created.installation.installationId,
       logicalRequestId: `inference:${suffix}`,
       actor: { localUid: 1_000 },
+      purpose: "mail-intake",
       period: new Date(startedAt).toISOString().slice(0, 7),
       model: "gsv/default",
       inputTokens: 2,
@@ -103,12 +104,22 @@ describe("installation admin service", () => {
         requests: 1,
         tokens: 3,
         costNanoUsd: 340,
+        mailIntake: {
+          requests: 1,
+          tokens: 3,
+          costNanoUsd: 340,
+        },
       },
     });
     await expect(service.inferenceOverview()).resolves.toMatchObject({
       requests: 1,
       tokens: 3,
       costNanoUsd: 340,
+      mailIntake: {
+        requests: 1,
+        tokens: 3,
+        costNanoUsd: 340,
+      },
     });
   });
 

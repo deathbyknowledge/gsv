@@ -16,6 +16,8 @@ export type ManagedInferenceActor = {
   runId?: string;
 };
 
+export type ManagedInferencePurpose = "agent" | "mail-intake";
+
 export type ManagedInferenceRequest = {
   version: 1;
   installationId: string;
@@ -46,6 +48,36 @@ export interface ManagedInferenceService {
   generate(input: ManagedInferenceRequest): Promise<ManagedInferenceGeneration>;
 }
 
+export type ManagedMailSummaryRequest = {
+  version: 1;
+  installationId: string;
+  logicalRequestId: string;
+  actor: ManagedInferenceActor;
+  from: string;
+  subject: string;
+  text: string;
+};
+
+export type ManagedMailSummaryCategory =
+  | "personal"
+  | "work"
+  | "transactional"
+  | "newsletter"
+  | "spam"
+  | "suspicious"
+  | "other";
+
+export type ManagedMailSummary = {
+  summary: string;
+  category: ManagedMailSummaryCategory;
+  requiresAttention: boolean;
+  confidence: number;
+};
+
+export interface ManagedMailSummaryService {
+  summarizeMail(input: ManagedMailSummaryRequest): Promise<ManagedMailSummary>;
+}
+
 export type ManagedInferenceUsageOutcome =
   | "completed"
   | "failed"
@@ -57,6 +89,7 @@ export type ManagedInferenceUsageEvent = {
   installationId: string;
   logicalRequestId: string;
   actor: ManagedInferenceActor;
+  purpose: ManagedInferencePurpose;
   period: string;
   model: typeof GSV_INFERENCE_PRODUCT_MODEL;
   responseModel?: string;
