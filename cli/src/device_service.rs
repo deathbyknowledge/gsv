@@ -1,4 +1,4 @@
-use crate::logger;
+use crate::{build_info, logger};
 #[cfg(any(test, target_os = "windows"))]
 use base64::Engine;
 use std::ffi::OsString;
@@ -11,6 +11,7 @@ use std::time::Duration;
 
 type DynError = Box<dyn std::error::Error>;
 
+#[cfg(any(test, target_os = "linux"))]
 const DEVICE_SYSTEMD_UNIT_NAME: &str = "gsvd.service";
 #[cfg(any(test, target_os = "macos"))]
 const DEVICE_LAUNCHD_LABEL: &str = "gsvd";
@@ -27,12 +28,11 @@ struct DeviceServiceInstallSpec {
 
 impl DeviceServiceInstallSpec {
     fn current() -> Result<Self, DynError> {
-        let exe_path = std::env::current_exe()?;
-        let exe_path = exe_path.canonicalize().unwrap_or(exe_path);
+        let exe_path = resolve_gsvd_executable()?;
         Ok(Self {
             description: "gsvd",
             exe_path,
-            args: vec!["device".to_string(), "run".to_string()],
+            args: vec!["--foreground".to_string()],
             path_env: device_service_path(),
         })
     }
@@ -46,6 +46,86 @@ trait DeviceServiceManager {
     fn restart(&self) -> Result<(), DynError>;
     fn stop(&self) -> Result<(), DynError>;
     fn status(&self) -> Result<(), DynError>;
+    fn needs_migration(&self, spec: &DeviceServiceInstallSpec) -> Result<bool, DynError>;
+}
+
+pub fn resolve_gsvd_executable() -> Result<PathBuf, DynError> {
+    if let Some(explicit) = std::env::var_os("GSV_GSVD_PATH") {
+        let path = PathBuf::from(explicit);
+        let path = validate_gsvd_executable(path, "GSV_GSVD_PATH")?;
+        validate_gsvd_version(&path)?;
+        return Ok(path);
+    }
+
+    let current = std::env::current_exe()?;
+    let executable_name = if cfg!(windows) { "gsvd.exe" } else { "gsvd" };
+    if let Some(parent) = current.parent() {
+        let sibling = parent.join(executable_name);
+        if is_runnable_file(&sibling) {
+            let sibling = sibling.canonicalize().unwrap_or(sibling);
+            validate_gsvd_version(&sibling)?;
+            return Ok(sibling);
+        }
+    }
+
+    if let Some(path) = find_executable_on_path(executable_name) {
+        let path = path.canonicalize().unwrap_or(path);
+        validate_gsvd_version(&path)?;
+        return Ok(path);
+    }
+
+    Err(format!(
+        "Could not find the sibling `{executable_name}` executable. Install the complete GSV distribution or set GSV_GSVD_PATH."
+    )
+    .into())
+}
+
+fn validate_gsvd_version(executable: &Path) -> Result<(), DynError> {
+    let version_output = read_gsvd_version(executable)?;
+    let version = parse_gsvd_version(&version_output).ok_or("Invalid gsvd version output")?;
+    if version != build_info::PACKAGE_VERSION {
+        return Err(format!(
+            "gsv {} cannot control gsvd {version}; install a complete matching GSV distribution",
+            build_info::PACKAGE_VERSION,
+        )
+        .into());
+    }
+    Ok(())
+}
+
+fn validate_gsvd_executable(path: PathBuf, source: &str) -> Result<PathBuf, DynError> {
+    if !is_runnable_file(&path) {
+        return Err(format!(
+            "{source} does not name an executable file: {}",
+            path.display()
+        )
+        .into());
+    }
+    Ok(path.canonicalize().unwrap_or(path))
+}
+
+fn find_executable_on_path(name: &str) -> Option<PathBuf> {
+    let path = std::env::var_os("PATH")?;
+    std::env::split_paths(&path)
+        .map(|directory| directory.join(name))
+        .find(|candidate| is_runnable_file(candidate))
+}
+
+fn is_runnable_file(path: &Path) -> bool {
+    if !path.is_file() {
+        return false;
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::metadata(path)
+            .map(|metadata| metadata.permissions().mode() & 0o111 != 0)
+            .unwrap_or(false)
+    }
+    #[cfg(not(unix))]
+    {
+        true
+    }
 }
 
 pub fn device_service_management_supported() -> bool {
@@ -56,9 +136,37 @@ pub fn device_service_is_installed() -> Result<bool, DynError> {
     require_platform_service_manager()?.is_installed()
 }
 
+pub fn device_service_needs_migration() -> Result<bool, DynError> {
+    let manager = require_platform_service_manager()?;
+    if !manager.is_installed()? {
+        return Ok(false);
+    }
+    manager.needs_migration(&DeviceServiceInstallSpec::current()?)
+}
+
 pub fn install_device_service() -> Result<(), DynError> {
     let spec = DeviceServiceInstallSpec::current()?;
-    require_platform_service_manager()?.install(&spec)
+    let manager = require_platform_service_manager()?;
+    install_device_service_with_manager(manager.as_ref(), &spec).map(|_| ())
+}
+
+fn install_device_service_with_manager(
+    manager: &dyn DeviceServiceManager,
+    spec: &DeviceServiceInstallSpec,
+) -> Result<bool, DynError> {
+    let was_legacy = manager.is_installed()? && manager.needs_migration(spec)?;
+    manager.install(spec)?;
+
+    // Replacing a running service definition does not necessarily replace its
+    // process: systemd's `enable --now` leaves an active unit running, and a
+    // Windows task configured with IgnoreNew leaves its old instance alive.
+    // Restart only migrations so the established service identity now runs the
+    // newly installed gsvd entrypoint.
+    if was_legacy {
+        manager.restart()?;
+    }
+
+    Ok(was_legacy)
 }
 
 pub fn uninstall_device_service() -> Result<(), DynError> {
@@ -81,8 +189,61 @@ pub fn status_device_service() -> Result<(), DynError> {
     require_platform_service_manager()?.status()
 }
 
+pub fn doctor_device_service() -> Result<(), DynError> {
+    let manager = require_platform_service_manager()?;
+    let executable = resolve_gsvd_executable()?;
+    let installed = manager.is_installed()?;
+    let migration_required =
+        installed && manager.needs_migration(&DeviceServiceInstallSpec::current()?)?;
+    let daemon_version = read_gsvd_version(&executable)?;
+
+    println!("gsvd executable: {}", executable.display());
+    println!("gsvd version: {daemon_version}");
+    println!("gsv version: {}", build_info::BUILD_VERSION);
+    println!(
+        "service installed: {}",
+        if installed { "yes" } else { "no" }
+    );
+    println!(
+        "service definition: {}",
+        if migration_required {
+            "legacy (`gsv device run`); run `gsv device install` to migrate"
+        } else if installed {
+            "current"
+        } else {
+            "not installed"
+        }
+    );
+    println!("logs: {}", logger::device_log_pattern().display());
+
+    if migration_required {
+        return Err("The installed device service uses the legacy CLI launcher".into());
+    }
+    Ok(())
+}
+
+fn read_gsvd_version(executable: &Path) -> Result<String, DynError> {
+    let output = Command::new(executable).arg("--version").output()?;
+    if !output.status.success() {
+        return Err(format!("Failed to read gsvd version ({})", output.status).into());
+    }
+    let version = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if parse_gsvd_version(&version).is_none() {
+        return Err(format!("gsvd returned an invalid version string: {version}").into());
+    }
+    Ok(version)
+}
+
+fn parse_gsvd_version(output: &str) -> Option<&str> {
+    let mut fields = output.split_whitespace();
+    (fields.next()? == "gsvd")
+        .then(|| fields.next())
+        .flatten()
+        .filter(|_| fields.next().is_none())
+}
+
 pub fn show_device_service_logs(lines: usize, follow: bool) -> Result<(), DynError> {
-    let log_path = logger::device_log_path()?;
+    let log_path = logger::device_log_path();
     if !log_path.exists() {
         return Err(format!("Log file not found: {}", log_path.display()).into());
     }
@@ -207,30 +368,12 @@ fn run_command_passthrough(cmd: &mut Command, context: &str) -> Result<(), DynEr
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
-fn is_executable_file(path: &Path) -> bool {
-    if !path.is_file() {
-        return false;
-    }
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        fs::metadata(path)
-            .map(|meta| (meta.permissions().mode() & 0o111) != 0)
-            .unwrap_or(false)
-    }
-    #[cfg(not(unix))]
-    {
-        true
-    }
-}
-
-#[cfg(any(target_os = "linux", target_os = "macos"))]
 fn resolve_login_shell() -> String {
     if let Ok(raw) = std::env::var("SHELL") {
         let candidate = raw.trim();
         if !candidate.is_empty() {
             let path = Path::new(candidate);
-            if path.is_absolute() && is_executable_file(path) {
+            if path.is_absolute() && is_runnable_file(path) {
                 return candidate.to_string();
             }
         }
@@ -328,6 +471,12 @@ fn systemd_exec_start(spec: &DeviceServiceInstallSpec) -> String {
     parts.join(" ")
 }
 
+#[cfg(any(test, target_os = "linux"))]
+fn systemd_service_needs_migration(unit: &str, spec: &DeviceServiceInstallSpec) -> bool {
+    let expected = format!("ExecStart={}", systemd_exec_start(spec));
+    !unit.lines().any(|line| line == expected)
+}
+
 #[cfg(any(test, target_os = "macos"))]
 fn launchd_path_environment_block(path: Option<&str>) -> String {
     path.map(|value| {
@@ -363,6 +512,11 @@ fn launchd_plist_contents(
         launchd_program_arguments_block(spec),
         path_env_block,
     )
+}
+
+#[cfg(any(test, target_os = "macos"))]
+fn launchd_service_needs_migration(plist: &str, spec: &DeviceServiceInstallSpec) -> bool {
+    !plist.contains(&launchd_program_arguments_block(spec))
 }
 
 #[cfg(any(test, target_os = "windows"))]
@@ -455,6 +609,33 @@ try {{\n\
 }
 
 #[cfg(any(test, target_os = "windows"))]
+fn windows_task_stop_if_running_script(task_name: &str) -> String {
+    let task_name = powershell_single_quote(task_name);
+    format!(
+        "$ErrorActionPreference = 'Stop'\n\
+$ProgressPreference = 'SilentlyContinue'\n\
+Import-Module ScheduledTasks -ErrorAction Stop\n\
+$TaskName = {task_name}\n\
+$Task = Get-ScheduledTask -TaskName $TaskName -ErrorAction Stop\n\
+$InitialState = [string]$Task.State\n\
+if ($InitialState -eq 'Unknown') {{ throw \"Scheduled task '$TaskName' state is unknown\" }}\n\
+if ($InitialState -eq 'Running' -or $InitialState -eq 'Queued') {{\n\
+  Stop-ScheduledTask -TaskName $TaskName -ErrorAction Stop\n\
+  $Stopped = $false\n\
+  for ($Attempt = 0; $Attempt -lt 50; $Attempt++) {{\n\
+    $State = [string](Get-ScheduledTask -TaskName $TaskName -ErrorAction Stop).State\n\
+    if ($State -eq 'Ready' -or $State -eq 'Disabled') {{\n\
+      $Stopped = $true\n\
+      break\n\
+    }}\n\
+    Start-Sleep -Milliseconds 100\n\
+  }}\n\
+  if (-not $Stopped) {{ throw \"Scheduled task '$TaskName' did not stop\" }}\n\
+}}\n"
+    )
+}
+
+#[cfg(any(test, target_os = "windows"))]
 fn encode_powershell_script(script: &str) -> String {
     let mut utf16 = Vec::with_capacity(script.len() * 2);
     for unit in script.encode_utf16() {
@@ -541,7 +722,7 @@ impl DeviceServiceManager for SystemdUserServiceManager {
             }
         }
 
-        println!("Logs: {}", logger::device_log_pattern()?);
+        println!("Logs: {}", logger::device_log_pattern().display());
         Ok(())
     }
 
@@ -606,6 +787,15 @@ impl DeviceServiceManager for SystemdUserServiceManager {
             "Failed to read device service status",
         )
     }
+
+    fn needs_migration(&self, spec: &DeviceServiceInstallSpec) -> Result<bool, DynError> {
+        let unit_path = systemd_user_unit_path()?;
+        if !unit_path.exists() {
+            return Ok(false);
+        }
+        let unit = fs::read_to_string(unit_path)?;
+        Ok(systemd_service_needs_migration(&unit, spec))
+    }
 }
 
 #[cfg(target_os = "linux")]
@@ -656,7 +846,7 @@ impl DeviceServiceManager for LaunchdUserServiceManager {
             fs::create_dir_all(parent)?;
         }
 
-        fs::create_dir_all(logger::device_log_dir()?)?;
+        fs::create_dir_all(gsv_config::device_log_dir())?;
 
         let path_env_block = launchd_path_environment_block(spec.path_env.as_deref());
         let plist = launchd_plist_contents(DEVICE_LAUNCHD_LABEL, spec, &path_env_block);
@@ -685,7 +875,7 @@ impl DeviceServiceManager for LaunchdUserServiceManager {
         )?;
 
         println!("Installed launchd agent: {}", plist_path.display());
-        println!("Logs: {}", logger::device_log_pattern()?);
+        println!("Logs: {}", logger::device_log_pattern().display());
         Ok(())
     }
 
@@ -764,6 +954,15 @@ impl DeviceServiceManager for LaunchdUserServiceManager {
             "Failed to read launchd service status",
         )
     }
+
+    fn needs_migration(&self, spec: &DeviceServiceInstallSpec) -> Result<bool, DynError> {
+        let plist_path = launchd_plist_path()?;
+        if !plist_path.exists() {
+            return Ok(false);
+        }
+        let plist = fs::read_to_string(plist_path)?;
+        Ok(launchd_service_needs_migration(&plist, spec))
+    }
 }
 
 #[cfg(target_os = "macos")]
@@ -824,18 +1023,13 @@ impl DeviceServiceManager for WindowsTaskServiceManager {
             "Installed Windows scheduled task: {}",
             DEVICE_WINDOWS_TASK_NAME
         );
-        println!("Logs: {}", logger::device_log_pattern()?);
+        println!("Logs: {}", logger::device_log_pattern().display());
         Ok(())
     }
 
     fn uninstall(&self) -> Result<(), DynError> {
-        let _ = run_command_capture(
-            Command::new("schtasks")
-                .arg("/end")
-                .arg("/tn")
-                .arg(DEVICE_WINDOWS_TASK_NAME),
-            "Failed to stop Windows scheduled task",
-        );
+        let script = windows_task_stop_if_running_script(DEVICE_WINDOWS_TASK_NAME);
+        run_windows_powershell_script(&script, "Failed to stop Windows scheduled task")?;
         run_command_capture(
             Command::new("schtasks")
                 .arg("/delete")
@@ -857,24 +1051,14 @@ impl DeviceServiceManager for WindowsTaskServiceManager {
     }
 
     fn restart(&self) -> Result<(), DynError> {
-        let _ = run_command_capture(
-            Command::new("schtasks")
-                .arg("/end")
-                .arg("/tn")
-                .arg(DEVICE_WINDOWS_TASK_NAME),
-            "Failed to stop Windows scheduled task",
-        );
+        let script = windows_task_stop_if_running_script(DEVICE_WINDOWS_TASK_NAME);
+        run_windows_powershell_script(&script, "Failed to stop Windows scheduled task")?;
         self.start()
     }
 
     fn stop(&self) -> Result<(), DynError> {
-        run_command_capture(
-            Command::new("schtasks")
-                .arg("/end")
-                .arg("/tn")
-                .arg(DEVICE_WINDOWS_TASK_NAME),
-            "Failed to stop Windows scheduled task",
-        )
+        let script = windows_task_stop_if_running_script(DEVICE_WINDOWS_TASK_NAME);
+        run_windows_powershell_script(&script, "Failed to stop Windows scheduled task")
     }
 
     fn status(&self) -> Result<(), DynError> {
@@ -888,6 +1072,23 @@ impl DeviceServiceManager for WindowsTaskServiceManager {
                 .arg("/v"),
             "Failed to read Windows scheduled task status",
         )
+    }
+
+    fn needs_migration(&self, spec: &DeviceServiceInstallSpec) -> Result<bool, DynError> {
+        let output = Command::new("schtasks")
+            .arg("/query")
+            .arg("/tn")
+            .arg(DEVICE_WINDOWS_TASK_NAME)
+            .arg("/xml")
+            .output()?;
+        if !output.status.success() {
+            return Ok(false);
+        }
+        let xml = String::from_utf8_lossy(&output.stdout);
+        let executable = xml_escape(&spec.exe_path.display().to_string());
+        let arguments = xml_escape(&windows_arguments_string(&spec.args));
+        Ok(!xml.contains(&format!("<Command>{executable}</Command>"))
+            || !xml.contains(&format!("<Arguments>{arguments}</Arguments>")))
     }
 }
 
@@ -918,12 +1119,63 @@ fn current_windows_user_id() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::cell::RefCell;
+
+    struct RecordingServiceManager {
+        calls: RefCell<Vec<&'static str>>,
+    }
+
+    impl RecordingServiceManager {
+        fn legacy() -> Self {
+            Self {
+                calls: RefCell::new(Vec::new()),
+            }
+        }
+    }
+
+    impl DeviceServiceManager for RecordingServiceManager {
+        fn is_installed(&self) -> Result<bool, DynError> {
+            self.calls.borrow_mut().push("is_installed");
+            Ok(true)
+        }
+
+        fn install(&self, _spec: &DeviceServiceInstallSpec) -> Result<(), DynError> {
+            self.calls.borrow_mut().push("install");
+            Ok(())
+        }
+
+        fn uninstall(&self) -> Result<(), DynError> {
+            Ok(())
+        }
+
+        fn start(&self) -> Result<(), DynError> {
+            Ok(())
+        }
+
+        fn restart(&self) -> Result<(), DynError> {
+            self.calls.borrow_mut().push("restart");
+            Ok(())
+        }
+
+        fn stop(&self) -> Result<(), DynError> {
+            Ok(())
+        }
+
+        fn status(&self) -> Result<(), DynError> {
+            Ok(())
+        }
+
+        fn needs_migration(&self, _spec: &DeviceServiceInstallSpec) -> Result<bool, DynError> {
+            self.calls.borrow_mut().push("needs_migration");
+            Ok(true)
+        }
+    }
 
     fn test_spec() -> DeviceServiceInstallSpec {
         DeviceServiceInstallSpec {
             description: "gsvd",
-            exe_path: PathBuf::from("/Applications/GSV/gsv"),
-            args: vec!["device".to_string(), "run".to_string()],
+            exe_path: PathBuf::from("/Applications/GSV/gsvd"),
+            args: vec!["--foreground".to_string()],
             path_env: Some("/opt/bin:/usr/bin".to_string()),
         }
     }
@@ -975,12 +1227,46 @@ mod tests {
     }
 
     #[test]
-    fn test_launchd_plist_contents_uses_device_run_entrypoint() {
+    fn test_launchd_plist_contents_uses_gsvd_entrypoint() {
         let plist = launchd_plist_contents(DEVICE_LAUNCHD_LABEL, &test_spec(), "");
-        assert!(plist.contains("<string>device</string>"));
-        assert!(plist.contains("<string>run</string>"));
-        assert!(!plist.contains("<string>node</string>"));
-        assert!(!plist.contains("<string>--foreground</string>"));
+        assert!(plist.contains("<string>/Applications/GSV/gsvd</string>"));
+        assert!(plist.contains("<string>--foreground</string>"));
+        assert!(!plist.contains("<string>device</string>"));
+        assert!(!plist.contains("<string>run</string>"));
+    }
+
+    #[test]
+    fn installing_a_legacy_definition_restarts_its_running_process() {
+        let manager = RecordingServiceManager::legacy();
+
+        let migrated = install_device_service_with_manager(&manager, &test_spec())
+            .expect("legacy service migration");
+
+        assert!(migrated);
+        assert_eq!(
+            manager.calls.into_inner(),
+            vec!["is_installed", "needs_migration", "install", "restart"]
+        );
+    }
+
+    #[test]
+    fn detects_legacy_systemd_and_launchd_entrypoints() {
+        let current = test_spec();
+        let legacy = DeviceServiceInstallSpec {
+            description: "gsvd",
+            exe_path: PathBuf::from("/Applications/GSV/gsv"),
+            args: vec!["device".to_string(), "run".to_string()],
+            path_env: None,
+        };
+        let current_unit = format!("ExecStart={}\n", systemd_exec_start(&current));
+        let legacy_unit = format!("ExecStart={}\n", systemd_exec_start(&legacy));
+        assert!(!systemd_service_needs_migration(&current_unit, &current));
+        assert!(systemd_service_needs_migration(&legacy_unit, &current));
+
+        let current_plist = launchd_plist_contents("gsvd", &current, "");
+        let legacy_plist = launchd_plist_contents("gsvd", &legacy, "");
+        assert!(!launchd_service_needs_migration(&current_plist, &current));
+        assert!(launchd_service_needs_migration(&legacy_plist, &current));
     }
 
     #[test]
@@ -1000,7 +1286,7 @@ mod tests {
     #[test]
     fn test_windows_task_registration_script_sets_infinite_execution_time() {
         let mut spec = test_spec();
-        spec.exe_path = PathBuf::from(r"C:\Program Files\GSV\gsv.exe");
+        spec.exe_path = PathBuf::from(r"C:\Program Files\GSV\gsvd.exe");
         let script = windows_task_registration_script("gsvd", r"ACME\hank", &spec);
 
         assert!(script.contains("$UserId = 'ACME\\hank'"));
@@ -1013,7 +1299,7 @@ mod tests {
             "$Principal = New-ScheduledTaskPrincipal -UserId $UserId -LogonType Interactive -RunLevel Limited"
         ));
         assert!(script.contains(
-            "$Action = New-ScheduledTaskAction -Execute 'C:\\Program Files\\GSV\\gsv.exe' -Argument 'device run'"
+            "$Action = New-ScheduledTaskAction -Execute 'C:\\Program Files\\GSV\\gsvd.exe' -Argument '--foreground'"
         ));
         assert!(!script.contains("AllowStartOnDemand"));
         assert!(script.contains("-ExecutionTimeLimit ([TimeSpan]::Zero)"));
@@ -1033,5 +1319,27 @@ mod tests {
         assert!(script.contains(
             "User-scoped logon trigger failed: $ScopedTriggerError. Generic logon trigger failed:"
         ));
+    }
+
+    #[test]
+    fn windows_stop_script_ignores_only_an_explicit_non_running_state() {
+        let script = windows_task_stop_if_running_script("gsvd");
+
+        assert!(script.contains("$Task = Get-ScheduledTask -TaskName $TaskName -ErrorAction Stop"));
+        assert!(script.contains("$InitialState = [string]$Task.State"));
+        assert!(script.contains("if ($InitialState -eq 'Unknown')"));
+        assert!(script.contains("$InitialState -eq 'Running' -or $InitialState -eq 'Queued'"));
+        assert!(script.contains("Stop-ScheduledTask -TaskName $TaskName -ErrorAction Stop"));
+        assert!(script.contains("$State -eq 'Ready' -or $State -eq 'Disabled'"));
+        assert!(script.contains("Scheduled task '$TaskName' did not stop"));
+        assert!(!script.contains("SilentlyContinue\n  Stop-ScheduledTask"));
+    }
+
+    #[test]
+    fn parses_only_the_gsvd_version_shape() {
+        assert_eq!(parse_gsvd_version("gsvd 0.4.1"), Some("0.4.1"));
+        assert_eq!(parse_gsvd_version("gsv 0.4.1"), None);
+        assert_eq!(parse_gsvd_version("gsvd 0.4.1 extra"), None);
+        assert_eq!(parse_gsvd_version(""), None);
     }
 }

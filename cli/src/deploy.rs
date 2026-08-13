@@ -3640,15 +3640,19 @@ async fn connect_gateway_with_retry(
     let mut last_error: Option<Box<dyn std::error::Error>> = None;
 
     for attempt in 1..=max_attempts {
-        match Connection::connect(
-            crate::connection::ConnectOptions {
+        match Connection::connect_with_options(
+            crate::connection::ConnectionOptions {
                 url: ws_url.to_string(),
-                role: "user".to_string(),
-                client_id: Some("deploy-bootstrap".to_string()),
-                implements: None,
+                identity: crate::connection::ClientIdentity::new(
+                    "deploy-bootstrap",
+                    crate::build_info::BUILD_VERSION,
+                )
+                .with_channel("cli"),
+                role: crate::connection::ConnectionRole::User,
                 auth_username: None,
                 auth_password: None,
                 auth_token: auth_token.map(|t| t.to_string()),
+                limits: gsv_client::BinaryBodyLimits::default(),
             },
             |_| {},
         )
@@ -4397,8 +4401,8 @@ mod tests {
             );
         }
 
-        assert!(DeployInstance::parse(DEFAULT_DEPLOY_INSTANCE).is_ok());
-        assert!(DeployInstance::parse("team-channel").is_ok());
+        DeployInstance::parse(DEFAULT_DEPLOY_INSTANCE).unwrap();
+        DeployInstance::parse("team-channel").unwrap();
     }
 
     #[test]

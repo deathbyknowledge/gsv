@@ -1,4 +1,6 @@
-// Integration tests for CLI tools
+#![allow(clippy::unwrap_used)]
+
+// Integration tests for the concrete machine capabilities owned by gsvd.
 
 use std::path::Path;
 
@@ -38,12 +40,12 @@ fn shell_background_finish_command() -> &'static str {
 fn normalize_shell_path(value: &str) -> String {
     #[cfg(windows)]
     {
-        return value
+        value
             .trim()
             .replace('/', "\\")
             .trim_start_matches(r"\\?\")
             .trim_end_matches('\\')
-            .to_ascii_lowercase();
+            .to_ascii_lowercase()
     }
 
     #[cfg(not(windows))]
@@ -75,7 +77,7 @@ fn output_matches_cwd(output: &str, expected: &Path) -> bool {
 
 #[tokio::test]
 async fn test_shell_tool_execution() {
-    use gsv::tools::{ShellTool, Tool};
+    use gsvd::tools::{ShellTool, Tool};
     use serde_json::json;
 
     let workspace = std::env::temp_dir();
@@ -100,7 +102,7 @@ async fn test_shell_tool_execution() {
 
 #[tokio::test]
 async fn test_shell_tool_cwd() {
-    use gsv::tools::{ShellTool, Tool};
+    use gsvd::tools::{ShellTool, Tool};
     use serde_json::json;
     use std::fs;
 
@@ -132,7 +134,7 @@ async fn test_shell_tool_cwd() {
 
 #[tokio::test]
 async fn test_shell_background_returns_session_id() {
-    use gsv::tools::{ShellTool, Tool};
+    use gsvd::tools::{ShellTool, Tool};
     use serde_json::json;
 
     let workspace = std::env::temp_dir();
@@ -153,7 +155,7 @@ async fn test_shell_background_returns_session_id() {
 
 #[tokio::test]
 async fn test_shell_session_poll_returns_new_output() {
-    use gsv::tools::{ShellTool, Tool};
+    use gsvd::tools::{ShellTool, Tool};
     use serde_json::json;
 
     let workspace = std::env::temp_dir();
@@ -187,7 +189,7 @@ async fn test_shell_session_poll_returns_new_output() {
 
 #[tokio::test]
 async fn test_shell_session_is_removed_after_final_poll() {
-    use gsv::tools::{ShellTool, Tool};
+    use gsvd::tools::{ShellTool, Tool};
     use serde_json::json;
 
     let workspace = std::env::temp_dir();
@@ -226,7 +228,7 @@ async fn test_shell_session_is_removed_after_final_poll() {
 
 #[tokio::test]
 async fn test_read_tool() {
-    use gsv::tools::{ReadTool, Tool};
+    use gsvd::tools::{ReadTool, Tool};
     use serde_json::json;
     use std::io::Write;
     use tokio::io::AsyncReadExt;
@@ -265,7 +267,7 @@ async fn test_read_tool() {
 
 #[tokio::test]
 async fn test_read_tool_directory() {
-    use gsv::tools::{ReadTool, Tool};
+    use gsvd::tools::{ReadTool, Tool};
     use serde_json::json;
 
     let workspace = std::env::temp_dir().join("gsv_test_read_dir");
@@ -290,7 +292,7 @@ async fn test_read_tool_directory() {
 
 #[tokio::test]
 async fn test_read_tool_with_offset_limit() {
-    use gsv::tools::{ReadTool, Tool};
+    use gsvd::tools::{ReadTool, Tool};
     use serde_json::json;
     use std::io::Write;
     use tokio::io::AsyncReadExt;
@@ -330,7 +332,7 @@ async fn test_read_tool_with_offset_limit() {
 
 #[tokio::test]
 async fn test_write_tool() {
-    use gsv::tools::{Tool, WriteTool};
+    use gsvd::tools::{Tool, WriteTool};
     use serde_json::json;
 
     let workspace = std::env::temp_dir();
@@ -360,7 +362,7 @@ async fn test_write_tool() {
 
 #[tokio::test]
 async fn test_edit_tool() {
-    use gsv::tools::{EditTool, Tool};
+    use gsvd::tools::{EditTool, Tool};
     use serde_json::json;
     use std::io::Write;
 
@@ -398,7 +400,7 @@ async fn test_edit_tool() {
 
 #[tokio::test]
 async fn test_search_tool() {
-    use gsv::tools::{SearchTool, Tool};
+    use gsvd::tools::{SearchTool, Tool};
     use serde_json::json;
     use std::io::Write;
 
@@ -451,7 +453,7 @@ async fn test_search_tool() {
 
 #[test]
 fn test_all_tools_with_workspace() {
-    use gsv::tools::all_tools_with_workspace;
+    use gsvd::tools::all_tools_with_workspace;
 
     let workspace = std::env::temp_dir();
     let tools = all_tools_with_workspace(workspace);
@@ -468,29 +470,4 @@ fn test_all_tools_with_workspace() {
     assert!(names.contains(&"Copy".to_string()));
     assert!(names.contains(&"Search".to_string()));
     assert!(names.contains(&"Fetch".to_string()));
-}
-
-#[test]
-fn test_config_load_default() {
-    use gsv::config::CliConfig;
-
-    // Should return default config when file doesn't exist
-    let cfg = CliConfig::load();
-
-    assert_eq!(cfg.default_session(), "agent:main:cli:dm:main");
-    // Default URL is ws://localhost:8787/ws
-    let url = cfg.gateway_url();
-    assert!(url.starts_with("ws://") || url.starts_with("wss://"));
-}
-
-#[test]
-fn test_config_sample() {
-    use gsv::config::sample_config;
-
-    let sample = sample_config();
-
-    // Should contain expected sections
-    assert!(sample.contains("[gateway]"));
-    assert!(sample.contains("[r2]"));
-    assert!(sample.contains("[session]"));
 }

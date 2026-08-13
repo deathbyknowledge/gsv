@@ -1,8 +1,9 @@
 # CLI Command Reference
 
-The `gsv` binary controls a GSV gateway, local device daemon, process tree,
-adapters, and Cloudflare infrastructure. Most commands talk to the Kernel syscall
-surface over WebSocket; `infra` talks directly to Cloudflare.
+The `gsv` binary controls a GSV gateway, local Desktop application, device
+daemon, process tree, adapters, and Cloudflare infrastructure. Most commands
+talk to the Kernel syscall surface over WebSocket; `desktop` uses a same-user
+local endpoint and `infra` talks directly to Cloudflare.
 
 ## Global Options
 
@@ -203,23 +204,63 @@ Processes are the agent-facing execution model. `spawn` creates a new process;
 `send`, `history`, `reset`, and `kill` require a PID. `--uid` filters process
 lists and requires root when viewing another user.
 
+## Desktop Commands
+
+```bash
+gsv desktop
+gsv desktop status [--json]
+gsv desktop new
+gsv desktop use PID
+```
+
+`gsv desktop` focuses a running Desktop or launches the sibling
+`gsv-desktop` executable and waits for its local control endpoint. `new` also
+launches or focuses Desktop, asks Desktop to create a Process using its own
+authenticated gateway connection, selects it after authoritative history is
+installed, and prints the new PID. A cancellation after durable spawn but
+before selection can leave that Process valid but unselected. `use` launches
+or focuses Desktop, validates and selects an existing
+Process, then prints its PID.
+
+`status` never launches Desktop. Its human output contains only gateway state,
+window state, and the selected PID; `--json` prints those same redacted fields
+for scripts. The command returns an error when Desktop is not running.
+
+The CLI finds `gsv-desktop` beside `gsv`, then on `PATH`. Development builds
+also recognize the current `gsv-native` binary name. Set `GSV_DESKTOP_PATH` to
+an explicit executable when testing a nonstandard installation.
+
+These commands use the versioned same-user IPC contract in
+`gsv-desktop-control`; they do not connect through `gsvd`. Credentials,
+messages, drafts, attachment paths, and approval content cannot be sent over
+that contract. Desktop remains the owner of gateway authentication, process
+selection, and process-switch fencing.
+
 ## Device Commands
 
 ```bash
 gsv device run [--id ID] [--workspace PATH]
 gsv device install [--id ID] [--workspace PATH]
 gsv device start
+gsv device restart
 gsv device stop
+gsv device uninstall
 gsv device status
+gsv device doctor
 gsv device logs [-l N] [--follow]
 ```
 
 The device daemon exposes local hardware-style capabilities to the Kernel:
-`fs.*` and `shell.exec`. The gateway always sees the same syscall/tool surface;
+`fs.*`, `shell.exec`, and `net.fetch`. The gateway always sees the same syscall/tool surface;
 the device ID selects which implementation receives a driver request.
 
-`run` starts a foreground driver. `install` creates and starts a launchd agent on
-macOS or a systemd user unit on Linux. The daemon writes daily rotated JSONL logs
+The driver runtime is the separate `gsvd` executable. `run` is a compatibility
+launcher that transfers process ownership to the sibling `gsvd --foreground`;
+the CLI never embeds the driver. `install` creates and starts a launchd agent on
+macOS, a systemd user unit on Linux, or a scheduled task on Windows. Reinstalling
+or starting an old definition migrates `gsv device run` to the direct `gsvd`
+entrypoint without changing the existing service identity. `doctor` checks the
+installed executable and definition. The daemon writes daily rotated JSONL logs
 under `~/.gsv/logs/device.log*`; `logs` tails the latest file with `-l, --lines`
 defaulting to `100`. Foreground logs use compact text by default; set
 `GSV_DEVICE_CONSOLE_FORMAT=json` or `GSV_DEVICE_CONSOLE_FORMAT=quiet` to change that.
@@ -231,6 +272,19 @@ Device identity resolves as `--id`, then local `device.id`, then
 `gsv auth setup --device-id ...` or
 `gsv auth token create --kind device --device ...` followed by
 `gsv config --local set device.token ...`.
+Because the compatibility launcher replaces itself with `gsvd`, gateway setup
+must be completed before `gsv device run`; use `gsv auth setup` when connecting
+to a new deployment.
+
+`gsv`, `gsvd`, and the Desktop application share protocol and configuration
+crates but remain separate applications. The CLI owns operator commands and OS
+service control; `gsvd` owns machine syscalls, subprocesses, transfers,
+cancellation, reconnection, logging, and shutdown.
+
+The verified host installer ships `gsv` and `gsvd` as a matching pair and
+migrates an existing legacy service definition during upgrade. See
+[Install Host Applications](/how-to/install-host-apps) for the release matrix,
+checksum verification, and rollback contract.
 
 ## Auth Commands
 

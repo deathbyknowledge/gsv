@@ -4,7 +4,9 @@ use async_trait::async_trait;
 use serde::Deserialize;
 use serde_json::{json, Value};
 use std::collections::HashMap;
-use std::path::{Path, PathBuf};
+#[cfg(not(windows))]
+use std::path::Path;
+use std::path::PathBuf;
 use std::process::Stdio;
 use std::sync::{Arc, OnceLock};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -253,17 +255,18 @@ fn completed_result(snapshot: &ProcessSnapshot) -> Value {
     })
 }
 
-fn normalize_signal_name(status: &std::process::ExitStatus) -> Option<String> {
+fn normalize_signal_name(_status: &std::process::ExitStatus) -> Option<String> {
     #[cfg(unix)]
     {
         use std::os::unix::process::ExitStatusExt;
-        if let Some(signal) = status.signal() {
+        if let Some(signal) = _status.signal() {
             return Some(format!("SIG{}", signal));
         }
     }
     None
 }
 
+#[cfg(not(windows))]
 fn is_executable_file(path: &Path) -> bool {
     if !path.is_file() {
         return false;

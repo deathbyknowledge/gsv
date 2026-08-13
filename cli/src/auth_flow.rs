@@ -2,7 +2,7 @@ use chrono::{TimeZone, Utc};
 use cliclack::{confirm, input, password, select};
 use gsv::config::CliConfig;
 use gsv::connection::{Connection, GatewayRpcError};
-use gsv::kernel_client::{GatewayAuth, KernelClient};
+use gsv::kernel_client::{cli_client_identity, BinaryBodyLimits, GatewayAuth, KernelClient};
 use gsv::protocol::PROTOCOL_VERSION;
 use serde::Deserialize;
 use serde_json::json;
@@ -360,7 +360,14 @@ async fn issue_and_store_user_session_token(
     };
     auth.validate()?;
 
-    let client = KernelClient::connect_user(url, auth, |_| {}).await?;
+    let client = KernelClient::connect_user_with_identity(
+        url,
+        cli_client_identity(),
+        auth,
+        BinaryBodyLimits::default(),
+        |_| {},
+    )
+    .await?;
     let expiry_ms = Utc::now().timestamp_millis() + (i64::from(ttl_hours) * 3_600_000);
     let payload = client
         .request_ok(
@@ -383,12 +390,12 @@ async fn issue_and_store_user_session_token(
         })?
         .token;
 
-    let mut local_cfg = CliConfig::load();
-    local_cfg.gateway.username = Some(username.clone());
-    local_cfg.gateway.session_token = Some(issued.token.clone());
-    local_cfg.gateway.session_token_id = Some(issued.token_id);
-    local_cfg.gateway.session_expires_at = issued.expires_at;
-    local_cfg.save()?;
+    CliConfig::update(|local_cfg| {
+        local_cfg.gateway.username = Some(username.clone());
+        local_cfg.gateway.session_token = Some(issued.token.clone());
+        local_cfg.gateway.session_token_id = Some(issued.token_id.clone());
+        local_cfg.gateway.session_expires_at = issued.expires_at;
+    })?;
 
     if let Some(expires_at) = issued.expires_at {
         println!(
@@ -408,18 +415,11 @@ async fn issue_and_store_user_session_token(
 }
 
 fn clear_cached_user_session_token() -> Result<(), Box<dyn std::error::Error>> {
-    let mut cfg = CliConfig::load();
-    let changed = cfg.gateway.session_token.is_some()
-        || cfg.gateway.session_token_id.is_some()
-        || cfg.gateway.session_expires_at.is_some();
-
-    cfg.gateway.session_token = None;
-    cfg.gateway.session_token_id = None;
-    cfg.gateway.session_expires_at = None;
-
-    if changed {
-        cfg.save()?;
-    }
+    CliConfig::update(|cfg| {
+        cfg.gateway.session_token = None;
+        cfg.gateway.session_token_id = None;
+        cfg.gateway.session_expires_at = None;
+    })?;
 
     Ok(())
 }
@@ -724,30 +724,27 @@ pub(crate) async fn run_auth_setup(
         }
     };
 
-    let mut local_cfg = CliConfig::load();
-    let mut saved_fields: Vec<&str> = Vec::new();
-
-    if local_cfg.gateway.username.as_deref() != Some(setup.user.username.as_str()) {
-        local_cfg.gateway.username = Some(setup.user.username.clone());
-        saved_fields.push("gateway.username");
-    }
-
-    if let Some(device_token) = setup.device_token.as_ref() {
-        if local_cfg.device.token.as_deref() != Some(device_token.token.as_str()) {
-            local_cfg.device.token = Some(device_token.token.clone());
-            saved_fields.push("device.token");
+    let saved_fields = CliConfig::update(|local_cfg| {
+        let mut saved_fields: Vec<&str> = Vec::new();
+        if local_cfg.gateway.username.as_deref() != Some(setup.user.username.as_str()) {
+            local_cfg.gateway.username = Some(setup.user.username.clone());
+            saved_fields.push("gateway.username");
         }
-        if let Some(device_id) = device_token.allowed_device_id.as_deref() {
-            if local_cfg.device.id.as_deref() != Some(device_id) {
-                local_cfg.device.id = Some(device_id.to_string());
-                saved_fields.push("device.id");
+
+        if let Some(device_token) = setup.device_token.as_ref() {
+            if local_cfg.device.token.as_deref() != Some(device_token.token.as_str()) {
+                local_cfg.device.token = Some(device_token.token.clone());
+                saved_fields.push("device.token");
+            }
+            if let Some(device_id) = device_token.allowed_device_id.as_deref() {
+                if local_cfg.device.id.as_deref() != Some(device_id) {
+                    local_cfg.device.id = Some(device_id.to_string());
+                    saved_fields.push("device.id");
+                }
             }
         }
-    }
-
-    if !saved_fields.is_empty() {
-        local_cfg.save()?;
-    }
+        saved_fields
+    })?;
 
     println!("Setup complete.");
     println!("User: {} (uid {})", setup.user.username, setup.user.uid);
@@ -827,17 +824,17 @@ pub(crate) async fn run_auth_login(
 }
 
 pub(crate) fn run_auth_logout() -> Result<(), Box<dyn std::error::Error>> {
-    let mut cfg = CliConfig::load();
-    let had_session = cfg.gateway.session_token.is_some()
-        || cfg.gateway.session_token_id.is_some()
-        || cfg.gateway.session_expires_at.is_some();
-
-    cfg.gateway.session_token = None;
-    cfg.gateway.session_token_id = None;
-    cfg.gateway.session_expires_at = None;
+    let had_session = CliConfig::update(|cfg| {
+        let had_session = cfg.gateway.session_token.is_some()
+            || cfg.gateway.session_token_id.is_some()
+            || cfg.gateway.session_expires_at.is_some();
+        cfg.gateway.session_token = None;
+        cfg.gateway.session_token_id = None;
+        cfg.gateway.session_expires_at = None;
+        had_session
+    })?;
 
     if had_session {
-        cfg.save()?;
         println!("Cleared cached user session token.");
     } else {
         println!("No cached user session token.");

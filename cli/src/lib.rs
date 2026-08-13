@@ -4,6 +4,5 @@ pub mod connection;
 pub mod deploy;
 pub mod device_service;
 pub mod kernel_client;
-pub mod logger;
+mod logger;
 pub mod protocol;
-pub mod tools;
