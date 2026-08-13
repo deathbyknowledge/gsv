@@ -1,5 +1,9 @@
 import type { ConsoleConfigEntry } from "./consoleModels";
-import { modelDisplayName } from "./consoleSettings";
+import { fixedAiProviderModel } from "../../../domain/aiProviders";
+import {
+  modelDisplayName,
+  modelStackDisplayName,
+} from "./consoleSettings";
 
 export const DEFAULT_MODEL_LABEL = "GATEWAY DEFAULT";
 
@@ -76,6 +80,10 @@ export function modelLabelsForConfig(config: readonly ConsoleConfigEntry[]): str
 
 export function modelOptionsForConfig(config: readonly ConsoleConfigEntry[]): ConsoleModelOption[] {
   const defaultModel = defaultModelLabelForConfig(config);
+  const defaultProvider = config.find((entry) =>
+    !entry.redacted && entry.key === "config/ai/provider"
+  )?.value ?? "";
+  const fixedDefaultModel = fixedAiProviderModel(defaultProvider);
   const profileModels = new Set(
     profileModelLabelsForConfig(config).map((model) => model.trim().toLowerCase()).filter(Boolean),
   );
@@ -103,7 +111,15 @@ export function modelOptionsForConfig(config: readonly ConsoleConfigEntry[]): Co
     }
   };
 
-  addOption(defaultModel);
+  addOption(defaultModel, fixedDefaultModel === defaultModel
+    ? {
+        label: modelStackDisplayName({
+          "config/ai/provider": defaultProvider,
+          "config/ai/model": defaultModel,
+        }),
+        description: "Included and managed by GSV",
+      }
+    : {});
 
   for (const entry of config) {
     if (isModelConfigEntry(entry)) {
@@ -200,6 +216,10 @@ export function modelProfilesForConfig(
 }
 
 export function modelProfileSummary(profile: ConsoleModelProfile): string {
+  const displayName = modelStackDisplayName(profile.values);
+  if (fixedAiProviderModel(profile.values["config/ai/provider"] ?? "")) {
+    return displayName;
+  }
   return [
     profile.values["config/ai/provider"],
     profile.values["config/ai/model"],

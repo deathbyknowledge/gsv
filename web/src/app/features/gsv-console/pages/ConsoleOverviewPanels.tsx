@@ -6,11 +6,13 @@ import { OBJECT_GLYPH_ICON } from "../../../components/ui/objectGlyph";
 import { SectionHeader } from "../../../components/ui/SectionHeader";
 import type { StatusTone } from "../../../components/ui/StatusDot";
 import type { TagTone } from "../../../components/ui/Tag";
+import { fixedAiProviderModel } from "../../../domain/aiProviders";
 import {
   configValueForKey,
   effectiveAiValuesForViewer,
   modelDisplayName,
   modelProfilesForConfig,
+  modelStackDisplayName,
   viewerAccountForSettings,
 } from "../domain/consoleSettings";
 import {
@@ -301,7 +303,11 @@ function SettingsCard({
   const viewer = viewerAccountForSettings(accounts);
   const modelValues = effectiveAiValuesForViewer(config, viewer?.uid);
   const profiles = modelProfilesForConfig(config, viewer?.uid);
-  const chatModel = modelCoreName(modelValues["config/ai/model"] ?? "") || "Not configured";
+  const chatModel = (
+    fixedAiProviderModel(modelValues["config/ai/provider"] ?? "")
+      ? modelStackDisplayName(modelValues)
+      : modelCoreName(modelValues["config/ai/model"] ?? "")
+  ) || "Not configured";
   const savedModels = `${profiles.length} saved model${profiles.length === 1 ? "" : "s"}`;
   const behavior = viewer ? behaviorForAccount(config, viewer.uid, viewer.uid) : null;
   const permission = behavior?.permission ?? "ask";

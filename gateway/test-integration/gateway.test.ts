@@ -130,6 +130,10 @@ describe("gateway integration", () => {
       });
       expect(connected.identity.capabilities).toContain("proc.*");
 
+      await expect(client.sys.config.get({ key: "config/ai/provider" })).resolves.toEqual({
+        entries: [{ key: "config/ai/provider", value: "workers-ai" }],
+      });
+
       expect((await client.account.list()).accounts).toEqual(expect.arrayContaining([
         expect.objectContaining({
           uid: 1000,

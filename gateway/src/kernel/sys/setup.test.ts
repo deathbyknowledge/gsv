@@ -16,7 +16,11 @@ vi.mock("./skills-seed", () => ({
 
 import { handleSysSetup, recoverCompletedSysSetup } from "./setup";
 
-function createCtx(overrides?: { setupMode?: boolean; ripgit?: Fetcher }) {
+function createCtx(overrides?: {
+  setupMode?: boolean;
+  ripgit?: Fetcher;
+  managedInference?: boolean;
+}) {
   type PasswdRow = { username: string; uid: number; gid: number; gecos: string; home: string; shell: string };
   type GroupRow = { name: string; gid: number; members: string[] };
 
@@ -152,6 +156,7 @@ function createCtx(overrides?: { setupMode?: boolean; ripgit?: Fetcher }) {
     env: {
       STORAGE: storage,
       ...(overrides?.ripgit ? { RIPGIT: overrides.ripgit } : {}),
+      ...(overrides?.managedInference ? { MANAGED_INFERENCE: {} } : {}),
     } as unknown as KernelContext["env"],
     serverVersion: "0.0.1-test",
   } as KernelContext;
@@ -213,6 +218,79 @@ describe("handleSysSetup", () => {
     expect(result.user.username).toBe("alice");
     expect(result.server).toEqual({ version: "0.0.1-test", release: "dev" });
     expect(result.nodeToken?.allowedDeviceId).toBe("macbook");
+  });
+
+  it("uses GSV included inference as the managed first-boot default", async () => {
+    const { ctx, config } = createCtx({ managedInference: true });
+
+    const result = await handleSysSetup(
+      {
+        username: "alice",
+        password: "password-123",
+      },
+      ctx,
+    );
+
+    expect(config.set).toHaveBeenCalledWith("config/ai/provider", "gsv");
+    expect(config.set).toHaveBeenCalledWith("config/ai/model", "default");
+    expect(config.set).toHaveBeenCalledWith("config/ai/fallback_model_profile", "");
+    expect(result.server.features).toEqual(["ai.provider.gsv"]);
+  });
+
+  it("keeps standalone defaults implicit when setup has no AI selection", async () => {
+    const { ctx, config } = createCtx();
+
+    await handleSysSetup(
+      {
+        username: "alice",
+        password: "password-123",
+      },
+      ctx,
+    );
+
+    expect(config.set).not.toHaveBeenCalledWith("config/ai/provider", expect.anything());
+    expect(config.set).not.toHaveBeenCalledWith("config/ai/model", expect.anything());
+    expect(config.set).not.toHaveBeenCalledWith("config/ai/fallback_model_profile", expect.anything());
+  });
+
+  it("normalizes an explicit GSV provider without accepting a model or credential", async () => {
+    const { ctx, config } = createCtx({ managedInference: true });
+
+    await handleSysSetup(
+      {
+        username: "alice",
+        password: "password-123",
+        ai: {
+          provider: "gsv",
+        },
+      },
+      ctx,
+    );
+
+    expect(config.set).toHaveBeenCalledWith("config/ai/provider", "gsv");
+    expect(config.set).toHaveBeenCalledWith("config/ai/model", "default");
+    expect(config.set).not.toHaveBeenCalledWith("config/ai/api_key", expect.anything());
+  });
+
+  it("preserves an explicit bring-your-own provider on managed setup", async () => {
+    const { ctx, config } = createCtx({ managedInference: true });
+
+    await handleSysSetup(
+      {
+        username: "alice",
+        password: "password-123",
+        ai: {
+          provider: "openrouter",
+          model: "openai/gpt-5-mini",
+          apiKey: "provider-key",
+        },
+      },
+      ctx,
+    );
+
+    expect(config.set).toHaveBeenCalledWith("config/ai/provider", "openrouter");
+    expect(config.set).toHaveBeenCalledWith("config/ai/model", "openai/gpt-5-mini");
+    expect(config.set).toHaveBeenCalledWith("config/ai/api_key", "provider-key");
   });
 
   it("seeds shipped skills into root home after first setup bootstrap", async () => {

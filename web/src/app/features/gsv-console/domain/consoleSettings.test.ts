@@ -17,6 +17,7 @@ import {
   modelProfileSecretConfigKey,
   modelProfilesConfigKey,
   modelProfilesForConfig,
+  modelStackDisplayName,
   modelValidationValuesFromProfileDrafts,
   redactModelProfilesConfigValue,
   serializeModelProfiles,
@@ -268,5 +269,9 @@ describe("console settings domain", () => {
   it("formats raw provider model ids for list labels", () => {
     expect(modelDisplayName("@cf/moondream/moondream3.1-9B-A2B")).toBe("Moondream3 1 9B A2B");
     expect(modelDisplayName("anthropic/claude-sonnet-4.5")).toBe("Claude Sonnet 4 5");
+    expect(modelStackDisplayName({
+      "config/ai/provider": "gsv",
+      "config/ai/model": "default",
+    })).toBe("GSV included");
   });
 });

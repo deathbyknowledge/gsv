@@ -194,18 +194,13 @@ describe("managed installation routing integration", () => {
     socket.close(1000, "test complete");
   });
 
-  it("runs a managed agent turn through the registered provider", async () => {
+  it("runs a managed agent turn through the included default provider", async () => {
     await beginProvisioning(harness, "first");
     const socket = await openManagedSocket(harness, "first");
     await expectManagedRpcOk(socket, "setup-process-inference", "sys.setup", {
       username: "process-owner",
       password: "process-owner-password",
       onboardingToken: "integration-onboarding-first",
-      ai: {
-        provider: "gsv",
-        model: "default",
-        apiKey: "",
-      },
     });
     await expectManagedRpcOk(socket, "connect-process-inference", "sys.connect", {
       protocol: 2,

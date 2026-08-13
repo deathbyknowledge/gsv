@@ -2,7 +2,9 @@ import { describe, expect, it } from "vitest";
 import type { OnboardingDraft } from "@humansandmachines/gsv/protocol";
 import type { SessionPhase, SessionSnapshot } from "../../services/session/sessionService";
 import {
+  buildAiSummary,
   buildNodeBootstrapCommand,
+  buildSetupPayload,
   resolveVisibleView,
   validateSetupDetails,
   type PendingAction,
@@ -111,6 +113,40 @@ describe("validateSetupDetails", () => {
       message: "Invalid device ID. Use 1-48 lowercase letters, numbers, underscores, or hyphens, starting with a letter or number.",
       step: "system",
     });
+  });
+
+  it("does not ask for a model id when GSV owns model selection", () => {
+    const draft = setupDraft();
+    draft.lane = "customize";
+    draft.detailStep = "system";
+    draft.ai = {
+      enabled: true,
+      provider: "gsv",
+      model: "",
+      apiKey: "",
+    };
+
+    expect(validateSetupDetails(draft, true)).toEqual({ message: null });
+    expect(buildSetupPayload(draft).ai).toEqual({
+      provider: "gsv",
+      model: "default",
+    });
+  });
+});
+
+describe("buildAiSummary", () => {
+  it("describes managed defaults without exposing the internal model alias", () => {
+    const draft = setupDraft();
+
+    expect(buildAiSummary(draft, true)).toBe("GSV included");
+    draft.lane = "customize";
+    draft.ai = {
+      enabled: true,
+      provider: "gsv",
+      model: "default",
+      apiKey: "",
+    };
+    expect(buildAiSummary(draft, true)).toBe("GSV included");
   });
 });
 

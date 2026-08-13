@@ -269,6 +269,29 @@ describe("shell chat agent model", () => {
     expect(agent?.reasoningLabel).toBe("HIGH");
   });
 
+  it("presents the included GSV provider without its internal model alias", () => {
+    const agent = buildShellChatAgent({
+      activeProcess: null,
+      accounts: [
+        account({ uid: 1000, username: "sam", relation: "self", displayName: "Sam" }),
+        account({ uid: 1001, username: "scout", relation: "agent", displayName: "Scout" }),
+      ],
+      chatProcesses: [],
+      config: [
+        { key: "config/ai/provider", value: "gsv", redacted: false },
+        { key: "config/ai/model", value: "default", redacted: false },
+        { key: "config/ai/reasoning", value: "medium", redacted: false },
+      ],
+      consoleProcesses: [],
+      sessionUsername: "sam",
+      statusLabel: "no process",
+    });
+
+    expect(agent?.modelLabel).toBe("GSV included");
+    expect(agent?.modelOptions).toEqual(["GSV included"]);
+    expect(agent?.modelValue).toBe("");
+  });
+
   it("prefers an agent model override over the owner model override", () => {
     const activeProcess = process({ pid: "proc:scout", uid: 1001, username: "scout" });
     const agent = buildShellChatAgent({

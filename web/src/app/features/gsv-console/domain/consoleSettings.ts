@@ -2,6 +2,8 @@ import type { ConsoleAccount, ConsoleConfigEntry } from "./consoleModels";
 import {
   AI_OPENAI_WORKERS_PROVIDER_OPTIONS,
   AI_PROVIDER_OPTIONS,
+  aiProviderDisplayLabel,
+  fixedAiProviderModel,
 } from "../../../domain/aiProviders";
 
 export type ConsoleSettingKind = "text" | "textarea" | "password" | "number" | "checkbox" | "select" | "readonly";
@@ -729,7 +731,18 @@ export function modelProfileSummary(values: Record<string, string>): string {
   const provider = cleanValue(values["config/ai/provider"]) || "provider";
   const model = cleanValue(values["config/ai/model"]) || "model";
   const reasoning = cleanValue(values["config/ai/reasoning"]) || "default";
+  if (fixedAiProviderModel(provider)) {
+    return `${aiProviderDisplayLabel(provider)} / reasoning ${reasoning}`;
+  }
   return `${provider} / ${modelDisplayName(model)} / reasoning ${reasoning}`;
+}
+
+export function modelStackDisplayName(values: Record<string, string>): string {
+  const provider = cleanValue(values["config/ai/provider"]);
+  if (fixedAiProviderModel(provider)) {
+    return aiProviderDisplayLabel(provider);
+  }
+  return modelDisplayName(values["config/ai/model"] ?? "");
 }
 
 export function modelDisplayName(value: string): string {

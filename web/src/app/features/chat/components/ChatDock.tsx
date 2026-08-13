@@ -9,6 +9,10 @@ import { IconButton } from "../../../components/ui/IconButton";
 import { MessageInput, type MessageInputAttachment } from "../../../components/ui/MessageInput";
 import { StatusDot, type StatusTone } from "../../../components/ui/StatusDot";
 import { Hint, closeAllTooltips } from "../../../components/ui/Tooltip";
+import {
+  aiProviderDisplayLabel,
+  fixedAiProviderModel,
+} from "../../../domain/aiProviders";
 import type { JSX } from "preact";
 import {
   buildChatAgentViewModel,
@@ -604,7 +608,10 @@ export function ChatDock({
   const taskCount = activeAgent.tasksTotal > 0 ? activeAgent.tasksTotal : activeAgent.tasks.length;
   const contextLevel = context?.level ? context.level.toUpperCase() : contextPercent === null ? "UNKNOWN" : "ESTIMATED";
   const processModel = processAiConfig.data?.values["config/ai/model"]?.trim() ?? "";
-  const currentModelLabel = processModel || activeAgent.modelLabel;
+  const processProvider = processAiConfig.data?.values["config/ai/provider"]?.trim() ?? "";
+  const currentModelLabel = fixedAiProviderModel(processProvider) === processModel
+    ? aiProviderDisplayLabel(processProvider)
+    : processModel || activeAgent.modelLabel;
   const processReasoning = processAiConfig.data?.values["config/ai/reasoning"]?.trim() ?? "";
   const contextReasoning = context?.reasoning?.trim() ?? "";
   const currentReasoningLabel = formatChatReasoningLabel(processReasoning || contextReasoning || activeAgent.reasoningLabel);

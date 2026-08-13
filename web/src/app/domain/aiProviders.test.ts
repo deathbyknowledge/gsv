@@ -2,7 +2,11 @@ import { GSV_INFERENCE_FEATURE } from "@humansandmachines/gsv/protocol";
 import { describe, expect, it } from "vitest";
 import {
   AI_PROVIDER_OPTIONS,
+  aiModelAfterProviderChange,
+  aiProviderDisplayLabel,
   aiProviderOptionsForFeatures,
+  aiProviderOptionsForValue,
+  fixedAiProviderModel,
 } from "./aiProviders";
 
 describe("AI provider options", () => {
@@ -15,7 +19,23 @@ describe("AI provider options", () => {
     expect(aiProviderOptionsForFeatures([GSV_INFERENCE_FEATURE])[0]).toEqual({
       value: "gsv",
       label: "GSV included",
-      defaultModel: "default",
+      fixedModel: "default",
+    });
+  });
+
+  it("treats the GSV model as a fixed product implementation detail", () => {
+    expect(fixedAiProviderModel("gsv")).toBe("default");
+    expect(fixedAiProviderModel("openrouter")).toBeNull();
+    expect(aiModelAfterProviderChange("openrouter", "deepseek/model", "gsv")).toBe("default");
+    expect(aiModelAfterProviderChange("gsv", "default", "openrouter")).toBe("");
+    expect(aiProviderDisplayLabel("gsv")).toBe("GSV included");
+  });
+
+  it("preserves the managed provider label for an existing GSV value", () => {
+    expect(aiProviderOptionsForValue("gsv").at(-1)).toEqual({
+      value: "gsv",
+      label: "GSV included",
+      fixedModel: "default",
     });
   });
 });

@@ -18,8 +18,10 @@ import { Surface } from "../../../components/ui/Surface";
 import { TextArea } from "../../../components/ui/TextArea";
 import { TextInput } from "../../../components/ui/TextInput";
 import {
+  aiModelAfterProviderChange,
   aiProviderOptionsForFeatures,
   aiProviderOptionsForValue,
+  fixedAiProviderModel,
 } from "../../../domain/aiProviders";
 import { useSession } from "../../../services/session/SessionProvider";
 import { ConsoleDetailPage } from "../components/ConsoleDetailPage";
@@ -62,6 +64,7 @@ import {
   modelProfileSecretConfigKey,
   modelProfileSummary,
   modelProfilesForConfig,
+  modelStackDisplayName,
   normalizeProfileName,
   profileValuesFromDrafts,
   updateModelProfile,
@@ -194,6 +197,13 @@ const OPENAI_CODEX_IGNORED_PROFILE_FIELD_KEYS = new Set([
   MODEL_BASE_URL_FIELD_KEY,
   MODEL_PROVIDER_STYLE_FIELD_KEY,
 ]);
+const GSV_IGNORED_MODEL_FIELD_KEYS = new Set([
+  "config/ai/model",
+  MODEL_API_KEY_FIELD_KEY,
+  MODEL_BASE_URL_FIELD_KEY,
+  MODEL_PROVIDER_STYLE_FIELD_KEY,
+  MODEL_TRANSPORT_TARGET_KEY,
+]);
 const CUSTOM_ENDPOINT_CONNECT_FIELD_KEYS = [
   "config/ai/model",
   MODEL_BASE_URL_FIELD_KEY,
@@ -211,6 +221,7 @@ const OPENAI_CODEX_CONNECT_FIELD_KEYS = [
   "config/ai/model",
   MODEL_TRANSPORT_TARGET_KEY,
 ] as const;
+const GSV_CONNECT_FIELD_KEYS = [MODEL_PROVIDER_FIELD_KEY] as const;
 const GSV_TRANSPORT_TARGET_OPTION: SelectOption = {
   label: "GSV Worker",
   value: "gsv",
@@ -753,12 +764,13 @@ function runtimeSelectionTitle(selectionId: string): string {
 
 function defaultModelRow(values: Record<string, string>, onOpen: () => void): SettingsListRow {
   const model = values["config/ai/model"] ?? "";
-  const label = modelDisplayName(model) || "Not configured";
+  const label = modelStackDisplayName(values) || "Not configured";
+  const fixedModel = fixedAiProviderModel(values["config/ai/provider"] ?? "");
   return {
     id: "default-agent-model",
     icon: "stars",
     label,
-    sub: model || "Default agent model stack",
+    sub: fixedModel ? "Model selection managed by GSV" : model || "Default agent model stack",
     statusLabel: model ? "DEFAULT" : "EMPTY",
     tone: model ? "online" : "idle",
     onOpen,
@@ -767,14 +779,15 @@ function defaultModelRow(values: Record<string, string>, onOpen: () => void): Se
 
 function profileRow(profile: ConsoleModelProfile, onOpen: () => void): SettingsListRow {
   const model = profile.values["config/ai/model"] ?? "";
+  const label = modelStackDisplayName(profile.values);
   return {
     id: profile.id,
     icon: "stars",
     label: profile.name,
-    sub: modelDisplayName(model) || model || "Saved model configuration",
+    sub: label || model || "Saved model configuration",
     statusLabel: model ? "MODEL" : "INCOMPLETE",
     tone: model ? "online" : "warn",
-    tag: { label: modelDisplayName(model) || "MODEL", tone: "info" },
+    tag: { label: label || "MODEL", tone: "info" },
     onOpen,
   };
 }
@@ -1007,9 +1020,13 @@ function ModelProfileForm({
 }) {
   const initialValues = useMemo(
     () => {
-      const values = profile ? profile.values : profileValuesFromDrafts(defaultValues);
+      let values = profile ? profile.values : profileValuesFromDrafts(defaultValues);
       if (!profile && !values["config/ai/provider"]?.trim()) {
-        return { ...values, "config/ai/provider": defaultBuiltInProvider(defaultValues, "") };
+        values = { ...values, "config/ai/provider": defaultBuiltInProvider(defaultValues, "") };
+      }
+      const fixedModel = fixedAiProviderModel(values[MODEL_PROVIDER_FIELD_KEY] ?? "");
+      if (fixedModel && values["config/ai/model"] !== fixedModel) {
+        return { ...values, "config/ai/model": fixedModel };
       }
       return values;
     },
@@ -1031,6 +1048,7 @@ function ModelProfileForm({
   );
   const isCustomEndpoint = isCustomModelProvider(drafts[MODEL_PROVIDER_FIELD_KEY] ?? "");
   const isOpenAiCodexProvider = normalizeProviderValue(drafts[MODEL_PROVIDER_FIELD_KEY] ?? "") === OPENAI_CODEX_PROVIDER;
+  const isGsvProvider = fixedAiProviderModel(drafts[MODEL_PROVIDER_FIELD_KEY] ?? "") !== null;
   const codexLogin = useOpenAiCodexLogin({
     active: isOpenAiCodexProvider,
     resetKey: `${profile?.id ?? "new"}:${JSON.stringify(initialValues)}`,
@@ -1101,7 +1119,11 @@ function ModelProfileForm({
     const validationValues = modelValidationValuesFromProfileDrafts(effectiveDrafts, effectiveClearedSecretKeys);
     setPendingLabel("TESTING...");
     setStatusTone("pending");
-    setStatusText(isOpenAiCodexProvider ? "Verifying OpenAI Codex settings..." : "Testing model...");
+    setStatusText(isGsvProvider
+      ? "Checking GSV included inference..."
+      : isOpenAiCodexProvider
+      ? "Verifying OpenAI Codex settings..."
+      : "Testing model...");
     await onValidate({
       values: validationValues,
       ...(profile && !effectiveClearedSecretKeys.has(MODEL_API_KEY_FIELD_KEY) ? { presetId: profile.id } : {}),
@@ -1120,26 +1142,38 @@ function ModelProfileForm({
       await validateDrafts();
     }
   };
-  const visibleModelProfileFields = isOpenAiCodexProvider
-    ? MODEL_PROFILE_FIELDS.filter((field) => !OPENAI_CODEX_IGNORED_PROFILE_FIELD_KEYS.has(field.key))
-    : MODEL_PROFILE_FIELDS;
+  const visibleModelProfileFields = MODEL_PROFILE_FIELDS.filter((field) =>
+    !(
+      (isOpenAiCodexProvider && OPENAI_CODEX_IGNORED_PROFILE_FIELD_KEYS.has(field.key))
+      || (isGsvProvider && GSV_IGNORED_MODEL_FIELD_KEYS.has(field.key))
+    )
+  );
   const profileFields = splitModelSettingsFields(visibleModelProfileFields);
   const newProfileConnectionFields = newModelConnectionFields(
     visibleModelProfileFields,
     isCustomEndpoint,
     isOpenAiCodexProvider,
+    isGsvProvider,
   );
   const newProfileAdvancedFields = newModelAdvancedFields(profileFields.advanced, newProfileConnectionFields);
   const editProfilePrimaryFields = isOpenAiCodexProvider ? newProfileConnectionFields : profileFields.primary;
   const editProfileAdvancedFields = isOpenAiCodexProvider ? newProfileAdvancedFields : profileFields.advanced;
   const advancedResetKey = `${profile?.id ?? "new"}:${JSON.stringify(initialValues)}`;
   const setModelType = (customEndpoint: boolean) => {
-    setDrafts((current) => ({
-      ...current,
-      [MODEL_PROVIDER_FIELD_KEY]: customEndpoint
+    setDrafts((current) => {
+      const provider = customEndpoint
         ? "custom"
-        : defaultBuiltInProvider(defaultValues, current[MODEL_PROVIDER_FIELD_KEY] ?? ""),
-    }));
+        : defaultBuiltInProvider(defaultValues, current[MODEL_PROVIDER_FIELD_KEY] ?? "");
+      return {
+        ...current,
+        [MODEL_PROVIDER_FIELD_KEY]: provider,
+        "config/ai/model": aiModelAfterProviderChange(
+          current[MODEL_PROVIDER_FIELD_KEY] ?? "",
+          current["config/ai/model"] ?? "",
+          provider,
+        ),
+      };
+    });
     setStatusText("");
   };
   const renderModelTypeField = () => (
@@ -1204,6 +1238,13 @@ function ModelProfileForm({
           });
           setDrafts((current) => {
             const next = { ...current, [field.key]: value };
+            if (field.key === MODEL_PROVIDER_FIELD_KEY) {
+              next["config/ai/model"] = aiModelAfterProviderChange(
+                current[MODEL_PROVIDER_FIELD_KEY] ?? "",
+                current["config/ai/model"] ?? "",
+                value,
+              );
+            }
             if (
               field.key === MODEL_PROVIDER_FIELD_KEY &&
               normalizeProviderValue(value) === OPENAI_CODEX_PROVIDER &&
@@ -1260,7 +1301,9 @@ function ModelProfileForm({
     await validateDraftsWithOpenAiCodexLogin();
     setPendingLabel("SAVING");
     const defaultStatus = makeDefault ? " and updating default" : "";
-    setStatusText(isOpenAiCodexProvider
+    setStatusText(isGsvProvider
+      ? `GSV included inference is ready. Saving${defaultStatus}...`
+      : isOpenAiCodexProvider
       ? `OpenAI Codex verified. Saving model${defaultStatus}...`
       : `Model test passed. Saving model${defaultStatus}...`);
     await onSave(name, effectiveDrafts, effectiveClearedSecretKeys, makeDefault);
@@ -1295,6 +1338,8 @@ function ModelProfileForm({
       : clampedStep === 2
       ? isCustomEndpoint
         ? "Set the endpoint, model id, and origin machine used to reach this model."
+        : isGsvProvider
+        ? "GSV manages model selection and provider credentials automatically."
         : isOpenAiCodexProvider
         ? "Set the provider, model id, and ChatGPT login used to test this model."
         : "Set the provider, model id, and credential needed to test this model."
@@ -1564,6 +1609,7 @@ function SettingsFieldGroup({
   const [statusText, setStatusText] = useState("");
   const [statusTone, setStatusTone] = useState<SettingsStatusTone>("success");
   const isOpenAiCodexSettings = normalizeProviderValue(drafts[MODEL_PROVIDER_FIELD_KEY] ?? "") === OPENAI_CODEX_PROVIDER;
+  const isGsvSettings = fixedAiProviderModel(drafts[MODEL_PROVIDER_FIELD_KEY] ?? "") !== null;
   const hasOpenAiCodexOAuth = Boolean(
     onCheckOpenAiCodexOAuth &&
     onPollOpenAiCodexOAuth &&
@@ -1616,7 +1662,11 @@ function SettingsFieldGroup({
   const entriesToSave = isOpenAiCodexSettings
     ? withOpenAiCodexApiKeyClear(changedEntries, fields, writeKeyForField)
     : changedEntries;
-  const fieldGroups = settingFieldGroupsForProvider(fields, isOpenAiCodexSettings);
+  const fieldGroups = settingFieldGroupsForProvider(
+    fields,
+    isOpenAiCodexSettings,
+    isGsvSettings,
+  );
   const advancedResetKey = initialDraftsSignature;
   const codexOriginReady = !isOpenAiCodexSettings ||
     normalizedTransportTargetValue(drafts[MODEL_TRANSPORT_TARGET_KEY] ?? "") !== "gsv";
@@ -1647,7 +1697,11 @@ function SettingsFieldGroup({
       }
     }
     setPendingLabel("TESTING...");
-    setStatusText(isOpenAiCodexSettings ? "Verifying OpenAI Codex settings..." : "Testing model...");
+    setStatusText(isGsvSettings
+      ? "Checking GSV included inference..."
+      : isOpenAiCodexSettings
+      ? "Verifying OpenAI Codex settings..."
+      : "Testing model...");
     await validateBeforeSave(values);
   };
 
@@ -1698,7 +1752,11 @@ function SettingsFieldGroup({
           await validateSettings();
         }
         setPendingLabel("SAVING");
-        setStatusText(isOpenAiCodexSettings ? "OpenAI Codex verified. Saving settings..." : "Model test passed. Saving settings...");
+        setStatusText(isGsvSettings
+          ? "GSV included inference is ready. Saving settings..."
+          : isOpenAiCodexSettings
+          ? "OpenAI Codex verified. Saving settings..."
+          : "Model test passed. Saving settings...");
       } else if (isOpenAiCodexSettings && hasOpenAiCodexOAuth) {
         await codexLogin.ensureConnected();
         setPendingLabel("SAVING");
@@ -1752,6 +1810,13 @@ function SettingsFieldGroup({
           });
           setDrafts((current) => {
             const next = { ...current, [field.key]: value };
+            if (field.key === MODEL_PROVIDER_FIELD_KEY) {
+              next["config/ai/model"] = aiModelAfterProviderChange(
+                current[MODEL_PROVIDER_FIELD_KEY] ?? "",
+                current["config/ai/model"] ?? "",
+                value,
+              );
+            }
             if (
               field.key === MODEL_PROVIDER_FIELD_KEY &&
               normalizeProviderValue(value) === OPENAI_CODEX_PROVIDER &&
@@ -1873,13 +1938,17 @@ function splitModelSettingsFields(fields: readonly ConsoleSettingField[]): {
 function settingFieldGroupsForProvider(
   fields: readonly ConsoleSettingField[],
   openAiCodexProvider: boolean,
+  gsvProvider: boolean,
 ): {
   primary: readonly ConsoleSettingField[];
   advanced: readonly ConsoleSettingField[];
 } {
-  const visibleFields = openAiCodexProvider
-    ? fields.filter((field) => !OPENAI_CODEX_IGNORED_PROFILE_FIELD_KEYS.has(field.key))
-    : fields;
+  const visibleFields = fields.filter((field) =>
+    !(
+      (openAiCodexProvider && OPENAI_CODEX_IGNORED_PROFILE_FIELD_KEYS.has(field.key))
+      || (gsvProvider && GSV_IGNORED_MODEL_FIELD_KEYS.has(field.key))
+    )
+  );
   const groups = splitModelSettingsFields(visibleFields);
   if (!openAiCodexProvider) {
     return groups;
@@ -1920,9 +1989,12 @@ function newModelConnectionFields(
   fields: readonly ConsoleSettingField[],
   customEndpoint: boolean,
   openAiCodexProvider = false,
+  gsvProvider = false,
 ): ConsoleSettingField[] {
   const keys = customEndpoint
     ? CUSTOM_ENDPOINT_CONNECT_FIELD_KEYS
+    : gsvProvider
+    ? GSV_CONNECT_FIELD_KEYS
     : openAiCodexProvider
     ? OPENAI_CODEX_CONNECT_FIELD_KEYS
     : PROVIDER_CONNECT_FIELD_KEYS;

@@ -106,13 +106,6 @@ describe("managed inference stack integration", () => {
         "ai.text.generate",
         {
           messages: [{ role: "user", content: "ping" }],
-          config: {
-            overrides: {
-              "config/ai/provider": "gsv",
-              "config/ai/model": "default",
-              "config/ai/api_key": "",
-            },
-          },
           options: { maxTokens: 128, reasoning: "low", timeoutMs: 5_000 },
         },
       );
@@ -131,13 +124,6 @@ describe("managed inference stack integration", () => {
         "ai.text.generate",
         {
           messages: [{ role: "user", content: "ping again" }],
-          config: {
-            overrides: {
-              "config/ai/provider": "gsv",
-              "config/ai/model": "default",
-              "config/ai/api_key": "",
-            },
-          },
           options: { maxTokens: 128, reasoning: "low", timeoutMs: 5_000 },
         },
       );

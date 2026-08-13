@@ -13,10 +13,15 @@ import type {
   ConsoleProcess,
 } from "../../gsv-console/domain/consoleModels";
 import {
+  aiProviderDisplayLabel,
+  fixedAiProviderModel,
+} from "../../../domain/aiProviders";
+import {
   defaultModelLabelForConfig,
   modelLabelsForConfig,
   modelProfilesForConfig,
 } from "../../gsv-console/domain/consoleAi";
+import { effectiveAiValuesForViewer } from "../../gsv-console/domain/consoleSettings";
 import {
   behaviorForAccount,
   inheritedModelLabelForAccount,
@@ -349,10 +354,22 @@ function behaviorViewForAccount(
   const behavior = behaviorForAccount(config, account.uid, ownerUid);
   const modelValue = behavior.model.trim();
   const inheritedModelLabel = inheritedModelLabelForAccount(config, account.uid, ownerUid);
+  const effectiveValues = effectiveAiValuesForViewer(config, account.uid);
+  const fixedModel = fixedAiProviderModel(effectiveValues["config/ai/provider"] ?? "");
+  const includedLabel = !modelValue && fixedModel === effectiveValues["config/ai/model"]
+    ? aiProviderDisplayLabel(effectiveValues["config/ai/provider"] ?? "")
+    : "";
+  const visibleModelLabels = includedLabel
+    ? modelLabels.map((label) => label === fixedModel ? includedLabel : label)
+    : modelLabels;
   const reasoning = behavior.reasoning.trim() || inheritedReasoningForAccount(config, account.uid, ownerUid);
   return {
-    modelLabel: behavior.modelLabel || inheritedModelLabel,
-    modelOptions: modelLabelsForAccount(modelLabels, behavior.modelLabel || modelValue, inheritedModelLabel),
+    modelLabel: includedLabel || behavior.modelLabel || inheritedModelLabel,
+    modelOptions: modelLabelsForAccount(
+      visibleModelLabels,
+      behavior.modelLabel || modelValue,
+      includedLabel || inheritedModelLabel,
+    ),
     modelValue,
     modelIsDefault: modelValue.length === 0,
     reasoningLabel: formatChatReasoningLabel(reasoning),
@@ -361,10 +378,17 @@ function behaviorViewForAccount(
 }
 
 function defaultBehaviorView(config: readonly ConsoleConfigEntry[], modelLabels: readonly string[]): AgentBehaviorView {
-  const modelLabel = defaultModelLabelForConfig(config);
+  const values = effectiveAiValuesForViewer(config, null);
+  const fixedModel = fixedAiProviderModel(values["config/ai/provider"] ?? "");
+  const modelLabel = fixedModel === values["config/ai/model"]
+    ? aiProviderDisplayLabel(values["config/ai/provider"] ?? "")
+    : defaultModelLabelForConfig(config);
+  const visibleModelLabels = fixedModel
+    ? modelLabels.map((label) => label === fixedModel ? modelLabel : label)
+    : modelLabels;
   return {
     modelLabel,
-    modelOptions: modelLabels.length > 0 ? [...modelLabels] : [modelLabel],
+    modelOptions: visibleModelLabels.length > 0 ? [...visibleModelLabels] : [modelLabel],
     modelValue: "",
     modelIsDefault: true,
     reasoningLabel: formatChatReasoningLabel(inheritedReasoningForAccount(config, -1, null)),

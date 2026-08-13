@@ -2,7 +2,15 @@ import { hashPassword, isLocked, makeShadowEntry } from "../../auth/shadow";
 import type { KernelContext } from "../context";
 import { SERVER_RELEASE } from "../../version";
 import type { PasswdEntry } from "../../auth/passwd";
-import type { ProcessIdentity, SysSetupArgs, SysSetupResult, UserIdentity } from "@humansandmachines/gsv/protocol";
+import {
+  GSV_INFERENCE_FEATURE,
+  GSV_INFERENCE_MODEL,
+  GSV_INFERENCE_PROVIDER,
+  type ProcessIdentity,
+  type SysSetupArgs,
+  type SysSetupResult,
+  type UserIdentity,
+} from "@humansandmachines/gsv/protocol";
 import { handleSysBootstrap } from "./bootstrap";
 import { ensureAccountHomeLayout } from "../account-home";
 import { RipgitClient } from "../../fs";
@@ -112,7 +120,13 @@ function parseSetupAgentName(
   return agentName;
 }
 
-function parseAiConfig(args: SysSetupArgs): { provider?: string; model?: string; apiKey?: string } {
+type SetupAiConfig = {
+  provider?: string;
+  model?: string;
+  apiKey?: string;
+};
+
+function parseAiConfig(args: SysSetupArgs): SetupAiConfig {
   const raw = args as Record<string, unknown>;
   if (!raw.ai || typeof raw.ai !== "object") {
     return {};
@@ -123,6 +137,39 @@ function parseAiConfig(args: SysSetupArgs): { provider?: string; model?: string;
     model: readOptionalString(ai.model),
     apiKey: typeof ai.apiKey === "string" ? ai.apiKey : undefined,
   };
+}
+
+function resolveSetupAiConfig(
+  ai: SetupAiConfig,
+  managedInferenceAvailable: boolean,
+): SetupAiConfig {
+  if (ai.provider === GSV_INFERENCE_PROVIDER) {
+    if (!managedInferenceAvailable) {
+      throw new Error("GSV included inference is not available");
+    }
+    if (ai.model !== undefined && ai.model !== GSV_INFERENCE_MODEL) {
+      throw new Error("GSV included inference does not accept a model selection");
+    }
+    if (ai.apiKey?.trim()) {
+      throw new Error("GSV included inference does not accept an API key");
+    }
+    return {
+      provider: GSV_INFERENCE_PROVIDER,
+      model: GSV_INFERENCE_MODEL,
+    };
+  }
+  if (
+    managedInferenceAvailable
+    && ai.provider === undefined
+    && ai.model === undefined
+    && ai.apiKey === undefined
+  ) {
+    return {
+      provider: GSV_INFERENCE_PROVIDER,
+      model: GSV_INFERENCE_MODEL,
+    };
+  }
+  return ai;
 }
 
 function parseTimezone(args: SysSetupArgs): string | undefined {
@@ -173,7 +220,12 @@ export async function handleSysSetup(
   }
 
   const { username, password } = parseSetupIdentity(args);
-  const ai = parseAiConfig(args);
+  const serverFeatures = gsvInferenceFeaturesFromEnv(ctx.env);
+  const managedInferenceAvailable = serverFeatures.includes(GSV_INFERENCE_FEATURE);
+  const ai = resolveSetupAiConfig(
+    parseAiConfig(args),
+    managedInferenceAvailable,
+  );
   const timezone = parseTimezone(args);
   const node = parseNodeConfig(args);
   const rootPassword = readOptionalString((args as Record<string, unknown>).rootPassword);
@@ -277,6 +329,9 @@ export async function handleSysSetup(
       if (ai.apiKey !== undefined) {
         config.set("config/ai/api_key", ai.apiKey);
       }
+      if (managedInferenceAvailable) {
+        config.set("config/ai/fallback_model_profile", "");
+      }
     });
 
     if (node) {
@@ -347,7 +402,6 @@ export async function handleSysSetup(
       `[sys.setup] user=${username} completed in ${Date.now() - startedAt}ms (${formatSetupTimings(timings)})`,
     );
 
-    const serverFeatures = gsvInferenceFeaturesFromEnv(ctx.env);
     return {
       server: {
         version: ctx.serverVersion,

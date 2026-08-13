@@ -6,6 +6,10 @@ import type {
 import type { SessionSnapshot, SessionSetupInput } from "../../services/session/sessionService";
 import { buildCliInstallCommand, cliReleaseLabel } from "../../domain/cliInstall";
 import { DEVICE_ID_FORMAT_DESCRIPTION, parseDeviceId } from "../../domain/deviceId";
+import {
+  aiProviderDisplayLabel,
+  fixedAiProviderModel,
+} from "../../domain/aiProviders";
 
 export type PendingAction = "login" | "setup" | "continue" | null;
 export type AdminMode = "same" | "custom";
@@ -263,10 +267,11 @@ export function validateSetupDetails(
         }
       }
       if (advancedSectionsVisible(draft) && draft.ai.enabled) {
-        if (!draft.ai.provider.trim()) {
+        const provider = draft.ai.provider.trim();
+        if (!provider) {
           return { message: "AI service is required when customizing AI settings.", step };
         }
-        if (!draft.ai.model.trim()) {
+        if (!fixedAiProviderModel(provider) && !draft.ai.model.trim()) {
           return { message: "AI model is required when customizing AI settings.", step };
         }
       }
@@ -288,12 +293,18 @@ export function validateSetupDetails(
   return { message: null };
 }
 
-export function buildAiSummary(draft: OnboardingDraft): string {
+export function buildAiSummary(
+  draft: OnboardingDraft,
+  managedInferenceIncluded = false,
+): string {
   if (!advancedSectionsVisible(draft) || !draft.ai.enabled) {
-    return "Use default AI";
+    return managedInferenceIncluded ? "GSV included" : "Use default AI";
   }
   const provider = draft.ai.provider.trim();
-  const model = draft.ai.model.trim();
+  const model = fixedAiProviderModel(provider) ?? draft.ai.model.trim();
+  if (fixedAiProviderModel(provider)) {
+    return aiProviderDisplayLabel(provider);
+  }
   return provider && model ? `${provider} / ${model}` : "Custom AI settings";
 }
 
@@ -322,9 +333,10 @@ export function buildSetupPayload(draft: OnboardingDraft): SessionSetupInput {
   }
 
   if (advancedSectionsVisible(draft) && draft.ai.enabled) {
+    const provider = draft.ai.provider.trim();
     payload.ai = {
-      provider: draft.ai.provider.trim(),
-      model: draft.ai.model.trim(),
+      provider,
+      model: fixedAiProviderModel(provider) ?? draft.ai.model.trim(),
       ...(draft.ai.apiKey.trim() ? { apiKey: draft.ai.apiKey.trim() } : {}),
     };
   }
