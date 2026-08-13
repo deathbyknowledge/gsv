@@ -93,10 +93,11 @@ approval text is not forwarded to the model.
 ## Current boundary
 
 - Streaming `proc.run.*` signals become one mutable intelligence moment.
-- Completed intelligence replies render a conservative GFM subset: headings, emphasis, links,
-  lists, quotes, tables, rules, inline and fenced code, and Markdown images. Partial streaming
-  Markdown remains literal until the reply completes so its layout does not churn while tokens
-  arrive.
+- Intelligence replies render a conservative GFM subset while they stream: headings, emphasis,
+  links, lists, quotes, tables, rules, inline and fenced code, and Markdown images. Preparation is
+  coalesced off the UI thread and publishes coherent snapshots rather than splicing an unparsed
+  token tail into rendered Markdown. An identical completed reply reuses its final streamed
+  document and type size instead of reparsing or reshaping at completion.
 - Process-owned image attachments use `proc.media.read`. Remote HTTP and HTTPS Markdown images are
   fetched automatically inside the trusted conversation boundary. The selected moment owns each
   transfer and cancels it on navigation; transfer, decoded-image, concurrency, and cache budgets
@@ -110,8 +111,8 @@ approval text is not forwarded to the model.
   response; raw tool names, arguments, paths, outputs, and tool cards are not shown.
 - `proc.hil` approval remains a deterministic control boundary.
 - The command surface currently uses one-shot `shell.exec`; it is not a persistent PTY yet.
-- Attachment composition/upload, process management, settings, and daemon lifecycle are out of
-  scope for this prototype.
+- Attachment composition/upload, process management, settings, and daemon lifecycle are not yet
+  implemented in this client.
 
 Validate with:
 

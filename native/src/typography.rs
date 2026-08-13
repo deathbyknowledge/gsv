@@ -106,54 +106,6 @@ pub fn fit_type_layout(
     }
 }
 
-pub fn measure_type_layout_at_size(
-    window: &Window,
-    text: SharedString,
-    available_width: f32,
-    available_height: f32,
-    size: f32,
-    weight: FontWeight,
-) -> TypeLayout {
-    let width = reading_width(text.as_ref(), available_width);
-    let size = quantize_size(size.clamp(MIN_TYPE_SIZE, MAX_TYPE_SIZE));
-    let text: SharedString = if text.is_empty() { " ".into() } else { text };
-    let mut prose_font = font(theme::PROSE_FONT);
-    prose_font.weight = weight;
-    let line_height = line_height_for(size);
-    let (content_height, _) = retained_size_content_height(
-        text.as_ref(),
-        size,
-        line_height,
-        width,
-        available_height,
-        || measured_height(window, text.clone(), prose_font, size, line_height, width),
-    );
-
-    TypeLayout {
-        size,
-        line_height,
-        width,
-        content_height,
-        scrolls: content_height > available_height,
-    }
-}
-
-fn retained_size_content_height(
-    text: &str,
-    size: f32,
-    line_height: f32,
-    width: f32,
-    available_height: f32,
-    measure: impl FnOnce() -> Option<f32>,
-) -> (f32, bool) {
-    let estimated = estimated_height(text, size, line_height, width);
-    if estimated > available_height {
-        return (estimated, false);
-    }
-
-    (measure().unwrap_or(estimated), true)
-}
-
 fn type_size_ceiling(
     text: &str,
     reading_width: f32,
@@ -450,35 +402,6 @@ mod tests {
             1_020.0,
             614.0 * MAX_CONTENT_OCCUPANCY,
         ));
-    }
-
-    #[test]
-    fn retained_overflow_uses_the_estimate_without_an_extra_shape() {
-        let text = "A response that already extends past the viewport. ".repeat(200);
-        let mut measurements = 0;
-        let (height, measured) =
-            retained_size_content_height(&text, 30.0, line_height_for(30.0), 820.0, 420.0, || {
-                measurements += 1;
-                Some(1.0)
-            });
-
-        assert!(height > 420.0);
-        assert!(!measured);
-        assert_eq!(measurements, 0);
-
-        let (_, measured) = retained_size_content_height(
-            "Short response.",
-            30.0,
-            line_height_for(30.0),
-            820.0,
-            420.0,
-            || {
-                measurements += 1;
-                Some(42.0)
-            },
-        );
-        assert!(measured);
-        assert_eq!(measurements, 1);
     }
 
     #[test]

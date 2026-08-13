@@ -19,7 +19,7 @@ use crate::model::{
 };
 use crate::prepared::PreparedContent;
 use crate::theme;
-use crate::typography::{fit_type_layout, measure_type_layout_at_size, TypeLayout};
+use crate::typography::{fit_type_layout, TypeLayout};
 
 use super::media::release_assets;
 use super::presence::{
@@ -143,7 +143,6 @@ struct TypeFit<'a> {
     available_width: f32,
     available_height: f32,
     maximum_size: Option<f32>,
-    lock_size: bool,
     weight: FontWeight,
 }
 
@@ -196,19 +195,13 @@ fn stable_transition_cost(
     candidate
 }
 
-fn type_fit_hash(
-    revision: u64,
-    available_width: f32,
-    available_height: f32,
-    lock_size: bool,
-) -> u64 {
+fn type_fit_hash(revision: u64, available_width: f32, available_height: f32) -> u64 {
     type_content_hash(&(
         TYPE_LAYOUT_POLICY_REVISION,
         theme::PROSE_FONT,
         revision,
         available_width.to_bits(),
         available_height.to_bits(),
-        lock_size,
     ))
 }
 
@@ -747,10 +740,9 @@ impl GsvApp {
             available_width,
             available_height,
             maximum_size,
-            lock_size,
             weight,
         } = request;
-        let content_hash = type_fit_hash(revision, available_width, available_height, lock_size);
+        let content_hash = type_fit_hash(revision, available_width, available_height);
         self.type_layout_clock = self.type_layout_clock.wrapping_add(1);
         if let Some(cached) = self
             .type_layouts
@@ -761,25 +753,14 @@ impl GsvApp {
             return cached.layout;
         }
 
-        let layout = if lock_size {
-            measure_type_layout_at_size(
-                window,
-                text.clone(),
-                available_width,
-                available_height,
-                maximum_size.expect("a locked type fit requires a retained size"),
-                weight,
-            )
-        } else {
-            fit_type_layout(
-                window,
-                text,
-                available_width,
-                available_height,
-                maximum_size,
-                weight,
-            )
-        };
+        let layout = fit_type_layout(
+            window,
+            text,
+            available_width,
+            available_height,
+            maximum_size,
+            weight,
+        );
         if self.type_layouts.len() >= TYPE_LAYOUT_CACHE_LIMIT
             && !self.type_layouts.contains_key(key)
         {
@@ -1116,7 +1097,6 @@ impl GsvApp {
                 available_width,
                 available_height,
                 maximum_size,
-                lock_size: maximum_size.is_some(),
                 weight: message_weight,
             },
         );
@@ -1233,7 +1213,6 @@ impl GsvApp {
                     available_width,
                     available_height,
                     maximum_size: self.draft_type_size,
-                    lock_size: false,
                     weight: FontWeight::NORMAL,
                 },
             );
@@ -1275,7 +1254,6 @@ impl GsvApp {
                     available_width,
                     available_height,
                     maximum_size: self.draft_type_size,
-                    lock_size: false,
                     weight: FontWeight::NORMAL,
                 },
             );
@@ -2340,13 +2318,12 @@ mod tests {
     }
 
     #[test]
-    fn type_fit_cache_hash_covers_geometry_and_locking() {
-        let baseline = type_fit_hash(7, 800.0, 500.0, false);
-        assert_eq!(baseline, type_fit_hash(7, 800.0, 500.0, false));
-        assert_ne!(baseline, type_fit_hash(7, 801.0, 500.0, false));
-        assert_ne!(baseline, type_fit_hash(7, 800.0, 501.0, false));
-        assert_ne!(baseline, type_fit_hash(7, 800.0, 500.0, true));
-        assert_ne!(baseline, type_fit_hash(8, 800.0, 500.0, false));
+    fn type_fit_cache_hash_covers_revision_and_geometry() {
+        let baseline = type_fit_hash(7, 800.0, 500.0);
+        assert_eq!(baseline, type_fit_hash(7, 800.0, 500.0));
+        assert_ne!(baseline, type_fit_hash(7, 801.0, 500.0));
+        assert_ne!(baseline, type_fit_hash(7, 800.0, 501.0));
+        assert_ne!(baseline, type_fit_hash(8, 800.0, 500.0));
     }
 
     use crate::app::{bind_keys, HideDraft};
@@ -2649,7 +2626,9 @@ mod tests {
     }
 
     #[gpui::test]
-    fn completed_stream_size_is_retained_until_navigation(cx: &mut TestAppContext) {
+    fn stream_size_shrinks_with_prepared_growth_and_never_regrows_within_the_run(
+        cx: &mut TestAppContext,
+    ) {
         cx.update(|cx| {
             gpui_component::init(cx);
             bind_keys(cx);
@@ -2697,13 +2676,37 @@ mod tests {
                 cx.notify();
             });
         });
+        cx.executor().advance_clock(Duration::from_millis(40));
+        cx.run_until_parked();
+        let grown_size = cx.cx.update(|cx| {
+            let app = app.read(cx);
+            let mut sizes = app.stream_type_sizes.values().copied();
+            let size = sizes.next().expect("grown stream size should be cached");
+            assert!(sizes.all(|other| other == size));
+            assert!(
+                size < live_size,
+                "accepted prepared growth should shrink from {live_size} to {size}"
+            );
+            size
+        });
+
+        cx.cx.update(|cx| {
+            app.update(cx, |app, cx| {
+                app.conversation.replace_run_text_owned(
+                    Some("run-1"),
+                    "A corrected short response.".to_string(),
+                );
+                cx.notify();
+            });
+        });
+        cx.executor().advance_clock(Duration::from_millis(40));
         cx.run_until_parked();
         cx.cx.update(|cx| {
             assert!(app
                 .read(cx)
                 .stream_type_sizes
                 .values()
-                .all(|size| *size == live_size));
+                .all(|size| *size == grown_size));
         });
 
         cx.cx.update(|cx| {
@@ -2716,7 +2719,7 @@ mod tests {
         cx.cx.update(|cx| {
             let app = app.read(cx);
             assert_eq!(app.stream_type_sizes.len(), 1);
-            assert_eq!(app.stream_type_sizes.values().next(), Some(&live_size));
+            assert_eq!(app.stream_type_sizes.values().next(), Some(&grown_size));
         });
 
         cx.cx.update(|cx| {
