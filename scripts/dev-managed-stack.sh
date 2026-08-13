@@ -31,6 +31,7 @@ exec env \
   --config wrangler.dev.jsonc \
   --config ../inference/wrangler.dev.jsonc \
   --config ../ripgit/wrangler.managed.dev.jsonc \
+  --config ../adapters/email/wrangler.dev.jsonc \
   --ip 127.0.0.1 \
   --port 8976 \
   --env-file "$MANAGED_ENV_FILE" \

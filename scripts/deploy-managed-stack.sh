@@ -22,6 +22,28 @@ fi
 npm run managed:check --prefix "$ROOT_DIR"
 
 (
+  cd "$ROOT_DIR/adapters/email"
+  if ! npm exec --workspaces=false -- wrangler queues info \
+    gsv-managed-mail-outbound-dead-letter >/dev/null 2>&1; then
+    npm exec --workspaces=false -- wrangler queues create \
+      gsv-managed-mail-outbound-dead-letter \
+      --message-retention-period-secs 1209600
+  fi
+  npm exec --workspaces=false -- wrangler queues update \
+    gsv-managed-mail-outbound-dead-letter \
+    --message-retention-period-secs 1209600
+  if ! npm exec --workspaces=false -- wrangler queues info \
+    gsv-managed-mail-outbound >/dev/null 2>&1; then
+    npm exec --workspaces=false -- wrangler queues create \
+      gsv-managed-mail-outbound \
+      --message-retention-period-secs 1209600
+  fi
+  npm exec --workspaces=false -- wrangler queues update \
+    gsv-managed-mail-outbound \
+    --message-retention-period-secs 1209600
+)
+
+(
   cd "$ROOT_DIR/accounts"
   CI=1 npm exec --workspaces=false -- wrangler d1 migrations apply \
     gsv-accounts \
@@ -59,4 +81,4 @@ npm run managed:check --prefix "$ROOT_DIR"
     --minify
 )
 
-echo "Managed GSV deployed. Inference remains governed by its source-controlled release gate."
+echo "Managed GSV deployed. Inference remains governed by Accounts policy."

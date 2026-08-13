@@ -163,7 +163,7 @@ Runtime behavior:
 
 | Syscall | Handler | Behavior |
 |---|---|---|
-| `shell.exec` | `handleShellExec`; CLI `Bash` | Native runs `just-bash` over `GsvFs` with process identity env and built-in commands such as `codemode`, `mcp`, and `wiki`. Device targets run a real local shell through the CLI. Device start calls return within a runtime-owned wait budget. If the command is still running, the result includes a `sessionId`; later calls with that `sessionId` poll or write stdin. |
+| `shell.exec` | `handleShellExec`; CLI `Bash` | Native runs `just-bash` over `GsvFs` with process identity env and built-in commands such as `codemode`, `mail`, `mcp`, and `wiki`. Device targets run a real local shell through the CLI. Device start calls return within a runtime-owned wait budget. If the command is still running, the result includes a `sessionId`; later calls with that `sessionId` poll or write stdin. |
 
 ```ts
 type ShellSyscalls = {
@@ -215,6 +215,114 @@ while (res.status === "running") {
 return output;
 ```
 
+The native `mail` command exposes the managed mailbox. `mail send` sends a new
+message and `mail reply` replies to a stored inbound message:
+
+```bash
+mail send --to person@example.com --subject "Hello" --message "Hello from GSV"
+mail reply MESSAGE_ID --body ./reply.txt
+mail status DELIVERY_ID
+```
+
+Both commands run inside `shell.exec`, so a model invocation is governed by the
+outer `shell.exec` approval. They do not create a second nested `mail.send`
+approval. Use `--delivery-id` to retain an idempotency key across a deliberate
+retry; otherwise the command derives one from the outer request and the
+invocation's ordinal.
+
+## Mail: `mail.send`
+
+`mail.send` is the explicit managed-email send primitive. Version one accepts a
+non-empty plain-text body of at most 1 MiB and exactly one recipient. It does
+not accept HTML, CC, BCC, or attachments. New messages require `to` and `subject`. A reply
+instead supplies `replyToMessageId`; the Kernel looks up that message in the
+caller's mailbox, derives its recipient and threading headers, and derives a
+`Re:` subject unless the caller supplies one. A reply cannot override `to`.
+
+The caller must have the `mail.send` capability and resolve to an active human
+mailbox owner. The Kernel derives `from` from that owner's managed mailbox; the
+caller cannot choose it. Standalone deployments do not bind the managed email
+queue, so this syscall returns an unavailable operation result there.
+
+`deliveryId` is the caller's required durable idempotency key. A direct protocol
+or SDK caller must retain it before sending so a timeout or disconnect can be
+reconciled without minting a duplicate. Reusing the same id for the same owner and exact message returns the existing outbound intent with
+`replayed: true`; reusing it with different content, destination, or reply
+context is rejected. CodeMode and the native shell derive deterministic ids
+from their durable outer execution when the caller does not supply one.
+
+The first successful call normally returns `queued`, which means only that the
+canonical intent and body are durable and Queue publication is durably owned by
+the Kernel. The Kernel retries publication until the Queue accepts the command.
+Replaying the same call returns its current state. `accepted` means Cloudflare
+Email Sending accepted the message and returned a provider id, not that the
+recipient's mailbox has delivered it. `failed` is a known terminal failure.
+`unknown` means the provider call may have succeeded, so GSV will not replay it
+and risk sending a duplicate.
+
+Cancellation is effective until the Kernel durably admits the outbox wake. Once
+that admission exists, delivery recovery continues even if the original request
+disconnects; the caller must retain the delivery id and inspect `mail.status`
+rather than assuming that cancellation recalled the message.
+
+```ts
+type MailSyscalls = {
+  "mail.send": {
+    args: {
+      text: string;
+      to?: string;
+      subject?: string;
+      replyToMessageId?: string;
+      deliveryId: string;
+    };
+    result:
+      | {
+          ok: true;
+          deliveryId: string;
+          outboundId: string;
+          state: "queued" | "accepted" | "failed" | "unknown";
+          from: string;
+          to: string;
+          subject: string;
+          errorCode?: string;
+          replayed: boolean;
+        }
+      | {
+          ok: false;
+          error: string;
+          retryable: boolean;
+          deliveryId?: string;
+          outboundId?: string;
+        };
+  };
+  "mail.status": {
+    args: { deliveryId: string };
+    result: {
+      outbound: null | {
+        deliveryId: string;
+        outboundId: string;
+        state: "staging" | "queued" | "accepted" | "failed" | "unknown";
+        from: string;
+        to: string;
+        subject: string;
+        createdAt: number;
+        queuedAt: number | null;
+        completedAt: number | null;
+        providerMessageId?: string;
+        errorCode?: string;
+      };
+    };
+  };
+};
+```
+
+`mail.status` is a pure owner-scoped lookup by exact `deliveryId`. It has its
+own `mail.status` capability, remains available when sending is disabled or the
+managed Queue is unavailable, and returns the same `null` result for missing
+and foreign-owned deliveries. It does not re-enter compose, body storage, or
+Queue publication. This is the normal way to observe the eventual outcome of a
+send that returned `queued`.
+
 ## CodeMode: `codemode.exec`, `codemode.run`
 
 `codemode.exec` runs one sandboxed async JavaScript block in the Process DO
@@ -241,16 +349,22 @@ const toolResult = await lookup_record({ query: "gsv" });
 ```
 
 Nested tool calls are dispatched back through the Process DO and Kernel as
-ordinary `shell.exec`, `fs.*`, `net.fetch`, and `sys.mcp.*` request frames. They keep the
-same capability, approval, target routing, async device response, and shell
-session behavior as direct model tool calls.
+ordinary `shell.exec`, `fs.*`, `net.fetch`, `mail.send`, and `sys.mcp.*`
+request frames. They keep the same capability, approval, target routing, async
+device response, and shell session behavior as direct model tool calls.
+
+`mail.send` is deliberately available through the CodeMode wrapper rather than
+as another fixed model-facing tool. Each nested call is checked independently
+against the Process approval policy; the default interactive policy asks for
+approval. The wrapper derives an ordinal idempotency key from the durable run
+and CodeMode dispatch unless the script supplies `deliveryId` explicitly.
 
 Runtime behavior:
 
 | Syscall | Handler | Behavior |
 |---|---|---|
-| `codemode.exec` | Process DO `executeCodeModeTool`; `executeCodeMode` | Runs code in an isolated Worker Loader worker with outbound network disabled. Provides `shell(input, options)`, `fs.read/write/edit/delete/search`, `mcpTools` metadata, and connected MCP tools as generated async functions. Returns a structured `completed` or `failed` CodeMode result. |
-| `codemode.run` | Kernel `forwardToProcess`; Process DO `handleCodeModeRun`; `executeCodeMode` | Manual CodeMode execution for shell/CLI surfaces. Accepts code plus optional wrapper defaults and script arguments. Nested tools route through normal `shell.exec`, `fs.*`, `net.fetch`, and `sys.mcp.*` syscalls. |
+| `codemode.exec` | Process DO `executeCodeModeTool`; `executeCodeMode` | Runs code in an isolated Worker Loader worker with outbound network disabled. Provides `shell(input, options)`, `fs.read/write/edit/delete/search`, `mail.send`, `mcpTools` metadata, and connected MCP tools as generated async functions. Returns a structured `completed` or `failed` CodeMode result. |
+| `codemode.run` | Kernel `forwardToProcess`; Process DO `handleCodeModeRun`; `executeCodeMode` | Manual CodeMode execution for shell/CLI surfaces. Accepts code plus optional wrapper defaults and script arguments. Nested tools route through normal `shell.exec`, `fs.*`, `net.fetch`, `mail.send`, and `sys.mcp.*` syscalls. |
 
 ```ts
 type CodeModeSyscalls = {

@@ -12,13 +12,14 @@ bundles.
 | Managed inference | `gsv-inference` | none | InferenceInstallation DOs |
 | Managed repositories | `gsv-managed-ripgit` | none | Repository DOs |
 | Installation Gateway | `gsv-managed-gateway` | `*.gsv.space/*` | Kernel and Process DOs, R2 `gsv-managed-storage` |
-| Managed email | `gsv-managed-email` | Email Routing only | MailInstallation DOs |
+| Managed email | `gsv-managed-email` | Email Routing and outbound Queue consumer | MailInstallation DOs |
 
 Accounts has no dependency on another managed Worker. Inference exports usage
-to Accounts. The Gateway binds Accounts, Inference, and ripgit. Email is
-deployed last because it binds Accounts, Inference, and the Gateway. Inference,
-ripgit, and email disable `workers.dev` and preview URLs and have no public HTTP
-routes.
+to Accounts. The Gateway binds Accounts, Inference, ripgit, and the managed
+outbound-mail Queue. Email is deployed last because it binds Accounts,
+Inference, the Gateway, Cloudflare Email Sending, and consumes that Queue.
+Inference, ripgit, and email disable `workers.dev` and Worker preview URLs and
+have no public HTTP routes.
 
 Managed email accepts `<installation-handle>@gsv.space`. Accounts resolves the
 handle to an active immutable installation before the email Worker addresses a
@@ -27,6 +28,20 @@ and summary work; the Kernel remains the canonical mailbox owner and stores the
 message under the selected local user's home. Version one assigns one address
 to the installation's first unlocked human account. Per-user aliases require a
 future address directory rather than overloading installation routing.
+
+Outbound mail uses the same installation address and is managed-only. The
+Kernel persists a canonical text-only, single-recipient intent in SQLite and
+its body in R2. The v1 text cap is 1 MiB, leaving headroom beneath Cloudflare's
+5 MiB composed-message limit for encoding and headers. The Kernel publishes
+only the installation ID, opaque outbound ID, and content fingerprint to the
+Queue. The email Worker durably admits that trusted reference to the
+installation-scoped Durable Object before acknowledging the Queue message. The
+DO re-resolves the active installation through Accounts, persists the expected
+sender on its first successful resolution, claims the draft from the Gateway,
+reserves daily message and byte quotas, records the provider attempt, and calls
+the native Email Sending binding once. Completion is
+`accepted`, `failed`, or `unknown`; `unknown` is an at-most-once terminal result
+and is never replayed after provider ambiguity.
 
 The production Gateway uses `gateway/src/index.ts`. The
 `gateway/src/managed-development.ts` wrapper exists only to put the local
@@ -60,8 +75,26 @@ catch-all during a normal Worker deployment: a catch-all can take over existing
 `@gsv.space` mail. Inspect the zone's current Email Routing rules, then add only
 the reviewed address or catch-all rule that should deliver to
 `gsv-managed-email`. Staging uses the separate `staging.gsv.space` email
-subdomain and `gsv-staging-email`; its first dogfood rule should be a literal
-test address, not a catch-all.
+subdomain and `gsv-staging-email`; its first dogfood route must be the literal
+address for the disposable installation, not a catch-all.
+
+Cloudflare Email Sending is a separate domain onboarding from Email Routing.
+Before enabling outbound mail, verify that the exact production or staging mail
+domain is onboarded for Email Sending and that its SPF, DKIM, DMARC, and bounce
+records are healthy. Arbitrary recipients require Workers Paid. New sending
+domains enable Email preview by default, which stores sent message content in
+Cloudflare's activity log temporarily; turn preview off before using real GSV
+mail. Confirm the account's current daily sending quota because production and
+staging share that account-level limit.
+
+The source-controlled deployment is intentionally inert: it sets
+`MAIL_OUTBOUND_ENABLED` to false and both outbound daily allowances to zero.
+For the first staging dogfood, configure the Email binding with the exact
+staging installation sender and a single verified test destination. Do not use
+a wildcard sender restriction: Cloudflare's binding restriction accepts exact
+addresses. Keep production disabled while staging is exercised. Activating an
+environment requires one reviewed change that sets the switch, nonzero daily
+message and byte allowances, and the intended binding restrictions together.
 
 Create a Cloudflare Access self-hosted application protecting
 `https://gsv.space/admin*`. Configure the Accounts Worker with both required
@@ -111,12 +144,33 @@ Humans & Machines infrastructure repository manages the equivalent production
 and staging graph; use one deployment owner for a live environment rather than
 mixing it with this direct Wrangler path.
 
-Managed inference is source-controlled off in `inference/wrangler.jsonc`, with
-a zero deployment ceiling. Do not enable it by changing only the boolean:
-choose and review a nonzero deployment ceiling in the same change, deploy
-Inference, then use the Accounts admin to enable the operational switch and a
-positive allowance for each installation. The effective allowance is the lower
-of the deployment ceiling and the installation allowance.
+Managed inference is source-controlled on in `inference/wrangler.jsonc`. The
+zero deployment ceiling adds no second ceiling; Accounts remains the runtime
+control plane through its global switch and each installation's positive
+allowance. A positive deployment ceiling may be added as an additional hard
+cap, in which case the effective allowance is the lower of the deployment and
+installation limits.
+
+Managed outbound email follows the same fail-closed release discipline. Queue
+and Email Sending bindings may be deployed while its boolean and daily quotas
+remain zero. Provision `gsv-managed-mail-outbound` and its
+`gsv-managed-mail-outbound-dead-letter` Queue before either producer or
+consumer deployment. Alert on the dead-letter Queue and replay a reference only
+after the admission failure is understood; the Kernel and installation ledger
+make an exact replay idempotent.
+
+Keep both Queues at the 14-day retention used by the direct deployment script,
+and do not attach the normal email consumer to the dead-letter Queue. To
+redrive a valid entry, first fix the admission failure, then publish the exact
+unchanged JSON body to `gsv-managed-mail-outbound`. Wait until `mail status`
+or the installation delivery ledger shows durable progress or a terminal
+outcome before acknowledging the dead-letter copy. A malformed or unsupported
+entry is poison and must be acknowledged without replay; never repair an
+installation ID, outbound ID, or fingerprint by hand.
+
+Email Routing domains, routing rules, Email Sending domains, preview settings,
+and exact sender/destination restrictions remain operator-owned Cloudflare
+configuration; the application deployment must not silently claim them.
 
 ## Smoke and rollback
 
@@ -130,10 +184,19 @@ After deployment:
   installation ID; and
 - send mail to the reviewed disposable address, then verify `mail list`,
   `mail show <messageId>`, `mail show <messageId> --raw`, and the Inbox process
-  event without exposing raw message content as trusted instructions; and
-- while inference is disabled, verify generation fails without contacting the
-  provider; then enable the operational and installation controls and verify a
-  generation settles into the Accounts usage view.
+  event without exposing raw message content as trusted instructions;
+- from that installation, send one text message with `mail send` to the exact
+  verified test recipient, replay it with the same delivery ID, and verify only
+  one provider message exists and the durable state settles to `accepted`;
+- reply with `mail reply <messageId>` and verify the sender remains the exact
+  Accounts-derived installation address and threading headers refer to the
+  stored inbound message;
+- inspect the email Worker ledger and account Email Sending activity, then
+  restore outbound to disabled with zero daily quotas before widening either
+  the inbound route or recipient policy; and
+- disable the Accounts operational switch and verify generation fails without
+  contacting the provider; then enable the operational and installation
+  controls and verify a generation settles into the Accounts usage view.
 
 Record each prior Worker version before updating. Worker rollback does not roll
 back D1, R2, or Durable Object storage. Schema changes therefore remain

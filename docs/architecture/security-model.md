@@ -129,8 +129,8 @@ smallest useful directory.
 
 Tool approval is a policy layer, not an isolation layer. Profiles can auto,
 deny, or ask for matching syscalls. The default interactive policy asks for
-`shell.exec`, `fs.delete`, and `sys.mcp.call`; non-interactive profiles cannot
-pause for human approval.
+`shell.exec`, `fs.delete`, `sys.mcp.call`, and `mail.send`; non-interactive
+profiles cannot pause for human approval.
 
 ## Devices
 
@@ -174,9 +174,31 @@ Inbound email is hostile content. The Kernel persists exact bytes before any
 inference call. Summarization uses a fixed server-owned model and prompt with no
 tools, and only its validated bounded result becomes a typed system event for
 the Inbox Process. This reduces the instruction-injection surface but does not
-make the sender, links, attachments, or summary trusted. Explicit outbound mail
-is not enabled until its syscall, approval, destination, quota, and replay
-contracts are implemented end to end.
+make the sender, links, attachments, or summary trusted.
+
+Explicit outbound mail is a capability-gated `mail.send` syscall for one
+plain-text recipient. The Kernel ignores caller-supplied sender identity because
+the syscall has no `from` argument: it resolves the active human owner and
+derives that owner's canonical managed address. The email Worker independently
+derives the same expected sender from the active Accounts handle and configured
+mail domain before using the provider binding.
+
+CodeMode exposes `mail.send` as a nested syscall, not as a fixed direct tool, and
+the default interactive policy asks for approval on each call. The native
+`mail send` and `mail reply` commands execute beneath `shell.exec`; the outer
+shell approval is their authority and they do not generate a second nested
+approval. Policies that auto-approve `shell.exec` therefore also authorize
+those shell forms, just as they authorize other shell side effects.
+
+Outbound replay protection spans both trust boundaries. Kernel SQLite binds a
+human owner's required, caller-retained `deliveryId` to the exact draft while R2 holds the canonical body.
+The installation-scoped email Durable Object durably reserves quotas and marks
+the provider attempt before sending. Local lifecycle, quota, and validation
+rejections before that attempt are `failed`; a successful provider acceptance
+is `accepted`; any binding throw or other ambiguous outcome after the attempt
+is `unknown` and is never replayed. Production deployment
+keeps outbound sending disabled and its daily message and byte allowances at
+zero until the operator completes the Email Sending release gates.
 
 ## Git
 

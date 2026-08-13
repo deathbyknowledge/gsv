@@ -165,6 +165,41 @@ sends text or one filesystem attachment as an extra message. An explicit
 send to the current automatic destination requires `--also`, preventing an
 accidental duplicate final reply.
 
+Managed outbound email has a separate explicit path because email is a mailbox,
+not an observed chat surface. `mail.send` accepts one recipient and a plain-text
+body capped at 1 MiB in version one, or `replyToMessageId` to derive the
+recipient and threading headers from a message in the caller's canonical
+mailbox. The Kernel derives the sender from the active human owner's mailbox.
+`mail send` and `mail reply` expose the same operation through the native
+shell; CodeMode exposes it as `mail.send`.
+
+The Kernel owns the canonical outbound intent. It binds a caller-selected or
+deterministically derived `deliveryId` to the exact owner, destination, reply
+context, headers, and body digest in Kernel SQLite, then stores the text once in
+installation-scoped R2. Replaying an exact intent returns its current state;
+reusing the id for different content fails closed. The Queue carries only an
+installation-scoped `outboundId` and fingerprint. The email Worker first admits
+that trusted reference to the installation-scoped email Durable Object. The DO
+then resolves Accounts and claims the canonical draft and body over the Gateway
+binding before contacting a provider, so a transient dependency outage cannot
+exhaust Queue retries and lose the intent.
+
+An installation-scoped email Durable Object owns the delivery ledger, daily
+message and byte reservations, claim retries, and completion callback retries.
+It independently derives and persists the expected sender on the first
+successful active Accounts resolution. Later handle drift fails closed, and a
+mismatched draft is rejected rather than trusting the claimed `from` field.
+Cloudflare Email Sending is called at most once after the DO durably records an
+attempt. Provider acceptance records `accepted`.
+Lifecycle, quota, and draft validation failures before that attempt record
+`failed`; a crash, binding throw, or malformed provider result after the attempt
+records `unknown` and is never replayed, because the message may already have
+left the provider boundary.
+
+This service exists only in the Humans & Machines managed graph. Standalone GSV
+does not deploy the email Worker, Queue, provider binding, or managed
+`mail.send` transport.
+
 Each adapter derives a stable account-scoped ingress `deliveryId` from the
 provider's complete event identity. For example, WhatsApp includes the group
 participant as well as the stanza id. Before link, command, approval, routing,
