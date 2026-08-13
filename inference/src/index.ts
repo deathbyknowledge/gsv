@@ -6,6 +6,7 @@ import type {
   ManagedInferenceService,
   ManagedMailSummary,
   ManagedMailSummaryRequest,
+  ManagedMailSummaryRequestStatus,
   ManagedMailSummaryService,
 } from "@humansandmachines/gsv/protocol";
 import type { InferenceEnv } from "./env";
@@ -51,6 +52,15 @@ export class InferenceService
     return await this.env.INFERENCE_INSTALLATIONS.getByName(
       input.installationId,
     ).summarizeMail(input);
+  }
+
+  async getMailSummaryStatus(
+    inputValue: ManagedMailSummaryRequest,
+  ): Promise<ManagedMailSummaryRequestStatus> {
+    const input = validateManagedMailSummaryRequest(inputValue);
+    return await this.env.INFERENCE_INSTALLATIONS.getByName(
+      input.installationId,
+    ).getMailSummaryStatus(input);
   }
 }
 

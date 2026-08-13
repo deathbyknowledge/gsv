@@ -161,6 +161,10 @@ describe("installation managed inference", () => {
 
     expect(first).toEqual(expected);
     expect(replay).toEqual(expected);
+    await expect(stub.getMailSummaryStatus(input)).resolves.toEqual({
+      state: "completed",
+      summary: expected,
+    });
     expect(persisted.disabledReplay).toEqual(expected);
     expect(persisted.exportedPurpose).toBe("mail-intake");
     expect(fetchMock).toHaveBeenCalledTimes(1);
@@ -242,6 +246,9 @@ describe("installation managed inference", () => {
     expect(rejections[0]).toContain("result fields are invalid");
     expect(rejections[1]).toContain("was already failed");
     expect(fetchMock).toHaveBeenCalledTimes(1);
+    await expect(stub.getMailSummaryStatus(input)).resolves.toEqual({
+      state: "failed",
+    });
     await expect(stub.usage()).resolves.toMatchObject({
       spentNanoUsd: 340,
       reservedNanoUsd: 0,

@@ -216,6 +216,26 @@ test("bodyFromBytes supports an empty body", async () => {
   assert.equal((await new Response(framed.stream).arrayBuffer()).byteLength, 0);
 });
 
+test("bodyToBytes assembles a bounded declared body from multiple chunks", async () => {
+  const chunks = [
+    Uint8Array.of(1, 2),
+    Uint8Array.of(3),
+    Uint8Array.of(4, 5),
+  ];
+  const body = {
+    length: 5,
+    stream: new ReadableStream({
+      pull(controller) {
+        const chunk = chunks.shift();
+        if (chunk) controller.enqueue(chunk);
+        else controller.close();
+      },
+    }),
+  };
+
+  assert.deepEqual([...await bodyToBytes(body, 5)], [1, 2, 3, 4, 5]);
+});
+
 test("bodyToBytes cancels an active read with its signal", async () => {
   const controller = new AbortController();
   let cancelled;

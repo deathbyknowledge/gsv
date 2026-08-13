@@ -16,7 +16,12 @@ import type {
 } from "../protocol/process-frames";
 import { stableOpaqueId } from "../shared/stable-id";
 import { sendFrameToProcess } from "../shared/utils";
-import { accountIdentity } from "./accounts";
+import {
+  accountIdentity,
+  createAccount,
+  isUsernameAvailable,
+} from "./accounts";
+import { canOwnerDelegateRunAs } from "./account-access";
 import type { KernelContext } from "./context";
 import type { MailboxRecord } from "./mailbox-store";
 import { handleProcSpawn } from "./proc-handlers";
@@ -157,20 +162,20 @@ export async function ensureMailboxNotificationProcess(
   const mailbox = ctx.mailboxes.getMailbox(mailboxId);
   if (!mailbox) throw new Error("Unknown mailbox");
 
+  const human = requireHumanIdentity(ctx, mailbox.ownerUid);
+  const notification = mailbox.notificationUid === null
+    ? await createMailboxNotificationAccount(mailbox, human, ctx)
+    : requireMailboxNotificationIdentity(mailbox, human, ctx);
   if (mailbox.notificationPid) {
     const process = ctx.procs.get(mailbox.notificationPid);
-    if (process?.ownerUid === mailbox.ownerUid) return process.processId;
+    if (
+      process?.ownerUid === mailbox.ownerUid
+      && process.uid === notification.uid
+    ) {
+      return process.processId;
+    }
   }
 
-  const recovered = ctx.procs.list(mailbox.ownerUid).find((process) => (
-    process.label === INBOX_PROCESS_LABEL
-  ));
-  if (recovered) {
-    ctx.mailboxes.setNotificationPid(mailbox.mailboxId, recovered.processId);
-    return recovered.processId;
-  }
-
-  const human = requireHumanIdentity(ctx, mailbox.ownerUid);
   const identity: ConnectionIdentity = {
     role: "user",
     process: human,
@@ -182,12 +187,64 @@ export async function ensureMailboxNotificationProcess(
     callerOwnerUid: human.uid,
   };
   const spawned = await handleProcSpawn({
-    interactive: true,
+    interactive: false,
     label: INBOX_PROCESS_LABEL,
+    runAs: notification.username,
   }, spawnContext);
   if (!spawned.ok) throw new Error(spawned.error);
   ctx.mailboxes.setNotificationPid(mailbox.mailboxId, spawned.pid);
   return spawned.pid;
+}
+
+async function createMailboxNotificationAccount(
+  mailbox: MailboxRecord,
+  human: ProcessIdentity,
+  ctx: KernelContext,
+): Promise<ProcessIdentity> {
+  let suffix = 0;
+  let username = "mailbox";
+  while (!isUsernameAvailable(ctx.auth, username)) {
+    suffix += 1;
+    username = `mailbox${suffix}`;
+  }
+  const created = await createAccount(ctx, {
+    kind: "agent",
+    username,
+    gecos: "Mail notifications",
+    ownerUid: human.uid,
+    shared: false,
+    crossMemberOwner: true,
+  });
+  ctx.mailboxes.setNotificationUid(mailbox.mailboxId, created.identity.uid);
+  return requireMailboxNotificationIdentity(
+    ctx.mailboxes.getMailbox(mailbox.mailboxId)!,
+    human,
+    ctx,
+  );
+}
+
+function requireMailboxNotificationIdentity(
+  mailbox: MailboxRecord,
+  human: ProcessIdentity,
+  ctx: KernelContext,
+): ProcessIdentity {
+  const uid = mailbox.notificationUid;
+  const entry = uid === null ? null : ctx.auth.getPasswdByUid(uid);
+  const shadow = entry ? ctx.auth.getShadowByUsername(entry.username) : null;
+  if (
+    !entry
+    || !shadow
+    || !isLocked(shadow)
+    || ctx.auth.isPersonalAgentUid(entry.uid)
+    || !canOwnerDelegateRunAs(ctx.auth, human.uid, entry)
+  ) {
+    throw new Error("Mailbox notification identity is invalid");
+  }
+  const identity = accountIdentity(ctx.auth, entry);
+  if (ctx.caps.resolve(identity.gids).length !== 0) {
+    throw new Error("Mailbox notification identity must have no capabilities");
+  }
+  return identity;
 }
 
 export function managedMailAddressForOwner(

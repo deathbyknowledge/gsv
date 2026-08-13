@@ -7,6 +7,7 @@ export type MailboxRecord = {
   mailboxId: string;
   ownerUid: number;
   address: string;
+  notificationUid: number | null;
   notificationPid: string | null;
   createdAt: number;
   updatedAt: number;
@@ -144,6 +145,23 @@ export class MailboxStore {
     );
     if (!this.getMailbox(mailboxId)) {
       throw new Error("Unknown mailbox");
+    }
+  }
+
+  setNotificationUid(mailboxId: string, uid: number): void {
+    this.sql.exec(
+      `UPDATE mailboxes
+          SET notification_uid = ?, updated_at = ?
+        WHERE mailbox_id = ? AND (notification_uid IS NULL OR notification_uid = ?)`,
+      uid,
+      Date.now(),
+      mailboxId,
+      uid,
+    );
+    const mailbox = this.getMailbox(mailboxId);
+    if (!mailbox) throw new Error("Unknown mailbox");
+    if (mailbox.notificationUid !== uid) {
+      throw new Error("Mailbox notification identity conflicts with existing state");
     }
   }
 
@@ -443,6 +461,7 @@ type MailboxRow = {
   mailbox_id: string;
   owner_uid: number;
   address: string;
+  notification_uid: number | null;
   notification_pid: string | null;
   created_at: number;
   updated_at: number;
@@ -489,6 +508,7 @@ function mailboxFromRow(row: MailboxRow): MailboxRecord {
     mailboxId: row.mailbox_id,
     ownerUid: row.owner_uid,
     address: row.address,
+    notificationUid: row.notification_uid,
     notificationPid: row.notification_pid,
     createdAt: row.created_at,
     updatedAt: row.updated_at,

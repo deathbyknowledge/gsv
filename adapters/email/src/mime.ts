@@ -13,17 +13,23 @@ import PostalMime, {
 const MAX_HEADER_BYTES = 256 * 1024;
 const MAX_MIME_NESTING = 64;
 const MAX_RFC822_NESTING = 2;
-const MAX_ADDRESSES_PER_FIELD = 100;
-const MAX_ATTACHMENTS = 100;
-const MAX_ADDRESS_LENGTH = 320;
-const MAX_NAME_LENGTH = 512;
-const MAX_SUBJECT_LENGTH = 2_048;
-const MAX_TEXT_LENGTH = 128 * 1024;
-const MAX_HTML_LENGTH = 512 * 1024;
-const MAX_SUMMARY_TEXT_LENGTH = 64 * 1024;
-const MAX_FILENAME_LENGTH = 1_024;
-const MAX_MIME_TYPE_LENGTH = 255;
-const MAX_CONTENT_ID_LENGTH = 1_024;
+const MAX_ADDRESSES_PER_FIELD = 200;
+const MAX_ATTACHMENTS = 256;
+const MAX_ADDRESS_BYTES = 512;
+const MAX_NAME_BYTES = 512;
+const MAX_SUBJECT_BYTES = 4_096;
+const MAX_RFC_MESSAGE_ID_BYTES = 2_048;
+const MAX_TEXT_BYTES = 128 * 1024;
+const MAX_HTML_BYTES = 512 * 1024;
+const MAX_SUMMARY_SUBJECT_BYTES = 1_024;
+const MAX_SUMMARY_TEXT_BYTES = 64 * 1024;
+const MAX_FILENAME_BYTES = 1_024;
+const MAX_MIME_TYPE_BYTES = 256;
+const MAX_CONTENT_ID_BYTES = 1_024;
+const MAX_METADATA_JSON_BYTES = 1024 * 1024;
+
+const TEXT_ENCODER = new TextEncoder();
+const TEXT_DECODER = new TextDecoder();
 
 export type ParsedMail = {
   metadata: ManagedInboundMailMetadata;
@@ -44,29 +50,44 @@ export async function parseMail(
     envelopeTo: string;
   },
 ): Promise<ParsedMail> {
-  const email = await PostalMime.parse(raw, {
+  const source = raw.buffer instanceof ArrayBuffer
+    && raw.byteOffset === 0
+    && raw.byteLength === raw.buffer.byteLength
+    ? raw.buffer
+    : raw.slice().buffer;
+  const email = await PostalMime.parse(source, {
     attachmentEncoding: "arraybuffer",
     maxHeadersSize: MAX_HEADER_BYTES,
     maxNestingDepth: MAX_MIME_NESTING,
     maxRfc822NestingDepth: MAX_RFC822_NESTING,
   });
   const from = firstMailbox(email.from);
-  const subject = bounded(email.subject, MAX_SUBJECT_LENGTH);
-  const text = bounded(email.text, MAX_TEXT_LENGTH);
-  const html = bounded(email.html, MAX_HTML_LENGTH);
-  const metadata: ManagedInboundMailMetadata = {
+  const rfcMessageId = boundedText(
+    sanitizeHeaderText(email.messageId),
+    MAX_RFC_MESSAGE_ID_BYTES,
+  );
+  const subject = boundedText(sanitizeHeaderText(email.subject), MAX_SUBJECT_BYTES);
+  const text = boundedText(sanitizeBodyText(email.text), MAX_TEXT_BYTES);
+  const html = boundedText(sanitizeBodyText(email.html), MAX_HTML_BYTES);
+  const summarySubject = boundedText(
+    (email.subject ?? "").replace(/[\r\n]/g, " ").replaceAll("\0", ""),
+    MAX_SUMMARY_SUBJECT_BYTES,
+  ) ?? "";
+  const summaryText = boundedText(
+    (email.text || email.subject || "Message has no text body").replaceAll("\0", ""),
+    MAX_SUMMARY_TEXT_BYTES,
+  )?.trim() ?? "";
+  const metadata = compactMetadata({
     version: 1,
     intakeId: input.intakeId,
     digest: input.digest,
     receivedAt: input.receivedAt,
     rawSize: raw.byteLength,
     envelope: {
-      from: boundedRequired(input.envelopeFrom, MAX_ADDRESS_LENGTH),
-      to: boundedRequired(input.envelopeTo, MAX_ADDRESS_LENGTH),
+      from: requiredAddress(input.envelopeFrom, "envelopeFrom"),
+      to: requiredAddress(input.envelopeTo, "envelopeTo"),
     },
-    ...(bounded(email.messageId, MAX_CONTENT_ID_LENGTH)
-      ? { rfcMessageId: bounded(email.messageId, MAX_CONTENT_ID_LENGTH) }
-      : {}),
+    ...(rfcMessageId ? { rfcMessageId } : {}),
     ...(mailDate(email) === undefined ? {} : { sentAt: mailDate(email) }),
     ...(from ? { from } : {}),
     to: mailboxes(email.to),
@@ -78,21 +99,48 @@ export async function parseMail(
     attachments: email.attachments
       .slice(0, MAX_ATTACHMENTS)
       .map(attachmentMetadata),
-  };
+  });
   return {
     metadata,
     summaryInput: {
-      from: boundedRequired(
-        from?.address || input.envelopeFrom,
-        MAX_ADDRESS_LENGTH,
-      ),
-      subject: subject ?? "",
-      text: bounded(
-        email.text || email.subject || "Message has no text body",
-        MAX_SUMMARY_TEXT_LENGTH,
-      )?.trim() ?? "",
+      from: from?.address ?? requiredAddress(input.envelopeFrom, "envelopeFrom"),
+      subject: summarySubject,
+      text: summarySubject.trim().length === 0 && summaryText.length === 0
+        ? "Message has no text body"
+        : summaryText,
     },
   };
+}
+
+function compactMetadata(
+  metadata: ManagedInboundMailMetadata,
+): ManagedInboundMailMetadata {
+  if (serializedBytes(metadata) <= MAX_METADATA_JSON_BYTES) return metadata;
+  delete metadata.html;
+  if (serializedBytes(metadata) <= MAX_METADATA_JSON_BYTES) return metadata;
+  metadata.attachments = metadata.attachments.slice(0, 50);
+  metadata.to = metadata.to.slice(0, 25);
+  metadata.cc = metadata.cc.slice(0, 25);
+  metadata.replyTo = metadata.replyTo.slice(0, 25);
+  if (serializedBytes(metadata) <= MAX_METADATA_JSON_BYTES) return metadata;
+  delete metadata.text;
+  if (serializedBytes(metadata) <= MAX_METADATA_JSON_BYTES) return metadata;
+  return {
+    version: metadata.version,
+    intakeId: metadata.intakeId,
+    digest: metadata.digest,
+    receivedAt: metadata.receivedAt,
+    rawSize: metadata.rawSize,
+    envelope: metadata.envelope,
+    to: [],
+    cc: [],
+    replyTo: [],
+    attachments: [],
+  };
+}
+
+function serializedBytes(value: unknown): number {
+  return TEXT_ENCODER.encode(JSON.stringify(value)).byteLength;
 }
 
 function mailboxes(addresses: Address[] | undefined): ManagedMailAddress[] {
@@ -114,16 +162,19 @@ function mailboxes(addresses: Address[] | undefined): ManagedMailAddress[] {
 function firstMailbox(address: Address | undefined): ManagedMailAddress | undefined {
   if (!address) return undefined;
   if (address.group) {
-    const first = address.group[0];
-    return first ? mailbox(first) ?? undefined : undefined;
+    for (const entry of address.group) {
+      const candidate = mailbox(entry);
+      if (candidate) return candidate;
+    }
+    return undefined;
   }
   return mailbox(address) ?? undefined;
 }
 
 function mailbox(value: Mailbox): ManagedMailAddress | null {
-  const address = bounded(value.address, MAX_ADDRESS_LENGTH)?.trim();
+  const address = optionalAddress(value.address);
   if (!address) return null;
-  const name = bounded(value.name, MAX_NAME_LENGTH)?.trim();
+  const name = boundedText(sanitizeHeaderText(value.name), MAX_NAME_BYTES)?.trim();
   return {
     address,
     ...(name ? { name } : {}),
@@ -133,35 +184,83 @@ function mailbox(value: Mailbox): ManagedMailAddress | null {
 function attachmentMetadata(
   attachment: Attachment,
 ): ManagedMailAttachmentMetadata {
-  const filename = bounded(attachment.filename ?? undefined, MAX_FILENAME_LENGTH);
-  const mimeType = bounded(attachment.mimeType, MAX_MIME_TYPE_LENGTH)
+  const filename = boundedText(
+    sanitizeHeaderText(attachment.filename ?? undefined),
+    MAX_FILENAME_BYTES,
+  );
+  const mimeType = boundedText(
+    sanitizeHeaderText(attachment.mimeType),
+    MAX_MIME_TYPE_BYTES,
+  )?.trim()
     || "application/octet-stream";
-  const contentId = bounded(attachment.contentId, MAX_CONTENT_ID_LENGTH);
+  const contentId = boundedText(
+    sanitizeHeaderText(attachment.contentId),
+    MAX_CONTENT_ID_BYTES,
+  );
+  const disposition = attachmentDisposition(attachment.disposition);
   return {
     mimeType,
     size: attachmentSize(attachment.content),
     ...(filename ? { filename } : {}),
-    ...(attachment.disposition ? { disposition: attachment.disposition } : {}),
+    ...(disposition ? { disposition } : {}),
     ...(contentId ? { contentId } : {}),
   };
 }
 
+function attachmentDisposition(
+  value: Attachment["disposition"],
+): ManagedMailAttachmentMetadata["disposition"] | undefined {
+  return value === "attachment" || value === "inline" ? value : undefined;
+}
+
 function attachmentSize(content: Attachment["content"]): number {
-  if (typeof content === "string") return new TextEncoder().encode(content).byteLength;
+  if (typeof content === "string") return TEXT_ENCODER.encode(content).byteLength;
   return content.byteLength;
 }
 
 function mailDate(email: Email): number | undefined {
   if (!email.date) return undefined;
   const value = Date.parse(email.date);
-  return Number.isFinite(value) ? value : undefined;
+  return Number.isSafeInteger(value) && value >= 0 && value <= 8_640_000_000_000_000
+    ? value
+    : undefined;
 }
 
-function bounded(value: string | undefined, maxLength: number): string | undefined {
+function boundedText(value: string | undefined, maxBytes: number): string | undefined {
   if (value === undefined) return undefined;
-  return value.length <= maxLength ? value : value.slice(0, maxLength);
+  const bytes = new Uint8Array(maxBytes);
+  const encoded = TEXT_ENCODER.encodeInto(value, bytes);
+  return encoded.read === value.length
+    ? value
+    : TEXT_DECODER.decode(bytes.subarray(0, encoded.written));
 }
 
-function boundedRequired(value: string, maxLength: number): string {
-  return bounded(value, maxLength) ?? "";
+function sanitizeHeaderText(value: string | undefined): string | undefined {
+  return value?.replace(/[\u0000-\u001f\u007f]/g, " ");
+}
+
+function sanitizeBodyText(value: string | undefined): string | undefined {
+  return value?.replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g, "");
+}
+
+function optionalAddress(value: string | undefined): string | undefined {
+  if (value === undefined) return undefined;
+  const address = value.trim().toLowerCase();
+  return isValidAddress(address) ? address : undefined;
+}
+
+function requiredAddress(value: string, name: string): string {
+  const address = value.toLowerCase();
+  if (!isValidAddress(address)) {
+    throw new Error(`Managed mail ${name} is invalid`);
+  }
+  return address;
+}
+
+function isValidAddress(value: string): boolean {
+  if (TEXT_ENCODER.encode(value).byteLength > MAX_ADDRESS_BYTES) return false;
+  const separator = value.lastIndexOf("@");
+  return separator > 0
+    && separator < value.length - 1
+    && !/\s/.test(value);
 }

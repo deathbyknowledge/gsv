@@ -25,7 +25,7 @@ function environment(input: {
     env: {
       MAIL_DOMAIN: "gsv.space",
       GSV_BASE_DOMAIN: "gsv.space",
-      MAIL_MAX_MESSAGE_BYTES: 26_214_400,
+      MAIL_MAX_MESSAGE_BYTES: 16_777_216,
       MAIL_DAILY_INBOUND_MESSAGE_LIMIT: 250,
       MAIL_DAILY_INBOUND_BYTE_LIMIT: 268_435_456,
       MAIL_DAILY_SUMMARIZATION_LIMIT: 100,

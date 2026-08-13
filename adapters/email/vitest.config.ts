@@ -113,17 +113,43 @@ export default defineConfig({
             modules: true,
             script: `
               import { WorkerEntrypoint } from "cloudflare:workers";
+              const summaries = new Map();
               export default class InferenceTest extends WorkerEntrypoint {
                 async summarizeMail(input) {
                   if (!input.logicalRequestId.startsWith("summary:mail_")) {
                     throw new Error("invalid summary request");
                   }
-                  return {
+                  if (
+                    input.subject === "retry summary"
+                    && input.logicalRequestId.endsWith(":attempt:1")
+                  ) {
+                    summaries.set(input.logicalRequestId, { state: "failed" });
+                    throw new Error("simulated summary provider failure");
+                  }
+                  if (
+                    input.subject === "invalid summary"
+                    && input.logicalRequestId.endsWith(":attempt:1")
+                  ) {
+                    summaries.set(input.logicalRequestId, { state: "failed" });
+                    return { summary: "invalid" };
+                  }
+                  const summary = {
                     summary: "A test message arrived.",
                     category: "personal",
                     requiresAttention: true,
                     confidence: 0.9,
                   };
+                  summaries.set(input.logicalRequestId, {
+                    state: "completed",
+                    summary,
+                  });
+                  if (input.subject === "lost summary response") {
+                    throw new Error("simulated RPC response loss");
+                  }
+                  return summary;
+                }
+                async getMailSummaryStatus(input) {
+                  return summaries.get(input.logicalRequestId) ?? { state: "missing" };
                 }
               }
             `,

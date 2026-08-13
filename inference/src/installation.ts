@@ -9,6 +9,7 @@ import {
   type ManagedInferenceUsageOutcome,
   type ManagedMailSummary,
   type ManagedMailSummaryRequest,
+  type ManagedMailSummaryRequestStatus,
 } from "@humansandmachines/gsv/protocol";
 import type { InferenceEnv } from "./env";
 import {
@@ -199,6 +200,17 @@ export class InferenceInstallation extends DurableObject<InferenceEnv> {
         this.activeMailSummaries.delete(input.logicalRequestId);
       }
     }
+  }
+
+  async getMailSummaryStatus(
+    inputValue: ManagedMailSummaryRequest,
+  ): Promise<ManagedMailSummaryRequestStatus> {
+    const input = validateManagedMailSummaryRequest(inputValue);
+    this.requireOwnedRequest(input);
+    return this.mailSummaryStatus(
+      input.logicalRequestId,
+      await managedMailSummaryFingerprint(input),
+    );
   }
 
   async abort(logicalRequestIdValue: string): Promise<void> {
@@ -684,16 +696,27 @@ export class InferenceInstallation extends DurableObject<InferenceEnv> {
     logicalRequestId: string,
     fingerprint: string,
   ): ManagedMailSummary | undefined {
+    const status = this.mailSummaryStatus(logicalRequestId, fingerprint);
+    if (status.state === "missing") return undefined;
+    if (status.state === "completed") return status.summary;
+    throw new Error(`Managed mail summary request was already ${status.state}`);
+  }
+
+  private mailSummaryStatus(
+    logicalRequestId: string,
+    fingerprint: string,
+  ): ManagedMailSummaryRequestStatus {
     const request = this.requestState(logicalRequestId);
-    if (!request) return undefined;
+    if (!request) return { state: "missing" };
     if (
       request.purpose !== "mail-intake"
       || request.request_fingerprint !== fingerprint
     ) {
       throw new Error("Managed mail summary request conflicts with an existing request");
     }
-    if (request.state !== "completed" || request.result_json === null) {
-      throw new Error(`Managed mail summary request was already ${request.state}`);
+    if (request.state !== "completed") return { state: request.state };
+    if (request.result_json === null) {
+      throw new Error("Stored managed mail summary is invalid");
     }
     let result: unknown;
     try {
@@ -702,7 +725,7 @@ export class InferenceInstallation extends DurableObject<InferenceEnv> {
       throw new Error("Stored managed mail summary is invalid");
     }
     try {
-      return validateManagedMailSummary(result);
+      return { state: "completed", summary: validateManagedMailSummary(result) };
     } catch {
       throw new Error("Stored managed mail summary is invalid");
     }

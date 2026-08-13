@@ -1,4 +1,6 @@
 import { MAIL_V001_INITIAL_SCHEMA } from "./v001_initial";
+import { MAIL_V002_STAGED_INTAKE } from "./v002_staged_intake";
+import { MAIL_V003_SUMMARY_GENERATION } from "./v003_summary_generation";
 
 export type MailSqlMigration = {
   id: number;
@@ -17,6 +19,8 @@ const SCHEMA_COMPONENT = "managed_mail";
 
 export const MAIL_MIGRATIONS: readonly MailSqlMigration[] = [
   MAIL_V001_INITIAL_SCHEMA,
+  MAIL_V002_STAGED_INTAKE,
+  MAIL_V003_SUMMARY_GENERATION,
 ];
 
 export function runMailSqlMigrations(storage: DurableObjectStorage): void {

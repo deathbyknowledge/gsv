@@ -27,6 +27,24 @@ function context(installationId: string): AdapterInstallationContext {
   return { installationId };
 }
 
+function chunkedBody(bytes: Uint8Array, chunkBytes: number) {
+  let offset = 0;
+  return {
+    length: bytes.byteLength,
+    stream: new ReadableStream<Uint8Array>({
+      pull(controller) {
+        if (offset === bytes.byteLength) {
+          controller.close();
+          return;
+        }
+        const end = Math.min(offset + chunkBytes, bytes.byteLength);
+        controller.enqueue(bytes.slice(offset, end));
+        offset = end;
+      },
+    }),
+  };
+}
+
 async function intake(
   stub: DurableObjectStub<MailInstallation>,
   installationId: string,
@@ -53,6 +71,45 @@ async function intakeBytes(
       bodyFromBytes(bytes),
     ),
   };
+}
+
+async function interruptAfterFirstChunk(
+  stub: DurableObjectStub<MailInstallation>,
+  installationId: string,
+  bytes: Uint8Array,
+): Promise<string> {
+  return await runInDurableObject(stub, async (instance, state) => {
+    const internals = instance as unknown as {
+      storeRawMessage(intakeId: string, raw: Uint8Array): void;
+    };
+    const original = internals.storeRawMessage.bind(instance);
+    internals.storeRawMessage = (intakeId, rawBytes) => {
+      const first = rawBytes.slice(0, 1024 * 1024);
+      state.storage.sql.exec(
+        `INSERT INTO mail_intake_chunks (intake_id, chunk_index, content)
+         VALUES (?, 0, ?)`,
+        intakeId,
+        first.buffer,
+      );
+      throw new Error("simulated intake interruption");
+    };
+    try {
+      await (instance as MailInstallation).intake(
+        context(installationId),
+        {
+          from: "mike@example.com",
+          to: "hank@gsv.space",
+          rawSize: bytes.byteLength,
+        },
+        bodyFromBytes(bytes),
+      );
+    } catch (error) {
+      return error instanceof Error ? error.message : String(error);
+    } finally {
+      internals.storeRawMessage = original;
+    }
+    return "";
+  });
 }
 
 describe("managed mail installation transport", () => {
@@ -117,12 +174,27 @@ describe("managed mail installation transport", () => {
     });
   });
 
-  it("persists retry bodies larger than one SQLite row as bounded chunks", async () => {
+  it("resumes an interrupted multi-transaction intake from bounded chunks", async () => {
     const installationId = "installation_mail_chunked_retry";
     const stub = env.MAIL_INSTALLATIONS.getByName(installationId);
     const bytes = encoder.encode(
       `Subject: retry storage\r\n\r\n${"x".repeat(2_200_000)}`,
     );
+    await expect(interruptAfterFirstChunk(stub, installationId, bytes))
+      .resolves.toContain("simulated intake interruption");
+    const staged = await runInDurableObject(stub, (_instance, state) =>
+      state.storage.sql.exec<{
+        uploads: number;
+        intakes: number;
+        chunks: number;
+      }>(
+        `SELECT
+           (SELECT COUNT(*) FROM mail_intake_uploads) AS uploads,
+           (SELECT COUNT(*) FROM mail_intakes) AS intakes,
+           (SELECT COUNT(*) FROM mail_intake_chunks) AS chunks`,
+      ).one());
+    expect(staged).toEqual({ uploads: 1, intakes: 0, chunks: 1 });
+
     const accepted = await intakeBytes(stub, installationId, bytes);
     if (accepted.result.status !== "accepted") {
       throw new Error("test mail was not accepted");
@@ -146,6 +218,91 @@ describe("managed mail installation transport", () => {
     expect(chunks.chunk_count).toBeGreaterThan(2);
     expect(chunks.largest_chunk).toBeLessThanOrEqual(1024 * 1024);
     expect(chunks.retained_size).toBe(bytes.byteLength);
+  });
+
+  it("durably stages a message at the configured 16 MiB boundary", async () => {
+    const installationId = "installation_mail_size_boundary";
+    const stub = env.MAIL_INSTALLATIONS.getByName(installationId);
+    await runInDurableObject(stub, (instance) => {
+      const internals = instance as unknown as {
+        limits: { dailyInboundBytes: number };
+      };
+      internals.limits.dailyInboundBytes = 64 * 1024 * 1024;
+    });
+    const bytes = new Uint8Array(16 * 1024 * 1024 - 1);
+    const prefix = encoder.encode("Subject: size boundary\r\n\r\n");
+    bytes.set(prefix);
+    bytes.fill("x".charCodeAt(0), prefix.byteLength);
+
+    const result = await stub.intake(
+      context(installationId),
+      {
+        from: "mike@example.com",
+        to: "hank@gsv.space",
+        rawSize: bytes.byteLength,
+      },
+      chunkedBody(bytes, 1024 * 1024),
+    );
+
+    expect(result).toMatchObject({ status: "accepted" });
+    const durable = await runInDurableObject(stub, (_instance, state) =>
+      state.storage.sql.exec<{
+        raw_size: number;
+        chunks: number;
+        stored_bytes: number;
+      }>(
+        `SELECT raw_size,
+                (SELECT COUNT(*) FROM mail_intake_chunks
+                 WHERE mail_intake_chunks.intake_id = mail_intakes.intake_id) AS chunks,
+                (SELECT SUM(length(content)) FROM mail_intake_chunks
+                 WHERE mail_intake_chunks.intake_id = mail_intakes.intake_id) AS stored_bytes
+         FROM mail_intakes`,
+      ).one());
+    expect(durable).toEqual({
+      raw_size: bytes.byteLength,
+      chunks: 16,
+      stored_bytes: bytes.byteLength,
+    });
+    await expect(runDurableObjectAlarm(stub)).resolves.toBe(true);
+    await expect(stub.getIntake(
+      context(installationId),
+      result.status === "accepted" ? result.intakeId : "",
+    )).resolves.toMatchObject({
+      storageState: "stored",
+      summaryState: "complete",
+    });
+  });
+
+  it("reclaims expired partial intake chunks and quota reservations", async () => {
+    const installationId = "installation_mail_partial_cleanup";
+    const stub = env.MAIL_INSTALLATIONS.getByName(installationId);
+    const bytes = encoder.encode(
+      `Subject: abandoned intake\r\n\r\n${"x".repeat(1_200_000)}`,
+    );
+    await interruptAfterFirstChunk(stub, installationId, bytes);
+    await runInDurableObject(stub, async (_instance, state) => {
+      state.storage.sql.exec(
+        "UPDATE mail_intake_uploads SET expires_at = ?",
+        Date.now() - 1,
+      );
+      await state.storage.setAlarm(Date.now() + 60_000);
+    });
+
+    await expect(runDurableObjectAlarm(stub)).resolves.toBe(true);
+    const remaining = await runInDurableObject(stub, (_instance, state) =>
+      state.storage.sql.exec<{
+        uploads: number;
+        chunks: number;
+      }>(
+        `SELECT
+           (SELECT COUNT(*) FROM mail_intake_uploads) AS uploads,
+           (SELECT COUNT(*) FROM mail_intake_chunks) AS chunks`,
+      ).one());
+    expect(remaining).toEqual({ uploads: 0, chunks: 0 });
+    await expect(stub.usage()).resolves.toMatchObject({
+      inboundMessages: 0,
+      inboundBytes: 0,
+    });
   });
 
   it("stores raw through Gateway before summarizing and compacts the outbox", async () => {
@@ -218,6 +375,81 @@ describe("managed mail installation transport", () => {
     expect(nextAlarm).toBeGreaterThan(Date.now());
   });
 
+  it.each(["retry summary", "invalid summary"])(
+    "advances the durable inference key after a terminal %s failure",
+    async (subject) => {
+      const installationId = `installation_mail_${subject.replace(" ", "_")}`;
+      const stub = env.MAIL_INSTALLATIONS.getByName(installationId);
+      const accepted = await intake(stub, installationId, subject);
+      if (accepted.result.status !== "accepted") {
+        throw new Error("test mail was not accepted");
+      }
+      const intakeId = accepted.result.intakeId;
+
+      await expect(runDurableObjectAlarm(stub)).resolves.toBe(true);
+      await expect(stub.getIntake(
+        context(installationId),
+        intakeId,
+      )).resolves.toMatchObject({
+        storageState: "stored",
+        summaryState: "pending",
+        summaryAttempts: 1,
+      });
+      await runInDurableObject(stub, async (_instance, state) => {
+        state.storage.sql.exec(
+          "UPDATE mail_daily_usage SET summarization_attempts = 0",
+        );
+        state.storage.sql.exec(
+          `UPDATE mail_intakes
+           SET summary_next_attempt_at = ?
+           WHERE intake_id = ?`,
+          Date.now(),
+          intakeId,
+        );
+        await state.storage.setAlarm(Date.now() + 60_000);
+      });
+
+      await expect(runDurableObjectAlarm(stub)).resolves.toBe(true);
+      await expect(stub.getIntake(
+        context(installationId),
+        intakeId,
+      )).resolves.toMatchObject({
+        summaryState: "complete",
+        summaryAttempts: 2,
+        completionAttempts: 1,
+      });
+      const generation = await runInDurableObject(stub, (_instance, state) =>
+        state.storage.sql.exec<{ summary_generation: number }>(
+          `SELECT summary_generation
+           FROM mail_intakes
+           WHERE intake_id = ?`,
+          intakeId,
+        ).one().summary_generation);
+      expect(generation).toBe(2);
+    },
+  );
+
+  it("recovers a completed inference result after its RPC response is lost", async () => {
+    const installationId = "installation_mail_lost_summary_response";
+    const stub = env.MAIL_INSTALLATIONS.getByName(installationId);
+    const accepted = await intake(stub, installationId, "lost summary response");
+    if (accepted.result.status !== "accepted") {
+      throw new Error("test mail was not accepted");
+    }
+    const intakeId = accepted.result.intakeId;
+
+    await expect(runDurableObjectAlarm(stub)).resolves.toBe(true);
+
+    await expect(stub.getIntake(
+      context(installationId),
+      intakeId,
+    )).resolves.toMatchObject({
+      summaryState: "complete",
+      summaryAttempts: 1,
+      completionAttempts: 1,
+    });
+  });
+
   it("retains exact raw for an alarm retry after Gateway failure", async () => {
     const installationId = "installation_mail_gateway_retry";
     const stub = env.MAIL_INSTALLATIONS.getByName(installationId);
@@ -265,6 +497,49 @@ describe("managed mail installation transport", () => {
       storageAttempts: 2,
       summaryAttempts: 1,
     });
+  });
+
+  it("isolates a corrupt retry row so later mail still completes", async () => {
+    const installationId = "installation_mail_corrupt_retry";
+    const stub = env.MAIL_INSTALLATIONS.getByName(installationId);
+    const corrupt = await intake(stub, installationId, "corrupt retry");
+    const healthy = await intake(stub, installationId, "healthy after corrupt");
+    if (
+      corrupt.result.status !== "accepted"
+      || healthy.result.status !== "accepted"
+    ) {
+      throw new Error("test mail was not accepted");
+    }
+    const corruptId = corrupt.result.intakeId;
+    const healthyId = healthy.result.intakeId;
+    await runInDurableObject(stub, (_instance, state) => {
+      state.storage.sql.exec(
+        "DELETE FROM mail_intake_chunks WHERE intake_id = ? AND chunk_index = 0",
+        corruptId,
+      );
+    });
+
+    await expect(runDurableObjectAlarm(stub)).resolves.toBe(true);
+
+    await expect(stub.getIntake(
+      context(installationId),
+      corruptId,
+    )).resolves.toMatchObject({
+      storageState: "pending",
+      storageAttempts: 1,
+    });
+    await expect(stub.getIntake(
+      context(installationId),
+      healthyId,
+    )).resolves.toMatchObject({
+      storageState: "stored",
+      summaryState: "complete",
+    });
+    const nextAlarm = await runInDurableObject(
+      stub,
+      (_instance, state) => state.storage.getAlarm(),
+    );
+    expect(nextAlarm).toBeGreaterThan(Date.now());
   });
 
   it("rejects a caller context that does not own the named object", async () => {

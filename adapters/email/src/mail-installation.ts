@@ -1,6 +1,5 @@
 import { DurableObject } from "cloudflare:workers";
 import {
-  bodyFromBytes,
   bodyToBytes,
   isAdapterInstallationContext,
   type AdapterInstallationContext,
@@ -23,6 +22,8 @@ const MAX_ENVELOPE_ADDRESS_LENGTH = 512;
 const MAX_MESSAGE_ID_LENGTH = 512;
 const MAX_LIST_LIMIT = 100;
 const RAW_CHUNK_BYTES = 1024 * 1024;
+const UPLOAD_EXPIRY_MS = 24 * 60 * 60 * 1000;
+const TEXT_ENCODER = new TextEncoder();
 
 export type MailEnvelope = {
   from: string;
@@ -56,6 +57,7 @@ type IntakeRow = {
   message_id: string | null;
   storage_attempts: number;
   summary_attempts: number;
+  summary_generation: number;
   completion_attempts: number;
   stored_at: number | null;
   completed_at: number | null;
@@ -67,6 +69,17 @@ type SummaryInput = {
   text: string;
 };
 
+type UploadRow = {
+  intake_id: string;
+  digest: string;
+  received_at: number;
+  raw_size: number;
+  metadata_json: string;
+  summary_input_json: string;
+  usage_day: string;
+  expires_at: number;
+};
+
 type UsageRow = {
   inbound_messages: number;
   inbound_bytes: number;
@@ -76,6 +89,7 @@ type UsageRow = {
 export class MailInstallation extends DurableObject<MailEnv> {
   private readonly installationId: string;
   private readonly limits: MailLimits;
+  private readonly activeIntakes = new Map<string, Promise<MailIntakeResult>>();
 
   constructor(ctx: DurableObjectState, env: MailEnv) {
     super(ctx, env);
@@ -103,68 +117,22 @@ export class MailInstallation extends DurableObject<MailEnv> {
       }
       const raw = await bodyToBytes(body, this.limits.maxMessageBytes);
       const digest = await messageDigest(raw);
-      const existing = this.intakeByDigest(digest);
-      if (existing) {
-        await this.scheduleNextAlarm();
-        return { status: "duplicate", intakeId: existing.intake_id };
+      const active = this.activeIntakes.get(digest);
+      if (active) {
+        const result = await active;
+        return result.status === "accepted"
+          ? { status: "duplicate", intakeId: result.intakeId }
+          : result;
       }
-
-      const intakeId = `mail_${digest.slice("sha256:".length)}`;
-      const receivedAt = Date.now();
-      let parsed;
+      const operation = this.persistIntake(envelope, raw, digest);
+      this.activeIntakes.set(digest, operation);
       try {
-        parsed = await parseMail(raw, {
-          intakeId,
-          digest,
-          receivedAt,
-          envelopeFrom: envelope.from,
-          envelopeTo: envelope.to,
-        });
-      } catch {
-        return { status: "rejected", reason: "invalid" };
-      }
-      const result = this.ctx.storage.transactionSync<MailIntakeResult>(() => {
-        const replay = this.intakeByDigest(digest);
-        if (replay) return { status: "duplicate", intakeId: replay.intake_id };
-
-        const day = utcDay(receivedAt);
-        this.ensureUsageDay(day);
-        const usage = this.usageRow(day);
-        if (
-          usage.inbound_messages + 1 > this.limits.dailyInboundMessages
-          || usage.inbound_bytes + raw.byteLength > this.limits.dailyInboundBytes
-        ) {
-          return { status: "rejected", reason: "quota" };
+        return await operation;
+      } finally {
+        if (this.activeIntakes.get(digest) === operation) {
+          this.activeIntakes.delete(digest);
         }
-
-        this.ctx.storage.sql.exec(
-          `INSERT INTO mail_intakes (
-             intake_id, digest, received_at, raw_size, storage_state,
-             summary_state, metadata_json, summary_input_json,
-             storage_next_attempt_at, updated_at
-           ) VALUES (?, ?, ?, ?, 'pending', 'pending', ?, ?, ?, ?)`,
-          intakeId,
-          digest,
-          receivedAt,
-          raw.byteLength,
-          JSON.stringify(parsed.metadata),
-          JSON.stringify(parsed.summaryInput),
-          receivedAt,
-          receivedAt,
-        );
-        this.storeRawMessage(intakeId, raw);
-        this.ctx.storage.sql.exec(
-          `UPDATE mail_daily_usage
-           SET inbound_messages = inbound_messages + 1,
-               inbound_bytes = inbound_bytes + ?
-           WHERE day = ?`,
-          raw.byteLength,
-          day,
-        );
-        return { status: "accepted", intakeId };
-      });
-      await this.scheduleNextAlarm();
-      return result;
+      }
     } catch (error) {
       await cancelBody(body, error);
       throw error;
@@ -244,21 +212,78 @@ export class MailInstallation extends DurableObject<MailEnv> {
 
   async alarm(): Promise<void> {
     const now = Date.now();
-    this.recoverExpiredSummaryReservations(now);
-    for (let processed = 0; processed < ALARM_BATCH_SIZE; processed += 1) {
-      const storage = this.nextStorageIntake(Date.now());
-      if (storage) {
-        await this.deliverStorage(storage);
-        continue;
+    try {
+      this.cleanupExpiredUploads(now);
+      this.recoverExpiredSummaryReservations(now);
+      for (let processed = 0; processed < ALARM_BATCH_SIZE; processed += 1) {
+        const storage = this.nextStorageIntake(Date.now());
+        if (storage) {
+          await this.deliverStorage(storage);
+          continue;
+        }
+        const summary = this.nextSummaryIntake(Date.now());
+        if (summary) {
+          await this.processSummary(summary);
+          continue;
+        }
+        break;
       }
-      const summary = this.nextSummaryIntake(Date.now());
-      if (summary) {
-        await this.processSummary(summary);
-        continue;
-      }
-      break;
+    } finally {
+      await this.scheduleNextAlarm();
     }
+  }
+
+  private async persistIntake(
+    envelope: MailEnvelope,
+    raw: Uint8Array,
+    digest: string,
+  ): Promise<MailIntakeResult> {
+    const existing = this.intakeByDigest(digest);
+    if (existing) {
+      await this.scheduleNextAlarm();
+      return { status: "duplicate", intakeId: existing.intake_id };
+    }
+
+    let upload = this.uploadByDigest(digest);
+    if (upload) {
+      if (upload.raw_size !== raw.byteLength) {
+        throw new Error("Staged mail intake conflicts with its digest");
+      }
+      this.touchUpload(upload.intake_id, Date.now());
+      upload = this.uploadByDigest(digest);
+      if (!upload) throw new Error("Staged mail intake disappeared");
+    } else {
+      const intakeId = `mail_${digest.slice("sha256:".length)}`;
+      const receivedAt = Date.now();
+      let parsed;
+      try {
+        parsed = await parseMail(raw, {
+          intakeId,
+          digest,
+          receivedAt,
+          envelopeFrom: envelope.from,
+          envelopeTo: envelope.to,
+        });
+      } catch {
+        return { status: "rejected", reason: "invalid" };
+      }
+      const reserved = this.reserveUpload({
+        intakeId,
+        digest,
+        receivedAt,
+        rawSize: raw.byteLength,
+        metadataJson: JSON.stringify(parsed.metadata),
+        summaryInputJson: JSON.stringify(parsed.summaryInput),
+      });
+      if (reserved.status !== "ready") return reserved.result;
+      upload = reserved.upload;
+    }
+
     await this.scheduleNextAlarm();
+    this.storeRawMessage(upload.intake_id, raw);
+    const result = this.finalizeUpload(upload.intake_id, digest);
+    await this.scheduleNextAlarm();
+    return result;
   }
 
   private ensureIdentity(): void {
@@ -302,6 +327,143 @@ export class MailInstallation extends DurableObject<MailEnv> {
        LIMIT 1`,
       digest,
     ).toArray()[0] ?? null;
+  }
+
+  private uploadByDigest(digest: string): UploadRow | null {
+    return this.ctx.storage.sql.exec<UploadRow>(
+      `SELECT intake_id, digest, received_at, raw_size, metadata_json,
+              summary_input_json, usage_day, expires_at
+       FROM mail_intake_uploads
+       WHERE digest = ?
+       LIMIT 1`,
+      digest,
+    ).toArray()[0] ?? null;
+  }
+
+  private touchUpload(intakeId: string, now: number): void {
+    this.ctx.storage.sql.exec(
+      `UPDATE mail_intake_uploads
+       SET expires_at = ?, updated_at = ?
+       WHERE intake_id = ?`,
+      now + UPLOAD_EXPIRY_MS,
+      now,
+      intakeId,
+    );
+  }
+
+  private reserveUpload(input: {
+    intakeId: string;
+    digest: string;
+    receivedAt: number;
+    rawSize: number;
+    metadataJson: string;
+    summaryInputJson: string;
+  }):
+    | { status: "ready"; upload: UploadRow }
+    | { status: "rejected"; result: MailIntakeResult } {
+    return this.ctx.storage.transactionSync(() => {
+      const replay = this.intakeByDigest(input.digest);
+      if (replay) {
+        return {
+          status: "rejected" as const,
+          result: { status: "duplicate" as const, intakeId: replay.intake_id },
+        };
+      }
+      const staged = this.uploadByDigest(input.digest);
+      if (staged) return { status: "ready" as const, upload: staged };
+
+      const day = utcDay(input.receivedAt);
+      this.ensureUsageDay(day);
+      const usage = this.usageRow(day);
+      if (
+        usage.inbound_messages + 1 > this.limits.dailyInboundMessages
+        || usage.inbound_bytes + input.rawSize > this.limits.dailyInboundBytes
+      ) {
+        return {
+          status: "rejected" as const,
+          result: { status: "rejected" as const, reason: "quota" as const },
+        };
+      }
+
+      const expiresAt = input.receivedAt + UPLOAD_EXPIRY_MS;
+      this.ctx.storage.sql.exec(
+        `INSERT INTO mail_intake_uploads (
+           intake_id, digest, received_at, raw_size, metadata_json,
+           summary_input_json, usage_day, expires_at, updated_at
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        input.intakeId,
+        input.digest,
+        input.receivedAt,
+        input.rawSize,
+        input.metadataJson,
+        input.summaryInputJson,
+        day,
+        expiresAt,
+        input.receivedAt,
+      );
+      this.ctx.storage.sql.exec(
+        `UPDATE mail_daily_usage
+         SET inbound_messages = inbound_messages + 1,
+             inbound_bytes = inbound_bytes + ?
+         WHERE day = ?`,
+        input.rawSize,
+        day,
+      );
+      return {
+        status: "ready" as const,
+        upload: {
+          intake_id: input.intakeId,
+          digest: input.digest,
+          received_at: input.receivedAt,
+          raw_size: input.rawSize,
+          metadata_json: input.metadataJson,
+          summary_input_json: input.summaryInputJson,
+          usage_day: day,
+          expires_at: expiresAt,
+        },
+      };
+    });
+  }
+
+  private finalizeUpload(intakeId: string, digest: string): MailIntakeResult {
+    return this.ctx.storage.transactionSync(() => {
+      const replay = this.intakeByDigest(digest);
+      if (replay) return { status: "duplicate", intakeId: replay.intake_id };
+      const upload = this.uploadByDigest(digest);
+      if (!upload || upload.intake_id !== intakeId) {
+        throw new Error("Staged mail intake disappeared");
+      }
+      const layout = this.rawMessageLayout(intakeId);
+      const expectedChunks = Math.ceil(upload.raw_size / RAW_CHUNK_BYTES);
+      if (
+        layout.chunk_count !== expectedChunks
+        || layout.first_chunk !== 0
+        || layout.last_chunk !== expectedChunks - 1
+        || layout.stored_bytes !== upload.raw_size
+      ) {
+        throw new Error("Staged mail intake has incomplete durable body chunks");
+      }
+      this.ctx.storage.sql.exec(
+        `INSERT INTO mail_intakes (
+           intake_id, digest, received_at, raw_size, storage_state,
+           summary_state, metadata_json, summary_input_json,
+           storage_next_attempt_at, updated_at
+         ) VALUES (?, ?, ?, ?, 'pending', 'pending', ?, ?, ?, ?)`,
+        upload.intake_id,
+        upload.digest,
+        upload.received_at,
+        upload.raw_size,
+        upload.metadata_json,
+        upload.summary_input_json,
+        upload.received_at,
+        upload.received_at,
+      );
+      this.ctx.storage.sql.exec(
+        "DELETE FROM mail_intake_uploads WHERE intake_id = ?",
+        upload.intake_id,
+      );
+      return { status: "accepted", intakeId: upload.intake_id };
+    });
   }
 
   private cursorPosition(intakeId: string): {
@@ -352,13 +514,14 @@ export class MailInstallation extends DurableObject<MailEnv> {
   }
 
   private async deliverStorage(row: IntakeRow): Promise<void> {
-    if (!row.metadata_json) {
-      throw new Error("Pending mail intake is missing its durable body");
-    }
-    const metadata = JSON.parse(row.metadata_json) as ManagedInboundMailMetadata;
-    const body = bodyFromBytes(this.loadRawMessage(row));
+    let body: BinaryBody | undefined;
     const now = Date.now();
     try {
+      if (!row.metadata_json) {
+        throw new Error("Pending mail intake is missing its durable body");
+      }
+      const metadata = JSON.parse(row.metadata_json) as ManagedInboundMailMetadata;
+      body = this.rawMessageBody(row);
       const result = await this.env.GATEWAY.acceptManagedInboundMail(
         { installationId: this.installationId },
         metadata,
@@ -401,7 +564,9 @@ export class MailInstallation extends DurableObject<MailEnv> {
       );
       logRetry("storage", error);
     } finally {
-      await cancelBody(body, "Managed mail storage RPC finished");
+      if (body) {
+        await cancelBody(body, "Managed mail storage RPC finished");
+      }
     }
   }
 
@@ -425,46 +590,88 @@ export class MailInstallation extends DurableObject<MailEnv> {
       const end = Math.min(offset + RAW_CHUNK_BYTES, raw.byteLength);
       this.ctx.storage.sql.exec(
         `INSERT INTO mail_intake_chunks (intake_id, chunk_index, content)
-         VALUES (?, ?, ?)`,
+         VALUES (?, ?, ?)
+         ON CONFLICT(intake_id, chunk_index)
+         DO UPDATE SET content = excluded.content`,
         intakeId,
         index,
         exactArrayBuffer(raw.subarray(offset, end)),
       );
       offset = end;
     }
+    this.ctx.storage.sql.exec(
+      `DELETE FROM mail_intake_chunks
+       WHERE intake_id = ? AND chunk_index >= ?`,
+      intakeId,
+      Math.ceil(raw.byteLength / RAW_CHUNK_BYTES),
+    );
   }
 
-  private loadRawMessage(row: IntakeRow): Uint8Array {
-    const chunks = this.ctx.storage.sql.exec<{
-      chunk_index: number;
-      content: ArrayBuffer;
+  private rawMessageLayout(intakeId: string): {
+    chunk_count: number;
+    first_chunk: number | null;
+    last_chunk: number | null;
+    stored_bytes: number | null;
+  } {
+    return this.ctx.storage.sql.exec<{
+      chunk_count: number;
+      first_chunk: number | null;
+      last_chunk: number | null;
+      stored_bytes: number | null;
     }>(
-      `SELECT chunk_index, content
+      `SELECT COUNT(*) AS chunk_count,
+              MIN(chunk_index) AS first_chunk,
+              MAX(chunk_index) AS last_chunk,
+              SUM(length(content)) AS stored_bytes
        FROM mail_intake_chunks
-       WHERE intake_id = ?
-       ORDER BY chunk_index`,
-      row.intake_id,
-    ).toArray();
-    const raw = new Uint8Array(row.raw_size);
-    let offset = 0;
-    for (let index = 0; index < chunks.length; index += 1) {
-      const chunk = chunks[index];
-      const bytes = new Uint8Array(chunk.content);
-      if (
-        chunk.chunk_index !== index
-        || bytes.byteLength === 0
-        || bytes.byteLength > RAW_CHUNK_BYTES
-        || offset + bytes.byteLength > raw.byteLength
-      ) {
-        throw new Error("Pending mail intake has invalid durable body chunks");
-      }
-      raw.set(bytes, offset);
-      offset += bytes.byteLength;
+       WHERE intake_id = ?`,
+      intakeId,
+    ).one();
+  }
+
+  private rawMessageBody(row: IntakeRow): BinaryBody {
+    const layout = this.rawMessageLayout(row.intake_id);
+    const expectedChunks = Math.ceil(row.raw_size / RAW_CHUNK_BYTES);
+    if (
+      layout.chunk_count !== expectedChunks
+      || layout.first_chunk !== 0
+      || layout.last_chunk !== expectedChunks - 1
+      || layout.stored_bytes !== row.raw_size
+    ) {
+      throw new Error("Pending mail intake has invalid durable body chunks");
     }
-    if (offset !== raw.byteLength) {
-      throw new Error("Pending mail intake has incomplete durable body chunks");
-    }
-    return raw;
+
+    let index = 0;
+    let remaining = row.raw_size;
+    const stream = new ReadableStream<Uint8Array>({
+      pull: (controller) => {
+        if (remaining === 0) {
+          controller.close();
+          return;
+        }
+        const chunk = this.ctx.storage.sql.exec<{ content: ArrayBuffer }>(
+          `SELECT content
+           FROM mail_intake_chunks
+           WHERE intake_id = ? AND chunk_index = ?`,
+          row.intake_id,
+          index,
+        ).toArray()[0];
+        const expectedBytes = Math.min(RAW_CHUNK_BYTES, remaining);
+        if (!chunk || chunk.content.byteLength !== expectedBytes) {
+          controller.error(
+            new Error("Pending mail intake has invalid durable body chunks"),
+          );
+          return;
+        }
+        controller.enqueue(new Uint8Array(chunk.content));
+        index += 1;
+        remaining -= expectedBytes;
+      },
+      cancel: () => {
+        remaining = 0;
+      },
+    });
+    return { stream, length: row.raw_size };
   }
 
   private async processSummary(row: IntakeRow): Promise<void> {
@@ -480,36 +687,64 @@ export class MailInstallation extends DurableObject<MailEnv> {
     try {
       input = parseSummaryInput(row.summary_input_json);
     } catch (error) {
-      this.deferSummaryFailure(row.intake_id, row.summary_attempts + 1, error);
+      this.deferSummaryFailure(
+        row.intake_id,
+        row.summary_attempts + 1,
+        error,
+        false,
+      );
       return;
     }
+    const request = {
+      version: 1 as const,
+      installationId: this.installationId,
+      logicalRequestId: `summary:${row.intake_id}:attempt:${row.summary_generation}`,
+      actor: { localUid: 0 },
+      from: input.from,
+      subject: input.subject,
+      text: input.text,
+    };
+    let summary: ManagedMailSummary;
     try {
-      const summary = validateSummary(await this.env.INFERENCE.summarizeMail({
-        version: 1,
-        installationId: this.installationId,
-        logicalRequestId: `summary:${row.intake_id}`,
-        actor: { localUid: 0 },
-        from: input.from,
-        subject: input.subject,
-        text: input.text,
-      }));
-      const completedAt = Date.now();
-      this.ctx.storage.sql.exec(
-        `UPDATE mail_intakes
-         SET summary_state = 'notifying', summary_json = ?,
-             summary_next_attempt_at = ?, summary_reservation_expires_at = NULL,
-             updated_at = ?
-         WHERE intake_id = ? AND summary_state = 'running'`,
-        JSON.stringify(summary),
-        completedAt,
-        completedAt,
-        row.intake_id,
-      );
-      const notifying = this.intakeById(row.intake_id);
-      if (notifying) await this.notifySummary(notifying);
+      summary = validateSummary(await this.env.INFERENCE.summarizeMail(request));
     } catch (error) {
-      this.deferSummaryFailure(row.intake_id, row.summary_attempts + 1, error);
+      try {
+        const status = await this.env.INFERENCE.getMailSummaryStatus(request);
+        if (status.state === "completed") {
+          summary = validateSummary(status.summary);
+        } else {
+          this.deferSummaryFailure(
+            row.intake_id,
+            row.summary_attempts + 1,
+            error,
+            ["failed", "aborted", "abandoned"].includes(status.state),
+          );
+          return;
+        }
+      } catch (statusError) {
+        this.deferSummaryFailure(
+          row.intake_id,
+          row.summary_attempts + 1,
+          statusError,
+          false,
+        );
+        return;
+      }
     }
+    const completedAt = Date.now();
+    this.ctx.storage.sql.exec(
+      `UPDATE mail_intakes
+       SET summary_state = 'notifying', summary_json = ?,
+           summary_next_attempt_at = ?, summary_reservation_expires_at = NULL,
+           updated_at = ?
+       WHERE intake_id = ? AND summary_state = 'running'`,
+      JSON.stringify(summary),
+      completedAt,
+      completedAt,
+      row.intake_id,
+    );
+    const notifying = this.intakeById(row.intake_id);
+    if (notifying) await this.notifySummary(notifying);
   }
 
   private reserveSummary(intakeId: string, now: number): boolean {
@@ -565,14 +800,17 @@ export class MailInstallation extends DurableObject<MailEnv> {
     intakeId: string,
     attempts: number,
     error: unknown,
+    advanceGeneration: boolean,
   ): void {
     const now = Date.now();
     this.ctx.storage.sql.exec(
       `UPDATE mail_intakes
        SET summary_state = 'pending', summary_next_attempt_at = ?,
-           summary_reservation_expires_at = NULL, updated_at = ?
+           summary_reservation_expires_at = NULL,
+           summary_generation = summary_generation + ?, updated_at = ?
        WHERE intake_id = ? AND summary_state = 'running'`,
       now + retryDelay(attempts),
+      advanceGeneration ? 1 : 0,
       now,
       intakeId,
     );
@@ -580,12 +818,12 @@ export class MailInstallation extends DurableObject<MailEnv> {
   }
 
   private async notifySummary(row: IntakeRow): Promise<void> {
-    if (!row.message_id || !row.summary_json) {
-      throw new Error("Completed mail summary is missing durable state");
-    }
-    const summary = validateSummary(JSON.parse(row.summary_json));
     const now = Date.now();
     try {
+      if (!row.message_id || !row.summary_json) {
+        throw new Error("Completed mail summary is missing durable state");
+      }
+      const summary = validateSummary(JSON.parse(row.summary_json));
       await this.env.GATEWAY.completeManagedInboundMail(
         { installationId: this.installationId },
         {
@@ -634,6 +872,60 @@ export class MailInstallation extends DurableObject<MailEnv> {
     );
   }
 
+  private cleanupExpiredUploads(now: number): void {
+    const uploads = this.ctx.storage.sql.exec<{
+      intake_id: string;
+      raw_size: number;
+      usage_day: string;
+    }>(
+      `SELECT intake_id, raw_size, usage_day
+       FROM mail_intake_uploads
+       WHERE expires_at <= ?
+       ORDER BY expires_at
+       LIMIT ?`,
+      now,
+      ALARM_BATCH_SIZE,
+    ).toArray();
+    for (const upload of uploads) {
+      const chunks = this.ctx.storage.sql.exec<{ chunk_index: number }>(
+        `SELECT chunk_index
+         FROM mail_intake_chunks
+         WHERE intake_id = ?
+         ORDER BY chunk_index`,
+        upload.intake_id,
+      ).toArray();
+      for (const chunk of chunks) {
+        this.ctx.storage.sql.exec(
+          `DELETE FROM mail_intake_chunks
+           WHERE intake_id = ? AND chunk_index = ?`,
+          upload.intake_id,
+          chunk.chunk_index,
+        );
+      }
+      this.ctx.storage.transactionSync(() => {
+        const expired = this.ctx.storage.sql.exec<{ expires_at: number }>(
+          `SELECT expires_at
+           FROM mail_intake_uploads
+           WHERE intake_id = ?`,
+          upload.intake_id,
+        ).toArray()[0];
+        if (!expired || expired.expires_at > now) return;
+        this.ctx.storage.sql.exec(
+          "DELETE FROM mail_intake_uploads WHERE intake_id = ?",
+          upload.intake_id,
+        );
+        this.ctx.storage.sql.exec(
+          `UPDATE mail_daily_usage
+           SET inbound_messages = MAX(0, inbound_messages - 1),
+               inbound_bytes = MAX(0, inbound_bytes - ?)
+           WHERE day = ?`,
+          upload.raw_size,
+          upload.usage_day,
+        );
+      });
+    }
+  }
+
   private intakeById(intakeId: string): IntakeRow | null {
     return this.ctx.storage.sql.exec<IntakeRow>(
       `${INTAKE_INTERNAL_SELECT}
@@ -655,6 +947,9 @@ export class MailInstallation extends DurableObject<MailEnv> {
          FROM mail_intakes
          WHERE storage_state = 'stored'
            AND summary_state IN ('pending', 'running', 'notifying', 'deferred')
+         UNION ALL
+         SELECT expires_at AS next_attempt_at
+         FROM mail_intake_uploads
        )
        WHERE next_attempt_at IS NOT NULL`,
     ).one().next_attempt_at;
@@ -665,7 +960,8 @@ export class MailInstallation extends DurableObject<MailEnv> {
 
 const INTAKE_DIAGNOSTIC_SELECT = `
   SELECT intake_id, digest, received_at, raw_size, storage_state, summary_state,
-         message_id, storage_attempts, summary_attempts, completion_attempts,
+         message_id, storage_attempts, summary_attempts, summary_generation,
+         completion_attempts,
          stored_at, completed_at,
          NULL AS metadata_json, NULL AS summary_input_json,
          NULL AS summary_json
@@ -675,7 +971,8 @@ const INTAKE_DIAGNOSTIC_SELECT = `
 const INTAKE_INTERNAL_SELECT = `
   SELECT intake_id, digest, received_at, raw_size, storage_state, summary_state,
          metadata_json, summary_input_json, summary_json,
-         message_id, storage_attempts, summary_attempts, completion_attempts,
+         message_id, storage_attempts, summary_attempts, summary_generation,
+         completion_attempts,
          stored_at, completed_at
   FROM mail_intakes
 `;
@@ -764,7 +1061,10 @@ function validateSummary(value: unknown): ManagedMailSummary {
   const candidate = value as Partial<ManagedMailSummary>;
   if (
     typeof candidate.summary !== "string"
-    || candidate.summary.length > 1_000
+    || candidate.summary.trim() !== candidate.summary
+    || candidate.summary.length === 0
+    || TEXT_ENCODER.encode(candidate.summary).byteLength > 280
+    || /[\r\n\0]/.test(candidate.summary)
     || ![
       "personal",
       "work",

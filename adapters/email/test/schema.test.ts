@@ -8,6 +8,14 @@ describe("managed mail schema migrations", () => {
         id: 1,
         name: "initial_mail_transport_schema",
       }),
+      expect.objectContaining({
+        id: 2,
+        name: "staged_mail_intake",
+      }),
+      expect.objectContaining({
+        id: 3,
+        name: "mail_summary_generation",
+      }),
     ]);
   });
 });

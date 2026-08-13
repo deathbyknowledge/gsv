@@ -29,6 +29,21 @@ function messageInput(
 }
 
 describe("MailboxStore", () => {
+  it("binds a mailbox notification identity once", async () => {
+    await runWithRealKernelSql((sql) => {
+      const store = new MailboxStore(sql);
+      const mailboxId = "mailbox:1000:primary";
+      store.ensureMailbox(mailboxId, 1000, "hank@gsv.space");
+
+      store.setNotificationUid(mailboxId, 2000);
+      store.setNotificationUid(mailboxId, 2000);
+
+      expect(store.getMailbox(mailboxId)?.notificationUid).toBe(2000);
+      expect(() => store.setNotificationUid(mailboxId, 2001))
+        .toThrow("notification identity conflicts");
+    });
+  });
+
   it("keeps mailboxes and message listings scoped to their local owner", async () => {
     await runWithRealKernelSql((sql) => {
       const store = new MailboxStore(sql);

@@ -74,8 +74,16 @@ export type ManagedMailSummary = {
   confidence: number;
 };
 
+export type ManagedMailSummaryRequestStatus =
+  | { state: "missing" }
+  | { state: "reserved" | "failed" | "aborted" | "abandoned" }
+  | { state: "completed"; summary: ManagedMailSummary };
+
 export interface ManagedMailSummaryService {
   summarizeMail(input: ManagedMailSummaryRequest): Promise<ManagedMailSummary>;
+  getMailSummaryStatus(
+    input: ManagedMailSummaryRequest,
+  ): Promise<ManagedMailSummaryRequestStatus>;
 }
 
 export type ManagedInferenceUsageOutcome =

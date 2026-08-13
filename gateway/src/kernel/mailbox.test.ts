@@ -5,13 +5,18 @@ vi.mock("../shared/utils", () => ({
 }));
 
 import { bodyFromBytes } from "@humansandmachines/gsv/protocol";
+import { makeShadowEntry } from "../auth/shadow";
 import { sendFrameToProcess } from "../shared/utils";
 import { runWithRealKernelSql } from "../test-support/real-kernel-sql";
+import { AuthStore } from "./auth-store";
+import { CapabilityStore } from "./capabilities";
 import type { KernelContext } from "./context";
 import { MailboxStore } from "./mailbox-store";
+import { ProcessRegistry } from "./processes";
 import {
   acceptManagedInboundMail,
   completeManagedInboundMail,
+  ensureMailboxNotificationProcess,
   managedMailAddressForOwner,
 } from "./mailbox";
 
@@ -157,6 +162,81 @@ describe("managed Kernel mailbox", () => {
       expect(managedMailAddressForOwner(1001, staging)).toBeNull();
     });
   });
+
+  it("runs Inbox events as a persisted capability-less account", async () => {
+    await runWithRealKernelSql(async (sql) => {
+      const storage = new MemoryR2Bucket();
+      const auth = new AuthStore(sql);
+      await auth.bootstrap();
+      auth.addUser({
+        username: "hank",
+        uid: 1000,
+        gid: 1000,
+        gecos: "Hank",
+        home: "/home/hank",
+        shell: "/bin/init",
+      });
+      auth.setShadow(makeShadowEntry("hank", "password-hash"));
+      auth.addGroup({ name: "hank", gid: 1000, members: [] });
+      auth.updateGroupMembers("users", ["hank"]);
+      const caps = new CapabilityStore(sql);
+      caps.seed();
+      const procs = new ProcessRegistry(sql);
+      procs.spawn("proc:broad-inbox", {
+        uid: 1000,
+        gid: 1000,
+        gids: [1000, 100],
+        username: "hank",
+        home: "/home/hank",
+        cwd: "/home/hank",
+      }, { ownerUid: 1000, label: "Inbox" });
+      const mailboxes = new MailboxStore(sql);
+      const mailbox = mailboxes.ensureMailbox(
+        "mailbox:1000:primary",
+        1000,
+        "hank@gsv.space",
+      );
+      const ctx = {
+        env: { STORAGE: storage as unknown as R2Bucket },
+        installationId: "installation-1",
+        auth,
+        caps,
+        procs,
+        mailboxes,
+      } as unknown as KernelContext;
+      sendFrameToProcessMock.mockImplementation(async (
+        _installationId,
+        _pid,
+        frame,
+      ) => ({
+        type: "res",
+        id: frame.id,
+        ok: true,
+        data: { ok: true },
+      }));
+
+      const pid = await ensureMailboxNotificationProcess(mailbox.mailboxId, ctx);
+      const persisted = mailboxes.getMailbox(mailbox.mailboxId)!;
+      const process = procs.get(pid)!;
+
+      expect(pid).not.toBe("proc:broad-inbox");
+      expect(persisted.notificationUid).toBe(process.uid);
+      expect(process).toMatchObject({
+        ownerUid: 1000,
+        interactive: false,
+        label: "Inbox",
+      });
+      expect(process.uid).not.toBe(1000);
+      expect(auth.getShadowByUsername(process.username)?.hash).toBe("!");
+      expect(caps.resolve(process.gids)).toEqual([]);
+      await expect(ensureMailboxNotificationProcess(mailbox.mailboxId, ctx))
+        .resolves.toBe(pid);
+
+      caps.grant(process.gid, "net.fetch");
+      await expect(ensureMailboxNotificationProcess(mailbox.mailboxId, ctx))
+        .rejects.toThrow("must have no capabilities");
+    });
+  });
 });
 
 function mailboxContext(sql: SqlStorage, storage: MemoryR2Bucket): KernelContext {
@@ -189,6 +269,10 @@ function mailboxContext(sql: SqlStorage, storage: MemoryR2Bucket): KernelContext
 
 class MemoryR2Bucket {
   private readonly objects = new Map<string, Uint8Array>();
+
+  async head(key: string): Promise<R2Object | null> {
+    return this.objects.has(key) ? ({} as R2Object) : null;
+  }
 
   async put(
     key: string,
