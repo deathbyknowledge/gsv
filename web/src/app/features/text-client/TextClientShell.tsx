@@ -37,6 +37,51 @@ type TextClientShellProps = {
 
 type SurfaceMode = "conversation" | "terminal";
 
+const INTERACTIVE_TARGETS = [
+  "input",
+  "textarea",
+  "select",
+  "button",
+  "a",
+  "summary",
+  "audio[controls]",
+  "video[controls]",
+  "[contenteditable]",
+  "[contenteditable=true]",
+  "[role=button]",
+  "[role=checkbox]",
+  "[role=combobox]",
+  "[role=link]",
+  "[role=menuitem]",
+  "[role=option]",
+  "[role=radio]",
+  "[role=slider]",
+  "[role=switch]",
+  "[role=tab]",
+  "[role=textbox]",
+].join(", ");
+
+function eventHasInteractiveTarget(event: Event): boolean {
+  const path = typeof event.composedPath === "function" ? event.composedPath() : [];
+  if (path.some((node) => node instanceof Element && node.matches(INTERACTIVE_TARGETS))) {
+    return true;
+  }
+  return event.target instanceof Element && event.target.closest(INTERACTIVE_TARGETS) !== null;
+}
+
+function isCompositionKey(event: KeyboardEvent): boolean {
+  return event.isComposing || event.keyCode === 229;
+}
+
+function startsTextInput(event: KeyboardEvent): boolean {
+  if (event.key === "Dead" || event.key === "Process") return true;
+  if ((event.metaKey || event.ctrlKey) && !event.altKey && event.key.toLowerCase() === "v") return true;
+  if (event.key.length !== 1) return false;
+  if (event.metaKey) return false;
+  if (event.ctrlKey && !event.getModifierState?.("AltGraph")) return false;
+  return true;
+}
+
 function errorMessage(error: unknown, fallback: string): string {
   return error instanceof Error && error.message.trim() ? error.message : fallback;
 }
@@ -118,10 +163,20 @@ export function TextClientShell({ username, onLock }: TextClientShellProps) {
   const [notice, setNotice] = useState("");
   const [terminalDraft, setTerminalDraft] = useState("");
   const [terminalLines, setTerminalLines] = useState<TerminalLine[]>([]);
+  const [draftFitElement, setDraftFitElement] = useState<HTMLFormElement | null>(null);
   const [edgeIntent, setEdgeIntent] = useState<{ direction: -1 | 1; progress: number } | null>(null);
   const composerRef = useRef<HTMLTextAreaElement>(null);
+  const composingRef = useRef(false);
+  const draftRevisionRef = useRef(0);
+  const submissionInFlightRef = useRef(false);
+  const approvalTakeoverRef = useRef<{
+    requestId: string;
+    restoreDraft: boolean;
+    restoreMode: SurfaceMode;
+  } | null>(null);
   const wheelGestureRef = useRef({ amount: 0, direction: 0, lastAt: 0, latched: false });
   const edgeIntentTimerRef = useRef<number | null>(null);
+  const draftFitCeilingRef = useRef<number | null>(null);
   const sounds = useMemo(() => createTextClientSounds(), []);
 
   const runtime = useChatRuntime({ enabled: Boolean(processId), processId });
@@ -129,6 +184,64 @@ export function TextClientShell({ username, onLock }: TextClientShellProps) {
   const moments = projection.moments;
   const selectedIndex = Math.max(0, moments.findIndex((moment) => moment.key === selectedKey));
   const selected = moments[selectedIndex] ?? null;
+  const draftFit = useFittedText<HTMLFormElement>(draft, {
+    element: draftFitElement,
+    maximumSize: draftFitCeilingRef.current,
+  });
+
+  useEffect(() => {
+    if (!draft) {
+      draftFitCeilingRef.current = null;
+    } else if (draftFit.ready) {
+      draftFitCeilingRef.current = draftFit.fontSize;
+    }
+  }, [draft, draftFit.fontSize, draftFit.ready]);
+
+  useEffect(() => {
+    const releaseDraftFit = () => { draftFitCeilingRef.current = null; };
+    window.addEventListener("resize", releaseDraftFit);
+    return () => window.removeEventListener("resize", releaseDraftFit);
+  }, []);
+
+  useEffect(() => {
+    const approval = runtime.runtime.pendingHil;
+    if (approval) {
+      if (!approvalTakeoverRef.current) {
+        approvalTakeoverRef.current = {
+          requestId: approval.requestId,
+          restoreDraft: draftVisible,
+          restoreMode: mode,
+        };
+      } else {
+        // A run may hand one protected call directly to the next. Preserve
+        // the original surface/draft across the whole approval sequence.
+        approvalTakeoverRef.current.requestId = approval.requestId;
+      }
+      if (mode !== "conversation") setMode("conversation");
+      setDraftVisible(false);
+      composingRef.current = false;
+      composerRef.current?.blur();
+      return;
+    }
+
+    const takeover = approvalTakeoverRef.current;
+    if (!takeover) return;
+    approvalTakeoverRef.current = null;
+    if (takeover.restoreDraft && draft) {
+      setDraftVisible(true);
+    }
+    if (takeover.restoreMode === "terminal") {
+      setMode("terminal");
+    } else {
+      composerRef.current?.focus({ preventScroll: true });
+    }
+  }, [draft, draftVisible, mode, runtime.runtime.pendingHil]);
+
+  useEffect(() => {
+    if (mode === "conversation" && !runtime.runtime.pendingHil) {
+      composerRef.current?.focus({ preventScroll: true });
+    }
+  }, [mode, runtime.runtime.pendingHil]);
 
   useEffect(() => {
     if (processId || !processList.data) return;
@@ -163,6 +276,7 @@ export function TextClientShell({ username, onLock }: TextClientShellProps) {
     setSelectedKey(key);
     setFollowingLatest(key === moments[moments.length - 1]?.key);
     setDraftVisible(false);
+    composerRef.current?.focus({ preventScroll: true });
   }, [moments, selectedKey, sounds]);
 
   const moveMoment = useCallback((direction: -1 | 1) => {
@@ -188,12 +302,22 @@ export function TextClientShell({ username, onLock }: TextClientShellProps) {
   const revealDraft = useCallback(() => {
     if (mode !== "conversation" || runtime.runtime.pendingHil) return;
     setDraftVisible(true);
-    requestAnimationFrame(() => composerRef.current?.focus());
+    composerRef.current?.focus({ preventScroll: true });
   }, [mode, runtime.runtime.pendingHil]);
 
   const submitDraft = useCallback(async () => {
-    const message = draft.trim();
-    if (!message || send.isPending || spawn.isPending) return;
+    if (!draft.trim()) {
+      if (draft) {
+        draftRevisionRef.current += 1;
+        setDraft("");
+        setDraftVisible(false);
+      }
+      return;
+    }
+    if (submissionInFlightRef.current || send.isPending || spawn.isPending) return;
+    const message = draft;
+    const submittedRevision = draftRevisionRef.current;
+    submissionInFlightRef.current = true;
     let pid = processId;
     try {
       if (!pid) {
@@ -203,23 +327,32 @@ export function TextClientShell({ username, onLock }: TextClientShellProps) {
       }
       runtime.appendOptimisticUserMessage(message);
       sounds.play("send");
-      setDraft("");
-      setDraftVisible(false);
+      if (draftRevisionRef.current === submittedRevision) {
+        setDraft("");
+        setDraftVisible(false);
+      }
       setFollowingLatest(true);
       await send.mutateAsync({ pid, message });
       setNotice("");
     } catch (error) {
-      setDraft(message);
-      setDraftVisible(true);
+      if (draftRevisionRef.current === submittedRevision) {
+        setDraft(message);
+        setDraftVisible(true);
+      }
       setNotice(errorMessage(error, "Your message could not be sent."));
+    } finally {
+      submissionInFlightRef.current = false;
     }
   }, [draft, processId, runtime, send, sounds, spawn]);
 
   const updateDraft = useCallback((value: string) => {
     setDraft((current) => {
+      if (value.length < current.length) draftFitCeilingRef.current = null;
+      draftRevisionRef.current += 1;
       sounds.playTextChange(current, value);
       return value;
     });
+    setDraftVisible(value.length > 0);
   }, [sounds]);
 
   const updateTerminalDraft = useCallback((value: string) => {
@@ -231,8 +364,15 @@ export function TextClientShell({ username, onLock }: TextClientShellProps) {
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
-      const target = event.target as HTMLElement | null;
-      const typingTarget = target?.matches("input, textarea, select, button, a, [role=button], [contenteditable=true]");
+      if (event.defaultPrevented) return;
+      const typingTarget = eventHasInteractiveTarget(event);
+      const compositionKey = composingRef.current || isCompositionKey(event);
+      if (compositionKey) {
+        if (!typingTarget && mode === "conversation" && !runtime.runtime.pendingHil) {
+          composerRef.current?.focus({ preventScroll: true });
+        }
+        return;
+      }
       if ((event.metaKey || event.ctrlKey) && event.key === "`") {
         event.preventDefault();
         sounds.play("select");
@@ -247,7 +387,7 @@ export function TextClientShell({ username, onLock }: TextClientShellProps) {
         }
         return;
       }
-      if (typingTarget || event.isComposing || mode !== "conversation") return;
+      if (mode !== "conversation" || runtime.runtime.pendingHil) return;
       if (event.altKey && event.key === "ArrowUp") {
         event.preventDefault();
         moveMoment(-1);
@@ -256,19 +396,22 @@ export function TextClientShell({ username, onLock }: TextClientShellProps) {
         moveMoment(1);
       } else if (event.key === "Escape") {
         setDraftVisible(false);
-      } else if (event.key.length === 1 && !event.metaKey && !event.ctrlKey && !event.altKey) {
-        event.preventDefault();
-        setDraft((current) => {
-          const next = `${current}${event.key}`;
-          sounds.playTextChange(current, next);
-          return next;
-        });
-        revealDraft();
+      } else if (!typingTarget && startsTextInput(event)) {
+        // Let the browser deliver the character to the real editing control.
+        // Native input events then preserve selection, undo, paste, and IME.
+        composerRef.current?.focus({ preventScroll: true });
       }
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [abort, mode, moveMoment, processId, revealDraft, runtime.runtime.activeRunId, sounds]);
+  }, [abort, mode, moveMoment, processId, runtime.runtime.activeRunId, runtime.runtime.pendingHil, runtime.runtime.runState, sounds]);
+
+  const focusComposerAfterCanvasClick = (event: JSX.TargetedMouseEvent<HTMLElement>) => {
+    if (mode !== "conversation" || runtime.runtime.pendingHil || eventHasInteractiveTarget(event)) return;
+    const selection = typeof window.getSelection === "function" ? window.getSelection() : null;
+    if (selection && !selection.isCollapsed) return;
+    composerRef.current?.focus({ preventScroll: true });
+  };
 
   const onCanvasWheel = (event: JSX.TargetedWheelEvent<HTMLDivElement>) => {
     if (draftVisible || mode !== "conversation") return;
@@ -332,21 +475,23 @@ export function TextClientShell({ username, onLock }: TextClientShellProps) {
 
   const startNewConversation = () => {
     if (spawn.isPending) return;
+    draftRevisionRef.current += 1;
+    setDraft("");
+    setDraftVisible(true);
+    composerRef.current?.focus({ preventScroll: true });
     spawn.mutate({ interactive: true }, {
       onSuccess: (result) => {
         setProcessId(result.pid);
         setSelectedKey(null);
         setFollowingLatest(true);
-        setDraft("");
-        setDraftVisible(true);
         setNotice("");
-        requestAnimationFrame(() => composerRef.current?.focus());
       },
       onError: (error) => setNotice(errorMessage(error, "Could not start a new conversation.")),
     });
   };
 
   const pendingHil = runtime.runtime.pendingHil;
+  const draftShown = draftVisible && !pendingHil;
   const approvalCopy = pendingHil ? textApprovalCopy(pendingHil) : null;
   const active = runtime.runtime.runState === "running" || projection.activityLines.length > 0;
   const presenceLines = notice
@@ -395,14 +540,14 @@ export function TextClientShell({ username, onLock }: TextClientShellProps) {
               ...(pendingHil ? [{ id: "approval", label: "Approval", role: "assistant" as const, state: "approval" as const }] : []),
               ...(draftVisible || draft.length > 0 ? [{ id: "draft", label: "Draft", role: "user" as const, state: "draft" as const }] : []),
             ]}
-            currentId={pendingHil ? "approval" : draftVisible ? "draft" : selected?.key ?? null}
+            currentId={pendingHil ? "approval" : draftShown ? "draft" : selected?.key ?? null}
             onSelect={(key) => {
               if (key === "draft") revealDraft();
               else if (key !== "approval") selectMoment(key);
             }}
             onWheel={onRailWheel}
           />
-          <section class="text-client-stage" onWheel={onCanvasWheel}>
+          <section class="text-client-stage" onClick={focusComposerAfterCanvasClick} onWheel={onCanvasWheel}>
             {presenceLines.length > 0 ? (
               <PresenceLane
                 primary={presenceLines[0]}
@@ -424,32 +569,65 @@ export function TextClientShell({ username, onLock }: TextClientShellProps) {
                   onAlwaysAllow={() => { sounds.play("send"); decideHil.mutate({ pid: processId, requestId: pendingHil.requestId, decision: "approve", remember: true }); }}
                   onDeny={() => { sounds.play("stop"); decideHil.mutate({ pid: processId, requestId: pendingHil.requestId, decision: "deny" }); }}
                 />
-              ) : draftVisible ? (
-                <form class="text-client-draft" onSubmit={(event) => { event.preventDefault(); void submitDraft(); }}>
-                  <textarea
-                    ref={composerRef}
-                    value={draft}
-                    aria-label="Message"
-                    placeholder="What are you thinking?"
-                    disabled={send.isPending}
-                    onInput={(event) => updateDraft(event.currentTarget.value)}
-                    onKeyDown={(event) => {
-                      if (event.key === "Escape") { event.preventDefault(); setDraftVisible(false); }
-                      if (event.key === "Enter" && !event.shiftKey && !event.metaKey && !event.ctrlKey && !event.isComposing) {
-                        event.preventDefault();
-                        void submitDraft();
-                      }
-                    }}
-                  />
-                  <div><span>Escape keeps this draft</span><button type="submit" disabled={!draft.trim() || send.isPending}>{send.isPending ? "Sending" : "Send"}</button></div>
-                </form>
-              ) : selected ? (
+              ) : selected && !draftShown ? (
                 <MomentBody key={selected.key} moment={selected} processId={processId} />
-              ) : (
+              ) : !draftShown ? (
                 <button type="button" class="text-client-empty" onClick={revealDraft} disabled={spawn.isPending}>
                   {spawn.isPending || processList.isLoading ? "Preparing your conversation…" : "Start typing"}
                 </button>
-              )}
+              ) : null}
+              <form
+                ref={(element) => {
+                  draftFit.containerRef.current = element;
+                  setDraftFitElement(element);
+                }}
+                class={`text-client-draft${draftShown ? " is-visible" : ""}${draftFit.scrolls ? " is-scrollable" : ""}`}
+                onSubmit={(event) => { event.preventDefault(); void submitDraft(); }}
+              >
+                <span id="text-client-composer-instructions" class="text-client-visually-hidden">
+                  Enter sends. Shift Enter starts a new line. Escape keeps the draft for later.
+                </span>
+                <textarea
+                  ref={composerRef}
+                  value={draft}
+                  aria-label="Message"
+                  tabIndex={draftShown ? 0 : -1}
+                  readOnly={Boolean(pendingHil)}
+                  aria-describedby="text-client-composer-instructions"
+                  enterkeyhint="send"
+                  spellcheck
+                  style={{
+                    fontFamily: draftFit.fontFamily,
+                    fontSize: `${draftFit.fontSize}px`,
+                    lineHeight: `${draftFit.lineHeight}px`,
+                    height: draftFit.scrolls
+                      ? "100%"
+                      : `${Math.max(draftFit.lineHeight, draftFit.contentHeight)}px`,
+                  }}
+                  onInput={(event) => updateDraft(event.currentTarget.value)}
+                  onCompositionStart={() => {
+                    composingRef.current = true;
+                    setDraftVisible(true);
+                  }}
+                  onCompositionEnd={() => { composingRef.current = false; }}
+                  onKeyDown={(event) => {
+                    if (event.isComposing || event.keyCode === 229 || composingRef.current) return;
+                    if (event.key === "Escape") {
+                      event.preventDefault();
+                      setDraftVisible(false);
+                      return;
+                    }
+                    if (event.key === "Enter" && !event.shiftKey && !event.metaKey && !event.ctrlKey) {
+                      event.preventDefault();
+                      if (!draftShown && draft.length > 0) {
+                        setDraftVisible(true);
+                        return;
+                      }
+                      void submitDraft();
+                    }
+                  }}
+                />
+              </form>
             </div>
             {edgeIntent ? (
               <div class={`text-client-edge-intent is-${edgeIntent.direction < 0 ? "previous" : "next"}`} aria-hidden="true">
@@ -457,7 +635,7 @@ export function TextClientShell({ username, onLock }: TextClientShellProps) {
                 <i><i style={{ transform: `scaleX(${edgeIntent.progress})` }} /></i>
               </div>
             ) : null}
-            {!draftVisible && !pendingHil && presenceLines.length === 0 ? (
+            {!draftShown && !pendingHil && presenceLines.length === 0 ? (
               <p class="text-client-hint">TYPE ANYWHERE · ENTER SENDS · SHIFT ENTER NEW LINE · SCROLL HISTORY</p>
             ) : null}
           </section>

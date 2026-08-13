@@ -31,6 +31,7 @@ export interface ChooseFittedTextPolicyOptions {
   availableHeight: number;
   measureHeight: (fontSize: number, lineHeight: number) => number;
   lockedSize?: number | null;
+  maximumSize?: number | null;
 }
 
 export interface UseFittedTextOptions {
@@ -41,6 +42,10 @@ export interface UseFittedTextOptions {
    * is clamped and quantized to the fitted-prose scale.
    */
   lockedSize?: number | null;
+  /** Prevent a growing draft/stream from becoming larger than its prior fit. */
+  maximumSize?: number | null;
+  /** Observe an explicitly mounted element when this hook spans UI modes. */
+  element?: HTMLElement | null;
 }
 
 export interface UseFittedTextResult<T extends HTMLElement> extends FittedTextPolicy {
@@ -126,10 +131,19 @@ export function chooseFittedTextPolicy({
   availableHeight,
   measureHeight,
   lockedSize,
+  maximumSize,
 }: ChooseFittedTextPolicyOptions): FittedTextPolicy {
   const targetHeight = finiteDimension(availableHeight) * FITTED_TEXT_HEIGHT_TARGET;
+  const ceiling = maximumSize == null
+    ? null
+    : clamp(
+      Math.floor((Number.isFinite(maximumSize) ? maximumSize : FITTED_TEXT_MIN_SIZE) / FITTED_TEXT_SIZE_STEP)
+        * FITTED_TEXT_SIZE_STEP,
+      FITTED_TEXT_MIN_SIZE,
+      FITTED_TEXT_MAX_SIZE,
+    );
   const sizes = lockedSize == null
-    ? normalizedCandidates(candidates)
+    ? normalizedCandidates(candidates).filter((size) => ceiling == null || size <= ceiling)
     : [quantizeFittedTextSize(lockedSize)];
   let smallestPolicy: FittedTextPolicy | null = null;
 
@@ -236,6 +250,8 @@ export function useFittedText<T extends HTMLElement = HTMLDivElement>(
   const internallyLockedSizeRef = useRef<number | null>(null);
   const locked = options.locked ?? false;
   const callerLockedSize = options.lockedSize;
+  const maximumSize = options.maximumSize;
+  const observedElement = options.element;
 
   useLayoutEffect(() => {
     const fontSet = typeof document === "undefined" ? undefined : document.fonts;
@@ -270,7 +286,7 @@ export function useFittedText<T extends HTMLElement = HTMLDivElement>(
   }, []);
 
   useLayoutEffect(() => {
-    const element = containerRef.current;
+    const element = observedElement ?? containerRef.current;
     if (!element) {
       return;
     }
@@ -312,7 +328,7 @@ export function useFittedText<T extends HTMLElement = HTMLDivElement>(
       observer.disconnect();
       window.removeEventListener("resize", measureViewport);
     };
-  }, []);
+  }, [observedElement]);
 
   useLayoutEffect(() => {
     if (!fontsReady || containerSize.width <= 0 || containerSize.height <= 0) {
@@ -335,6 +351,7 @@ export function useFittedText<T extends HTMLElement = HTMLDivElement>(
         candidates,
         availableHeight: containerSize.height,
         lockedSize: stableSize,
+        maximumSize,
         measureHeight: (fontSize, lineHeight) => {
           if (text.length === 0) {
             return 0;
@@ -364,7 +381,7 @@ export function useFittedText<T extends HTMLElement = HTMLDivElement>(
     const nextState = { ...nextPolicy, ready: true };
     stateRef.current = nextState;
     setState((previous) => sameFittedTextState(previous, nextState) ? previous : nextState);
-  }, [callerLockedSize, containerSize, fontsReady, locked, text, viewport]);
+  }, [callerLockedSize, containerSize, fontsReady, locked, maximumSize, text, viewport]);
 
   return {
     containerRef,

@@ -89,6 +89,20 @@ describe("fitted text policy", () => {
     expect(measureHeight).toHaveBeenCalledWith(38, fittedTextLineHeight(38));
   });
 
+  it("keeps a growing draft at or below its previous fitted size", () => {
+    const measureHeight = vi.fn(() => 100);
+    const policy = chooseFittedTextPolicy({
+      candidates: [54, 52, 50, 48, 46, 44, 42, 40, 38, 36],
+      availableHeight: 600,
+      maximumSize: 39,
+      measureHeight,
+    });
+
+    expect(policy.fontSize).toBe(38);
+    expect(measureHeight).toHaveBeenCalledTimes(1);
+    expect(measureHeight).toHaveBeenCalledWith(38, fittedTextLineHeight(38));
+  });
+
   it("treats non-finite measurements as overflow", () => {
     const policy = chooseFittedTextPolicy({
       candidates: [24],
