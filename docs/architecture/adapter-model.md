@@ -76,6 +76,23 @@ This gives GSV:
 Trust is established at deploy time. If the binding exists, that adapter worker
 is part of the trusted deployment.
 
+Managed email follows the same transport ownership rule but is not a chat
+identity surface. Email Routing delivers `<installation-handle>@gsv.space` to
+the email Worker. The Worker resolves the handle through Accounts before
+addressing its installation-scoped transport Durable Object, persists an exact
+retryable copy, and hands the message to the Gateway over a service binding.
+The Kernel owns the canonical mailbox, filesystem paths, local user assignment,
+and notification Process. The adapter deletes its raw outbox chunks after the
+Kernel acknowledges durable storage; it retains only bounded delivery and usage
+state.
+
+The handoff has two phases. Raw mail is stored first so inference failure never
+hides a message. A separate fixed, no-tools summarization call produces bounded
+metadata, which the Kernel delivers to a dedicated Inbox Process as a typed
+system event. Raw headers, bodies, and summaries never become service frames or
+model-facing user instructions merely because an external sender supplied
+them.
+
 The protocol source of truth is `packages/gsv/src/protocol/adapters.ts`.
 Gateway-to-adapter bindings expose lifecycle, status, activity, and send
 operations; adapters call the Gateway's single `serviceFrame` entrypoint for

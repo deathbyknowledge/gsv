@@ -52,5 +52,11 @@ npm run managed:check --prefix "$ROOT_DIR"
     --minify \
     --define "__GSV_RELEASE__:$RELEASE_DEFINE"
 )
+(
+  cd "$ROOT_DIR/adapters/email"
+  npm exec --workspaces=false -- wrangler deploy \
+    --config wrangler.jsonc \
+    --minify
+)
 
 echo "Managed GSV deployed. Inference remains governed by its source-controlled release gate."

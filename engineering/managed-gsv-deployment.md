@@ -12,11 +12,21 @@ bundles.
 | Managed inference | `gsv-inference` | none | InferenceInstallation DOs |
 | Managed repositories | `gsv-managed-ripgit` | none | Repository DOs |
 | Installation Gateway | `gsv-managed-gateway` | `*.gsv.space/*` | Kernel and Process DOs, R2 `gsv-managed-storage` |
+| Managed email | `gsv-managed-email` | Email Routing only | MailInstallation DOs |
 
-The graph is deployed in that order. Accounts has no dependency on another
-managed Worker. Inference exports usage to Accounts, and the Gateway is deployed
-last because it binds all three internal services. Inference and ripgit disable
-`workers.dev` and preview URLs and have no public routes.
+Accounts has no dependency on another managed Worker. Inference exports usage
+to Accounts. The Gateway binds Accounts, Inference, and ripgit. Email is
+deployed last because it binds Accounts, Inference, and the Gateway. Inference,
+ripgit, and email disable `workers.dev` and preview URLs and have no public HTTP
+routes.
+
+Managed email accepts `<installation-handle>@gsv.space`. Accounts resolves the
+handle to an active immutable installation before the email Worker addresses a
+MailInstallation Durable Object. The adapter durably queues exact RFC 822 bytes
+and summary work; the Kernel remains the canonical mailbox owner and stores the
+message under the selected local user's home. Version one assigns one address
+to the installation's first unlocked human account. Per-user aliases require a
+future address directory rather than overloading installation routing.
 
 The production Gateway uses `gateway/src/index.ts`. The
 `gateway/src/managed-development.ts` wrapper exists only to put the local
@@ -45,6 +55,14 @@ not create these Workers, bind their services, or require platform credentials.
 The wildcard DNS record for `*.gsv.space` must be proxied through Cloudflare.
 The checked Gateway route attaches that wildcard to `gsv-managed-gateway`.
 
+Email Routing activation is an explicit operator step. Do not install an apex
+catch-all during a normal Worker deployment: a catch-all can take over existing
+`@gsv.space` mail. Inspect the zone's current Email Routing rules, then add only
+the reviewed address or catch-all rule that should deliver to
+`gsv-managed-email`. Staging uses the separate `staging.gsv.space` email
+subdomain and `gsv-staging-email`; its first dogfood rule should be a literal
+test address, not a catch-all.
+
 Create a Cloudflare Access self-hosted application protecting
 `https://gsv.space/admin*`. Configure the Accounts Worker with both required
 values:
@@ -71,9 +89,9 @@ to provision the checked resource names.
 
 ## Validate and deploy
 
-The validation command builds the protocol and desktop, typechecks all three
-TypeScript Workers, generates bindings from every production config, and runs
-Wrangler dry-run builds for all four Workers:
+The validation command builds the protocol and desktop, typechecks the managed
+TypeScript Workers, runs the email adapter tests, generates bindings from every
+production config, and runs Wrangler dry-run builds for all five Workers:
 
 ```bash
 npm run managed:check
@@ -87,8 +105,11 @@ npm run managed:deploy -- --confirm
 ```
 
 The command applies pending Accounts D1 migrations before deploying Accounts,
-then deploys Inference, ripgit, and the wildcard Gateway. Durable Object class
-migrations are applied with their owning Worker deployments.
+then deploys Inference, ripgit, the wildcard Gateway, and email. Durable Object
+class migrations are applied with their owning Worker deployments. The central
+Humans & Machines infrastructure repository manages the equivalent production
+and staging graph; use one deployment owner for a live environment rather than
+mixing it with this direct Wrangler path.
 
 Managed inference is source-controlled off in `inference/wrangler.jsonc`, with
 a zero deployment ceiling. Do not enable it by changing only the boolean:
@@ -107,6 +128,9 @@ After deployment:
 - create a disposable installation, complete onboarding, and log in;
 - verify its R2, Process, repository, and inference addresses use its immutable
   installation ID; and
+- send mail to the reviewed disposable address, then verify `mail list`,
+  `mail show <messageId>`, `mail show <messageId> --raw`, and the Inbox process
+  event without exposing raw message content as trusted instructions; and
 - while inference is disabled, verify generation fails without contacting the
   provider; then enable the operational and installation controls and verify a
   generation settles into the Accounts usage view.

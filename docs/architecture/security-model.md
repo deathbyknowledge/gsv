@@ -162,6 +162,22 @@ linked, adapter messages are delivered to the user's routed process or their
 newly created personal-agent process. Pending human-in-the-loop approvals can be
 answered from a linked DM surface.
 
+Managed email is installation-addressed rather than actor-linked. The public
+recipient handle is resolved through Accounts, and only an active directory
+record can select the immutable installation ID used to address email and
+Kernel Durable Objects. The email adapter owns SMTP intake, quotas, retry state,
+and temporary raw outbox chunks. The Kernel owns the canonical mailbox and
+assigns it to one local human account; filesystem and shell authorization then
+apply normally.
+
+Inbound email is hostile content. The Kernel persists exact bytes before any
+inference call. Summarization uses a fixed server-owned model and prompt with no
+tools, and only its validated bounded result becomes a typed system event for
+the Inbox Process. This reduces the instruction-injection surface but does not
+make the sender, links, attachments, or summary trusted. Explicit outbound mail
+is not enabled until its syscall, approval, destination, quota, and replay
+contracts are implemented end to end.
+
 ## Git
 
 Git HTTP uses Basic auth with either password or user token credentials. Public
