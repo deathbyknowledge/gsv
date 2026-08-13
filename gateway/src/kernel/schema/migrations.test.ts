@@ -31,7 +31,7 @@ function createTableStatement(name: string): string {
 describe("kernel schema migrations", () => {
   it("starts the kernel component at a v1 baseline", () => {
     expect(KERNEL_SCHEMA_COMPONENT).toBe("kernel");
-    expect(KERNEL_MIGRATIONS).toHaveLength(19);
+    expect(KERNEL_MIGRATIONS).toHaveLength(20);
     expect(KERNEL_MIGRATIONS[0]).toMatchObject({
       id: 1,
       name: "initial_kernel_schema",
@@ -108,6 +108,10 @@ describe("kernel schema migrations", () => {
       id: 19,
       name: "remove_notifications",
     });
+    expect(KERNEL_MIGRATIONS[19]).toMatchObject({
+      id: 20,
+      name: "add_mailboxes",
+    });
   });
 
   it("creates the current kernel table set", () => {
@@ -145,6 +149,9 @@ describe("kernel schema migrations", () => {
       "oauth_accounts",
       "user_mcp_servers",
       "adapter_ingress_receipts",
+      "mailboxes",
+      "mail_messages",
+      "mail_intakes",
     ]);
   });
 
@@ -182,6 +189,25 @@ describe("kernel schema migrations", () => {
       "DELETE FROM signal_watches WHERE signal LIKE 'notification.%'",
     );
     expect(statements).toContain("DROP TABLE notifications");
+  });
+
+  it("adds installation-local mailbox indexes", () => {
+    const statements = normalizedStatements();
+    const mailboxes = createTableStatement("mailboxes");
+    const messages = createTableStatement("mail_messages");
+    const intakes = createTableStatement("mail_intakes");
+
+    expect(mailboxes).toContain("owner_uid INTEGER NOT NULL");
+    expect(mailboxes).toContain("address TEXT NOT NULL UNIQUE");
+    expect(mailboxes).toContain("notification_pid TEXT");
+    expect(messages).toContain("UNIQUE(mailbox_id, digest)");
+    expect(messages).toContain("raw_path TEXT NOT NULL");
+    expect(messages).toContain("event_delivered_at INTEGER");
+    expect(intakes).toContain("intake_id TEXT PRIMARY KEY");
+    expect(intakes).toContain("message_id TEXT NOT NULL");
+    expect(statements).toContain(
+      "CREATE INDEX IF NOT EXISTS idx_mail_messages_mailbox_received ON mail_messages(mailbox_id, received_at DESC, message_id DESC)",
+    );
   });
 
   it("moves explicit system context overrides to the new lexical order", () => {

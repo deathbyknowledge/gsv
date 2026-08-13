@@ -25,6 +25,7 @@ import type { McpServerStore } from "./mcp-store";
 import type { SignalWatchStore } from "./signal-watches";
 import type { IpcCallStore } from "./ipc-calls";
 import type { ScheduleStore } from "./scheduler";
+import type { MailboxStore } from "./mailbox-store";
 import type { McpAddConnectionInput, McpAddConnectionResult } from "./sys/mcp";
 import type { InstallationIdentity } from "../installation/identity";
 
@@ -46,6 +47,7 @@ export type KernelContext = {
   signalWatches: SignalWatchStore;
   ipcCalls: IpcCallStore;
   schedules: ScheduleStore;
+  mailboxes: MailboxStore;
   connection: Connection | null;
   identity?: ConnectionIdentity;
   processId?: string;
@@ -59,6 +61,7 @@ export type KernelContext = {
   failIpcCallsByTarget: (uid: number, targetPid: string, error: string) => void;
   scheduleScheduleWake: (scheduleId: string, dueAtMs: number) => Promise<string>;
   cancelScheduleWake: (wakeScheduleId: string) => Promise<void>;
+  ensureMailboxNotificationProcess: (mailboxId: string) => Promise<string>;
   runSchedules: (
     args: SchedulerRunArgs,
     identity?: ConnectionIdentity,

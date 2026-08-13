@@ -26,6 +26,9 @@ import type {
   InstallationDirectoryService,
   InstallationOnboardingAuthorization,
   InstallationOnboardingService,
+  ManagedInboundMailAccepted,
+  ManagedInboundMailCompletion,
+  ManagedInboundMailMetadata,
   NetFetchArgs,
   ProcessIdentity,
   ScheduleRecord,
@@ -58,6 +61,7 @@ import { AdapterStore } from "./adapter-store";
 import { RunRouteStore, type AdapterRunRoute, type RunRoute } from "./run-routes";
 import { OAuthStore } from "./oauth-store";
 import { McpServerStore } from "./mcp-store";
+import { MailboxStore } from "./mailbox-store";
 import { SignalWatchStore, type SignalWatchRecord } from "./signal-watches";
 import { isUserProcessSignal } from "./user-signals";
 import { IpcCallStore, type IpcCallRecord } from "./ipc-calls";
@@ -116,6 +120,11 @@ import { isRepoPublic } from "./repo-visibility";
 import { canReadRepo, canWriteRepo } from "./repo";
 import { handleProcSpawn } from "./proc-handlers";
 import { ensurePersonalAgent } from "./agents";
+import {
+  acceptManagedInboundMail as acceptKernelManagedInboundMail,
+  completeManagedInboundMail as completeKernelManagedInboundMail,
+  ensureMailboxNotificationProcess as ensureKernelMailboxNotificationProcess,
+} from "./mailbox";
 import { handleShellExec } from "../drivers/native/shell";
 import { getVisibleTarget } from "./targets";
 import { runKernelSqlMigrations } from "./schema/migrations";
@@ -243,6 +252,7 @@ export class Kernel extends Host<Env> {
   private readonly signalWatches: SignalWatchStore;
   private readonly ipcCalls: IpcCallStore;
   private readonly schedules: ScheduleStore;
+  private readonly mailboxes: MailboxStore;
   private readonly oauth: OAuthStore;
   private readonly mcpServers: McpServerStore;
   private readonly connections = new Map<string, Connection<ConnectionState>>();
@@ -250,6 +260,7 @@ export class Kernel extends Host<Env> {
   private pendingManagedOnboarding?: PendingManagedOnboardingCompletion;
   private readonly pendingKernelResponses = new Map<string, (frame: ResponseFrame) => void>();
   private readonly pendingProcessSignals = new Map<string, Promise<void>>();
+  private readonly pendingMailboxNotificationProcesses = new Map<string, Promise<string>>();
   private readonly frameBodyChannels = new Map<string, BinaryBodyChannel>();
   private readonly routedBodies = new Map<
     string,
@@ -313,6 +324,8 @@ export class Kernel extends Host<Env> {
     this.ipcCalls = new IpcCallStore(sql);
 
     this.schedules = new ScheduleStore(sql);
+
+    this.mailboxes = new MailboxStore(sql);
 
     this.oauth = new OAuthStore(sql);
 
@@ -719,6 +732,34 @@ export class Kernel extends Host<Env> {
     } finally {
       await cancelUnlockedBody(body, "Service request completed");
     }
+  }
+
+  async acceptManagedInboundMail(
+    metadata: ManagedInboundMailMetadata,
+    body: BinaryBody,
+  ): Promise<ManagedInboundMailAccepted> {
+    try {
+      const gate = await this.managedWorkGate();
+      if (!gate.allowed) throw new Error(gate.message);
+      return await acceptKernelManagedInboundMail(
+        metadata,
+        body,
+        this.buildKernelContext({}),
+      );
+    } finally {
+      await cancelUnlockedBody(body, "Managed mail request completed");
+    }
+  }
+
+  async completeManagedInboundMail(
+    completion: ManagedInboundMailCompletion,
+  ): Promise<void> {
+    const gate = await this.managedWorkGate();
+    if (!gate.allowed) throw new Error(gate.message);
+    await completeKernelManagedInboundMail(
+      completion,
+      this.buildKernelContext({}),
+    );
   }
 
   async authorizeGitHttp(input: AuthorizeGitHttpInput): Promise<AuthorizeGitHttpResult> {
@@ -1660,6 +1701,7 @@ export class Kernel extends Host<Env> {
       signalWatches: this.signalWatches,
       ipcCalls: this.ipcCalls,
       schedules: this.schedules,
+      mailboxes: this.mailboxes,
       connection: options.connection ?? null,
       identity: options.identity,
       processId: options.processId,
@@ -1674,6 +1716,9 @@ export class Kernel extends Host<Env> {
       cancelScheduleWake: async (wakeScheduleId) => {
         await this.cancelSchedule(wakeScheduleId);
       },
+      ensureMailboxNotificationProcess: (mailboxId) => (
+        this.ensureMailboxNotificationProcess(mailboxId)
+      ),
       runSchedules: this.runSchedules.bind(this),
       addMcpServerConnection: this.addMcpServerConnection.bind(this),
       removeMcpServerConnection: this.removeMcpServer.bind(this),
@@ -1692,6 +1737,21 @@ export class Kernel extends Host<Env> {
 
   private get bindings(): Env {
     return this.installationEnv ?? this.env;
+  }
+
+  private ensureMailboxNotificationProcess(mailboxId: string): Promise<string> {
+    const pending = this.pendingMailboxNotificationProcesses.get(mailboxId);
+    if (pending) return pending;
+    const created = ensureKernelMailboxNotificationProcess(
+      mailboxId,
+      this.buildKernelContext({}),
+    ).finally(() => {
+      if (this.pendingMailboxNotificationProcesses.get(mailboxId) === created) {
+        this.pendingMailboxNotificationProcesses.delete(mailboxId);
+      }
+    });
+    this.pendingMailboxNotificationProcesses.set(mailboxId, created);
+    return created;
   }
 
   private get storage(): R2Bucket {

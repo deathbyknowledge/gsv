@@ -12,6 +12,7 @@ import { buildCpCommand } from "./cp";
 import { buildCrontabCommand } from "./crontab";
 import { buildLsCommand } from "./ls";
 import { buildLlmCommand } from "./llm";
+import { buildMailCommand } from "./mail";
 import { buildMediaCommands } from "./media";
 import { buildMessageCommand } from "./message";
 import { buildMcpCommand } from "./mcp";
@@ -45,6 +46,7 @@ export function buildCustomCommands(
   const coreCommands = buildCoreCommands(fs, identity, ctx, discovery);
   const ls = buildLsCommand(fs, identity, ctx);
   const llm = buildLlmCommand(ctx, options?.netFetchTransport);
+  const mail = buildMailCommand(fs, ctx);
   const stat = buildStatCommand(fs, identity, ctx);
   const cp = buildCpCommand(ctx, options?.fsTransport);
   const crontab = buildCrontabCommand(fs, ctx);
@@ -81,6 +83,7 @@ export function buildCustomCommands(
     ...netCommands,
     oauth,
     llm,
+    mail,
     ...mediaCommands,
     message,
     skills,

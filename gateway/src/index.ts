@@ -3,6 +3,13 @@ import type {
   AdapterInstallationContext,
   GatewayAdapterInterface,
 } from "./adapter-interface";
+import type {
+  BinaryBody,
+  ManagedInboundMailAccepted,
+  ManagedInboundMailCompletion,
+  ManagedInboundMailMetadata,
+  ManagedMailGatewayService,
+} from "@humansandmachines/gsv/protocol";
 import type { Frame } from "./protocol/frames";
 import { buildOAuthClientMetadata } from "./oauth-http";
 import {
@@ -128,7 +135,7 @@ export default {
 } satisfies ExportedHandler<Env>;
 export class GatewayEntrypoint
   extends WorkerEntrypoint<Env & GatewayInstallationBindings>
-  implements GatewayAdapterInterface
+  implements GatewayAdapterInterface, ManagedMailGatewayService
 {
   async serviceFrame(
     installation: AdapterInstallationContext,
@@ -136,9 +143,8 @@ export class GatewayEntrypoint
   ): Promise<Frame | null> {
     const body = "body" in frame ? frame.body : undefined;
     try {
-      let installationId: string;
+      const installationId = resolveAdapterInstallationId(this.env, installation);
       if (this.env.INSTALLATION_DIRECTORY) {
-        installationId = parseManagedInstallationId(installation?.installationId);
         const gate = await managedInstallationWorkGate(this.env, installationId);
         if (!gate.allowed) {
           if (body && !body.stream.locked) {
@@ -153,11 +159,6 @@ export class GatewayEntrypoint
               }
             : null;
         }
-      } else {
-        installationId = parseInstallationId(installation?.installationId);
-        if (installationId !== SINGLETON_INSTALLATION_ID) {
-          throw new Error("Adapter installation does not match standalone Gateway");
-        }
       }
       const kernel = await getKernelByInstallationId(this.env.KERNEL, installationId);
       return await kernel.serviceFrame(frame);
@@ -169,4 +170,51 @@ export class GatewayEntrypoint
       return null;
     }
   }
+
+  async acceptManagedInboundMail(
+    installation: AdapterInstallationContext,
+    metadata: ManagedInboundMailMetadata,
+    body: BinaryBody,
+  ): Promise<ManagedInboundMailAccepted> {
+    try {
+      const installationId = resolveAdapterInstallationId(this.env, installation);
+      if (this.env.INSTALLATION_DIRECTORY) {
+        const gate = await managedInstallationWorkGate(this.env, installationId);
+        if (!gate.allowed) throw new Error(gate.message);
+      }
+      const kernel = await getKernelByInstallationId(this.env.KERNEL, installationId);
+      return await kernel.acceptManagedInboundMail(metadata, body);
+    } finally {
+      if (!body.stream.locked) {
+        await body.stream.cancel("Managed mail Gateway request completed").catch(() => {});
+      }
+    }
+  }
+
+  async completeManagedInboundMail(
+    installation: AdapterInstallationContext,
+    completion: ManagedInboundMailCompletion,
+  ): Promise<void> {
+    const installationId = resolveAdapterInstallationId(this.env, installation);
+    if (this.env.INSTALLATION_DIRECTORY) {
+      const gate = await managedInstallationWorkGate(this.env, installationId);
+      if (!gate.allowed) throw new Error(gate.message);
+    }
+    const kernel = await getKernelByInstallationId(this.env.KERNEL, installationId);
+    await kernel.completeManagedInboundMail(completion);
+  }
+}
+
+function resolveAdapterInstallationId(
+  bindings: Env & GatewayInstallationBindings,
+  installation: AdapterInstallationContext,
+): string {
+  if (bindings.INSTALLATION_DIRECTORY) {
+    return parseManagedInstallationId(installation?.installationId);
+  }
+  const installationId = parseInstallationId(installation?.installationId);
+  if (installationId !== SINGLETON_INSTALLATION_ID) {
+    throw new Error("Adapter installation does not match standalone Gateway");
+  }
+  return installationId;
 }
