@@ -1,0 +1,31 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "gsv-managed-email-test",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-07-29",
+  "compatibility_flags": ["nodejs_compat"],
+  "workers_dev": false,
+  "preview_urls": false,
+  "vars": {
+    "MAIL_DOMAIN": "gsv.space",
+    "GSV_BASE_DOMAIN": "gsv.space",
+    "MAIL_MAX_MESSAGE_BYTES": 26214400,
+    "MAIL_DAILY_INBOUND_MESSAGE_LIMIT": 2,
+    "MAIL_DAILY_INBOUND_BYTE_LIMIT": 1048576,
+    "MAIL_DAILY_SUMMARIZATION_LIMIT": 1
+  },
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "MAIL_INSTALLATIONS",
+        "class_name": "MailInstallation"
+      }
+    ]
+  },
+  "migrations": [
+    {
+      "tag": "v1",
+      "new_sqlite_classes": ["MailInstallation"]
+    }
+  ]
+}

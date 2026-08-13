@@ -21,3 +21,4 @@ export * from "./request-cancel";
 export * from "./file-content";
 export * from "./speech-text";
 export * from "./managed";
+export * from "./mail";

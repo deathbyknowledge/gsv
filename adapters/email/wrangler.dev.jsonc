@@ -1,0 +1,47 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "gsv-managed-email-dev",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-07-29",
+  "compatibility_flags": ["nodejs_compat"],
+  "workers_dev": false,
+  "preview_urls": false,
+  "vars": {
+    "MAIL_DOMAIN": "gsv.space",
+    "GSV_BASE_DOMAIN": "localhost",
+    "MAIL_MAX_MESSAGE_BYTES": 26214400,
+    "MAIL_DAILY_INBOUND_MESSAGE_LIMIT": 250,
+    "MAIL_DAILY_INBOUND_BYTE_LIMIT": 268435456,
+    "MAIL_DAILY_SUMMARIZATION_LIMIT": 100
+  },
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "MAIL_INSTALLATIONS",
+        "class_name": "MailInstallation"
+      }
+    ]
+  },
+  "migrations": [
+    {
+      "tag": "v1",
+      "new_sqlite_classes": ["MailInstallation"]
+    }
+  ],
+  "services": [
+    {
+      "binding": "ACCOUNTS",
+      "service": "gsv-accounts-dev"
+    },
+    {
+      "binding": "GATEWAY",
+      "service": "gsv-managed-gateway-dev",
+      "entrypoint": "GatewayEntrypoint"
+    },
+    {
+      "binding": "INFERENCE",
+      "service": "gsv-inference-dev",
+      "entrypoint": "InferenceService"
+    }
+  ]
+}
