@@ -1,12 +1,13 @@
 import {
   GSV_INFERENCE_PRODUCT_MODEL,
   type ManagedInferenceActor,
+  type ManagedInferenceAbortRequest,
   type ManagedInferenceRequest,
 } from "@humansandmachines/gsv/protocol";
 import { MANAGED_INFERENCE_MAX_OUTPUT_TOKENS } from "./pricing";
 
 const OPAQUE_ID_PATTERN = /^[A-Za-z0-9](?:[A-Za-z0-9._:-]{0,126}[A-Za-z0-9])?$/;
-const MAX_TIMEOUT_MS = 15 * 60 * 1000;
+export const MAX_MANAGED_INFERENCE_TIMEOUT_MS = 15 * 60 * 1000;
 
 export function validateManagedInferenceRequest(
   input: ManagedInferenceRequest,
@@ -33,10 +34,21 @@ export function validateManagedInferenceRequest(
   if (
     !Number.isSafeInteger(input.timeoutMs)
     || input.timeoutMs < 1
-    || input.timeoutMs > MAX_TIMEOUT_MS
+    || input.timeoutMs > MAX_MANAGED_INFERENCE_TIMEOUT_MS
   ) {
     throw new Error("Managed inference timeout is invalid");
   }
+  return input;
+}
+
+export function validateManagedInferenceAbortRequest(
+  input: ManagedInferenceAbortRequest,
+): ManagedInferenceAbortRequest {
+  if (!input || typeof input !== "object" || input.version !== 1) {
+    throw new Error("Managed inference abort request version is invalid");
+  }
+  validateOpaqueId(input.installationId, "installationId");
+  validateOpaqueId(input.logicalRequestId, "logicalRequestId");
   return input;
 }
 

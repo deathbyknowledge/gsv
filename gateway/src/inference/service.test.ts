@@ -169,12 +169,10 @@ describe("createGenerationService", () => {
       stopReason: "stop",
       timestamp: 1,
     };
-    const generate = vi.fn<ManagedInferenceService["generate"]>(async () => ({
-      result: async () => managedResult,
-      abort: async () => {},
-    }));
+    const generate = vi.fn<ManagedInferenceService["generate"]>(async () => managedResult);
     const managedInference: ManagedInferenceService = {
       generate,
+      abort: vi.fn(),
     };
     completePiAiSimpleMock.mockImplementationOnce((model, context, options, models) =>
       models.completeSimple(model, context, options)
@@ -242,6 +240,7 @@ describe("createGenerationService", () => {
   it("requires trusted attribution for a registered provider", async () => {
     const managedInference: ManagedInferenceService = {
       generate: vi.fn(),
+      abort: vi.fn(),
     };
 
     await expect(createGenerationService({

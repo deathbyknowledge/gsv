@@ -281,6 +281,157 @@ describe("installation managed inference", () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
+  it("honors a durable cancellation that arrives before generation", async () => {
+    const installationId = "installation_cancelled_before_generate";
+    const logicalRequestId = "request_cancelled_before_generate";
+    const stub = env.INFERENCE_INSTALLATIONS.getByName(installationId);
+    const fetchMock = vi.fn<typeof fetch>(async () => completion("unexpected"));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await stub.abort(logicalRequestId);
+    const result = await stub.generate(request(installationId, logicalRequestId));
+    const tombstone = await runInDurableObject(stub, (_instance, state) => (
+      state.storage.sql.exec<{ expires_at: number }>(
+        `SELECT expires_at FROM inference_cancellations
+         WHERE logical_request_id = ?`,
+        logicalRequestId,
+      ).one()
+    ));
+
+    expect(result).toMatchObject({
+      provider: "gsv",
+      model: "gsv/default",
+      stopReason: "aborted",
+      usage: { totalTokens: 0 },
+    });
+    expect(tombstone.expires_at).toBeGreaterThan(Date.now());
+    expect(fetchMock).not.toHaveBeenCalled();
+    await expect(stub.usage()).resolves.toMatchObject({
+      startedRequests: 0,
+      reservedNanoUsd: 0,
+      spentNanoUsd: 0,
+    });
+  });
+
+  it("does not let a late abort replace terminal replay behavior", async () => {
+    const installationId = "installation_late_abort";
+    const logicalRequestId = "request_late_abort";
+    const stub = env.INFERENCE_INSTALLATIONS.getByName(installationId);
+    const fetchMock = vi.fn<typeof fetch>(async () => completion("gen_late_abort"));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(
+      stub.generate(request(installationId, logicalRequestId)),
+    ).resolves.toMatchObject({ stopReason: "stop" });
+    await stub.abort(logicalRequestId);
+    const tombstones = await runInDurableObject(stub, (_instance, state) => (
+      state.storage.sql.exec<{ count: number }>(
+        `SELECT COUNT(*) AS count FROM inference_cancellations
+         WHERE logical_request_id = ?`,
+        logicalRequestId,
+      ).one().count
+    ));
+
+    const replayError = await runInDurableObject(stub, async (instance) => {
+      try {
+        await (instance as InferenceInstallation).generate(
+          request(installationId, logicalRequestId),
+        );
+        return null;
+      } catch (error) {
+        return error instanceof Error ? error.message : String(error);
+      }
+    });
+
+    expect(replayError).toBe("Managed inference request was already completed");
+    expect(tombstones).toBe(0);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps terminal settlement authoritative over an overtaking cancellation", async () => {
+    const installationId = "installation_settlement_cancellation_race";
+    const logicalRequestId = "request_settlement_cancellation_race";
+    const stub = env.INFERENCE_INSTALLATIONS.getByName(installationId);
+    let respond: (response: Response) => void = () => {};
+    let markStarted: () => void = () => {};
+    const started = new Promise<void>((resolve) => {
+      markStarted = resolve;
+    });
+    const fetchMock = vi.fn<typeof fetch>(async () => {
+      markStarted();
+      return await new Promise<Response>((resolve) => {
+        respond = resolve;
+      });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const outcome = await runInDurableObject(stub, async (instance, state) => {
+      const installation = instance as InferenceInstallation;
+      const generation = installation.generate(request(
+        installationId,
+        logicalRequestId,
+      ));
+      await started;
+      state.storage.sql.exec(
+        `INSERT INTO inference_cancellations (logical_request_id, expires_at)
+         VALUES (?, ?)`,
+        logicalRequestId,
+        Date.now() + 60_000,
+      );
+      respond(completion("gen_settlement_cancellation_race"));
+      const result = await generation;
+      const requestState = state.storage.sql.exec<{ state: string }>(
+        `SELECT state FROM inference_requests WHERE logical_request_id = ?`,
+        logicalRequestId,
+      ).one().state;
+      const tombstones = state.storage.sql.exec<{ count: number }>(
+        `SELECT COUNT(*) AS count FROM inference_cancellations
+         WHERE logical_request_id = ?`,
+        logicalRequestId,
+      ).one().count;
+      let replayError = "";
+      try {
+        await installation.generate(request(installationId, logicalRequestId));
+      } catch (error) {
+        replayError = error instanceof Error ? error.message : String(error);
+      }
+      return { result, requestState, tombstones, replayError };
+    });
+
+    expect(outcome.result).toMatchObject({
+      responseId: "gen_settlement_cancellation_race",
+      stopReason: "stop",
+    });
+    expect(outcome.requestState).toBe("completed");
+    expect(outcome.tombstones).toBe(0);
+    expect(outcome.replayError).toBe(
+      "Managed inference request was already completed",
+    );
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("removes expired cancellation tombstones from its alarm", async () => {
+    const installationId = "installation_cancel_cleanup";
+    const logicalRequestId = "request_cancel_cleanup";
+    const stub = env.INFERENCE_INSTALLATIONS.getByName(installationId);
+    await stub.abort(logicalRequestId);
+
+    const remaining = await runInDurableObject(stub, async (instance, state) => {
+      state.storage.sql.exec(
+        `UPDATE inference_cancellations SET expires_at = ?
+         WHERE logical_request_id = ?`,
+        Date.now() - 1,
+        logicalRequestId,
+      );
+      await (instance as InferenceInstallation).alarm();
+      return state.storage.sql.exec<{ count: number }>(
+        "SELECT COUNT(*) AS count FROM inference_cancellations",
+      ).one().count;
+    });
+
+    expect(remaining).toBe(0);
+  });
+
   it("keeps parallel generations in flight without a concurrency cap", async () => {
     const installationId = "installation_parallel";
     const stub = env.INFERENCE_INSTALLATIONS.getByName(installationId);
@@ -507,15 +658,28 @@ describe("installation managed inference", () => {
         Date.now() - 2,
         Date.now() - 1,
       );
+      state.storage.sql.exec(
+        `INSERT INTO inference_cancellations (logical_request_id, expires_at)
+         VALUES (?, ?)`,
+        "request_abandoned",
+        Date.now() + 60_000,
+      );
 
       await (instance as InferenceInstallation).alarm();
-      return await (instance as InferenceInstallation).usage(period);
+      return {
+        usage: await (instance as InferenceInstallation).usage(period),
+        tombstones: state.storage.sql.exec<{ count: number }>(
+          `SELECT COUNT(*) AS count FROM inference_cancellations
+           WHERE logical_request_id = 'request_abandoned'`,
+        ).one().count,
+      };
     });
 
-    expect(snapshot).toMatchObject({
+    expect(snapshot.usage).toMatchObject({
       reservedNanoUsd: 0,
       abandonedRequests: 1,
     });
+    expect(snapshot.tombstones).toBe(0);
   });
 
   it("retains usage and rearms export after an Accounts failure", async () => {

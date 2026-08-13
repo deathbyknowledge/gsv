@@ -1,6 +1,6 @@
 import { WorkerEntrypoint } from "cloudflare:workers";
 import type {
-  ManagedInferenceGeneration,
+  ManagedInferenceAbortRequest,
   ManagedInferenceRequest,
   ManagedInferenceResult,
   ManagedInferenceService,
@@ -11,7 +11,10 @@ import type {
 } from "@humansandmachines/gsv/protocol";
 import type { InferenceEnv } from "./env";
 import { validateManagedMailSummaryRequest } from "./mail-summary";
-import { validateManagedInferenceRequest } from "./validation";
+import {
+  validateManagedInferenceAbortRequest,
+  validateManagedInferenceRequest,
+} from "./validation";
 
 export { InferenceInstallation } from "./installation";
 
@@ -25,24 +28,21 @@ export class InferenceService
 
   async generate(
     inputValue: ManagedInferenceRequest,
-  ): Promise<ManagedInferenceGeneration> {
+  ): Promise<ManagedInferenceResult> {
     if (!this.env.MANAGED_INFERENCE_ENABLED) {
       throw new Error("Managed inference is disabled");
     }
     const input = validateManagedInferenceRequest(inputValue);
-    const installation = this.env.INFERENCE_INSTALLATIONS.getByName(
+    return await this.env.INFERENCE_INSTALLATIONS.getByName(
       input.installationId,
-    );
-    let resultPromise: Promise<ManagedInferenceResult> | undefined;
-    return {
-      result: () => {
-        resultPromise ??= installation.generate(input);
-        return resultPromise;
-      },
-      abort: async () => {
-        await installation.abort(input.logicalRequestId);
-      },
-    };
+    ).generate(input);
+  }
+
+  async abort(inputValue: ManagedInferenceAbortRequest): Promise<void> {
+    const input = validateManagedInferenceAbortRequest(inputValue);
+    await this.env.INFERENCE_INSTALLATIONS.getByName(
+      input.installationId,
+    ).abort(input.logicalRequestId);
   }
 
   async summarizeMail(

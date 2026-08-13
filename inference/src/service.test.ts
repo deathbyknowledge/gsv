@@ -39,15 +39,10 @@ describe("managed inference service RPC", () => {
   it("routes a trusted installation request through its Durable Object", async () => {
     vi.stubGlobal("fetch", vi.fn<typeof fetch>(async () => completion()));
 
-    const generation = await exports.default.generate(REQUEST);
-    try {
-      await expect(generation.result()).resolves.toMatchObject({
-        responseId: "generation_service_rpc",
-        usage: { input: 2, output: 1, totalTokens: 3 },
-      });
-    } finally {
-      (generation as typeof generation & Partial<Disposable>)[Symbol.dispose]?.();
-    }
+    await expect(exports.default.generate(REQUEST)).resolves.toMatchObject({
+      responseId: "generation_service_rpc",
+      usage: { input: 2, output: 1, totalTokens: 3 },
+    });
 
     const installation = env.INFERENCE_INSTALLATIONS.getByName(
       REQUEST.installationId,
@@ -58,6 +53,26 @@ describe("managed inference service RPC", () => {
       reservedNanoUsd: 0,
       completedRequests: 1,
     });
+  });
+
+  it("honors an immediate abort that overtakes generation RPC", async () => {
+    const fetchMock = vi.fn<typeof fetch>(async () => completion("unexpected"));
+    vi.stubGlobal("fetch", fetchMock);
+    const request: ManagedInferenceRequest = {
+      ...REQUEST,
+      installationId: "installation_service_abort_rpc",
+      logicalRequestId: "request_service_abort_rpc",
+    };
+
+    await exports.default.abort({
+      version: 1,
+      installationId: request.installationId,
+      logicalRequestId: request.logicalRequestId,
+    });
+    const result = exports.default.generate(request);
+
+    await expect(result).resolves.toMatchObject({ stopReason: "aborted" });
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it("routes fixed mail intake through the same budget coordinator", async () => {

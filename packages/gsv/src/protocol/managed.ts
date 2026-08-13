@@ -39,13 +39,15 @@ export type ManagedInferenceResult = Omit<
   timestamp: number;
 };
 
-export type ManagedInferenceGeneration = {
-  result: () => Promise<ManagedInferenceResult>;
-  abort: () => Promise<void>;
+export type ManagedInferenceAbortRequest = {
+  version: 1;
+  installationId: string;
+  logicalRequestId: string;
 };
 
 export interface ManagedInferenceService {
-  generate(input: ManagedInferenceRequest): Promise<ManagedInferenceGeneration>;
+  generate(input: ManagedInferenceRequest): Promise<ManagedInferenceResult>;
+  abort(input: ManagedInferenceAbortRequest): Promise<void>;
 }
 
 export type ManagedMailSummaryRequest = {

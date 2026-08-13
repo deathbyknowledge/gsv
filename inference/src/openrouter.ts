@@ -8,7 +8,6 @@ import { openAICompletionsApi } from "@earendil-works/pi-ai/api/openai-completio
 import {
   GSV_INFERENCE_PRODUCT_MODEL,
   GSV_INFERENCE_PROVIDER,
-  type ManagedInferenceGeneration,
   type ManagedInferenceRequest,
   type ManagedInferenceResult,
 } from "@humansandmachines/gsv/protocol";
@@ -48,6 +47,11 @@ const OPENROUTER_MODEL: Model<"openai-completions"> = {
   },
 };
 
+type OpenRouterGeneration = {
+  result: () => Promise<ManagedInferenceResult>;
+  abort: () => Promise<void>;
+};
+
 const openRouter = createProvider({
   id: "openrouter",
   name: "OpenRouter",
@@ -66,7 +70,7 @@ export function createOpenRouterGeneration(
   input: ManagedInferenceRequest,
   apiKey: string,
   fetchImpl: typeof fetch = fetch,
-): ManagedInferenceGeneration {
+): OpenRouterGeneration {
   if (input.model !== GSV_INFERENCE_PRODUCT_MODEL) {
     throw new Error(`Unsupported managed inference model: ${input.model}`);
   }

@@ -15,7 +15,6 @@ import {
   GSV_INFERENCE_MODEL,
   GSV_INFERENCE_PRODUCT_MODEL,
   GSV_INFERENCE_PROVIDER,
-  type ManagedInferenceGeneration,
   type ManagedInferenceRequest,
   type ManagedInferenceResult,
   type ManagedInferenceService,
@@ -152,14 +151,17 @@ async function pumpGsvInference(
   stream: AssistantMessageEventStream,
   signal?: AbortSignal,
 ): Promise<void> {
-  let generation: (ManagedInferenceGeneration & Partial<Disposable>) | null = null;
-  let generationAbort: Promise<void> | null = null;
+  let generationStarted = false;
+  let generationAbort: Promise<void> | undefined;
   const abortGeneration = () => {
-    if (generation && !generationAbort) {
-      const activeGeneration = generation;
+    if (generationStarted && !generationAbort) {
       generationAbort = (async () => {
         try {
-          await activeGeneration.abort();
+          await service.abort({
+            version: 1,
+            installationId: request.installationId,
+            logicalRequestId: request.logicalRequestId,
+          });
         } catch {}
       })();
     }
@@ -171,13 +173,10 @@ async function pumpGsvInference(
       stream.push(gsvInferenceErrorEvent(true));
       return;
     }
-    generation = await service.generate(request);
-    if (signal?.aborted) {
-      abortGeneration();
-      stream.push(gsvInferenceErrorEvent(true));
-      return;
-    }
-    const result = await generation.result();
+    const resultPromise = service.generate(request);
+    generationStarted = true;
+    if (signal?.aborted) abortGeneration();
+    const result = await resultPromise;
     if (signal?.aborted) {
       stream.push(gsvInferenceErrorEvent(true));
       return;
@@ -189,9 +188,6 @@ async function pumpGsvInference(
   } finally {
     signal?.removeEventListener("abort", abortGeneration);
     await generationAbort;
-    try {
-      generation?.[Symbol.dispose]?.();
-    } catch {}
   }
 }
 

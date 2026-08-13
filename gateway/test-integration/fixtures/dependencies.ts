@@ -19,7 +19,7 @@ import type {
   InstallationDirectoryResult,
   InstallationOnboardingAuthorization,
   ManagedInstallationState,
-  ManagedInferenceGeneration,
+  ManagedInferenceAbortRequest,
   ManagedInferenceRequest,
   ManagedInferenceResult,
   ManagedInferenceService,
@@ -106,26 +106,16 @@ export class ManagedInferenceFixture
   extends WorkerEntrypoint<Env>
   implements ManagedInferenceService
 {
-  async generate(input: ManagedInferenceRequest): Promise<ManagedInferenceGeneration> {
+  async generate(input: ManagedInferenceRequest): Promise<ManagedInferenceResult> {
     const waitsForCancellation = input.messages.some((message) => (
       message.role === "user" && message.content === "wait for cancellation"
     ));
-    let resultReady = Promise.resolve();
-    let releaseResult = () => {};
-    let abort = async () => {};
     if (waitsForCancellation) {
       const id = this.env.INTEGRATION_STATE.idFromName(SINGLETON_INSTALLATION_ID);
       const state = this.env.INTEGRATION_STATE.get(id);
-      resultReady = new Promise<void>((resolve) => {
-        releaseResult = resolve;
-      });
-      abort = async () => {
-        try {
-          await state.recordManagedInferenceCancellation(input.installationId);
-        } finally {
-          releaseResult();
-        }
-      };
+      while (!await state.wasManagedInferenceCancelled(input.installationId)) {
+        await scheduler.wait(10);
+      }
     }
 
     const text = [
@@ -151,13 +141,14 @@ export class ManagedInferenceFixture
       stopReason: "stop",
       timestamp: Date.now(),
     };
-    return {
-      result: async () => {
-        await resultReady;
-        return result;
-      },
-      abort,
-    };
+    return result;
+  }
+
+  async abort(input: ManagedInferenceAbortRequest): Promise<void> {
+    const id = this.env.INTEGRATION_STATE.idFromName(SINGLETON_INSTALLATION_ID);
+    await this.env.INTEGRATION_STATE.get(id).recordManagedInferenceCancellation(
+      input.installationId,
+    );
   }
 }
 

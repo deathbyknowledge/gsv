@@ -7,7 +7,7 @@
   "workers_dev": false,
   "preview_urls": false,
   "vars": {
-    "MANAGED_INFERENCE_ENABLED": false,
+    "MANAGED_INFERENCE_ENABLED": true,
     "MANAGED_INFERENCE_MONTHLY_LIMIT_NANO_USD": 0
   },
   "secrets": {

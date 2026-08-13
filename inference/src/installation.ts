@@ -1,6 +1,7 @@
 import { DurableObject } from "cloudflare:workers";
 import {
   GSV_INFERENCE_PRODUCT_MODEL,
+  GSV_INFERENCE_PROVIDER,
   type ManagedInferencePolicy,
   type ManagedInferencePurpose,
   type ManagedInferenceRequest,
@@ -23,6 +24,7 @@ import { createOpenRouterGeneration } from "./openrouter";
 import { reservationNanoUsd, usageNanoUsd } from "./pricing";
 import { runInferenceSqlMigrations } from "./schema/migrations";
 import {
+  MAX_MANAGED_INFERENCE_TIMEOUT_MS,
   validateManagedInferenceRequest,
   validateOpaqueId,
 } from "./validation";
@@ -31,6 +33,8 @@ const EXPORT_DELAY_MS = 5_000;
 const EXPORT_BATCH_SIZE = 100;
 const RESERVATION_GRACE_MS = 5 * 60 * 1000;
 const MAX_EXPORT_BACKOFF_MS = 5 * 60 * 1000;
+const CANCELLATION_TOMBSTONE_TTL_MS = MAX_MANAGED_INFERENCE_TIMEOUT_MS
+  + RESERVATION_GRACE_MS;
 
 type ActiveGeneration = {
   promise: Promise<ManagedInferenceResult>;
@@ -137,6 +141,9 @@ export class InferenceInstallation extends DurableObject<InferenceEnv> {
     }
     const existing = this.activeGenerations.get(input.logicalRequestId);
     if (existing) return await existing.promise;
+    if (this.isCancelled(input.logicalRequestId, Date.now())) {
+      return abortedResult();
+    }
 
     const generation = createOpenRouterGeneration(
       input,
@@ -218,8 +225,21 @@ export class InferenceInstallation extends DurableObject<InferenceEnv> {
       logicalRequestIdValue,
       "logicalRequestId",
     );
-    await this.activeGenerations.get(logicalRequestId)?.abort();
-    await this.activeMailSummaries.get(logicalRequestId)?.abort();
+    const request = this.requestState(logicalRequestId);
+    if (request && request.state !== "reserved") return;
+    const now = Date.now();
+    this.ctx.storage.sql.exec(
+      `INSERT INTO inference_cancellations (logical_request_id, expires_at)
+       VALUES (?, ?)
+       ON CONFLICT(logical_request_id) DO UPDATE SET
+         expires_at = MAX(expires_at, excluded.expires_at)`,
+      logicalRequestId,
+      now + CANCELLATION_TOMBSTONE_TTL_MS,
+    );
+    const generationAbort = this.activeGenerations.get(logicalRequestId)?.abort();
+    const mailSummaryAbort = this.activeMailSummaries.get(logicalRequestId)?.abort();
+    await this.scheduleNextAlarm();
+    await Promise.all([generationAbort, mailSummaryAbort]);
   }
 
   async usage(periodValue?: string): Promise<InferenceUsageSnapshot> {
@@ -251,6 +271,7 @@ export class InferenceInstallation extends DurableObject<InferenceEnv> {
 
   async alarm(): Promise<void> {
     const now = Date.now();
+    this.deleteExpiredCancellations(now);
     await this.abandonExpiredReservations(now);
     await this.exportCompletedRequests(now);
     await this.scheduleNextAlarm();
@@ -263,6 +284,9 @@ export class InferenceInstallation extends DurableObject<InferenceEnv> {
     const policy = await this.env.ACCOUNTS.getManagedInferencePolicy(
       this.installationId,
     );
+    if (this.isCancelled(input.logicalRequestId, Date.now())) {
+      return abortedResult();
+    }
     const monthlyLimitNanoUsd = effectiveMonthlyLimit(
       policy,
       this.installationId,
@@ -534,6 +558,10 @@ export class InferenceInstallation extends DurableObject<InferenceEnv> {
         settlement.outcome === "aborted" ? 1 : 0,
         request.period,
       );
+      this.ctx.storage.sql.exec(
+        "DELETE FROM inference_cancellations WHERE logical_request_id = ?",
+        logicalRequestId,
+      );
     });
   }
 
@@ -566,6 +594,10 @@ export class InferenceInstallation extends DurableObject<InferenceEnv> {
            WHERE period = ?`,
           request.reserved_nano_usd,
           request.period,
+        );
+        this.ctx.storage.sql.exec(
+          "DELETE FROM inference_cancellations WHERE logical_request_id = ?",
+          request.logical_request_id,
         );
       }
     });
@@ -673,6 +705,9 @@ export class InferenceInstallation extends DurableObject<InferenceEnv> {
          SELECT MIN(next_export_at) AS due_at
          FROM inference_requests
          WHERE exported_at IS NULL AND completed_at IS NOT NULL
+         UNION ALL
+         SELECT MIN(expires_at) AS due_at
+         FROM inference_cancellations
        )`,
     ).one().due_at;
     if (next === null) return;
@@ -680,6 +715,24 @@ export class InferenceInstallation extends DurableObject<InferenceEnv> {
     if (scheduled === null || scheduled > next) {
       await this.ctx.storage.setAlarm(Math.max(Date.now(), next));
     }
+  }
+
+  private isCancelled(logicalRequestId: string, now: number): boolean {
+    return this.ctx.storage.sql.exec<{ cancelled: number }>(
+      `SELECT EXISTS(
+         SELECT 1 FROM inference_cancellations
+         WHERE logical_request_id = ? AND expires_at > ?
+       ) AS cancelled`,
+      logicalRequestId,
+      now,
+    ).one().cancelled === 1;
+  }
+
+  private deleteExpiredCancellations(now: number): void {
+    this.ctx.storage.sql.exec(
+      "DELETE FROM inference_cancellations WHERE expires_at <= ?",
+      now,
+    );
   }
 
   private requestState(logicalRequestId: string): RequestStateRow | undefined {
@@ -751,6 +804,32 @@ function normalizedUsage(result: ManagedInferenceResult): {
     cacheRead: tokenCount(result.usage.cacheRead),
     cacheWrite: tokenCount(result.usage.cacheWrite),
     total: tokenCount(result.usage.totalTokens),
+  };
+}
+
+function abortedResult(): ManagedInferenceResult {
+  return {
+    role: "assistant",
+    content: [],
+    api: "gsv-inference",
+    provider: GSV_INFERENCE_PROVIDER,
+    model: GSV_INFERENCE_PRODUCT_MODEL,
+    usage: {
+      input: 0,
+      output: 0,
+      cacheRead: 0,
+      cacheWrite: 0,
+      totalTokens: 0,
+      cost: {
+        input: 0,
+        output: 0,
+        cacheRead: 0,
+        cacheWrite: 0,
+        total: 0,
+      },
+    },
+    stopReason: "aborted",
+    timestamp: Date.now(),
   };
 }
 
