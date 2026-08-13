@@ -79,10 +79,15 @@ selected automatically when `WAYLAND_DISPLAY` is present; no Cargo feature is ne
 - Drag across reply or terminal text to select it; `Cmd/Ctrl+C` copies the exact visible text.
 - `Cmd/Ctrl+Shift+Space` starts local streaming dictation. Speak after `LISTENING`; words appear in
   the draft as they are recognized. Press the same shortcut again (or press `Enter`) to finish it.
-  Voice input uses the operating-system default microphone. Until the native microphone picker is
-  available, an exact device can be selected with `GSV_VOICE_DEVICE="Shure MV6"`. Build the isolated
-  helper first with `cargo build --release --manifest-path native/transcribe-helper/Cargo.toml`. For a
-  distributable build, place that helper and its `THIRD_PARTY.md` beside the app binary.
+  On first use, Desktop asks which input to remember, including `SYSTEM DEFAULT`; reopen that calm,
+  full-canvas chooser with `Cmd/Ctrl+Shift+M`. The running Desktop can also list or change the saved
+  choice with `gsv desktop microphone list`, `gsv desktop microphone use "Shure MV6"`, and
+  `gsv desktop microphone default`. `GSV_VOICE_DEVICE="Shure MV6"` is a temporary developer override
+  with precedence over the saved preference; changing the saved choice does not clear the override.
+  Build the isolated helper first with
+  `cargo build --release --manifest-path native/transcribe-helper/Cargo.toml`. Workspace builds place
+  it under the root `target/release` directory. For a distributable build, place that helper and its
+  `THIRD_PARTY.md` beside the app binary.
 - `Cmd/Ctrl+.` stops the active run.
 - `Cmd/Ctrl+Shift+A` opens the attachment picker. Text is optional when files are attached.
 - `Cmd/Ctrl+\`` switches between conversation and command surfaces.
@@ -95,6 +100,9 @@ gsv desktop
 gsv desktop status
 gsv desktop new
 gsv desktop use PID
+gsv desktop microphone list
+gsv desktop microphone use "Shure MV6"
+gsv desktop microphone default
 ```
 
 When GSV asks for capability approval, choose `ALLOW ONCE`, `ALWAYS ALLOW`, or `DENY` directly, or

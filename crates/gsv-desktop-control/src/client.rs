@@ -3,8 +3,8 @@ use std::time::Duration;
 use crate::{
     codec,
     protocol::{Outcome, Request, Response},
-    transport, Command, DesktopControlEndpoint, DesktopStatus, Error, ProcessId, Success,
-    TimeoutStage, PROTOCOL_VERSION,
+    transport, Command, DesktopControlEndpoint, DesktopStatus, Error, MicrophoneName,
+    MicrophoneStatus, ProcessId, Success, TimeoutStage, PROTOCOL_VERSION,
 };
 
 #[derive(Clone, Debug)]
@@ -85,6 +85,27 @@ impl DesktopControlClient {
     pub async fn use_process(&self, process_id: ProcessId) -> Result<ProcessId, Error> {
         match self.request(Command::Use { process_id }).await? {
             Success::Selected { process_id } => Ok(process_id),
+            _ => Err(Error::UnexpectedResponse),
+        }
+    }
+
+    pub async fn microphone_list(&self) -> Result<MicrophoneStatus, Error> {
+        match self.request(Command::MicrophoneList).await? {
+            Success::MicrophonesListed { status } => Ok(status),
+            _ => Err(Error::UnexpectedResponse),
+        }
+    }
+
+    pub async fn microphone_use(&self, name: MicrophoneName) -> Result<MicrophoneStatus, Error> {
+        match self.request(Command::MicrophoneUse { name }).await? {
+            Success::MicrophoneSelected { status } => Ok(status),
+            _ => Err(Error::UnexpectedResponse),
+        }
+    }
+
+    pub async fn microphone_default(&self) -> Result<MicrophoneStatus, Error> {
+        match self.request(Command::MicrophoneDefault).await? {
+            Success::DefaultMicrophoneSelected { status } => Ok(status),
             _ => Err(Error::UnexpectedResponse),
         }
     }

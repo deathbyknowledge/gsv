@@ -7,7 +7,10 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use audio::{AudioCapture, AudioError, AudioPacket, Resampler};
+use audio::{
+    list_input_devices, AudioCapture, AudioError, AudioPacket, InputDeviceInfo,
+    InputDeviceMatchPolicy, Resampler,
+};
 use crossbeam_channel::{Receiver, TryRecvError};
 use model::{Engine, LoadError};
 use protocol::{emit, Command, ErrorCode, Event, Phase};
@@ -18,6 +21,7 @@ const MAX_SESSION_DURATION: Duration = Duration::from_secs(10 * 60);
 const MAX_TRANSCRIPT_BYTES: usize = 64 * 1024;
 const ENGINE_IDLE_TIMEOUT: Duration = Duration::from_secs(5 * 60);
 const PREPARATION_POLL: Duration = Duration::from_millis(20);
+const DISCOVERY_POLL: Duration = Duration::from_millis(20);
 
 const _: () = {
     assert!(MAX_SESSION_DURATION.as_secs() <= 10 * 60);
@@ -35,6 +39,8 @@ struct StartRequest {
     request_id: u64,
     locale: String,
     device: Option<String>,
+    device_id: Option<String>,
+    device_match: InputDeviceMatchPolicy,
 }
 
 enum PreparationMessage {
@@ -49,11 +55,28 @@ struct Preparation {
     last_state: Option<(Phase, Option<f32>)>,
 }
 
+type DeviceDiscoveryResult = Result<Vec<InputDeviceInfo>, String>;
+
+struct DeviceDiscovery {
+    request_id: Option<u64>,
+    results: Receiver<DeviceDiscoveryResult>,
+    worker: std::thread::JoinHandle<()>,
+}
+
+struct DeviceDiscoveryCompletion {
+    request_id: Option<u64>,
+    result: Result<Vec<InputDeviceInfo>, ErrorCode>,
+}
+
 fn main() {
     lower_process_priority();
+    emit(&Event::Hello {
+        protocol_version: protocol::VOICE_PROTOCOL_VERSION,
+    });
     let commands = protocol::read_commands();
     let mut engine: Option<Engine> = None;
     let mut preparation: Option<Preparation> = None;
+    let mut discovery: Option<DeviceDiscovery> = None;
     let mut engine_last_used = Instant::now();
 
     loop {
@@ -104,6 +127,27 @@ fn main() {
                 Err(crossbeam_channel::RecvTimeoutError::Timeout) => continue,
                 Err(crossbeam_channel::RecvTimeoutError::Disconnected) => Command::Shutdown,
             }
+        } else if discovery.is_some() {
+            let timeout = if engine.is_some() {
+                let remaining = ENGINE_IDLE_TIMEOUT.saturating_sub(engine_last_used.elapsed());
+                if remaining.is_zero() {
+                    engine = None;
+                    continue;
+                }
+                DISCOVERY_POLL.min(remaining)
+            } else {
+                DISCOVERY_POLL
+            };
+            match commands.recv_timeout(timeout) {
+                Ok(command) => command,
+                Err(crossbeam_channel::RecvTimeoutError::Timeout) => {
+                    if let Some(completion) = poll_device_discovery(&mut discovery) {
+                        report_device_discovery(completion);
+                    }
+                    continue;
+                }
+                Err(crossbeam_channel::RecvTimeoutError::Disconnected) => Command::Shutdown,
+            }
         } else if engine.is_some() {
             let remaining = ENGINE_IDLE_TIMEOUT.saturating_sub(engine_last_used.elapsed());
             match commands.recv_timeout(remaining) {
@@ -126,13 +170,26 @@ fn main() {
                 request_id,
                 locale,
                 device,
+                device_id,
+                exact_device,
             } => {
                 let request = StartRequest {
                     request_id,
                     locale,
                     device,
+                    device_id,
+                    device_match: if exact_device {
+                        InputDeviceMatchPolicy::UniqueExactPublicName
+                    } else {
+                        InputDeviceMatchPolicy::LegacyFuzzyName
+                    },
                 };
-                if let Some(active) = preparation.as_mut() {
+                if discovery.is_some() {
+                    emit(&Event::Error {
+                        request_id: Some(request_id),
+                        code: ErrorCode::Busy,
+                    });
+                } else if let Some(active) = preparation.as_mut() {
                     if active.request.is_some() {
                         emit(&Event::Error {
                             request_id: Some(request_id),
@@ -157,7 +214,7 @@ fn main() {
                     preparation = start_preparation(request);
                 }
             }
-            Command::Stop { request_id } | Command::Cancel { request_id } => {
+            Command::Stop { request_id } => {
                 let cancelled = cancel_preparation(&mut preparation, request_id);
                 if cancelled {
                     emit(&Event::Cancelled { request_id });
@@ -168,6 +225,33 @@ fn main() {
                     });
                 }
             }
+            Command::Cancel { request_id } => {
+                let cancelled = cancel_device_discovery(&mut discovery, request_id)
+                    || cancel_preparation(&mut preparation, request_id);
+                if cancelled {
+                    emit(&Event::Cancelled { request_id });
+                } else {
+                    emit(&Event::Error {
+                        request_id: Some(request_id),
+                        code: ErrorCode::NotActive,
+                    });
+                }
+            }
+            Command::ListDevices { request_id } => {
+                if preparation.is_some() {
+                    emit(&Event::Error {
+                        request_id: Some(request_id),
+                        code: ErrorCode::Busy,
+                    });
+                } else if let Err(code) =
+                    start_device_discovery(&mut discovery, request_id, list_input_devices)
+                {
+                    emit(&Event::Error {
+                        request_id: Some(request_id),
+                        code,
+                    });
+                }
+            }
             Command::Shutdown => {
                 if let Some(active) = preparation.as_ref() {
                     active.cancelled.store(true, Ordering::Release);
@@ -175,6 +259,72 @@ fn main() {
                 break;
             }
         }
+    }
+}
+
+fn start_device_discovery(
+    discovery: &mut Option<DeviceDiscovery>,
+    request_id: u64,
+    enumerate: impl FnOnce() -> DeviceDiscoveryResult + Send + 'static,
+) -> Result<(), ErrorCode> {
+    if discovery.is_some() {
+        return Err(ErrorCode::Busy);
+    }
+    let (results, messages) = crossbeam_channel::bounded(1);
+    let worker = std::thread::Builder::new()
+        .name("gsv-voice-devices".to_string())
+        .spawn(move || {
+            let _ = results.try_send(enumerate());
+        })
+        .map_err(|_| ErrorCode::MicrophoneUnavailable)?;
+    *discovery = Some(DeviceDiscovery {
+        request_id: Some(request_id),
+        results: messages,
+        worker,
+    });
+    Ok(())
+}
+
+fn cancel_device_discovery(discovery: &mut Option<DeviceDiscovery>, request_id: u64) -> bool {
+    discovery.as_mut().is_some_and(|active| {
+        if active.request_id == Some(request_id) {
+            active.request_id = None;
+            true
+        } else {
+            false
+        }
+    })
+}
+
+fn poll_device_discovery(
+    discovery: &mut Option<DeviceDiscovery>,
+) -> Option<DeviceDiscoveryCompletion> {
+    let result = match discovery.as_ref()?.results.try_recv() {
+        Ok(result) => result.map_err(|_| ErrorCode::MicrophoneUnavailable),
+        Err(TryRecvError::Empty) => return None,
+        Err(TryRecvError::Disconnected) => Err(ErrorCode::MicrophoneUnavailable),
+    };
+    let active = discovery.take()?;
+    let _ = active.worker.join();
+    Some(DeviceDiscoveryCompletion {
+        request_id: active.request_id,
+        result,
+    })
+}
+
+fn report_device_discovery(completion: DeviceDiscoveryCompletion) {
+    let Some(request_id) = completion.request_id else {
+        return;
+    };
+    match completion.result {
+        Ok(devices) => emit(&Event::Devices {
+            request_id,
+            devices: &devices,
+        }),
+        Err(code) => emit(&Event::Error {
+            request_id: Some(request_id),
+            code,
+        }),
     }
 }
 
@@ -280,6 +430,8 @@ fn run_and_report(
         request.request_id,
         &request.locale,
         request.device.as_deref(),
+        request.device_id.as_deref(),
+        request.device_match,
         engine,
         commands,
     ) {
@@ -299,10 +451,13 @@ fn run_stream(
     request_id: u64,
     locale: &str,
     device: Option<&str>,
+    device_id: Option<&str>,
+    device_match: InputDeviceMatchPolicy,
     engine: &mut Engine,
     commands: &Receiver<Command>,
 ) -> Result<StreamOutcome, ErrorCode> {
-    let capture = AudioCapture::open(device).map_err(|_| ErrorCode::MicrophoneUnavailable)?;
+    let capture = AudioCapture::open(device, device_id, device_match)
+        .map_err(|_| ErrorCode::MicrophoneUnavailable)?;
     let mut resampler =
         Resampler::new(capture.sample_rate).map_err(|_| ErrorCode::MicrophoneUnavailable)?;
     let run_options = RunOptions {
@@ -355,6 +510,12 @@ fn run_stream(
                         request_id: Some(other),
                         code: ErrorCode::Busy,
                     }),
+                    Ok(Command::ListDevices { request_id: other }) => {
+                        emit(&Event::Error {
+                            request_id: Some(other),
+                            code: ErrorCode::Busy,
+                        });
+                    }
                     Ok(Command::Stop { request_id: other }) | Ok(Command::Cancel { request_id: other }) => {
                         emit(&Event::Error {
                             request_id: Some(other),
@@ -460,6 +621,17 @@ fn lower_process_priority() {}
 mod tests {
     use super::*;
 
+    fn wait_for_discovery(discovery: &mut Option<DeviceDiscovery>) -> DeviceDiscoveryCompletion {
+        let deadline = Instant::now() + Duration::from_secs(1);
+        loop {
+            if let Some(completion) = poll_device_discovery(discovery) {
+                return completion;
+            }
+            assert!(Instant::now() < deadline, "discovery worker timed out");
+            std::thread::yield_now();
+        }
+    }
+
     #[test]
     fn automatic_language_is_none_and_explicit_locale_is_preserved() {
         assert_eq!(normalize_locale(""), None);
@@ -479,6 +651,8 @@ mod tests {
                 request_id: 17,
                 locale: "auto".to_string(),
                 device: None,
+                device_id: None,
+                device_match: InputDeviceMatchPolicy::LegacyFuzzyName,
             }),
             last_state: Some((Phase::Downloading, Some(0.2))),
         });
@@ -511,5 +685,77 @@ mod tests {
         let bounded = bounded_transcript(&text);
         assert_eq!(bounded.len(), MAX_TRANSCRIPT_BYTES - 1);
         assert!(bounded.is_char_boundary(bounded.len()));
+    }
+
+    #[test]
+    fn device_discovery_runs_off_main_and_cancel_ignores_its_late_result() {
+        let main_thread = std::thread::current().id();
+        let (started, worker_started) = crossbeam_channel::bounded(1);
+        let (release, released) = crossbeam_channel::bounded(1);
+        let mut discovery = None;
+        start_device_discovery(&mut discovery, 41, move || {
+            started
+                .send(std::thread::current().id())
+                .expect("main owns discovery receiver");
+            released.recv().expect("test releases worker");
+            Ok(vec![InputDeviceInfo {
+                id: "alsa:late".to_string(),
+                name: "Late microphone".to_string(),
+                is_default: false,
+            }])
+        })
+        .expect("discovery starts");
+
+        let worker_thread = worker_started
+            .recv_timeout(Duration::from_secs(1))
+            .expect("worker starts");
+        assert_ne!(worker_thread, main_thread);
+        assert!(poll_device_discovery(&mut discovery).is_none());
+        assert!(!cancel_device_discovery(&mut discovery, 40));
+        assert!(cancel_device_discovery(&mut discovery, 41));
+        release.send(()).expect("worker is listening");
+
+        let completion = wait_for_discovery(&mut discovery);
+        assert_eq!(completion.request_id, None);
+        assert!(completion.result.is_ok());
+        assert!(discovery.is_none());
+    }
+
+    #[test]
+    fn device_discovery_owns_at_most_one_worker() {
+        let (release, released) = crossbeam_channel::bounded(1);
+        let second_ran = Arc::new(AtomicBool::new(false));
+        let mut discovery = None;
+        start_device_discovery(&mut discovery, 51, move || {
+            released.recv().expect("test releases worker");
+            Ok(Vec::new())
+        })
+        .expect("first discovery starts");
+
+        let second_worker_ran = Arc::clone(&second_ran);
+        assert_eq!(
+            start_device_discovery(&mut discovery, 52, move || {
+                second_worker_ran.store(true, Ordering::Release);
+                Ok(Vec::new())
+            }),
+            Err(ErrorCode::Busy)
+        );
+        assert!(!second_ran.load(Ordering::Acquire));
+
+        release.send(()).expect("worker is listening");
+        let completion = wait_for_discovery(&mut discovery);
+        assert_eq!(completion.request_id, Some(51));
+        assert_eq!(completion.result, Ok(Vec::new()));
+    }
+
+    #[test]
+    fn device_discovery_maps_worker_failures_without_native_details() {
+        let mut discovery = None;
+        start_device_discovery(&mut discovery, 61, || Err("backend diagnostic".to_string()))
+            .expect("discovery starts");
+
+        let completion = wait_for_discovery(&mut discovery);
+        assert_eq!(completion.request_id, Some(61));
+        assert_eq!(completion.result, Err(ErrorCode::MicrophoneUnavailable));
     }
 }

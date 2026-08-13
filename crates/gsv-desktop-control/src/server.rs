@@ -11,8 +11,8 @@ use crate::{
     codec,
     protocol::{Request, Response},
     transport::BoundListener,
-    Command, DesktopControlEndpoint, DesktopStatus, Error, ErrorCode, OperationError, ProcessId,
-    Success, TimeoutStage, PROTOCOL_VERSION,
+    Command, DesktopControlEndpoint, DesktopStatus, Error, ErrorCode, MicrophoneName,
+    MicrophoneStatus, OperationError, ProcessId, Success, TimeoutStage, PROTOCOL_VERSION,
 };
 
 #[derive(Clone, Debug)]
@@ -66,6 +66,22 @@ pub trait DesktopControlHandler: Send + Sync + 'static {
         request: RequestContext,
         process_id: ProcessId,
     ) -> Result<ProcessId, OperationError>;
+
+    async fn microphone_list(
+        &self,
+        request: RequestContext,
+    ) -> Result<MicrophoneStatus, OperationError>;
+
+    async fn microphone_use(
+        &self,
+        request: RequestContext,
+        name: MicrophoneName,
+    ) -> Result<MicrophoneStatus, OperationError>;
+
+    async fn microphone_default(
+        &self,
+        request: RequestContext,
+    ) -> Result<MicrophoneStatus, OperationError>;
 }
 
 /// Correlation and cancellation state for one accepted Desktop operation.
@@ -284,6 +300,18 @@ where
                 .use_process(request_context.clone(), process_id)
                 .await
                 .map(|process_id| Success::Selected { process_id }),
+            Command::MicrophoneList => handler
+                .microphone_list(request_context.clone())
+                .await
+                .map(|status| Success::MicrophonesListed { status }),
+            Command::MicrophoneUse { name } => handler
+                .microphone_use(request_context.clone(), name)
+                .await
+                .map(|status| Success::MicrophoneSelected { status }),
+            Command::MicrophoneDefault => handler
+                .microphone_default(request_context.clone())
+                .await
+                .map(|status| Success::DefaultMicrophoneSelected { status }),
         }
     };
 
@@ -317,7 +345,10 @@ mod tests {
     use tokio::io::{duplex, AsyncReadExt, AsyncWriteExt};
 
     use super::*;
-    use crate::{protocol::Outcome, GatewayState, RequestId, WindowState};
+    use crate::{
+        protocol::Outcome, GatewayState, MicrophoneDevice, MicrophoneSelection, RequestId,
+        WindowState,
+    };
 
     struct Handler;
 
@@ -349,6 +380,43 @@ mod tests {
         ) -> Result<ProcessId, OperationError> {
             Ok(process_id)
         }
+
+        async fn microphone_list(
+            &self,
+            _request: RequestContext,
+        ) -> Result<MicrophoneStatus, OperationError> {
+            microphone_status(MicrophoneSelection::Ask)
+        }
+
+        async fn microphone_use(
+            &self,
+            _request: RequestContext,
+            name: MicrophoneName,
+        ) -> Result<MicrophoneStatus, OperationError> {
+            microphone_status(MicrophoneSelection::Device { name })
+        }
+
+        async fn microphone_default(
+            &self,
+            _request: RequestContext,
+        ) -> Result<MicrophoneStatus, OperationError> {
+            microphone_status(MicrophoneSelection::SystemDefault)
+        }
+    }
+
+    fn microphone_status(
+        selected: MicrophoneSelection,
+    ) -> Result<MicrophoneStatus, OperationError> {
+        MicrophoneStatus::new(
+            vec![MicrophoneDevice {
+                name: MicrophoneName::new("Built-in Microphone")
+                    .map_err(|_| OperationError::Internal)?,
+                is_default: true,
+            }],
+            selected,
+            None,
+        )
+        .map_err(|_| OperationError::Internal)
     }
 
     #[tokio::test]

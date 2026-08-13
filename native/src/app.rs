@@ -2,7 +2,7 @@ use std::collections::{hash_map::DefaultHasher, HashMap};
 use std::hash::{Hash, Hasher};
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{atomic::AtomicBool, Arc};
 use std::time::Instant;
 
 use gpui::{
@@ -25,12 +25,14 @@ use crate::media_files::{MaterializedMedia, MediaFileStore};
 use crate::model::{Conversation, MomentIdentityAdoption, SurfaceMode};
 use crate::prepared::PreparedContent;
 use crate::startup::{LoginDefaults, LoginFlow, LoginProgress, LoginStep};
-use crate::transcription::{coalesce_for_ui, VoiceCommand, VoiceErrorCode, VoiceEvent, VoicePhase};
+use crate::transcription::{coalesce_for_ui, VoiceCommand};
 use crate::typography::TypeLayout;
+use gsv_config::MicrophonePreference;
 use gsv_desktop_control::{DesktopStatus, GatewayState, OperationError, ProcessId, WindowState};
 
 mod login;
 mod media;
+mod microphone;
 mod preparation;
 mod presence;
 mod rich;
@@ -39,6 +41,9 @@ mod session;
 mod view;
 
 use media::{release_assets, MediaCache, MediaPreparation, PreparedMedia};
+use microphone::{
+    configured_microphone_preference, MicrophoneChooser, PendingMicrophoneRequest, VoiceDraft,
+};
 use preparation::{run_preparation_worker, PreparedContentCache};
 use presence::PresenceLane;
 use selection::TextSelection;
@@ -54,6 +59,10 @@ actions!(
         PreviousMoment,
         NextMoment,
         ToggleDictation,
+        ChooseMicrophone,
+        PreviousMicrophone,
+        NextMicrophone,
+        SelectMicrophone,
         AddAttachment
     ]
 );
@@ -82,16 +91,6 @@ struct MediaFilePreparationResult {
     action: MediaFileAction,
     result: std::io::Result<MaterializedMedia>,
     _lease: MediaTransferLease,
-}
-
-#[derive(Debug)]
-struct VoiceDraft {
-    request_id: u64,
-    before: String,
-    after: String,
-    rendered: String,
-    revision: i32,
-    stopping: bool,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -254,6 +253,15 @@ pub struct GsvApp {
     voice_commands: crate::transcription::VoiceCommandSender,
     voice_draft: Option<VoiceDraft>,
     voice_notice: Option<String>,
+    microphone_preference: MicrophonePreference,
+    microphone_chooser: Option<MicrophoneChooser>,
+    microphone_focus: FocusHandle,
+    pending_microphone_request: Option<PendingMicrophoneRequest>,
+    microphone_request_cancellation: Option<Task<()>>,
+    microphone_save_pending: bool,
+    microphone_save_generation: u64,
+    microphone_save_cancellation: Option<Arc<AtomicBool>>,
+    microphone_save_task: Option<Task<()>>,
     next_voice_request_id: u64,
     _input_subscription: Subscription,
     _login_subscription: Option<Subscription>,
@@ -365,6 +373,34 @@ impl GsvApp {
                     // See DesktopNew: dropping the response maps to unavailable.
                 }
             }
+            DesktopControlRequest::MicrophoneList { context, response } => {
+                self.handle_microphone_control(context, response, None, window, cx);
+            }
+            DesktopControlRequest::MicrophoneUse {
+                context,
+                name,
+                response,
+            } => {
+                self.handle_microphone_control(
+                    context,
+                    response,
+                    Some(MicrophonePreference::Device {
+                        id: None,
+                        name: name.into_inner(),
+                    }),
+                    window,
+                    cx,
+                );
+            }
+            DesktopControlRequest::MicrophoneDefault { context, response } => {
+                self.handle_microphone_control(
+                    context,
+                    response,
+                    Some(MicrophonePreference::SystemDefault),
+                    window,
+                    cx,
+                );
+            }
         }
     }
 
@@ -391,6 +427,9 @@ impl GsvApp {
             && self.media_file_preparations.is_empty()
             && self.media_file_saves.is_empty()
             && self.voice_draft.is_none()
+            && self.microphone_chooser.is_none()
+            && self.pending_microphone_request.is_none()
+            && !self.microphone_save_pending
             && self.terminal_draft.is_empty()
             && !self.terminal.iter().any(|exchange| exchange.pending)
     }
@@ -497,6 +536,7 @@ impl GsvApp {
         } = crate::transcription::start();
         let input = cx.new(|cx| InputState::new(window, cx).auto_grow(1, 12).soft_wrap(true));
         let login_focus = cx.focus_handle();
+        let microphone_focus = cx.focus_handle();
         let presence_lane = cx.new(|_| PresenceLane::new(Vec::new(), false, reduced_motion));
         let input_subscription = cx.subscribe_in(&input, window, |this, _, event, window, cx| {
             this.on_input(event, window, cx);
@@ -723,6 +763,15 @@ impl GsvApp {
             voice_commands,
             voice_draft: None,
             voice_notice: None,
+            microphone_preference: configured_microphone_preference(),
+            microphone_chooser: None,
+            microphone_focus,
+            pending_microphone_request: None,
+            microphone_request_cancellation: None,
+            microphone_save_pending: false,
+            microphone_save_generation: 0,
+            microphone_save_cancellation: None,
+            microphone_save_task: None,
             next_voice_request_id: 1,
             _input_subscription: input_subscription,
             _login_subscription: login_subscription,
@@ -771,6 +820,7 @@ impl GsvApp {
     ) {
         if self.login.is_some()
             || self.desktop_switch_pending
+            || self.microphone_chooser.is_some()
             || self.conversation.mode != SurfaceMode::Conversation
             || self.interaction.is_approval()
             || self.attachment_picker.is_some()
@@ -1270,7 +1320,9 @@ impl GsvApp {
     }
 
     fn focus_active_input(&self, window: &mut Window, cx: &mut Context<Self>) {
-        if let Some(input) = &self.login_input {
+        if self.microphone_chooser.is_some() {
+            self.microphone_focus.focus(window);
+        } else if let Some(input) = &self.login_input {
             input.focus_handle(cx).focus(window);
         } else if self.login.is_some() {
             self.login_focus.focus(window);
@@ -1281,6 +1333,10 @@ impl GsvApp {
 
     fn submit(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.desktop_switch_pending {
+            return;
+        }
+        if self.microphone_chooser.is_some() {
+            self.select_highlighted_microphone(window, cx);
             return;
         }
         if self.login.is_some() {
@@ -1592,196 +1648,10 @@ impl GsvApp {
         self.input.focus_handle(cx).focus(window);
     }
 
-    fn toggle_dictation_action(
-        &mut self,
-        _: &ToggleDictation,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        if self.voice_draft.is_some() {
-            self.finish_dictation(cx);
-            return;
-        }
-        if self.login.is_some()
-            || self.desktop_switch_pending
-            || self.conversation.mode != SurfaceMode::Conversation
-            || self.interaction.is_approval()
-            || self.interaction.is_submitting()
-        {
-            return;
-        }
-
-        let value = self.input.read(cx).value().to_string();
-        let cursor = self.input.read(cx).cursor().min(value.len());
-        let cursor = value.floor_char_boundary(cursor);
-        let request_id = self.next_voice_request_id;
-        self.next_voice_request_id = self.next_voice_request_id.wrapping_add(1).max(1);
-        self.voice_draft = Some(VoiceDraft {
-            request_id,
-            before: value[..cursor].to_string(),
-            after: value[cursor..].to_string(),
-            rendered: value.clone(),
-            revision: -1,
-            stopping: false,
-        });
-        self.voice_notice = Some("PREPARING VOICE INPUT".to_string());
-        if !value.is_empty() {
-            self.reveal_voice_draft_if_needed(&value, window, cx);
-            self.interaction.on_input(value);
-            self.input.focus_handle(cx).focus(window);
-        }
-        if self
-            .voice_commands
-            .send(VoiceCommand::Start {
-                request_id,
-                locale: "auto".to_string(),
-                device: configured_voice_device(),
-            })
-            .is_err()
-        {
-            self.voice_draft = None;
-            self.voice_notice = Some("VOICE INPUT UNAVAILABLE · KEEP TYPING".to_string());
-        }
-        cx.notify();
-    }
-
-    fn finish_dictation(&mut self, cx: &mut Context<Self>) {
-        let Some(voice) = self.voice_draft.as_ref() else {
-            return;
-        };
-        if voice.stopping {
-            self.voice_notice = Some("FINISHING VOICE INPUT".to_string());
-            cx.notify();
-            return;
-        }
-        let request_id = voice.request_id;
-        match self.voice_commands.send(VoiceCommand::Stop { request_id }) {
-            Ok(()) => {
-                if let Some(voice) = self.voice_draft.as_mut() {
-                    voice.stopping = true;
-                }
-                self.voice_notice = Some("FINISHING VOICE INPUT".to_string());
-            }
-            Err(_) => {
-                // A failed terminal command means the supervisor cannot own
-                // this session anymore. Keep the latest visible words and
-                // release the UI state so typing is never held hostage.
-                self.voice_draft = None;
-                self.voice_notice = Some("VOICE INPUT UNAVAILABLE · KEEP TYPING".to_string());
-            }
-        }
-        cx.notify();
-    }
-
-    fn handle_voice_event(
-        &mut self,
-        event: VoiceEvent,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        match event {
-            VoiceEvent::State {
-                request_id,
-                phase,
-                progress,
-            } if self.voice_request_is(request_id) => {
-                if self
-                    .voice_draft
-                    .as_ref()
-                    .is_some_and(|voice| voice.stopping)
-                {
-                    self.voice_notice = Some("FINISHING VOICE INPUT".to_string());
-                } else {
-                    self.voice_notice = Some(voice_phase_notice(phase, progress));
-                }
-            }
-            VoiceEvent::Partial {
-                request_id,
-                revision,
-                committed,
-                tentative,
-            } if self.voice_request_is(request_id) => {
-                let Some(voice) = self.voice_draft.as_mut() else {
-                    return;
-                };
-                if revision <= voice.revision {
-                    return;
-                }
-                voice.revision = revision;
-                let transcript = format!("{committed}{tentative}");
-                let composition = compose_voice_text(&voice.before, &transcript, &voice.after);
-                let stopping = voice.stopping;
-                voice.rendered.clone_from(&composition.value);
-                self.reveal_voice_draft_if_needed(&composition.value, window, cx);
-                self.interaction.on_input(composition.value.clone());
-                self.set_input_value_at(composition.value, composition.cursor, window, cx);
-                self.voice_notice = Some(if stopping {
-                    "FINISHING VOICE INPUT".to_string()
-                } else {
-                    voice_phase_notice(VoicePhase::Listening, None)
-                });
-            }
-            VoiceEvent::Final { request_id, text } if self.voice_request_is(request_id) => {
-                let Some(voice) = self.voice_draft.take() else {
-                    return;
-                };
-                if text.trim().is_empty() {
-                    self.voice_notice =
-                        (voice.revision < 0).then(|| "NO SPEECH HEARD · CHECK INPUT".to_string());
-                    return;
-                }
-                let composition = compose_voice_text(&voice.before, &text, &voice.after);
-                self.reveal_voice_draft_if_needed(&composition.value, window, cx);
-                self.interaction.on_input(composition.value.clone());
-                self.set_input_value_at(composition.value, composition.cursor, window, cx);
-                self.voice_notice = None;
-            }
-            VoiceEvent::Cancelled { request_id } if self.voice_request_is(request_id) => {
-                self.voice_draft = None;
-                self.voice_notice = None;
-            }
-            VoiceEvent::Error { request_id, code }
-                if request_id.is_none_or(|request_id| self.voice_request_is(request_id)) =>
-            {
-                self.voice_draft = None;
-                self.voice_notice = Some(voice_error_notice(code).to_string());
-            }
-            _ => {}
-        }
-    }
-
-    fn voice_request_is(&self, request_id: u64) -> bool {
-        self.voice_draft
-            .as_ref()
-            .is_some_and(|voice| voice.request_id == request_id)
-    }
-
-    fn cancel_dictation(
-        &mut self,
-        restore_base: bool,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let Some(voice) = self.voice_draft.take() else {
-            return;
-        };
-        let command_failed = self
-            .voice_commands
-            .send(VoiceCommand::Cancel {
-                request_id: voice.request_id,
-            })
-            .is_err();
-        if restore_base && self.input.read(cx).value().as_ref() == voice.rendered {
-            let cursor = voice.before.len();
-            let value = format!("{}{}", voice.before, voice.after);
-            self.interaction.on_input(value.clone());
-            self.set_input_value_at(value, cursor, window, cx);
-        }
-        self.voice_notice =
-            command_failed.then(|| "VOICE INPUT UNAVAILABLE · KEEP TYPING".to_string());
-    }
-
     fn hide_draft(&mut self, _: &HideDraft, window: &mut Window, cx: &mut Context<Self>) {
+        if self.close_microphone_chooser(window, cx) {
+            return;
+        }
         if self.login.is_some() {
             self.back_login(window, cx);
             return;
@@ -1803,6 +1673,9 @@ impl GsvApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.microphone_chooser.is_some() {
+            return;
+        }
         let modifiers = window.modifiers();
         if modifiers.shift || modifiers.secondary() {
             return;
@@ -1860,7 +1733,8 @@ impl GsvApp {
     }
 
     fn toggle_terminal(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.login.is_some() || self.desktop_switch_pending {
+        if self.login.is_some() || self.desktop_switch_pending || self.microphone_chooser.is_some()
+        {
             return;
         }
         if self.voice_draft.is_some() {
@@ -1896,6 +1770,7 @@ impl GsvApp {
 
     fn move_moment(&mut self, direction: i8, window: &mut Window, cx: &mut Context<Self>) {
         if self.login.is_some()
+            || self.microphone_chooser.is_some()
             || self.conversation.mode != SurfaceMode::Conversation
             || self.interaction.is_approval()
         {
@@ -1921,6 +1796,7 @@ impl GsvApp {
 
     fn select_moment(&mut self, index: usize, window: &mut Window, cx: &mut Context<Self>) {
         if self.login.is_some()
+            || self.microphone_chooser.is_some()
             || self.interaction.is_approval()
             || self.conversation.moments.is_empty()
         {
@@ -1941,7 +1817,10 @@ impl GsvApp {
     }
 
     fn show_held_draft(&mut self, cx: &mut Context<Self>) {
-        if self.login.is_some() || self.interaction.is_approval() {
+        if self.login.is_some()
+            || self.microphone_chooser.is_some()
+            || self.interaction.is_approval()
+        {
             return;
         }
         self.interaction.show_conversation_draft();
@@ -1978,6 +1857,10 @@ pub fn bind_keys(cx: &mut App) {
         KeyBinding::new("escape", HideDraft, None),
         KeyBinding::new("secondary-.", AbortRun, None),
         KeyBinding::new("secondary-shift-space", ToggleDictation, None),
+        KeyBinding::new("secondary-shift-m", ChooseMicrophone, None),
+        KeyBinding::new("up", PreviousMicrophone, Some("MicrophoneChooser")),
+        KeyBinding::new("down", NextMicrophone, Some("MicrophoneChooser")),
+        KeyBinding::new("enter", SelectMicrophone, Some("MicrophoneChooser")),
         KeyBinding::new("secondary-shift-a", AddAttachment, None),
         KeyBinding::new("secondary-`", ToggleTerminal, None),
         KeyBinding::new("alt-up", PreviousMoment, None),
@@ -2152,45 +2035,6 @@ fn is_unspaced_script(character: char) -> bool {
     )
 }
 
-fn voice_phase_notice(phase: VoicePhase, progress: Option<f32>) -> String {
-    match phase {
-        VoicePhase::Downloading => progress.map_or_else(
-            || "DOWNLOADING VOICE INPUT".to_string(),
-            |progress| format!("DOWNLOADING VOICE INPUT · {:.0}%", progress * 100.0),
-        ),
-        VoicePhase::Verifying => "VERIFYING VOICE INPUT".to_string(),
-        VoicePhase::Loading => "PREPARING VOICE INPUT".to_string(),
-        VoicePhase::Listening => "LISTENING · SPEAK NOW · PRESS AGAIN TO FINISH".to_string(),
-        VoicePhase::Finishing => "FINISHING VOICE INPUT".to_string(),
-    }
-}
-
-fn voice_error_notice(code: VoiceErrorCode) -> &'static str {
-    match code {
-        VoiceErrorCode::MicrophoneUnavailable => "MICROPHONE UNAVAILABLE · CHECK ACCESS",
-        VoiceErrorCode::MicrophoneSilent => "NO MICROPHONE AUDIO · CHECK INPUT",
-        VoiceErrorCode::AudioOverflow => "VOICE INPUT COULDN'T KEEP UP · TRY AGAIN",
-        VoiceErrorCode::NotInstalled => "VOICE INPUT ISN'T INSTALLED · KEEP TYPING",
-        VoiceErrorCode::HelperUnavailable => "VOICE INPUT COULDN'T START · KEEP TYPING",
-        VoiceErrorCode::DownloadFailed | VoiceErrorCode::ModelInvalid => {
-            "VOICE INPUT COULDN'T PREPARE · CHECK CONNECTION"
-        }
-        VoiceErrorCode::Busy => "VOICE INPUT IS BUSY · TRY AGAIN",
-        VoiceErrorCode::NotActive => "VOICE INPUT ALREADY STOPPED · KEEP TYPING",
-        VoiceErrorCode::Interrupted => "VOICE INPUT WAS INTERRUPTED · KEEP TYPING",
-        VoiceErrorCode::EngineFailed | VoiceErrorCode::InvalidCommand => {
-            "VOICE INPUT STOPPED · KEEP TYPING"
-        }
-    }
-}
-
-fn configured_voice_device() -> Option<String> {
-    std::env::var("GSV_VOICE_DEVICE")
-        .ok()
-        .map(|device| device.trim().to_string())
-        .filter(|device| !device.is_empty())
-}
-
 #[cfg(test)]
 mod tests {
     use std::cell::RefCell;
@@ -2253,54 +2097,6 @@ mod tests {
         assert_eq!(composition.value, "🙂 café encore!");
         assert_eq!(&composition.value[..composition.cursor], "🙂 café encore");
         assert!(composition.value.is_char_boundary(composition.cursor));
-    }
-
-    #[test]
-    fn voice_errors_are_actionable_without_exposing_internal_details() {
-        assert_eq!(
-            voice_error_notice(VoiceErrorCode::MicrophoneUnavailable),
-            "MICROPHONE UNAVAILABLE · CHECK ACCESS"
-        );
-        assert_eq!(
-            voice_error_notice(VoiceErrorCode::NotInstalled),
-            "VOICE INPUT ISN'T INSTALLED · KEEP TYPING"
-        );
-        assert_eq!(
-            voice_error_notice(VoiceErrorCode::HelperUnavailable),
-            "VOICE INPUT COULDN'T START · KEEP TYPING"
-        );
-        assert_eq!(
-            voice_error_notice(VoiceErrorCode::DownloadFailed),
-            "VOICE INPUT COULDN'T PREPARE · CHECK CONNECTION"
-        );
-        assert_eq!(
-            voice_error_notice(VoiceErrorCode::EngineFailed),
-            "VOICE INPUT STOPPED · KEEP TYPING"
-        );
-        assert_eq!(
-            voice_error_notice(VoiceErrorCode::MicrophoneSilent),
-            "NO MICROPHONE AUDIO · CHECK INPUT"
-        );
-        assert_eq!(
-            voice_error_notice(VoiceErrorCode::AudioOverflow),
-            "VOICE INPUT COULDN'T KEEP UP · TRY AGAIN"
-        );
-    }
-
-    #[test]
-    fn voice_phases_expose_progress_without_model_details() {
-        assert_eq!(
-            voice_phase_notice(VoicePhase::Downloading, Some(0.42)),
-            "DOWNLOADING VOICE INPUT · 42%"
-        );
-        assert_eq!(
-            voice_phase_notice(VoicePhase::Verifying, None),
-            "VERIFYING VOICE INPUT"
-        );
-        assert_eq!(
-            voice_phase_notice(VoicePhase::Listening, None),
-            "LISTENING · SPEAK NOW · PRESS AGAIN TO FINISH"
-        );
     }
 
     #[test]

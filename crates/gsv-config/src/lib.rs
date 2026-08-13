@@ -6,6 +6,7 @@ use std::fs::{File, OpenOptions};
 use std::io::Write;
 use std::marker::PhantomData;
 use std::path::{Path, PathBuf};
+use std::time::{Duration, Instant};
 
 pub const DEFAULT_SESSION_KEY: &str = "agent:main:cli:dm:main";
 
@@ -64,6 +65,10 @@ pub struct CliConfig {
     /// Default session settings
     #[serde(default)]
     pub session: SessionConfig,
+
+    /// Desktop application preferences
+    #[serde(default)]
+    pub desktop: DesktopConfig,
 
     /// Fields owned by newer or optional host applications.
     #[serde(default, flatten)]
@@ -146,6 +151,68 @@ pub struct DeviceConfig {
 
     #[serde(default, flatten)]
     pub extra: toml::Table,
+}
+
+/// Desktop application preferences shared by the native app and operator CLI.
+///
+/// `microphone_configured` distinguishes a fresh installation from an explicit
+/// choice of the operating-system default input, whose stored name is `None`.
+#[derive(Debug, Default, Clone, Serialize, Deserialize)]
+pub struct DesktopConfig {
+    /// Persisted microphone name. `None` means SYSTEM DEFAULT once configured.
+    pub microphone: Option<String>,
+
+    /// Opaque platform selector for the persisted microphone. Older configs
+    /// may have only `microphone`; Desktop resolves and migrates those names
+    /// before starting voice input.
+    pub microphone_id: Option<String>,
+
+    /// Whether the user has made a microphone choice.
+    #[serde(default)]
+    pub microphone_configured: bool,
+
+    #[serde(default, flatten)]
+    pub extra: toml::Table,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum MicrophonePreference {
+    Ask,
+    SystemDefault,
+    Device { id: Option<String>, name: String },
+}
+
+impl DesktopConfig {
+    pub fn microphone_preference(&self) -> MicrophonePreference {
+        match (self.microphone_configured, self.microphone.as_ref()) {
+            (false, _) => MicrophonePreference::Ask,
+            (true, None) => MicrophonePreference::SystemDefault,
+            (true, Some(name)) => MicrophonePreference::Device {
+                id: self.microphone_id.clone(),
+                name: name.clone(),
+            },
+        }
+    }
+
+    pub fn set_microphone_preference(&mut self, preference: MicrophonePreference) {
+        match preference {
+            MicrophonePreference::Ask => {
+                self.microphone = None;
+                self.microphone_id = None;
+                self.microphone_configured = false;
+            }
+            MicrophonePreference::SystemDefault => {
+                self.microphone = None;
+                self.microphone_id = None;
+                self.microphone_configured = true;
+            }
+            MicrophonePreference::Device { id, name } => {
+                self.microphone = Some(name);
+                self.microphone_id = id;
+                self.microphone_configured = true;
+            }
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -267,13 +334,70 @@ where
         &self,
         update: impl FnOnce(&mut T) -> Result<R, ConfigError>,
     ) -> Result<R, ConfigError> {
+        self.update_if(|value| update(value).map(Some))
+            .map(|result| result.expect("unconditional config update returned no value"))
+    }
+
+    /// Update under the exclusive lock only when the closure returns a value.
+    ///
+    /// `None` leaves the existing file byte-for-byte untouched. This lets a
+    /// cancellable caller make its final cancellation check while it owns the
+    /// same lock as the eventual atomic replacement.
+    pub fn update_if<R>(
+        &self,
+        update: impl FnOnce(&mut T) -> Result<Option<R>, ConfigError>,
+    ) -> Result<Option<R>, ConfigError> {
         let lock = self.open_lock()?;
         FileExt::lock_exclusive(&lock)?;
         let result = (|| {
             let mut document = self.load_unlocked()?;
-            let result = update(&mut document)?;
+            let Some(result) = update(&mut document)? else {
+                return Ok(None);
+            };
             self.save_unlocked(&document)?;
-            Ok(result)
+            Ok(Some(result))
+        })();
+        FileExt::unlock(&lock)?;
+        result
+    }
+
+    /// Conditionally update after bounded, cancellable lock acquisition.
+    ///
+    /// `cancelled` is checked before every lock attempt. A cancellation or
+    /// elapsed deadline returns `Ok(None)` without reading or replacing the
+    /// configuration file.
+    pub fn update_if_until<R>(
+        &self,
+        deadline: Instant,
+        cancelled: impl Fn() -> bool,
+        update: impl FnOnce(&mut T) -> Result<Option<R>, ConfigError>,
+    ) -> Result<Option<R>, ConfigError> {
+        let lock = self.open_lock()?;
+        loop {
+            if cancelled() || Instant::now() >= deadline {
+                return Ok(None);
+            }
+            match FileExt::try_lock_exclusive(&lock) {
+                Ok(()) => break,
+                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                    std::thread::sleep(Duration::from_millis(10));
+                }
+                Err(error) => return Err(error.into()),
+            }
+        }
+        let result = (|| {
+            if cancelled() || Instant::now() >= deadline {
+                return Ok(None);
+            }
+            let mut document = self.load_unlocked()?;
+            let Some(result) = update(&mut document)? else {
+                return Ok(None);
+            };
+            if cancelled() || Instant::now() >= deadline {
+                return Ok(None);
+            }
+            self.save_unlocked(&document)?;
+            Ok(Some(result))
         })();
         FileExt::unlock(&lock)?;
         result
@@ -405,6 +529,27 @@ impl CliConfig {
     pub fn update<R>(update: impl FnOnce(&mut Self) -> R) -> Result<R, ConfigError> {
         let path = Self::config_path().ok_or(ConfigError::DirectoryUnavailable)?;
         ConfigFile::new(path).update(|config| Ok(update(config)))
+    }
+
+    /// Conditionally update the complete shared host configuration.
+    ///
+    /// Returning `None` from `update` skips serialization and atomic
+    /// replacement, so cancellation checked inside the locked closure cannot
+    /// rewrite the file as a side effect.
+    pub fn update_if<R>(
+        update: impl FnOnce(&mut Self) -> Option<R>,
+    ) -> Result<Option<R>, ConfigError> {
+        let path = Self::config_path().ok_or(ConfigError::DirectoryUnavailable)?;
+        ConfigFile::new(path).update_if(|config| Ok(update(config)))
+    }
+
+    pub fn update_if_until<R>(
+        deadline: Instant,
+        cancelled: impl Fn() -> bool,
+        update: impl FnOnce(&mut Self) -> Option<R>,
+    ) -> Result<Option<R>, ConfigError> {
+        let path = Self::config_path().ok_or(ConfigError::DirectoryUnavailable)?;
+        ConfigFile::new(path).update_if_until(deadline, cancelled, |config| Ok(update(config)))
     }
 
     /// Save config to file
@@ -583,6 +728,162 @@ selected_pid = "proc-7"
         assert_eq!(value["gateway"]["future_gateway"].as_integer(), Some(42));
         assert_eq!(value["desktop"]["selected_pid"].as_str(), Some("proc-7"));
         assert_eq!(value["gateway"]["username"].as_str(), Some("root"));
+    }
+
+    #[test]
+    fn microphone_preference_distinguishes_ask_default_and_named_device() {
+        let mut desktop = DesktopConfig::default();
+        assert_eq!(desktop.microphone_preference(), MicrophonePreference::Ask);
+
+        desktop.set_microphone_preference(MicrophonePreference::SystemDefault);
+        assert_eq!(
+            desktop.microphone_preference(),
+            MicrophonePreference::SystemDefault
+        );
+        assert!(desktop.microphone_configured);
+        assert!(desktop.microphone.is_none());
+
+        desktop.set_microphone_preference(MicrophonePreference::Device {
+            id: Some("opaque-studio-id".to_string()),
+            name: "Studio microphone".to_string(),
+        });
+        assert_eq!(
+            desktop.microphone_preference(),
+            MicrophonePreference::Device {
+                id: Some("opaque-studio-id".to_string()),
+                name: "Studio microphone".to_string(),
+            }
+        );
+    }
+
+    #[test]
+    fn legacy_named_microphone_loads_without_an_opaque_id() {
+        let config: CliConfig = toml::from_str(
+            r#"
+[desktop]
+microphone = "Studio microphone"
+microphone_configured = true
+"#,
+        )
+        .expect("legacy desktop config");
+        assert_eq!(
+            config.desktop.microphone_preference(),
+            MicrophonePreference::Device {
+                id: None,
+                name: "Studio microphone".to_string(),
+            }
+        );
+    }
+
+    #[test]
+    fn desktop_update_preserves_unknown_fields() {
+        let temp = tempfile::tempdir().expect("temporary config directory");
+        let path = temp.path().join("config.toml");
+        std::fs::write(
+            &path,
+            r#"
+[desktop]
+future_desktop = "kept"
+"#,
+        )
+        .expect("seed config");
+        let store = ConfigFile::<CliConfig>::new(&path);
+        store
+            .update(|config| {
+                config
+                    .desktop
+                    .set_microphone_preference(MicrophonePreference::SystemDefault);
+                Ok(())
+            })
+            .expect("update config");
+
+        let config = store.load().expect("load config");
+        assert_eq!(
+            config.desktop.microphone_preference(),
+            MicrophonePreference::SystemDefault
+        );
+        assert_eq!(
+            config
+                .desktop
+                .extra
+                .get("future_desktop")
+                .and_then(toml::Value::as_str),
+            Some("kept")
+        );
+    }
+
+    #[test]
+    fn conditional_update_skips_atomic_replacement() {
+        let temp = tempfile::tempdir().expect("temporary config directory");
+        let path = temp.path().join("config.toml");
+        let original = b"# keep formatting\n[gateway]\nusername = \"root\"\n";
+        std::fs::write(&path, original).expect("seed config");
+        let before = std::fs::metadata(&path).expect("metadata before skipped update");
+
+        let result = ConfigFile::<CliConfig>::new(&path)
+            .update_if(|config| {
+                config.gateway.username = Some("would-be-replacement".to_string());
+                Ok(None::<()>)
+            })
+            .expect("skipped update");
+
+        assert_eq!(result, None);
+        assert_eq!(std::fs::read(&path).expect("unchanged config"), original);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::MetadataExt;
+            assert_eq!(
+                std::fs::metadata(&path)
+                    .expect("metadata after skipped update")
+                    .ino(),
+                before.ino()
+            );
+        }
+    }
+
+    #[test]
+    fn conditional_update_deadline_does_not_wait_for_or_replace_a_locked_config() {
+        let temp = tempfile::tempdir().expect("temporary config directory");
+        let path = temp.path().join("config.toml");
+        let original = b"# unchanged\n[gateway]\nusername = \"root\"\n";
+        std::fs::write(&path, original).expect("seed config");
+        let store = ConfigFile::<CliConfig>::new(&path);
+        let held_lock = store.open_lock().expect("config lock");
+        FileExt::lock_exclusive(&held_lock).expect("hold config lock");
+
+        let started = Instant::now();
+        let result = store
+            .update_if_until(
+                started + Duration::from_millis(40),
+                || false,
+                |config| {
+                    config.gateway.username = Some("late".to_string());
+                    Ok(Some(()))
+                },
+            )
+            .expect("deadline is a skipped update");
+
+        assert_eq!(result, None);
+        assert!(started.elapsed() < Duration::from_secs(1));
+        assert_eq!(std::fs::read(path).expect("unchanged config"), original);
+        FileExt::unlock(&held_lock).expect("release config lock");
+    }
+
+    #[test]
+    fn conditional_update_cancellation_skips_lock_acquisition() {
+        let temp = tempfile::tempdir().expect("temporary config directory");
+        let path = temp.path().join("config.toml");
+        let original = b"[gateway]\nusername = \"root\"\n";
+        std::fs::write(&path, original).expect("seed config");
+        let result = ConfigFile::<CliConfig>::new(&path)
+            .update_if_until(
+                Instant::now() + Duration::from_secs(1),
+                || true,
+                |_| Ok(Some(())),
+            )
+            .expect("cancelled update");
+        assert_eq!(result, None);
+        assert_eq!(std::fs::read(path).expect("unchanged config"), original);
     }
 
     #[test]

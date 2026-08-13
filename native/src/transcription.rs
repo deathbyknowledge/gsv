@@ -1,5 +1,6 @@
-use std::io::{BufRead as _, BufReader, Write as _};
-use std::path::PathBuf;
+use std::collections::HashSet;
+use std::io::{BufRead, BufReader, Write as _};
+use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, Command, Stdio};
 use std::sync::mpsc::{self, Receiver, SendError, Sender};
 use std::time::{Duration, Instant};
@@ -7,6 +8,13 @@ use std::time::{Duration, Instant};
 use serde_json::{json, Value};
 
 const EVENT_CAPACITY: usize = 16;
+const HELPER_EVENT_MAX_BYTES: usize = 128 * 1024;
+pub const MAX_DEVICE_COUNT: usize = 32;
+pub const MAX_DEVICE_NAME_BYTES: usize = 256;
+pub const MAX_DEVICE_ID_BYTES: usize = 512;
+const VOICE_PROTOCOL_VERSION: u64 = 2;
+const HELPER_HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(2);
+const DEVICE_LIST_TIMEOUT: Duration = Duration::from_secs(5);
 const STOP_TIMEOUT: Duration = Duration::from_secs(30);
 const SHUTDOWN_GRACE: Duration = Duration::from_secs(1);
 
@@ -16,6 +24,8 @@ pub enum VoiceCommand {
         request_id: u64,
         locale: String,
         device: Option<String>,
+        device_id: Option<String>,
+        exact_device: bool,
     },
     Stop {
         request_id: u64,
@@ -23,7 +33,17 @@ pub enum VoiceCommand {
     Cancel {
         request_id: u64,
     },
+    ListDevices {
+        request_id: u64,
+    },
     Shutdown,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct VoiceDevice {
+    pub id: String,
+    pub name: String,
+    pub is_default: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -71,6 +91,10 @@ pub enum VoiceEvent {
     Cancelled {
         request_id: u64,
     },
+    Devices {
+        request_id: u64,
+        devices: Vec<VoiceDevice>,
+    },
     Error {
         request_id: Option<u64>,
         code: VoiceErrorCode,
@@ -113,6 +137,8 @@ pub(crate) fn coalesce_for_ui(events: impl IntoIterator<Item = VoiceEvent>) -> V
 #[derive(Default)]
 struct VoiceSupervisorState {
     active_request: Option<u64>,
+    device_request: Option<u64>,
+    device_deadline: Option<(u64, Instant)>,
     terminal_deadline: Option<(u64, Instant)>,
 }
 
@@ -133,11 +159,22 @@ impl VoiceSupervisorState {
             {
                 self.terminal_deadline = Some((*request_id, now + STOP_TIMEOUT));
             }
+            VoiceCommand::ListDevices { request_id } => {
+                self.device_request = Some(*request_id);
+                self.device_deadline = Some((*request_id, now + DEVICE_LIST_TIMEOUT));
+            }
             VoiceCommand::Stop { .. } | VoiceCommand::Cancel { .. } | VoiceCommand::Shutdown => {}
         }
     }
 
-    fn terminal_observed(&mut self, request_id: Option<u64>) {
+    fn terminal_observed(&mut self, request_id: Option<u64>, devices: bool) {
+        if devices {
+            if request_id == self.device_request {
+                self.device_request = None;
+                self.device_deadline = None;
+            }
+            return;
+        }
         if request_id.is_some_and(|request_id| {
             self.terminal_deadline
                 .is_some_and(|(terminal_id, _)| terminal_id == request_id)
@@ -146,6 +183,22 @@ impl VoiceSupervisorState {
         }
         if request_id.is_none_or(|request_id| self.active_request == Some(request_id)) {
             self.active_request = None;
+        }
+        if request_id.is_none_or(|request_id| self.device_request == Some(request_id)) {
+            self.device_request = None;
+            self.device_deadline = None;
+        }
+    }
+
+    fn conflicts(&self, command: &VoiceCommand) -> bool {
+        match command {
+            VoiceCommand::ListDevices { .. } => {
+                self.active_request.is_some() || self.device_request.is_some()
+            }
+            VoiceCommand::Start { .. } => self.device_request.is_some(),
+            VoiceCommand::Stop { .. } | VoiceCommand::Cancel { .. } | VoiceCommand::Shutdown => {
+                false
+            }
         }
     }
 }
@@ -173,19 +226,39 @@ fn supervise(commands: Receiver<VoiceCommand>, events: tokio::sync::mpsc::Sender
     loop {
         flush_pending_update(&events, &mut pending_update);
         if let Some(helper) = process.as_mut() {
-            while let Ok(event) = helper.events.try_recv() {
-                let terminal = matches!(
-                    event,
-                    VoiceEvent::Final { .. }
-                        | VoiceEvent::Cancelled { .. }
-                        | VoiceEvent::Error { .. }
-                );
+            while let Ok(mut event) = helper.events.try_recv() {
+                if let VoiceEvent::Error {
+                    request_id: request_id @ None,
+                    ..
+                } = &mut event
+                {
+                    *request_id = match (state.active_request, state.device_request) {
+                        (None, Some(request_id)) | (Some(request_id), None) => Some(request_id),
+                        _ => None,
+                    };
+                }
+                let request_id = event_request_id(&event);
+                let device_terminal = matches!(event, VoiceEvent::Devices { .. })
+                    || matches!(event, VoiceEvent::Error { .. })
+                        && request_id == state.device_request;
+                let terminal = device_terminal
+                    || matches!(
+                        event,
+                        VoiceEvent::Final { .. }
+                            | VoiceEvent::Cancelled { .. }
+                            | VoiceEvent::Error { .. }
+                    );
                 if terminal {
-                    state.terminal_observed(event_request_id(&event));
+                    state.terminal_observed(request_id, device_terminal);
                 }
                 publish(&events, &mut pending_update, event);
             }
-            if helper.child.try_wait().ok().flatten().is_some() {
+            if helper
+                .child
+                .as_mut()
+                .and_then(|child| child.try_wait().ok().flatten())
+                .is_some()
+            {
                 if state.active_request.is_some() {
                     publish(
                         &events,
@@ -196,6 +269,17 @@ fn supervise(commands: Receiver<VoiceCommand>, events: tokio::sync::mpsc::Sender
                         },
                     );
                 }
+                if let Some(request_id) = state.device_request.take() {
+                    publish(
+                        &events,
+                        &mut pending_update,
+                        VoiceEvent::Error {
+                            request_id: Some(request_id),
+                            code: VoiceErrorCode::Interrupted,
+                        },
+                    );
+                }
+                state.device_deadline = None;
                 process = None;
                 state.terminal_deadline = None;
             }
@@ -209,9 +293,8 @@ fn supervise(commands: Receiver<VoiceCommand>, events: tokio::sync::mpsc::Sender
             let interrupted_active = state
                 .active_request
                 .filter(|active| Some(*active) != request_id);
-            if let Some(mut helper) = process.take() {
-                let _ = helper.child.kill();
-                let _ = helper.child.wait();
+            if let Some(helper) = process.take() {
+                terminate_helper_and_reap(helper);
             }
             publish(
                 &events,
@@ -235,7 +318,36 @@ fn supervise(commands: Receiver<VoiceCommand>, events: tokio::sync::mpsc::Sender
                 );
                 state.active_request = None;
             }
+            if let Some(device_request_id) = state.device_request.take() {
+                publish(
+                    &events,
+                    &mut pending_update,
+                    VoiceEvent::Error {
+                        request_id: Some(device_request_id),
+                        code: VoiceErrorCode::Interrupted,
+                    },
+                );
+            }
             state.terminal_deadline = None;
+        }
+
+        if state
+            .device_deadline
+            .is_some_and(|(_, deadline)| Instant::now() >= deadline)
+        {
+            let request_id = state.device_request.take();
+            if let Some(helper) = process.take() {
+                terminate_helper_and_reap(helper);
+            }
+            publish(
+                &events,
+                &mut pending_update,
+                VoiceEvent::Error {
+                    request_id,
+                    code: VoiceErrorCode::Interrupted,
+                },
+            );
+            state.device_deadline = None;
         }
 
         let command = match commands.recv_timeout(Duration::from_millis(20)) {
@@ -248,14 +360,47 @@ fn supervise(commands: Receiver<VoiceCommand>, events: tokio::sync::mpsc::Sender
                 let _ = helper.send(&command);
                 let deadline = Instant::now() + SHUTDOWN_GRACE;
                 while Instant::now() < deadline {
-                    if helper.child.try_wait().ok().flatten().is_some() {
+                    if helper
+                        .child
+                        .as_mut()
+                        .and_then(|child| child.try_wait().ok().flatten())
+                        .is_some()
+                    {
                         return;
                     }
                     std::thread::sleep(Duration::from_millis(10));
                 }
-                terminate_child(&mut helper.child);
+                terminate_helper_and_reap(helper);
             }
             return;
+        }
+
+        if let VoiceCommand::Cancel { request_id } = command {
+            if state.device_request == Some(request_id) {
+                if let Some(helper) = process.take() {
+                    terminate_helper_and_reap(helper);
+                }
+                state.device_request = None;
+                state.device_deadline = None;
+                publish(
+                    &events,
+                    &mut pending_update,
+                    VoiceEvent::Cancelled { request_id },
+                );
+                continue;
+            }
+        }
+
+        if state.conflicts(&command) {
+            publish(
+                &events,
+                &mut pending_update,
+                VoiceEvent::Error {
+                    request_id: command_request_id(&command),
+                    code: VoiceErrorCode::Busy,
+                },
+            );
+            continue;
         }
 
         if process.is_none() && !command_starts_helper(&command) {
@@ -277,7 +422,9 @@ fn supervise(commands: Receiver<VoiceCommand>, events: tokio::sync::mpsc::Sender
                         },
                     );
                 }
-                VoiceCommand::Start { .. } | VoiceCommand::Shutdown => unreachable!(),
+                VoiceCommand::Start { .. }
+                | VoiceCommand::ListDevices { .. }
+                | VoiceCommand::Shutdown => unreachable!(),
             }
             continue;
         }
@@ -312,6 +459,8 @@ fn supervise(commands: Receiver<VoiceCommand>, events: tokio::sync::mpsc::Sender
             );
             process = None;
             state.active_request = None;
+            state.device_request = None;
+            state.device_deadline = None;
             state.terminal_deadline = None;
             continue;
         }
@@ -364,7 +513,7 @@ fn flush_pending_update(
 }
 
 struct HelperProcess {
-    child: Child,
+    child: Option<Child>,
     stdin: ChildStdin,
     events: Receiver<VoiceEvent>,
 }
@@ -381,35 +530,60 @@ impl HelperProcess {
             .spawn()
             .map_err(|_| VoiceErrorCode::HelperUnavailable)?;
         let Some(stdin) = child.stdin.take() else {
-            terminate_child(&mut child);
+            terminate_and_reap(child);
             return Err(VoiceErrorCode::HelperUnavailable);
         };
         let Some(stdout) = child.stdout.take() else {
-            terminate_child(&mut child);
+            terminate_and_reap(child);
             return Err(VoiceErrorCode::HelperUnavailable);
         };
+        let (handshake_tx, handshake_rx) = mpsc::sync_channel(1);
         let (event_tx, events) = mpsc::sync_channel(32);
         if std::thread::Builder::new()
             .name("gsv-voice-events".to_string())
             .spawn(move || {
-                for line in BufReader::new(stdout).lines() {
-                    let Ok(line) = line else {
-                        break;
-                    };
-                    if let Some(event) = parse_event(&line) {
-                        if event_tx.send(event).is_err() {
-                            break;
+                let mut reader = BufReader::new(stdout);
+                let mut line = Vec::new();
+                let handshake = matches!(
+                    read_bounded_line(&mut reader, &mut line, HELPER_EVENT_MAX_BYTES),
+                    Ok(BoundedLine::Line)
+                ) && std::str::from_utf8(&line)
+                    .ok()
+                    .is_some_and(valid_protocol_hello);
+                let _ = handshake_tx.send(handshake);
+                if !handshake {
+                    return;
+                }
+                loop {
+                    match read_bounded_line(&mut reader, &mut line, HELPER_EVENT_MAX_BYTES) {
+                        Ok(BoundedLine::Line) => {
+                            let Ok(line) = std::str::from_utf8(&line) else {
+                                continue;
+                            };
+                            if parse_event(line).is_some_and(|event| event_tx.send(event).is_err())
+                            {
+                                break;
+                            }
                         }
+                        Ok(BoundedLine::Oversized) => continue,
+                        Ok(BoundedLine::Eof) | Err(_) => break,
                     }
                 }
             })
             .is_err()
         {
-            terminate_child(&mut child);
+            terminate_and_reap(child);
+            return Err(VoiceErrorCode::HelperUnavailable);
+        }
+        if !matches!(
+            handshake_rx.recv_timeout(HELPER_HANDSHAKE_TIMEOUT),
+            Ok(true)
+        ) {
+            terminate_and_reap(child);
             return Err(VoiceErrorCode::HelperUnavailable);
         }
         Ok(Self {
-            child,
+            child: Some(child),
             stdin,
             events,
         })
@@ -425,14 +599,83 @@ impl HelperProcess {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum BoundedLine {
+    Line,
+    Oversized,
+    Eof,
+}
+
+fn read_bounded_line(
+    reader: &mut impl BufRead,
+    line: &mut Vec<u8>,
+    maximum: usize,
+) -> std::io::Result<BoundedLine> {
+    line.clear();
+    let mut oversized = false;
+    loop {
+        let available = reader.fill_buf()?;
+        if available.is_empty() {
+            return Ok(if line.is_empty() && !oversized {
+                BoundedLine::Eof
+            } else if oversized {
+                BoundedLine::Oversized
+            } else {
+                BoundedLine::Line
+            });
+        }
+        let newline = available.iter().position(|byte| *byte == b'\n');
+        let consumed = newline.map_or(available.len(), |index| index + 1);
+        let content = newline.map_or(available, |index| &available[..index]);
+        if !oversized {
+            let remaining = maximum.saturating_sub(line.len());
+            if content.len() <= remaining {
+                line.extend_from_slice(content);
+            } else {
+                oversized = true;
+            }
+        }
+        reader.consume(consumed);
+        if newline.is_some() {
+            if line.last() == Some(&b'\r') {
+                line.pop();
+            }
+            return Ok(if oversized {
+                BoundedLine::Oversized
+            } else {
+                BoundedLine::Line
+            });
+        }
+    }
+}
+
 fn terminate_child(child: &mut Child) {
     let _ = child.kill();
-    let _ = child.wait();
+}
+
+fn terminate_and_reap(mut child: Child) {
+    terminate_child(&mut child);
+    // Reaping is deliberately detached: platform audio discovery can remain
+    // stuck in an uninterruptible syscall even after kill. The supervisor must
+    // publish cancellation/timeouts and accept later voice commands promptly.
+    let _ = std::thread::Builder::new()
+        .name("gsv-voice-reaper".to_string())
+        .spawn(move || {
+            let _ = child.wait();
+        });
+}
+
+fn terminate_helper_and_reap(mut helper: HelperProcess) {
+    if let Some(child) = helper.child.take() {
+        terminate_and_reap(child);
+    }
 }
 
 impl Drop for HelperProcess {
     fn drop(&mut self) {
-        terminate_child(&mut self.child);
+        if let Some(child) = self.child.take() {
+            terminate_and_reap(child);
+        }
     }
 }
 
@@ -450,36 +693,63 @@ fn helper_executable() -> Result<PathBuf, VoiceErrorCode> {
             return Ok(sibling);
         }
     }
-    let development_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("transcribe-helper")
-        .join("target");
-    let profiles = if cfg!(debug_assertions) {
+    development_helper_candidates(
+        Path::new(env!("CARGO_MANIFEST_DIR")),
+        std::env::var_os("CARGO_TARGET_DIR").map(PathBuf::from),
+        cfg!(debug_assertions),
+    )
+    .into_iter()
+    .find(|candidate| candidate.is_file())
+    .ok_or(VoiceErrorCode::NotInstalled)
+}
+
+fn development_helper_candidates(
+    manifest_dir: &Path,
+    target_override: Option<PathBuf>,
+    debug: bool,
+) -> Vec<PathBuf> {
+    let workspace_root = manifest_dir.parent().unwrap_or(manifest_dir);
+    let mut target_dirs = Vec::with_capacity(2);
+    if let Some(target) = target_override {
+        target_dirs.push(if target.is_absolute() {
+            target
+        } else {
+            workspace_root.join(target)
+        });
+    }
+    target_dirs.push(workspace_root.join("target"));
+    let profiles = if debug {
         ["debug", "release"]
     } else {
         ["release", "debug"]
     };
-    profiles
+    target_dirs
         .into_iter()
-        .map(|profile| {
-            development_root
-                .join(profile)
-                .join(format!("gsv-transcribe{}", std::env::consts::EXE_SUFFIX))
+        .flat_map(|target| {
+            profiles.map(move |profile| {
+                target
+                    .join(profile)
+                    .join(format!("gsv-transcribe{}", std::env::consts::EXE_SUFFIX))
+            })
         })
-        .find(|candidate| candidate.is_file())
-        .ok_or(VoiceErrorCode::NotInstalled)
+        .collect()
 }
 
 fn command_request_id(command: &VoiceCommand) -> Option<u64> {
     match command {
         VoiceCommand::Start { request_id, .. }
         | VoiceCommand::Stop { request_id }
-        | VoiceCommand::Cancel { request_id } => Some(*request_id),
+        | VoiceCommand::Cancel { request_id }
+        | VoiceCommand::ListDevices { request_id } => Some(*request_id),
         VoiceCommand::Shutdown => None,
     }
 }
 
 fn command_starts_helper(command: &VoiceCommand) -> bool {
-    matches!(command, VoiceCommand::Start { .. })
+    matches!(
+        command,
+        VoiceCommand::Start { .. } | VoiceCommand::ListDevices { .. }
+    )
 }
 
 fn event_request_id(event: &VoiceEvent) -> Option<u64> {
@@ -487,7 +757,8 @@ fn event_request_id(event: &VoiceEvent) -> Option<u64> {
         VoiceEvent::State { request_id, .. }
         | VoiceEvent::Partial { request_id, .. }
         | VoiceEvent::Final { request_id, .. }
-        | VoiceEvent::Cancelled { request_id } => Some(*request_id),
+        | VoiceEvent::Cancelled { request_id }
+        | VoiceEvent::Devices { request_id, .. } => Some(*request_id),
         VoiceEvent::Error { request_id, .. } => *request_id,
     }
 }
@@ -498,11 +769,17 @@ fn command_json(command: &VoiceCommand) -> Value {
             request_id,
             locale,
             device,
+            device_id,
+            exact_device,
         } => {
             let mut value = json!({ "type": "start", "request_id": request_id, "locale": locale });
             if let Some(device) = device {
                 value["device"] = Value::String(device.clone());
             }
+            if let Some(device_id) = device_id {
+                value["device_id"] = Value::String(device_id.clone());
+            }
+            value["exact_device"] = Value::Bool(*exact_device);
             value
         }
         VoiceCommand::Stop { request_id } => {
@@ -510,6 +787,9 @@ fn command_json(command: &VoiceCommand) -> Value {
         }
         VoiceCommand::Cancel { request_id } => {
             json!({ "type": "cancel", "request_id": request_id })
+        }
+        VoiceCommand::ListDevices { request_id } => {
+            json!({ "type": "list_devices", "request_id": request_id })
         }
         VoiceCommand::Shutdown => json!({ "type": "shutdown" }),
     }
@@ -541,12 +821,71 @@ fn parse_event(line: &str) -> Option<VoiceEvent> {
         "cancelled" => Some(VoiceEvent::Cancelled {
             request_id: request_id()?,
         }),
+        "devices" => Some(VoiceEvent::Devices {
+            request_id: request_id()?,
+            devices: parse_devices(value.get("devices")?)?,
+        }),
         "error" => Some(VoiceEvent::Error {
             request_id: request_id(),
             code: parse_error_code(value.get("code")?.as_str()?)?,
         }),
         _ => None,
     }
+}
+
+fn valid_protocol_hello(line: &str) -> bool {
+    let Ok(Value::Object(value)) = serde_json::from_str::<Value>(line) else {
+        return false;
+    };
+    value.len() == 2
+        && value.get("type").and_then(Value::as_str) == Some("hello")
+        && value.get("protocol_version").and_then(Value::as_u64) == Some(VOICE_PROTOCOL_VERSION)
+}
+
+fn parse_devices(value: &Value) -> Option<Vec<VoiceDevice>> {
+    let values = value.as_array()?;
+    if values.len() > MAX_DEVICE_COUNT {
+        return None;
+    }
+    let mut ids = HashSet::with_capacity(values.len());
+    values
+        .iter()
+        .map(|value| {
+            let id = value.get("id")?.as_str()?;
+            let name = value.get("name")?.as_str()?;
+            if !valid_device_id(id) || !valid_device_name(name) || !ids.insert(id) {
+                return None;
+            }
+            Some(VoiceDevice {
+                id: id.to_string(),
+                name: name.to_string(),
+                is_default: value.get("is_default")?.as_bool()?,
+            })
+        })
+        .collect()
+}
+
+pub fn normalized_device_name(value: &str) -> Option<String> {
+    let value = value.trim();
+    valid_device_name(value).then(|| value.to_string())
+}
+
+pub fn normalized_device_id(value: &str) -> Option<String> {
+    let trimmed = value.trim();
+    (trimmed == value && valid_device_id(trimmed)).then(|| trimmed.to_string())
+}
+
+fn valid_device_name(value: &str) -> bool {
+    !value.is_empty()
+        && value.len() <= MAX_DEVICE_NAME_BYTES
+        && !value.chars().any(char::is_control)
+}
+
+fn valid_device_id(value: &str) -> bool {
+    !value.is_empty()
+        && value.len() <= MAX_DEVICE_ID_BYTES
+        && !value.chars().any(char::is_control)
+        && value.trim() == value
 }
 
 fn parse_phase(value: &str) -> Option<VoicePhase> {
@@ -604,12 +943,43 @@ mod tests {
             request_id: 2,
             locale: "auto".to_string(),
             device: Some("Studio microphone".to_string()),
+            device_id: None,
+            exact_device: true,
         });
         assert!(value.get("model").is_none());
         assert!(value.get("backend").is_none());
         assert_eq!(
             value.get("device").and_then(Value::as_str),
             Some("Studio microphone")
+        );
+        assert_eq!(
+            value.get("exact_device").and_then(Value::as_bool),
+            Some(true)
+        );
+        assert!(value.get("device_id").is_none());
+        let selected_by_id = command_json(&VoiceCommand::Start {
+            request_id: 4,
+            locale: "auto".to_string(),
+            device: None,
+            device_id: Some("opaque-device-id".to_string()),
+            exact_device: true,
+        });
+        assert_eq!(
+            selected_by_id.get("device_id").and_then(Value::as_str),
+            Some("opaque-device-id")
+        );
+        assert!(selected_by_id.get("device").is_none());
+        assert_eq!(
+            command_json(&VoiceCommand::Start {
+                request_id: 3,
+                locale: "auto".to_string(),
+                device: Some("studio".to_string()),
+                device_id: None,
+                exact_device: false,
+            })
+            .get("exact_device")
+            .and_then(Value::as_bool),
+            Some(false)
         );
     }
 
@@ -629,6 +999,11 @@ mod tests {
             request_id: 8,
             locale: "auto".to_string(),
             device: None,
+            device_id: None,
+            exact_device: false,
+        }));
+        assert!(command_starts_helper(&VoiceCommand::ListDevices {
+            request_id: 9
         }));
     }
 
@@ -796,6 +1171,23 @@ mod tests {
     }
 
     #[test]
+    fn helper_handshake_requires_exact_protocol_v2_hello() {
+        assert!(valid_protocol_hello(
+            r#"{"type":"hello","protocol_version":2}"#
+        ));
+        assert!(!valid_protocol_hello(
+            r#"{"type":"hello","protocol_version":1}"#
+        ));
+        assert!(!valid_protocol_hello(
+            r#"{"type":"state","request_id":1,"phase":"loading"}"#
+        ));
+        assert!(!valid_protocol_hello(""));
+        assert!(!valid_protocol_hello(
+            r#"{"type":"hello","protocol_version":2,"unexpected":true}"#
+        ));
+    }
+
+    #[test]
     fn invalid_progress_and_unknown_codes_do_not_cross_the_boundary() {
         assert_eq!(
             parse_event(r#"{"type":"state","request_id":4,"phase":"downloading","progress":9.0}"#),
@@ -816,6 +1208,94 @@ mod tests {
     }
 
     #[test]
+    fn device_events_are_typed_and_strictly_bounded() {
+        assert_eq!(
+            parse_event(
+                r#"{"type":"devices","request_id":5,"devices":[{"id":"builtin-id","name":"Built-in Microphone","is_default":true},{"id":"usb-id","name":"USB Mic","is_default":false}]}"#
+            ),
+            Some(VoiceEvent::Devices {
+                request_id: 5,
+                devices: vec![
+                    VoiceDevice {
+                        id: "builtin-id".to_string(),
+                        name: "Built-in Microphone".to_string(),
+                        is_default: true,
+                    },
+                    VoiceDevice {
+                        id: "usb-id".to_string(),
+                        name: "USB Mic".to_string(),
+                        is_default: false,
+                    },
+                ],
+            })
+        );
+        let long_name = "a".repeat(MAX_DEVICE_NAME_BYTES + 1);
+        assert!(parse_event(&format!(
+            r#"{{"type":"devices","request_id":5,"devices":[{{"id":"long-name","name":"{long_name}","is_default":false}}]}}"#
+        ))
+        .is_none());
+        let too_many = (0..=MAX_DEVICE_COUNT)
+            .map(|index| {
+                format!(r#"{{"id":"id-{index}","name":"mic-{index}","is_default":false}}"#)
+            })
+            .collect::<Vec<_>>()
+            .join(",");
+        assert!(parse_event(&format!(
+            r#"{{"type":"devices","request_id":5,"devices":[{too_many}]}}"#
+        ))
+        .is_none());
+        assert!(parse_event(
+            r#"{"type":"devices","request_id":5,"devices":[{"id":"one","name":"Same","is_default":true},{"id":"two","name":"Same","is_default":false}]}"#
+        )
+        .is_some());
+        assert!(parse_event(
+            r#"{"type":"devices","request_id":5,"devices":[{"id":"same","name":"One","is_default":true},{"id":"same","name":"Two","is_default":false}]}"#
+        )
+        .is_none());
+    }
+
+    #[test]
+    fn helper_lines_are_bounded_and_recover_after_oversized_input() {
+        let input = format!(
+            "{}\n{{\"type\":\"cancelled\",\"request_id\":7}}\n",
+            "x".repeat(9)
+        );
+        let mut reader = std::io::Cursor::new(input.into_bytes());
+        let mut line = Vec::new();
+        assert_eq!(
+            read_bounded_line(&mut reader, &mut line, 8).expect("oversized line"),
+            BoundedLine::Oversized
+        );
+        assert_eq!(
+            read_bounded_line(&mut reader, &mut line, HELPER_EVENT_MAX_BYTES).expect("valid line"),
+            BoundedLine::Line
+        );
+        assert_eq!(
+            parse_event(std::str::from_utf8(&line).expect("UTF-8")),
+            Some(VoiceEvent::Cancelled { request_id: 7 })
+        );
+    }
+
+    #[test]
+    fn workspace_helper_candidates_prefer_the_root_target() {
+        let manifest = Path::new("/work/gsv/native");
+        let candidates = development_helper_candidates(manifest, None, true);
+        assert_eq!(
+            candidates[0],
+            Path::new("/work/gsv/target/debug")
+                .join(format!("gsv-transcribe{}", std::env::consts::EXE_SUFFIX))
+        );
+        assert_eq!(
+            candidates[1],
+            Path::new("/work/gsv/target/release")
+                .join(format!("gsv-transcribe{}", std::env::consts::EXE_SUFFIX))
+        );
+        assert!(candidates
+            .iter()
+            .all(|candidate| !candidate.starts_with("/work/gsv/native/transcribe-helper/target")));
+    }
+
+    #[test]
     fn replacement_request_owns_lifecycle_while_the_cancelled_request_finishes() {
         let now = Instant::now();
         let mut state = VoiceSupervisorState::default();
@@ -824,6 +1304,8 @@ mod tests {
                 request_id: 1,
                 locale: "auto".to_string(),
                 device: None,
+                device_id: None,
+                exact_device: false,
             },
             now,
         );
@@ -833,12 +1315,44 @@ mod tests {
                 request_id: 2,
                 locale: "auto".to_string(),
                 device: None,
+                device_id: None,
+                exact_device: false,
             },
             now,
         );
-        state.terminal_observed(Some(1));
+        state.terminal_observed(Some(1), false);
 
         assert_eq!(state.active_request, Some(2));
         assert!(state.terminal_deadline.is_none());
+    }
+
+    #[test]
+    fn enumeration_does_not_take_or_clear_the_active_voice_request() {
+        let now = Instant::now();
+        let mut state = VoiceSupervisorState::default();
+        state.command_sent(
+            &VoiceCommand::Start {
+                request_id: 1,
+                locale: "auto".to_string(),
+                device: None,
+                device_id: None,
+                exact_device: false,
+            },
+            now,
+        );
+        assert!(state.conflicts(&VoiceCommand::ListDevices { request_id: 2 }));
+
+        state.active_request = None;
+        state.command_sent(&VoiceCommand::ListDevices { request_id: 2 }, now);
+        assert!(state.conflicts(&VoiceCommand::Start {
+            request_id: 3,
+            locale: "auto".to_string(),
+            device: None,
+            device_id: None,
+            exact_device: false,
+        }));
+        state.terminal_observed(Some(2), true);
+        assert_eq!(state.active_request, None);
+        assert_eq!(state.device_request, None);
     }
 }

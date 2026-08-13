@@ -111,6 +111,27 @@ pub(crate) enum DesktopAction {
         /// Process ID to select
         pid: String,
     },
+
+    /// List or select the microphone used for voice input
+    Microphone {
+        #[command(subcommand)]
+        action: MicrophoneAction,
+    },
+}
+
+#[derive(Subcommand)]
+pub(crate) enum MicrophoneAction {
+    /// List microphones and the current selection
+    List,
+
+    /// Select and remember a microphone by name
+    Use {
+        /// Microphone name to select
+        name: String,
+    },
+
+    /// Use the operating system's default microphone
+    Default,
 }
 
 #[derive(Subcommand)]
@@ -729,7 +750,45 @@ mod tests {
             } if pid == "proc:1"
         ));
 
+        let microphone_list = Cli::try_parse_from(["gsv", "desktop", "microphone", "list"])
+            .expect("microphone list parses");
+        assert!(matches!(
+            microphone_list.command,
+            Commands::Desktop {
+                action: Some(DesktopAction::Microphone {
+                    action: MicrophoneAction::List
+                })
+            }
+        ));
+
+        let microphone_use =
+            Cli::try_parse_from(["gsv", "desktop", "microphone", "use", "Shure MV6"])
+                .expect("microphone use parses");
+        assert!(matches!(
+            microphone_use.command,
+            Commands::Desktop {
+                action: Some(DesktopAction::Microphone {
+                    action: MicrophoneAction::Use { name }
+                })
+            } if name == "Shure MV6"
+        ));
+
+        let microphone_default = Cli::try_parse_from(["gsv", "desktop", "microphone", "default"])
+            .expect("microphone default parses");
+        assert!(matches!(
+            microphone_default.command,
+            Commands::Desktop {
+                action: Some(DesktopAction::Microphone {
+                    action: MicrophoneAction::Default
+                })
+            }
+        ));
+
         assert!(Cli::try_parse_from(["gsv", "desktop", "send", "secret"]).is_err());
         assert!(Cli::try_parse_from(["gsv", "desktop", "new", "--label", "private"]).is_err());
+        assert!(Cli::try_parse_from(["gsv", "desktop", "microphone"]).is_err());
+        assert!(
+            Cli::try_parse_from(["gsv", "desktop", "microphone", "use", "one", "two"]).is_err()
+        );
     }
 }

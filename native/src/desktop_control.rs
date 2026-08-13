@@ -1,5 +1,6 @@
 use gsv_desktop_control::{
-    DesktopControlHandler, DesktopStatus, OperationError, ProcessId, RequestContext,
+    DesktopControlHandler, DesktopStatus, MicrophoneName, MicrophoneStatus, OperationError,
+    ProcessId, RequestContext,
 };
 use tokio::sync::{mpsc, oneshot};
 
@@ -26,6 +27,19 @@ pub enum DesktopControlRequest {
         context: RequestContext,
         process_id: ProcessId,
         response: oneshot::Sender<Result<ProcessId, OperationError>>,
+    },
+    MicrophoneList {
+        context: RequestContext,
+        response: oneshot::Sender<Result<MicrophoneStatus, OperationError>>,
+    },
+    MicrophoneUse {
+        context: RequestContext,
+        name: MicrophoneName,
+        response: oneshot::Sender<Result<MicrophoneStatus, OperationError>>,
+    },
+    MicrophoneDefault {
+        context: RequestContext,
+        response: oneshot::Sender<Result<MicrophoneStatus, OperationError>>,
     },
 }
 
@@ -79,6 +93,35 @@ impl DesktopControlHandler for NativeDesktopControlHandler {
             response,
         })
         .await
+    }
+
+    async fn microphone_list(
+        &self,
+        context: RequestContext,
+    ) -> Result<MicrophoneStatus, OperationError> {
+        self.dispatch(|response| DesktopControlRequest::MicrophoneList { context, response })
+            .await
+    }
+
+    async fn microphone_use(
+        &self,
+        context: RequestContext,
+        name: MicrophoneName,
+    ) -> Result<MicrophoneStatus, OperationError> {
+        self.dispatch(|response| DesktopControlRequest::MicrophoneUse {
+            context,
+            name,
+            response,
+        })
+        .await
+    }
+
+    async fn microphone_default(
+        &self,
+        context: RequestContext,
+    ) -> Result<MicrophoneStatus, OperationError> {
+        self.dispatch(|response| DesktopControlRequest::MicrophoneDefault { context, response })
+            .await
     }
 }
 

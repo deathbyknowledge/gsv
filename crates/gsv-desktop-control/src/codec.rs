@@ -59,6 +59,7 @@ mod tests {
     use tokio::io::{duplex, AsyncWriteExt};
 
     use super::*;
+    use crate::{protocol::Request, Command, MicrophoneName, PROTOCOL_VERSION};
 
     #[derive(Debug, Eq, PartialEq, Serialize, Deserialize)]
     struct Example {
@@ -111,6 +112,46 @@ mod tests {
         bad_sender.write_all(b"{").await.expect("body writes");
         assert!(matches!(
             read_json::<Example, _>(&mut bad_receiver).await,
+            Err(Error::MalformedFrame(_))
+        ));
+    }
+
+    #[tokio::test]
+    async fn microphone_request_round_trips_through_the_codec() {
+        let (mut sender, mut receiver) = duplex(1024);
+        let expected = Request::new(Command::MicrophoneUse {
+            name: MicrophoneName::new("Shure MV6").expect("valid microphone name"),
+        });
+
+        write_json(&mut sender, &expected)
+            .await
+            .expect("request writes");
+        let actual: Request = read_json(&mut receiver).await.expect("request reads");
+
+        assert_eq!(actual, expected);
+    }
+
+    #[tokio::test]
+    async fn microphone_request_codec_rejects_extra_fields() {
+        let (mut sender, mut receiver) = duplex(1024);
+        let request = serde_json::to_vec(&serde_json::json!({
+            "protocolVersion": PROTOCOL_VERSION,
+            "requestId": uuid::Uuid::new_v4(),
+            "command": {
+                "type": "microphoneUse",
+                "name": "Shure MV6",
+                "deviceId": "private-system-id"
+            }
+        }))
+        .expect("request serializes");
+        sender
+            .write_u32(request.len() as u32)
+            .await
+            .expect("header writes");
+        sender.write_all(&request).await.expect("body writes");
+
+        assert!(matches!(
+            read_json::<Request, _>(&mut receiver).await,
             Err(Error::MalformedFrame(_))
         ));
     }

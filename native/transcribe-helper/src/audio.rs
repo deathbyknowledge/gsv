@@ -1,3 +1,5 @@
+use std::collections::BTreeMap;
+use std::str::FromStr as _;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
@@ -5,9 +7,31 @@ use std::time::Duration;
 use cpal::traits::{DeviceTrait as _, HostTrait as _, StreamTrait as _};
 use cpal::{FromSample, Sample, SampleFormat, SizedSample, Stream};
 use crossbeam_channel::{Receiver, Sender};
+use serde::Serialize;
 
 const CAPTURE_BUFFER_DURATION: Duration = Duration::from_secs(5);
 const SILENT_INPUT_DURATION: Duration = Duration::from_secs(2);
+const MAX_INPUT_DEVICES: usize = 32;
+const MAX_DEVICE_NAME_BYTES: usize = 256;
+const MAX_DEVICE_ID_BYTES: usize = 512;
+
+const _: () = {
+    assert!(MAX_INPUT_DEVICES <= 32);
+    assert!(MAX_DEVICE_NAME_BYTES <= 256);
+};
+
+#[derive(Clone, Debug, Serialize, PartialEq, Eq)]
+pub struct InputDeviceInfo {
+    pub id: String,
+    pub name: String,
+    pub is_default: bool,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum InputDeviceMatchPolicy {
+    UniqueExactPublicName,
+    LegacyFuzzyName,
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum AudioError {
@@ -146,10 +170,87 @@ pub struct AudioCapture {
     pub sample_rate: u32,
 }
 
+pub fn list_input_devices() -> Result<Vec<InputDeviceInfo>, String> {
+    let host = cpal::default_host();
+    let default_id = host
+        .default_input_device()
+        .and_then(|device| device.id().ok())
+        .map(|id| id.to_string());
+    let devices = host
+        .input_devices()
+        .map_err(|error| format!("microphones are unavailable: {error}"))?;
+    Ok(normalize_input_devices(
+        devices.filter_map(|device| {
+            let id = bounded_device_id(&device.id().ok()?.to_string())?;
+            let description = device.description().ok()?;
+            let name = bounded_device_name(description.name())?;
+            Some((id, name))
+        }),
+        default_id.as_deref(),
+    ))
+}
+
+fn normalize_input_devices<I>(devices: I, default_id: Option<&str>) -> Vec<InputDeviceInfo>
+where
+    I: IntoIterator<Item = (String, String)>,
+{
+    let default_id = default_id.and_then(bounded_device_id);
+    let mut unique = BTreeMap::<String, InputDeviceInfo>::new();
+    for (id, name) in devices {
+        let is_default = default_id.as_deref() == Some(id.as_str());
+        unique.entry(id.clone()).or_insert(InputDeviceInfo {
+            id,
+            name,
+            is_default,
+        });
+        if unique.len() > MAX_INPUT_DEVICES {
+            let remove = unique
+                .iter()
+                .rev()
+                .find_map(|(id, device)| (!device.is_default).then(|| id.clone()));
+            if let Some(remove) = remove {
+                unique.remove(&remove);
+            }
+        }
+    }
+
+    let mut devices = unique.into_values().collect::<Vec<_>>();
+    devices.sort_by(|left, right| {
+        right
+            .is_default
+            .cmp(&left.is_default)
+            .then_with(|| left.name.cmp(&right.name))
+            .then_with(|| left.id.cmp(&right.id))
+    });
+    devices
+}
+
+fn bounded_device_name(name: &str) -> Option<String> {
+    let name = name.trim();
+    (!name.is_empty() && name.len() <= MAX_DEVICE_NAME_BYTES && !name.chars().any(char::is_control))
+        .then(|| name.to_string())
+}
+
+fn bounded_device_id(id: &str) -> Option<String> {
+    (!id.is_empty()
+        && id.trim() == id
+        && id.len() <= MAX_DEVICE_ID_BYTES
+        && !id.chars().any(char::is_control))
+    .then(|| id.to_string())
+}
+
+fn saved_device_name_matches(current: &str, saved: &str) -> bool {
+    bounded_device_name(current).as_deref() == Some(saved)
+}
+
 impl AudioCapture {
-    pub fn open(preferred_name: Option<&str>) -> Result<Self, String> {
+    pub fn open(
+        preferred_name: Option<&str>,
+        preferred_id: Option<&str>,
+        match_policy: InputDeviceMatchPolicy,
+    ) -> Result<Self, String> {
         let host = cpal::default_host();
-        let devices = select_input_devices(&host, preferred_name)?;
+        let devices = select_input_devices(&host, preferred_name, preferred_id, match_policy)?;
         let mut last_error = None;
         for device in devices {
             match Self::open_device(device) {
@@ -249,7 +350,30 @@ impl CaptureErrorWriter {
 fn select_input_devices(
     host: &cpal::Host,
     preferred_name: Option<&str>,
+    preferred_id: Option<&str>,
+    match_policy: InputDeviceMatchPolicy,
 ) -> Result<Vec<cpal::Device>, String> {
+    if let Some(preferred_id) = preferred_id {
+        let preferred_name = preferred_name
+            .and_then(bounded_device_name)
+            .ok_or_else(|| "configured microphone name is invalid".to_string())?;
+        let id = bounded_device_id(preferred_id)
+            .and_then(|id| cpal::DeviceId::from_str(&id).ok())
+            .ok_or_else(|| "configured microphone identifier is invalid".to_string())?;
+        let device = host
+            .device_by_id(&id)
+            .filter(|device| device.supports_input())
+            .ok_or_else(|| "configured microphone is unavailable".to_string())?;
+        let current_name = device
+            .description()
+            .ok()
+            .map(|description| description.name().to_string())
+            .ok_or_else(|| "configured microphone is unavailable".to_string())?;
+        if !saved_device_name_matches(&current_name, &preferred_name) {
+            return Err("configured microphone is unavailable".to_string());
+        }
+        return Ok(vec![device]);
+    }
     let Some(preferred_name) = preferred_name else {
         return host
             .default_input_device()
@@ -268,8 +392,15 @@ fn select_input_devices(
         .iter()
         .map(|(_, name)| name.as_str())
         .collect::<Vec<_>>();
-    let selected = select_device_name_indices(preferred_name, &names)
-        .ok_or_else(|| "configured microphone is unavailable or ambiguous".to_string())?;
+    let selected = match match_policy {
+        InputDeviceMatchPolicy::UniqueExactPublicName => {
+            select_exact_device_name_indices(preferred_name, &names)
+        }
+        InputDeviceMatchPolicy::LegacyFuzzyName => {
+            select_legacy_device_name_indices(preferred_name, &names)
+        }
+    }
+    .ok_or_else(|| "configured microphone is unavailable or ambiguous".to_string())?;
     let mut devices = devices.into_iter().map(Some).collect::<Vec<_>>();
     let selected = selected
         .into_iter()
@@ -285,12 +416,26 @@ fn select_input_devices(
 
 #[cfg(test)]
 fn select_device_name_index(preferred: &str, names: &[&str]) -> Option<usize> {
-    select_device_name_indices(preferred, names)?
+    select_legacy_device_name_indices(preferred, names)?
         .first()
         .copied()
 }
 
-fn select_device_name_indices(preferred: &str, names: &[&str]) -> Option<Vec<usize>> {
+fn select_exact_device_name_indices(preferred: &str, names: &[&str]) -> Option<Vec<usize>> {
+    if preferred.is_empty() {
+        return None;
+    }
+    let selected = names
+        .iter()
+        .enumerate()
+        .filter_map(|(index, name)| {
+            (bounded_device_name(name).as_deref() == Some(preferred)).then_some(index)
+        })
+        .collect::<Vec<_>>();
+    (selected.len() == 1).then_some(selected)
+}
+
+fn select_legacy_device_name_indices(preferred: &str, names: &[&str]) -> Option<Vec<usize>> {
     if preferred.is_empty() {
         return None;
     }
@@ -316,11 +461,7 @@ fn select_device_name_indices(preferred: &str, names: &[&str]) -> Option<Vec<usi
     });
 
     if !exact.is_empty() {
-        let mut candidates = exact;
-        if one_partial_name {
-            candidates.extend(partial.into_iter().map(|(index, _)| index));
-        }
-        return Some(candidates);
+        return Some(exact);
     }
     one_partial_name.then(|| partial.into_iter().map(|(index, _)| index).collect())
 }
@@ -503,7 +644,7 @@ mod tests {
     }
 
     #[test]
-    fn duplicate_backend_aliases_with_one_human_name_are_not_ambiguous() {
+    fn exact_legacy_match_wins_over_backend_alias_substrings() {
         let names = [
             "Shure MV6",
             "Shure MV6, USB Audio",
@@ -512,10 +653,130 @@ mod tests {
         ];
         assert_eq!(select_device_name_index("Shure MV6", &names), Some(0));
         assert_eq!(
-            select_device_name_indices("Shure MV6", &names),
-            Some(vec![0, 1, 2])
+            select_legacy_device_name_indices("Shure MV6", &names),
+            Some(vec![0])
         );
         assert_eq!(select_device_name_index("audio", &names), None);
+    }
+
+    #[test]
+    fn exact_device_selection_never_uses_case_or_substring_fallback() {
+        let names = ["Shure MV6", "Shure MV6, USB Audio", "Built-in Audio"];
+        assert_eq!(
+            select_exact_device_name_indices("Shure MV6", &names),
+            Some(vec![0])
+        );
+        assert_eq!(select_exact_device_name_indices("shure mv6", &names), None);
+        assert_eq!(select_exact_device_name_indices("Shure", &names), None);
+        assert_eq!(select_exact_device_name_indices("", &names), None);
+    }
+
+    #[test]
+    fn exact_name_selection_rejects_duplicate_devices() {
+        let names = [
+            "Same microphone",
+            "Same microphone",
+            "Same microphone (USB)",
+        ];
+        assert_eq!(
+            select_exact_device_name_indices("Same microphone", &names),
+            None
+        );
+        assert_eq!(
+            select_exact_device_name_indices("same microphone", &names),
+            None
+        );
+    }
+
+    #[test]
+    fn device_listing_deduplicates_names_and_places_the_default_first() {
+        let devices = [
+            ("alsa:z", "Zulu"),
+            ("alsa:a", "Alpha"),
+            ("alsa:d", "Default microphone"),
+            ("alsa:a", "Alpha"),
+        ]
+        .map(|(id, name)| (id.to_string(), name.to_string()));
+        assert_eq!(
+            normalize_input_devices(devices, Some("alsa:d")),
+            vec![
+                InputDeviceInfo {
+                    id: "alsa:d".to_string(),
+                    name: "Default microphone".to_string(),
+                    is_default: true,
+                },
+                InputDeviceInfo {
+                    id: "alsa:a".to_string(),
+                    name: "Alpha".to_string(),
+                    is_default: false,
+                },
+                InputDeviceInfo {
+                    id: "alsa:z".to_string(),
+                    name: "Zulu".to_string(),
+                    is_default: false,
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn device_listing_keeps_distinct_ids_when_display_names_match() {
+        let devices = [
+            ("alsa:mic-a".to_string(), "USB microphone".to_string()),
+            ("alsa:mic-b".to_string(), "USB microphone".to_string()),
+        ];
+
+        let listed = normalize_input_devices(devices, Some("alsa:mic-b"));
+
+        assert_eq!(listed.len(), 2);
+        assert_eq!(listed[0].id, "alsa:mic-b");
+        assert_eq!(listed[1].id, "alsa:mic-a");
+        assert!(listed[0].is_default);
+    }
+
+    #[test]
+    fn device_listing_is_deterministic_and_keeps_the_default_within_its_cap() {
+        let devices = (0..40)
+            .rev()
+            .map(|index| {
+                (
+                    format!("alsa:mic-{index:02}"),
+                    format!("Microphone {index:02}"),
+                )
+            })
+            .collect::<Vec<_>>();
+        let listed = normalize_input_devices(devices.clone(), Some("alsa:mic-39"));
+        let mut reversed = devices;
+        reversed.reverse();
+
+        assert_eq!(listed.len(), MAX_INPUT_DEVICES);
+        assert_eq!(listed[0].name, "Microphone 39");
+        assert!(listed[0].is_default);
+        assert_eq!(
+            listed,
+            normalize_input_devices(reversed, Some("alsa:mic-39"))
+        );
+    }
+
+    #[test]
+    fn invalid_or_overlong_public_device_fields_are_omitted() {
+        let long_name = format!("{}é ignored", "a".repeat(MAX_DEVICE_NAME_BYTES - 1));
+        assert_eq!(bounded_device_name("  "), None);
+        assert_eq!(bounded_device_name(&long_name), None);
+        assert_eq!(bounded_device_id("bad\nid"), None);
+        assert_eq!(bounded_device_id(" opaque-id"), None);
+        assert_eq!(
+            bounded_device_id(&"x".repeat(MAX_DEVICE_ID_BYTES + 1)),
+            None
+        );
+        assert!(saved_device_name_matches(
+            " USB microphone ",
+            "USB microphone"
+        ));
+        assert!(!saved_device_name_matches(
+            "Other microphone",
+            "USB microphone"
+        ));
     }
 
     #[test]

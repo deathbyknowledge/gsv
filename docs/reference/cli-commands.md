@@ -211,6 +211,9 @@ gsv desktop
 gsv desktop status [--json]
 gsv desktop new
 gsv desktop use PID
+gsv desktop microphone list
+gsv desktop microphone use NAME
+gsv desktop microphone default
 ```
 
 `gsv desktop` focuses a running Desktop or launches the sibling
@@ -221,6 +224,23 @@ installed, and prints the new PID. A cancellation after durable spawn but
 before selection can leave that Process valid but unselected. `use` launches
 or focuses Desktop, validates and selects an existing
 Process, then prints its PID.
+
+The microphone commands query a running Desktop without focusing its window. If
+Desktop is absent, they launch it and retry the requested microphone operation
+while its local endpoint starts. `microphone list` lists at most 32 available
+input devices and marks the operating-system default, the saved selection, and
+any active `GSV_VOICE_DEVICE` environment override. That legacy override uses a
+case-insensitive exact name, or a case-insensitive substring only when it
+identifies one device unambiguously. If the environment value is empty, too
+long, or otherwise invalid, output reports `environment override: invalid
+(remove GSV_VOICE_DEVICE)` without echoing the value. A selection of `not
+configured` means Desktop will ask on first voice use; `system default` means
+that choice was made explicitly. `microphone use NAME` validates and saves an
+exact device name, then prints the confirmed selection. Duplicate display names
+are numbered in the list but remain ambiguous to the name-only CLI; select those
+inputs in Desktop's picker instead. Quote names containing spaces. `microphone
+default` clears a named preference in favor of the operating
+system's default and prints the confirmed selection.
 
 `status` never launches Desktop. Its human output contains only gateway state,
 window state, and the selected PID; `--json` prints those same redacted fields
@@ -233,8 +253,10 @@ an explicit executable when testing a nonstandard installation.
 These commands use the versioned same-user IPC contract in
 `gsv-desktop-control`; they do not connect through `gsvd`. Credentials,
 messages, drafts, attachment paths, and approval content cannot be sent over
-that contract. Desktop remains the owner of gateway authentication, process
-selection, and process-switch fencing.
+that contract. Microphone names cross it only for the explicit microphone
+commands and are never included in the general redacted Desktop status. Desktop
+remains the owner of gateway authentication, process selection, microphone
+preference, and process-switch fencing.
 
 ## Device Commands
 

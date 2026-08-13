@@ -1872,6 +1872,131 @@ impl GsvApp {
             .into_any_element()
     }
 
+    fn render_microphone_chooser(&self, cx: &mut Context<Self>) -> AnyElement {
+        let Some(chooser) = &self.microphone_chooser else {
+            return div().into_any_element();
+        };
+        let mut choices = Vec::with_capacity(chooser.devices.len() + 1);
+        choices.push("SYSTEM DEFAULT".to_string());
+        choices.extend(chooser.devices.iter().enumerate().map(|(index, device)| {
+            let duplicate_count = chooser
+                .devices
+                .iter()
+                .filter(|candidate| candidate.name == device.name)
+                .count();
+            let duplicate_ordinal = chooser.devices[..=index]
+                .iter()
+                .filter(|candidate| candidate.name == device.name)
+                .count();
+            let mut label = if duplicate_count > 1 {
+                format!("{} · {duplicate_ordinal}", device.name)
+            } else {
+                device.name.clone()
+            };
+            if device.is_default {
+                label.push_str(" · CURRENT SYSTEM INPUT");
+            }
+            label
+        }));
+        let rows = choices
+            .into_iter()
+            .enumerate()
+            .map(|(index, label)| {
+                let highlighted = chooser.highlighted == index;
+                div()
+                    .id(("microphone-choice", index))
+                    .w_full()
+                    .py(px(7.0))
+                    .cursor_pointer()
+                    .font_family(theme::MONO_FONT)
+                    .text_size(px(13.0))
+                    .text_color(theme::color(if highlighted {
+                        theme::ACCENT
+                    } else {
+                        theme::TEXT_QUIET
+                    }))
+                    .hover(|this| this.text_color(theme::color(theme::TEXT)))
+                    .on_click(cx.listener(move |this, _, window, cx| {
+                        this.select_microphone_at(index, window, cx);
+                    }))
+                    .child(format!("{} {label}", if highlighted { "›" } else { " " }))
+            })
+            .collect::<Vec<_>>();
+        let status = if chooser.loading {
+            Some("LISTENING FOR MICROPHONES".to_string())
+        } else {
+            chooser.notice.clone()
+        };
+
+        div()
+            .id("microphone-surface")
+            .key_context("MicrophoneChooser")
+            .track_focus(&self.microphone_focus)
+            .absolute()
+            .inset_0()
+            .flex()
+            .items_center()
+            .justify_center()
+            .occlude()
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|this, _, window, _| {
+                    this.microphone_focus.focus(window);
+                }),
+            )
+            .child(
+                div()
+                    .w_full()
+                    .max_w(px(820.0))
+                    .px(px(42.0))
+                    .flex()
+                    .flex_col()
+                    .gap(px(18.0))
+                    .child(
+                        div()
+                            .font_family(theme::MONO_FONT)
+                            .text_size(px(10.0))
+                            .text_color(theme::color(theme::TEXT_FAINT))
+                            .child("VOICE INPUT"),
+                    )
+                    .child(
+                        div()
+                            .font_family(theme::PROSE_FONT)
+                            .font_weight(FontWeight::NORMAL)
+                            .text_size(px(25.0))
+                            .text_color(theme::color(theme::TEXT_QUIET))
+                            .child("Which microphone should hear you?"),
+                    )
+                    .when(!chooser.loading, |this| {
+                        this.child(div().mt(px(7.0)).flex().flex_col().children(rows))
+                    })
+                    .when_some(status, |this, status| {
+                        this.child(
+                            div()
+                                .mt(px(5.0))
+                                .font_family(theme::MONO_FONT)
+                                .text_size(px(10.0))
+                                .line_height(relative(1.45))
+                                .text_color(theme::color(theme::TEXT_FAINT))
+                                .child(status),
+                        )
+                    }),
+            )
+            .child(
+                div()
+                    .absolute()
+                    .bottom(px(31.0))
+                    .left_0()
+                    .right_0()
+                    .text_center()
+                    .font_family(theme::MONO_FONT)
+                    .text_size(px(9.0))
+                    .text_color(theme::color(theme::TEXT_FAINT))
+                    .child("↑ ↓ CHOOSE · ENTER SAVES · ESC RETURNS"),
+            )
+            .into_any_element()
+    }
+
     fn render_terminal(&mut self, cx: &mut Context<Self>) -> AnyElement {
         let released = self.media_cache.sync([], &self.commands);
         self.cancel_stale_media_preparations();
@@ -2042,6 +2167,7 @@ impl GsvApp {
 impl Render for GsvApp {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let login_visible = self.login.is_some();
+        let microphone_visible = !login_visible && self.microphone_chooser.is_some();
         div()
             .id("gsv-native")
             .key_context("GsvNative")
@@ -2057,6 +2183,10 @@ impl Render for GsvApp {
             .on_action(cx.listener(Self::previous_moment))
             .on_action(cx.listener(Self::next_moment))
             .on_action(cx.listener(Self::toggle_dictation_action))
+            .on_action(cx.listener(Self::choose_microphone_action))
+            .on_action(cx.listener(Self::previous_microphone))
+            .on_action(cx.listener(Self::next_microphone))
+            .on_action(cx.listener(Self::select_microphone_action))
             .on_action(cx.listener(Self::choose_attachments))
             .capture_action(cx.listener(Self::copy_selection))
             .on_mouse_down(
@@ -2068,15 +2198,22 @@ impl Render for GsvApp {
             .when(login_visible, |this| {
                 this.child(self.render_login(window, cx))
             })
+            .when(microphone_visible, |this| {
+                this.child(self.render_microphone_chooser(cx))
+            })
             .when(
-                !login_visible && self.conversation.mode == SurfaceMode::Conversation,
+                !login_visible
+                    && !microphone_visible
+                    && self.conversation.mode == SurfaceMode::Conversation,
                 |this| {
                     this.child(self.render_conversation(window, cx))
                         .child(self.render_timeline(window, cx))
                 },
             )
             .when(
-                !login_visible && self.conversation.mode == SurfaceMode::Terminal,
+                !login_visible
+                    && !microphone_visible
+                    && self.conversation.mode == SurfaceMode::Terminal,
                 |this| this.child(self.render_terminal(cx)),
             )
     }

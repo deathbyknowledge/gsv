@@ -13,8 +13,10 @@ use std::{
 use async_trait::async_trait;
 use gsv_desktop_control::{
     ClientOptions, DesktopControlClient, DesktopControlEndpoint, DesktopControlHandler,
-    DesktopControlServer, DesktopStatus, Error, ErrorCode, GatewayState, OperationError, ProcessId,
-    RequestContext, ServerOptions, TimeoutStage, WindowState,
+    DesktopControlServer, DesktopStatus, Error, ErrorCode, GatewayState, MicrophoneDevice,
+    MicrophoneEnvironmentOverride, MicrophoneName, MicrophoneSelection, MicrophoneStatus,
+    OperationError, ProcessId, RequestContext, ServerOptions, TimeoutStage, WindowState,
+    PROTOCOL_VERSION,
 };
 use tempfile::TempDir;
 use tokio::{
@@ -28,6 +30,25 @@ fn test_endpoint(temp: &TempDir) -> DesktopControlEndpoint {
     std::fs::set_permissions(&parent, std::fs::Permissions::from_mode(0o700))
         .expect("control directory made private");
     DesktopControlEndpoint::from_path(parent.join("desktop.sock"))
+}
+
+fn microphone_status(selected: MicrophoneSelection) -> Result<MicrophoneStatus, OperationError> {
+    MicrophoneStatus::new(
+        vec![
+            MicrophoneDevice {
+                name: MicrophoneName::new("Built-in Microphone")
+                    .map_err(|_| OperationError::Internal)?,
+                is_default: true,
+            },
+            MicrophoneDevice {
+                name: MicrophoneName::new("Shure MV6").map_err(|_| OperationError::Internal)?,
+                is_default: false,
+            },
+        ],
+        selected,
+        Some(MicrophoneEnvironmentOverride::Invalid),
+    )
+    .map_err(|_| OperationError::Internal)
 }
 
 #[derive(Default)]
@@ -70,10 +91,32 @@ impl DesktopControlHandler for WorkingHandler {
             Ok(process_id)
         }
     }
+
+    async fn microphone_list(
+        &self,
+        _request: RequestContext,
+    ) -> Result<MicrophoneStatus, OperationError> {
+        microphone_status(MicrophoneSelection::Ask)
+    }
+
+    async fn microphone_use(
+        &self,
+        _request: RequestContext,
+        name: MicrophoneName,
+    ) -> Result<MicrophoneStatus, OperationError> {
+        microphone_status(MicrophoneSelection::Device { name })
+    }
+
+    async fn microphone_default(
+        &self,
+        _request: RequestContext,
+    ) -> Result<MicrophoneStatus, OperationError> {
+        microphone_status(MicrophoneSelection::SystemDefault)
+    }
 }
 
 #[tokio::test]
-async fn all_four_commands_round_trip_and_shutdown_cleans_up() {
+async fn all_commands_round_trip_and_shutdown_cleans_up() {
     let temp = TempDir::new().expect("temp dir");
     let endpoint = test_endpoint(&temp);
     let handler = WorkingHandler::default();
@@ -118,6 +161,34 @@ async fn all_four_commands_round_trip_and_shutdown_cleans_up() {
             .await,
         Err(Error::Remote(ErrorCode::ProcessNotFound))
     ));
+    let microphones = client
+        .microphone_list()
+        .await
+        .expect("microphones are listed");
+    assert_eq!(microphones.devices().len(), 2);
+    assert_eq!(microphones.selected(), &MicrophoneSelection::Ask);
+    assert_eq!(
+        microphones.environment_override(),
+        Some(&MicrophoneEnvironmentOverride::Invalid)
+    );
+
+    let selected_name = MicrophoneName::new("Shure MV6").expect("valid microphone name");
+    let microphones = client
+        .microphone_use(selected_name.clone())
+        .await
+        .expect("microphone is selected");
+    assert_eq!(
+        microphones.selected(),
+        &MicrophoneSelection::Device {
+            name: selected_name
+        }
+    );
+
+    let microphones = client
+        .microphone_default()
+        .await
+        .expect("default microphone is selected");
+    assert_eq!(microphones.selected(), &MicrophoneSelection::SystemDefault);
 
     shutdown_tx.send(()).expect("shutdown sent");
     server_task
@@ -133,10 +204,8 @@ struct SlowHandler {
 
 #[async_trait]
 impl DesktopControlHandler for SlowHandler {
-    async fn activate(&self, request: RequestContext) -> Result<(), OperationError> {
-        *self.request.lock().expect("request lock") = Some(request);
-        tokio::time::sleep(Duration::from_secs(1)).await;
-        Ok(())
+    async fn activate(&self, _request: RequestContext) -> Result<(), OperationError> {
+        Err(OperationError::Internal)
     }
 
     async fn status(&self, _request: RequestContext) -> Result<DesktopStatus, OperationError> {
@@ -155,6 +224,30 @@ impl DesktopControlHandler for SlowHandler {
         _request: RequestContext,
         _process_id: ProcessId,
     ) -> Result<ProcessId, OperationError> {
+        Err(OperationError::Internal)
+    }
+
+    async fn microphone_list(
+        &self,
+        _request: RequestContext,
+    ) -> Result<MicrophoneStatus, OperationError> {
+        Err(OperationError::Internal)
+    }
+
+    async fn microphone_use(
+        &self,
+        request: RequestContext,
+        _name: MicrophoneName,
+    ) -> Result<MicrophoneStatus, OperationError> {
+        *self.request.lock().expect("request lock") = Some(request);
+        tokio::time::sleep(Duration::from_secs(1)).await;
+        microphone_status(MicrophoneSelection::Ask)
+    }
+
+    async fn microphone_default(
+        &self,
+        _request: RequestContext,
+    ) -> Result<MicrophoneStatus, OperationError> {
         Err(OperationError::Internal)
     }
 }
@@ -180,7 +273,9 @@ async fn operation_timeout_is_a_typed_redacted_response() {
     let client = DesktopControlClient::new(endpoint, ClientOptions::default());
 
     assert!(matches!(
-        client.activate().await,
+        client
+            .microphone_use(MicrophoneName::new("Shure MV6").expect("valid microphone name"))
+            .await,
         Err(Error::Remote(ErrorCode::Timeout))
     ));
     assert!(
@@ -230,6 +325,28 @@ impl DesktopControlHandler for DisconnectHandler {
     ) -> Result<ProcessId, OperationError> {
         Err(OperationError::Internal)
     }
+
+    async fn microphone_list(
+        &self,
+        _request: RequestContext,
+    ) -> Result<MicrophoneStatus, OperationError> {
+        Err(OperationError::Internal)
+    }
+
+    async fn microphone_use(
+        &self,
+        _request: RequestContext,
+        _name: MicrophoneName,
+    ) -> Result<MicrophoneStatus, OperationError> {
+        Err(OperationError::Internal)
+    }
+
+    async fn microphone_default(
+        &self,
+        _request: RequestContext,
+    ) -> Result<MicrophoneStatus, OperationError> {
+        Err(OperationError::Internal)
+    }
 }
 
 #[tokio::test]
@@ -256,7 +373,7 @@ async fn disconnect_cancels_a_queued_ui_operation() {
         .await
         .expect("manual client connects");
     let request = serde_json::to_vec(&serde_json::json!({
-        "protocolVersion": 1,
+        "protocolVersion": PROTOCOL_VERSION,
         "requestId": uuid::Uuid::new_v4(),
         "command": { "type": "activate" }
     }))
@@ -330,6 +447,28 @@ impl DesktopControlHandler for BlockingHandler {
     ) -> Result<ProcessId, OperationError> {
         Err(OperationError::Internal)
     }
+
+    async fn microphone_list(
+        &self,
+        _request: RequestContext,
+    ) -> Result<MicrophoneStatus, OperationError> {
+        Err(OperationError::Internal)
+    }
+
+    async fn microphone_use(
+        &self,
+        _request: RequestContext,
+        _name: MicrophoneName,
+    ) -> Result<MicrophoneStatus, OperationError> {
+        Err(OperationError::Internal)
+    }
+
+    async fn microphone_default(
+        &self,
+        _request: RequestContext,
+    ) -> Result<MicrophoneStatus, OperationError> {
+        Err(OperationError::Internal)
+    }
 }
 
 #[tokio::test]
@@ -396,7 +535,7 @@ async fn client_rejects_an_uncorrelated_response() {
             .await
             .expect("request body reads");
         let response = serde_json::json!({
-            "protocolVersion": 1,
+            "protocolVersion": PROTOCOL_VERSION,
             "requestId": uuid::Uuid::new_v4(),
             "outcome": {
                 "type": "success",

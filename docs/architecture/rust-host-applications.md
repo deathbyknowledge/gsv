@@ -44,10 +44,12 @@ chat and process commands, deployment, OS service installation/control for
 `gsvd`, and the client side of local Desktop control.
 
 `gsv desktop` launches or activates the installed Desktop. Its `status`, `new`,
-and `use` subcommands are clients of `gsv-desktop-control`, not alternate owners
-of Desktop state. `status` is read-only and never starts the application;
-state-changing commands make Desktop perform the operation through its own
-authenticated gateway connection.
+`use`, and `microphone` subcommands are clients of `gsv-desktop-control`, not
+alternate owners of Desktop state. `status` is read-only and never starts the
+application; state-changing commands make Desktop perform the operation through
+the runtime that owns it. Process changes use Desktop's authenticated gateway
+connection. Microphone discovery and selection use Desktop's isolated local
+transcription helper and atomically persisted host configuration.
 
 The compatibility command `gsv device run` resolves the sibling `gsvd` binary
 and replaces itself with `gsvd --foreground`. It does not link or execute the
@@ -56,14 +58,17 @@ machine runtime in the CLI process.
 ## GSV Desktop
 
 Desktop connects to the gateway with a user role. It owns the selected Process,
-the active conversation workspace, drafts, approvals, attachment work, presentation, and
-the same-user local control server. Desktop does not need `gsvd` to chat; the
-daemon only makes the local machine available as a syscall target.
+the active conversation workspace, drafts, approvals, attachment work,
+presentation, microphone preference, and the same-user local control server.
+Desktop does not need `gsvd` to chat; the daemon only makes the local machine
+available as a syscall target.
 
-The local protocol begins with `activate`, redacted `status`, `new`, and `use`.
-Its endpoint must be accessible only to the current OS user. Credentials,
-drafts, attachment paths, approval arguments, and conversation content never
-cross this IPC boundary.
+The local protocol exposes `activate`, redacted `status`, `new`, `use`, and the
+narrow `microphone list/use/default` operations. Its endpoint must be accessible
+only to the current OS user. Credentials, drafts, attachment paths, approval
+arguments, and conversation content never cross this IPC boundary. Bounded
+human-readable microphone names cross only the explicit microphone operations;
+they never enter general Desktop status.
 
 `new` means Desktop performs an authenticated `proc.spawn`, then selects the
 returned Process only after its authoritative history handoff succeeds. If
