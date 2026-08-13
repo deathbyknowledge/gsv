@@ -729,6 +729,56 @@ describe("chat transcript rows", () => {
     ]));
   });
 
+  it("ignores out-of-order stream sequences and late frames from a finished run", () => {
+    let state = applyChatSignal(
+      emptyChatRuntimeState("pid-1"),
+      "proc.run.started",
+      { pid: "pid-1", runId: "run-1" },
+      { pid: "pid-1" },
+    ).state;
+
+    state = applyChatSignal(state, "proc.run.stream", {
+      pid: "pid-1",
+      runId: "run-1",
+      seq: 5,
+      event: {
+        type: "text_delta",
+        partial: { content: [{ type: "text", text: "Newest" }] },
+      },
+    }, { pid: "pid-1" }).state;
+    state = applyChatSignal(state, "proc.run.stream", {
+      pid: "pid-1",
+      runId: "run-1",
+      seq: 4,
+      event: {
+        type: "text_delta",
+        partial: { content: [{ type: "text", text: "Stale" }] },
+      },
+    }, { pid: "pid-1" }).state;
+
+    expect(state.rows).toEqual(expect.arrayContaining([
+      expect.objectContaining({ role: "assistant", text: "Newest" }),
+    ]));
+
+    state = applyChatSignal(state, "proc.run.finished", {
+      pid: "pid-1",
+      runId: "run-1",
+      queuedCount: 0,
+      status: "completed",
+    }, { pid: "pid-1" }).state;
+    const finished = state;
+    state = applyChatSignal(state, "proc.run.stream", {
+      pid: "pid-1",
+      runId: "run-1",
+      seq: 6,
+      event: { type: "text_delta", delta: " late" },
+    }, { pid: "pid-1" }).state;
+
+    expect(state).toBe(finished);
+    expect(state.activeRunId).toBeNull();
+    expect(state.runState).toBe("idle");
+  });
+
   it("drops stream fallback tool rows when a concrete tool starts", () => {
     let state = emptyChatRuntimeState("pid-1");
 

@@ -44,6 +44,8 @@ export interface UseFittedTextOptions {
   lockedSize?: number | null;
   /** Prevent a growing draft/stream from becoming larger than its prior fit. */
   maximumSize?: number | null;
+  /** Coalesce expensive overflow measurement to a prepared presentation revision. */
+  measurementKey?: string | number | null;
   /** Observe an explicitly mounted element when this hook spans UI modes. */
   element?: HTMLElement | null;
 }
@@ -251,6 +253,7 @@ export function useFittedText<T extends HTMLElement = HTMLDivElement>(
   const locked = options.locked ?? false;
   const callerLockedSize = options.lockedSize;
   const maximumSize = options.maximumSize;
+  const measurementKey = options.measurementKey;
   const observedElement = options.element;
 
   useLayoutEffect(() => {
@@ -347,19 +350,32 @@ export function useFittedText<T extends HTMLElement = HTMLDivElement>(
     let nextPolicy: FittedTextPolicy;
 
     try {
-      nextPolicy = chooseFittedTextPolicy({
-        candidates,
-        availableHeight: containerSize.height,
-        lockedSize: stableSize,
-        maximumSize,
-        measureHeight: (fontSize, lineHeight) => {
-          if (text.length === 0) {
-            return 0;
-          }
-          const prepared = prepareCached(text, fontShorthand(fontSize));
-          return layout(prepared, containerSize.width, lineHeight).height;
-        },
-      });
+      if (stableSize != null) {
+        const fontSize = quantizeFittedTextSize(stableSize);
+        const element = observedElement ?? containerRef.current;
+        const contentHeight = element?.scrollHeight ?? stateRef.current.contentHeight;
+        nextPolicy = {
+          fontSize,
+          lineHeight: fittedTextLineHeight(fontSize),
+          contentHeight,
+          targetHeight: containerSize.height * FITTED_TEXT_HEIGHT_TARGET,
+          scrolls: contentHeight > containerSize.height + HEIGHT_TOLERANCE,
+        };
+      } else {
+        nextPolicy = chooseFittedTextPolicy({
+          candidates,
+          availableHeight: containerSize.height,
+          lockedSize: stableSize,
+          maximumSize,
+          measureHeight: (fontSize, lineHeight) => {
+            if (text.length === 0) {
+              return 0;
+            }
+            const prepared = prepareCached(text, fontShorthand(fontSize));
+            return layout(prepared, containerSize.width, lineHeight).height;
+          },
+        });
+      }
     } catch {
       // Unsupported segmentation/canvas APIs degrade to readable scrolling
       // prose instead of taking down the entire text client.
@@ -381,11 +397,15 @@ export function useFittedText<T extends HTMLElement = HTMLDivElement>(
     const nextState = { ...nextPolicy, ready: true };
     stateRef.current = nextState;
     setState((previous) => sameFittedTextState(previous, nextState) ? previous : nextState);
-  }, [callerLockedSize, containerSize, fontsReady, locked, maximumSize, text, viewport]);
+  }, [callerLockedSize, containerSize, fontsReady, locked, maximumSize, measurementKey ?? stableTextDependency(locked, text), viewport]);
 
   return {
     containerRef,
     fontFamily: FITTED_TEXT_FONT_FAMILY,
     ...state,
   };
+}
+
+function stableTextDependency(locked: boolean, text: string): string | number {
+  return locked ? Number(text.length > 0) : text;
 }

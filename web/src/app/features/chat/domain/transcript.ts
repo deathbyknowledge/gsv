@@ -63,6 +63,8 @@ export type ChatRuntimeState = {
   pendingHil: ProcHilRequest | null;
   rows: ChatTranscriptRow[];
   runState: ChatRunState;
+  /** Last accepted provider stream sequence for each live run. */
+  streamSequences: Readonly<Record<string, number>>;
 };
 
 export type ChatSignalTarget = {
@@ -107,6 +109,7 @@ export function emptyChatRuntimeState(processId = ""): ChatRuntimeState {
     pendingHil: null,
     rows: [],
     runState: "idle",
+    streamSequences: {},
   };
 }
 
@@ -122,6 +125,7 @@ export function chatRuntimeStateFromHistory(history: ChatHistory | null): ChatRu
     pendingHil: history.pendingHil,
     rows: transcriptRowsFromHistory(history),
     runState: history.runState,
+    streamSequences: {},
   };
 }
 
@@ -193,6 +197,7 @@ export function applyChatSignal(
         activeRunId: runId ?? state.activeRunId,
         pendingHil: null,
         runState: "running",
+        streamSequences: runId && state.activeRunId !== runId ? {} : state.streamSequences,
       },
     };
   }
@@ -201,7 +206,14 @@ export function applyChatSignal(
     const record = asRecord(payload);
     const runId = asString(record?.runId);
     const event = asRecord(record?.event);
-    if (!runId || !event) {
+    const sequence = asNumber(record?.seq);
+    const previousSequence = runId ? state.streamSequences[runId] : undefined;
+    if (
+      !runId
+      || !event
+      || state.activeRunId !== runId
+      || (sequence !== null && previousSequence !== undefined && sequence <= previousSequence)
+    ) {
       return { matched: true, refreshHistory: false, state };
     }
     return {
@@ -212,6 +224,9 @@ export function applyChatSignal(
         activeRunId: runId,
         rows: applyStreamEvent(state.rows, runId, event),
         runState: "running",
+        streamSequences: sequence === null
+          ? state.streamSequences
+          : { ...state.streamSequences, [runId]: sequence },
       },
     };
   }
@@ -334,6 +349,9 @@ export function applyChatSignal(
         pendingHil: null,
         rows: runId ? finishRowsForRun(state.rows, runId) : state.rows,
         runState: queuedCount > 0 ? "queued" : "idle",
+        streamSequences: runId
+          ? Object.fromEntries(Object.entries(state.streamSequences).filter(([id]) => id !== runId))
+          : state.streamSequences,
       },
     };
   }
@@ -347,6 +365,7 @@ export function applyChatSignal(
         activeRunId: null,
         pendingHil: null,
         runState: "idle",
+        streamSequences: {},
       },
     };
   }

@@ -9,16 +9,25 @@ use crate::client::MediaSource;
 use crate::content::{
     MarkdownImage, MediaAttachment, MediaKind, RichBlock, RichListItem, RichTable, TableAlignment,
 };
-use crate::prepared::{PreparedContent, PreparedInlineText, PreparedMediaSource, PreparedTextSpan};
+use crate::prepared::{
+    is_allowed_external_link, PreparedContent, PreparedInlineText, PreparedMediaOrigin,
+    PreparedMediaSource, PreparedTextSpan,
+};
 use crate::theme;
 
 use super::media::{MediaCache, MediaDescriptor, MediaVisual};
 use super::selection::{SelectableText, TextSelection};
 
-pub(super) fn media_descriptors(content: &PreparedContent) -> Vec<MediaDescriptor> {
+pub(super) fn media_descriptors(
+    content: &PreparedContent,
+    include_markdown_images: bool,
+) -> Vec<MediaDescriptor> {
     content
         .media()
         .iter()
+        .filter(|descriptor| {
+            include_markdown_images || descriptor.origin == PreparedMediaOrigin::Attachment
+        })
         .map(|descriptor| MediaDescriptor {
             cache_key: descriptor.cache_key.to_string(),
             source: match &descriptor.source {
@@ -490,7 +499,11 @@ fn render_markdown_image(
         .title
         .clone()
         .or_else(|| (!image.alt.trim().is_empty()).then_some(image.alt.clone()));
-    let link = image.link.as_ref().map(|link| link.destination.clone());
+    let link = image
+        .link
+        .as_ref()
+        .filter(|link| is_allowed_external_link(&link.destination))
+        .map(|link| link.destination.trim().to_string());
     render_image_stage(
         descriptor.as_ref(),
         cursor,
@@ -806,7 +819,7 @@ mod tests {
             "> ![map](https://example.com/map.png)".to_string(),
             Vec::new(),
         );
-        let descriptors = media_descriptors(&content);
+        let descriptors = media_descriptors(&content, true);
 
         assert_eq!(descriptors.len(), 1);
         assert_eq!(
@@ -819,12 +832,40 @@ mod tests {
     }
 
     #[test]
+    fn streaming_media_descriptors_suppress_markdown_urls_but_keep_attachments() {
+        let attachment = MediaAttachment {
+            kind: MediaKind::Image,
+            mime_type: "image/png".to_string(),
+            key: Some("agents/hank/media/result.png".to_string()),
+            path: None,
+            url: None,
+            filename: None,
+            size: None,
+            duration: None,
+            transcription: None,
+            description: None,
+        };
+        let content = prepare_completed_assistant(
+            "![changing](https://example.com/provisional.png)".to_string(),
+            vec![attachment],
+        );
+
+        let provisional = media_descriptors(&content, false);
+        let completed = media_descriptors(&content, true);
+
+        assert_eq!(provisional.len(), 1);
+        assert!(matches!(provisional[0].source, MediaSource::Process { .. }));
+        assert_eq!(completed.len(), 2);
+        assert!(matches!(completed[0].source, MediaSource::Remote { .. }));
+    }
+
+    #[test]
     fn table_images_share_the_remote_media_pipeline() {
         let content = prepare_completed_assistant(
             "| Result | Preview |\n| --- | --- |\n| ready | ![plot](https://example.com/plot.webp) |".to_string(),
             Vec::new(),
         );
-        let descriptors = media_descriptors(&content);
+        let descriptors = media_descriptors(&content, true);
 
         assert!(content.is_rich());
         assert_eq!(descriptors.len(), 1);

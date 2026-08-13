@@ -1,5 +1,3 @@
-import DOMPurify from "dompurify";
-import { parse as parseMarkdown } from "marked";
 import type { JSX } from "preact";
 import { useCallback, useEffect, useMemo, useRef, useState } from "preact/hooks";
 import { useGateway } from "../../services/gateway/GatewayProvider";
@@ -27,6 +25,7 @@ import {
   type TextMoment,
 } from "./model";
 import { createTextClientSounds } from "./sound";
+import { StreamingMarkdown, usePreparedMarkdown } from "./streamingMarkdown";
 import { useFittedText } from "./useFittedText";
 import "./textClient.css";
 
@@ -105,19 +104,16 @@ function presenceMotionForCategory(category: string | undefined) {
   return "thinking" as const;
 }
 
-function RichText({ text }: { text: string }) {
-  const html = useMemo(() => {
-    try {
-      return String(DOMPurify.sanitize(parseMarkdown(text, { async: false, breaks: true, gfm: true })));
-    } catch {
-      return "";
-    }
-  }, [text]);
-  return html ? <div class="text-client-rich" dangerouslySetInnerHTML={{ __html: html }} /> : <>{text}</>;
-}
-
 function MomentBody({ moment, processId }: { moment: TextMoment; processId: string }) {
-  const fit = useFittedText<HTMLDivElement>(moment.text, { locked: moment.role === "assistant" });
+  const preparedMarkdown = usePreparedMarkdown(
+    moment.text,
+    moment.role === "assistant",
+    moment.role === "assistant" && !moment.streaming,
+  );
+  const fit = useFittedText<HTMLDivElement>(moment.text, {
+    locked: moment.role === "assistant",
+    measurementKey: preparedMarkdown?.presentationRevision ?? 0,
+  });
   return (
     <div
       ref={fit.containerRef}
@@ -129,7 +125,13 @@ function MomentBody({ moment, processId }: { moment: TextMoment; processId: stri
         aria-busy={moment.streaming}
         style={{ fontFamily: fit.fontFamily, fontSize: `${fit.fontSize}px`, lineHeight: `${fit.lineHeight}px` }}
       >
-        {moment.role === "assistant" && !moment.streaming ? <RichText text={moment.text} /> : moment.text}
+        {moment.role === "assistant" ? (
+          <StreamingMarkdown
+            prepared={preparedMarkdown}
+            source={moment.text}
+            streaming={moment.streaming}
+          />
+        ) : moment.text}
         <TextClientMedia items={moment.media} momentKey={moment.key} processId={processId} />
         {moment.completedWork.length > 0 ? (
           <div class="text-client-work-record" aria-label="Work completed">

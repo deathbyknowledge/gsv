@@ -774,6 +774,32 @@ mod tests {
         assert!(state.head.is_none());
     }
 
+    #[test]
+    fn same_document_key_and_topology_preserve_selection_across_prepared_revisions() {
+        let selection = TextSelection::default();
+        selection.prepare("streaming-reply", SelectionTopology::RichDocument);
+        {
+            let mut state = selection.inner.borrow_mut();
+            state.fragments.insert(0, fragment("first snapshot", ""));
+            state.anchor = Some(DocumentPosition {
+                order: 0,
+                offset: 0,
+            });
+            state.head = Some(DocumentPosition {
+                order: 0,
+                offset: 5,
+            });
+        }
+
+        selection.prepare("streaming-reply", SelectionTopology::RichDocument);
+        {
+            let mut state = selection.inner.borrow_mut();
+            state.fragments.insert(0, fragment("final snapshot", ""));
+        }
+
+        assert_eq!(selection.selected_text().as_deref(), Some("final"));
+    }
+
     struct SelectionHarness {
         selection: TextSelection,
         focus_handle: FocusHandle,

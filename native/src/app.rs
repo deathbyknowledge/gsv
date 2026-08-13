@@ -87,6 +87,7 @@ enum MessageScrollAnchor {
     Top,
     Bottom,
     Ratio(f32),
+    Absolute(f32),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -95,6 +96,7 @@ enum RichPresentationPhase {
     FadingPlain,
     AwaitingRichLayout { anchor: MessageScrollAnchor },
     FadingRich,
+    UpdatingRichLayout { anchor: MessageScrollAnchor },
 }
 
 #[derive(Clone, Debug)]
@@ -335,12 +337,12 @@ impl GsvApp {
         let preparation_worker = cx.background_spawn(run_preparation_worker(
             preparation_requests,
             preparation_results,
+            cx.background_executor().clone(),
         ));
         let preparation_task = cx.spawn(async move |this, cx| {
             while let Some(result) = prepared_content_events.recv().await {
                 if this
                     .update(cx, |this, cx| {
-                        let changes_presentation = result.content.is_rich();
                         let acceptance = this.prepared_content.accept(result);
                         let visible = acceptance.as_deref().is_some_and(|accepted_id| {
                             this.interaction.visible_draft().is_none()
@@ -349,15 +351,11 @@ impl GsvApp {
                                     .current()
                                     .is_some_and(|moment| moment.id == accepted_id)
                         });
-                        if visible && changes_presentation {
-                            this.pending_rich_fallback = acceptance.and_then(|acceptance| {
-                                acceptance.replaced_fallback.and_then(|content| {
-                                    content.is_rich().then_some(PendingRichFallback {
-                                        moment_id: acceptance.target_id,
-                                        content,
-                                    })
-                                })
-                            });
+                        if visible {
+                            // The cache keeps the last prepared Markdown snapshot visible while a
+                            // newer provider snapshot is pending. A rich-to-rich acceptance is an
+                            // in-place document update, not a new plain-to-rich presentation.
+                            this.pending_rich_fallback = None;
                             cx.notify();
                         }
                     })

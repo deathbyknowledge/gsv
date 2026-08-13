@@ -282,6 +282,10 @@ function mergeHistoryRuntime(
   return {
     ...next,
     rows: mergeTranscriptRows(current.rows, next.rows),
+    // History is authoritative for durable rows, but it does not carry the
+    // ephemeral stream sequence watermark. Preserve that fence until the run
+    // terminal/start signal retires or replaces it.
+    streamSequences: current.streamSequences,
   };
 }
 

@@ -56,6 +56,13 @@ pub(crate) struct PreparedMediaDescriptor {
     pub cache_key: Arc<str>,
     pub source: PreparedMediaSource,
     pub mime_type: Option<Arc<str>>,
+    pub origin: PreparedMediaOrigin,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum PreparedMediaOrigin {
+    Markdown,
+    Attachment,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -90,6 +97,11 @@ pub(crate) struct PreparedInlineStyle {
 pub(crate) struct PreparedLink {
     pub destination: Arc<str>,
     pub title: Option<Arc<str>>,
+}
+
+pub(crate) fn is_allowed_external_link(destination: &str) -> bool {
+    url::Url::parse(destination.trim())
+        .is_ok_and(|url| matches!(url.scheme(), "http" | "https" | "mailto"))
 }
 
 /// Parse and normalize one completed intelligence response. The function has no GPUI or transport
@@ -293,11 +305,11 @@ fn flatten_inlines(
                 title,
                 content,
             } => {
-                let prepared_link = PreparedLink {
-                    destination: Arc::from(destination.as_str()),
+                let prepared_link = is_allowed_external_link(destination).then(|| PreparedLink {
+                    destination: Arc::from(destination.trim()),
                     title: title.as_deref().map(Arc::from),
-                };
-                flatten_inlines(content, style, Some(&prepared_link), text, spans);
+                });
+                flatten_inlines(content, style, prepared_link.as_ref(), text, spans);
             }
         }
     }
@@ -367,7 +379,11 @@ fn markdown_image_descriptor(image: &MarkdownImage) -> Option<PreparedMediaDescr
     if url.is_empty() {
         return None;
     }
-    Some(remote_descriptor(url, image_mime_from_url(url)))
+    Some(remote_descriptor(
+        url,
+        image_mime_from_url(url),
+        PreparedMediaOrigin::Markdown,
+    ))
 }
 
 fn attachment_descriptor(attachment: &MediaAttachment) -> Option<PreparedMediaDescriptor> {
@@ -388,19 +404,31 @@ fn attachment_descriptor(attachment: &MediaAttachment) -> Option<PreparedMediaDe
                 key: Arc::from(key),
             },
             mime_type: Some(Arc::from(attachment.mime_type.as_str())),
+            origin: PreparedMediaOrigin::Attachment,
         });
     }
     let url = attachment.url.as_deref()?.trim();
-    (!url.is_empty()).then(|| remote_descriptor(url, Some(attachment.mime_type.as_str())))
+    (!url.is_empty()).then(|| {
+        remote_descriptor(
+            url,
+            Some(attachment.mime_type.as_str()),
+            PreparedMediaOrigin::Attachment,
+        )
+    })
 }
 
-fn remote_descriptor(url: &str, mime_type: Option<&str>) -> PreparedMediaDescriptor {
+fn remote_descriptor(
+    url: &str,
+    mime_type: Option<&str>,
+    origin: PreparedMediaOrigin,
+) -> PreparedMediaDescriptor {
     PreparedMediaDescriptor {
         cache_key: Arc::from(format!("remote:{url}")),
         source: PreparedMediaSource::Remote {
             url: Arc::from(url),
         },
         mime_type: mime_type.map(Arc::from),
+        origin,
     }
 }
 
@@ -504,6 +532,26 @@ mod tests {
     }
 
     #[test]
+    fn unsafe_markdown_links_remain_text_without_click_targets() {
+        let prepared = prepare_completed_assistant(
+            "[local](file:///tmp/private) [script](javascript:alert(1)) [safe](https://example.com)"
+                .to_string(),
+            Vec::new(),
+        );
+        let inline = &prepared.inline_text()[0];
+        let linked = inline
+            .spans
+            .iter()
+            .filter_map(|span| span.link.as_ref())
+            .collect::<Vec<_>>();
+
+        assert_eq!(linked.len(), 1);
+        assert_eq!(linked[0].destination.as_ref(), "https://example.com");
+        assert!(inline.text.contains("local"));
+        assert!(inline.text.contains("script"));
+    }
+
+    #[test]
     fn media_is_normalized_in_document_order_before_rendering() {
         let mut process_image = attachment(MediaKind::Image);
         process_image.path = Some("/agents/hank/media/result.png".to_string());
@@ -521,6 +569,7 @@ mod tests {
                     url: Arc::from("https://example.com/map.webp?size=2")
                 },
                 mime_type: Some(Arc::from("image/webp")),
+                origin: PreparedMediaOrigin::Markdown,
             }
         );
         assert_eq!(
@@ -529,6 +578,7 @@ mod tests {
                 key: Arc::from("agents/hank/media/result.png")
             }
         );
+        assert_eq!(prepared.media()[1].origin, PreparedMediaOrigin::Attachment);
     }
 
     #[test]

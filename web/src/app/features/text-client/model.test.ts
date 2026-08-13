@@ -28,6 +28,7 @@ function runtime(
     pendingHil: null,
     rows,
     runState: "idle",
+    streamSequences: {},
     ...input,
   };
 }

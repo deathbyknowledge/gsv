@@ -1,7 +1,9 @@
 use std::collections::{HashMap, HashSet};
 use std::ops::Deref;
 use std::sync::Arc;
+use std::time::Duration;
 
+use gpui::BackgroundExecutor;
 use tokio::sync::{
     mpsc::{channel, Receiver, Sender},
     watch,
@@ -17,15 +19,17 @@ use crate::prepared::{
 
 const PREPARED_CONTENT_CACHE_LIMIT: usize = 256;
 const PREPARATION_RESULT_CAPACITY: usize = 1;
+const STREAMING_PREPARATION_INTERVAL: Duration = Duration::from_millis(40);
 
 #[derive(Clone)]
 pub(super) struct ContentPreparationRequest {
     id: String,
-    revision: ContentRevision,
+    revision: PreparationRevision,
     generation: u64,
     text: Arc<str>,
     media: Arc<Vec<MediaAttachment>>,
     mode: PreparationMode,
+    streaming: bool,
 }
 
 #[derive(Clone)]
@@ -35,9 +39,11 @@ pub(super) struct ContentPreparationBatch {
 
 pub(super) struct ContentPreparationResult {
     pub id: String,
-    revision: ContentRevision,
+    revision: PreparationRevision,
     generation: u64,
     mode: PreparationMode,
+    text: Arc<str>,
+    media: Arc<Vec<MediaAttachment>>,
     pub content: PreparedContent,
 }
 
@@ -63,14 +69,18 @@ impl Deref for ContentPreparationAcceptance {
 enum PreparationMode {
     Literal,
     Markdown,
-    StreamingMedia,
+}
+
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+enum PreparationRevision {
+    Content(ContentRevision),
+    Streaming(u64),
 }
 
 enum PreparedEntryState {
     Pending {
         generation: u64,
         fallback: Option<PreparedContent>,
-        source: PreparationSource,
     },
     Ready(PreparedContent),
 }
@@ -79,30 +89,32 @@ enum PreparedEntryState {
 struct PreparationSource {
     text: Arc<str>,
     media: Arc<Vec<MediaAttachment>>,
+    streaming: bool,
 }
 
 struct PreparedEntry {
-    revision: ContentRevision,
+    revision: PreparationRevision,
     mode: PreparationMode,
     last_used: u64,
+    source: PreparationSource,
     state: PreparedEntryState,
 }
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 struct PreparationResultIdentity {
     id: String,
-    revision: ContentRevision,
+    revision: PreparationRevision,
     generation: u64,
     mode: PreparationMode,
 }
 
 struct PreparationCandidate {
     id: String,
-    revision: ContentRevision,
-    media_revision: ContentRevision,
+    revision: PreparationRevision,
     text: Arc<str>,
     media: Arc<Vec<MediaAttachment>>,
     mode: PreparationMode,
+    streaming: bool,
 }
 
 pub(super) struct PreparedContentCache {
@@ -153,11 +165,12 @@ impl PreparedContentCache {
         self.clock = self.clock.wrapping_add(1);
         let mut matching_pending = false;
         let mut pending_fallback = None;
-        if let Some(entry) = self
-            .entries
-            .get_mut(id)
-            .filter(|entry| entry.revision == revision && entry.mode == mode)
-        {
+        if let Some(entry) = self.entries.get_mut(id).filter(|entry| {
+            entry.revision == PreparationRevision::Content(revision)
+                && entry.mode == mode
+                && entry.source.text.as_ref() == text
+                && entry.source.media.as_slice() == media
+        }) {
             entry.last_used = self.clock;
             match &entry.state {
                 PreparedEntryState::Ready(content) => return Some(content.clone()),
@@ -174,8 +187,47 @@ impl PreparedContentCache {
             return pending_fallback;
         }
 
-        let candidate = preparation_candidate(id, text, media, mode, revision);
+        let candidate = preparation_candidate(id, text, media, mode, revision, false);
         self.publish_candidates(vec![candidate], id);
+        self.entries.get(id).and_then(|entry| match &entry.state {
+            PreparedEntryState::Pending { fallback, .. } => fallback.clone(),
+            PreparedEntryState::Ready(content) => Some(content.clone()),
+        })
+    }
+
+    pub fn resolve_streaming(
+        &mut self,
+        id: &str,
+        source_revision: u64,
+        text: Arc<str>,
+        media: Arc<Vec<MediaAttachment>>,
+    ) -> Option<PreparedContent> {
+        let revision = PreparationRevision::Streaming(source_revision);
+        self.clock = self.clock.wrapping_add(1);
+        if let Some(entry) = self.entries.get_mut(id).filter(|entry| {
+            entry.revision == revision
+                && entry.mode == PreparationMode::Markdown
+                && entry.source.text.as_ref() == text.as_ref()
+                && entry.source.media.as_slice() == media.as_slice()
+        }) {
+            entry.last_used = self.clock;
+            return match &entry.state {
+                PreparedEntryState::Ready(content) => Some(content.clone()),
+                PreparedEntryState::Pending { fallback, .. } => fallback.clone(),
+            };
+        }
+
+        self.publish_candidates(
+            vec![PreparationCandidate {
+                id: id.to_string(),
+                revision,
+                text,
+                media,
+                mode: PreparationMode::Markdown,
+                streaming: true,
+            }],
+            id,
+        );
         self.entries.get(id).and_then(|entry| match &entry.state {
             PreparedEntryState::Pending { fallback, .. } => fallback.clone(),
             PreparedEntryState::Ready(content) => Some(content.clone()),
@@ -190,7 +242,10 @@ impl PreparedContentCache {
         let mut matching_pending = false;
         let mut content = None;
         if let Some(entry) = self.entries.get_mut(candidate.id.as_ref()).filter(|entry| {
-            entry.revision == candidate.revision && entry.mode == PreparationMode::Markdown
+            entry.revision == PreparationRevision::Content(candidate.revision)
+                && entry.mode == PreparationMode::Markdown
+                && entry.source.text.as_ref() == candidate.text.as_ref()
+                && entry.source.media.as_slice() == candidate.media.as_slice()
         }) {
             entry.last_used = self.clock;
             match &entry.state {
@@ -199,6 +254,28 @@ impl PreparedContentCache {
                     matching_pending = true;
                     content = fallback.clone();
                 }
+            }
+        }
+        if let Some(entry) = self.entries.get_mut(candidate.id.as_ref()).filter(|entry| {
+            entry.mode == PreparationMode::Markdown
+                && entry.source.text.as_ref() == candidate.text.as_ref()
+                && entry.source.media.as_slice() == candidate.media.as_slice()
+        }) {
+            entry.last_used = self.clock;
+            match &entry.state {
+                PreparedEntryState::Pending { fallback, .. } => {
+                    let fallback = fallback.clone();
+                    if self.selected_request_id.as_deref() != Some(candidate.id.as_ref()) {
+                        self.publish_pending(&candidate.id);
+                    }
+                    return fallback;
+                }
+                PreparedEntryState::Ready(content) if content.revision() == candidate.revision => {
+                    entry.revision = PreparationRevision::Content(candidate.revision);
+                    entry.source.streaming = false;
+                    return Some(content.clone());
+                }
+                PreparedEntryState::Ready(_) => {}
             }
         }
         if matching_pending {
@@ -211,11 +288,11 @@ impl PreparedContentCache {
         self.publish_candidates(
             vec![PreparationCandidate {
                 id: candidate.id.to_string(),
-                revision: candidate.revision,
-                media_revision: candidate.media_revision,
+                revision: PreparationRevision::Content(candidate.revision),
                 text: candidate.text.clone(),
                 media: candidate.media.clone(),
                 mode: PreparationMode::Markdown,
+                streaming: false,
             }],
             &candidate.id,
         );
@@ -243,11 +320,11 @@ impl PreparedContentCache {
             .filter(|candidate| seen.insert((candidate.id.clone(), candidate.revision)))
             .map(|candidate| PreparationCandidate {
                 id: candidate.id.to_string(),
-                revision: candidate.revision,
-                media_revision: candidate.media_revision,
+                revision: PreparationRevision::Content(candidate.revision),
                 text: candidate.text.clone(),
                 media: candidate.media.clone(),
                 mode: PreparationMode::Markdown,
+                streaming: false,
             })
             .collect::<Vec<_>>();
         self.publish_candidates(candidates, selected_id);
@@ -273,6 +350,12 @@ impl PreparedContentCache {
         if !entry_matches_adoption(&source, adoption) {
             self.entries.insert(adoption.transient_id.clone(), source);
             return false;
+        }
+        if source.mode == PreparationMode::Markdown
+            && matches!(&source.state, PreparedEntryState::Ready(content) if content.revision() == adoption.revision)
+        {
+            source.revision = PreparationRevision::Content(adoption.revision);
+            source.source.streaming = false;
         }
 
         self.clock = self.clock.wrapping_add(1);
@@ -319,7 +402,8 @@ impl PreparedContentCache {
         &mut self,
         result: ContentPreparationResult,
     ) -> Option<ContentPreparationAcceptance> {
-        if result.content.revision() != result.revision {
+        if matches!(result.revision, PreparationRevision::Content(revision) if result.content.revision() != revision)
+        {
             return None;
         }
         let direct_match = self.entries.get(&result.id).is_some_and(|entry| {
@@ -340,6 +424,8 @@ impl PreparedContentCache {
         };
         let entry = self.entries.get_mut(&target_id).filter(|entry| {
             entry_accepts_result(entry, result.revision, result.generation, result.mode)
+                && Arc::ptr_eq(&entry.source.text, &result.text)
+                && Arc::ptr_eq(&entry.source.media, &result.media)
         })?;
         let replaced_fallback =
             match std::mem::replace(&mut entry.state, PreparedEntryState::Ready(result.content)) {
@@ -354,19 +440,6 @@ impl PreparedContentCache {
         Some(ContentPreparationAcceptance {
             target_id,
             replaced_fallback,
-        })
-    }
-
-    pub fn appends_plain_text(&self, id: &str) -> bool {
-        self.entries.get(id).is_some_and(|entry| {
-            entry.mode == PreparationMode::StreamingMedia
-                || matches!(
-                    entry.state,
-                    PreparedEntryState::Pending {
-                        fallback: Some(_),
-                        ..
-                    }
-                )
         })
     }
 
@@ -388,7 +461,10 @@ impl PreparedContentCache {
         for candidate in candidates {
             self.clock = self.clock.wrapping_add(1);
             if let Some(entry) = self.entries.get_mut(&candidate.id).filter(|entry| {
-                entry.revision == candidate.revision && entry.mode == candidate.mode
+                entry.revision == candidate.revision
+                    && entry.mode == candidate.mode
+                    && entry.source.text.as_ref() == candidate.text.as_ref()
+                    && entry.source.media.as_slice() == candidate.media.as_slice()
             }) {
                 entry.last_used = self.clock;
                 continue;
@@ -399,15 +475,14 @@ impl PreparedContentCache {
                 .flatten()
                 .and_then(|entry| match &entry.state {
                     PreparedEntryState::Ready(content)
-                        if entry.mode == PreparationMode::StreamingMedia
-                            && content.revision() == candidate.media_revision =>
+                        if entry.mode == PreparationMode::Markdown =>
                     {
                         Some(content.clone())
                     }
                     PreparedEntryState::Pending {
                         fallback: Some(content),
                         ..
-                    } if content.revision() == candidate.media_revision => Some(content.clone()),
+                    } if entry.mode == PreparationMode::Markdown => Some(content.clone()),
                     _ => None,
                 });
             self.drop_result_adoptions_for(&candidate.id);
@@ -417,13 +492,14 @@ impl PreparedContentCache {
                     revision: candidate.revision,
                     mode: candidate.mode,
                     last_used: self.clock,
+                    source: PreparationSource {
+                        text: candidate.text,
+                        media: candidate.media,
+                        streaming: candidate.streaming,
+                    },
                     state: PreparedEntryState::Pending {
                         generation: 0,
                         fallback,
-                        source: PreparationSource {
-                            text: candidate.text,
-                            media: candidate.media,
-                        },
                     },
                 },
             );
@@ -448,7 +524,6 @@ impl PreparedContentCache {
             .filter_map(|(id, entry)| {
                 let PreparedEntryState::Pending {
                     generation: pending_generation,
-                    source,
                     ..
                 } = &mut entry.state
                 else {
@@ -462,9 +537,10 @@ impl PreparedContentCache {
                         id: id.clone(),
                         revision: entry.revision,
                         generation,
-                        text: source.text.clone(),
-                        media: source.media.clone(),
+                        text: entry.source.text.clone(),
+                        media: entry.source.media.clone(),
                         mode: entry.mode,
+                        streaming: entry.source.streaming,
                     },
                 ))
             })
@@ -538,15 +614,17 @@ impl PreparedContentCache {
 
 fn entry_matches_adoption(entry: &PreparedEntry, adoption: &MomentIdentityAdoption) -> bool {
     match entry.mode {
-        PreparationMode::Markdown => entry.revision == adoption.revision,
-        PreparationMode::StreamingMedia => entry.revision == adoption.media_revision,
+        PreparationMode::Markdown => {
+            entry.revision == PreparationRevision::Content(adoption.revision)
+                || matches!(entry.revision, PreparationRevision::Streaming(_))
+        }
         PreparationMode::Literal => false,
     }
 }
 
 fn entry_accepts_result(
     entry: &PreparedEntry,
-    revision: ContentRevision,
+    revision: PreparationRevision,
     generation: u64,
     mode: PreparationMode,
 ) -> bool {
@@ -570,17 +648,9 @@ fn preparation_identity(
     let mode = match (state, role, media.is_empty()) {
         (MomentState::Complete, MomentRole::Intelligence, _) => PreparationMode::Markdown,
         (MomentState::Complete, _, false) => PreparationMode::Literal,
-        (MomentState::Streaming, MomentRole::Intelligence, false) => {
-            PreparationMode::StreamingMedia
-        }
         _ => return None,
     };
-    let revision_text = if mode == PreparationMode::StreamingMedia {
-        ""
-    } else {
-        text
-    };
-    Some((mode, content_revision(revision_text, media)))
+    Some((mode, content_revision(text, media)))
 }
 
 fn preparation_candidate(
@@ -589,50 +659,79 @@ fn preparation_candidate(
     media: &[MediaAttachment],
     mode: PreparationMode,
     revision: ContentRevision,
+    streaming: bool,
 ) -> PreparationCandidate {
     PreparationCandidate {
         id: id.to_string(),
-        revision,
-        media_revision: content_revision("", media),
-        text: if mode == PreparationMode::StreamingMedia {
-            Arc::from("")
-        } else {
-            Arc::from(text)
-        },
+        revision: PreparationRevision::Content(revision),
+        text: Arc::from(text),
         media: Arc::new(media.to_vec()),
         mode,
+        streaming,
     }
 }
 
 pub(super) async fn run_preparation_worker(
     mut requests: watch::Receiver<Option<ContentPreparationBatch>>,
     results: Sender<ContentPreparationResult>,
+    executor: BackgroundExecutor,
 ) {
+    let mut last_streaming_preparation = None;
     while requests.changed().await.is_ok() {
         'latest: loop {
             let Some(batch) = requests.borrow_and_update().clone() else {
                 break;
             };
+            if batch
+                .requests
+                .first()
+                .is_some_and(|request| request.streaming)
+            {
+                if let Some(last_preparation) = last_streaming_preparation {
+                    let elapsed = executor.now().saturating_duration_since(last_preparation);
+                    if elapsed < STREAMING_PREPARATION_INTERVAL {
+                        tokio::select! {
+                            biased;
+                            changed = requests.changed() => {
+                                if changed.is_err() {
+                                    return;
+                                }
+                                continue 'latest;
+                            }
+                            () = executor.timer(STREAMING_PREPARATION_INTERVAL - elapsed) => {}
+                        }
+                    }
+                }
+            }
             for request in batch.requests {
+                let content_revision = match request.revision {
+                    PreparationRevision::Content(revision) => revision,
+                    PreparationRevision::Streaming(_) => {
+                        content_revision(request.text.as_ref(), request.media.as_slice())
+                    }
+                };
+                if request.streaming {
+                    last_streaming_preparation = Some(executor.now());
+                }
                 let content = match request.mode {
                     PreparationMode::Markdown => prepare_completed_assistant_with_revision(
-                        request.revision,
+                        content_revision,
                         request.text.as_ref(),
                         request.media.as_slice(),
                     ),
-                    PreparationMode::Literal | PreparationMode::StreamingMedia => {
-                        prepare_literal_content_with_revision(
-                            request.revision,
-                            request.text.as_ref(),
-                            request.media.as_slice(),
-                        )
-                    }
+                    PreparationMode::Literal => prepare_literal_content_with_revision(
+                        content_revision,
+                        request.text.as_ref(),
+                        request.media.as_slice(),
+                    ),
                 };
                 let result = ContentPreparationResult {
                     id: request.id,
                     revision: request.revision,
                     generation: request.generation,
                     mode: request.mode,
+                    text: request.text,
+                    media: request.media,
                     content,
                 };
                 let sent = tokio::select! {
@@ -692,25 +791,31 @@ mod tests {
     }
 
     fn result_for(request: ContentPreparationRequest) -> ContentPreparationResult {
+        let content_revision = match request.revision {
+            PreparationRevision::Content(revision) => revision,
+            PreparationRevision::Streaming(_) => {
+                content_revision(request.text.as_ref(), request.media.as_slice())
+            }
+        };
         let content = match request.mode {
             PreparationMode::Markdown => prepare_completed_assistant_with_revision(
-                request.revision,
+                content_revision,
                 request.text.as_ref(),
                 request.media.as_slice(),
             ),
-            PreparationMode::Literal | PreparationMode::StreamingMedia => {
-                prepare_literal_content_with_revision(
-                    request.revision,
-                    request.text.as_ref(),
-                    request.media.as_slice(),
-                )
-            }
+            PreparationMode::Literal => prepare_literal_content_with_revision(
+                content_revision,
+                request.text.as_ref(),
+                request.media.as_slice(),
+            ),
         };
         ContentPreparationResult {
             id: request.id,
             revision: request.revision,
             generation: request.generation,
             mode: request.mode,
+            text: request.text,
+            media: request.media,
             content,
         }
     }
@@ -781,12 +886,11 @@ mod tests {
         let durable_id = "message:fallback";
         let media = image_media("answer.png");
         assert!(cache
-            .resolve_or_request(
+            .resolve_streaming(
                 transient_id,
-                MomentRole::Intelligence,
-                MomentState::Streaming,
-                "partial",
-                &media,
+                1,
+                Arc::from("partial"),
+                Arc::new(media.clone()),
             )
             .is_none());
         let streaming_request = requests
@@ -1045,7 +1149,10 @@ mod tests {
             .clone()
             .expect("history preparation batch");
         let request = batch.requests.first().expect("history preparation request");
-        assert_eq!(request.revision, candidate.revision);
+        assert_eq!(
+            request.revision,
+            PreparationRevision::Content(candidate.revision)
+        );
         assert!(Arc::ptr_eq(&request.text, &candidate.text));
         assert!(Arc::ptr_eq(&request.media, &candidate.media));
     }
@@ -1111,81 +1218,321 @@ mod tests {
     }
 
     #[test]
-    fn streaming_media_prepares_once_then_upgrades_to_completed_markdown() {
+    fn streaming_assistant_snapshots_are_prepared_as_markdown() {
         let (mut cache, mut requests, _results, _result_receiver) = PreparedContentCache::new();
-        let media = image_media("result.png");
+        let text: Arc<str> = Arc::from("**partial**");
+        let media = Arc::new(image_media("result.png"));
         assert!(cache
-            .resolve_or_request(
-                "assistant",
-                MomentRole::Intelligence,
-                MomentState::Streaming,
-                "**partial**",
-                &media,
-            )
+            .resolve_streaming("assistant", 41, text.clone(), media.clone(),)
             .is_none());
         let streaming = requests
             .borrow_and_update()
             .as_ref()
             .and_then(|batch| batch.requests.first())
             .cloned()
-            .expect("streaming media batch");
-        assert_eq!(streaming.mode, PreparationMode::StreamingMedia);
-        assert_eq!(streaming.text.as_ref(), "");
-        assert!(cache.accept(result_for(streaming)).is_some());
+            .expect("streaming Markdown batch");
+        assert_eq!(streaming.mode, PreparationMode::Markdown);
+        assert!(streaming.streaming);
+        assert_eq!(streaming.revision, PreparationRevision::Streaming(41));
+        assert_eq!(streaming.text.as_ref(), "**partial**");
+        assert!(Arc::ptr_eq(&streaming.text, &text));
+        assert!(Arc::ptr_eq(&streaming.media, &media));
+        let acceptance = cache
+            .accept(result_for(streaming))
+            .expect("streaming Markdown result");
+        assert!(acceptance.replaced_fallback.is_none());
         let prepared = cache
-            .resolve_or_request(
-                "assistant",
-                MomentRole::Intelligence,
-                MomentState::Streaming,
-                "**a later partial**",
-                &media,
-            )
-            .expect("stable media should not reprepare for each text delta");
+            .resolve_streaming("assistant", 41, text, media)
+            .expect("prepared streaming Markdown");
+        assert!(prepared.is_rich());
         assert_eq!(prepared.media().len(), 1);
+    }
+
+    #[test]
+    fn non_prefix_stream_correction_replaces_the_queued_snapshot_and_keeps_last_prepared() {
+        let (mut cache, mut requests, _results, _result_receiver) = PreparedContentCache::new();
+        assert!(cache
+            .resolve_streaming(
+                "assistant",
+                1,
+                Arc::from("before **old tail**"),
+                Arc::new(Vec::new()),
+            )
+            .is_none());
+        let old = requests
+            .borrow_and_update()
+            .as_ref()
+            .and_then(|batch| batch.requests.first())
+            .cloned()
+            .expect("old streaming request");
+        assert!(cache.accept(result_for(old)).is_some());
 
         let fallback = cache
+            .resolve_streaming(
+                "assistant",
+                2,
+                Arc::from("# corrected"),
+                Arc::new(Vec::new()),
+            )
+            .expect("last exact prepared snapshot remains visible");
+        assert!(fallback.is_rich());
+        let corrected = requests
+            .borrow_and_update()
+            .as_ref()
+            .and_then(|batch| batch.requests.first())
+            .cloned()
+            .expect("corrected streaming request");
+        assert_eq!(corrected.text.as_ref(), "# corrected");
+        assert_eq!(corrected.revision, PreparationRevision::Streaming(2));
+        let acceptance = cache
+            .accept(result_for(corrected))
+            .expect("corrected result");
+        assert_eq!(
+            acceptance
+                .replaced_fallback
+                .expect("exact old fallback")
+                .revision(),
+            fallback.revision()
+        );
+    }
+
+    #[test]
+    fn identical_completion_reuses_the_streaming_markdown_document() {
+        let (mut cache, mut requests, _results, _result_receiver) = PreparedContentCache::new();
+        let text = "One **finished** answer";
+        let source: Arc<str> = Arc::from(text);
+        let media = Arc::new(Vec::new());
+        assert!(cache
+            .resolve_streaming("assistant", 72, source.clone(), media.clone(),)
+            .is_none());
+        let request = requests
+            .borrow_and_update()
+            .as_ref()
+            .and_then(|batch| batch.requests.first())
+            .cloned()
+            .expect("streaming request");
+        assert!(cache.accept(result_for(request)).is_some());
+        let streaming = cache
+            .resolve_streaming("assistant", 72, source, media)
+            .expect("streaming result");
+
+        let completed = cache
+            .resolve_history(&history_candidate("assistant", text))
+            .expect("completion reuses the exact revision");
+
+        assert!(Arc::ptr_eq(streaming.document(), completed.document()));
+        assert!(!requests
+            .has_changed()
+            .expect("preparation request channel remains open"));
+    }
+
+    #[test]
+    fn completion_reuses_an_exact_pending_final_stream_request() {
+        let (mut cache, mut requests, _results, _result_receiver) = PreparedContentCache::new();
+        let candidate = history_candidate("assistant", "Final **answer**");
+        assert!(cache
+            .resolve_streaming(
+                "assistant",
+                91,
+                candidate.text.clone(),
+                candidate.media.clone(),
+            )
+            .is_none());
+        let final_stream = requests
+            .borrow_and_update()
+            .as_ref()
+            .and_then(|batch| batch.requests.first())
+            .cloned()
+            .expect("final streaming request");
+
+        assert!(cache.resolve_history(&candidate).is_none());
+        assert!(!requests
+            .has_changed()
+            .expect("completion does not replace exact in-flight work"));
+        assert!(cache.accept(result_for(final_stream)).is_some());
+
+        let completed = cache
+            .resolve_history(&candidate)
+            .expect("the in-flight stream result becomes completion");
+        assert_eq!(completed.revision(), candidate.revision);
+        assert!(!requests
+            .has_changed()
+            .expect("completion remains fully prepared"));
+    }
+
+    #[test]
+    fn completion_revision_token_cannot_reuse_different_raw_source() {
+        let (mut cache, mut requests, _results, _result_receiver) = PreparedContentCache::new();
+        let source: Arc<str> = Arc::from("first raw");
+        let media = Arc::new(Vec::new());
+        assert!(cache
+            .resolve_streaming("assistant", 1, source, media)
+            .is_none());
+        let stream = requests
+            .borrow_and_update()
+            .as_ref()
+            .and_then(|batch| batch.requests.first())
+            .cloned()
+            .expect("stream request");
+        let forced_revision = result_for(stream).content.revision();
+        let stream = requests
+            .borrow_and_update()
+            .as_ref()
+            .and_then(|batch| batch.requests.first())
+            .cloned()
+            .expect("stream request retained");
+        assert!(cache.accept(result_for(stream)).is_some());
+
+        let text: Arc<str> = Arc::from("different raw");
+        let candidate = HistoryPreparationCandidate {
+            id: Arc::from("assistant"),
+            revision: forced_revision,
+            media_revision: content_revision("", &[]),
+            render_text: text.clone(),
+            text,
+            media: Arc::new(Vec::new()),
+        };
+        assert!(cache.resolve_history(&candidate).is_some());
+        let replacement = requests
+            .borrow_and_update()
+            .as_ref()
+            .and_then(|batch| batch.requests.first())
+            .cloned()
+            .expect("different raw is prepared independently");
+        assert_eq!(replacement.text.as_ref(), "different raw");
+    }
+
+    #[test]
+    fn content_revision_token_cannot_reuse_a_ready_different_raw_source() {
+        let (mut cache, mut requests, _results, _result_receiver) = PreparedContentCache::new();
+        assert!(cache
             .resolve_or_request(
                 "assistant",
                 MomentRole::Intelligence,
                 MomentState::Complete,
-                "**finished**",
-                &media,
+                "first raw",
+                &[],
             )
-            .expect("streaming media should remain visible during Markdown preparation");
+            .is_none());
+        let first = requests
+            .borrow_and_update()
+            .as_ref()
+            .and_then(|batch| batch.requests.first())
+            .cloned()
+            .expect("first content request");
+        let forced_revision = match first.revision {
+            PreparationRevision::Content(revision) => revision,
+            PreparationRevision::Streaming(_) => unreachable!("completed content revision"),
+        };
+        let first_result = result_for(first);
+        let first_document = first_result.content.document().clone();
+        assert!(cache.accept(first_result).is_some());
+
+        let text: Arc<str> = Arc::from("different raw");
+        let candidate = HistoryPreparationCandidate {
+            id: Arc::from("assistant"),
+            revision: forced_revision,
+            media_revision: content_revision("", &[]),
+            render_text: text.clone(),
+            text,
+            media: Arc::new(Vec::new()),
+        };
+        let fallback = cache
+            .resolve_history(&candidate)
+            .expect("last exact document remains visible");
+        assert!(Arc::ptr_eq(fallback.document(), &first_document));
+        let replacement = requests
+            .borrow_and_update()
+            .as_ref()
+            .and_then(|batch| batch.requests.first())
+            .cloned()
+            .expect("different raw is prepared independently");
+        assert_eq!(replacement.text.as_ref(), "different raw");
+    }
+
+    #[test]
+    fn content_revision_token_cannot_reuse_a_pending_different_raw_source() {
+        let (mut cache, mut requests, _results, _result_receiver) = PreparedContentCache::new();
+        assert!(cache
+            .resolve_or_request(
+                "assistant",
+                MomentRole::Intelligence,
+                MomentState::Complete,
+                "first raw",
+                &[],
+            )
+            .is_none());
+        let first = requests
+            .borrow_and_update()
+            .as_ref()
+            .and_then(|batch| batch.requests.first())
+            .cloned()
+            .expect("first content request");
+        let forced_revision = match first.revision {
+            PreparationRevision::Content(revision) => revision,
+            PreparationRevision::Streaming(_) => unreachable!("completed content revision"),
+        };
+
+        let text: Arc<str> = Arc::from("different raw");
+        let candidate = HistoryPreparationCandidate {
+            id: Arc::from("assistant"),
+            revision: forced_revision,
+            media_revision: content_revision("", &[]),
+            render_text: text.clone(),
+            text,
+            media: Arc::new(Vec::new()),
+        };
+        assert!(cache.resolve_history(&candidate).is_none());
+        let replacement = requests
+            .borrow_and_update()
+            .as_ref()
+            .and_then(|batch| batch.requests.first())
+            .cloned()
+            .expect("different raw supersedes pending work");
+        assert_eq!(replacement.text.as_ref(), "different raw");
+        assert!(cache.accept(result_for(first)).is_none());
+        assert!(cache.accept(result_for(replacement)).is_some());
+    }
+
+    #[test]
+    fn newer_streaming_markdown_keeps_attachment_media_in_its_fallback() {
+        let (mut cache, mut requests, _results, _result_receiver) = PreparedContentCache::new();
+        let media = image_media("result.png");
+        assert!(cache
+            .resolve_streaming("assistant", 1, Arc::from("first"), Arc::new(media.clone()),)
+            .is_none());
+        let first = requests
+            .borrow_and_update()
+            .as_ref()
+            .and_then(|batch| batch.requests.first())
+            .cloned()
+            .expect("first request");
+        assert!(cache.accept(result_for(first)).is_some());
+
+        let fallback = cache
+            .resolve_streaming("assistant", 2, Arc::from("second"), Arc::new(media.clone()))
+            .expect("attachment remains visible while the next snapshot prepares");
         assert_eq!(fallback.media().len(), 1);
-        assert!(cache.appends_plain_text("assistant"));
-        let retained_fallback = cache
-            .resolve_or_request(
-                "assistant",
-                MomentRole::Intelligence,
-                MomentState::Complete,
-                "**finished**",
-                &media,
-            )
-            .expect("resolving the same completion must retain live media");
-        assert_eq!(retained_fallback.media().len(), 1);
         let batch = requests
             .borrow_and_update()
             .clone()
-            .expect("completion batch");
+            .expect("new streaming batch");
         assert_eq!(batch.requests[0].mode, PreparationMode::Markdown);
         assert!(cache
             .accept(result_for(batch.requests[0].clone()))
             .is_some());
-        assert!(!cache.appends_plain_text("assistant"));
     }
 
     #[test]
-    fn changed_completion_media_does_not_reuse_the_streaming_fallback() {
+    fn changed_completion_media_keeps_the_old_document_only_as_a_pending_fallback() {
         let (mut cache, mut requests, _results, _result_receiver) = PreparedContentCache::new();
         let streaming_media = image_media("partial.png");
         assert!(cache
-            .resolve_or_request(
+            .resolve_streaming(
                 "assistant",
-                MomentRole::Intelligence,
-                MomentState::Streaming,
-                "partial",
-                &streaming_media,
+                1,
+                Arc::from("partial"),
+                Arc::new(streaming_media.clone()),
             )
             .is_none());
         let streaming = requests
@@ -1197,7 +1544,7 @@ mod tests {
         assert!(cache.accept(result_for(streaming)).is_some());
 
         let completed_media = image_media("final.png");
-        assert!(cache
+        let fallback = cache
             .resolve_or_request(
                 "assistant",
                 MomentRole::Intelligence,
@@ -1205,59 +1552,46 @@ mod tests {
                 "finished",
                 &completed_media,
             )
-            .is_none());
-        assert!(!cache.appends_plain_text("assistant"));
+            .expect("old prepared document remains visible while completion prepares");
+        assert_eq!(
+            fallback.media()[0].cache_key.as_ref(),
+            "process:partial.png"
+        );
+        let pending = requests
+            .borrow_and_update()
+            .as_ref()
+            .and_then(|batch| batch.requests.first())
+            .cloned()
+            .expect("changed completion request");
+        assert_eq!(pending.media.as_slice(), completed_media.as_slice());
     }
 
-    #[test]
-    fn worker_keeps_at_most_one_old_result_and_moves_to_the_latest_generation() {
-        let runtime = tokio::runtime::Builder::new_current_thread()
-            .enable_time()
-            .build()
-            .expect("test runtime");
-        runtime.block_on(async {
-            let (mut cache, requests, results, mut result_receiver) = PreparedContentCache::new();
-            let worker = tokio::spawn(run_preparation_worker(requests, results));
-            assert!(cache
-                .resolve_or_request(
-                    "assistant",
-                    MomentRole::Intelligence,
-                    MomentState::Complete,
-                    "old",
-                    &[],
-                )
-                .is_none());
-            tokio::task::yield_now().await;
+    #[gpui::test]
+    async fn worker_coalesces_streaming_work_to_one_old_result_and_the_latest_snapshot(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let (mut cache, requests, results, mut result_receiver) = PreparedContentCache::new();
+        let worker = cx.background_executor.spawn(run_preparation_worker(
+            requests,
+            results,
+            cx.background_executor.clone(),
+        ));
+        assert!(cache
+            .resolve_streaming("assistant", 1, Arc::from("old"), Arc::new(Vec::new()),)
+            .is_none());
+        let first = result_receiver.recv().await.expect("first worker result");
+        assert_eq!(first.revision, PreparationRevision::Streaming(1));
+        assert!(cache.accept(first).is_some());
 
-            for text in ["newer", "latest"] {
-                assert!(cache
-                    .resolve_or_request(
-                        "assistant",
-                        MomentRole::Intelligence,
-                        MomentState::Complete,
-                        text,
-                        &[],
-                    )
-                    .is_none());
-            }
-            let expected = content_revision("latest", &[]);
-            let mut observed_latest = false;
-            for _ in 0..2 {
-                let result =
-                    tokio::time::timeout(std::time::Duration::from_secs(1), result_receiver.recv())
-                        .await
-                        .expect("worker result timeout")
-                        .expect("worker result");
-                if result.revision == expected {
-                    observed_latest = true;
-                    assert!(cache.accept(result).is_some());
-                    break;
-                }
-                assert!(cache.accept(result).is_none());
-            }
-            assert!(observed_latest);
-            assert!(result_receiver.try_recv().is_err());
-            worker.abort();
-        });
+        for (revision, text) in [(2, "newer"), (3, "latest")] {
+            assert!(cache
+                .resolve_streaming("assistant", revision, Arc::from(text), Arc::new(Vec::new()),)
+                .is_some());
+        }
+        let latest = result_receiver.recv().await.expect("latest worker result");
+        assert_eq!(latest.revision, PreparationRevision::Streaming(3));
+        assert!(cache.accept(latest).is_some());
+        assert!(result_receiver.try_recv().is_err());
+        drop(worker);
     }
 }

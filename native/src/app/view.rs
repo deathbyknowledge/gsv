@@ -497,6 +497,46 @@ fn message_selection_topology(rich_content: bool, append_plain_text: bool) -> Se
     }
 }
 
+fn message_selection_key(moment_id: &str, activity_summary: &[ActivitySummaryEntry]) -> String {
+    // A stream revision replaces the same logical document. Keep selection positions alive while
+    // its raw provider snapshot and prepared Markdown revision advance; topology changes still
+    // invalidate positions in `TextSelection::prepare`.
+    format!(
+        "conversation:{moment_id}:{}",
+        activity_summary_revision(activity_summary)
+    )
+}
+
+fn streaming_scroll_anchor(maximum: f32, offset: f32) -> super::MessageScrollAnchor {
+    let maximum = maximum.max(0.0);
+    let offset = offset.clamp(-maximum, 0.0);
+    if maximum <= 0.5 || offset >= -0.5 {
+        super::MessageScrollAnchor::Top
+    } else if offset <= -maximum + 0.5 {
+        super::MessageScrollAnchor::Bottom
+    } else {
+        super::MessageScrollAnchor::Absolute(offset)
+    }
+}
+
+fn scroll_anchor_offset(anchor: super::MessageScrollAnchor, maximum: f32) -> f32 {
+    let maximum = maximum.max(0.0);
+    match anchor {
+        super::MessageScrollAnchor::Top => 0.0,
+        super::MessageScrollAnchor::Bottom => -maximum,
+        super::MessageScrollAnchor::Ratio(ratio) => -maximum * ratio.clamp(0.0, 1.0),
+        super::MessageScrollAnchor::Absolute(offset) => offset.clamp(-maximum, 0.0),
+    }
+}
+
+fn markdown_media_is_authoritative(
+    state: MomentState,
+    expected: Option<crate::prepared::ContentRevision>,
+    rendered: &PreparedContent,
+) -> bool {
+    state == MomentState::Complete && expected == Some(rendered.revision())
+}
+
 impl GsvApp {
     fn capture_message_scroll_anchor(&self) -> super::MessageScrollAnchor {
         let maximum = f32::from(self.message_scroll.max_offset().height).max(0.0);
@@ -512,12 +552,14 @@ impl GsvApp {
 
     fn apply_message_scroll_anchor(&mut self, anchor: super::MessageScrollAnchor) {
         let maximum = f32::from(self.message_scroll.max_offset().height).max(0.0);
-        let offset = match anchor {
-            super::MessageScrollAnchor::Top => 0.0,
-            super::MessageScrollAnchor::Bottom => -maximum,
-            super::MessageScrollAnchor::Ratio(ratio) => -maximum * ratio.clamp(0.0, 1.0),
-        };
+        let offset = scroll_anchor_offset(anchor, maximum);
         self.message_scroll.set_offset(point(px(0.0), px(offset)));
+    }
+
+    fn capture_streaming_scroll_anchor(&self) -> super::MessageScrollAnchor {
+        let maximum = f32::from(self.message_scroll.max_offset().height).max(0.0);
+        let offset = f32::from(self.message_scroll.offset().y).clamp(-maximum, 0.0);
+        streaming_scroll_anchor(maximum, offset)
     }
 
     fn resolve_rich_presentation(
@@ -544,7 +586,15 @@ impl GsvApp {
             let epoch = self.next_rich_presentation_epoch;
             self.next_rich_presentation_epoch =
                 self.next_rich_presentation_epoch.wrapping_add(2).max(2);
-            let phase = if already_visible && !self.reduced_motion {
+            let updating_visible_rich = self
+                .rich_presentation
+                .as_ref()
+                .is_some_and(|presentation| presentation.moment_id == moment_id);
+            let phase = if updating_visible_rich {
+                RichPresentationPhase::UpdatingRichLayout {
+                    anchor: self.capture_streaming_scroll_anchor(),
+                }
+            } else if already_visible && !self.reduced_motion {
                 RichPresentationPhase::FadingPlain
             } else {
                 RichPresentationPhase::Steady
@@ -655,6 +705,36 @@ impl GsvApp {
                     .detach();
                 }
                 RichPresentationEffect::FadeRich(epoch.wrapping_add(1))
+            }
+            RichPresentationPhase::UpdatingRichLayout { anchor } => {
+                if self.rich_layout_wait_scheduled != Some(epoch) {
+                    self.rich_layout_wait_scheduled = Some(epoch);
+                    let timer = cx.background_executor().timer(Duration::from_millis(16));
+                    cx.spawn(async move |this, cx| {
+                        timer.await;
+                        let _ = this.update(cx, |this, cx| {
+                            if this.rich_layout_wait_scheduled == Some(epoch) {
+                                this.rich_layout_wait_scheduled = None;
+                            }
+                            let should_apply =
+                                this.rich_presentation.as_ref().is_some_and(|presentation| {
+                                    presentation.epoch == epoch
+                                        && presentation.revision == revision
+                                        && presentation.phase
+                                            == RichPresentationPhase::UpdatingRichLayout { anchor }
+                                });
+                            if should_apply {
+                                this.apply_message_scroll_anchor(anchor);
+                                if let Some(presentation) = this.rich_presentation.as_mut() {
+                                    presentation.phase = RichPresentationPhase::Steady;
+                                }
+                                cx.notify();
+                            }
+                        });
+                    })
+                    .detach();
+                }
+                RichPresentationEffect::None
             }
         }
     }
@@ -891,36 +971,37 @@ impl GsvApp {
             .map(|moment| self.conversation.activity_summary_for(moment).to_vec())
             .unwrap_or_default();
         let local_preparation_candidate = current.and_then(|moment| moment.preparation_candidate());
-        let (display_message, media, moment_id, run_id, role, state, message_revision) =
-            match current {
-                Some(moment) => (
-                    SharedString::new(moment.text.clone()),
-                    moment.media.clone(),
-                    moment.id.clone(),
-                    moment.run_id.clone(),
-                    moment.role,
-                    moment.state,
-                    moment.content_revision,
-                ),
-                None if self.conversation.connection == ConnectionState::Connecting => (
-                    "Reaching your GSV…".into(),
-                    Arc::new(Vec::new()),
-                    "system:connecting".to_string(),
-                    None,
-                    MomentRole::System,
-                    MomentState::Complete,
-                    1,
-                ),
-                None => (
-                    "Begin anywhere.".into(),
-                    Arc::new(Vec::new()),
-                    "system:begin".to_string(),
-                    None,
-                    MomentRole::Intelligence,
-                    MomentState::Complete,
-                    2,
-                ),
-            };
+        let (display_text, media, moment_id, run_id, role, state, message_revision) = match current
+        {
+            Some(moment) => (
+                moment.text.clone(),
+                moment.media.clone(),
+                moment.id.clone(),
+                moment.run_id.clone(),
+                moment.role,
+                moment.state,
+                moment.content_revision,
+            ),
+            None if self.conversation.connection == ConnectionState::Connecting => (
+                Arc::from("Reaching your GSV…"),
+                Arc::new(Vec::new()),
+                "system:connecting".to_string(),
+                None,
+                MomentRole::System,
+                MomentState::Complete,
+                1,
+            ),
+            None => (
+                Arc::from("Begin anywhere."),
+                Arc::new(Vec::new()),
+                "system:begin".to_string(),
+                None,
+                MomentRole::Intelligence,
+                MomentState::Complete,
+                2,
+            ),
+        };
+        let display_message = SharedString::new(display_text.clone());
         let preparation_candidate = self
             .history_preparations
             .get(&moment_id)
@@ -929,8 +1010,18 @@ impl GsvApp {
         let message_revision = preparation_candidate
             .as_ref()
             .map_or(message_revision, |candidate| candidate.revision.get());
+        let authoritative_markdown_revision = preparation_candidate
+            .as_ref()
+            .map(|candidate| candidate.revision);
         let prepared_content = if let Some(candidate) = preparation_candidate.as_ref() {
             self.prepared_content.resolve_history(candidate)
+        } else if state == MomentState::Streaming && role == MomentRole::Intelligence {
+            self.prepared_content.resolve_streaming(
+                &moment_id,
+                message_revision,
+                display_text,
+                media.clone(),
+            )
         } else {
             self.prepared_content.resolve_or_request(
                 &moment_id,
@@ -940,25 +1031,17 @@ impl GsvApp {
                 media.as_slice(),
             )
         };
-        let append_plain_text = self.prepared_content.appends_plain_text(&moment_id);
         let content_pending = self.prepared_content.is_pending(&moment_id);
         let already_visible = self.message_scroll_moment.as_deref() == Some(moment_id.as_str());
         let prepared_is_rich = prepared_content
             .as_ref()
             .is_some_and(PreparedContent::is_rich);
-        let fallback_is_rich = content_pending && prepared_is_rich;
-        let rich_ready = !content_pending && prepared_is_rich;
-        let streaming_media_is_rich = append_plain_text && prepared_is_rich;
-        // While text streams beside already-prepared media, only the literal prefix changes.
-        // Keep the renderer identity pinned to the media document so every delta cannot restart
-        // the rich handoff or temporarily hide its attachment.
-        let presentation_revision = if streaming_media_is_rich {
-            prepared_content
-                .as_ref()
-                .map_or(message_revision, |content| content.revision().get())
-        } else {
-            message_revision
-        };
+        let rich_ready = prepared_is_rich;
+        // Pending work renders the last exact prepared snapshot. Its revision, rather than the
+        // newer raw provider revision, owns the presentation until the exact new result arrives.
+        let presentation_revision = prepared_content
+            .as_ref()
+            .map_or(message_revision, |content| content.revision().get());
         let rich_presentation = self.resolve_rich_presentation(
             &moment_id,
             presentation_revision,
@@ -974,19 +1057,14 @@ impl GsvApp {
             })
             .flatten();
         let showing_outgoing_fallback = outgoing_content.is_some();
-        let show_rich = fallback_is_rich
-            || showing_outgoing_fallback
+        let show_rich = showing_outgoing_fallback
             || (rich_ready && !matches!(rich_presentation, RichPresentationEffect::FadePlain(_)));
         let rendered_content = if showing_outgoing_fallback {
             outgoing_content
         } else {
             show_rich.then_some(prepared_content.clone()).flatten()
         };
-        let rendered_append_plain_text = if showing_outgoing_fallback {
-            true
-        } else {
-            append_plain_text
-        };
+        let rendered_append_plain_text = showing_outgoing_fallback;
         let selection_topology = message_selection_topology(show_rich, rendered_append_plain_text);
         if self.message_scroll_moment.as_deref() != Some(moment_id.as_str()) {
             self.message_scroll.set_offset(point(px(0.0), px(0.0)));
@@ -1022,12 +1100,19 @@ impl GsvApp {
         };
         self.stream_type_sizes.clear();
         let measurement_text = message_measurement_text(&display_message, media.as_slice());
+        let layout_revision = if state == MomentState::Streaming {
+            prepared_content
+                .as_ref()
+                .map_or(0, |content| content.revision().get())
+        } else {
+            message_revision
+        };
         let message_layout = self.fit_cached_type_layout(
             window,
             TypeFit {
                 key: &moment_type_key,
                 text: measurement_text,
-                revision: message_revision,
+                revision: layout_revision,
                 available_width,
                 available_height,
                 maximum_size,
@@ -1086,11 +1171,7 @@ impl GsvApp {
             self.text_selection.clear();
         } else {
             self.text_selection.prepare(
-                format!(
-                    "conversation:{moment_id}:{}:{}",
-                    message_revision,
-                    activity_summary_revision(&activity_summary)
-                ),
+                message_selection_key(&moment_id, &activity_summary),
                 selection_topology,
             );
         }
@@ -1100,7 +1181,16 @@ impl GsvApp {
             self.media_cache.sync(
                 rendered_content
                     .as_ref()
-                    .map(media_descriptors)
+                    .map(|content| {
+                        media_descriptors(
+                            content,
+                            markdown_media_is_authoritative(
+                                state,
+                                authoritative_markdown_revision,
+                                content,
+                            ),
+                        )
+                    })
                     .unwrap_or_default(),
                 &self.commands,
             )
@@ -1978,6 +2068,37 @@ mod tests {
             message_selection_topology(true, true),
             SelectionTopology::PlainPrefixWithRichDocument
         );
+
+        let first_revision = message_selection_key("assistant:stream", &[]);
+        let corrected_revision = message_selection_key("assistant:stream", &[]);
+        assert_eq!(first_revision, corrected_revision);
+    }
+
+    #[test]
+    fn streaming_growth_preserves_middle_offset_and_bottom_following() {
+        let middle = streaming_scroll_anchor(100.0, -40.0);
+        assert_eq!(middle, super::super::MessageScrollAnchor::Absolute(-40.0));
+        assert_eq!(scroll_anchor_offset(middle, 240.0), -40.0);
+
+        let bottom = streaming_scroll_anchor(100.0, -100.0);
+        assert_eq!(bottom, super::super::MessageScrollAnchor::Bottom);
+        assert_eq!(scroll_anchor_offset(bottom, 240.0), -240.0);
+    }
+
+    #[test]
+    fn completed_state_does_not_authorize_an_old_streaming_media_snapshot() {
+        let old = crate::prepared::prepare_completed_assistant(
+            "![old](https://example.com/old.png)".to_string(),
+            Vec::new(),
+        );
+        let final_revision = crate::prepared::content_revision("final correction", &[]);
+
+        assert!(!markdown_media_is_authoritative(
+            MomentState::Complete,
+            Some(final_revision),
+            &old,
+        ));
+        assert!(media_descriptors(&old, false).is_empty());
     }
 
     #[test]

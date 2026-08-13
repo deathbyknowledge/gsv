@@ -99,15 +99,20 @@
 
 .text-client-rich {
   white-space: normal;
-  animation: text-client-rich-ready 140ms ease-out both;
 }
 
-.text-client-rich > :first-child {
+.text-client-rich > :first-child,
+.text-client-rich-block > :first-child {
   margin-top: 0;
 }
 
-.text-client-rich > :last-child {
+.text-client-rich > :last-child,
+.text-client-rich-block > :last-child {
   margin-bottom: 0;
+}
+
+.text-client-stream-tail {
+  white-space: pre-wrap;
 }
 
 .text-client-rich h1,
@@ -748,11 +753,6 @@
 @keyframes text-client-moment-enter {
   from { opacity: 0; transform: translateY(8px); }
   to { opacity: 1; transform: none; }
-}
-
-@keyframes text-client-rich-ready {
-  from { opacity: 0.72; }
-  to { opacity: 1; }
 }
 
 @keyframes text-client-presence-breathe {
