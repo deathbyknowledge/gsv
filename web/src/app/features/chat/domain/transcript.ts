@@ -42,6 +42,7 @@ export type ChatTranscriptRow = {
   origin?: InteractionOrigin;
   toolArgs?: unknown;
   toolCallId?: string;
+  toolExecutionId?: string;
   toolName?: string;
   toolOutcome?: ChatToolOutcome;
   toolOutput?: unknown;
@@ -268,6 +269,37 @@ export function applyChatSignal(
     };
   }
 
+  if (signal === "proc.run.tool.finished") {
+    const record = asRecord(payload);
+    const runId = asString(record?.runId);
+    const executionId = asString(record?.executionId);
+    const callId = asString(record?.callId);
+    const outcome = normalizeToolOutcome(record?.outcome);
+    if (!runId || !executionId || !callId || !outcome) {
+      return { matched: true, refreshHistory: false, state };
+    }
+    return {
+      matched: true,
+      refreshHistory: false,
+      state: {
+        ...state,
+        rows: state.rows.map((row) => (
+          row.role === "tool"
+          && row.runId === runId
+          && row.toolExecutionId === executionId
+          && row.toolCallId === callId
+            ? {
+                ...row,
+                status: outcome === "completed" ? "done" as const : "error" as const,
+                streaming: false,
+                toolOutcome: outcome,
+              }
+            : row
+        )),
+      },
+    };
+  }
+
   if (signal === "proc.run.hil.requested") {
     const pendingHil = normalizeHilRequest(payload);
     if (!pendingHil) {
@@ -480,13 +512,16 @@ function isToolActivityRow(row: Pick<ChatTranscriptRow, "role">): boolean {
 }
 
 function sameToolActivityRow(
-  left: Pick<ChatTranscriptRow, "role" | "runId" | "toolCallId">,
-  right: Pick<ChatTranscriptRow, "role" | "runId" | "toolCallId">,
+  left: Pick<ChatTranscriptRow, "role" | "runId" | "toolCallId" | "toolExecutionId">,
+  right: Pick<ChatTranscriptRow, "role" | "runId" | "toolCallId" | "toolExecutionId">,
 ): boolean {
   if (!isToolActivityRow(left) || !isToolActivityRow(right) || !left.toolCallId || !right.toolCallId) {
     return false;
   }
   if (left.toolCallId !== right.toolCallId) {
+    return false;
+  }
+  if (left.toolExecutionId && right.toolExecutionId && left.toolExecutionId !== right.toolExecutionId) {
     return false;
   }
   if (left.runId || right.runId) {
@@ -931,6 +966,7 @@ function toolRowFromStarted(record: Record<string, unknown> | null): ChatTranscr
     time: formatTranscriptTime(now),
     toolArgs: record?.args ?? {},
     toolCallId: callId,
+    toolExecutionId: asString(record?.executionId) ?? undefined,
     toolName,
     toolSyscall: syscall,
     runId: asString(record?.runId) ?? undefined,

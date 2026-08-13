@@ -590,6 +590,7 @@ describe("chat transcript rows", () => {
     state = applyChatSignal(state, "proc.run.tool.started", {
       pid: "pid-1",
       runId: "run-1",
+      executionId: "execution-1",
       callId: "call-1",
       name: "Shell",
       syscall: "shell.exec",
@@ -616,7 +617,20 @@ describe("chat transcript rows", () => {
     });
     expect(state.rows).toEqual(expect.arrayContaining([
       expect.objectContaining({ role: "assistant", text: "Hello", streaming: true }),
-      expect.objectContaining({ role: "tool", toolCallId: "call-1", status: "running" }),
+      expect.objectContaining({ role: "tool", toolCallId: "call-1", toolExecutionId: "execution-1", status: "running" }),
+    ]));
+
+    state = applyChatSignal(state, "proc.run.tool.finished", {
+      pid: "pid-1",
+      runId: "run-1",
+      executionId: "execution-1",
+      callId: "call-1",
+      outcome: "completed",
+      timestamp: 2,
+    }, { pid: "pid-1" }).state;
+
+    expect(state.rows).toEqual(expect.arrayContaining([
+      expect.objectContaining({ toolExecutionId: "execution-1", status: "done", toolOutcome: "completed" }),
     ]));
   });
 
