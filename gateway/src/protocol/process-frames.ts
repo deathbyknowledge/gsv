@@ -1,10 +1,55 @@
 import type {
   AdapterInteractionOrigin,
   EventReplyTarget,
+  ManagedMailSummaryCategory,
   ProcMediaInput,
   ProcSendResult,
 } from "@humansandmachines/gsv/protocol";
 import type { Frame, RequestFrame, ResponseErrFrame } from "./frames";
+
+export type ProcessMailReceivedRuntimeEvent = {
+  eventId: string;
+  type: "mail.received";
+  mailboxId: string;
+  messageId: string;
+  receivedAt: number;
+  envelopeFrom: string;
+  displayFrom?: string;
+  subject?: string;
+  summary: string;
+  category: ManagedMailSummaryCategory;
+  requiresAttention: boolean;
+  confidence?: number;
+};
+
+export type ProcessRuntimeEvent = ProcessMailReceivedRuntimeEvent;
+
+export type ProcessRuntimeEventDeliverArgs = {
+  event: ProcessRuntimeEvent;
+};
+
+export type ProcessRuntimeEventDeliverRequestFrame = {
+  type: "req";
+  id: string;
+  call: "proc.runtime.event.deliver";
+  args: ProcessRuntimeEventDeliverArgs;
+  body?: undefined;
+};
+
+export type ProcessRuntimeEventDeliverResult = {
+  eventId: string;
+  runId: string;
+  queued: boolean;
+};
+
+export type ProcessRuntimeEventDeliverResponseFrame =
+  | {
+      type: "res";
+      id: string;
+      ok: true;
+      data: ProcessRuntimeEventDeliverResult;
+    }
+  | ResponseErrFrame;
 
 export type ProcessScheduleDeliverArgs = {
   runId: string;
@@ -98,11 +143,13 @@ export type ProcessRunAttachResponseFrame =
 
 export type ProcessRequestFrame =
   | RequestFrame
+  | ProcessRuntimeEventDeliverRequestFrame
   | ProcessScheduleDeliverRequestFrame
   | ProcessAdapterDeliverRequestFrame
   | ProcessRunAttachRequestFrame;
 export type ProcessInboundFrame =
   | Frame
+  | ProcessRuntimeEventDeliverRequestFrame
   | ProcessScheduleDeliverRequestFrame
   | ProcessAdapterDeliverRequestFrame
   | ProcessRunAttachRequestFrame;

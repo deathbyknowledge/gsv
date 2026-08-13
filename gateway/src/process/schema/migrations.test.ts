@@ -6,6 +6,7 @@ import { PROCESS_V003_MESSAGE_METADATA } from "./v003_message_metadata";
 import { PROCESS_V005_TOOL_RESULT_OUTCOME } from "./v005_tool_result_outcome";
 import { PROCESS_V006_PENDING_HIL_OWNER } from "./v006_pending_hil_owner";
 import { PROCESS_V008_SINGLE_PROCESS_HISTORY } from "./v008_single_process_history";
+import { PROCESS_V009_TYPED_MESSAGE_QUEUE } from "./v009_typed_message_queue";
 
 function normalizedStatements(): string[] {
   return PROCESS_MIGRATIONS.flatMap((migration) => migration.statements)
@@ -37,7 +38,7 @@ function createTableStatement(name: string): string {
 describe("process schema migrations", () => {
   it("starts the process component at a v1 baseline with ordered migrations", () => {
     expect(PROCESS_SCHEMA_COMPONENT).toBe("process");
-    expect(PROCESS_MIGRATIONS).toHaveLength(8);
+    expect(PROCESS_MIGRATIONS).toHaveLength(9);
     expect(PROCESS_MIGRATIONS[0]).toMatchObject({
       id: 1,
       name: "initial_process_schema",
@@ -69,6 +70,10 @@ describe("process schema migrations", () => {
     expect(PROCESS_MIGRATIONS[7]).toMatchObject({
       id: 8,
       name: "single_process_history",
+    });
+    expect(PROCESS_MIGRATIONS[8]).toMatchObject({
+      id: 9,
+      name: "add_typed_message_queue",
     });
   });
 
@@ -173,6 +178,27 @@ describe("process schema migrations", () => {
     expect(segments).not.toContain("conversation_id");
     expect(statements.some((statement) => (
       statement.includes("FROM messages WHERE conversation_id = 'default'")
+    ))).toBe(true);
+  });
+
+  it("adds role, kind, and provenance to queued work in v9", () => {
+    const statements = PROCESS_V009_TYPED_MESSAGE_QUEUE.statements
+      .map((statement) => statement.trim().replace(/\s+/g, " "));
+
+    expect(statements).toContain(
+      "ALTER TABLE message_queue ADD COLUMN role TEXT NOT NULL DEFAULT 'user' CHECK (role IN ('user', 'system'))",
+    );
+    expect(statements).toContain(
+      "ALTER TABLE message_queue ADD COLUMN kind TEXT NOT NULL DEFAULT 'message'",
+    );
+    expect(statements).toContain(
+      "ALTER TABLE message_queue ADD COLUMN provenance_json TEXT",
+    );
+    expect(statements.some((statement) => (
+      statement.startsWith("UPDATE message_queue SET role = 'system', kind = 'schedule.event'")
+    ))).toBe(true);
+    expect(statements.some((statement) => (
+      statement.startsWith("UPDATE message_queue SET role = 'system', kind = 'runtime.wake'")
     ))).toBe(true);
   });
 });

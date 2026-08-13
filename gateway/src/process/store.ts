@@ -66,6 +66,7 @@ export type PendingToolCallRecord = {
 };
 
 export type MessageRole = "user" | "assistant" | "system" | "toolResult";
+export type QueuedMessageRole = Extract<MessageRole, "user" | "system">;
 
 export type MessageRecord = {
   id: number;
@@ -107,9 +108,20 @@ export type QueuedMessage = {
   id: number;
   runId: string;
   generation: number;
+  role: QueuedMessageRole;
+  kind: string;
   message: string;
   media: string | null;
   origin?: string | null;
+  provenance?: string | null;
+};
+
+export type EnqueueMessageOptions = {
+  role?: QueuedMessageRole;
+  kind?: string;
+  media?: string;
+  origin?: string;
+  provenance?: string;
 };
 
 export type PendingHilRecord = {
@@ -933,19 +945,22 @@ export class ProcessStore {
   enqueue(
     runId: string,
     message: string,
-    media?: string,
-    origin?: string,
+    options: EnqueueMessageOptions = {},
   ): void {
     const generation = this.getHistoryGeneration();
     this.sql.exec(
       `INSERT INTO message_queue (
-        run_id, generation, message, media_json, origin_json, created_at
-      ) VALUES (?, ?, ?, ?, ?, ?)`,
+        run_id, generation, role, kind, message, media_json, origin_json,
+        provenance_json, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       runId,
       generation,
+      options.role ?? "user",
+      options.kind ?? "message",
       message,
-      media ?? null,
-      origin ?? null,
+      options.media ?? null,
+      options.origin ?? null,
+      options.provenance ?? null,
       Date.now(),
     );
   }
@@ -956,11 +971,15 @@ export class ProcessStore {
         id: number;
         run_id: string;
         generation: number;
+        role: string;
+        kind: string;
         message: string;
         media_json: string | null;
         origin_json: string | null;
+        provenance_json: string | null;
       }>(
-        `SELECT id, run_id, generation, message, media_json, origin_json
+        `SELECT id, run_id, generation, role, kind, message, media_json,
+                origin_json, provenance_json
            FROM message_queue
           ORDER BY id ASC
           LIMIT 1`,
@@ -973,9 +992,12 @@ export class ProcessStore {
       id: row.id,
       runId: row.run_id,
       generation: row.generation,
+      role: queuedMessageRole(row.role),
+      kind: row.kind,
       message: row.message,
       media: row.media_json,
       origin: row.origin_json,
+      provenance: row.provenance_json,
     };
   }
 
@@ -985,11 +1007,15 @@ export class ProcessStore {
         id: number;
         run_id: string;
         generation: number;
+        role: string;
+        kind: string;
         message: string;
         media_json: string | null;
         origin_json: string | null;
+        provenance_json: string | null;
       }>(
-        `SELECT id, run_id, generation, message, media_json, origin_json
+        `SELECT id, run_id, generation, role, kind, message, media_json,
+                origin_json, provenance_json
            FROM message_queue
           ORDER BY id ASC`,
       ),
@@ -1000,9 +1026,12 @@ export class ProcessStore {
       id: row.id,
       runId: row.run_id,
       generation: row.generation,
+      role: queuedMessageRole(row.role),
+      kind: row.kind,
       message: row.message,
       media: row.media_json,
       origin: row.origin_json,
+      provenance: row.provenance_json,
     }));
   }
 
@@ -1080,6 +1109,13 @@ function messageRecordFromRow(row: MessageRow): MessageRecord {
     metadata: row.metadata_json ?? null,
     createdAt: row.created_at,
   };
+}
+
+function queuedMessageRole(value: string): QueuedMessageRole {
+  if (value === "user" || value === "system") {
+    return value;
+  }
+  throw new Error(`Invalid queued message role: ${value}`);
 }
 
 export function parseMessageMetadata(raw: string | null | undefined): MessageMetadata | null {

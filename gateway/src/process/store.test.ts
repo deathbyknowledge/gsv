@@ -587,9 +587,34 @@ describe("ProcessStore", () => {
       const stub = await getProcessByPid("queue-meta");
       await runInDurableObject(stub, (instance: Process) => {
         const store = (instance as any).store;
-        store.enqueue("r1", "hello", '["img.png"]');
+        store.enqueue("r1", "hello", { media: '["img.png"]' });
         const item = store.dequeue();
         expect(item!.media).toBe('["img.png"]');
+      });
+    });
+
+    it("preserves queued runtime event semantics", async () => {
+      const stub = await getProcessByPid("queue-runtime-event");
+      await runInDurableObject(stub, (instance: Process) => {
+        const store = (instance as any).store;
+        const provenance = JSON.stringify({
+          source: "kernel",
+          eventId: "mail-event-1",
+          eventType: "mail.received",
+          contentTrust: "untrusted",
+        });
+        store.enqueue("mail-run-1", "mail arrived", {
+          role: "system",
+          kind: "mail.received",
+          provenance,
+        });
+
+        expect(store.dequeue()).toMatchObject({
+          runId: "mail-run-1",
+          role: "system",
+          kind: "mail.received",
+          provenance,
+        });
       });
     });
 
