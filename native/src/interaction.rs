@@ -11,6 +11,7 @@ pub struct PendingSubmission {
     pub id: u64,
     pub moment_id: String,
     pub text: String,
+    pub attachment_ids: Vec<u64>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -21,8 +22,14 @@ pub struct PendingApprovalSubmission {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum SubmissionFailure {
-    RestoreDraft { moment_id: String, text: String },
-    PreserveFailedMoment { moment_id: String },
+    RestoreDraft {
+        moment_id: String,
+        text: String,
+        attachment_ids: Vec<u64>,
+    },
+    PreserveFailedMoment {
+        moment_id: String,
+    },
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -35,6 +42,7 @@ pub enum ApprovalSubmissionFailure {
 pub struct CanvasInteraction {
     pub layer: CanvasLayer,
     conversation_draft: String,
+    conversation_has_attachments: bool,
     approval_draft: String,
     resume_after_approval: CanvasLayer,
     pending_submission: Option<PendingSubmission>,
@@ -48,6 +56,7 @@ impl CanvasInteraction {
         Self {
             layer: CanvasLayer::Moment,
             conversation_draft: String::new(),
+            conversation_has_attachments: false,
             approval_draft: String::new(),
             resume_after_approval: CanvasLayer::Moment,
             pending_submission: None,
@@ -70,11 +79,12 @@ impl CanvasInteraction {
             }
             CanvasLayer::Moment | CanvasLayer::Draft => {
                 self.conversation_draft = value;
-                self.layer = if self.conversation_draft.is_empty() {
-                    CanvasLayer::Moment
-                } else {
-                    CanvasLayer::Draft
-                };
+                self.layer =
+                    if self.conversation_draft.is_empty() && !self.conversation_has_attachments {
+                        CanvasLayer::Moment
+                    } else {
+                        CanvasLayer::Draft
+                    };
             }
         }
     }
@@ -94,12 +104,44 @@ impl CanvasInteraction {
     }
 
     pub fn show_conversation_draft(&mut self) {
-        if !self.conversation_draft.is_empty() && !self.is_approval() {
+        if (!self.conversation_draft.is_empty() || self.conversation_has_attachments)
+            && !self.is_approval()
+        {
             self.layer = CanvasLayer::Draft;
         }
     }
 
+    pub fn set_conversation_has_attachments(&mut self, has_attachments: bool) {
+        self.conversation_has_attachments = has_attachments;
+        if has_attachments {
+            self.has_interacted = true;
+            if self.is_approval() {
+                self.resume_after_approval = CanvasLayer::Draft;
+            } else {
+                self.layer = CanvasLayer::Draft;
+            }
+        } else if self.conversation_draft.is_empty() {
+            if self.is_approval() {
+                if self.resume_after_approval == CanvasLayer::Draft {
+                    self.resume_after_approval = CanvasLayer::Moment;
+                }
+            } else if self.layer == CanvasLayer::Draft {
+                self.layer = CanvasLayer::Moment;
+            }
+        }
+    }
+
+    #[cfg(test)]
     pub fn begin_submission(&mut self, text: String, moment_id: String) -> Option<u64> {
+        self.begin_submission_with_attachments(text, moment_id, Vec::new())
+    }
+
+    pub fn begin_submission_with_attachments(
+        &mut self,
+        text: String,
+        moment_id: String,
+        attachment_ids: Vec<u64>,
+    ) -> Option<u64> {
         if self.pending_submission.is_some() {
             return None;
         }
@@ -110,8 +152,10 @@ impl CanvasInteraction {
             id,
             moment_id,
             text,
+            attachment_ids,
         });
         self.conversation_draft.clear();
+        self.conversation_has_attachments = false;
         self.layer = CanvasLayer::Moment;
         Some(id)
     }
@@ -134,8 +178,9 @@ impl CanvasInteraction {
             return None;
         }
 
-        if self.conversation_draft.is_empty() {
+        if self.conversation_draft.is_empty() && !self.conversation_has_attachments {
             self.conversation_draft = submission.text.clone();
+            self.conversation_has_attachments = !submission.attachment_ids.is_empty();
             if self.is_approval() {
                 self.resume_after_approval = CanvasLayer::Draft;
             } else {
@@ -144,6 +189,7 @@ impl CanvasInteraction {
             Some(SubmissionFailure::RestoreDraft {
                 moment_id: submission.moment_id,
                 text: submission.text,
+                attachment_ids: submission.attachment_ids,
             })
         } else {
             Some(SubmissionFailure::PreserveFailedMoment {
@@ -211,7 +257,7 @@ impl CanvasInteraction {
         self.approval_draft.clear();
         self.pending_approval_submission = None;
         self.layer = if self.resume_after_approval == CanvasLayer::Draft
-            && !self.conversation_draft.is_empty()
+            && (!self.conversation_draft.is_empty() || self.conversation_has_attachments)
         {
             CanvasLayer::Draft
         } else {
@@ -237,7 +283,8 @@ impl CanvasInteraction {
     }
 
     pub fn held_draft(&self) -> bool {
-        !self.conversation_draft.is_empty() && self.layer != CanvasLayer::Draft
+        (!self.conversation_draft.is_empty() || self.conversation_has_attachments)
+            && self.layer != CanvasLayer::Draft
     }
 
     pub fn is_approval(&self) -> bool {
@@ -325,6 +372,7 @@ mod tests {
             Some(SubmissionFailure::RestoreDraft {
                 moment_id: "user:1".to_string(),
                 text: "do not lose me".to_string(),
+                attachment_ids: Vec::new(),
             })
         );
         assert_eq!(interaction.visible_draft(), Some("do not lose me"));
@@ -364,6 +412,29 @@ mod tests {
         assert_eq!(interaction.layer, CanvasLayer::ApprovalPrompt);
         interaction.leave_approval();
         assert_eq!(interaction.visible_draft(), Some("first"));
+    }
+
+    #[test]
+    fn attachments_keep_an_empty_draft_visible_and_are_correlated_to_submission() {
+        let mut interaction = CanvasInteraction::new();
+        interaction.set_conversation_has_attachments(true);
+
+        assert_eq!(interaction.layer, CanvasLayer::Draft);
+        assert_eq!(interaction.visible_draft(), Some(""));
+        let id = interaction
+            .begin_submission_with_attachments(String::new(), "user:media".to_string(), vec![7, 9])
+            .expect("media-only submission should start");
+
+        assert_eq!(interaction.layer, CanvasLayer::Moment);
+        assert_eq!(
+            interaction.submission_failed(id),
+            Some(SubmissionFailure::RestoreDraft {
+                moment_id: "user:media".to_string(),
+                text: String::new(),
+                attachment_ids: vec![7, 9],
+            })
+        );
+        assert_eq!(interaction.visible_draft(), Some(""));
     }
 
     #[test]

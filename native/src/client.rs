@@ -1,23 +1,30 @@
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{HashMap, HashSet};
 use std::env;
 use std::fmt::{self, Display, Formatter};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::mpsc as std_mpsc;
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
 
-use gsv::config::CliConfig;
-use gsv::connection::GatewayRpcError;
-use gsv::kernel_client::{GatewayAuth, KernelClient, ProcSendResult};
-use gsv::protocol::{
-    build_binary_frame, parse_binary_frame, Frame, FrameBodyDescriptor, BINARY_FRAME_CANCEL,
-    BINARY_FRAME_DATA, BINARY_FRAME_END, BINARY_FRAME_ERROR,
+use gsv_client::client::{GatewayAuth, KernelClient, ProcSendResult};
+use gsv_client::connection::{ClientIdentity, GatewayRpcError};
+use gsv_client::protocol::Frame;
+use gsv_client::{BinaryBody, BinaryBodyLimits};
+use gsv_config::{CliConfig, ConfigError, ConfigFile};
+use gsv_desktop_control::{
+    ClientOptions as DesktopClientOptions, DesktopControlClient, DesktopControlEndpoint,
+    DesktopControlServer, Error as DesktopControlError, OperationError, ProcessId, RequestContext,
+    ServerOptions,
 };
 use reqwest::header::{CONTENT_LENGTH, CONTENT_TYPE};
 use serde_json::{json, Value};
-use tokio::sync::{mpsc as tokio_mpsc, Notify, OwnedSemaphorePermit, Semaphore};
+use tokio::sync::{mpsc as tokio_mpsc, oneshot, OwnedSemaphorePermit, Semaphore};
 use tokio::task::{AbortHandle, JoinSet};
 
+use crate::content::{MediaAttachment, MediaKind};
+use crate::desktop_control::{DesktopControlRequest, NativeDesktopControlHandler};
 use crate::history::{normalize_history, HistorySnapshot, MAX_FETCHED_HISTORY_MESSAGES};
 use crate::startup::{
     resolve_startup, ConnectionSettings, Credential, LoginDefaults, LoginStep, StartupResolution,
@@ -32,13 +39,12 @@ const HISTORY_POLL_INTERVAL: Duration = Duration::from_secs(5);
 const INITIAL_RECONNECT_DELAY: Duration = Duration::from_millis(250);
 const MAX_RECONNECT_DELAY: Duration = Duration::from_secs(8);
 const MEDIA_FETCH_TIMEOUT: Duration = Duration::from_secs(45);
-const MEDIA_BODY_IDLE_TIMEOUT: Duration = Duration::from_secs(30);
+const MEDIA_CLEANUP_RPC_TIMEOUT: Duration = Duration::from_secs(5);
+const MEDIA_CLEANUP_ENVELOPE_TIMEOUT: Duration = Duration::from_secs(6);
 const MAX_MEDIA_BYTES: usize = 48 * 1024 * 1024;
-const MAX_BUFFERED_MEDIA_BYTES: usize = 64 * 1024 * 1024;
-const MAX_BUFFERED_MEDIA_FRAMES: usize = 2048;
-const MAX_CANCELLED_MEDIA_STREAMS: usize = 256;
-const MAX_FAILED_MEDIA_STREAMS: usize = 256;
 const MAX_CONCURRENT_MEDIA_TRANSFERS: usize = 2;
+const MAX_MEDIA_CLEANUP_ENTRIES: usize = 256;
+const MEDIA_CLEANUP_JOURNAL_VERSION: u64 = 1;
 const DEMO_SESSION_ID: u64 = 0;
 
 static NEXT_LIVE_SESSION_ID: AtomicU64 = AtomicU64::new(1);
@@ -55,12 +61,27 @@ pub enum MediaSource {
     Remote { url: String },
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum MediaFileAction {
+    Open,
+    Save,
+}
+
+#[derive(Clone, Debug)]
+pub struct OutgoingAttachment {
+    pub media_id: String,
+    pub snapshot: PathBuf,
+    pub kind: MediaKind,
+    pub mime_type: String,
+    pub filename: String,
+    pub size: u64,
+}
+
 #[derive(Clone, Debug)]
 pub struct MediaTransferLease {
     _permit: Arc<OwnedSemaphorePermit>,
 }
 
-#[derive(Clone)]
 pub enum ClientCommand {
     Connect(ConnectionSettings),
     CancelConnect {
@@ -69,6 +90,7 @@ pub enum ClientCommand {
     Send {
         submission_id: u64,
         message: String,
+        attachments: Vec<OutgoingAttachment>,
     },
     Abort {
         run_id: String,
@@ -85,6 +107,21 @@ pub enum ClientCommand {
     CancelMedia {
         request_id: u64,
     },
+    MaterializeMedia {
+        source: MediaSource,
+        filename: Option<String>,
+        mime_type: Option<String>,
+        action: MediaFileAction,
+    },
+    DesktopNew {
+        context: RequestContext,
+        response: oneshot::Sender<Result<ProcessId, OperationError>>,
+    },
+    DesktopUse {
+        context: RequestContext,
+        process_id: ProcessId,
+        response: oneshot::Sender<Result<ProcessId, OperationError>>,
+    },
     Shell(String),
     Shutdown,
 }
@@ -96,7 +133,6 @@ pub struct PreparedHistory {
     pub snapshot: Arc<HistorySnapshot>,
 }
 
-#[derive(Clone, Debug)]
 pub enum ClientEvent {
     Connecting,
     LoginFailed {
@@ -138,6 +174,7 @@ pub enum ClientEvent {
         submission_id: u64,
         run_id: String,
         queued: bool,
+        media: Vec<MediaAttachment>,
     },
     SendFailed {
         submission_id: u64,
@@ -146,6 +183,7 @@ pub enum ClientEvent {
     SendUncertain {
         submission_id: u64,
         submitted_text: String,
+        media: Vec<MediaAttachment>,
         message: String,
     },
     AbortResolved {
@@ -177,6 +215,18 @@ pub enum ClientEvent {
         request_id: u64,
         message: String,
     },
+    MediaFileLoaded {
+        bytes: Arc<[u8]>,
+        mime_type: Option<String>,
+        filename: Option<String>,
+        action: MediaFileAction,
+        _lease: MediaTransferLease,
+    },
+    MediaFileFailed {
+        message: String,
+    },
+    DesktopControl(DesktopControlRequest),
+    DesktopControlSettled,
     Error(String),
 }
 
@@ -184,6 +234,101 @@ pub struct ClientHandle {
     pub commands: tokio_mpsc::UnboundedSender<ClientCommand>,
     pub events: tokio_mpsc::UnboundedReceiver<ClientEvent>,
     pub login: Option<LoginDefaults>,
+}
+
+pub enum DesktopStartup {
+    Started(ClientHandle),
+    ActivatedExisting,
+    Failed(String),
+}
+
+pub fn start_desktop(demo: bool) -> DesktopStartup {
+    if demo {
+        return DesktopStartup::Started(start(demo));
+    }
+    let endpoint = match DesktopControlEndpoint::current_user() {
+        Ok(endpoint) => endpoint,
+        Err(error) => return DesktopStartup::Failed(error.to_string()),
+    };
+    let (command_tx, command_rx) = tokio_mpsc::unbounded_channel();
+    let (event_tx, event_rx) = tokio_mpsc::unbounded_channel();
+    let (initial_connection, login) = match startup_resolution() {
+        StartupResolution::Connect(settings) => (Some(settings), None),
+        StartupResolution::Login(defaults) => (None, Some(defaults)),
+    };
+    let (binding_tx, binding_rx) = std_mpsc::sync_channel(1);
+    let server_endpoint = endpoint.clone();
+    if let Err(error) = spawn_client_thread(
+        "gsv-native-client",
+        command_rx,
+        event_tx.clone(),
+        move |runtime, commands, events| {
+            let server = {
+                let _runtime_guard = runtime.enter();
+                DesktopControlServer::bind(
+                    &server_endpoint,
+                    NativeDesktopControlHandler::new(events.clone()),
+                    ServerOptions::default(),
+                )
+            };
+            let server = match server {
+                Ok(server) => {
+                    let _ = binding_tx.send(DesktopServerBinding::Bound);
+                    server
+                }
+                Err(DesktopControlError::AlreadyRunning) => {
+                    let _ = binding_tx.send(DesktopServerBinding::AlreadyRunning);
+                    return;
+                }
+                Err(error) => {
+                    let _ = binding_tx.send(DesktopServerBinding::Failed(error.to_string()));
+                    return;
+                }
+            };
+            runtime.block_on(async move {
+                let (shutdown_tx, shutdown_rx) = oneshot::channel::<()>();
+                let server_task = tokio::spawn(server.run_until(async move {
+                    let _ = shutdown_rx.await;
+                }));
+                run_live(commands, events, initial_connection).await;
+                let _ = shutdown_tx.send(());
+                let _ = server_task.await;
+            });
+        },
+    ) {
+        return DesktopStartup::Failed(error);
+    }
+    match binding_rx.recv_timeout(Duration::from_secs(5)) {
+        Ok(DesktopServerBinding::Bound) => DesktopStartup::Started(ClientHandle {
+            commands: command_tx,
+            events: event_rx,
+            login,
+        }),
+        Ok(DesktopServerBinding::AlreadyRunning) => match activate_existing_desktop(endpoint) {
+            Ok(()) => DesktopStartup::ActivatedExisting,
+            Err(error) => DesktopStartup::Failed(error),
+        },
+        Ok(DesktopServerBinding::Failed(error)) => DesktopStartup::Failed(error),
+        Err(error) => {
+            DesktopStartup::Failed(format!("Desktop control did not finish starting: {error}"))
+        }
+    }
+}
+
+enum DesktopServerBinding {
+    Bound,
+    AlreadyRunning,
+    Failed(String),
+}
+
+fn activate_existing_desktop(endpoint: DesktopControlEndpoint) -> Result<(), String> {
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .map_err(|error| error.to_string())?;
+    runtime
+        .block_on(DesktopControlClient::new(endpoint, DesktopClientOptions::default()).activate())
+        .map_err(|error| error.to_string())
 }
 
 pub fn start(demo: bool) -> ClientHandle {
@@ -203,7 +348,41 @@ pub fn start(demo: bool) -> ClientHandle {
         "gsv-native-client"
     };
 
-    let thread_events = event_tx.clone();
+    let _ = spawn_client_thread(
+        thread_name,
+        command_rx,
+        event_tx.clone(),
+        move |runtime, command_rx, thread_events| {
+            if demo {
+                runtime.block_on(run_demo(command_rx, thread_events));
+            } else {
+                runtime.block_on(run_live(command_rx, thread_events, initial_connection));
+            }
+        },
+    );
+
+    ClientHandle {
+        commands: command_tx,
+        events: event_rx,
+        login,
+    }
+}
+
+fn spawn_client_thread<F>(
+    thread_name: &str,
+    command_rx: tokio_mpsc::UnboundedReceiver<ClientCommand>,
+    events: tokio_mpsc::UnboundedSender<ClientEvent>,
+    run: F,
+) -> Result<(), String>
+where
+    F: FnOnce(
+            tokio::runtime::Runtime,
+            tokio_mpsc::UnboundedReceiver<ClientCommand>,
+            tokio_mpsc::UnboundedSender<ClientEvent>,
+        ) + Send
+        + 'static,
+{
+    let thread_events = events.clone();
     let spawn_result = thread::Builder::new()
         .name(thread_name.to_string())
         .spawn(move || {
@@ -219,23 +398,15 @@ pub fn start(demo: bool) -> ClientHandle {
                     return;
                 }
             };
-            if demo {
-                runtime.block_on(run_demo(command_rx, thread_events));
-            } else {
-                runtime.block_on(run_live(command_rx, thread_events, initial_connection));
-            }
+            run(runtime, command_rx, thread_events);
         });
     if let Err(error) = spawn_result {
-        let _ = event_tx.send(ClientEvent::Error(format!(
+        let _ = events.send(ClientEvent::Error(format!(
             "The native client thread could not start: {error}"
         )));
+        return Err(error.to_string());
     }
-
-    ClientHandle {
-        commands: command_tx,
-        events: event_rx,
-        login,
-    }
+    Ok(())
 }
 
 async fn run_live(
@@ -246,6 +417,7 @@ async fn run_live(
     let mut preferred_pid = None;
     let mut reconnect_attempt = 0_u32;
     let mut has_connected = false;
+    let mut pending_switch: Option<PendingDesktopSwitch> = None;
 
     'connection: loop {
         let settings = match connection.take() {
@@ -262,24 +434,55 @@ async fn run_live(
         };
         let _ = events.send(ClientEvent::Connecting);
         let reconnect_pid = preferred_pid.clone();
+        let require_preferred_pid = pending_switch.is_some();
         let url = settings.url.clone();
         let establishing = establish_live_session(
             &url,
             gateway_auth(&settings),
             reconnect_pid.as_deref(),
+            require_preferred_pid,
             events.clone(),
         );
         tokio::pin!(establishing);
+        let switch_context = pending_switch
+            .as_ref()
+            .map(|pending| pending.context.clone());
+        let switch_cancelled = async move {
+            match switch_context {
+                Some(context) => context.cancelled().await,
+                None => std::future::pending::<()>().await,
+            }
+        };
+        tokio::pin!(switch_cancelled);
 
         let session = loop {
             tokio::select! {
                 biased;
+                _ = &mut switch_cancelled => {
+                    if let Some(pending) = pending_switch.take() {
+                        let _ = pending.response.send(Err(OperationError::Conflict));
+                        let _ = events.send(ClientEvent::DesktopControlSettled);
+                        preferred_pid = pending.previous_pid;
+                        connection = Some(settings);
+                        continue 'connection;
+                    }
+                }
                 command = commands.recv() => {
                     let Some(command) = command else {
+                        settle_pending_switch(
+                            &mut pending_switch,
+                            &events,
+                            OperationError::Unavailable,
+                        );
                         return;
                     };
                     match command {
                         ClientCommand::Connect(next) => {
+                            settle_pending_switch(
+                                &mut pending_switch,
+                                &events,
+                                OperationError::Conflict,
+                            );
                             has_connected = false;
                             preferred_pid = None;
                             reconnect_attempt = 0;
@@ -289,6 +492,11 @@ async fn run_live(
                         ClientCommand::CancelConnect { attempt_id }
                             if attempt_id == settings.attempt_id =>
                         {
+                            settle_pending_switch(
+                                &mut pending_switch,
+                                &events,
+                                OperationError::Conflict,
+                            );
                             has_connected = false;
                             preferred_pid = None;
                             continue 'connection;
@@ -307,6 +515,15 @@ async fn run_live(
         let session = match session {
             Ok(session) => session,
             Err(error) => {
+                if let Some(pending) = pending_switch.take() {
+                    let _ = pending
+                        .response
+                        .send(Err(map_establish_operation_error(&error)));
+                    let _ = events.send(ClientEvent::DesktopControlSettled);
+                    preferred_pid = pending.previous_pid;
+                    connection = Some(settings);
+                    continue;
+                }
                 match error.kind {
                     EstablishFailureKind::Authentication(step) => {
                         let _ = events.send(ClientEvent::LoginFailed {
@@ -381,6 +598,7 @@ async fn run_live(
         loop {
             match commands.try_recv() {
                 Ok(ClientCommand::Connect(next)) => {
+                    settle_pending_switch(&mut pending_switch, &events, OperationError::Conflict);
                     has_connected = false;
                     preferred_pid = None;
                     reconnect_attempt = 0;
@@ -390,6 +608,7 @@ async fn run_live(
                 Ok(ClientCommand::CancelConnect { attempt_id })
                     if attempt_id == settings.attempt_id =>
                 {
+                    settle_pending_switch(&mut pending_switch, &events, OperationError::Conflict);
                     has_connected = false;
                     preferred_pid = None;
                     continue 'connection;
@@ -400,13 +619,19 @@ async fn run_live(
                     }
                 }
                 Err(tokio_mpsc::error::TryRecvError::Empty) => break,
-                Err(tokio_mpsc::error::TryRecvError::Disconnected) => return,
+                Err(tokio_mpsc::error::TryRecvError::Disconnected) => {
+                    settle_pending_switch(
+                        &mut pending_switch,
+                        &events,
+                        OperationError::Unavailable,
+                    );
+                    return;
+                }
             }
         }
 
         let LiveSession {
             client,
-            media_bodies,
             pid,
             history,
             history_request_signal_id,
@@ -414,6 +639,18 @@ async fn run_live(
             signal_lease,
             session_id,
         } = session;
+        if pending_switch
+            .as_ref()
+            .is_some_and(|pending| pending.context.is_cancelled() || pending.response.is_closed())
+        {
+            if let Some(pending) = pending_switch.take() {
+                let _ = pending.response.send(Err(OperationError::Conflict));
+                let _ = events.send(ClientEvent::DesktopControlSettled);
+                preferred_pid = pending.previous_pid;
+                connection = Some(settings);
+                continue;
+            }
+        }
         has_connected = true;
         reconnect_attempt = 0;
         preferred_pid = Some(pid.clone());
@@ -429,15 +666,30 @@ async fn run_live(
             signal_lease.handoff_history(history_request_signal_id, history, &events),
             HistoryPublication::Superseded | HistoryPublication::Stale
         );
+        if let Some(pending) = pending_switch.take() {
+            match ProcessId::new(pid.clone()) {
+                Ok(process_id) => {
+                    let _ = pending.response.send(Ok(process_id));
+                    let _ = events.send(ClientEvent::DesktopControlSettled);
+                }
+                Err(_) => {
+                    let _ = pending.response.send(Err(OperationError::Internal));
+                    let _ = events.send(ClientEvent::DesktopControlSettled);
+                    preferred_pid = pending.previous_pid;
+                    connection = Some(settings);
+                    continue;
+                }
+            }
+        }
 
         match run_connected_session(
             ActiveClientSession {
                 client,
-                media_bodies,
                 pid,
                 process_exit,
                 signal_lease,
                 attempt_id: settings.attempt_id,
+                cleanup_scope: MediaCleanupScope::from_settings(&settings),
             },
             &mut commands,
             &events,
@@ -478,6 +730,19 @@ async fn run_live(
                 preferred_pid = None;
                 connection = Some(next);
             }
+            ConnectedSessionOutcome::Switch {
+                pid: next_pid,
+                context,
+                response,
+            } => {
+                pending_switch = Some(PendingDesktopSwitch {
+                    context,
+                    response,
+                    previous_pid: preferred_pid.clone(),
+                });
+                preferred_pid = Some(next_pid);
+                connection = Some(settings);
+            }
             ConnectedSessionOutcome::Cancelled => {
                 has_connected = false;
                 preferred_pid = None;
@@ -486,9 +751,34 @@ async fn run_live(
     }
 }
 
+struct PendingDesktopSwitch {
+    context: RequestContext,
+    response: oneshot::Sender<Result<ProcessId, OperationError>>,
+    previous_pid: Option<String>,
+}
+
+fn settle_pending_switch(
+    pending_switch: &mut Option<PendingDesktopSwitch>,
+    events: &tokio_mpsc::UnboundedSender<ClientEvent>,
+    error: OperationError,
+) -> Option<String> {
+    let pending = pending_switch.take()?;
+    settle_desktop_switch(pending.response, pending.previous_pid, events, error)
+}
+
+fn settle_desktop_switch(
+    response: oneshot::Sender<Result<ProcessId, OperationError>>,
+    previous_pid: Option<String>,
+    events: &tokio_mpsc::UnboundedSender<ClientEvent>,
+    error: OperationError,
+) -> Option<String> {
+    let _ = response.send(Err(error));
+    let _ = events.send(ClientEvent::DesktopControlSettled);
+    previous_pid
+}
+
 struct LiveSession {
     client: Arc<KernelClient>,
-    media_bodies: ResponseBodyInbox,
     pid: String,
     history: PreparedHistory,
     history_request_signal_id: u64,
@@ -499,11 +789,11 @@ struct LiveSession {
 
 struct ActiveClientSession {
     client: Arc<KernelClient>,
-    media_bodies: ResponseBodyInbox,
     pid: String,
     process_exit: Arc<tokio::sync::Notify>,
     signal_lease: SessionSignalLease,
     attempt_id: u64,
+    cleanup_scope: MediaCleanupScope,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -694,6 +984,11 @@ impl Drop for SessionSignalLease {
 enum ConnectedSessionOutcome {
     Reconnect(String),
     Replace(ConnectionSettings),
+    Switch {
+        pid: String,
+        context: RequestContext,
+        response: oneshot::Sender<Result<ProcessId, OperationError>>,
+    },
     Cancelled,
     Shutdown,
 }
@@ -742,7 +1037,10 @@ impl Display for RequestFailure {
 #[derive(Debug)]
 enum SendAttemptFailure {
     Rejected(String),
-    Uncertain(String),
+    Uncertain {
+        message: String,
+        media: Vec<MediaAttachment>,
+    },
 }
 
 #[derive(Debug)]
@@ -757,370 +1055,14 @@ struct MediaResponse {
     mime_type: Option<String>,
 }
 
-#[derive(Clone)]
-struct ResponseBodyInbox {
-    state: Arc<Mutex<ResponseBodyState>>,
-    notify: Arc<Notify>,
-    send_frame: Arc<dyn Fn(Vec<u8>) + Send + Sync>,
-}
-
-#[derive(Default)]
-struct ResponseBodyState {
-    frames: HashMap<u32, VecDeque<QueuedBodyFrame>>,
-    registered: HashSet<u32>,
-    terminal: HashSet<u32>,
-    failures: HashMap<u32, String>,
-    cancelled: CancelledBodyStreams,
-    buffered_bytes: usize,
-    buffered_frames: usize,
-}
-
-#[derive(Default)]
-struct CancelledBodyStreams {
-    stream_ids: HashSet<u32>,
-    insertion_order: VecDeque<u32>,
-}
-
-impl CancelledBodyStreams {
-    fn insert(&mut self, stream_id: u32) {
-        if stream_id == 0 || !self.stream_ids.insert(stream_id) {
-            return;
-        }
-        while self.insertion_order.len() >= MAX_CANCELLED_MEDIA_STREAMS {
-            if let Some(evicted) = self.insertion_order.pop_front() {
-                self.stream_ids.remove(&evicted);
-            }
-        }
-        self.insertion_order.push_back(stream_id);
-    }
-
-    fn accept_reused(&mut self, stream_id: u32) {
-        self.stream_ids.remove(&stream_id);
-        self.insertion_order.retain(|queued| *queued != stream_id);
-    }
-
-    fn should_discard(&mut self, stream_id: u32, flags: u8) -> bool {
-        let should_discard = self.stream_ids.contains(&stream_id);
-        if should_discard && flags & BINARY_FRAME_END != 0 {
-            self.stream_ids.remove(&stream_id);
-            self.insertion_order.retain(|queued| *queued != stream_id);
-        }
-        should_discard
-    }
-}
-
-#[derive(Debug)]
-struct QueuedBodyFrame {
-    flags: u8,
-    payload: Vec<u8>,
-}
-
-enum BodyItem {
-    Frame(QueuedBodyFrame),
-    Failure(String),
-}
-
-impl ResponseBodyInbox {
-    fn new(send_frame: impl Fn(Vec<u8>) + Send + Sync + 'static) -> Self {
-        Self {
-            state: Arc::new(Mutex::new(ResponseBodyState::default())),
-            notify: Arc::new(Notify::new()),
-            send_frame: Arc::new(send_frame),
-        }
-    }
-
-    fn push(&self, data: Vec<u8>) {
-        let Some((stream_id, flags, payload)) = parse_binary_frame(&data) else {
-            return;
-        };
-
-        let mut cancel = false;
-        let Ok(mut state) = self.state.lock() else {
-            return;
-        };
-        if flags & BINARY_FRAME_CANCEL != 0 {
-            return;
-        }
-        if state.cancelled.should_discard(stream_id, flags) {
-            return;
-        }
-        if state.terminal.contains(&stream_id) || state.failures.contains_key(&stream_id) {
-            return;
-        }
-
-        let stream_bytes = state
-            .frames
-            .get(&stream_id)
-            .map(|frames| {
-                frames
-                    .iter()
-                    .map(|frame| frame.payload.len())
-                    .sum::<usize>()
-            })
-            .unwrap_or_default();
-        let exceeds_limit = stream_bytes.saturating_add(payload.len()) > MAX_MEDIA_BYTES
-            || state.buffered_bytes.saturating_add(payload.len()) > MAX_BUFFERED_MEDIA_BYTES
-            || state.buffered_frames >= MAX_BUFFERED_MEDIA_FRAMES;
-        if exceeds_limit {
-            remove_body_frames(&mut state, stream_id);
-            record_body_failure(
-                &mut state,
-                stream_id,
-                format!("Media exceeds the {MAX_MEDIA_BYTES}-byte transfer limit."),
-            );
-            cancel = true;
-        } else {
-            state.buffered_bytes += payload.len();
-            state.buffered_frames += 1;
-            state
-                .frames
-                .entry(stream_id)
-                .or_default()
-                .push_back(QueuedBodyFrame { flags, payload });
-            if flags & BINARY_FRAME_END != 0 {
-                state.terminal.insert(stream_id);
-            }
-        }
-        drop(state);
-
-        if cancel {
-            self.send_cancel(stream_id, "Media transfer limit exceeded");
-        }
-        self.notify.notify_waiters();
-    }
-
-    fn register(&self, body: FrameBodyDescriptor) -> Result<(), RequestFailure> {
-        if body.stream_id == 0 {
-            return Err(RequestFailure::transport(
-                "The gateway returned an invalid media body stream.",
-            ));
-        }
-        let Ok(mut state) = self.state.lock() else {
-            return Err(RequestFailure::transport(
-                "The media body receiver is unavailable.",
-            ));
-        };
-        if !state.failures.contains_key(&body.stream_id) {
-            state.cancelled.accept_reused(body.stream_id);
-        }
-        state.registered.insert(body.stream_id);
-        Ok(())
-    }
-
-    async fn read_body(&self, body: FrameBodyDescriptor) -> Result<Arc<[u8]>, RequestFailure> {
-        self.register(body)?;
-        let mut guard = IncomingBodyGuard::new(self.clone(), body.stream_id);
-        if body
-            .length
-            .is_some_and(|length| length > MAX_MEDIA_BYTES as u64)
-        {
-            return Err(RequestFailure::rejected(format!(
-                "Media exceeds the {MAX_MEDIA_BYTES}-byte transfer limit."
-            )));
-        }
-
-        let expected_length = body.length;
-        let capacity = expected_length
-            .and_then(|length| usize::try_from(length).ok())
-            .unwrap_or_default();
-        let mut bytes = Vec::with_capacity(capacity);
-        loop {
-            let frame = match self.take(body.stream_id).await? {
-                BodyItem::Frame(frame) => frame,
-                BodyItem::Failure(message) => {
-                    guard.complete();
-                    self.finish_cancelled(body.stream_id);
-                    return Err(RequestFailure::rejected(message));
-                }
-            };
-            if frame.flags & BINARY_FRAME_ERROR != 0 {
-                guard.complete();
-                self.finish(body.stream_id);
-                return Err(RequestFailure::transport(
-                    String::from_utf8(frame.payload)
-                        .unwrap_or_else(|_| "The gateway media transfer failed.".to_string()),
-                ));
-            }
-            if frame.flags & BINARY_FRAME_DATA != 0 {
-                let Some(next_length) = bytes.len().checked_add(frame.payload.len()) else {
-                    return Err(RequestFailure::rejected(
-                        "The media body is too large to open.".to_string(),
-                    ));
-                };
-                if next_length > MAX_MEDIA_BYTES {
-                    return Err(RequestFailure::rejected(format!(
-                        "Media exceeds the {MAX_MEDIA_BYTES}-byte transfer limit."
-                    )));
-                }
-                if expected_length.is_some_and(|length| next_length as u64 > length) {
-                    return Err(RequestFailure::transport(
-                        "The media body exceeded its declared length.".to_string(),
-                    ));
-                }
-                bytes.extend_from_slice(&frame.payload);
-            }
-            if frame.flags & BINARY_FRAME_END != 0 {
-                break;
-            }
-        }
-
-        if expected_length.is_some_and(|length| bytes.len() as u64 != length) {
-            guard.complete();
-            self.finish(body.stream_id);
-            return Err(RequestFailure::transport(
-                "The media body did not match its declared length.".to_string(),
-            ));
-        }
-        guard.complete();
-        self.finish(body.stream_id);
-        Ok(Arc::from(bytes))
-    }
-
-    async fn take(&self, stream_id: u32) -> Result<BodyItem, RequestFailure> {
-        let deadline = tokio::time::Instant::now() + MEDIA_BODY_IDLE_TIMEOUT;
-        loop {
-            let notified = self.notify.notified();
-            tokio::pin!(notified);
-            notified.as_mut().enable();
-
-            if let Some(item) = self.pop(stream_id) {
-                return Ok(item);
-            }
-
-            tokio::time::timeout_at(deadline, notified.as_mut())
-                .await
-                .map_err(|_| {
-                    RequestFailure::transport("The media body transfer timed out.".to_string())
-                })?;
-        }
-    }
-
-    fn pop(&self, stream_id: u32) -> Option<BodyItem> {
-        let Ok(mut state) = self.state.lock() else {
-            return Some(BodyItem::Failure(
-                "The media body receiver is unavailable.".to_string(),
-            ));
-        };
-        if let Some(message) = state.failures.remove(&stream_id) {
-            return Some(BodyItem::Failure(message));
-        }
-        let queue = state.frames.get_mut(&stream_id)?;
-        let frame = queue.pop_front()?;
-        if queue.is_empty() {
-            state.frames.remove(&stream_id);
-        }
-        state.buffered_bytes = state.buffered_bytes.saturating_sub(frame.payload.len());
-        state.buffered_frames = state.buffered_frames.saturating_sub(1);
-        Some(BodyItem::Frame(frame))
-    }
-
-    fn finish(&self, stream_id: u32) {
-        if let Ok(mut state) = self.state.lock() {
-            remove_body_frames(&mut state, stream_id);
-            state.registered.remove(&stream_id);
-            state.terminal.remove(&stream_id);
-            state.failures.remove(&stream_id);
-        }
-    }
-
-    fn finish_cancelled(&self, stream_id: u32) {
-        if let Ok(mut state) = self.state.lock() {
-            remove_body_frames(&mut state, stream_id);
-            state.registered.remove(&stream_id);
-            state.terminal.remove(&stream_id);
-            state.failures.remove(&stream_id);
-            state.cancelled.insert(stream_id);
-        }
-    }
-
-    fn cancel(&self, stream_id: u32, reason: &str) {
-        let accepted = if let Ok(mut state) = self.state.lock() {
-            let had_frames = remove_body_frames(&mut state, stream_id);
-            let registered = state.registered.remove(&stream_id);
-            let terminal = state.terminal.remove(&stream_id);
-            let failed = state.failures.remove(&stream_id).is_some();
-            state.cancelled.insert(stream_id);
-            had_frames || registered || terminal || failed
-        } else {
-            false
-        };
-        if accepted {
-            self.send_cancel(stream_id, reason);
-        }
-    }
-
-    fn send_cancel(&self, stream_id: u32, reason: &str) {
-        if stream_id == 0 {
-            return;
-        }
-        (self.send_frame)(build_binary_frame(
-            stream_id,
-            BINARY_FRAME_CANCEL | BINARY_FRAME_END,
-            reason.as_bytes(),
-        ));
-    }
-}
-
-fn remove_body_frames(state: &mut ResponseBodyState, stream_id: u32) -> bool {
-    let Some(frames) = state.frames.remove(&stream_id) else {
-        return false;
-    };
-    state.buffered_bytes = state
-        .buffered_bytes
-        .saturating_sub(frames.iter().map(|frame| frame.payload.len()).sum());
-    state.buffered_frames = state.buffered_frames.saturating_sub(frames.len());
-    true
-}
-
-fn record_body_failure(state: &mut ResponseBodyState, stream_id: u32, message: String) {
-    if !state.failures.contains_key(&stream_id) && state.failures.len() >= MAX_FAILED_MEDIA_STREAMS
-    {
-        if let Some(evicted) = state.failures.keys().next().copied() {
-            state.failures.remove(&evicted);
-            state.terminal.remove(&evicted);
-        }
-    }
-    state.terminal.insert(stream_id);
-    state.cancelled.insert(stream_id);
-    state.failures.insert(stream_id, message);
-}
-
-struct IncomingBodyGuard {
-    inbox: ResponseBodyInbox,
-    stream_id: u32,
-    complete: bool,
-}
-
-impl IncomingBodyGuard {
-    fn new(inbox: ResponseBodyInbox, stream_id: u32) -> Self {
-        Self {
-            inbox,
-            stream_id,
-            complete: false,
-        }
-    }
-
-    fn complete(&mut self) {
-        self.complete = true;
-    }
-}
-
-impl Drop for IncomingBodyGuard {
-    fn drop(&mut self) {
-        if !self.complete {
-            self.inbox
-                .cancel(self.stream_id, "Media body was no longer needed");
-        }
-    }
-}
-
 enum ConnectedTaskOutcome {
-    Send(Result<ProcSendResult, SendAttemptFailure>),
+    Send(Result<(ProcSendResult, Vec<MediaAttachment>), SendAttemptFailure>),
     Abort(Result<Value, RequestFailure>),
     Approval(Result<Value, RequestFailure>),
     History(Result<PreparedHistory, RequestFailure>),
     Shell(Result<ShellResponse, RequestFailure>),
     Media(Result<(MediaResponse, MediaTransferLease), RequestFailure>),
+    MediaFile(Result<(MediaResponse, MediaTransferLease), RequestFailure>),
 }
 
 struct ConnectedTaskCompletion {
@@ -1132,6 +1074,7 @@ enum PendingOperation {
     Send {
         submission_id: u64,
         submitted_text: String,
+        progress: Arc<SendProgress>,
     },
     Abort {
         run_id: String,
@@ -1148,6 +1091,319 @@ enum PendingOperation {
     Media {
         request_id: u64,
     },
+    MediaFile {
+        filename: Option<String>,
+        mime_type: Option<String>,
+        action: MediaFileAction,
+    },
+}
+
+struct SendProgress {
+    send_started: AtomicBool,
+    media: Mutex<Vec<MediaAttachment>>,
+}
+
+impl Default for SendProgress {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl SendProgress {
+    fn new() -> Self {
+        Self {
+            send_started: AtomicBool::new(false),
+            media: Mutex::new(Vec::new()),
+        }
+    }
+
+    fn stage_media(
+        &self,
+        journal: &MediaCleanupJournal,
+        scope: &MediaCleanupScope,
+        pid: &str,
+        media: MediaAttachment,
+    ) -> Result<(), String> {
+        let entry = media_cleanup_entry(scope, pid, &media)
+            .ok_or_else(|| "GSV returned an attachment without cleanup ownership".to_string())?;
+        self.media
+            .lock()
+            .map_err(|_| "The attachment cleanup state became unavailable".to_string())?
+            .push(media);
+        journal.record(std::slice::from_ref(&entry))
+    }
+
+    fn begin_send(
+        &self,
+        journal: &MediaCleanupJournal,
+        scope: &MediaCleanupScope,
+        pid: &str,
+    ) -> Result<(), String> {
+        let entries = media_cleanup_entries(scope, pid, &self.media());
+        journal.retain_for_send(&entries)?;
+        // There is deliberately no await between transitioning the write-ahead entries to
+        // durable retention and setting this fence. A process crash in this window retains the
+        // exact descriptors; cancellation can observe only cleanup ownership or send ownership.
+        self.send_started.store(true, Ordering::Release);
+        Ok(())
+    }
+
+    fn media(&self) -> Vec<MediaAttachment> {
+        self.media
+            .lock()
+            .map(|media| media.clone())
+            .unwrap_or_default()
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct MediaCleanupScope {
+    gateway_url: String,
+    username: String,
+}
+
+impl MediaCleanupScope {
+    fn from_settings(settings: &ConnectionSettings) -> Self {
+        Self {
+            gateway_url: settings.url.clone(),
+            username: settings.username.clone(),
+        }
+    }
+
+    fn owns(&self, entry: &MediaCleanupEntry) -> bool {
+        self.gateway_url == entry.gateway_url && self.username == entry.username
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct MediaCleanupEntry {
+    gateway_url: String,
+    username: String,
+    pid: String,
+    key: String,
+    cleanup: bool,
+}
+
+impl MediaCleanupEntry {
+    fn to_value(&self) -> Value {
+        json!({
+            "gatewayUrl": self.gateway_url,
+            "username": self.username,
+            "pid": self.pid,
+            "key": self.key,
+            "cleanup": self.cleanup,
+        })
+    }
+
+    fn from_value(value: &Value) -> Result<Self, ConfigError> {
+        let field = |name| {
+            value
+                .get(name)
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(str::to_string)
+                .ok_or_else(|| invalid_cleanup_journal(format!("missing {name}")))
+        };
+        Ok(Self {
+            gateway_url: field("gatewayUrl")?,
+            username: field("username")?,
+            pid: field("pid")?,
+            key: field("key")?,
+            cleanup: value
+                .get("cleanup")
+                .and_then(Value::as_bool)
+                .ok_or_else(|| invalid_cleanup_journal("missing cleanup disposition"))?,
+        })
+    }
+
+    fn same_object(&self, other: &Self) -> bool {
+        self.gateway_url == other.gateway_url
+            && self.username == other.username
+            && self.pid == other.pid
+            && self.key == other.key
+    }
+}
+
+#[derive(Clone)]
+struct MediaCleanupJournal {
+    store: ConfigFile<Value>,
+}
+
+impl MediaCleanupJournal {
+    fn live() -> Self {
+        let path = CliConfig::config_path()
+            .and_then(|path| path.parent().map(|parent| parent.to_path_buf()))
+            .unwrap_or_else(gsv_config::gsv_home)
+            .join("native-media-cleanup.toml");
+        Self::new(path)
+    }
+
+    fn new(path: PathBuf) -> Self {
+        Self {
+            store: ConfigFile::new(path),
+        }
+    }
+
+    fn record(&self, additions: &[MediaCleanupEntry]) -> Result<(), String> {
+        if additions.is_empty() {
+            return Ok(());
+        }
+        self.store
+            .update(|document| {
+                let mut entries = decode_cleanup_journal(document)?;
+                for addition in additions {
+                    if !entries.iter().any(|entry| entry.same_object(addition)) {
+                        if entries.len() >= MAX_MEDIA_CLEANUP_ENTRIES {
+                            return Err(invalid_cleanup_journal(
+                                "the cleanup journal reached its safe entry limit",
+                            ));
+                        }
+                        entries.push(addition.clone());
+                    }
+                }
+                *document = encode_cleanup_journal(&entries);
+                Ok(())
+            })
+            .map_err(|error| error.to_string())
+    }
+
+    fn remove(&self, removals: &[MediaCleanupEntry]) -> Result<(), String> {
+        if removals.is_empty() {
+            return Ok(());
+        }
+        self.store
+            .update(|document| {
+                let mut entries = decode_cleanup_journal(document)?;
+                entries.retain(|entry| !removals.iter().any(|removal| entry.same_object(removal)));
+                *document = encode_cleanup_journal(&entries);
+                Ok(())
+            })
+            .map_err(|error| error.to_string())
+    }
+
+    fn entries_for(&self, scope: &MediaCleanupScope) -> Result<Vec<MediaCleanupEntry>, String> {
+        self.store
+            .load()
+            .and_then(|document| decode_cleanup_journal(&document))
+            .map(|entries| {
+                entries
+                    .into_iter()
+                    .filter(|entry| scope.owns(entry) && entry.cleanup)
+                    .collect()
+            })
+            .map_err(|error| error.to_string())
+    }
+
+    fn retain_for_send(&self, retained: &[MediaCleanupEntry]) -> Result<(), String> {
+        self.set_cleanup_disposition(retained, false)
+    }
+
+    fn arm_for_cleanup(&self, cleanup: &[MediaCleanupEntry]) -> Result<(), String> {
+        self.set_cleanup_disposition(cleanup, true)
+    }
+
+    fn set_cleanup_disposition(
+        &self,
+        targets: &[MediaCleanupEntry],
+        cleanup: bool,
+    ) -> Result<(), String> {
+        if targets.is_empty() {
+            return Ok(());
+        }
+        self.store
+            .update(|document| {
+                let mut entries = decode_cleanup_journal(document)?;
+                for target in targets {
+                    let entry = entries
+                        .iter_mut()
+                        .find(|entry| entry.same_object(target))
+                        .ok_or_else(|| {
+                            invalid_cleanup_journal(
+                                "a staged attachment was missing from the cleanup journal",
+                            )
+                        })?;
+                    entry.cleanup = cleanup;
+                }
+                *document = encode_cleanup_journal(&entries);
+                Ok(())
+            })
+            .map_err(|error| error.to_string())
+    }
+
+    #[cfg(test)]
+    fn retained_for(&self, scope: &MediaCleanupScope) -> Result<Vec<MediaCleanupEntry>, String> {
+        self.store
+            .load()
+            .and_then(|document| decode_cleanup_journal(&document))
+            .map(|entries| {
+                entries
+                    .into_iter()
+                    .filter(|entry| scope.owns(entry) && !entry.cleanup)
+                    .collect()
+            })
+            .map_err(|error| error.to_string())
+    }
+}
+
+fn invalid_cleanup_journal(message: impl Into<String>) -> ConfigError {
+    ConfigError::Io(std::io::Error::new(
+        std::io::ErrorKind::InvalidData,
+        message.into(),
+    ))
+}
+
+fn decode_cleanup_journal(document: &Value) -> Result<Vec<MediaCleanupEntry>, ConfigError> {
+    if document.is_null() {
+        return Ok(Vec::new());
+    }
+    if document.get("version").and_then(Value::as_u64) != Some(MEDIA_CLEANUP_JOURNAL_VERSION) {
+        return Err(invalid_cleanup_journal(
+            "unsupported native media cleanup journal version",
+        ));
+    }
+    let entries = document
+        .get("entries")
+        .and_then(Value::as_array)
+        .ok_or_else(|| invalid_cleanup_journal("missing cleanup journal entries"))?;
+    if entries.len() > MAX_MEDIA_CLEANUP_ENTRIES {
+        return Err(invalid_cleanup_journal(
+            "the cleanup journal exceeds its safe entry limit",
+        ));
+    }
+    entries.iter().map(MediaCleanupEntry::from_value).collect()
+}
+
+fn encode_cleanup_journal(entries: &[MediaCleanupEntry]) -> Value {
+    json!({
+        "version": MEDIA_CLEANUP_JOURNAL_VERSION,
+        "entries": entries.iter().map(MediaCleanupEntry::to_value).collect::<Vec<_>>(),
+    })
+}
+
+fn media_cleanup_entry(
+    scope: &MediaCleanupScope,
+    pid: &str,
+    media: &MediaAttachment,
+) -> Option<MediaCleanupEntry> {
+    Some(MediaCleanupEntry {
+        gateway_url: scope.gateway_url.clone(),
+        username: scope.username.clone(),
+        pid: pid.to_string(),
+        key: media.key.as_deref()?.to_string(),
+        cleanup: true,
+    })
+}
+
+fn media_cleanup_entries(
+    scope: &MediaCleanupScope,
+    pid: &str,
+    media: &[MediaAttachment],
+) -> Vec<MediaCleanupEntry> {
+    media
+        .iter()
+        .filter_map(|media| media_cleanup_entry(scope, pid, media))
+        .collect()
 }
 
 struct MediaTaskControl {
@@ -1162,9 +1418,10 @@ struct ConnectedCommandContext<'a> {
     cancelled_task_ids: &'a mut HashSet<tokio::task::Id>,
     next_operation_id: &'a mut u64,
     client: Arc<KernelClient>,
-    media_bodies: ResponseBodyInbox,
     http_client: reqwest::Client,
     media_slots: Arc<Semaphore>,
+    cleanup_journal: Arc<MediaCleanupJournal>,
+    cleanup_scope: MediaCleanupScope,
     pid: String,
 }
 
@@ -1269,29 +1526,42 @@ fn spawn_connected_command(context: ConnectedCommandContext<'_>, command: Client
         cancelled_task_ids,
         next_operation_id,
         client,
-        media_bodies,
         http_client,
         media_slots,
+        cleanup_journal,
+        cleanup_scope,
         pid,
     } = context;
     match command {
         ClientCommand::Send {
             submission_id,
             message,
+            attachments,
         } => {
+            let progress = Arc::new(SendProgress::default());
             let operation_id = reserve_operation(
                 next_operation_id,
                 pending,
                 PendingOperation::Send {
                     submission_id,
                     submitted_text: message.clone(),
+                    progress: progress.clone(),
                 },
             );
             tasks.spawn(async move {
                 ConnectedTaskCompletion {
                     operation_id,
                     outcome: ConnectedTaskOutcome::Send(
-                        send_message(&client, &pid, &message).await,
+                        upload_and_send_message(
+                            &client,
+                            &cleanup_journal,
+                            &cleanup_scope,
+                            &pid,
+                            &message,
+                            attachments,
+                            progress,
+                        )
+                        .await,
                     ),
                 }
             });
@@ -1377,8 +1647,7 @@ fn spawn_connected_command(context: ConnectedCommandContext<'_>, command: Client
                     let permit = media_slots.acquire_owned().await.map_err(|_| {
                         RequestFailure::transport("The media transfer queue is unavailable.")
                     })?;
-                    let media =
-                        load_media(&client, &media_bodies, &http_client, &pid, source).await?;
+                    let media = load_media(&client, &http_client, &pid, source).await?;
                     Ok((
                         media,
                         MediaTransferLease {
@@ -1400,8 +1669,45 @@ fn spawn_connected_command(context: ConnectedCommandContext<'_>, command: Client
                 },
             );
         }
+        ClientCommand::MaterializeMedia {
+            source,
+            filename,
+            mime_type,
+            action,
+        } => {
+            let operation_id = reserve_operation(
+                next_operation_id,
+                pending,
+                PendingOperation::MediaFile {
+                    filename,
+                    mime_type,
+                    action,
+                },
+            );
+            tasks.spawn(async move {
+                let result = async {
+                    let permit = media_slots.acquire_owned().await.map_err(|_| {
+                        RequestFailure::transport("The media transfer queue is unavailable.")
+                    })?;
+                    let media = load_media(&client, &http_client, &pid, source).await?;
+                    Ok((
+                        media,
+                        MediaTransferLease {
+                            _permit: Arc::new(permit),
+                        },
+                    ))
+                }
+                .await;
+                ConnectedTaskCompletion {
+                    operation_id,
+                    outcome: ConnectedTaskOutcome::MediaFile(result),
+                }
+            });
+        }
         ClientCommand::Connect(_)
         | ClientCommand::CancelConnect { .. }
+        | ClientCommand::DesktopNew { .. }
+        | ClientCommand::DesktopUse { .. }
         | ClientCommand::RefreshHistory
         | ClientCommand::CancelMedia { .. }
         | ClientCommand::Shutdown => {}
@@ -1488,14 +1794,16 @@ fn emit_connected_completion(
             PendingOperation::Send {
                 submission_id,
                 submitted_text,
+                ..
             },
             ConnectedTaskOutcome::Send(result),
         ) => match result {
-            Ok(result) => {
+            Ok((result, media)) => {
                 let _ = events.send(ClientEvent::SendAccepted {
                     submission_id,
                     run_id: result.run_id,
                     queued: result.queued,
+                    media,
                 });
             }
             Err(SendAttemptFailure::Rejected(error)) => {
@@ -1504,10 +1812,14 @@ fn emit_connected_completion(
                     message: format!("GSV couldn’t accept that thought: {error}"),
                 });
             }
-            Err(SendAttemptFailure::Uncertain(error)) => {
+            Err(SendAttemptFailure::Uncertain {
+                message: error,
+                media,
+            }) => {
                 let _ = events.send(ClientEvent::SendUncertain {
                     submission_id,
                     submitted_text,
+                    media,
                     message: format!(
                         "GSV may have accepted that thought, but the response was lost: {error}"
                     ),
@@ -1605,6 +1917,29 @@ fn emit_connected_completion(
                 }
             }
         }
+        (
+            PendingOperation::MediaFile {
+                filename,
+                mime_type,
+                action,
+            },
+            ConnectedTaskOutcome::MediaFile(result),
+        ) => match result {
+            Ok((media, lease)) => {
+                let _ = events.send(ClientEvent::MediaFileLoaded {
+                    bytes: media.bytes,
+                    mime_type: media.mime_type.or(mime_type),
+                    filename,
+                    action,
+                    _lease: lease,
+                });
+            }
+            Err(error) => {
+                let _ = events.send(ClientEvent::MediaFileFailed {
+                    message: format!("That media could not be opened: {error}"),
+                });
+            }
+        },
         _ => {
             let _ = events.send(ClientEvent::Error(
                 "The native client mismatched an operation result.".to_string(),
@@ -1622,6 +1957,7 @@ async fn reconcile_interrupted_tasks(
     pending: &mut HashMap<u64, PendingOperation>,
     events: &tokio_mpsc::UnboundedSender<ClientEvent>,
     signal_lease: &SessionSignalLease,
+    cleanup: MediaCleanupRuntime<'_>,
     reason: &str,
 ) {
     while let Some(result) = tasks.try_join_next() {
@@ -1638,12 +1974,21 @@ async fn reconcile_interrupted_tasks(
             PendingOperation::Send {
                 submission_id,
                 submitted_text,
+                progress,
             } => {
-                let _ = events.send(ClientEvent::SendUncertain {
-                    submission_id,
-                    submitted_text,
-                    message: reason.to_string(),
-                });
+                if progress.send_started.load(Ordering::Acquire) {
+                    let _ = events.send(ClientEvent::SendUncertain {
+                        submission_id,
+                        submitted_text,
+                        media: progress.media(),
+                        message: reason.to_string(),
+                    });
+                } else {
+                    let _ = events.send(ClientEvent::SendFailed {
+                        submission_id,
+                        message: reason.to_string(),
+                    });
+                }
             }
             PendingOperation::Abort { run_id } => {
                 let _ = events.send(ClientEvent::AbortFailed {
@@ -1670,9 +2015,27 @@ async fn reconcile_interrupted_tasks(
                     message: reason.to_string(),
                 });
             }
+            PendingOperation::MediaFile { .. } => {
+                let _ = events.send(ClientEvent::MediaFileFailed {
+                    message: reason.to_string(),
+                });
+            }
             PendingOperation::History { .. } => {}
         }
     }
+    if let Err(error) =
+        retry_journaled_media_cleanup(cleanup.client, cleanup.journal, cleanup.scope).await
+    {
+        let _ = events.send(ClientEvent::Error(format!(
+            "Attachment cleanup remains queued for retry: {error}"
+        )));
+    }
+}
+
+struct MediaCleanupRuntime<'a> {
+    client: &'a KernelClient,
+    journal: &'a MediaCleanupJournal,
+    scope: &'a MediaCleanupScope,
 }
 
 async fn discard_tasks(tasks: &mut JoinSet<ConnectedTaskCompletion>) {
@@ -1692,28 +2055,11 @@ fn approval_response_matches(response: &Value, request_id: &str) -> bool {
     response.get("requestId").and_then(Value::as_str) == Some(request_id)
 }
 
-async fn install_media_body_handler(client: &Arc<KernelClient>) -> ResponseBodyInbox {
-    let weak_client = Arc::downgrade(client);
-    let inbox = ResponseBodyInbox::new(move |frame| {
-        let Some(client) = weak_client.upgrade() else {
-            return;
-        };
-        tokio::spawn(async move {
-            let _ = client.connection().send_binary(frame).await;
-        });
-    });
-    let handler_inbox = inbox.clone();
-    client
-        .connection()
-        .set_binary_handler(move |frame| handler_inbox.push(frame))
-        .await;
-    inbox
-}
-
 async fn establish_live_session(
     url: &str,
     auth: GatewayAuth,
     preferred_pid: Option<&str>,
+    require_preferred_pid: bool,
     events: tokio_mpsc::UnboundedSender<ClientEvent>,
 ) -> Result<LiveSession, EstablishFailure> {
     let session_id = next_live_session_id();
@@ -1722,23 +2068,34 @@ async fn establish_live_session(
     let signal_state = signal_lease.state.clone();
     let signal_process_exit = process_exit.clone();
     let signal_events = events.clone();
-    let connect = KernelClient::connect_user(url, auth, move |frame| {
-        let Frame::Sig(signal) = frame else {
-            return;
-        };
-        let payload = signal.payload.unwrap_or_else(|| json!({}));
-        let is_process_exit = signal.signal == "process.exit";
-        if queue_session_signal(
-            &signal_state,
-            session_id,
-            signal.signal,
-            payload,
-            &signal_events,
-        ) && is_process_exit
-        {
-            signal_process_exit.notify_one();
-        }
-    });
+    let identity = ClientIdentity::new(
+        format!("gsv-desktop-{}", uuid::Uuid::new_v4()),
+        env!("CARGO_PKG_VERSION"),
+    )
+    .with_channel("desktop");
+    let connect = KernelClient::connect_user_with_identity(
+        url,
+        identity,
+        auth,
+        BinaryBodyLimits::default(),
+        move |frame| {
+            let Frame::Sig(signal) = frame else {
+                return;
+            };
+            let payload = signal.payload.unwrap_or_else(|| json!({}));
+            let is_process_exit = signal.signal == "process.exit";
+            if queue_session_signal(
+                &signal_state,
+                session_id,
+                signal.signal,
+                payload,
+                &signal_events,
+            ) && is_process_exit
+            {
+                signal_process_exit.notify_one();
+            }
+        },
+    );
     let connected = tokio::time::timeout(CONNECT_TIMEOUT, connect)
         .await
         .map_err(|_| EstablishFailure {
@@ -1746,9 +2103,8 @@ async fn establish_live_session(
             message: format!("Connecting to {url} timed out after {CONNECT_TIMEOUT:?}."),
         })?;
     let client = Arc::new(connected.map_err(|error| classify_connect_failure(url, error))?);
-    let media_bodies = install_media_body_handler(&client).await;
 
-    let pid = choose_process(&client, preferred_pid)
+    let pid = choose_process(&client, preferred_pid, require_preferred_pid)
         .await
         .map_err(EstablishFailure::session)?;
     if signal_lease.select_pid(pid.clone()) {
@@ -1761,7 +2117,6 @@ async fn establish_live_session(
 
     Ok(LiveSession {
         client,
-        media_bodies,
         pid,
         history,
         history_request_signal_id,
@@ -1803,6 +2158,23 @@ fn classify_connect_failure(url: &str, error: Box<dyn std::error::Error>) -> Est
     }
 }
 
+fn map_establish_operation_error(error: &EstablishFailure) -> OperationError {
+    match error.kind {
+        EstablishFailureKind::Authentication(_) => OperationError::PermissionDenied,
+        EstablishFailureKind::SetupRequired | EstablishFailureKind::Transport => {
+            OperationError::Unavailable
+        }
+        EstablishFailureKind::Session => {
+            let lower = error.message.to_ascii_lowercase();
+            if lower.contains("no longer available") || lower.contains("not found") {
+                OperationError::ProcessNotFound
+            } else {
+                OperationError::Internal
+            }
+        }
+    }
+}
+
 async fn run_connected_session(
     session: ActiveClientSession,
     commands: &mut tokio_mpsc::UnboundedReceiver<ClientCommand>,
@@ -1811,11 +2183,11 @@ async fn run_connected_session(
 ) -> ConnectedSessionOutcome {
     let ActiveClientSession {
         client,
-        media_bodies,
         pid,
         process_exit,
         signal_lease,
         attempt_id: session_attempt_id,
+        cleanup_scope,
     } = session;
     let mut connection_check = tokio::time::interval(CONNECTION_CHECK_INTERVAL);
     connection_check.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
@@ -1835,6 +2207,14 @@ async fn run_connected_session(
         .build()
         .unwrap_or_else(|_| reqwest::Client::new());
     let media_slots = Arc::new(Semaphore::new(MAX_CONCURRENT_MEDIA_TRANSFERS));
+    let cleanup_journal = Arc::new(MediaCleanupJournal::live());
+    if let Err(error) =
+        retry_journaled_media_cleanup(&client, &cleanup_journal, &cleanup_scope).await
+    {
+        let _ = events.send(ClientEvent::Error(format!(
+            "Attachment cleanup is queued but could not be checked yet: {error}"
+        )));
+    }
     if initial_history_superseded && history_refresh.request() {
         spawn_history_task(
             &mut tasks,
@@ -1855,6 +2235,11 @@ async fn run_connected_session(
                 &mut pending,
                 events,
                 &signal_lease,
+                MediaCleanupRuntime {
+                    client: &client,
+                    journal: &cleanup_journal,
+                    scope: &cleanup_scope,
+                },
                 "The connection changed before GSV confirmed the operation.",
             )
             .await;
@@ -1872,6 +2257,11 @@ async fn run_connected_session(
                     &mut pending,
                     events,
                     &signal_lease,
+                    MediaCleanupRuntime {
+                        client: &client,
+                        journal: &cleanup_journal,
+                        scope: &cleanup_scope,
+                    },
                     "That GSV process ended before it confirmed the operation.",
                 ).await;
                 return ConnectedSessionOutcome::Reconnect(
@@ -1881,7 +2271,18 @@ async fn run_connected_session(
             command = commands.recv() => {
                 let Some(command) = command else {
                     signal_lease.deactivate();
-                    discard_tasks(&mut tasks).await;
+                    reconcile_interrupted_tasks(
+                        &mut tasks,
+                        &mut pending,
+                        events,
+                        &signal_lease,
+                        MediaCleanupRuntime {
+                            client: &client,
+                            journal: &cleanup_journal,
+                            scope: &cleanup_scope,
+                        },
+                        "GSV Desktop closed before it confirmed the operation.",
+                    ).await;
                     return ConnectedSessionOutcome::Shutdown;
                 };
                 match command {
@@ -1892,6 +2293,11 @@ async fn run_connected_session(
                             &mut pending,
                             events,
                             &signal_lease,
+                            MediaCleanupRuntime {
+                                client: &client,
+                                journal: &cleanup_journal,
+                                scope: &cleanup_scope,
+                            },
                             "The connection changed before GSV confirmed the operation.",
                         ).await;
                         return ConnectedSessionOutcome::Replace(next);
@@ -1905,6 +2311,11 @@ async fn run_connected_session(
                             &mut pending,
                             events,
                             &signal_lease,
+                            MediaCleanupRuntime {
+                                client: &client,
+                                journal: &cleanup_journal,
+                                scope: &cleanup_scope,
+                            },
                             "The connection was cancelled before GSV confirmed the operation.",
                         ).await;
                         return ConnectedSessionOutcome::Cancelled;
@@ -1912,8 +2323,77 @@ async fn run_connected_session(
                     ClientCommand::CancelConnect { .. } => {}
                     ClientCommand::Shutdown => {
                         signal_lease.deactivate();
-                        discard_tasks(&mut tasks).await;
+                        reconcile_interrupted_tasks(
+                            &mut tasks,
+                            &mut pending,
+                            events,
+                            &signal_lease,
+                            MediaCleanupRuntime {
+                                client: &client,
+                                journal: &cleanup_journal,
+                                scope: &cleanup_scope,
+                            },
+                            "GSV Desktop closed before it confirmed the operation.",
+                        ).await;
                         return ConnectedSessionOutcome::Shutdown;
+                    }
+                    ClientCommand::DesktopNew { context, response } => {
+                        if context.is_cancelled() {
+                            let _ = response.send(Err(OperationError::Conflict));
+                            let _ = events.send(ClientEvent::DesktopControlSettled);
+                            continue;
+                        }
+                        if !pending.is_empty() || !media_tasks.is_empty() {
+                            let _ = response.send(Err(OperationError::Busy));
+                            let _ = events.send(ClientEvent::DesktopControlSettled);
+                            continue;
+                        }
+                        match spawn_desktop_process(&client, &context).await {
+                            Ok(next_pid) => {
+                                signal_lease.deactivate();
+                                discard_tasks(&mut tasks).await;
+                                return ConnectedSessionOutcome::Switch {
+                                    pid: next_pid,
+                                    context,
+                                    response,
+                                };
+                            }
+                            Err(error) => {
+                                let _ = response.send(Err(error));
+                                let _ = events.send(ClientEvent::DesktopControlSettled);
+                            }
+                        }
+                    }
+                    ClientCommand::DesktopUse { context, process_id, response } => {
+                        if context.is_cancelled() {
+                            let _ = response.send(Err(OperationError::Conflict));
+                            let _ = events.send(ClientEvent::DesktopControlSettled);
+                            continue;
+                        }
+                        if !pending.is_empty() || !media_tasks.is_empty() {
+                            let _ = response.send(Err(OperationError::Busy));
+                            let _ = events.send(ClientEvent::DesktopControlSettled);
+                            continue;
+                        }
+                        match validate_desktop_process(&client, &context, &process_id).await {
+                            Ok(()) if process_id.as_str() == pid => {
+                                let _ = response.send(Ok(process_id));
+                                let _ = events.send(ClientEvent::DesktopControlSettled);
+                            }
+                            Ok(()) => {
+                                signal_lease.deactivate();
+                                discard_tasks(&mut tasks).await;
+                                return ConnectedSessionOutcome::Switch {
+                                    pid: process_id.into_inner(),
+                                    context,
+                                    response,
+                                };
+                            }
+                            Err(error) => {
+                                let _ = response.send(Err(error));
+                                let _ = events.send(ClientEvent::DesktopControlSettled);
+                            }
+                        }
                     }
                     ClientCommand::RefreshHistory => {
                         if history_refresh.request() {
@@ -1944,9 +2424,10 @@ async fn run_connected_session(
                             cancelled_task_ids: &mut cancelled_task_ids,
                             next_operation_id: &mut next_operation_id,
                             client: client.clone(),
-                            media_bodies: media_bodies.clone(),
                             http_client: http_client.clone(),
                             media_slots: media_slots.clone(),
+                            cleanup_journal: cleanup_journal.clone(),
+                            cleanup_scope: cleanup_scope.clone(),
                             pid: pid.clone(),
                         },
                         command,
@@ -1977,6 +2458,11 @@ async fn run_connected_session(
                                 &mut pending,
                                 events,
                                 &signal_lease,
+                                MediaCleanupRuntime {
+                                    client: &client,
+                                    journal: &cleanup_journal,
+                                    scope: &cleanup_scope,
+                                },
                                 "The selected GSV process disappeared before it confirmed the operation.",
                             ).await;
                             return ConnectedSessionOutcome::Reconnect(
@@ -2041,6 +2527,10 @@ fn handle_unavailable_command(
 ) -> bool {
     match command {
         ClientCommand::Connect(_) | ClientCommand::CancelConnect { .. } => {}
+        ClientCommand::DesktopNew { response, .. } | ClientCommand::DesktopUse { response, .. } => {
+            let _ = response.send(Err(OperationError::Unavailable));
+            let _ = events.send(ClientEvent::DesktopControlSettled);
+        }
         ClientCommand::Send { submission_id, .. } => {
             let _ = events.send(ClientEvent::SendFailed {
                 submission_id,
@@ -2064,6 +2554,11 @@ fn handle_unavailable_command(
         ClientCommand::LoadMedia { request_id, .. } => {
             let _ = events.send(ClientEvent::MediaFailed {
                 request_id,
+                message: "That media isn’t available while GSV is reconnecting.".to_string(),
+            });
+        }
+        ClientCommand::MaterializeMedia { .. } => {
+            let _ = events.send(ClientEvent::MediaFileFailed {
                 message: "That media isn’t available while GSV is reconnecting.".to_string(),
             });
         }
@@ -2172,10 +2667,10 @@ fn login_defaults(settings: &ConnectionSettings) -> LoginDefaults {
 }
 
 fn remember_connection_identity(settings: &ConnectionSettings) {
-    let mut config = CliConfig::load();
-    config.gateway.url = Some(settings.url.clone());
-    config.gateway.username = Some(settings.username.clone());
-    let _ = config.save();
+    let _ = CliConfig::update(|config| {
+        config.gateway.url = Some(settings.url.clone());
+        config.gateway.username = Some(settings.username.clone());
+    });
 }
 
 fn nonempty_env(key: &str) -> Option<String> {
@@ -2195,6 +2690,7 @@ fn nonempty_secret_env(key: &str) -> Option<String> {
 async fn choose_process(
     client: &KernelClient,
     preferred_pid: Option<&str>,
+    require_preferred_pid: bool,
 ) -> Result<String, String> {
     let response = request_ok(client, "proc.list", Some(json!({})))
         .await
@@ -2203,6 +2699,9 @@ async fn choose_process(
     let preferred_pid = configured_pid.as_deref().or(preferred_pid);
     if let Some(pid) = select_existing_process(&response, preferred_pid) {
         return Ok(pid);
+    }
+    if require_preferred_pid {
+        return Err("The selected interactive GSV process is no longer available.".to_string());
     }
 
     let spawned = request_ok(
@@ -2217,6 +2716,86 @@ async fn choose_process(
         .and_then(Value::as_str)
         .ok_or_else(|| "GSV started a process without returning its pid.".to_string())?;
     Ok(pid.to_string())
+}
+
+async fn spawn_desktop_process(
+    client: &KernelClient,
+    context: &RequestContext,
+) -> Result<String, OperationError> {
+    // The server can time out or its peer can disappear while this request is
+    // queued. Check cancellation immediately before the gateway mutation.
+    if context.is_cancelled() {
+        return Err(OperationError::Conflict);
+    }
+    let request = request_ok(
+        client,
+        "proc.spawn",
+        Some(json!({ "interactive": true, "label": "Desktop" })),
+    );
+    let spawned = tokio::select! {
+        result = request => result.map_err(map_desktop_request_failure)?,
+        () = context.cancelled() => return Err(OperationError::Conflict),
+    };
+    let pid = spawned
+        .get("pid")
+        .and_then(Value::as_str)
+        .ok_or(OperationError::Internal)?;
+    if context.is_cancelled() {
+        // proc.spawn may already have committed, but cancellation forbids the
+        // later Desktop selection mutation. The durable Process remains owned
+        // and inspectable by the user rather than being silently killed.
+        return Err(OperationError::Conflict);
+    }
+    ProcessId::new(pid.to_string()).map_err(|_| OperationError::Internal)?;
+    Ok(pid.to_string())
+}
+
+async fn validate_desktop_process(
+    client: &KernelClient,
+    context: &RequestContext,
+    process_id: &ProcessId,
+) -> Result<(), OperationError> {
+    if context.is_cancelled() {
+        return Err(OperationError::Conflict);
+    }
+    let request = request_ok(client, "proc.list", Some(json!({})));
+    let listed = tokio::select! {
+        result = request => result.map_err(map_desktop_request_failure)?,
+        () = context.cancelled() => return Err(OperationError::Conflict),
+    };
+    if context.is_cancelled() {
+        return Err(OperationError::Conflict);
+    }
+    let found = desktop_process_is_selectable(&listed, process_id.as_str());
+    found.then_some(()).ok_or(OperationError::ProcessNotFound)
+}
+
+fn desktop_process_is_selectable(response: &Value, process_id: &str) -> bool {
+    response
+        .get("processes")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .any(|process| {
+            process.get("pid").and_then(Value::as_str) == Some(process_id)
+                && process.get("interactive").and_then(Value::as_bool) == Some(true)
+        })
+}
+
+fn map_desktop_request_failure(error: RequestFailure) -> OperationError {
+    match error.kind {
+        RequestFailureKind::Transport => OperationError::Unavailable,
+        RequestFailureKind::Rejected => {
+            let lower = error.message.to_ascii_lowercase();
+            if lower.contains("not found") || lower.contains("does not exist") {
+                OperationError::ProcessNotFound
+            } else if lower.contains("permission") || lower.contains("forbidden") {
+                OperationError::PermissionDenied
+            } else {
+                OperationError::Internal
+            }
+        }
+    }
 }
 
 fn select_existing_process(response: &Value, preferred_pid: Option<&str>) -> Option<String> {
@@ -2282,13 +2861,12 @@ async fn fetch_history(
 
 async fn load_media(
     client: &KernelClient,
-    media_bodies: &ResponseBodyInbox,
     http_client: &reqwest::Client,
     pid: &str,
     source: MediaSource,
 ) -> Result<MediaResponse, RequestFailure> {
     match source {
-        MediaSource::Process { key } => fetch_process_media(client, media_bodies, pid, &key).await,
+        MediaSource::Process { key } => fetch_process_media(client, pid, &key).await,
         MediaSource::Remote { url } => {
             tokio::time::timeout(MEDIA_FETCH_TIMEOUT, fetch_remote_media(http_client, &url))
                 .await
@@ -2299,7 +2877,6 @@ async fn load_media(
 
 async fn fetch_process_media(
     client: &KernelClient,
-    media_bodies: &ResponseBodyInbox,
     pid: &str,
     key: &str,
 ) -> Result<MediaResponse, RequestFailure> {
@@ -2309,7 +2886,7 @@ async fn fetch_process_media(
         ));
     }
 
-    let request = client.connection().request_with_timeout(
+    let request = client.connection().request_response(
         "proc.media.read",
         Some(json!({ "pid": pid, "key": key })),
         RPC_TIMEOUT,
@@ -2323,26 +2900,8 @@ async fn fetch_process_media(
         })?
         .map_err(|error| RequestFailure::transport(error.to_string()))?;
 
-    let body = response.body;
-    if !response.ok {
-        cancel_response_body(media_bodies, body);
-        let Some(error) = response.error else {
-            return Err(RequestFailure::transport(
-                "proc.media.read failed without error details",
-            ));
-        };
-        return Err(RequestFailure {
-            kind: classify_response_failure(error.code, error.retryable),
-            message: format!(
-                "proc.media.read failed (code {}): {}",
-                error.code, error.message
-            ),
-        });
-    }
-
-    let data = response.data.unwrap_or_else(|| json!({}));
+    let data = response.data;
     if data.get("ok").and_then(Value::as_bool) == Some(false) {
-        cancel_response_body(media_bodies, body);
         return Err(RequestFailure::rejected(
             data.get("error")
                 .and_then(Value::as_str)
@@ -2350,34 +2909,35 @@ async fn fetch_process_media(
         ));
     }
 
-    let Some(body) = body else {
+    let Some(mut body) = response.body else {
         return Err(RequestFailure::transport(
             "GSV returned media metadata without its body.",
         ));
     };
     let Some(declared_size) = data.get("size").and_then(Value::as_u64) else {
-        media_bodies.register(body)?;
-        media_bodies.cancel(body.stream_id, "Media size metadata was invalid");
+        body.cancel("Media size metadata was invalid");
         return Err(RequestFailure::transport(
             "GSV returned media without a valid size.",
         ));
     };
     if declared_size > MAX_MEDIA_BYTES as u64 {
-        media_bodies.register(body)?;
-        media_bodies.cancel(body.stream_id, "Media transfer limit exceeded");
+        body.cancel("Media transfer limit exceeded");
         return Err(RequestFailure::rejected(format!(
             "Media exceeds the {MAX_MEDIA_BYTES}-byte transfer limit."
         )));
     }
-    if body.length.is_some_and(|length| length != declared_size) {
-        media_bodies.register(body)?;
-        media_bodies.cancel(body.stream_id, "Media size metadata did not match");
+    if body.length().is_some_and(|length| length != declared_size) {
+        body.cancel("Media size metadata did not match");
         return Err(RequestFailure::transport(
             "GSV returned inconsistent media size metadata.",
         ));
     }
 
-    let bytes = media_bodies.read_body(body).await?;
+    let bytes: Arc<[u8]> = Arc::from(
+        body.read_all(MAX_MEDIA_BYTES)
+            .await
+            .map_err(|error| RequestFailure::transport(error.to_string()))?,
+    );
     if bytes.len() as u64 != declared_size {
         return Err(RequestFailure::transport(
             "The media bytes did not match the declared size.",
@@ -2390,15 +2950,6 @@ async fn fetch_process_media(
         .filter(|mime_type| !mime_type.is_empty())
         .map(str::to_string);
     Ok(MediaResponse { bytes, mime_type })
-}
-
-fn cancel_response_body(media_bodies: &ResponseBodyInbox, body: Option<FrameBodyDescriptor>) {
-    let Some(body) = body else {
-        return;
-    };
-    if media_bodies.register(body).is_ok() {
-        media_bodies.cancel(body.stream_id, "Media response was not accepted");
-    }
 }
 
 async fn fetch_remote_media(
@@ -2517,11 +3068,13 @@ async fn send_message(
     client: &KernelClient,
     pid: &str,
     message: &str,
+    media: &[MediaAttachment],
 ) -> Result<ProcSendResult, SendAttemptFailure> {
+    let media = media.iter().map(media_to_json).collect::<Vec<_>>();
     let payload = match request_ok(
         client,
         "proc.send",
-        Some(json!({ "pid": pid, "message": message })),
+        Some(json!({ "pid": pid, "message": message, "media": media })),
     )
     .await
     {
@@ -2529,11 +3082,18 @@ async fn send_message(
         Err(error) if error.kind == RequestFailureKind::Rejected => {
             return Err(SendAttemptFailure::Rejected(error.to_string()));
         }
-        Err(error) => return Err(SendAttemptFailure::Uncertain(error.to_string())),
+        Err(error) => {
+            return Err(SendAttemptFailure::Uncertain {
+                message: error.to_string(),
+                media: Vec::new(),
+            });
+        }
     };
-    let result: ProcSendResult = serde_json::from_value(payload).map_err(|error| {
-        SendAttemptFailure::Uncertain(format!("Invalid proc.send response: {error}"))
-    })?;
+    let result: ProcSendResult =
+        serde_json::from_value(payload).map_err(|error| SendAttemptFailure::Uncertain {
+            message: format!("Invalid proc.send response: {error}"),
+            media: Vec::new(),
+        })?;
     if !result.ok {
         return Err(SendAttemptFailure::Rejected(
             result
@@ -2543,6 +3103,450 @@ async fn send_message(
         ));
     }
     Ok(result)
+}
+
+async fn upload_and_send_message(
+    client: &KernelClient,
+    cleanup_journal: &MediaCleanupJournal,
+    cleanup_scope: &MediaCleanupScope,
+    pid: &str,
+    message: &str,
+    attachments: Vec<OutgoingAttachment>,
+    progress: Arc<SendProgress>,
+) -> Result<(ProcSendResult, Vec<MediaAttachment>), SendAttemptFailure> {
+    let mut staged = Vec::with_capacity(attachments.len());
+    for attachment in attachments {
+        let media = match upload_attachment(client, pid, &attachment).await {
+            Ok(media) => media,
+            Err(error) => {
+                let _ = retry_journaled_media_cleanup(client, cleanup_journal, cleanup_scope).await;
+                return Err(SendAttemptFailure::Rejected(error));
+            }
+        };
+        if let Err(error) = progress.stage_media(cleanup_journal, cleanup_scope, pid, media.clone())
+        {
+            // The returned media exists but could not be recorded durably. Try the exact
+            // descriptor synchronously before returning a definite pre-send failure.
+            let cleanup_entry = media_cleanup_entry(cleanup_scope, pid, &media);
+            if let Some(entry) = cleanup_entry {
+                let _ = delete_staged_media(client, &entry).await;
+            }
+            let _ = retry_journaled_media_cleanup(client, cleanup_journal, cleanup_scope).await;
+            return Err(SendAttemptFailure::Rejected(format!(
+                "The attachment could not be staged safely: {error}"
+            )));
+        }
+        staged.push(media);
+    }
+
+    if let Err(error) = progress.begin_send(cleanup_journal, cleanup_scope, pid) {
+        let _ = retry_journaled_media_cleanup(client, cleanup_journal, cleanup_scope).await;
+        return Err(SendAttemptFailure::Rejected(format!(
+            "The attachment cleanup state could not be committed: {error}"
+        )));
+    }
+    match send_message(client, pid, message, &staged).await {
+        Ok(result) => {
+            let entries = media_cleanup_entries(cleanup_scope, pid, &staged);
+            let _ = cleanup_journal.remove(&entries);
+            Ok((result, staged))
+        }
+        Err(SendAttemptFailure::Rejected(error)) => {
+            // proc.send definitely rejected the request. Re-arm the same descriptors before
+            // deletion so a transient cleanup failure remains recoverable across restart.
+            let entries = media_cleanup_entries(cleanup_scope, pid, &staged);
+            if cleanup_journal.arm_for_cleanup(&entries).is_ok() {
+                let _ = retry_journaled_media_cleanup(client, cleanup_journal, cleanup_scope).await;
+            }
+            Err(SendAttemptFailure::Rejected(error))
+        }
+        Err(SendAttemptFailure::Uncertain { message, .. }) => {
+            Err(SendAttemptFailure::Uncertain {
+                message,
+                // The gateway may have accepted proc.send. Keep the process-scoped objects and
+                // expose their exact descriptors for history reconciliation; deleting here would
+                // race an accepted run.
+                media: staged,
+            })
+        }
+    }
+}
+
+async fn upload_attachment(
+    client: &KernelClient,
+    pid: &str,
+    attachment: &OutgoingAttachment,
+) -> Result<MediaAttachment, String> {
+    if attachment.size > MAX_MEDIA_BYTES as u64 {
+        return Err(format!(
+            "{} is larger than the attachment limit",
+            attachment.filename
+        ));
+    }
+    let file = tokio::fs::File::open(&attachment.snapshot)
+        .await
+        .map_err(|_| format!("{} could not be read", attachment.filename))?;
+    let body = BinaryBody::from_reader(file, Some(attachment.size));
+    let request = client.connection().request_with_body(
+        "proc.media.write",
+        Some(json!({
+            "pid": pid,
+            "mediaId": attachment.media_id,
+            "type": media_kind_name(attachment.kind),
+            "mimeType": attachment.mime_type,
+            "filename": attachment.filename,
+        })),
+        body,
+        RPC_ENVELOPE_TIMEOUT,
+    );
+    let response = request
+        .await
+        .map_err(|error| format!("{} could not be uploaded: {error}", attachment.filename))?;
+    if response.body.is_some() {
+        return Err("GSV returned an unexpected body for the media upload".to_string());
+    }
+    if response.data.get("ok").and_then(Value::as_bool) == Some(false) {
+        return Err(response
+            .data
+            .get("error")
+            .and_then(Value::as_str)
+            .unwrap_or("GSV rejected the attachment")
+            .to_string());
+    }
+    let media = response
+        .data
+        .get("media")
+        .ok_or_else(|| "GSV returned no attachment descriptor".to_string())?;
+    media_from_json(media)
+        .ok_or_else(|| "GSV returned an invalid attachment descriptor".to_string())
+}
+
+async fn retry_journaled_media_cleanup(
+    client: &KernelClient,
+    journal: &MediaCleanupJournal,
+    scope: &MediaCleanupScope,
+) -> Result<(), String> {
+    let entries = journal.entries_for(scope)?;
+    let mut removed = Vec::new();
+    let mut first_error = None;
+    for entry in entries {
+        match delete_staged_media(client, &entry).await {
+            Ok(()) => removed.push(entry),
+            Err(error) => {
+                if first_error.is_none() {
+                    first_error = Some(error);
+                }
+            }
+        }
+    }
+    journal.remove(&removed)?;
+    first_error.map_or(Ok(()), Err)
+}
+
+async fn delete_staged_media(
+    client: &KernelClient,
+    entry: &MediaCleanupEntry,
+) -> Result<(), String> {
+    let request = client.connection().request_with_timeout(
+        "proc.media.delete",
+        Some(json!({ "pid": entry.pid, "key": entry.key })),
+        MEDIA_CLEANUP_RPC_TIMEOUT,
+    );
+    let response = tokio::time::timeout(MEDIA_CLEANUP_ENVELOPE_TIMEOUT, request)
+        .await
+        .map_err(|_| "proc.media.delete timed out".to_string())?
+        .map_err(|error| error.to_string())?;
+    if !response.ok {
+        return Err(response
+            .error
+            .map(|error| error.message)
+            .unwrap_or_else(|| "proc.media.delete failed without error details".to_string()));
+    }
+    let data = response.data.unwrap_or_else(|| json!({}));
+    if data.get("ok").and_then(Value::as_bool) == Some(false) {
+        return Err(data
+            .get("error")
+            .and_then(Value::as_str)
+            .unwrap_or("The gateway rejected the media cleanup")
+            .to_string());
+    }
+    Ok(())
+}
+
+fn media_kind_name(kind: MediaKind) -> &'static str {
+    match kind {
+        MediaKind::Image => "image",
+        MediaKind::Audio => "audio",
+        MediaKind::Video => "video",
+        MediaKind::Document => "document",
+    }
+}
+
+fn media_to_json(media: &MediaAttachment) -> Value {
+    json!({
+        "type": media_kind_name(media.kind),
+        "mimeType": media.mime_type,
+        "key": media.key,
+        "path": media.path,
+        "url": media.url,
+        "filename": media.filename,
+        "size": media.size,
+        "duration": media.duration,
+        "transcription": media.transcription,
+    })
+}
+
+fn media_from_json(value: &Value) -> Option<MediaAttachment> {
+    let kind = match value.get("type")?.as_str()? {
+        "image" => MediaKind::Image,
+        "audio" => MediaKind::Audio,
+        "video" => MediaKind::Video,
+        "document" => MediaKind::Document,
+        _ => return None,
+    };
+    let mime_type = value.get("mimeType")?.as_str()?.trim();
+    let key = value.get("key")?.as_str()?.trim();
+    if mime_type.is_empty() || key.is_empty() {
+        return None;
+    }
+    Some(MediaAttachment {
+        kind,
+        mime_type: mime_type.to_string(),
+        key: Some(key.to_string()),
+        path: value
+            .get("path")
+            .and_then(Value::as_str)
+            .map(str::to_string),
+        url: None,
+        filename: value
+            .get("filename")
+            .and_then(Value::as_str)
+            .map(str::to_string),
+        size: value.get("size").and_then(Value::as_u64),
+        duration: value.get("duration").and_then(Value::as_f64),
+        transcription: value
+            .get("transcription")
+            .and_then(Value::as_str)
+            .map(str::to_string),
+        description: None,
+    })
+}
+
+#[cfg(test)]
+mod outgoing_media_tests {
+    use super::*;
+
+    fn cleanup_scope(url: &str, username: &str) -> MediaCleanupScope {
+        MediaCleanupScope {
+            gateway_url: url.to_string(),
+            username: username.to_string(),
+        }
+    }
+
+    fn cleanup_media(key: &str) -> MediaAttachment {
+        MediaAttachment {
+            kind: MediaKind::Document,
+            mime_type: "application/pdf".to_string(),
+            key: Some(key.to_string()),
+            path: None,
+            url: None,
+            filename: Some("report.pdf".to_string()),
+            size: Some(42),
+            duration: None,
+            transcription: None,
+            description: None,
+        }
+    }
+
+    fn cleanup_journal() -> (tempfile::TempDir, MediaCleanupJournal) {
+        let directory = tempfile::tempdir().expect("temporary cleanup directory");
+        let journal = MediaCleanupJournal::new(directory.path().join("cleanup.toml"));
+        (directory, journal)
+    }
+
+    #[test]
+    fn uploaded_media_descriptors_round_trip_without_private_fields() {
+        let value = json!({
+            "type": "document",
+            "mimeType": "application/pdf",
+            "key": "var/media/7/pid/report",
+            "path": "/var/media/report",
+            "filename": "report.pdf",
+            "size": 42
+        });
+        let media = media_from_json(&value).expect("valid media");
+        assert_eq!(media.kind, MediaKind::Document);
+        assert_eq!(media.key.as_deref(), Some("var/media/7/pid/report"));
+        assert_eq!(media.filename.as_deref(), Some("report.pdf"));
+        let wire = media_to_json(&media);
+        assert_eq!(wire["type"], "document");
+        assert_eq!(wire["key"], "var/media/7/pid/report");
+        assert!(wire.get("data").is_none());
+    }
+
+    #[test]
+    fn malformed_uploaded_media_is_rejected() {
+        assert!(media_from_json(&json!({
+            "type": "document",
+            "mimeType": "application/pdf"
+        }))
+        .is_none());
+        assert!(media_from_json(&json!({
+            "type": "unknown",
+            "mimeType": "application/pdf",
+            "key": "owned"
+        }))
+        .is_none());
+    }
+
+    #[test]
+    fn staged_media_remains_journaled_until_send_begins() {
+        let (_directory, journal) = cleanup_journal();
+        let scope = cleanup_scope("wss://gateway.example/ws", "root");
+        let progress = SendProgress::new();
+
+        progress
+            .stage_media(
+                &journal,
+                &scope,
+                "proc-7",
+                cleanup_media("var/media/root/proc-7/report"),
+            )
+            .expect("stage media");
+
+        assert!(!progress.send_started.load(Ordering::Acquire));
+        let entries = journal.entries_for(&scope).expect("load cleanup entries");
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].pid, "proc-7");
+        assert_eq!(entries[0].key, "var/media/root/proc-7/report");
+    }
+
+    #[test]
+    fn begin_send_disarms_journal_before_setting_uncertainty_fence() {
+        let (_directory, journal) = cleanup_journal();
+        let scope = cleanup_scope("wss://gateway.example/ws", "root");
+        let progress = SendProgress::new();
+        progress
+            .stage_media(
+                &journal,
+                &scope,
+                "proc-7",
+                cleanup_media("var/media/root/proc-7/report"),
+            )
+            .expect("stage media");
+
+        progress
+            .begin_send(&journal, &scope, "proc-7")
+            .expect("begin send");
+
+        assert!(progress.send_started.load(Ordering::Acquire));
+        assert!(journal
+            .entries_for(&scope)
+            .expect("load cleanup entries")
+            .is_empty());
+        let retained = journal
+            .retained_for(&scope)
+            .expect("load retained descriptors");
+        assert_eq!(retained.len(), 1);
+        assert_eq!(retained[0].key, "var/media/root/proc-7/report");
+    }
+
+    #[test]
+    fn cleanup_journal_isolates_gateway_and_user_scopes() {
+        let (_directory, journal) = cleanup_journal();
+        let first = cleanup_scope("wss://one.example/ws", "root");
+        let second = cleanup_scope("wss://two.example/ws", "root");
+        let third = cleanup_scope("wss://one.example/ws", "alice");
+        let entries = [
+            MediaCleanupEntry {
+                gateway_url: first.gateway_url.clone(),
+                username: first.username.clone(),
+                pid: "proc-1".to_string(),
+                key: "var/media/root/proc-1/one".to_string(),
+                cleanup: true,
+            },
+            MediaCleanupEntry {
+                gateway_url: second.gateway_url.clone(),
+                username: second.username.clone(),
+                pid: "proc-2".to_string(),
+                key: "var/media/root/proc-2/two".to_string(),
+                cleanup: true,
+            },
+            MediaCleanupEntry {
+                gateway_url: third.gateway_url.clone(),
+                username: third.username.clone(),
+                pid: "proc-3".to_string(),
+                key: "var/media/alice/proc-3/three".to_string(),
+                cleanup: true,
+            },
+        ];
+        journal.record(&entries).expect("record entries");
+
+        assert_eq!(
+            journal.entries_for(&first).expect("first scope"),
+            vec![entries[0].clone()]
+        );
+        assert_eq!(
+            journal.entries_for(&second).expect("second scope"),
+            vec![entries[1].clone()]
+        );
+        assert_eq!(
+            journal.entries_for(&third).expect("third scope"),
+            vec![entries[2].clone()]
+        );
+    }
+
+    #[test]
+    fn cleanup_entry_is_retained_until_a_delete_is_confirmed() {
+        let (_directory, journal) = cleanup_journal();
+        let scope = cleanup_scope("wss://gateway.example/ws", "root");
+        let entry = MediaCleanupEntry {
+            gateway_url: scope.gateway_url.clone(),
+            username: scope.username.clone(),
+            pid: "proc-7".to_string(),
+            key: "var/media/root/proc-7/report".to_string(),
+            cleanup: true,
+        };
+        journal
+            .record(std::slice::from_ref(&entry))
+            .expect("record cleanup");
+
+        // A failed delete performs no journal mutation. The later successful attempt removes the
+        // exact entry, which is the retry contract used by retry_journaled_media_cleanup.
+        assert_eq!(
+            journal.entries_for(&scope).expect("pending cleanup"),
+            vec![entry.clone()]
+        );
+        journal
+            .remove(std::slice::from_ref(&entry))
+            .expect("confirm cleanup");
+        assert!(journal.entries_for(&scope).expect("cleaned up").is_empty());
+    }
+
+    #[test]
+    fn replacing_connection_settles_pending_desktop_switch_once() {
+        let (response_tx, mut response_rx) = oneshot::channel();
+        let (events, mut received_events) = tokio_mpsc::unbounded_channel();
+        assert_eq!(
+            settle_desktop_switch(
+                response_tx,
+                Some("previous".to_string()),
+                &events,
+                OperationError::Conflict,
+            )
+            .as_deref(),
+            Some("previous")
+        );
+        assert_eq!(
+            response_rx.try_recv().expect("desktop response"),
+            Err(OperationError::Conflict)
+        );
+        assert!(matches!(
+            received_events.try_recv(),
+            Ok(ClientEvent::DesktopControlSettled)
+        ));
+        assert!(received_events.try_recv().is_err());
+    }
 }
 
 async fn execute_shell(
@@ -2590,6 +3594,7 @@ async fn run_demo(
             ClientCommand::Send {
                 submission_id,
                 message,
+                ..
             } => {
                 let run = generation.fetch_add(1, Ordering::SeqCst) + 1;
                 let run_id = format!("demo-run-{run}");
@@ -2597,6 +3602,7 @@ async fn run_demo(
                     submission_id,
                     run_id: run_id.clone(),
                     queued: false,
+                    media: Vec::new(),
                 });
                 let stream_events = events.clone();
                 let stream_generation = generation.clone();
@@ -2662,6 +3668,16 @@ async fn run_demo(
                     cancelled_task_ids.insert(control.id());
                     control.abort();
                 }
+            }
+            ClientCommand::MaterializeMedia { .. } => {
+                let _ = events.send(ClientEvent::MediaFileFailed {
+                    message: "Demo media cannot be opened outside the app.".to_string(),
+                });
+            }
+            ClientCommand::DesktopNew { response, .. }
+            | ClientCommand::DesktopUse { response, .. } => {
+                let _ = response.send(Err(OperationError::Unavailable));
+                let _ = events.send(ClientEvent::DesktopControlSettled);
             }
             ClientCommand::Shutdown => {
                 media_tasks.abort_all();
@@ -2780,131 +3796,6 @@ mod tests {
             generation,
             snapshot: Arc::new(normalize_history(&payload)),
         }
-    }
-
-    #[test]
-    fn media_body_consumes_frames_that_arrive_before_registration() -> Result<(), String> {
-        let sent = Arc::new(Mutex::new(Vec::new()));
-        let sent_frames = sent.clone();
-        let inbox = ResponseBodyInbox::new(move |frame| {
-            if let Ok(mut sent) = sent_frames.lock() {
-                sent.push(frame);
-            }
-        });
-        inbox.push(build_binary_frame(23, BINARY_FRAME_DATA, b"image"));
-        inbox.push(build_binary_frame(23, BINARY_FRAME_END, &[]));
-
-        let runtime = tokio::runtime::Builder::new_current_thread()
-            .enable_time()
-            .build()
-            .map_err(|error| error.to_string())?;
-        let bytes = runtime
-            .block_on(inbox.read_body(FrameBodyDescriptor {
-                stream_id: 23,
-                length: Some(5),
-            }))
-            .map_err(|error| error.to_string())?;
-
-        assert_eq!(bytes.as_ref(), b"image");
-        assert!(sent.lock().map(|sent| sent.is_empty()).unwrap_or(false));
-        Ok(())
-    }
-
-    #[test]
-    fn oversized_declared_media_body_is_cancelled_without_waiting() -> Result<(), String> {
-        let sent = Arc::new(Mutex::new(Vec::new()));
-        let sent_frames = sent.clone();
-        let inbox = ResponseBodyInbox::new(move |frame| {
-            if let Ok(mut sent) = sent_frames.lock() {
-                sent.push(frame);
-            }
-        });
-        let runtime = tokio::runtime::Builder::new_current_thread()
-            .enable_time()
-            .build()
-            .map_err(|error| error.to_string())?;
-        let result = runtime.block_on(inbox.read_body(FrameBodyDescriptor {
-            stream_id: 24,
-            length: Some(MAX_MEDIA_BYTES as u64 + 1),
-        }));
-        let Err(error) = result else {
-            return Err("oversized media should be rejected".to_string());
-        };
-        assert_eq!(error.kind, RequestFailureKind::Rejected);
-
-        let frame = sent
-            .lock()
-            .map_err(|_| "sent frame mutex poisoned".to_string())?
-            .first()
-            .cloned()
-            .ok_or_else(|| "expected a cancellation frame".to_string())?;
-        let (stream_id, flags, _) = parse_binary_frame(&frame)
-            .ok_or_else(|| "cancellation frame should parse".to_string())?;
-        assert_eq!(stream_id, 24);
-        assert_eq!(flags, BINARY_FRAME_CANCEL | BINARY_FRAME_END);
-
-        inbox.push(build_binary_frame(
-            24,
-            BINARY_FRAME_CANCEL | BINARY_FRAME_END,
-            b"outgoing direction",
-        ));
-        assert!(inbox
-            .state
-            .lock()
-            .map(|state| state.cancelled.stream_ids.contains(&24))
-            .unwrap_or(false));
-        inbox.push(build_binary_frame(24, BINARY_FRAME_DATA, b"late"));
-        let late_was_discarded = inbox
-            .state
-            .lock()
-            .map(|state| {
-                !state.frames.contains_key(&24) && state.cancelled.stream_ids.contains(&24)
-            })
-            .unwrap_or(false);
-        assert!(late_was_discarded);
-
-        inbox
-            .register(FrameBodyDescriptor {
-                stream_id: 24,
-                length: Some(2),
-            })
-            .map_err(|error| error.to_string())?;
-        inbox.push(build_binary_frame(24, BINARY_FRAME_DATA, b"ok"));
-        inbox.push(build_binary_frame(24, BINARY_FRAME_END, &[]));
-        let reused = runtime
-            .block_on(inbox.read_body(FrameBodyDescriptor {
-                stream_id: 24,
-                length: Some(2),
-            }))
-            .map_err(|error| error.to_string())?;
-        assert_eq!(reused.as_ref(), b"ok");
-        Ok(())
-    }
-
-    #[test]
-    fn cancelled_media_stream_tracking_is_bounded() {
-        let mut streams = CancelledBodyStreams::default();
-        for stream_id in 1..=(MAX_CANCELLED_MEDIA_STREAMS as u32 + 1) {
-            streams.insert(stream_id);
-        }
-
-        assert_eq!(streams.stream_ids.len(), MAX_CANCELLED_MEDIA_STREAMS);
-        assert!(!streams.stream_ids.contains(&1));
-        let newest = MAX_CANCELLED_MEDIA_STREAMS as u32 + 1;
-        assert!(streams.should_discard(newest, BINARY_FRAME_END));
-        assert!(!streams.should_discard(newest, BINARY_FRAME_DATA));
-    }
-
-    #[test]
-    fn failed_pre_descriptor_media_stream_tracking_is_bounded() {
-        let mut state = ResponseBodyState::default();
-        for stream_id in 1..=(MAX_FAILED_MEDIA_STREAMS as u32 + 1) {
-            record_body_failure(&mut state, stream_id, "too large".to_string());
-        }
-
-        assert_eq!(state.failures.len(), MAX_FAILED_MEDIA_STREAMS);
-        assert_eq!(state.terminal.len(), MAX_FAILED_MEDIA_STREAMS);
-        assert!(state.cancelled.stream_ids.len() <= MAX_CANCELLED_MEDIA_STREAMS);
     }
 
     #[test]
@@ -3097,6 +3988,68 @@ mod tests {
     }
 
     #[test]
+    fn desktop_use_accepts_only_the_exact_interactive_process() {
+        let processes = json!({
+            "processes": [
+                { "pid": "interactive", "interactive": true },
+                { "pid": "background", "interactive": false }
+            ]
+        });
+
+        assert!(desktop_process_is_selectable(&processes, "interactive"));
+        assert!(!desktop_process_is_selectable(&processes, "background"));
+        assert!(!desktop_process_is_selectable(&processes, "missing"));
+    }
+
+    #[test]
+    fn desktop_switch_failure_mapping_does_not_expose_gateway_details() {
+        let missing = EstablishFailure::session(
+            "The selected interactive GSV process is no longer available: private detail",
+        );
+        assert_eq!(
+            map_establish_operation_error(&missing),
+            OperationError::ProcessNotFound
+        );
+        let transport = EstablishFailure {
+            kind: EstablishFailureKind::Transport,
+            message: "credential=do-not-leak".to_string(),
+        };
+        assert_eq!(
+            map_establish_operation_error(&transport),
+            OperationError::Unavailable
+        );
+    }
+
+    #[test]
+    fn stale_old_session_signal_cannot_cross_the_switch_fence() {
+        let old = SessionSignalLease::new(100);
+        let new = SessionSignalLease::new(101);
+        let (events, mut received) = tokio_mpsc::unbounded_channel();
+        old.select_pid("old-pid".to_string());
+        new.select_pid("new-pid".to_string());
+        old.handoff_history(0, prepared_history(1, json!({})), &events);
+        new.handoff_history(0, prepared_history(1, json!({})), &events);
+        while received.try_recv().is_ok() {}
+
+        old.deactivate();
+        assert!(!queue_session_signal(
+            &old.state,
+            100,
+            "proc.run.output".to_string(),
+            json!({ "pid": "old-pid", "text": "stale" }),
+            &events,
+        ));
+        assert!(!queue_session_signal(
+            &new.state,
+            101,
+            "proc.run.output".to_string(),
+            json!({ "pid": "old-pid", "text": "wrong process" }),
+            &events,
+        ));
+        assert!(received.try_recv().is_err());
+    }
+
+    #[test]
     fn redundant_history_refreshes_coalesce_to_one_follow_up() {
         let mut refresh = HistoryRefresh::default();
 
@@ -3163,15 +4116,17 @@ mod tests {
             PendingOperation::Send {
                 submission_id: 42,
                 submitted_text: "keep this thought".to_string(),
+                progress: Arc::new(SendProgress::default()),
             },
         )]);
 
         emit_connected_completion(
             ConnectedTaskCompletion {
                 operation_id: 9,
-                outcome: ConnectedTaskOutcome::Send(Err(SendAttemptFailure::Uncertain(
-                    "timed out".to_string(),
-                ))),
+                outcome: ConnectedTaskOutcome::Send(Err(SendAttemptFailure::Uncertain {
+                    message: "timed out".to_string(),
+                    media: Vec::new(),
+                })),
             },
             &mut pending,
             &events,
@@ -3456,6 +4411,7 @@ mod tests {
             ClientCommand::Send {
                 submission_id: 41,
                 message: "hello".to_string(),
+                attachments: Vec::new(),
             },
             &events,
         ));

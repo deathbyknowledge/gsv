@@ -20,8 +20,8 @@ The demo uses deterministic local fixture responses and does not need a gateway.
 disable the procedural typing sounds. Add `--reduce-motion` (or set `GSV_REDUCE_MOTION=1`) to
 disable canvas entrance motion.
 
-To connect to GSV instead, omit `--demo`. The client reuses the public Rust client and protocol from
-`cli/`, reads the normal CLI config at `~/.config/gsv/config.toml`, and chooses the most recently
+To connect to GSV instead, omit `--demo`. Desktop uses the shared `gsv-client` and `gsv-config`
+crates, reads the normal CLI config at `~/.config/gsv/config.toml`, and chooses the most recently
 active interactive process. If none exists, it starts one.
 
 When connection details are missing, the app opens a full-screen sequence for the gateway URL,
@@ -84,7 +84,18 @@ selected automatically when `WAYLAND_DISPLAY` is present; no Cargo feature is ne
   helper first with `cargo build --release --manifest-path native/transcribe-helper/Cargo.toml`. For a
   distributable build, place that helper and its `THIRD_PARTY.md` beside the app binary.
 - `Cmd/Ctrl+.` stops the active run.
+- `Cmd/Ctrl+Shift+A` opens the attachment picker. Text is optional when files are attached.
 - `Cmd/Ctrl+\`` switches between conversation and command surfaces.
+
+The operator CLI can activate the running app, inspect its redacted connection status, or ask the
+app to create/select a conversation through its private same-user control socket:
+
+```bash
+gsv desktop
+gsv desktop status
+gsv desktop new
+gsv desktop use PID
+```
 
 When GSV asks for capability approval, choose `ALLOW ONCE`, `ALWAYS ALLOW`, or `DENY` directly, or
 type the same phrases. The request uses the Process-resolved target and a safe action preview;
@@ -102,17 +113,24 @@ approval text is not forwarded to the model.
   fetched automatically inside the trusted conversation boundary. The selected moment owns each
   transfer and cancels it on navigation; transfer, decoded-image, concurrency, and cache budgets
   keep media work bounded.
-- Audio, video, and document attachments currently render as typed metadata cards, including a
-  transcription or description when one exists. Native playback and document preview are later
-  surfaces.
+- Drafts can contain up to 20 files and 48 MiB total. Selection snapshots bytes into a private
+  app-owned directory off the UI thread; `proc.media.write` streams each snapshot once before
+  `proc.send`, and failed staging is rolled back. An uncertain send keeps its exact media
+  descriptors for authoritative history reconciliation instead of deleting a possibly accepted
+  upload.
+- Audio, video, and document attachments render as typed metadata cards, including a transcription
+  or description when one exists. `OPEN` materializes the bounded process body into a private
+  session directory and delegates playback or preview to the operating system; `SAVE` uses the
+  native save picker. Unknown content is written without an executable filename extension.
 - Existing run and tool signals become a prominent, client-derived live lane above the moment.
   Parallel work is grouped into a few calm, category-specific status lines. Completed tool
   results from process history are retained as quiet, line-by-line work records on the final
   response; raw tool names, arguments, paths, outputs, and tool cards are not shown.
 - `proc.hil` approval remains a deterministic control boundary.
 - The command surface currently uses one-shot `shell.exec`; it is not a persistent PTY yet.
-- Attachment composition/upload, process management, settings, and daemon lifecycle are not yet
-  implemented in this client.
+- General process management, settings, an embedded video/PDF renderer, and a persistent terminal
+  session remain outside this client surface. Conversation creation/selection is available through
+  the narrow `gsv desktop` control commands.
 
 Validate with:
 

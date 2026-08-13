@@ -26,9 +26,19 @@ use super::presence::{
     PresenceLine, PresenceMotion, MAX_VISIBLE_ACTIVITY_LINES, PRESENCE_LANE_HEIGHT,
     PRESENCE_LANE_TOP,
 };
-use super::rich::{media_descriptors, render_document};
+use super::rich::{media_descriptors, render_document, RichRenderContext};
 use super::selection::{SelectableText, SelectionSurface, SelectionTopology, TextSelection};
-use super::{type_content_hash, CachedTypeLayout, GsvApp, RichPresentationPhase};
+use super::{type_content_hash, AddAttachment, CachedTypeLayout, GsvApp, RichPresentationPhase};
+
+fn format_compact_bytes(bytes: u64) -> String {
+    if bytes >= 1024 * 1024 {
+        format!("{:.1} MiB", bytes as f64 / (1024.0 * 1024.0))
+    } else if bytes >= 1024 {
+        format!("{:.1} KiB", bytes as f64 / 1024.0)
+    } else {
+        format!("{bytes} B")
+    }
+}
 
 #[derive(Clone, Copy)]
 struct CanvasGeometry {
@@ -1221,6 +1231,7 @@ impl GsvApp {
                 draft_layout,
                 geometry,
                 self.interaction.layer == CanvasLayer::ApprovalDraft,
+                cx,
             )
         } else {
             self.render_message_canvas(
@@ -1455,12 +1466,15 @@ impl GsvApp {
                 })
                 .child(render_document(
                     content,
-                    &self.media_cache,
                     &self.text_selection,
                     self.message_scroll_moment.as_deref().unwrap_or("message"),
-                    layout.size,
-                    color,
-                    geometry.available_height,
+                    RichRenderContext::new(
+                        &self.media_cache,
+                        &self.commands,
+                        layout.size,
+                        color,
+                        geometry.available_height,
+                    ),
                 ))
                 .when(!activity_summary.is_empty(), |this| {
                     this.child(render_activity_summary(
@@ -1757,12 +1771,52 @@ impl GsvApp {
     }
 
     fn render_draft_canvas(
-        &self,
+        &mut self,
         layout: TypeLayout,
         geometry: CanvasGeometry,
         approval: bool,
+        cx: &mut Context<Self>,
     ) -> AnyElement {
         let is_long = layout.scrolls;
+        let attachment_rows = self
+            .draft_attachments
+            .iter()
+            .map(|attachment| {
+                let attachment_id = attachment.id;
+                let label = format!(
+                    "{}  ·  {}  ·  REMOVE",
+                    attachment.filename,
+                    format_compact_bytes(attachment.size)
+                );
+                div()
+                    .id(("draft-attachment", attachment_id))
+                    .cursor_pointer()
+                    .px(px(12.0))
+                    .py(px(7.0))
+                    .bg(theme::color(theme::SELECTION).opacity(0.46))
+                    .font_family(theme::MONO_FONT)
+                    .text_size(px(10.0))
+                    .text_color(theme::color(theme::TEXT_QUIET))
+                    .on_click(cx.listener(move |this, _, window, cx| {
+                        cx.stop_propagation();
+                        this.remove_draft_attachment(attachment_id, window, cx);
+                    }))
+                    .child(label)
+            })
+            .collect::<Vec<_>>();
+        let add_attachment = (!approval).then(|| {
+            div()
+                .id("draft-add-attachment")
+                .cursor_pointer()
+                .font_family(theme::MONO_FONT)
+                .text_size(px(9.0))
+                .text_color(theme::color(theme::TEXT_FAINT))
+                .on_click(cx.listener(|this, _, window, cx| {
+                    cx.stop_propagation();
+                    this.choose_attachments(&AddAttachment, window, cx);
+                }))
+                .child("ADD FILES  ·  ⌘⇧A")
+        });
         div()
             .id(("draft-scroll", self.transition_epoch))
             .absolute()
@@ -1777,22 +1831,42 @@ impl GsvApp {
             .when(!is_long, |this| this.items_center())
             .overflow_hidden()
             .child(
-                Input::new(&self.input)
-                    .appearance(false)
-                    .bordered(false)
-                    .focus_bordered(false)
+                div()
                     .w_full()
                     .max_w(px(layout.width))
-                    .max_h(px(geometry.available_height))
-                    .p_0()
-                    .font_family(theme::PROSE_FONT)
-                    .font_weight(FontWeight::NORMAL)
-                    .text_size(px(layout.size))
-                    .line_height(relative(layout.line_height))
-                    .text_color(if approval {
-                        theme::color(theme::APPROVAL)
-                    } else {
-                        theme::color(theme::TEXT)
+                    .flex()
+                    .flex_col()
+                    .gap(px(18.0))
+                    .child(
+                        Input::new(&self.input)
+                            .appearance(false)
+                            .bordered(false)
+                            .focus_bordered(false)
+                            .w_full()
+                            .max_h(px(geometry.available_height))
+                            .p_0()
+                            .font_family(theme::PROSE_FONT)
+                            .font_weight(FontWeight::NORMAL)
+                            .text_size(px(layout.size))
+                            .line_height(relative(layout.line_height))
+                            .text_color(if approval {
+                                theme::color(theme::APPROVAL)
+                            } else {
+                                theme::color(theme::TEXT)
+                            }),
+                    )
+                    .when(!attachment_rows.is_empty(), |this| {
+                        this.child(
+                            div()
+                                .w_full()
+                                .flex()
+                                .flex_wrap()
+                                .gap(px(8.0))
+                                .children(attachment_rows),
+                        )
+                    })
+                    .when_some(add_attachment, |this, add_attachment| {
+                        this.child(add_attachment)
                     }),
             )
             .into_any_element()
@@ -1983,6 +2057,7 @@ impl Render for GsvApp {
             .on_action(cx.listener(Self::previous_moment))
             .on_action(cx.listener(Self::next_moment))
             .on_action(cx.listener(Self::toggle_dictation_action))
+            .on_action(cx.listener(Self::choose_attachments))
             .capture_action(cx.listener(Self::copy_selection))
             .on_mouse_down(
                 MouseButton::Left,

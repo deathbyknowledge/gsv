@@ -1,9 +1,12 @@
 mod app;
+mod attachments;
 mod audio;
 mod client;
 mod content;
+mod desktop_control;
 mod history;
 mod interaction;
+mod media_files;
 mod model;
 mod prepared;
 mod startup;
@@ -34,7 +37,14 @@ fn main() {
         .iter()
         .any(|argument| argument == "--reduce-motion")
         || env::var("GSV_REDUCE_MOTION").is_ok_and(|value| value == "1");
-    let client = client::start(demo);
+    let client = match client::start_desktop(demo) {
+        client::DesktopStartup::Started(client) => client,
+        client::DesktopStartup::ActivatedExisting => return,
+        client::DesktopStartup::Failed(message) => {
+            eprintln!("GSV Desktop could not start: {message}");
+            return;
+        }
+    };
 
     Application::new().run(move |cx: &mut App| {
         gpui_component::init(cx);

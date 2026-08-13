@@ -1,22 +1,33 @@
 use std::collections::{hash_map::DefaultHasher, HashMap};
 use std::hash::{Hash, Hasher};
+use std::io::{self, Write};
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::time::Instant;
 
 use gpui::{
     actions, App, AppContext, ClipboardItem, Context, Entity, FocusHandle, Focusable, KeyBinding,
-    ScrollHandle, Subscription, Task, Window,
+    PathPromptOptions, ScrollHandle, Subscription, Task, Window,
 };
 use gpui_component::input::{Copy, InputEvent, InputState};
 
+use crate::attachments::{AttachmentError, AttachmentStore, DraftAttachment};
 use crate::audio::{KeySound, TypingAudio};
-use crate::client::{ApprovalDecision, ClientCommand, ClientHandle, MediaTransferLease};
+use crate::client::{
+    ApprovalDecision, ClientCommand, ClientHandle, MediaFileAction, MediaTransferLease,
+    OutgoingAttachment,
+};
+use crate::content::MediaAttachment;
+use crate::desktop_control::DesktopControlRequest;
 use crate::history::{HistoryPreparationCandidate, HistoryRevision};
 use crate::interaction::{CanvasInteraction, CanvasLayer, SubmissionFailure};
+use crate::media_files::{MaterializedMedia, MediaFileStore};
 use crate::model::{Conversation, MomentIdentityAdoption, SurfaceMode};
 use crate::prepared::PreparedContent;
 use crate::startup::{LoginDefaults, LoginFlow, LoginProgress, LoginStep};
 use crate::transcription::{coalesce_for_ui, VoiceCommand, VoiceErrorCode, VoiceEvent, VoicePhase};
 use crate::typography::TypeLayout;
+use gsv_desktop_control::{DesktopStatus, GatewayState, OperationError, ProcessId, WindowState};
 
 mod login;
 mod media;
@@ -42,7 +53,8 @@ actions!(
         ToggleTerminal,
         PreviousMoment,
         NextMoment,
-        ToggleDictation
+        ToggleDictation,
+        AddAttachment
     ]
 );
 
@@ -57,6 +69,18 @@ struct TerminalExchange {
 struct MediaPreparationResult {
     request_id: u64,
     prepared: PreparedMedia,
+    _lease: MediaTransferLease,
+}
+
+struct AttachmentPreparationResult {
+    batch_id: u64,
+    result: Result<Vec<DraftAttachment>, AttachmentError>,
+}
+
+struct MediaFilePreparationResult {
+    request_id: u64,
+    action: MediaFileAction,
+    result: std::io::Result<MaterializedMedia>,
     _lease: MediaTransferLease,
 }
 
@@ -203,6 +227,18 @@ pub struct GsvApp {
     media_cache: MediaCache,
     media_preparation_results: tokio::sync::mpsc::Sender<MediaPreparationResult>,
     media_preparations: HashMap<u64, Task<()>>,
+    attachment_store: Option<AttachmentStore>,
+    draft_attachments: Vec<DraftAttachment>,
+    pending_attachments: HashMap<u64, Vec<DraftAttachment>>,
+    next_attachment_batch_id: u64,
+    attachment_preparation_results: tokio::sync::mpsc::Sender<AttachmentPreparationResult>,
+    attachment_preparations: HashMap<u64, Task<()>>,
+    attachment_picker: Option<Task<()>>,
+    media_file_store: Option<MediaFileStore>,
+    next_media_file_request_id: u64,
+    media_file_results: tokio::sync::mpsc::Sender<MediaFilePreparationResult>,
+    media_file_preparations: HashMap<u64, Task<()>>,
+    media_file_saves: HashMap<u64, Task<()>>,
     draft_type_size: Option<f32>,
     stream_sequences: HashMap<String, u64>,
     type_viewport: Option<(u32, u32)>,
@@ -213,6 +249,8 @@ pub struct GsvApp {
     reduced_motion: bool,
     programmatic_input: Option<String>,
     approval_resume_mode: Option<SurfaceMode>,
+    desktop_switch_pending: bool,
+    desktop_switch_source_pid: Option<String>,
     voice_commands: crate::transcription::VoiceCommandSender,
     voice_draft: Option<VoiceDraft>,
     voice_notice: Option<String>,
@@ -223,10 +261,188 @@ pub struct GsvApp {
     _preparation_worker: Task<()>,
     _preparation_task: Task<()>,
     _media_preparation_task: Task<()>,
+    _attachment_preparation_task: Task<()>,
+    _media_file_task: Task<()>,
     _voice_task: Task<()>,
 }
 
 impl GsvApp {
+    fn handle_desktop_control(
+        &mut self,
+        request: DesktopControlRequest,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        match request {
+            DesktopControlRequest::Activate { context, response } => {
+                if context.is_cancelled() || response.is_closed() {
+                    return;
+                }
+                window.activate_window();
+                self.input.focus_handle(cx).focus(window);
+                let _ = response.send(Ok(()));
+            }
+            DesktopControlRequest::Status { context, response } => {
+                if context.is_cancelled() || response.is_closed() {
+                    return;
+                }
+                let gateway = if self.login.is_some() {
+                    GatewayState::Disconnected
+                } else if self.client_session_id.is_some()
+                    && self.conversation.connection == crate::model::ConnectionState::Connected
+                {
+                    GatewayState::Connected
+                } else {
+                    GatewayState::Connecting
+                };
+                let selected_process = self
+                    .pid
+                    .as_ref()
+                    .and_then(|pid| ProcessId::new(pid.clone()).ok());
+                let status = DesktopStatus {
+                    gateway,
+                    window: if window.is_window_active() {
+                        WindowState::Focused
+                    } else {
+                        WindowState::Visible
+                    },
+                    selected_process,
+                };
+                let _ = response.send(Ok(status));
+            }
+            DesktopControlRequest::New { context, response } => {
+                if !self.desktop_process_change_allowed(&context, response.is_closed()) {
+                    let error = if self.login.is_some() || self.client_session_id.is_none() {
+                        OperationError::Unavailable
+                    } else {
+                        OperationError::Busy
+                    };
+                    let _ = response.send(Err(error));
+                    return;
+                }
+                window.activate_window();
+                self.desktop_switch_pending = true;
+                self.desktop_switch_source_pid.clone_from(&self.pid);
+                if self
+                    .commands
+                    .send(ClientCommand::DesktopNew { context, response })
+                    .is_err()
+                {
+                    self.desktop_switch_pending = false;
+                    self.desktop_switch_source_pid = None;
+                    // The response sender was moved into the failed command and
+                    // is dropped here, so the handler reports unavailable.
+                }
+            }
+            DesktopControlRequest::Use {
+                context,
+                process_id,
+                response,
+            } => {
+                if !self.desktop_process_change_allowed(&context, response.is_closed()) {
+                    let error = if self.login.is_some() || self.client_session_id.is_none() {
+                        OperationError::Unavailable
+                    } else {
+                        OperationError::Busy
+                    };
+                    let _ = response.send(Err(error));
+                    return;
+                }
+                window.activate_window();
+                self.desktop_switch_pending = true;
+                self.desktop_switch_source_pid.clone_from(&self.pid);
+                if self
+                    .commands
+                    .send(ClientCommand::DesktopUse {
+                        context,
+                        process_id,
+                        response,
+                    })
+                    .is_err()
+                {
+                    self.desktop_switch_pending = false;
+                    self.desktop_switch_source_pid = None;
+                    // See DesktopNew: dropping the response maps to unavailable.
+                }
+            }
+        }
+    }
+
+    fn desktop_process_change_allowed(
+        &self,
+        context: &gsv_desktop_control::RequestContext,
+        response_closed: bool,
+    ) -> bool {
+        !context.is_cancelled()
+            && !response_closed
+            && self.login.is_none()
+            && self.client_session_id.is_some()
+            && !self.desktop_switch_pending
+            && self.conversation.mode == SurfaceMode::Conversation
+            && !self.interaction.is_submitting()
+            && !self.interaction.is_approval()
+            && !self.interaction.is_approval_submitting()
+            && self.interaction.conversation_draft().is_empty()
+            && self.draft_attachments.is_empty()
+            && self.pending_attachments.is_empty()
+            && self.attachment_preparations.is_empty()
+            && self.attachment_picker.is_none()
+            && self.media_preparations.is_empty()
+            && self.media_file_preparations.is_empty()
+            && self.media_file_saves.is_empty()
+            && self.voice_draft.is_none()
+            && self.terminal_draft.is_empty()
+            && !self.terminal.iter().any(|exchange| exchange.pending)
+    }
+
+    fn reset_process_workspace(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.desktop_switch_pending = false;
+        self.desktop_switch_source_pid = None;
+        let released = self.media_cache.clear(&self.commands);
+        self.cancel_stale_media_preparations();
+        release_assets(released, cx);
+        for attachment in self.draft_attachments.drain(..) {
+            let _ = std::fs::remove_file(attachment.snapshot);
+        }
+        for attachments in self
+            .pending_attachments
+            .drain()
+            .map(|(_, attachments)| attachments)
+        {
+            for attachment in attachments {
+                let _ = std::fs::remove_file(attachment.snapshot);
+            }
+        }
+        self.interaction.set_conversation_has_attachments(false);
+        self.conversation = Conversation::connecting();
+        self.interaction = CanvasInteraction::new();
+        self.terminal.clear();
+        self.terminal_draft.clear();
+        self.previous_input.clear();
+        self.last_history = None;
+        self.last_history_generation = 0;
+        self.history_preparations.clear();
+        self.stream_sequences.clear();
+        self.stream_type_sizes.clear();
+        self.type_layouts.clear();
+        self.draft_type_size = None;
+        self.prepared_content.clear();
+        self.rich_presentation = None;
+        self.pending_rich_fallback = None;
+        self.message_scroll_moment = None;
+        self.timeline_scroll = ScrollHandle::new();
+        self.message_scroll = ScrollHandle::new();
+        self.history_scroll_accumulator = 0.0;
+        self.history_scroll_last_event = None;
+        self.history_edge_intent = None;
+        self.timeline_scroll_accumulator = 0.0;
+        self.timeline_scroll_last_event = None;
+        self.text_selection.clear();
+        self.approval_resume_mode = None;
+        self.programmatic_input = None;
+        self.set_input_value(String::new(), window, cx);
+    }
+
     fn adopt_moment_presentations(&mut self, adoptions: &[MomentIdentityAdoption]) {
         for adoption in adoptions {
             let transient_key = format!("moment:{}", adoption.transient_id);
@@ -381,6 +597,36 @@ impl GsvApp {
                 }
             }
         });
+        let (attachment_preparation_results, mut attachment_preparation_events) =
+            tokio::sync::mpsc::channel::<AttachmentPreparationResult>(2);
+        let attachment_preparation_task = cx.spawn_in(window, async move |this, cx| {
+            while let Some(result) = attachment_preparation_events.recv().await {
+                if this
+                    .update_in(cx, |this, window, cx| {
+                        this.attachment_preparations.remove(&result.batch_id);
+                        this.apply_prepared_attachments(result.result, window, cx);
+                    })
+                    .is_err()
+                {
+                    break;
+                }
+            }
+        });
+        let (media_file_results, mut media_file_events) =
+            tokio::sync::mpsc::channel::<MediaFilePreparationResult>(2);
+        let media_file_task = cx.spawn_in(window, async move |this, cx| {
+            while let Some(result) = media_file_events.recv().await {
+                if this
+                    .update_in(cx, |this, window, cx| {
+                        this.media_file_preparations.remove(&result.request_id);
+                        this.apply_materialized_media(result, window, cx);
+                    })
+                    .is_err()
+                {
+                    break;
+                }
+            }
+        });
         let voice_task = cx.spawn_in(window, async move |this, cx| {
             while let Some(first) = voice_events.recv().await {
                 let mut batch = Vec::with_capacity(8);
@@ -450,6 +696,18 @@ impl GsvApp {
             media_cache: MediaCache::default(),
             media_preparation_results,
             media_preparations: HashMap::new(),
+            attachment_store: AttachmentStore::new().ok(),
+            draft_attachments: Vec::new(),
+            pending_attachments: HashMap::new(),
+            next_attachment_batch_id: 1,
+            attachment_preparation_results,
+            attachment_preparations: HashMap::new(),
+            attachment_picker: None,
+            media_file_store: MediaFileStore::new().ok(),
+            next_media_file_request_id: 1,
+            media_file_results,
+            media_file_preparations: HashMap::new(),
+            media_file_saves: HashMap::new(),
             draft_type_size: None,
             stream_sequences: HashMap::new(),
             type_viewport: None,
@@ -460,6 +718,8 @@ impl GsvApp {
             reduced_motion,
             programmatic_input: None,
             approval_resume_mode: None,
+            desktop_switch_pending: false,
+            desktop_switch_source_pid: None,
             voice_commands,
             voice_draft: None,
             voice_notice: None,
@@ -470,6 +730,8 @@ impl GsvApp {
             _preparation_worker: preparation_worker,
             _preparation_task: preparation_task,
             _media_preparation_task: media_preparation_task,
+            _attachment_preparation_task: attachment_preparation_task,
+            _media_file_task: media_file_task,
             _voice_task: voice_task,
         }
     }
@@ -501,6 +763,273 @@ impl GsvApp {
         }
     }
 
+    fn choose_attachments(
+        &mut self,
+        _: &AddAttachment,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.login.is_some()
+            || self.desktop_switch_pending
+            || self.conversation.mode != SurfaceMode::Conversation
+            || self.interaction.is_approval()
+            || self.attachment_picker.is_some()
+        {
+            return;
+        }
+        let picker = cx.prompt_for_paths(PathPromptOptions {
+            files: true,
+            directories: false,
+            multiple: true,
+            prompt: Some("Attach".into()),
+        });
+        self.attachment_picker = Some(cx.spawn_in(window, async move |this, cx| {
+            let paths = match picker.await {
+                Ok(Ok(Some(paths))) => paths,
+                Ok(Ok(None)) => Vec::new(),
+                Ok(Err(error)) => {
+                    if let Ok(()) = this.update_in(cx, |this, _, cx| {
+                        this.attachment_picker = None;
+                        this.conversation
+                            .show_error(format!("Files could not be selected: {error}"));
+                        cx.notify();
+                    }) {}
+                    return;
+                }
+                Err(_) => Vec::new(),
+            };
+            let _ = this.update_in(cx, |this, window, cx| {
+                this.attachment_picker = None;
+                if !paths.is_empty() {
+                    this.prepare_attachment_paths(paths, window, cx);
+                }
+            });
+        }));
+    }
+
+    fn prepare_attachment_paths(
+        &mut self,
+        paths: Vec<PathBuf>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let prospective_count = self.draft_attachments.len().saturating_add(paths.len());
+        if prospective_count > crate::attachments::MAX_ATTACHMENTS {
+            self.conversation.show_error(
+                AttachmentError::TooMany {
+                    count: prospective_count,
+                    maximum: crate::attachments::MAX_ATTACHMENTS,
+                }
+                .user_message(),
+            );
+            cx.notify();
+            return;
+        }
+        let Some(store) = self.attachment_store.as_mut() else {
+            self.conversation
+                .show_error(AttachmentError::SnapshotUnavailable.user_message());
+            cx.notify();
+            return;
+        };
+        let batch = match store.reserve_batch(paths) {
+            Ok(batch) => batch,
+            Err(error) => {
+                self.conversation.show_error(error.user_message());
+                cx.notify();
+                return;
+            }
+        };
+        let batch_id = self.next_attachment_batch_id;
+        self.next_attachment_batch_id = self.next_attachment_batch_id.saturating_add(1).max(1);
+        let results = self.attachment_preparation_results.clone();
+        let task = cx.background_spawn(async move {
+            let result = batch.prepare();
+            let _ = results
+                .send(AttachmentPreparationResult { batch_id, result })
+                .await;
+        });
+        self.attachment_preparations.insert(batch_id, task);
+        self.conversation.activity = Some("PREPARING ATTACHMENTS".to_string());
+        self.input.focus_handle(cx).focus(window);
+        cx.notify();
+    }
+
+    fn apply_prepared_attachments(
+        &mut self,
+        result: Result<Vec<DraftAttachment>, AttachmentError>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        match result {
+            Ok(mut attachments) => {
+                let current_bytes = self
+                    .draft_attachments
+                    .iter()
+                    .map(|attachment| attachment.size)
+                    .sum::<u64>();
+                let incoming_bytes = attachments
+                    .iter()
+                    .map(|attachment| attachment.size)
+                    .sum::<u64>();
+                if self
+                    .draft_attachments
+                    .len()
+                    .saturating_add(attachments.len())
+                    > crate::attachments::MAX_ATTACHMENTS
+                    || current_bytes
+                        .checked_add(incoming_bytes)
+                        .is_none_or(|total| total > crate::attachments::MAX_ATTACHMENT_TOTAL_BYTES)
+                {
+                    for attachment in attachments {
+                        let _ = std::fs::remove_file(attachment.snapshot);
+                    }
+                    self.conversation
+                        .show_error(AttachmentError::TotalTooLarge.user_message());
+                    cx.notify();
+                    return;
+                }
+                self.draft_attachments.append(&mut attachments);
+                self.interaction.set_conversation_has_attachments(true);
+                self.conversation.activity = None;
+                self.timeline_scroll
+                    .scroll_to_item(self.conversation.moments.len());
+                self.input.focus_handle(cx).focus(window);
+                self.begin_transition(1.0);
+                cx.notify();
+            }
+            Err(error) => {
+                self.conversation.show_error(error.user_message());
+                cx.notify();
+            }
+        }
+    }
+
+    fn remove_draft_attachment(
+        &mut self,
+        attachment_id: u64,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(index) = self
+            .draft_attachments
+            .iter()
+            .position(|attachment| attachment.id == attachment_id)
+        else {
+            return;
+        };
+        let attachment = self.draft_attachments.remove(index);
+        let _ = std::fs::remove_file(attachment.snapshot);
+        self.interaction
+            .set_conversation_has_attachments(!self.draft_attachments.is_empty());
+        self.input.focus_handle(cx).focus(window);
+        cx.notify();
+    }
+
+    fn materialize_media_file(
+        &mut self,
+        bytes: Arc<[u8]>,
+        mime_type: Option<String>,
+        filename: Option<String>,
+        action: MediaFileAction,
+        lease: MediaTransferLease,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(store) = self.media_file_store.as_mut() else {
+            self.conversation
+                .show_error("The private media workspace is unavailable.".to_string());
+            cx.notify();
+            return;
+        };
+        let materialization = match store.reserve(bytes, filename, mime_type) {
+            Ok(materialization) => materialization,
+            Err(_) => {
+                self.conversation
+                    .show_error("That media could not be prepared.".to_string());
+                cx.notify();
+                return;
+            }
+        };
+        let request_id = self.next_media_file_request_id;
+        self.next_media_file_request_id = self.next_media_file_request_id.saturating_add(1).max(1);
+        let results = self.media_file_results.clone();
+        let task = cx.background_spawn(async move {
+            let result = materialization.write();
+            let _ = results
+                .send(MediaFilePreparationResult {
+                    request_id,
+                    action,
+                    result,
+                    _lease: lease,
+                })
+                .await;
+        });
+        self.media_file_preparations.insert(request_id, task);
+        self.conversation.activity = Some(match action {
+            MediaFileAction::Open => "OPENING MEDIA".to_string(),
+            MediaFileAction::Save => "PREPARING DOWNLOAD".to_string(),
+        });
+        cx.notify();
+    }
+
+    fn apply_materialized_media(
+        &mut self,
+        result: MediaFilePreparationResult,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let materialized = match result.result {
+            Ok(materialized) => materialized,
+            Err(_) => {
+                self.conversation
+                    .show_error("That media could not be prepared.".to_string());
+                cx.notify();
+                return;
+            }
+        };
+        self.conversation.activity = None;
+        match result.action {
+            MediaFileAction::Open => {
+                cx.open_with_system(&materialized.path);
+                cx.notify();
+            }
+            MediaFileAction::Save => {
+                let directory = std::env::current_dir().unwrap_or_else(|_| std::env::temp_dir());
+                let picker = cx.prompt_for_new_path(&directory, Some(&materialized.display_name));
+                let save_id = result.request_id;
+                self.media_file_saves.insert(
+                    save_id,
+                    cx.spawn_in(window, async move |this, cx| {
+                        let destination = match picker.await {
+                            Ok(Ok(Some(destination))) => destination,
+                            _ => {
+                                let _ = this.update_in(cx, |this, _, _| {
+                                    this.media_file_saves.remove(&save_id);
+                                });
+                                return;
+                            }
+                        };
+                        let source = materialized.path;
+                        let copy_destination = destination.clone();
+                        let copy = cx.background_spawn(async move {
+                            copy_materialized_media(&source, &copy_destination)
+                        });
+                        let result = copy.await;
+                        let _ = this.update_in(cx, |this, _, cx| {
+                            this.media_file_saves.remove(&save_id);
+                            match result {
+                                Ok(()) => cx.reveal_path(&destination),
+                                Err(_) => this
+                                    .conversation
+                                    .show_error("That media could not be saved.".to_string()),
+                            }
+                            cx.notify();
+                        });
+                    }),
+                );
+            }
+        }
+    }
+
     fn on_input(&mut self, event: &InputEvent, window: &mut Window, cx: &mut Context<Self>) {
         match event {
             InputEvent::Change => {
@@ -511,6 +1040,10 @@ impl GsvApp {
                     .is_some_and(|expected| expected == value)
                 {
                     self.previous_input = value;
+                    return;
+                }
+                if self.desktop_switch_pending {
+                    self.set_input_value(self.previous_input.clone(), window, cx);
                     return;
                 }
                 if self
@@ -747,6 +1280,9 @@ impl GsvApp {
     }
 
     fn submit(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.desktop_switch_pending {
+            return;
+        }
         if self.login.is_some() {
             self.submit_login(window, cx);
             return;
@@ -756,7 +1292,10 @@ impl GsvApp {
             return;
         }
         let raw = self.input.read(cx).value().to_string();
-        if raw.trim().is_empty() {
+        let attachment_only = self.conversation.mode == SurfaceMode::Conversation
+            && !self.interaction.is_approval()
+            && !self.draft_attachments.is_empty();
+        if raw.trim().is_empty() && !attachment_only {
             if !raw.is_empty() {
                 match self.conversation.mode {
                     SurfaceMode::Conversation => self.interaction.on_input(String::new()),
@@ -893,14 +1432,40 @@ impl GsvApp {
             return;
         }
 
-        let moment_id = self.conversation.append_user(message.clone());
-        let Some(submission_id) = self
-            .interaction
-            .begin_submission(message.clone(), moment_id.clone())
-        else {
+        let attachments = std::mem::take(&mut self.draft_attachments);
+        let optimistic_media = attachments
+            .iter()
+            .map(draft_attachment_media)
+            .collect::<Vec<_>>();
+        let attachment_ids = attachments
+            .iter()
+            .map(|attachment| attachment.id)
+            .collect::<Vec<_>>();
+        let outgoing = attachments
+            .iter()
+            .map(|attachment| OutgoingAttachment {
+                media_id: attachment.media_id.clone(),
+                snapshot: attachment.snapshot.clone(),
+                kind: attachment.kind,
+                mime_type: attachment.mime_type.clone(),
+                filename: attachment.filename.clone(),
+                size: attachment.size,
+            })
+            .collect::<Vec<_>>();
+        let moment_id = self
+            .conversation
+            .append_user_with_media(message.clone(), optimistic_media);
+        let Some(submission_id) = self.interaction.begin_submission_with_attachments(
+            message.clone(),
+            moment_id.clone(),
+            attachment_ids,
+        ) else {
+            self.draft_attachments = attachments;
+            self.interaction.set_conversation_has_attachments(true);
             self.conversation.remove_moment(&moment_id);
             return;
         };
+        self.pending_attachments.insert(submission_id, attachments);
 
         self.conversation.activity = Some("SENDING".to_string());
         self.begin_transition(1.0);
@@ -912,6 +1477,7 @@ impl GsvApp {
             .send(ClientCommand::Send {
                 submission_id,
                 message,
+                attachments: outgoing,
             })
             .is_err()
         {
@@ -937,17 +1503,38 @@ impl GsvApp {
             return;
         };
         match failure {
-            SubmissionFailure::RestoreDraft { moment_id, text } => {
+            SubmissionFailure::RestoreDraft {
+                moment_id,
+                text,
+                attachment_ids,
+            } => {
                 self.conversation.remove_moment(&moment_id);
+                if let Some(attachments) = self.pending_attachments.remove(&submission_id) {
+                    let restored = attachments
+                        .into_iter()
+                        .filter(|attachment| attachment_ids.contains(&attachment.id));
+                    self.draft_attachments.extend(restored);
+                    self.interaction
+                        .set_conversation_has_attachments(!self.draft_attachments.is_empty());
+                }
                 if !self.interaction.is_approval() {
                     self.set_input_value(text, window, cx);
                 }
             }
             SubmissionFailure::PreserveFailedMoment { moment_id } => {
+                self.cleanup_pending_attachment_snapshots(submission_id);
                 self.conversation.fail_user(&moment_id);
             }
         }
         self.conversation.show_error(message);
+    }
+
+    fn cleanup_pending_attachment_snapshots(&mut self, submission_id: u64) {
+        if let Some(attachments) = self.pending_attachments.remove(&submission_id) {
+            for attachment in attachments {
+                let _ = std::fs::remove_file(attachment.snapshot);
+            }
+        }
     }
 
     fn set_input_value(&mut self, value: String, window: &mut Window, cx: &mut Context<Self>) {
@@ -1016,6 +1603,7 @@ impl GsvApp {
             return;
         }
         if self.login.is_some()
+            || self.desktop_switch_pending
             || self.conversation.mode != SurfaceMode::Conversation
             || self.interaction.is_approval()
             || self.interaction.is_submitting()
@@ -1272,7 +1860,7 @@ impl GsvApp {
     }
 
     fn toggle_terminal(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.login.is_some() {
+        if self.login.is_some() || self.desktop_switch_pending {
             return;
         }
         if self.voice_draft.is_some() {
@@ -1390,10 +1978,58 @@ pub fn bind_keys(cx: &mut App) {
         KeyBinding::new("escape", HideDraft, None),
         KeyBinding::new("secondary-.", AbortRun, None),
         KeyBinding::new("secondary-shift-space", ToggleDictation, None),
+        KeyBinding::new("secondary-shift-a", AddAttachment, None),
         KeyBinding::new("secondary-`", ToggleTerminal, None),
         KeyBinding::new("alt-up", PreviousMoment, None),
         KeyBinding::new("alt-down", NextMoment, None),
     ]);
+}
+
+fn draft_attachment_media(attachment: &DraftAttachment) -> MediaAttachment {
+    MediaAttachment {
+        kind: attachment.kind,
+        mime_type: attachment.mime_type.clone(),
+        key: None,
+        path: None,
+        url: None,
+        filename: Some(attachment.filename.clone()),
+        size: Some(attachment.size),
+        duration: None,
+        transcription: None,
+        description: None,
+    }
+}
+
+fn copy_materialized_media(source: &Path, destination: &Path) -> io::Result<()> {
+    replace_destination_atomically(destination, |staged| {
+        let mut source = std::fs::File::open(source)?;
+        io::copy(&mut source, staged)?;
+        Ok(())
+    })
+}
+
+fn replace_destination_atomically(
+    destination: &Path,
+    write: impl FnOnce(&mut std::fs::File) -> io::Result<()>,
+) -> io::Result<()> {
+    let parent = destination
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
+    let mut staged = tempfile::Builder::new()
+        .prefix(".gsv-save-")
+        .tempfile_in(parent)?;
+
+    write(staged.as_file_mut())?;
+    staged.as_file_mut().flush()?;
+    staged.as_file().sync_all()?;
+    // Keep the destination unopened until the staged bytes are durable. `persist`
+    // atomically replaces an existing file where the platform supports it, and
+    // returns ownership of the staging file so its drop removes it on failure.
+    staged
+        .persist(destination)
+        .map(|_| ())
+        .map_err(|error| error.error)
 }
 
 fn classify_change(previous: &str, next: &str) -> KeySound {
@@ -1665,6 +2301,65 @@ mod tests {
             voice_phase_notice(VoicePhase::Listening, None),
             "LISTENING · SPEAK NOW · PRESS AGAIN TO FINISH"
         );
+    }
+
+    #[test]
+    fn media_save_atomically_replaces_an_existing_destination() {
+        let directory = tempfile::tempdir().expect("create save directory");
+        let source = directory.path().join("materialized.bin");
+        let destination = directory.path().join("saved.bin");
+        std::fs::write(&source, b"new media").expect("write source");
+        std::fs::write(&destination, b"previous media").expect("write destination");
+
+        copy_materialized_media(&source, &destination).expect("save media");
+
+        assert_eq!(
+            std::fs::read(&destination).expect("read saved media"),
+            b"new media"
+        );
+    }
+
+    #[test]
+    fn failed_media_copy_preserves_the_destination_and_cleans_the_staging_file() {
+        let directory = tempfile::tempdir().expect("create save directory");
+        let destination = directory.path().join("saved.bin");
+        std::fs::write(&destination, b"previous media").expect("write destination");
+
+        let result = replace_destination_atomically(&destination, |staged| {
+            staged.write_all(b"partial replacement")?;
+            Err(io::Error::other("simulated copy failure"))
+        });
+
+        assert!(result.is_err());
+        assert_eq!(
+            std::fs::read(&destination).expect("read preserved media"),
+            b"previous media"
+        );
+        let mut names = std::fs::read_dir(directory.path())
+            .expect("read save directory")
+            .map(|entry| entry.expect("read directory entry").file_name())
+            .collect::<Vec<_>>();
+        names.sort();
+        assert_eq!(names, vec![std::ffi::OsString::from("saved.bin")]);
+    }
+
+    #[test]
+    fn failed_media_replace_cleans_the_staging_file_after_a_persist_error() {
+        let directory = tempfile::tempdir().expect("create save directory");
+        let destination = directory.path().join("existing-directory");
+        std::fs::create_dir(&destination).expect("create conflicting destination");
+
+        let result =
+            replace_destination_atomically(&destination, |staged| staged.write_all(b"replacement"));
+
+        assert!(result.is_err());
+        assert!(destination.is_dir());
+        let mut names = std::fs::read_dir(directory.path())
+            .expect("read save directory")
+            .map(|entry| entry.expect("read directory entry").file_name())
+            .collect::<Vec<_>>();
+        names.sort();
+        assert_eq!(names, vec![std::ffi::OsString::from("existing-directory")]);
     }
 
     #[gpui::test]

@@ -5,7 +5,7 @@ use gpui::{
     StatefulInteractiveElement, StrikethroughStyle, Styled, StyledImage as _, UnderlineStyle,
 };
 
-use crate::client::MediaSource;
+use crate::client::{ClientCommand, MediaFileAction, MediaSource};
 use crate::content::{
     MarkdownImage, MediaAttachment, MediaKind, RichBlock, RichListItem, RichTable, TableAlignment,
 };
@@ -43,37 +43,63 @@ pub(super) fn media_descriptors(
         .collect()
 }
 
-pub(super) fn render_document(
-    content: PreparedContent,
-    media: &MediaCache,
-    selection: &TextSelection,
-    moment_id: &str,
+#[derive(Clone, Copy)]
+pub(super) struct RichRenderContext<'a> {
+    media: &'a MediaCache,
+    commands: &'a tokio::sync::mpsc::UnboundedSender<ClientCommand>,
     base_size: f32,
     color: gpui::Hsla,
-    available_height: f32,
+    stage_height: f32,
+}
+
+impl<'a> RichRenderContext<'a> {
+    pub(super) fn new(
+        media: &'a MediaCache,
+        commands: &'a tokio::sync::mpsc::UnboundedSender<ClientCommand>,
+        base_size: f32,
+        color: gpui::Hsla,
+        stage_height: f32,
+    ) -> Self {
+        Self {
+            media,
+            commands,
+            base_size,
+            color,
+            stage_height,
+        }
+    }
+
+    fn with_typography(self, base_size: f32, color: gpui::Hsla, stage_height: f32) -> Self {
+        Self {
+            base_size,
+            color,
+            stage_height,
+            ..self
+        }
+    }
+}
+
+pub(super) fn render_document(
+    content: PreparedContent,
+    selection: &TextSelection,
+    moment_id: &str,
+    context: RichRenderContext<'_>,
 ) -> AnyElement {
     let document = content.document();
     let stage_height = if document.blocks.len() == 1 {
-        available_height.clamp(220.0, 620.0)
+        context.stage_height.clamp(220.0, 620.0)
     } else {
-        (available_height * 0.64).clamp(210.0, 500.0)
+        (context.stage_height * 0.64).clamp(210.0, 500.0)
     };
-    let gap = (base_size * 0.52).clamp(13.0, 28.0);
+    let gap = (context.base_size * 0.52).clamp(13.0, 28.0);
+    let context = context.with_typography(context.base_size, context.color, stage_height);
     let mut cursor = PreparedBlockCursor::new(content.inline_text(), selection);
     let blocks = document
         .blocks
         .iter()
         .enumerate()
         .map(|(index, block)| {
-            render_block(
-                block,
-                &mut cursor,
-                media,
-                &format!("{moment_id}:{index}"),
-                base_size,
-                color,
-                stage_height,
-            )
+            render_block(block, &mut cursor, &format!("{moment_id}:{index}"), context)
         })
         .collect::<Vec<_>>();
     div()
@@ -137,12 +163,16 @@ impl<'a> PreparedBlockCursor<'a> {
 fn render_block(
     block: &RichBlock,
     cursor: &mut PreparedBlockCursor<'_>,
-    media: &MediaCache,
     id: &str,
-    base_size: f32,
-    color: gpui::Hsla,
-    stage_height: f32,
+    context: RichRenderContext<'_>,
 ) -> AnyElement {
+    let RichRenderContext {
+        media,
+        commands,
+        base_size,
+        color,
+        stage_height,
+    } = context;
     let ordinal = cursor.begin_block();
     match block {
         RichBlock::Paragraph(_) => {
@@ -215,17 +245,7 @@ fn render_block(
             ordered,
             start,
             items,
-        } => render_list(
-            items,
-            *ordered,
-            start.unwrap_or(1),
-            cursor,
-            media,
-            id,
-            base_size,
-            color,
-            stage_height,
-        ),
+        } => render_list(items, *ordered, start.unwrap_or(1), cursor, id, context),
         RichBlock::BlockQuote(blocks) => {
             let blocks = blocks
                 .iter()
@@ -234,11 +254,12 @@ fn render_block(
                     render_block(
                         block,
                         cursor,
-                        media,
                         &format!("{id}:quote:{index}"),
-                        base_size * 0.92,
-                        theme::color(theme::TEXT_QUIET),
-                        stage_height,
+                        context.with_typography(
+                            base_size * 0.92,
+                            theme::color(theme::TEXT_QUIET),
+                            stage_height,
+                        ),
                     )
                 })
                 .collect::<Vec<_>>();
@@ -259,15 +280,13 @@ fn render_block(
             .h(px(1.0))
             .bg(theme::color(theme::TEXT_FAINT))
             .into_any_element(),
-        RichBlock::Table(table) => {
-            render_table(table, cursor, media, id, base_size, color, stage_height)
-        }
+        RichBlock::Table(table) => render_table(table, cursor, id, context),
         RichBlock::Image(image) => render_markdown_image(image, cursor, media, id, stage_height),
         RichBlock::Attachment(attachment) if attachment.kind == MediaKind::Image => {
             render_attachment_image(attachment, cursor, media, id, stage_height)
         }
         RichBlock::Attachment(attachment) => {
-            render_attachment_card(attachment, cursor, id, base_size, color)
+            render_attachment_card(attachment, cursor, commands, id, base_size, color)
         }
     }
 }
@@ -275,12 +294,15 @@ fn render_block(
 fn render_table(
     table: &RichTable,
     cursor: &mut PreparedBlockCursor<'_>,
-    media: &MediaCache,
     id: &str,
-    base_size: f32,
-    color: gpui::Hsla,
-    stage_height: f32,
+    context: RichRenderContext<'_>,
 ) -> AnyElement {
+    let RichRenderContext {
+        base_size,
+        color,
+        stage_height,
+        ..
+    } = context;
     let cell_size = (base_size * 0.58).clamp(13.0, 27.0);
     let cell_media_height = (stage_height * 0.42).clamp(120.0, 280.0);
     let row_count = table.rows.len();
@@ -302,11 +324,8 @@ fn render_table(
                     render_block(
                         block,
                         cursor,
-                        media,
                         &format!("{id}:row:{row_index}:cell:{cell_index}:{block_index}"),
-                        cell_size,
-                        color,
-                        cell_media_height,
+                        context.with_typography(cell_size, color, cell_media_height),
                     )
                 })
                 .collect::<Vec<_>>();
@@ -357,18 +376,15 @@ fn render_table(
         .into_any_element()
 }
 
-#[allow(clippy::too_many_arguments)]
 fn render_list(
     items: &[RichListItem],
     ordered: bool,
     start: u32,
     cursor: &mut PreparedBlockCursor<'_>,
-    media: &MediaCache,
     id: &str,
-    base_size: f32,
-    color: gpui::Hsla,
-    stage_height: f32,
+    context: RichRenderContext<'_>,
 ) -> AnyElement {
+    let base_size = context.base_size;
     let mut rendered_items = Vec::with_capacity(items.len());
     for (index, item) in items.iter().enumerate() {
         let marker = match item.checked {
@@ -385,11 +401,8 @@ fn render_list(
                 render_block(
                     block,
                     cursor,
-                    media,
                     &format!("{id}:item:{index}:{block_index}"),
-                    base_size,
-                    color,
-                    stage_height,
+                    context,
                 )
             })
             .collect::<Vec<_>>();
@@ -627,6 +640,7 @@ fn media_placeholder(label: &'static str, height: f32) -> AnyElement {
 fn render_attachment_card(
     attachment: &MediaAttachment,
     cursor: &mut PreparedBlockCursor<'_>,
+    commands: &tokio::sync::mpsc::UnboundedSender<ClientCommand>,
     id: &str,
     base_size: f32,
     color: gpui::Hsla,
@@ -652,6 +666,49 @@ fn render_attachment_card(
         .transcription
         .clone()
         .or_else(|| attachment.description.clone());
+    let filename = attachment.filename.clone();
+    let mime_type = Some(attachment.mime_type.clone());
+    let source = attachment_source(attachment);
+    let open = source.clone().map(|source| {
+        let commands = commands.clone();
+        div()
+            .id(gpui::SharedString::from(format!("{id}:open")))
+            .cursor_pointer()
+            .font_family(theme::MONO_FONT)
+            .text_size(px(10.0))
+            .text_color(theme::color(theme::ACCENT))
+            .on_click(move |_, _, cx| {
+                cx.stop_propagation();
+                let _ = commands.send(ClientCommand::MaterializeMedia {
+                    source: source.clone(),
+                    filename: filename.clone(),
+                    mime_type: mime_type.clone(),
+                    action: MediaFileAction::Open,
+                });
+            })
+            .child("OPEN")
+    });
+    let save = source.map(|source| {
+        let commands = commands.clone();
+        let filename = attachment.filename.clone();
+        let mime_type = Some(attachment.mime_type.clone());
+        div()
+            .id(gpui::SharedString::from(format!("{id}:save")))
+            .cursor_pointer()
+            .font_family(theme::MONO_FONT)
+            .text_size(px(10.0))
+            .text_color(theme::color(theme::TEXT_QUIET))
+            .on_click(move |_, _, cx| {
+                cx.stop_propagation();
+                let _ = commands.send(ClientCommand::MaterializeMedia {
+                    source: source.clone(),
+                    filename: filename.clone(),
+                    mime_type: mime_type.clone(),
+                    action: MediaFileAction::Save,
+                });
+            })
+            .child("SAVE")
+    });
     let title = cursor.selectable(format!("{id}:title"), title);
     let kind = cursor
         .selectable(format!("{id}:kind"), kind)
@@ -713,7 +770,43 @@ fn render_attachment_card(
                     .child(supporting_text),
             )
         })
+        .when(open.is_some() || save.is_some(), |this| {
+            this.child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap(px(18.0))
+                    .children(open)
+                    .children(save),
+            )
+        })
         .into_any_element()
+}
+
+fn attachment_source(attachment: &MediaAttachment) -> Option<MediaSource> {
+    if let Some(key) = attachment
+        .key
+        .as_deref()
+        .or_else(|| {
+            attachment
+                .path
+                .as_deref()
+                .map(|path| path.trim_start_matches('/'))
+        })
+        .filter(|key| !key.is_empty())
+    {
+        return Some(MediaSource::Process {
+            key: key.to_string(),
+        });
+    }
+    attachment
+        .url
+        .as_deref()
+        .map(str::trim)
+        .filter(|url| !url.is_empty())
+        .map(|url| MediaSource::Remote {
+            url: url.to_string(),
+        })
 }
 
 fn markdown_image_descriptor(image: &MarkdownImage) -> Option<MediaDescriptor> {

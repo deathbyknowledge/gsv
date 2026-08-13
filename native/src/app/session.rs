@@ -20,6 +20,13 @@ impl GsvApp {
         cx: &mut Context<Self>,
     ) {
         match event {
+            ClientEvent::DesktopControl(request) => {
+                self.handle_desktop_control(request, window, cx);
+            }
+            ClientEvent::DesktopControlSettled => {
+                self.desktop_switch_pending = false;
+                self.desktop_switch_source_pid = None;
+            }
             ClientEvent::Connecting => {
                 self.conversation.connection = ConnectionState::Connecting;
                 self.conversation.activity = Some("CONNECTING".to_string());
@@ -75,6 +82,14 @@ impl GsvApp {
                     }
                 }
                 self.finish_login(window, cx);
+                let switching_process = self.desktop_switch_pending
+                    && self
+                        .desktop_switch_source_pid
+                        .as_deref()
+                        .is_some_and(|active| active != pid);
+                if switching_process || self.pid.as_deref().is_some_and(|active| active != pid) {
+                    self.reset_process_workspace(window, cx);
+                }
                 let released = self.media_cache.clear(&self.commands);
                 self.cancel_stale_media_preparations();
                 release_assets(released, cx);
@@ -113,10 +128,16 @@ impl GsvApp {
                 submission_id,
                 run_id,
                 queued,
+                media,
             } => {
                 let Some(submission) = self.interaction.submission_accepted(submission_id) else {
                     return;
                 };
+                if !media.is_empty() {
+                    self.conversation
+                        .replace_moment_media(&submission.moment_id, media);
+                }
+                self.cleanup_pending_attachment_snapshots(submission_id);
                 self.conversation
                     .accept_user(&submission.moment_id, &run_id);
                 if queued {
@@ -134,6 +155,7 @@ impl GsvApp {
             ClientEvent::SendUncertain {
                 submission_id,
                 submitted_text,
+                media,
                 message,
             } => {
                 let Some(submission) = self.interaction.submission_accepted(submission_id) else {
@@ -142,6 +164,11 @@ impl GsvApp {
                 if submission.text != submitted_text {
                     return;
                 }
+                if !media.is_empty() {
+                    self.conversation
+                        .replace_moment_media(&submission.moment_id, media);
+                }
+                self.cleanup_pending_attachment_snapshots(submission_id);
                 self.conversation.mark_user_uncertain(&submission.moment_id);
                 self.conversation.show_error(message);
                 self.conversation.activity = Some("VERIFYING DELIVERY".to_string());
@@ -212,6 +239,16 @@ impl GsvApp {
             } => {
                 drop(message);
                 self.media_cache.failed(request_id);
+            }
+            ClientEvent::MediaFileLoaded {
+                bytes,
+                mime_type,
+                filename,
+                action,
+                _lease,
+            } => self.materialize_media_file(bytes, mime_type, filename, action, _lease, cx),
+            ClientEvent::MediaFileFailed { message } => {
+                self.conversation.show_error(message);
             }
             ClientEvent::Error(message) => {
                 if self.show_login_runtime_error(message.clone(), window, cx) {

@@ -152,6 +152,15 @@ impl PreparedContentCache {
         )
     }
 
+    pub fn clear(&mut self) {
+        self.entries.clear();
+        self.result_adoptions.clear();
+        self.selected_request_id = None;
+        self.deferred_selected_request_id = None;
+        self.generation = self.generation.wrapping_add(1).max(1);
+        let _ = self.requests.send(None);
+    }
+
     pub fn resolve_or_request(
         &mut self,
         id: &str,

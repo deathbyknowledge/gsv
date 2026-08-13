@@ -739,13 +739,14 @@ impl Conversation {
             })
             .cloned()
             .collect::<Vec<_>>();
-        let mut history_user_occurrences = HashMap::<u64, Vec<Arc<str>>>::new();
+        let mut history_user_occurrences =
+            HashMap::<(u64, ContentRevision), Vec<(Arc<str>, Arc<Vec<MediaAttachment>>)>>::new();
         for moment in &moments {
             if moment.role == MomentRole::User {
                 history_user_occurrences
-                    .entry(moment.text_fingerprint)
+                    .entry((moment.text_fingerprint, moment.media_revision))
                     .or_default()
-                    .push(moment.text.clone());
+                    .push((moment.text.clone(), moment.media.clone()));
             }
         }
         self.moments = moments;
@@ -761,11 +762,14 @@ impl Conversation {
                     .get(&local.id)
                     .is_some_and(|baseline| {
                         history_user_occurrences
-                            .get(&local.text_fingerprint)
+                            .get(&(local.text_fingerprint, local.media_revision))
                             .map(|candidates| {
                                 candidates
                                     .iter()
-                                    .filter(|candidate| candidate.as_ref() == local.text.as_ref())
+                                    .filter(|(text, media)| {
+                                        text.as_ref() == local.text.as_ref()
+                                            && media.as_slice() == local.media.as_slice()
+                                    })
                                     .count()
                             })
                             .unwrap_or_default()
@@ -810,7 +814,16 @@ impl Conversation {
         self.prune_response_activity();
     }
 
+    #[cfg(test)]
     pub fn append_user(&mut self, text: impl Into<String>) -> String {
+        self.append_user_with_media(text, Vec::new())
+    }
+
+    pub fn append_user_with_media(
+        &mut self,
+        text: impl Into<String>,
+        media: Vec<MediaAttachment>,
+    ) -> String {
         let text = text.into();
         let fingerprint = text_fingerprint(&text);
         let occurrence_baseline = self
@@ -821,16 +834,30 @@ impl Conversation {
                     && moment.state != MomentState::Error
                     && moment.text_fingerprint == fingerprint
                     && moment.text.as_ref() == text
+                    && moment.media.as_slice() == media.as_slice()
             })
             .count();
         let id = self.transient_id("user");
         let mut moment = Moment::new(id.clone(), MomentRole::User, text);
+        moment.replace_media(Arc::new(media));
         moment.state = MomentState::Sending;
         self.moments.push(moment);
         self.user_occurrence_baselines
             .insert(id.clone(), occurrence_baseline);
         self.select_latest();
         id
+    }
+
+    pub fn replace_moment_media(&mut self, moment_id: &str, media: Vec<MediaAttachment>) -> bool {
+        let Some(moment) = self
+            .moments
+            .iter_mut()
+            .find(|moment| moment.id == moment_id)
+        else {
+            return false;
+        };
+        moment.replace_media(Arc::new(media));
+        true
     }
 
     pub fn accept_user(&mut self, moment_id: &str, run_id: &str) {
@@ -2878,6 +2905,43 @@ mod tests {
         )]);
         assert_eq!(conversation.moments.len(), 1);
         assert_eq!(conversation.moments[0].id, "message:10");
+    }
+
+    #[test]
+    fn uncertain_media_delivery_requires_the_same_ordered_media() {
+        let media = MediaAttachment {
+            kind: MediaKind::Document,
+            mime_type: "application/pdf".to_string(),
+            key: Some("var/media/1/p/report".to_string()),
+            path: None,
+            url: None,
+            filename: Some("report.pdf".to_string()),
+            size: Some(3),
+            duration: None,
+            transcription: None,
+            description: None,
+        };
+        let mut conversation = Conversation::connecting();
+        let local_id = conversation.append_user_with_media("review", vec![media.clone()]);
+        conversation.mark_user_uncertain(&local_id);
+
+        conversation.replace_history(vec![Moment::new(
+            "message:without-media",
+            MomentRole::User,
+            "review",
+        )]);
+        assert!(conversation
+            .moments
+            .iter()
+            .any(|moment| moment.id == local_id));
+
+        let mut authoritative = Moment::new("message:with-media", MomentRole::User, "review");
+        authoritative.replace_media(Arc::new(vec![media]));
+        conversation.replace_history(vec![authoritative]);
+        assert!(conversation
+            .moments
+            .iter()
+            .all(|moment| !moment.id.starts_with("user:transient:")));
     }
 
     #[test]
