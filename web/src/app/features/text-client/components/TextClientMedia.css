@@ -1,0 +1,250 @@
+.text-client-media {
+  display: grid;
+  gap: clamp(18px, 2.6vh, 30px);
+  width: 100%;
+  min-width: 0;
+  margin-top: clamp(20px, 3.4vh, 38px);
+  color: var(--text-hi);
+  font-family: var(--gsv-font-prose);
+  font-size: 16px;
+  line-height: 1.45;
+  white-space: normal;
+}
+
+.text-client-media > .gsv-chat-media {
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  margin: 0;
+  color: inherit;
+  font: inherit;
+  letter-spacing: normal;
+}
+
+/* Images sit directly in the moment, like the native canvas. Only unresolved
+   media gets a frame so a failed or loading body has a visible footprint. */
+.text-client-media > .gsv-chat-media-image {
+  display: grid;
+  gap: 10px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+}
+
+.text-client-media .gsv-chat-media-image img {
+  display: block;
+  width: 100%;
+  max-width: 100%;
+  height: auto;
+  max-height: min(62vh, 680px);
+  margin: 0;
+  object-fit: contain;
+  object-position: center;
+  border: 0;
+  background: transparent;
+}
+
+/* Sanitized Markdown images share the same unboxed native treatment even
+   though they are part of the rich-text tree rather than process media. */
+.text-client-rich img {
+  display: block;
+  width: 100%;
+  max-width: 100%;
+  height: auto;
+  max-height: min(62vh, 680px);
+  margin: clamp(20px, 3.4vh, 38px) 0;
+  object-fit: contain;
+  object-position: center;
+  border: 0;
+  background: transparent;
+}
+
+.text-client-media .gsv-chat-media-image figcaption,
+.text-client-media .gsv-chat-media-image p {
+  margin: 0;
+  color: var(--text-dim);
+  font-family: var(--gsv-font-mono);
+  font-size: 10px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.text-client-media .gsv-chat-media-image p {
+  color: var(--text-muted);
+  font-family: var(--gsv-font-prose);
+  font-size: 14px;
+}
+
+.text-client-media > .gsv-chat-media-video {
+  display: grid;
+  gap: 10px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+}
+
+.text-client-media .gsv-chat-media-video video {
+  display: block;
+  width: 100%;
+  max-height: min(62vh, 680px);
+  margin: 0;
+  border: 0;
+  background: transparent;
+}
+
+.text-client-media .gsv-chat-media-video > div,
+.text-client-media .gsv-chat-media-file-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.text-client-media .gsv-chat-media-video span,
+.text-client-media .gsv-chat-media-file strong,
+.text-client-media .gsv-chat-media-file-head span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.text-client-media .gsv-chat-media-video small,
+.text-client-media .gsv-chat-media-file small,
+.text-client-media .gsv-chat-media-file-head small {
+  color: var(--text-dim);
+  font-family: var(--gsv-font-mono);
+  font-size: 10px;
+}
+
+.text-client-media > .gsv-chat-media-file,
+.text-client-media > .gsv-chat-media-audio {
+  border: 1px solid color-mix(in srgb, var(--text-dim) 42%, transparent);
+  background: transparent;
+}
+
+.text-client-media > .gsv-chat-media-file {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 16px 18px;
+  color: var(--text-hi);
+  text-decoration: none;
+}
+
+.text-client-media .gsv-chat-media-file > span {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.text-client-media > a.gsv-chat-media-file:hover {
+  border-color: var(--text-muted);
+}
+
+.text-client-media > .gsv-chat-media-audio {
+  display: grid;
+  gap: 14px;
+  padding: 16px 18px;
+}
+
+.text-client-media .gsv-chat-audio-player {
+  display: grid;
+  grid-template-columns: 30px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+}
+
+.text-client-media .gsv-chat-audio-player audio {
+  display: none;
+}
+
+.text-client-media .gsv-chat-audio-player button {
+  appearance: none;
+  display: inline-grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--text-hi);
+  cursor: pointer;
+}
+
+.text-client-media .gsv-chat-audio-player input {
+  width: 100%;
+  margin: 0;
+  accent-color: var(--accent-bright);
+  touch-action: none;
+}
+
+.text-client-media .gsv-chat-audio-player span {
+  color: var(--text-dim);
+  font-family: var(--gsv-font-mono);
+  font-size: 10px;
+  white-space: nowrap;
+}
+
+.text-client-media .gsv-chat-media-transcript summary {
+  color: var(--text-muted);
+  font-family: var(--gsv-font-mono);
+  font-size: 10px;
+  cursor: pointer;
+}
+
+.text-client-media .gsv-chat-media-transcript p {
+  margin: 10px 0 0;
+  color: var(--text-muted);
+  font-size: 14px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+}
+
+.text-client-media .gsv-chat-media-loading {
+  display: grid;
+  place-items: center;
+  min-height: clamp(180px, 38vh, 460px);
+  border: 1px solid color-mix(in srgb, var(--text-dim) 42%, transparent);
+  background: transparent;
+  color: var(--text-dim);
+  font-family: var(--gsv-font-mono);
+  font-size: 10px;
+}
+
+.text-client-media > .gsv-chat-media.is-error {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 36px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--error);
+  font-family: var(--gsv-font-mono);
+  font-size: 11px;
+}
+
+.text-client-media > .gsv-chat-media.is-error button {
+  appearance: none;
+  margin-left: auto;
+  padding: 4px 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+
+@media (max-width: 680px) {
+  .text-client-media .gsv-chat-media-image img,
+  .text-client-media .gsv-chat-media-video video,
+  .text-client-rich img {
+    max-height: 56vh;
+  }
+
+  .text-client-media > .gsv-chat-media-file,
+  .text-client-media > .gsv-chat-media-audio {
+    padding: 14px;
+  }
+}

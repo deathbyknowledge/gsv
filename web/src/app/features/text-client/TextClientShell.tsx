@@ -11,9 +11,9 @@ import {
   useSendChatMessage,
   useSpawnChatProcess,
 } from "../chat/hooks";
-import { ChatMediaAttachment } from "../chat/components/ChatMediaAttachment";
 import { useTerminalCommandMutation } from "../terminal/hooks/useTerminalQueries";
 import { textApprovalCopy } from "./approval";
+import { TextClientMedia } from "./components/TextClientMedia";
 import {
   ApprovalPanel,
   MomentRail,
@@ -26,6 +26,7 @@ import {
   projectTextMoments,
   type TextMoment,
 } from "./model";
+import { createTextClientSounds } from "./sound";
 import { useFittedText } from "./useFittedText";
 import "./textClient.css";
 
@@ -49,6 +50,14 @@ function roleLabel(role: TextMoment["role"]): string {
 function momentDetail(moment: TextMoment): string {
   const compact = moment.text.replace(/\s+/g, " ").trim();
   return compact ? compact.slice(0, 48) : moment.media.length > 0 ? "Attachment" : "Empty";
+}
+
+function presenceMotionForCategory(category: string | undefined) {
+  if (category === "searching-files") return "search" as const;
+  if (category === "reading-files") return "read" as const;
+  if (category === "writing-files" || category === "editing-files" || category === "deleting-files") return "mutate" as const;
+  if (category === "running-commands" || category === "running-code" || category === "using-tools") return "execute" as const;
+  return "thinking" as const;
 }
 
 function RichText({ text }: { text: string }) {
@@ -76,13 +85,7 @@ function MomentBody({ moment, processId }: { moment: TextMoment; processId: stri
         style={{ fontFamily: fit.fontFamily, fontSize: `${fit.fontSize}px`, lineHeight: `${fit.lineHeight}px` }}
       >
         {moment.role === "assistant" && !moment.streaming ? <RichText text={moment.text} /> : moment.text}
-        {moment.media.length > 0 ? (
-          <div class="text-client-media">
-            {moment.media.map((media, index) => (
-              <ChatMediaAttachment key={`${moment.key}:media:${index}`} media={media} processId={processId} />
-            ))}
-          </div>
-        ) : null}
+        <TextClientMedia items={moment.media} momentKey={moment.key} processId={processId} />
         {moment.completedWork.length > 0 ? (
           <div class="text-client-work-record" aria-label="Work completed">
             {moment.completedWork.map((entry) => <span key={entry.key}>{entry.text}</span>)}
@@ -115,8 +118,11 @@ export function TextClientShell({ username, onLock }: TextClientShellProps) {
   const [notice, setNotice] = useState("");
   const [terminalDraft, setTerminalDraft] = useState("");
   const [terminalLines, setTerminalLines] = useState<TerminalLine[]>([]);
+  const [edgeIntent, setEdgeIntent] = useState<{ direction: -1 | 1; progress: number } | null>(null);
   const composerRef = useRef<HTMLTextAreaElement>(null);
   const wheelGestureRef = useRef({ amount: 0, direction: 0, lastAt: 0, latched: false });
+  const edgeIntentTimerRef = useRef<number | null>(null);
+  const sounds = useMemo(() => createTextClientSounds(), []);
 
   const runtime = useChatRuntime({ enabled: Boolean(processId), processId });
   const projection = useMemo(() => projectTextMoments(runtime.runtime), [runtime.runtime]);
@@ -150,17 +156,34 @@ export function TextClientShell({ username, onLock }: TextClientShellProps) {
     }
   }, [followingLatest, moments, selectedKey]);
 
+  useEffect(() => () => sounds.dispose(), [sounds]);
+
   const selectMoment = useCallback((key: string) => {
+    if (key !== selectedKey) sounds.play("select");
     setSelectedKey(key);
     setFollowingLatest(key === moments[moments.length - 1]?.key);
     setDraftVisible(false);
-  }, [moments]);
+  }, [moments, selectedKey, sounds]);
 
   const moveMoment = useCallback((direction: -1 | 1) => {
     if (moments.length === 0) return;
     const next = Math.max(0, Math.min(moments.length - 1, selectedIndex + direction));
     selectMoment(moments[next].key);
   }, [moments, selectMoment, selectedIndex]);
+
+  const clearEdgeIntent = useCallback(() => {
+    if (edgeIntentTimerRef.current !== null) {
+      window.clearTimeout(edgeIntentTimerRef.current);
+      edgeIntentTimerRef.current = null;
+    }
+    setEdgeIntent(null);
+  }, []);
+
+  useEffect(() => () => {
+    if (edgeIntentTimerRef.current !== null) {
+      window.clearTimeout(edgeIntentTimerRef.current);
+    }
+  }, []);
 
   const revealDraft = useCallback(() => {
     if (mode !== "conversation" || runtime.runtime.pendingHil) return;
@@ -179,6 +202,7 @@ export function TextClientShell({ username, onLock }: TextClientShellProps) {
         setProcessId(pid);
       }
       runtime.appendOptimisticUserMessage(message);
+      sounds.play("send");
       setDraft("");
       setDraftVisible(false);
       setFollowingLatest(true);
@@ -189,7 +213,21 @@ export function TextClientShell({ username, onLock }: TextClientShellProps) {
       setDraftVisible(true);
       setNotice(errorMessage(error, "Your message could not be sent."));
     }
-  }, [draft, processId, runtime, send, spawn]);
+  }, [draft, processId, runtime, send, sounds, spawn]);
+
+  const updateDraft = useCallback((value: string) => {
+    setDraft((current) => {
+      sounds.playTextChange(current, value);
+      return value;
+    });
+  }, [sounds]);
+
+  const updateTerminalDraft = useCallback((value: string) => {
+    setTerminalDraft((current) => {
+      sounds.playTextChange(current, value);
+      return value;
+    });
+  }, [sounds]);
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -197,12 +235,16 @@ export function TextClientShell({ username, onLock }: TextClientShellProps) {
       const typingTarget = target?.matches("input, textarea, select, button, a, [role=button], [contenteditable=true]");
       if ((event.metaKey || event.ctrlKey) && event.key === "`") {
         event.preventDefault();
+        sounds.play("select");
         setMode((current) => current === "conversation" ? "terminal" : "conversation");
         return;
       }
       if ((event.metaKey || event.ctrlKey) && event.key === ".") {
         event.preventDefault();
-        if (processId) abort.mutate({ pid: processId, ...(runtime.runtime.activeRunId ? { runId: runtime.runtime.activeRunId } : {}) });
+        if (processId && (runtime.runtime.activeRunId || runtime.runtime.runState === "running")) {
+          sounds.play("stop");
+          abort.mutate({ pid: processId, ...(runtime.runtime.activeRunId ? { runId: runtime.runtime.activeRunId } : {}) });
+        }
         return;
       }
       if (typingTarget || event.isComposing || mode !== "conversation") return;
@@ -216,13 +258,17 @@ export function TextClientShell({ username, onLock }: TextClientShellProps) {
         setDraftVisible(false);
       } else if (event.key.length === 1 && !event.metaKey && !event.ctrlKey && !event.altKey) {
         event.preventDefault();
-        setDraft((current) => `${current}${event.key}`);
+        setDraft((current) => {
+          const next = `${current}${event.key}`;
+          sounds.playTextChange(current, next);
+          return next;
+        });
         revealDraft();
       }
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [abort, mode, moveMoment, processId, revealDraft, runtime.runtime.activeRunId]);
+  }, [abort, mode, moveMoment, processId, revealDraft, runtime.runtime.activeRunId, sounds]);
 
   const onCanvasWheel = (event: JSX.TargetedWheelEvent<HTMLDivElement>) => {
     if (draftVisible || mode !== "conversation") return;
@@ -241,14 +287,22 @@ export function TextClientShell({ username, onLock }: TextClientShellProps) {
     if (now - gesture.lastAt > 180 || direction !== gesture.direction) {
       gesture.amount = 0;
       gesture.latched = false;
+      clearEdgeIntent();
     }
     gesture.lastAt = now;
     gesture.direction = direction;
     if (gesture.latched) return;
     gesture.amount += vertical;
-    if (longMoment && Math.abs(gesture.amount) < 48) return;
     event.preventDefault();
+    if (longMoment) {
+      const progress = Math.min(1, Math.abs(gesture.amount) / 144);
+      setEdgeIntent({ direction: direction > 0 ? 1 : -1, progress });
+      if (edgeIntentTimerRef.current !== null) window.clearTimeout(edgeIntentTimerRef.current);
+      edgeIntentTimerRef.current = window.setTimeout(clearEdgeIntent, 240);
+      if (progress < 1) return;
+    }
     gesture.latched = true;
+    clearEdgeIntent();
     moveMoment(direction > 0 ? 1 : -1);
   };
 
@@ -263,6 +317,7 @@ export function TextClientShell({ username, onLock }: TextClientShellProps) {
     if (!input || terminalCommand.isPending) return;
     const prompt = `${username || "user"}@gsv $`;
     setTerminalLines((lines) => [...lines, { id: commandId("command"), kind: "command", prompt, text: input }]);
+    sounds.play("send");
     setTerminalDraft("");
     try {
       const result = await terminalCommand.mutateAsync({ input, target: "gsv" });
@@ -298,37 +353,28 @@ export function TextClientShell({ username, onLock }: TextClientShellProps) {
     ? [notice]
     : projection.activityLines.length > 0
       ? projection.activityLines.map((line) => line.text)
-      : [connected ? active ? "Thinking…" : "Ready" : "Reconnecting…"];
+      : !connected
+        ? ["Reconnecting…"]
+        : active
+          ? ["Thinking…"]
+          : [];
   const presenceMotion = (() => {
-    const category = projection.activityLines[0]?.category;
     if (!active) return "none" as const;
-    if (category === "searching-files") return "search" as const;
-    if (category === "reading-files") return "read" as const;
-    if (category === "writing-files" || category === "editing-files" || category === "deleting-files") return "mutate" as const;
-    if (category === "running-commands" || category === "running-code" || category === "using-tools") return "execute" as const;
-    return "thinking" as const;
+    return presenceMotionForCategory(projection.activityLines[0]?.category);
   })();
+  const presenceMotions = notice
+    ? ["none" as const]
+    : projection.activityLines.length > 0
+      ? projection.activityLines.map((line) => presenceMotionForCategory(line.category))
+      : [presenceMotion];
 
   return (
     <main class={`text-client-shell is-${mode}`}>
-      <header class="text-client-topbar">
-        <button type="button" class="text-client-brand" onClick={() => setMode("conversation")}>GSV</button>
-        <div class="text-client-topbar-actions">
-          <button type="button" onClick={() => setMode(mode === "conversation" ? "terminal" : "conversation")}>
-            {mode === "conversation" ? "Terminal" : "Conversation"}
-          </button>
-          {mode === "conversation" ? <button type="button" onClick={revealDraft}>Write</button> : null}
-          {mode === "conversation" ? <button type="button" disabled={spawn.isPending} onClick={startNewConversation}>New</button> : null}
-          <a href="/console">Console</a>
-          <button type="button" onClick={onLock}>Lock</button>
-        </div>
-      </header>
-
       {mode === "terminal" ? (
         <TerminalCanvas
           lines={terminalLines}
           value={terminalDraft}
-          onValueChange={setTerminalDraft}
+          onValueChange={updateTerminalDraft}
           onSubmit={() => void submitTerminal()}
           prompt={`${username || "user"}@gsv $`}
           busy={terminalCommand.isPending}
@@ -338,19 +384,35 @@ export function TextClientShell({ username, onLock }: TextClientShellProps) {
       ) : (
         <div class="text-client-conversation">
           <MomentRail
-            items={moments.map((moment, index) => ({ id: moment.key, label: `${index + 1} · ${roleLabel(moment.role)}`, detail: momentDetail(moment) }))}
-            currentId={draftVisible ? null : selected?.key ?? null}
-            onSelect={selectMoment}
+            items={[
+              ...moments.map((moment, index) => ({
+                id: moment.key,
+                label: `${index + 1} · ${roleLabel(moment.role)}`,
+                detail: momentDetail(moment),
+                role: moment.role,
+                state: moment.error ? "error" as const : moment.streaming ? "streaming" as const : "complete" as const,
+              })),
+              ...(pendingHil ? [{ id: "approval", label: "Approval", role: "assistant" as const, state: "approval" as const }] : []),
+              ...(draftVisible || draft.length > 0 ? [{ id: "draft", label: "Draft", role: "user" as const, state: "draft" as const }] : []),
+            ]}
+            currentId={pendingHil ? "approval" : draftVisible ? "draft" : selected?.key ?? null}
+            onSelect={(key) => {
+              if (key === "draft") revealDraft();
+              else if (key !== "approval") selectMoment(key);
+            }}
             onWheel={onRailWheel}
           />
           <section class="text-client-stage" onWheel={onCanvasWheel}>
-            <PresenceLane
-              primary={presenceLines[0]}
-              lines={presenceLines}
-              secondary={active && processId ? "Ctrl/Cmd+. to stop" : undefined}
-              activity={notice ? "waiting" : active ? "active" : connected ? "idle" : "waiting"}
-              motion={presenceMotion}
-            />
+            {presenceLines.length > 0 ? (
+              <PresenceLane
+                primary={presenceLines[0]}
+                lines={presenceLines}
+                lineMotions={presenceMotions}
+                secondary={active && processId ? "CTRL / CMD + . TO STOP" : undefined}
+                activity={notice ? "waiting" : active ? "active" : "waiting"}
+                motion={presenceMotion}
+              />
+            ) : null}
             <div class="text-client-canvas">
               {pendingHil && approvalCopy ? (
                 <ApprovalPanel
@@ -358,9 +420,9 @@ export function TextClientShell({ username, onLock }: TextClientShellProps) {
                   target={pendingHil.target}
                   detail={approvalCopy.detail}
                   busy={decideHil.isPending}
-                  onAllowOnce={() => decideHil.mutate({ pid: processId, requestId: pendingHil.requestId, decision: "approve" })}
-                  onAlwaysAllow={() => decideHil.mutate({ pid: processId, requestId: pendingHil.requestId, decision: "approve", remember: true })}
-                  onDeny={() => decideHil.mutate({ pid: processId, requestId: pendingHil.requestId, decision: "deny" })}
+                  onAllowOnce={() => { sounds.play("send"); decideHil.mutate({ pid: processId, requestId: pendingHil.requestId, decision: "approve" }); }}
+                  onAlwaysAllow={() => { sounds.play("send"); decideHil.mutate({ pid: processId, requestId: pendingHil.requestId, decision: "approve", remember: true }); }}
+                  onDeny={() => { sounds.play("stop"); decideHil.mutate({ pid: processId, requestId: pendingHil.requestId, decision: "deny" }); }}
                 />
               ) : draftVisible ? (
                 <form class="text-client-draft" onSubmit={(event) => { event.preventDefault(); void submitDraft(); }}>
@@ -370,7 +432,7 @@ export function TextClientShell({ username, onLock }: TextClientShellProps) {
                     aria-label="Message"
                     placeholder="What are you thinking?"
                     disabled={send.isPending}
-                    onInput={(event) => setDraft(event.currentTarget.value)}
+                    onInput={(event) => updateDraft(event.currentTarget.value)}
                     onKeyDown={(event) => {
                       if (event.key === "Escape") { event.preventDefault(); setDraftVisible(false); }
                       if (event.key === "Enter" && !event.shiftKey && !event.metaKey && !event.ctrlKey && !event.isComposing) {
@@ -389,9 +451,29 @@ export function TextClientShell({ username, onLock }: TextClientShellProps) {
                 </button>
               )}
             </div>
+            {edgeIntent ? (
+              <div class={`text-client-edge-intent is-${edgeIntent.direction < 0 ? "previous" : "next"}`} aria-hidden="true">
+                <span>{edgeIntent.direction < 0 ? "↑  KEEP SCROLLING FOR PREVIOUS" : "KEEP SCROLLING FOR NEXT  ↓"}</span>
+                <i><i style={{ transform: `scaleX(${edgeIntent.progress})` }} /></i>
+              </div>
+            ) : null}
+            {!draftVisible && !pendingHil && presenceLines.length === 0 ? (
+              <p class="text-client-hint">TYPE ANYWHERE · ENTER SENDS · SHIFT ENTER NEW LINE · SCROLL HISTORY</p>
+            ) : null}
           </section>
         </div>
       )}
+      <div class="text-client-quiet-actions">
+        {mode === "conversation" ? <button type="button" disabled={spawn.isPending} onClick={startNewConversation}>NEW</button> : null}
+        <button type="button" onClick={onLock}>LOCK</button>
+      </div>
+      <button
+        type="button"
+        class="text-client-mode-toggle"
+        onClick={() => { sounds.play("select"); setMode(mode === "conversation" ? "terminal" : "conversation"); }}
+      >
+        {mode === "conversation" ? "TERMINAL" : "CONVERSATION"}
+      </button>
     </main>
   );
 }

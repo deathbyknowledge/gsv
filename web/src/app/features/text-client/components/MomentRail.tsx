@@ -6,6 +6,8 @@ export interface MomentRailItem {
   label: string;
   detail?: string;
   disabled?: boolean;
+  role?: "user" | "assistant" | "system";
+  state?: "complete" | "streaming" | "error" | "approval" | "draft";
 }
 
 export interface MomentRailProps {
@@ -37,7 +39,7 @@ export function MomentRail({
           return (
             <li
               key={item.id}
-              class={`text-client-moment${isCurrent ? " is-current" : ""}`}
+              class={`text-client-moment is-${item.role ?? "system"} is-${item.state ?? "complete"}${isCurrent ? " is-current" : ""}`}
             >
               <button
                 type="button"

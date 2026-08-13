@@ -30,23 +30,13 @@ export function ApprovalPanel({
       aria-label="Approval required"
       aria-busy={busy}
     >
-      <header class="text-client-approval-header">
-        <span class="text-client-approval-kicker">Approval required</span>
-        <h2>Review before continuing</h2>
-      </header>
-
-      <dl class="text-client-approval-fields">
-        <div>
-          <dt>Action</dt>
-          <dd>{action}</dd>
-        </div>
-        <div>
-          <dt>Target</dt>
-          <dd>{target}</dd>
-        </div>
-      </dl>
-
-      {detail ? <p class="text-client-approval-detail">{detail}</p> : null}
+      <p class="text-client-approval-request">
+        I want to <span>{action}</span> on <strong>{target || "this device"}</strong>:
+      </p>
+      {detail ? <pre class="text-client-approval-detail">{detail}</pre> : null}
+      <p class="text-client-approval-scope">
+        Always allow covers future actions of this kind on {target || "this device"} in this conversation.
+      </p>
 
       <div class="text-client-approval-actions">
         <button

@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef } from "preact/hooks";
 import { useSession } from "../../services/session/SessionProvider";
-import { SessionScreens } from "../session/SessionScreens";
 import { GsvShell } from "../gsv-shell/GsvShell";
 import { TextClientShell } from "../text-client/TextClientShell";
+import { TextSessionScreens } from "../text-client/session/TextSessionScreens";
 
 type StandaloneNavigator = Navigator & {
   standalone?: boolean;
@@ -42,7 +42,7 @@ export function DesktopShell() {
   return (
     <div class="app-shell-root">
       <div class={`gsv-native-shell${standalone ? " is-standalone" : ""}`} ref={shellRef}>
-        <SessionScreens session={sessionService} snapshot={sessionSnapshot} />
+        <TextSessionScreens session={sessionService} snapshot={sessionSnapshot} />
         {classicShell ? (
           <GsvShell
             desktopVisible={desktopVisible}
