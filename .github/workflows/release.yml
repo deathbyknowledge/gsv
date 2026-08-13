@@ -78,8 +78,8 @@ jobs:
           echo "built_at=${BUILT_AT}" >> "$GITHUB_OUTPUT"
           echo "prerelease=${PRERELEASE}" >> "$GITHUB_OUTPUT"
 
-  # Build CLI binaries for multiple platforms
-  build-cli:
+  # Build the operator CLI and machine daemon as a same-version pair.
+  build-host-tools:
     needs: [resolve]
     env:
       GSV_BUILD_CHANNEL: ${{ needs.resolve.outputs.kind }}
@@ -90,26 +90,21 @@ jobs:
     strategy:
       matrix:
         include:
-          - os: ubuntu-latest
+          - os: ubuntu-22.04
             target: x86_64-unknown-linux-gnu
-            artifact: gsv-linux-x64
-            binary: gsv
-          - os: ubuntu-latest
+            platform: linux-x64
+          - os: ubuntu-22.04-arm
             target: aarch64-unknown-linux-gnu
-            artifact: gsv-linux-arm64
-            binary: gsv
-          - os: macos-latest
+            platform: linux-arm64
+          - os: macos-15-intel
             target: x86_64-apple-darwin
-            artifact: gsv-darwin-x64
-            binary: gsv
-          - os: macos-latest
+            platform: darwin-x64
+          - os: macos-15
             target: aarch64-apple-darwin
-            artifact: gsv-darwin-arm64
-            binary: gsv
-          - os: windows-latest
+            platform: darwin-arm64
+          - os: windows-2022
             target: x86_64-pc-windows-msvc
-            artifact: gsv-windows-x64.exe
-            binary: gsv.exe
+            platform: windows-x64
 
     runs-on: ${{ matrix.os }}
     steps:
@@ -120,56 +115,109 @@ jobs:
         with:
           targets: ${{ matrix.target }}
 
-      - name: Install cross-compilation tools (Linux ARM64)
-        if: matrix.target == 'aarch64-unknown-linux-gnu'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y gcc-aarch64-linux-gnu
-
-      - name: Build CLI (Linux - use rustls to avoid OpenSSL)
+      - name: Build host tools (Linux, rustls)
         if: runner.os == 'Linux'
-        working-directory: cli
-        run: cargo build --release --target ${{ matrix.target }} --no-default-features --features rustls
-        env:
-          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
-          GSV_BUILD_CHANNEL: ${{ needs.resolve.outputs.kind }}
-          GSV_BUILD_SHA: ${{ github.sha }}
-          GSV_BUILD_RUN_NUMBER: ${{ github.run_number }}
-          GSV_BUILD_TAG: ${{ needs.resolve.outputs.release_tag }}
-          GSV_BUILD_TIMESTAMP: ${{ needs.resolve.outputs.built_at }}
+        run: >-
+          cargo build --locked --release --target ${{ matrix.target }}
+          --package gsv --package gsvd --no-default-features
+          --features gsv/rustls,gsvd/rustls
 
-      - name: Build CLI (macOS - use native-tls for system certs)
-        if: runner.os == 'macOS'
-        working-directory: cli
-        run: cargo build --release --target ${{ matrix.target }}
-        env:
-          GSV_BUILD_CHANNEL: ${{ needs.resolve.outputs.kind }}
-          GSV_BUILD_SHA: ${{ github.sha }}
-          GSV_BUILD_RUN_NUMBER: ${{ github.run_number }}
-          GSV_BUILD_TAG: ${{ needs.resolve.outputs.release_tag }}
-          GSV_BUILD_TIMESTAMP: ${{ needs.resolve.outputs.built_at }}
+      - name: Build host tools (native TLS)
+        if: runner.os != 'Linux'
+        run: >-
+          cargo build --locked --release --target ${{ matrix.target }}
+          --package gsv --package gsvd
 
-      - name: Build CLI (Windows - use native-tls for system certs)
-        if: runner.os == 'Windows'
-        working-directory: cli
-        run: cargo build --release --target ${{ matrix.target }}
-        env:
-          GSV_BUILD_CHANNEL: ${{ needs.resolve.outputs.kind }}
-          GSV_BUILD_SHA: ${{ github.sha }}
-          GSV_BUILD_RUN_NUMBER: ${{ github.run_number }}
-          GSV_BUILD_TAG: ${{ needs.resolve.outputs.release_tag }}
-          GSV_BUILD_TIMESTAMP: ${{ needs.resolve.outputs.built_at }}
-
-      - name: Rename binary
+      - name: Stage host tools
         shell: bash
         run: |
-          mv "cli/target/${{ matrix.target }}/release/${{ matrix.binary }}" "cli/target/${{ matrix.target }}/release/${{ matrix.artifact }}"
+          set -euo pipefail
+          mkdir -p release
+          suffix=""
+          if [ "${{ runner.os }}" = "Windows" ]; then suffix=".exe"; fi
+          cp "target/${{ matrix.target }}/release/gsv${suffix}" "release/gsv-${{ matrix.platform }}${suffix}"
+          cp "target/${{ matrix.target }}/release/gsvd${suffix}" "release/gsvd-${{ matrix.platform }}${suffix}"
 
-      - name: Upload CLI binary
+      - name: Upload host tools
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.artifact }}
-          path: cli/target/${{ matrix.target }}/release/${{ matrix.artifact }}
+          name: gsv-host-tools-${{ matrix.platform }}
+          path: release/*
+
+  # GPUI 0.2.2 supports Linux and macOS. Build Desktop and its isolated
+  # transcription helper natively for both architectures on those systems.
+  build-desktop:
+    needs: [resolve]
+    env:
+      GSV_BUILD_CHANNEL: ${{ needs.resolve.outputs.kind }}
+      GSV_BUILD_SHA: ${{ github.sha }}
+      GSV_BUILD_RUN_NUMBER: ${{ github.run_number }}
+      GSV_BUILD_TAG: ${{ needs.resolve.outputs.release_tag }}
+      GSV_BUILD_TIMESTAMP: ${{ needs.resolve.outputs.built_at }}
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
+            platform: linux-x64
+          - os: ubuntu-22.04-arm
+            target: aarch64-unknown-linux-gnu
+            platform: linux-arm64
+          - os: macos-15-intel
+            target: x86_64-apple-darwin
+            platform: darwin-x64
+          - os: macos-15
+            target: aarch64-apple-darwin
+            platform: darwin-arm64
+
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Install Linux native build dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential \
+            clang \
+            cmake \
+            libasound2-dev \
+            libfontconfig1-dev \
+            libssl-dev \
+            libwayland-dev \
+            libx11-dev \
+            libx11-xcb-dev \
+            libxkbcommon-dev \
+            libxkbcommon-x11-dev \
+            pkg-config
+
+      - name: Build Desktop and transcription helper
+        run: >-
+          cargo build --locked --release --target ${{ matrix.target }}
+          --package gsv-native --package gsv-transcribe
+
+      - name: Stage Desktop
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p release
+          cp "target/${{ matrix.target }}/release/gsv-native" "release/gsv-desktop-${{ matrix.platform }}"
+          cp "target/${{ matrix.target }}/release/gsv-transcribe" "release/gsv-transcribe-${{ matrix.platform }}"
+          if [ "${{ matrix.platform }}" = "linux-x64" ]; then
+            cp native/transcribe-helper/THIRD_PARTY.md release/gsv-transcribe-THIRD_PARTY.md
+          fi
+
+      - name: Upload Desktop
+        uses: actions/upload-artifact@v4
+        with:
+          name: gsv-desktop-${{ matrix.platform }}
+          path: release/*
 
   # Build pre-bundled Cloudflare deployment artifacts.
   build-cloudflare-bundles:
@@ -243,7 +291,7 @@ jobs:
 
   # Create GitHub Release with all artifacts
   release:
-    needs: [resolve, build-cli, build-cloudflare-bundles, build-browser-extension]
+    needs: [resolve, build-host-tools, build-desktop, build-cloudflare-bundles, build-browser-extension]
     runs-on: ubuntu-latest
     env:
       KIND: ${{ needs.resolve.outputs.kind }}
@@ -263,12 +311,18 @@ jobs:
         run: |
           mkdir -p release
 
-          # CLI binaries
-          cp artifacts/gsv-linux-x64/gsv-linux-x64 release/
-          cp artifacts/gsv-linux-arm64/gsv-linux-arm64 release/
-          cp artifacts/gsv-darwin-x64/gsv-darwin-x64 release/
-          cp artifacts/gsv-darwin-arm64/gsv-darwin-arm64 release/
-          cp artifacts/gsv-windows-x64.exe/gsv-windows-x64.exe release/
+          # Operator CLI and machine daemon
+          cp artifacts/gsv-host-tools-linux-x64/* release/
+          cp artifacts/gsv-host-tools-linux-arm64/* release/
+          cp artifacts/gsv-host-tools-darwin-x64/* release/
+          cp artifacts/gsv-host-tools-darwin-arm64/* release/
+          cp artifacts/gsv-host-tools-windows-x64/* release/
+
+          # Desktop and isolated local transcription helper
+          cp artifacts/gsv-desktop-linux-x64/* release/
+          cp artifacts/gsv-desktop-linux-arm64/* release/
+          cp artifacts/gsv-desktop-darwin-x64/* release/
+          cp artifacts/gsv-desktop-darwin-arm64/* release/
 
           # Cloudflare deploy bundles (modular, per component/channel)
           cp artifacts/gsv-cloudflare-bundles/gsv-cloudflare-gateway.tar.gz release/
@@ -282,14 +336,21 @@ jobs:
           cp artifacts/gsv-browser-extension/gsv-browser-extension.zip release/
 
           # Make binaries executable
-          chmod +x release/gsv-*
+          chmod +x release/gsv-linux-* release/gsvd-linux-* \
+            release/gsv-darwin-* release/gsvd-darwin-* \
+            release/gsv-desktop-* release/gsv-transcribe-linux-* \
+            release/gsv-transcribe-darwin-*
+          chmod -x release/gsv-transcribe-THIRD_PARTY.md
 
           # Include install script
           cp install.sh release/
           cp install.ps1 release/
 
           # Create checksums
-          cd release && sha256sum * > checksums.txt
+          cd release
+          find . -maxdepth 1 -type f ! -name checksums.txt -printf '%f\0' \
+            | sort -z \
+            | xargs -0 sha256sum > checksums.txt
 
       - name: Build release body
         id: body
@@ -353,14 +414,25 @@ jobs:
 
           Download \`gsv-browser-extension.zip\`, unzip it, and load the extracted directory as an unpacked extension from the browser extensions page.
 
+          ### Host applications
+
+          The installer verifies every downloaded artifact, replaces \`gsv\`, \`gsvd\`,
+          Desktop, and the transcription helper as one versioned set, and migrates an
+          existing device service to execute \`gsvd --foreground\` directly. Linux and
+          macOS receive Desktop; Windows currently receives the CLI and daemon only.
+
           ### Manual Installation
 
           Download the binary for your platform:
-          - **macOS (Apple Silicon)**: \`gsv-darwin-arm64\`
-          - **macOS (Intel)**: \`gsv-darwin-x64\`
-          - **Linux (x64)**: \`gsv-linux-x64\`
-          - **Linux (ARM64)**: \`gsv-linux-arm64\`
-          - **Windows (x64)**: \`gsv-windows-x64.exe\`
+          - **macOS (Apple Silicon)**: \`gsv-darwin-arm64\`, \`gsvd-darwin-arm64\`, \`gsv-desktop-darwin-arm64\`
+          - **macOS (Intel)**: \`gsv-darwin-x64\`, \`gsvd-darwin-x64\`, \`gsv-desktop-darwin-x64\`
+          - **Linux (x64)**: \`gsv-linux-x64\`, \`gsvd-linux-x64\`, \`gsv-desktop-linux-x64\`
+          - **Linux (ARM64)**: \`gsv-linux-arm64\`, \`gsvd-linux-arm64\`, \`gsv-desktop-linux-arm64\`
+          - **Windows (x64)**: \`gsv-windows-x64.exe\`, \`gsvd-windows-x64.exe\`
+
+          The macOS command-line Desktop builds are not yet code-signed or notarized.
+          A signed \`.app\` distribution remains blocked on Apple Developer signing
+          credentials and a notarization secret being configured for this repository.
           BODY
 
       - name: Move mutable dev tag
@@ -406,6 +478,20 @@ jobs:
             release/gsv-darwin-x64
             release/gsv-darwin-arm64
             release/gsv-windows-x64.exe
+            release/gsvd-linux-x64
+            release/gsvd-linux-arm64
+            release/gsvd-darwin-x64
+            release/gsvd-darwin-arm64
+            release/gsvd-windows-x64.exe
+            release/gsv-desktop-linux-x64
+            release/gsv-desktop-linux-arm64
+            release/gsv-desktop-darwin-x64
+            release/gsv-desktop-darwin-arm64
+            release/gsv-transcribe-linux-x64
+            release/gsv-transcribe-linux-arm64
+            release/gsv-transcribe-darwin-x64
+            release/gsv-transcribe-darwin-arm64
+            release/gsv-transcribe-THIRD_PARTY.md
             release/gsv-cloudflare-gateway.tar.gz
             release/gsv-cloudflare-ripgit.tar.gz
             release/gsv-cloudflare-channel-whatsapp.tar.gz
