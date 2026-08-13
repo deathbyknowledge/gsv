@@ -13,6 +13,7 @@ import {
   FS_READ,
   FS_SEARCH,
   FS_WRITE,
+  MAIL_SEND,
   SHELL_EXEC,
   SYS_MCP_CALL,
 } from "../syscalls/constants";
@@ -31,6 +32,7 @@ export type CodeModeExecutionOptions = {
   defaultCwd?: string;
   argv?: string[];
   args?: unknown;
+  mailDeliveryBase?: string;
   mcpToolBindings?: CodeModeMcpToolBinding[];
   signal?: AbortSignal;
 };
@@ -49,6 +51,7 @@ export function buildCodeModeSource(
   const defaultCwd = JSON.stringify(options?.defaultCwd ?? null);
   const argv = JSON.stringify(options?.argv ?? []);
   const args = JSON.stringify(options && "args" in options ? options.args : null);
+  const mailDeliveryBase = JSON.stringify(options?.mailDeliveryBase ?? null);
   const mcpToolBindings = options?.mcpToolBindings ?? [];
   const mcpToolInfo = JSON.stringify(mcpToolBindings.map((binding) => ({
     functionName: binding.functionName,
@@ -66,6 +69,8 @@ export function buildCodeModeSource(
   const mcpTools = Object.freeze(${mcpToolInfo});
   const __defaultTarget = ${defaultTarget};
   const __defaultCwd = ${defaultCwd};
+  const __mailDeliveryBase = ${mailDeliveryBase};
+  let __mailDeliveryOrdinal = 0;
   const __isObject = (value) => value !== null && typeof value === "object" && !Array.isArray(value);
   const __unwrapToolResult = (result) => {
     if (__isObject(result) && typeof result.__gsvCodeModeAbort === "string") {
@@ -218,6 +223,25 @@ export function buildCodeModeSource(
     delete: async (args) => __unwrapToolResult(await codemode.delete(__withFsDefaults("fs.delete", args))),
     search: async (args) => __unwrapToolResult(await codemode.search(__withFsDefaults("fs.search", args))),
   });
+  const mail = Object.freeze({
+    send: async (args) => {
+      const request = __withObjectArgs("mail.send", args);
+      __mailDeliveryOrdinal += 1;
+      if (
+        request.deliveryId !== undefined
+        && (typeof request.deliveryId !== "string" || request.deliveryId.trim().length === 0)
+      ) {
+        throw new Error("mail.send deliveryId must be a string");
+      }
+      if (request.deliveryId === undefined) {
+        if (__mailDeliveryBase === null) {
+          throw new Error("mail.send requires deliveryId in this CodeMode execution");
+        }
+        request.deliveryId = __mailDeliveryBase + ":" + __mailDeliveryOrdinal;
+      }
+      return __unwrapToolResult(await __mail.send(request));
+    },
+  });
 ${mcpFunctionDeclarations}
   const __userMain = ${userMain};
   return await __userMain();
@@ -319,6 +343,18 @@ export async function executeCodeMode(
       name: "net",
       fns: {
         fetch: async (args: unknown) => request(NET_FETCH, toRecord(args, "fetch")),
+      },
+    },
+    {
+      name: "__mail",
+      fns: {
+        send: async (args: unknown) => {
+          const requestArgs = toRecord(args, "mail.send");
+          if (typeof requestArgs.deliveryId !== "string" || requestArgs.deliveryId.trim().length === 0) {
+            throw new Error("mail.send requires deliveryId");
+          }
+          return request(MAIL_SEND as SyscallName, requestArgs);
+        },
       },
     },
   ];

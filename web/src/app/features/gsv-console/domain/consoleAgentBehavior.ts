@@ -1,5 +1,11 @@
 import type { ConsoleConfigEntry } from "./consoleModels";
-import { approvalTargetFromValue } from "../../../domain/agentApproval";
+import {
+  approvalTargetFromValue,
+  protectManagedMailApproval,
+  type ApprovalPolicyAction,
+  type ApprovalPolicyRule,
+  type ApprovalPolicyValue,
+} from "../../../domain/agentApproval";
 import {
   defaultModelLabelForConfig,
   modelProfileOptionValue,
@@ -10,18 +16,11 @@ import {
   type ConsoleModelOption,
 } from "./consoleAi";
 
-export type AgentApprovalAction = "auto" | "ask" | "deny";
+export type AgentApprovalAction = ApprovalPolicyAction;
 
-export type ApprovalRule = {
-  match: string;
-  target?: string;
-  action: AgentApprovalAction;
-};
+export type ApprovalRule = ApprovalPolicyRule;
 
-export type ApprovalPolicy = {
-  default: AgentApprovalAction;
-  rules: ApprovalRule[];
-};
+export type ApprovalPolicy = ApprovalPolicyValue;
 
 export type ConsoleAgentBehavior = {
   approval: string;
@@ -56,6 +55,7 @@ const DEFAULT_APPROVAL_POLICY: ApprovalPolicy = {
     { match: "net.fetch", action: "ask" },
     { match: "fs.delete", action: "ask" },
     { match: "sys.mcp.call", action: "ask" },
+    { match: "mail.send", action: "ask" },
   ],
 };
 
@@ -332,10 +332,10 @@ export function parseApprovalPolicy(raw: string): ApprovalPolicy {
           })
           .filter((rule): rule is ApprovalRule => rule !== null)
       : [];
-    return {
+    return protectManagedMailApproval({
       default: parsed.default === undefined ? DEFAULT_APPROVAL_POLICY.default : approvalActionFromValue(parsed.default),
       rules: Array.isArray(parsed.rules) ? rules : DEFAULT_APPROVAL_POLICY.rules,
-    };
+    });
   } catch {
     return DEFAULT_APPROVAL_POLICY;
   }

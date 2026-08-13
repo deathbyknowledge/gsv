@@ -25,6 +25,7 @@ import {
   DEFAULT_WORKERS_AI_FALLBACK_PROFILE_NAME,
   DEFAULT_WORKERS_AI_MODEL,
 } from "../inference/default-models";
+import { MAIL_SEND } from "../syscalls/constants";
 
 // =============================================================================
 // System config defaults — every field documented.
@@ -40,6 +41,7 @@ const WORKER_TOOL_APPROVAL_POLICY = JSON.stringify({
     { match: "net.fetch", action: "ask" },
     { match: "fs.delete", action: "ask" },
     { match: "sys.mcp.call", action: "ask" },
+    { match: MAIL_SEND, action: "ask" },
   ],
 });
 

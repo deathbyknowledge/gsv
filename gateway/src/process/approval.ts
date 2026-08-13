@@ -1,4 +1,5 @@
-import { NET_FETCH } from "../syscalls/constants";
+import { MAIL_SEND, NET_FETCH } from "../syscalls/constants";
+import { isRoutableSyscall, type SyscallName } from "../syscalls";
 
 export type ToolApprovalAction = "auto" | "ask" | "deny";
 
@@ -26,6 +27,7 @@ export const DEFAULT_TOOL_APPROVAL_POLICY: ToolApprovalPolicy = {
     { match: NET_FETCH, action: "ask" },
     { match: "fs.delete", action: "ask" },
     { match: "sys.mcp.call", action: "ask" },
+    { match: MAIL_SEND, action: "ask" },
   ],
 };
 
@@ -52,10 +54,10 @@ export function parseToolApprovalPolicy(raw: string | null | undefined): ToolApp
           .filter((rule): rule is ToolApprovalRule => rule !== null)
       : DEFAULT_TOOL_APPROVAL_POLICY.rules;
 
-    return {
+    return protectManagedMailApproval({
       default: defaultAction,
       rules,
-    };
+    });
   } catch {
     return DEFAULT_TOOL_APPROVAL_POLICY;
   }
@@ -90,9 +92,32 @@ export function resolveToolApproval(
     };
   }
 
+  if (syscall === MAIL_SEND && policy.default === "auto") {
+    return {
+      action: "ask",
+      target,
+    };
+  }
+
   return {
     action: policy.default,
     target,
+  };
+}
+
+function protectManagedMailApproval(policy: ToolApprovalPolicy): ToolApprovalPolicy {
+  if (
+    policy.default !== "auto"
+    || policy.rules.some((rule) =>
+      (rule.match === MAIL_SEND || isWildcardMatch(rule.match, MAIL_SEND))
+      && targetMatchesScope(rule.target, "gsv")
+    )
+  ) {
+    return policy;
+  }
+  return {
+    ...policy,
+    rules: [...policy.rules, { match: MAIL_SEND, action: "ask" }],
   };
 }
 
@@ -100,7 +125,9 @@ export function resolveToolApprovalTarget(syscall: string, args?: unknown): stri
   const record = args && typeof args === "object" && !Array.isArray(args)
     ? args as Record<string, unknown>
     : null;
-  const target = normalizeExplicitTarget(record?.target);
+  const target = isRoutableSyscall(syscall as SyscallName)
+    ? normalizeExplicitTarget(record?.target)
+    : null;
   if (target) {
     return target;
   }

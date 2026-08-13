@@ -186,7 +186,26 @@ describe("console agent behavior", () => {
       "net.fetch",
       "fs.delete",
       "sys.mcp.call",
+      "mail.send",
     ]);
+  });
+
+  it("makes outbound mail ask-only when loading an older allow-by-default policy", () => {
+    const policy = parseApprovalPolicy(JSON.stringify({
+      default: "auto",
+      rules: [{ match: "fs.delete", action: "ask" }],
+    }));
+
+    expect(policy.rules).toContainEqual({ match: "mail.send", action: "ask" });
+  });
+
+  it("preserves an explicit wildcard mail policy", () => {
+    const policy = parseApprovalPolicy(JSON.stringify({
+      default: "auto",
+      rules: [{ match: "mail.*", action: "auto" }],
+    }));
+
+    expect(policy.rules).toEqual([{ match: "mail.*", action: "auto" }]);
   });
 
   it("keeps explicit ask-only approval policies serializable", () => {
@@ -207,9 +226,10 @@ describe("console agent behavior", () => {
       { match: "shell.exec", target: "gsv", action: "ask" },
       { match: "shell.exec", target: "targets/*", action: "deny" },
       { match: "fs.read", target: "macbook", action: "auto" },
+      { match: "mail.send", action: "ask" },
     ]);
     expect(serializeApprovalPolicy(policy)).toBe(
-      '{"default":"auto","rules":[{"match":"shell.exec","target":"gsv","action":"ask"},{"match":"shell.exec","target":"targets/*","action":"deny"},{"match":"fs.read","target":"macbook","action":"auto"}]}',
+      '{"default":"auto","rules":[{"match":"shell.exec","target":"gsv","action":"ask"},{"match":"shell.exec","target":"targets/*","action":"deny"},{"match":"fs.read","target":"macbook","action":"auto"},{"match":"mail.send","action":"ask"}]}',
     );
   });
 });

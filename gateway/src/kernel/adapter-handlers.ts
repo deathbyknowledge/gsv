@@ -94,6 +94,7 @@ type HilDecision = {
 type ParsedHilDecision = HilDecision & {
   requestToken?: string;
 };
+const ADAPTER_HIL_MAIL_DETAIL_MAX_CHARS = 160;
 type AdapterIngressProcessRecovery = {
   kind: "process_delivery";
   uid: number;
@@ -2147,5 +2148,43 @@ function summarizeAdapterHilRequest(pendingHil: AdapterHilRequest): string {
       ? `Requested action: delete \`${path}\`.`
       : "Requested action: delete a file.";
   }
+  if (pendingHil.syscall === "mail.send") {
+    const recipient = summarizeAdapterHilMailDetail(pendingHil.args.to);
+    const subject = summarizeAdapterHilMailDetail(pendingHil.args.subject);
+    const replyToMessageId = summarizeAdapterHilMailDetail(
+      pendingHil.args.replyToMessageId,
+    );
+    if (recipient && subject) {
+      return `Requested action: send an email to ${recipient} with subject ${subject}.`;
+    }
+    if (recipient) {
+      return `Requested action: send an email to ${recipient}.`;
+    }
+    if (subject) {
+      return `Requested action: send an email with subject ${subject}.`;
+    }
+    if (replyToMessageId) {
+      return `Requested action: reply to stored email ${replyToMessageId}.`;
+    }
+    return "Requested action: send an email.";
+  }
   return `Requested action: ${pendingHil.toolName}.`;
+}
+
+function summarizeAdapterHilMailDetail(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const singleLine = value
+    .replace(/[\u0000-\u001f\u007f-\u009f\u200b-\u200f\u202a-\u202e\u2060-\u2069\ufeff]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (!singleLine) return null;
+  const quoted = JSON.stringify(singleLine);
+  if (quoted.length <= ADAPTER_HIL_MAIL_DETAIL_MAX_CHARS) return quoted;
+  let encoded = "";
+  for (const character of singleLine) {
+    const part = JSON.stringify(character).slice(1, -1);
+    if (encoded.length + part.length > ADAPTER_HIL_MAIL_DETAIL_MAX_CHARS - 3) break;
+    encoded += part;
+  }
+  return `"${encoded}…"`;
 }

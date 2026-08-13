@@ -17,6 +17,7 @@ import {
   type AgentToolTarget,
 } from "./AgentToolsPanel";
 import { useUnsavedGuard } from "../../features/gsv-shell/unsaved/unsavedGuard";
+import { protectManagedMailApproval } from "../../domain/agentApproval";
 
 export type AgentEditorMode = "new" | "manage";
 export type AgentEditorTab = "general" | "files" | "tasks";
@@ -124,6 +125,7 @@ const DEFAULT_APPROVAL_POLICY: AgentToolApprovalPolicy = {
     { match: "net.fetch", action: "ask" },
     { match: "fs.delete", action: "ask" },
     { match: "sys.mcp.call", action: "ask" },
+    { match: "mail.send", action: "ask" },
   ],
 };
 export const MODEL_SETTING_INFO = "Which AI this agent uses to respond. Inherit uses the default model.";
@@ -192,7 +194,7 @@ function parseApprovalPolicy(raw: string | undefined, fallbackAction: string | u
   const trimmed = raw?.trim() ?? "";
   if (!trimmed) {
     return fallbackAction
-      ? { default: permissionForValue(fallbackAction), rules: [] }
+      ? protectManagedMailApproval({ default: permissionForValue(fallbackAction), rules: [] })
       : DEFAULT_APPROVAL_POLICY;
   }
   try {
@@ -214,13 +216,13 @@ function parseApprovalPolicy(raw: string | undefined, fallbackAction: string | u
           })
           .filter((rule): rule is AgentToolApprovalRule => rule !== null)
       : [];
-    return {
+    return protectManagedMailApproval({
       default: parsed.default === undefined ? DEFAULT_APPROVAL_POLICY.default : permissionForValue(String(parsed.default ?? "")),
       rules: Array.isArray(parsed.rules) ? rules : DEFAULT_APPROVAL_POLICY.rules,
-    };
+    });
   } catch {
     return fallbackAction
-      ? { default: permissionForValue(fallbackAction), rules: [] }
+      ? protectManagedMailApproval({ default: permissionForValue(fallbackAction), rules: [] })
       : DEFAULT_APPROVAL_POLICY;
   }
 }

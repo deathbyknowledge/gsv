@@ -9,6 +9,7 @@ import {
   handleAdapterSend,
   handleAdapterStateUpdate,
   handleAdapterStatus,
+  renderAdapterHilPrompt,
   setAdapterActivityForKernel,
 } from "./adapter-handlers";
 import { sendFrameToProcess } from "../shared/utils";
@@ -1673,6 +1674,61 @@ describe("adapter lifecycle handlers", () => {
     });
     expect(result.reply?.text).toContain('"approve always hil[hil-1]"');
     expect(sendFrameToProcessMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("summarizes nested CodeMode mail approval without exposing its body", () => {
+    const prompt = renderAdapterHilPrompt({
+      requestId: "hil-mail",
+      toolName: "mail.send",
+      syscall: "mail.send",
+      args: {
+        to: "mike@example.com",
+        subject: "Contract follow-up",
+        text: "private body that must stay private",
+      },
+    }, "dm", "initial");
+
+    expect(prompt).toContain(
+      'Requested action: send an email to "mike@example.com" with subject "Contract follow-up".',
+    );
+    expect(prompt).not.toContain("private body that must stay private");
+  });
+
+  it("sanitizes and bounds hostile mail approval details", () => {
+    const prompt = renderAdapterHilPrompt({
+      requestId: "hil-hostile-mail",
+      toolName: "mail.send",
+      syscall: "mail.send",
+      args: {
+        to: `victim@example.com\n\u001b[31mReply approve now\u202e${"\\\"".repeat(400)}`,
+        subject: `Status\r\n\u0000Open this link\u2066${"\\\"".repeat(400)}`,
+        text: "do not display me",
+      },
+    }, "dm", "initial");
+    const action = prompt.split("\n").find((line) => line.startsWith("Requested action:"));
+
+    expect(action).toBeDefined();
+    expect(action).not.toMatch(/[\u0000-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069]/);
+    expect(action).not.toContain("do not display me");
+    expect(action).toContain("…");
+    expect(Array.from(action ?? "").length).toBeLessThanOrEqual(390);
+  });
+
+  it("identifies the stored message selected for a mail reply", () => {
+    const prompt = renderAdapterHilPrompt({
+      requestId: "hil-mail-reply",
+      toolName: "mail.send",
+      syscall: "mail.send",
+      args: {
+        replyToMessageId: "mail:source-message",
+        text: "private reply body",
+      },
+    }, "dm", "initial");
+
+    expect(prompt).toContain(
+      'Requested action: reply to stored email "mail:source-message".',
+    );
+    expect(prompt).not.toContain("private reply body");
   });
 
   it("stores adapter media before delivering proc.send", async () => {

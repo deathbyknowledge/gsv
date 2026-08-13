@@ -10,6 +10,7 @@ import type {
 import type { RequestFrame, ResponseFrame } from "../../../protocol/frames";
 import type { SyscallName } from "../../../syscalls";
 import { createCodeModeRequest } from "../../../codemode/request";
+import { stableOpaqueId } from "../../../shared/stable-id";
 import {
   buildCodeModeMcpToolBindings,
   executeCodeMode,
@@ -40,6 +41,7 @@ export function buildCodeModeCommand(
   kernelCtx: KernelContext,
   request?: NativeShellRequest,
 ) {
+  let invocationOrdinal = 0;
   return defineCommand("codemode", async (commandArgs, bashCtx): Promise<ExecResult> => {
     try {
       const options = parseCodeModeCommandArgs(commandArgs);
@@ -57,11 +59,21 @@ export function buildCodeModeCommand(
       const requestTool = (call: SyscallName, args: Record<string, unknown>) =>
         requestCodeModeTool(request, call, args, bashCtx.signal);
       const cwd = resolveCodeModeCwd(options.cwd, options.target, bashCtx.cwd, identity);
+      invocationOrdinal += 1;
+      const mailDeliveryBase = kernelCtx.requestId
+        ? await stableOpaqueId("mail-send", [
+            kernelCtx.installationId,
+            kernelCtx.processId ?? identity.uid,
+            kernelCtx.requestId,
+            invocationOrdinal,
+          ])
+        : undefined;
       const result = await executeCodeMode(kernelCtx.env, code, requestTool, {
         defaultTarget: options.target,
         defaultCwd: cwd,
         argv: options.argv,
         args: options.args,
+        ...(mailDeliveryBase ? { mailDeliveryBase } : {}),
         mcpToolBindings: await loadMcpToolBindings(requestTool, bashCtx.signal),
         signal: bashCtx.signal,
       });

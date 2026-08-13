@@ -30,7 +30,10 @@ describe("tool approval policy", () => {
       ],
     }))).toEqual({
       default: "auto",
-      rules: [{ match: "shell.exec", target: "targets/*", action: "ask" }],
+      rules: [
+        { match: "shell.exec", target: "targets/*", action: "ask" },
+        { match: "mail.send", action: "ask" },
+      ],
     });
   });
 
@@ -39,7 +42,48 @@ describe("tool approval policy", () => {
     expect(resolveToolApproval(DEFAULT_TOOL_APPROVAL_POLICY, "net.fetch").action).toBe("ask");
     expect(resolveToolApproval(DEFAULT_TOOL_APPROVAL_POLICY, "fs.delete").action).toBe("ask");
     expect(resolveToolApproval(DEFAULT_TOOL_APPROVAL_POLICY, "sys.mcp.call").action).toBe("ask");
+    expect(resolveToolApproval(DEFAULT_TOOL_APPROVAL_POLICY, "mail.send").action).toBe("ask");
     expect(resolveToolApproval(DEFAULT_TOOL_APPROVAL_POLICY, "fs.read").action).toBe("auto");
+  });
+
+  it("does not let target fields rescope non-routable mail approval", () => {
+    const policy = {
+      default: "auto" as const,
+      rules: [{ match: "mail.send", target: "gsv", action: "deny" as const }],
+    };
+    expect(resolveToolApproval(policy, "mail.send", {
+      target: "workstation",
+      to: "mike@example.com",
+    })).toMatchObject({ action: "deny", target: "gsv" });
+  });
+
+  it("asks for mail added after a stored allow-by-default policy was created", () => {
+    const storedPolicy = {
+      default: "auto" as const,
+      rules: [{ match: "fs.delete", action: "ask" as const }],
+    };
+
+    expect(resolveToolApproval(storedPolicy, "mail.send").action).toBe("ask");
+    expect(parseToolApprovalPolicy(JSON.stringify(storedPolicy)).rules).toContainEqual({
+      match: "mail.send",
+      action: "ask",
+    });
+  });
+
+  it("preserves explicit exact and wildcard mail approval choices", () => {
+    const exact = parseToolApprovalPolicy(JSON.stringify({
+      default: "auto",
+      rules: [{ match: "mail.send", action: "auto" }],
+    }));
+    const wildcard = parseToolApprovalPolicy(JSON.stringify({
+      default: "auto",
+      rules: [{ match: "mail.*", action: "deny" }],
+    }));
+
+    expect(exact.rules).toEqual([{ match: "mail.send", action: "auto" }]);
+    expect(resolveToolApproval(exact, "mail.send").action).toBe("auto");
+    expect(wildcard.rules).toEqual([{ match: "mail.*", action: "deny" }]);
+    expect(resolveToolApproval(wildcard, "mail.send").action).toBe("deny");
   });
 
   it("resolves native and connected targets from tool args", () => {

@@ -23,7 +23,9 @@ import type {
   ProcessScheduleDeliverRequestFrame,
 } from "../protocol/process-frames";
 import { getProcessByPid, getKernelPtr } from "../shared/utils";
+import { stableOpaqueId } from "../shared/stable-id";
 import { TOOL_TO_SYSCALL } from "../syscalls/constants";
+import { DEFAULT_TOOL_APPROVAL_POLICY } from "./approval";
 import { PROCESS_V001_INITIAL_SCHEMA } from "./schema/v001_initial";
 import { PROCESS_V004_PENDING_TOOL_DISPATCH_ID } from "./schema/v004_pending_tool_dispatch_id";
 import { PROCESS_V005_TOOL_RESULT_OUTCOME } from "./schema/v005_tool_result_outcome";
@@ -8348,6 +8350,62 @@ describe("Process DO — mechanical", () => {
       });
     });
 
+    it("gates nested CodeMode mail sends through ordinary Process approval", async () => {
+      const stub = await initProcess("mech-codemode-mail-approval", ROOT_IDENTITY);
+
+      await runInDurableObject(stub, async (instance: Process) => {
+        const process = instance as any;
+        const approvals: Array<{
+          toolName: string;
+          call: string;
+          args: Record<string, unknown>;
+        }> = [];
+        let dispatched = false;
+        process.currentRun = { runId: "run-codemode-mail-approval" };
+        process.waitForCodeModeApproval = async (
+          _runId: string,
+          _dispatchId: string,
+          _toolCallId: string,
+          toolName: string,
+          call: string,
+          args: Record<string, unknown>,
+        ) => {
+          approvals.push({ toolName, call, args });
+          return false;
+        };
+        process.dispatchCodeModeSyscall = async () => {
+          dispatched = true;
+          throw new Error("unexpected dispatch");
+        };
+
+        await expect(process.executeCodeModeSyscall(
+          {
+            runId: "run-codemode-mail-approval",
+            dispatchId: "dispatch-codemode-mail-approval",
+            approvalPolicy: DEFAULT_TOOL_APPROVAL_POLICY,
+            capabilities: ["mail.send"],
+          },
+          "mail.send",
+          {
+            to: "mike@example.com",
+            text: "Hello",
+            deliveryId: "mail-send:approval:1",
+          },
+        )).rejects.toThrow("Tool execution was not approved: mail.send");
+
+        expect(approvals).toEqual([{
+          toolName: "mail.send",
+          call: "mail.send",
+          args: {
+            to: "mike@example.com",
+            text: "Hello",
+            deliveryId: "mail-send:approval:1",
+          },
+        }]);
+        expect(dispatched).toBe(false);
+      });
+    });
+
     it("ignores a nested CodeMode result after the run stops", async () => {
       const pid = "mech-codemode-fetch-stopped-after-fetch";
       const stub = await initProcess(pid, ROOT_IDENTITY);
@@ -8474,6 +8532,109 @@ describe("Process DO — mechanical", () => {
             },
           }),
         ]);
+      });
+    });
+
+    it("derives nested mail delivery ids from the durable model execution", async () => {
+      const pid = "mech-codemode-mail-delivery";
+      const stub = await initProcess(pid, ROOT_IDENTITY);
+
+      await runInDurableObject(stub, async (instance: Process) => {
+        const process = instance as any;
+        const runId = "run-codemode-mail-delivery";
+        const dispatchId = "dispatch-call-codemode-mail-delivery";
+        const calls: Array<{ call: string; args: Record<string, unknown> }> = [];
+        process.currentRun = {
+          runId,
+          config: { capabilities: ["mail.send"] },
+          approvalPolicy: { default: "auto", rules: [] },
+        };
+        process.getCodeModeMcpToolBindings = async () => [];
+        process.executeCodeModeSyscall = async (
+          _context: unknown,
+          call: string,
+          args: Record<string, unknown>,
+        ) => {
+          calls.push({ call, args });
+          return { ok: true, deliveryId: args.deliveryId };
+        };
+        registerToolBlock(process, runId, [{
+          type: "toolCall",
+          id: "call-codemode-mail-delivery",
+          name: "CodeMode",
+          arguments: {
+            code: `return await mail.send({ to: "mike@example.com", text: "Hello" });`,
+          },
+        }]);
+        process.store.markDispatched(dispatchId);
+
+        await process.executeCodeModeTool(
+          runId,
+          dispatchId,
+          { code: `return await mail.send({ to: "mike@example.com", text: "Hello" });` },
+          process.currentRun.approvalPolicy,
+        );
+
+        const deliveryBase = await stableOpaqueId("mail-send", [
+          process.installationId,
+          pid,
+          runId,
+          dispatchId,
+        ]);
+        expect(calls).toEqual([{
+          call: "mail.send",
+          args: {
+            to: "mike@example.com",
+            text: "Hello",
+            deliveryId: `${deliveryBase}:1`,
+          },
+        }]);
+      });
+    });
+
+    it("derives manual CodeMode mail delivery ids from the request frame", async () => {
+      const pid = "mech-codemode-run-mail-delivery";
+      const stub = await initProcess(pid, ROOT_IDENTITY);
+
+      await runInDurableObject(stub, async (instance: Process) => {
+        const process = instance as any;
+        const calls: Array<{ call: string; args: Record<string, unknown> }> = [];
+        process.getCodeModeMcpToolBindings = async () => [];
+        process.executeCodeModeSyscall = async (
+          _context: unknown,
+          call: string,
+          args: Record<string, unknown>,
+        ) => {
+          calls.push({ call, args });
+          return { ok: true, deliveryId: args.deliveryId };
+        };
+        const requestId = "codemode-run-mail-request";
+        const response = await instance.recvFrame({
+          type: "req",
+          id: requestId,
+          call: "codemode.run",
+          args: {
+            code: `return await mail.send({ to: "mike@example.com", text: "Hello" });`,
+          },
+        });
+
+        const deliveryBase = await stableOpaqueId("mail-send", [
+          process.installationId,
+          pid,
+          requestId,
+        ]);
+        expect(response).toMatchObject({
+          ok: true,
+          data: { status: "completed" },
+        });
+        expect(calls).toEqual([{
+          call: "mail.send",
+          args: {
+            to: "mike@example.com",
+            text: "Hello",
+            deliveryId: `${deliveryBase}:1`,
+          },
+        }]);
       });
     });
 

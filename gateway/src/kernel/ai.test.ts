@@ -46,6 +46,7 @@ import {
 } from "../inference/image-reading";
 import { DEFAULT_IMAGE_GENERATION_MODEL } from "../inference/capabilities";
 import { inferenceLogicalRequestId } from "../inference/provider";
+import { MAIL_SEND, MAIL_STATUS, SYSCALL_TOOL_NAMES } from "../syscalls/constants";
 
 vi.mock("../shared/utils", () => ({
   sendFrameToProcess: vi.fn(),
@@ -218,6 +219,8 @@ describe("handleAiTools", () => {
       "Shell",
       "CodeMode",
     ]);
+    expect(SYSCALL_TOOL_NAMES[MAIL_SEND]).toBeUndefined();
+    expect(SYSCALL_TOOL_NAMES[MAIL_STATUS]).toBeUndefined();
     expect(
       result.tools.every((tool) =>
         !tool.name.startsWith("MCP_") &&
@@ -229,6 +232,7 @@ describe("handleAiTools", () => {
     ).toBe(true);
     expect(result.mcpServers).toEqual(["Search"]);
     const codeModeTool = result.tools.find((tool) => tool.name === "CodeMode");
+    expect(codeModeTool?.description).toContain("mail.send");
     expect(codeModeTool?.description).toContain("return mcpTools.map");
     expect(codeModeTool?.description).toContain("inputSchema/outputSchema");
     expect(codeModeTool?.description).not.toContain("declare function lookup");

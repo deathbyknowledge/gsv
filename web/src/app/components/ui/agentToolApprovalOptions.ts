@@ -1,21 +1,19 @@
 import type { SelectOption } from "./Select";
+import type {
+  ApprovalPolicyAction,
+  ApprovalPolicyRule,
+  ApprovalPolicyValue,
+} from "../../domain/agentApproval";
 
 /** Shared model + option builders for tool-approval editing. Extracted from
  *  AgentToolsPanel so other approval editors (e.g. the CREW overrides drawer)
  *  can reuse the same capability families, machine scopes and labels. */
 
-export type AgentToolApprovalAction = "auto" | "ask" | "deny";
+export type AgentToolApprovalAction = ApprovalPolicyAction;
 
-export type AgentToolApprovalRule = {
-  match: string;
-  target?: string;
-  action: AgentToolApprovalAction;
-};
+export type AgentToolApprovalRule = ApprovalPolicyRule;
 
-export type AgentToolApprovalPolicy = {
-  default: AgentToolApprovalAction;
-  rules: AgentToolApprovalRule[];
-};
+export type AgentToolApprovalPolicy = ApprovalPolicyValue;
 
 export type AgentToolTarget = {
   id: string;
@@ -62,6 +60,12 @@ export const CAPABILITY_FAMILIES: CapabilityFamily[] = [
     options: [
       { match: "net.*", label: "All network tools", description: "Every network operation." },
       { match: "net.fetch", label: "Fetch URLs" },
+    ],
+  },
+  {
+    label: "Mail",
+    options: [
+      { match: "mail.send", label: "Send mail", description: "Send a new email or reply to an existing message." },
     ],
   },
   {

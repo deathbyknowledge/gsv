@@ -1296,7 +1296,7 @@ export class Process extends Host<Env> {
           break;
         case "codemode.run":
           data = await this.handleCancellableRequest(frame.id, (signal) =>
-            this.handleCodeModeRun(frame.args as CodeModeRunArgs, signal)
+            this.handleCodeModeRun(frame.args as CodeModeRunArgs, signal, frame.id)
           );
           break;
         case "proc.history":
@@ -6225,6 +6225,7 @@ export class Process extends Host<Env> {
   private async handleCodeModeRun(
     rawArgs: CodeModeRunArgs,
     signal?: AbortSignal,
+    requestId?: string,
   ): Promise<CodeModeRunResult> {
     const args = rawArgs && typeof rawArgs === "object"
       ? rawArgs as Partial<CodeModeRunArgs>
@@ -6246,6 +6247,9 @@ export class Process extends Host<Env> {
           defaultCwd: normalizeOptionalString(args.cwd),
           argv: Array.isArray(args.argv) ? args.argv.map((item) => String(item)) : [],
           args: args.args ?? null,
+          ...(requestId
+            ? { mailDeliveryBase: await stableOpaqueId("mail-send", [this.installationId, this.pid, requestId]) }
+            : {}),
           mcpToolBindings: await this.getCodeModeMcpToolBindings(signal),
           signal,
         },
@@ -6296,6 +6300,12 @@ export class Process extends Host<Env> {
           signal,
         ),
         {
+          mailDeliveryBase: await stableOpaqueId("mail-send", [
+            this.installationId,
+            this.pid,
+            runId,
+            dispatchId,
+          ]),
           mcpToolBindings: await this.getCodeModeMcpToolBindings(signal),
           signal,
         },

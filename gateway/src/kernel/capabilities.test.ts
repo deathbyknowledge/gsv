@@ -113,6 +113,8 @@ describe("CapabilityStore", () => {
         "ai.transcription.create",
         "codemode.*",
         "fs.*",
+        "mail.send",
+        "mail.status",
         "net.fetch",
         "proc.*",
         "repo.apply",
