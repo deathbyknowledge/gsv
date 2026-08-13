@@ -25,7 +25,11 @@ import {
   type TextMoment,
 } from "./model";
 import { createTextClientSounds } from "./sound";
-import { StreamingMarkdown, usePreparedMarkdown } from "./streamingMarkdown";
+import {
+  presentedMarkdownSource,
+  StreamingMarkdown,
+  usePreparedMarkdown,
+} from "./streamingMarkdown";
 import { useFittedText } from "./useFittedText";
 import "./textClient.css";
 
@@ -110,9 +114,11 @@ function MomentBody({ moment, processId }: { moment: TextMoment; processId: stri
     moment.role === "assistant",
     moment.role === "assistant" && !moment.streaming,
   );
-  const fit = useFittedText<HTMLDivElement>(moment.text, {
-    locked: moment.role === "assistant",
-    measurementKey: preparedMarkdown?.presentationRevision ?? 0,
+  const fit = useFittedText<HTMLDivElement>(presentedMarkdownSource(preparedMarkdown, moment.text), {
+    measurementKey: moment.role === "assistant"
+      ? preparedMarkdown?.presentationRevision ?? 0
+      : undefined,
+    shrinkOnly: moment.role === "assistant",
   });
   return (
     <div
@@ -129,7 +135,6 @@ function MomentBody({ moment, processId }: { moment: TextMoment; processId: stri
           <StreamingMarkdown
             prepared={preparedMarkdown}
             source={moment.text}
-            streaming={moment.streaming}
           />
         ) : moment.text}
         <TextClientMedia items={moment.media} momentKey={moment.key} processId={processId} />

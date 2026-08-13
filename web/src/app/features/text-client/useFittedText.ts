@@ -35,15 +35,10 @@ export interface ChooseFittedTextPolicyOptions {
 }
 
 export interface UseFittedTextOptions {
-  /** Freeze the most recently fitted size until `locked` becomes false. */
-  locked?: boolean;
-  /**
-   * Force a caller-owned stable size. This takes precedence over `locked` and
-   * is clamped and quantized to the fitted-prose scale.
-   */
-  lockedSize?: number | null;
   /** Prevent a growing draft/stream from becoming larger than its prior fit. */
   maximumSize?: number | null;
+  /** Keep accepted revisions steady or smaller until the viewport changes. */
+  shrinkOnly?: boolean;
   /** Coalesce expensive overflow measurement to a prepared presentation revision. */
   measurementKey?: string | number | null;
   /** Observe an explicitly mounted element when this hook spans UI modes. */
@@ -85,6 +80,14 @@ export function quantizeFittedTextSize(value: number): number {
 
 export function fittedTextLineHeight(fontSize: number): number {
   return Math.round(quantizeFittedTextSize(fontSize) * FITTED_TEXT_LINE_HEIGHT_RATIO);
+}
+
+export function tightenFittedTextCeiling(
+  previous: number | null,
+  candidate: number,
+): number {
+  const fitted = quantizeFittedTextSize(candidate);
+  return previous == null ? fitted : Math.min(quantizeFittedTextSize(previous), fitted);
 }
 
 /**
@@ -248,11 +251,10 @@ export function useFittedText<T extends HTMLElement = HTMLDivElement>(
   const [viewport, setViewport] = useState<FittedTextViewport>({ width: 0, height: 0 });
   const [fontsReady, setFontsReady] = useState(false);
   const [state, setState] = useState<FittedTextState>(INITIAL_STATE);
-  const stateRef = useRef(state);
-  const internallyLockedSizeRef = useRef<number | null>(null);
-  const locked = options.locked ?? false;
-  const callerLockedSize = options.lockedSize;
+  const shrinkCeilingRef = useRef<number | null>(null);
+  const shrinkViewportRef = useRef<FittedTextViewport | null>(null);
   const maximumSize = options.maximumSize;
+  const shrinkOnly = options.shrinkOnly ?? false;
   const measurementKey = options.measurementKey;
   const observedElement = options.element;
 
@@ -338,50 +340,41 @@ export function useFittedText<T extends HTMLElement = HTMLDivElement>(
       return;
     }
 
-    if (!locked) {
-      internallyLockedSizeRef.current = null;
+    const priorShrinkViewport = shrinkViewportRef.current;
+    if (
+      !shrinkOnly
+      || !priorShrinkViewport
+      || priorShrinkViewport.width !== viewport.width
+      || priorShrinkViewport.height !== viewport.height
+    ) {
+      shrinkCeilingRef.current = null;
     }
-    const stableSize = callerLockedSize != null
-      ? callerLockedSize
-      : locked
-        ? internallyLockedSizeRef.current ?? (stateRef.current.ready ? stateRef.current.fontSize : null)
-        : null;
+    shrinkViewportRef.current = viewport;
+    const fittedMaximum = shrinkOnly && shrinkCeilingRef.current != null
+      ? maximumSize == null
+        ? shrinkCeilingRef.current
+        : Math.min(maximumSize, shrinkCeilingRef.current)
+      : maximumSize;
     const candidates = fittedTextCandidates(viewport);
     let nextPolicy: FittedTextPolicy;
 
     try {
-      if (stableSize != null) {
-        const fontSize = quantizeFittedTextSize(stableSize);
-        const element = observedElement ?? containerRef.current;
-        const contentHeight = element?.scrollHeight ?? stateRef.current.contentHeight;
-        nextPolicy = {
-          fontSize,
-          lineHeight: fittedTextLineHeight(fontSize),
-          contentHeight,
-          targetHeight: containerSize.height * FITTED_TEXT_HEIGHT_TARGET,
-          scrolls: contentHeight > containerSize.height + HEIGHT_TOLERANCE,
-        };
-      } else {
-        nextPolicy = chooseFittedTextPolicy({
-          candidates,
-          availableHeight: containerSize.height,
-          lockedSize: stableSize,
-          maximumSize,
-          measureHeight: (fontSize, lineHeight) => {
-            if (text.length === 0) {
-              return 0;
-            }
-            const prepared = prepareCached(text, fontShorthand(fontSize));
-            return layout(prepared, containerSize.width, lineHeight).height;
-          },
-        });
-      }
+      nextPolicy = chooseFittedTextPolicy({
+        candidates,
+        availableHeight: containerSize.height,
+        maximumSize: fittedMaximum,
+        measureHeight: (fontSize, lineHeight) => {
+          if (text.length === 0) {
+            return 0;
+          }
+          const prepared = prepareCached(text, fontShorthand(fontSize));
+          return layout(prepared, containerSize.width, lineHeight).height;
+        },
+      });
     } catch {
       // Unsupported segmentation/canvas APIs degrade to readable scrolling
       // prose instead of taking down the entire text client.
-      const fallbackSize = stableSize == null
-        ? FITTED_TEXT_MIN_SIZE
-        : quantizeFittedTextSize(stableSize);
+      const fallbackSize = FITTED_TEXT_MIN_SIZE;
       nextPolicy = {
         fontSize: fallbackSize,
         lineHeight: fittedTextLineHeight(fallbackSize),
@@ -391,21 +384,19 @@ export function useFittedText<T extends HTMLElement = HTMLDivElement>(
       };
     }
 
-    if (locked && callerLockedSize == null && internallyLockedSizeRef.current == null) {
-      internallyLockedSizeRef.current = nextPolicy.fontSize;
+    if (shrinkOnly) {
+      shrinkCeilingRef.current = tightenFittedTextCeiling(
+        shrinkCeilingRef.current,
+        nextPolicy.fontSize,
+      );
     }
     const nextState = { ...nextPolicy, ready: true };
-    stateRef.current = nextState;
     setState((previous) => sameFittedTextState(previous, nextState) ? previous : nextState);
-  }, [callerLockedSize, containerSize, fontsReady, locked, maximumSize, measurementKey ?? stableTextDependency(locked, text), viewport]);
+  }, [containerSize, fontsReady, maximumSize, measurementKey ?? text, shrinkOnly, viewport]);
 
   return {
     containerRef,
     fontFamily: FITTED_TEXT_FONT_FAMILY,
     ...state,
   };
-}
-
-function stableTextDependency(locked: boolean, text: string): string | number {
-  return locked ? Number(text.length > 0) : text;
 }

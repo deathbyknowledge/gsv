@@ -6,6 +6,8 @@ import type {
 import {
   MarkdownPreparationController,
   preparedMarkdownPrefix,
+  presentedMarkdownSource,
+  shouldUseMainThreadMarkdownFallback,
   type PreparedMarkdown,
 } from "./streamingMarkdown";
 
@@ -39,7 +41,23 @@ afterEach(() => {
 });
 
 describe("MarkdownPreparationController", () => {
-  it("keeps a prepared rich prefix across appends but rejects corrections", () => {
+  it("reserves the bounded main-thread fallback for completed Worker failures", () => {
+    const base = {
+      cached: false,
+      complete: true,
+      enabled: true,
+      sourceLength: 1024,
+      workerUnavailable: true,
+    };
+
+    expect(shouldUseMainThreadMarkdownFallback(base)).toBe(true);
+    expect(shouldUseMainThreadMarkdownFallback({ ...base, complete: false })).toBe(false);
+    expect(shouldUseMainThreadMarkdownFallback({ ...base, workerUnavailable: false })).toBe(false);
+    expect(shouldUseMainThreadMarkdownFallback({ ...base, cached: true })).toBe(false);
+    expect(shouldUseMainThreadMarkdownFallback({ ...base, sourceLength: 64 * 1024 + 1 })).toBe(false);
+  });
+
+  it("keeps a coherent prepared snapshot across appends but rejects corrections", () => {
     const prepared: PreparedMarkdown = {
       blocks: [{ key: "0:paragraph", html: "<p>Hello</p>" }],
       generation: 1,
@@ -49,6 +67,21 @@ describe("MarkdownPreparationController", () => {
 
     expect(preparedMarkdownPrefix(prepared, "Hello world")).toBe(prepared);
     expect(preparedMarkdownPrefix(prepared, "Right world")).toBeNull();
+    expect(presentedMarkdownSource(prepared, "Hello world")).toBe("Hello");
+    expect(presentedMarkdownSource(prepared, "Right world")).toBe("Right world");
+  });
+
+  it("never splices an unparsed tail after an open Markdown construct", () => {
+    const prepared: PreparedMarkdown = {
+      blocks: [{ key: "0:code", html: "<pre><code>const answer</code></pre>" }],
+      generation: 1,
+      presentationRevision: 1,
+      source: "```ts\nconst answer",
+    };
+    const latest = "```ts\nconst answer = 42;\n```";
+
+    expect(presentedMarkdownSource(prepared, latest)).toBe(prepared.source);
+    expect(presentedMarkdownSource(prepared, latest)).not.toContain(" = 42");
   });
 
   it("publishes a parsed prefix while retaining only the latest queued snapshot", () => {
@@ -124,6 +157,26 @@ describe("MarkdownPreparationController", () => {
     expect(worker.terminated).toBe(true);
     controller.update("Ignored");
     expect(worker.posted).toHaveLength(1);
+  });
+
+  it("does not schedule another parse when completion repeats the exact snapshot", () => {
+    vi.useFakeTimers();
+    const worker = new FakeWorker();
+    const prepared = vi.fn();
+    const controller = new MarkdownPreparationController({
+      createWorker: () => worker,
+      intervalMs: 0,
+      onPrepared: prepared,
+    });
+
+    controller.update("A **stable** answer");
+    vi.runOnlyPendingTimers();
+    worker.prepared(worker.posted[0]!);
+    controller.update("A **stable** answer");
+    vi.runOnlyPendingTimers();
+
+    expect(worker.posted).toHaveLength(1);
+    expect(prepared).toHaveBeenCalledOnce();
   });
 
   it("reports a worker failure so completed content can use the bounded fallback", () => {

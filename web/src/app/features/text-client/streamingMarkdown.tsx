@@ -151,6 +151,14 @@ function rememberPrepared(prepared: PreparedMarkdown): void {
     (total, block) => total + block.key.length + block.html.length,
     0,
   );
+  const replaced = preparedMarkdownCache.get(prepared.source);
+  if (replaced) {
+    preparedMarkdownCacheBytes -= replaced.source.length + replaced.blocks.reduce(
+      (total, block) => total + block.key.length + block.html.length,
+      0,
+    );
+    preparedMarkdownCache.delete(prepared.source);
+  }
   while (
     preparedMarkdownCache.size >= PREPARED_MARKDOWN_CACHE_LIMIT
     || preparedMarkdownCacheBytes + size > PREPARED_MARKDOWN_CACHE_BYTES
@@ -184,6 +192,12 @@ export function usePreparedMarkdown(
   const controller = useRef<MarkdownPreparationController | null>(null);
   const [workerUnavailable, setWorkerUnavailable] = useState(false);
   latestSource.current = source;
+
+  useEffect(() => {
+    if (!enabled) {
+      setPrepared(null);
+    }
+  }, [enabled]);
 
   useEffect(() => {
     if (!enabled) return;
@@ -224,13 +238,15 @@ export function usePreparedMarkdown(
   }, [enabled, source]);
 
   useEffect(() => {
-    if (
-      !enabled
-      || !complete
-      || !workerUnavailable
-      || source.length > MAIN_THREAD_FALLBACK_LIMIT
-      || preparedMarkdownCache.has(source)
-    ) return;
+    // Normal completion never enters this path. This is only a bounded recovery
+    // for browsers where the Worker could not be constructed or stopped.
+    if (!shouldUseMainThreadMarkdownFallback({
+      cached: preparedMarkdownCache.has(source),
+      complete,
+      enabled,
+      sourceLength: source.length,
+      workerUnavailable,
+    })) return;
     let cancelled = false;
     const timer = setTimeout(() => {
       void import("./markdownParser").then(({ prepareMarkdownBlocks }) => {
@@ -254,13 +270,33 @@ export function usePreparedMarkdown(
   return prepared;
 }
 
-function sanitizeBlock(html: string, allowImages: boolean): string {
-  const cacheKey = `${allowImages ? "final" : "stream"}\u0000${html}`;
+export function shouldUseMainThreadMarkdownFallback({
+  cached,
+  complete,
+  enabled,
+  sourceLength,
+  workerUnavailable,
+}: {
+  cached: boolean;
+  complete: boolean;
+  enabled: boolean;
+  sourceLength: number;
+  workerUnavailable: boolean;
+}): boolean {
+  return enabled
+    && complete
+    && workerUnavailable
+    && !cached
+    && sourceLength <= MAIN_THREAD_FALLBACK_LIMIT;
+}
+
+function sanitizeBlock(html: string): string {
+  const cacheKey = html;
   const cached = sanitizedBlockCache.get(cacheKey);
   if (cached !== undefined) return cached;
   const sanitized = typeof DOMPurify.sanitize === "function" ? String(DOMPurify.sanitize(html, {
-    ALLOWED_ATTR: allowImages ? ["alt", "href", "src", "title"] : ["href", "title"],
-    ALLOWED_TAGS: allowImages ? [...MARKDOWN_ALLOWED_TAGS, "img"] : MARKDOWN_ALLOWED_TAGS,
+    ALLOWED_ATTR: ["alt", "href", "src", "title"],
+    ALLOWED_TAGS: [...MARKDOWN_ALLOWED_TAGS, "img"],
     ALLOW_DATA_ATTR: false,
   })) : "";
   while (
@@ -283,18 +319,15 @@ function sanitizeBlock(html: string, allowImages: boolean): string {
 export function StreamingMarkdown({
   prepared,
   source,
-  streaming,
 }: {
   prepared: PreparedMarkdown | null;
   source: string;
-  streaming: boolean;
 }): JSX.Element {
   const usable = preparedMarkdownPrefix(prepared, source);
   const blocks = useMemo(() => usable?.blocks.map((block) => ({
     ...block,
-    html: sanitizeBlock(block.html, !streaming && usable.source === source),
-  })) ?? [], [streaming, usable]);
-  const tail = usable ? source.slice(usable.source.length) : source;
+    html: sanitizeBlock(block.html),
+  })) ?? [], [usable]);
 
   if (!usable) return <>{source}</>;
   return (
@@ -306,7 +339,6 @@ export function StreamingMarkdown({
           key={block.key}
         />
       ))}
-      {tail ? <span class="text-client-stream-tail">{tail}</span> : null}
     </div>
   );
 }
@@ -316,4 +348,12 @@ export function preparedMarkdownPrefix(
   source: string,
 ): PreparedMarkdown | null {
   return prepared && source.startsWith(prepared.source) ? prepared : null;
+}
+
+/** The exact source currently represented by the DOM; no unparsed tail is spliced into it. */
+export function presentedMarkdownSource(
+  prepared: PreparedMarkdown | null,
+  source: string,
+): string {
+  return preparedMarkdownPrefix(prepared, source)?.source ?? source;
 }

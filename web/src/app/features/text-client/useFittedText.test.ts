@@ -8,6 +8,7 @@ import {
   fittedTextCandidates,
   fittedTextLineHeight,
   quantizeFittedTextSize,
+  tightenFittedTextCeiling,
 } from "./useFittedText";
 
 describe("fitted text candidates", () => {
@@ -32,6 +33,15 @@ describe("fitted text candidates", () => {
     expect(quantizeFittedTextSize(37)).toBe(38);
     expect(quantizeFittedTextSize(72)).toBe(54);
     expect(quantizeFittedTextSize(Number.NaN)).toBe(24);
+  });
+
+  it("lets a prepared stream shrink but never grow between viewport changes", () => {
+    let ceiling: number | null = null;
+    ceiling = tightenFittedTextCeiling(ceiling, 46);
+    ceiling = tightenFittedTextCeiling(ceiling, 38);
+    ceiling = tightenFittedTextCeiling(ceiling, 44);
+
+    expect(ceiling).toBe(38);
   });
 });
 

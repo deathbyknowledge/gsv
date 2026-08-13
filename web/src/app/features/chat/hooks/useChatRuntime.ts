@@ -95,6 +95,13 @@ function isTransientAssistantRow(row: ChatTranscriptRow): boolean {
     && !row.id.startsWith("message:");
 }
 
+function isCompletedTransientAssistantRow(row: ChatTranscriptRow): boolean {
+  return isTransientAssistantRow(row)
+    && row.streaming !== true
+    && row.status !== "streaming"
+    && row.status !== "thinking";
+}
+
 function isToolActivityRow(row: ChatTranscriptRow): boolean {
   return row.role === "tool" || row.role === "toolResult";
 }
@@ -121,6 +128,68 @@ function isPersistedAssistantRow(row: ChatTranscriptRow): boolean {
   return row.role === "assistant"
     && Boolean(row.runId)
     && row.id.startsWith("message:");
+}
+
+function presentationMediaSignature(row: ChatTranscriptRow): string | null {
+  try {
+    return JSON.stringify(row.media ?? []);
+  } catch {
+    return null;
+  }
+}
+
+function exactAssistantPresentationMatch(
+  transient: ChatTranscriptRow,
+  persisted: ChatTranscriptRow,
+): boolean {
+  if (
+    !isCompletedTransientAssistantRow(transient)
+    || !isPersistedAssistantRow(persisted)
+    || !transient.runId
+    || transient.runId !== persisted.runId
+    || transient.text !== persisted.text
+  ) {
+    return false;
+  }
+  const transientMedia = presentationMediaSignature(transient);
+  return transientMedia !== null && transientMedia === presentationMediaSignature(persisted);
+}
+
+/**
+ * Transfer a presentation identity only for a one-to-one, exact completed
+ * stream/history match. A run may contain several assistant messages, so run
+ * identity alone is deliberately insufficient.
+ */
+function adoptAssistantPresentationKeys(
+  currentRows: readonly ChatTranscriptRow[],
+  nextRows: readonly ChatTranscriptRow[],
+): ChatTranscriptRow[] {
+  const transients = currentRows.filter(isCompletedTransientAssistantRow);
+  const persisted = nextRows.filter(isPersistedAssistantRow);
+  if (transients.length === 0 || persisted.length === 0) {
+    return [...nextRows];
+  }
+
+  const adoptions = new Map<ChatTranscriptRow, string>();
+  for (const transient of transients) {
+    if (!transient.presentationKey) {
+      continue;
+    }
+    const durableMatches = persisted.filter((row) => exactAssistantPresentationMatch(transient, row));
+    if (durableMatches.length !== 1) {
+      continue;
+    }
+    const durable = durableMatches[0];
+    const transientMatches = transients.filter((row) => exactAssistantPresentationMatch(row, durable));
+    if (transientMatches.length === 1) {
+      adoptions.set(durable, transient.presentationKey);
+    }
+  }
+
+  return nextRows.map((row) => {
+    const presentationKey = adoptions.get(row);
+    return presentationKey ? { ...row, presentationKey } : row;
+  });
 }
 
 function rowMediaCount(row: ChatTranscriptRow): number {
@@ -175,17 +244,19 @@ function removeMatchedTransientAssistantRows(
   currentRows: readonly ChatTranscriptRow[],
   nextRows: readonly ChatTranscriptRow[],
 ): ChatTranscriptRow[] {
-  const persistedRunIds = new Set(
+  const adoptedPresentationKeys = new Set(
     nextRows
       .filter(isPersistedAssistantRow)
-      .map((row) => row.runId)
-      .filter((runId): runId is string => Boolean(runId)),
+      .map((row) => row.presentationKey)
+      .filter((key): key is string => Boolean(key)),
   );
-  if (persistedRunIds.size === 0) {
+  if (adoptedPresentationKeys.size === 0) {
     return [...currentRows];
   }
   return currentRows.filter((row) => (
-    !isTransientAssistantRow(row) || !row.runId || !persistedRunIds.has(row.runId)
+    !isTransientAssistantRow(row)
+    || !row.presentationKey
+    || !adoptedPresentationKeys.has(row.presentationKey)
   ));
 }
 
@@ -236,7 +307,8 @@ export function mergeTranscriptRows(
   currentRows: readonly ChatTranscriptRow[],
   nextRows: readonly ChatTranscriptRow[],
 ): ChatTranscriptRow[] {
-  const reconciledCurrentRows = reconcileTransientRows(currentRows, nextRows);
+  const adoptedNextRows = adoptAssistantPresentationKeys(currentRows, nextRows);
+  const reconciledCurrentRows = reconcileTransientRows(currentRows, adoptedNextRows);
   const order = new Map<string, number>();
   const merged = new Map<string, ChatTranscriptRow>();
   let index = 0;
@@ -249,7 +321,7 @@ export function mergeTranscriptRows(
     }
     merged.set(key, row);
   }
-  for (const row of nextRows) {
+  for (const row of adoptedNextRows) {
     const key = rowMergeKey(row);
     if (!order.has(key)) {
       order.set(key, index);
@@ -259,7 +331,9 @@ export function mergeTranscriptRows(
     if (current && shouldKeepCurrentToolRow(current, row)) {
       continue;
     }
-    merged.set(key, row);
+    merged.set(key, current?.presentationKey && !row.presentationKey
+      ? { ...row, presentationKey: current.presentationKey }
+      : row);
   }
 
   return Array.from(merged.entries())

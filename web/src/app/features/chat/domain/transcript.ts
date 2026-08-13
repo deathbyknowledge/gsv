@@ -33,6 +33,12 @@ export type ChatBackupModelInfo = {
 
 export type ChatTranscriptRow = {
   id: string;
+  /**
+   * Client-owned presentation identity. History reconciliation may transfer
+   * this from an exact completed stream to the durable message that persists
+   * it so view-local state survives without treating a run id as a message id.
+   */
+  presentationKey?: string;
   isError?: boolean;
   text: string;
   time: string;
@@ -99,6 +105,12 @@ type ToolResultHistory = {
 };
 
 const OPTIMISTIC_USER_MATCH_WINDOW_MS = 5 * 60 * 1000;
+let nextTransientAssistantPresentation = 1;
+
+function transientAssistantPresentationKey(runId: string, timestamp: number): string {
+  const sequence = nextTransientAssistantPresentation++;
+  return `live-assistant:${runId}:${timestamp}:${sequence}`;
+}
 
 export function emptyChatRuntimeState(processId = ""): ChatRuntimeState {
   void processId;
@@ -714,11 +726,16 @@ function applyAssistantOutput(
     next[existingIndex] = {
       ...next[existingIndex],
       ...nextRow,
+      presentationKey: next[existingIndex].presentationKey
+        ?? transientAssistantPresentationKey(runId ?? "unscoped", timestamp),
       thinking: thinking.length > 0 ? thinking : next[existingIndex].thinking,
     };
     return next;
   }
-  next.push(nextRow);
+  next.push({
+    ...nextRow,
+    presentationKey: transientAssistantPresentationKey(runId ?? "unscoped", timestamp),
+  });
   return next;
 }
 
@@ -765,6 +782,7 @@ function ensureThinkingRow(rows: ChatTranscriptRow[], runId: string): ChatTransc
   const now = Date.now();
   return rows.concat({
     id: `assistant:${runId}`,
+    presentationKey: transientAssistantPresentationKey(runId, now),
     role: "assistant",
     text: "",
     timestamp: now,
@@ -792,6 +810,7 @@ function appendAssistantDelta(rows: ChatTranscriptRow[], runId: string, delta: s
   }
   next.push({
     id: `assistant:${runId}`,
+    presentationKey: transientAssistantPresentationKey(runId, now),
     role: "assistant",
     text: delta,
     timestamp: now,
@@ -821,6 +840,7 @@ function setAssistantStreamText(rows: ChatTranscriptRow[], runId: string, text: 
   }
   next.push({
     id: `assistant:${runId}`,
+    presentationKey: transientAssistantPresentationKey(runId, now),
     role: "assistant",
     text,
     timestamp: now,
@@ -867,6 +887,7 @@ function appendAssistantThinkingDelta(rows: ChatTranscriptRow[], runId: string, 
   }
   next.push({
     id: `assistant:${runId}`,
+    presentationKey: transientAssistantPresentationKey(runId, now),
     role: "assistant",
     text: "",
     thinking: [delta],
@@ -952,6 +973,7 @@ function upsertBackupModelRow(
   const now = Date.now();
   const row: ChatTranscriptRow = {
     id: `backup:${runId}`,
+    presentationKey: transientAssistantPresentationKey(runId, now),
     role: "assistant",
     text: "",
     timestamp: now,
@@ -965,6 +987,7 @@ function upsertBackupModelRow(
     next[index] = {
       ...next[index],
       ...row,
+      presentationKey: next[index].presentationKey ?? row.presentationKey,
     };
     return next;
   }

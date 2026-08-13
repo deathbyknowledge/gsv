@@ -300,7 +300,7 @@ export function projectTextMoments(runtime: ChatRuntimeState): TextMomentProject
     }
 
     const media = row.media ?? [];
-    const momentKey = `moment:${row.id}`;
+    const momentKey = `moment:${row.presentationKey ?? row.id}`;
     const work = role === "assistant"
       ? completedWorkForMoment(momentKey, pendingWork.get(rowRunKey(row)))
       : [];

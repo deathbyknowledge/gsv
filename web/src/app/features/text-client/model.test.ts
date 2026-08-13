@@ -202,6 +202,20 @@ describe("text moment projection", () => {
     expect(JSON.stringify(projection)).not.toContain("private reasoning");
   });
 
+  it("uses a reconciled presentation key instead of remounting a durable response", () => {
+    const projection = projectTextMoments(runtime([
+      row({
+        id: "message:91",
+        presentationKey: "live-assistant:run-adopt:100:1",
+        role: "assistant",
+        text: "A stable answer",
+        runId: "run-adopt",
+      }),
+    ]));
+
+    expect(projection.moments[0].key).toBe("moment:live-assistant:run-adopt:100:1");
+  });
+
   it("attaches successful completed work to the following assistant moment", () => {
     const projection = projectTextMoments(runtime([
       row({ id: "user-1", role: "user", text: "Inspect it", runId: "run-1" }),
