@@ -61,6 +61,10 @@ export type KernelContext = {
   failIpcCallsByTarget: (uid: number, targetPid: string, error: string) => void;
   scheduleScheduleWake: (scheduleId: string, dueAtMs: number) => Promise<string>;
   cancelScheduleWake: (wakeScheduleId: string) => Promise<void>;
+  scheduleManagedOutboundEnqueue: (
+    outboundId: string,
+    dueAtMs: number,
+  ) => Promise<void>;
   ensureMailboxNotificationProcess: (mailboxId: string) => Promise<string>;
   runSchedules: (
     args: SchedulerRunArgs,

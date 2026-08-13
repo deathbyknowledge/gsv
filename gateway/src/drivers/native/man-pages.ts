@@ -200,6 +200,40 @@ export function renderManualPage(topic: string): string | null {
         "",
       ].join("\n");
 
+    case "mail":
+      return [
+        "MAIL(1)",
+        "",
+        "NAME",
+        "  mail - read and send managed email",
+        "",
+        "SYNOPSIS",
+        ...manualSynopsis("mail"),
+        "",
+        "OVERVIEW",
+        "  `mail send` queues one plain-text email to one recipient. `mail reply`",
+        "  derives the recipient and threading headers from an owner-scoped inbox",
+        "  message. `mail status` reads the eventual state for a delivery id.",
+        "  Sending requires managed mail and the mail.send capability. The command",
+        "  runs beneath shell.exec, so that outer shell approval authorizes the send.",
+        "",
+        "DELIVERY",
+        "  A successful command normally reports queued after GSV durably owns Queue",
+        "  publication. It does not mean the recipient received the message. Retain",
+        "  delivery_id and use `mail status` to observe accepted, failed, or unknown.",
+        "  Pass --delivery-id when retrying outside the same durable shell request.",
+        "",
+        "LIMITS",
+        "  Version one supports a non-empty plain-text body up to 1 MiB and exactly",
+        "  one recipient. It does not support HTML, CC, BCC, or attachments.",
+        "",
+        "EXAMPLES",
+        "  mail send --to person@example.com --subject 'Hello' --message 'Hello from GSV'",
+        "  mail reply MESSAGE_ID --body ./reply.txt",
+        "  mail status DELIVERY_ID",
+        "",
+      ].join("\n");
+
     case "sched":
       return [
         "SCHED(1)",
@@ -364,7 +398,7 @@ export function renderManualPage(topic: string): string | null {
         "OVERVIEW",
         "  `codemode` runs one async JavaScript block through the same CodeMode runtime exposed",
         "  to agents. Scripts can call `await shell(input, options)`, `fs.read`, `fs.write`,",
-        "  `fs.edit`, `fs.delete`, `fs.search`, and connected MCP tools as generated async",
+        "  `fs.edit`, `fs.delete`, `fs.search`, `mail.send`, and connected MCP tools as generated async",
         "  functions. Inspect `mcpTools` for their names and schemas. MCP functions return",
         "  structured output directly when available.",
         "  Script files and -e code are treated as async function bodies. Use top-level await",
@@ -382,6 +416,7 @@ export function renderManualPage(topic: string): string | null {
         "  args                Values supplied with --arg or --args-json.",
         "  shell(input, opts)  Run or continue a shell command.",
         "  fs                  Filesystem helpers: read, write, edit, delete, search.",
+        "  mail.send(args)     Queue a new message or a reply through managed mail.",
         "  mcpTools            Metadata and schemas for generated MCP tool functions.",
         "",
         "RESULTS",

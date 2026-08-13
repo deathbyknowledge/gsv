@@ -11,9 +11,14 @@ const GATEWAY_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const DEPENDENCY_WORKER = "gsv-test-dependencies";
 const ACCOUNTS_WORKER = "gsv-accounts-test";
 const INFERENCE_WORKER = "gsv-inference-test";
+const EMAIL_WORKER = "gsv-managed-email-test";
 const DEPENDENCY_CONFIG_PATH = resolve(
   GATEWAY_ROOT,
   "test-integration/fixtures/wrangler.jsonc",
+);
+const EMAIL_CONFIG_PATH = resolve(
+  GATEWAY_ROOT,
+  "../adapters/email/wrangler.test.jsonc",
 );
 
 function integrationGatewayConfig(options: {
@@ -23,6 +28,7 @@ function integrationGatewayConfig(options: {
     accounts: string;
     inference: string;
   };
+  managedMailQueue?: string;
 } = {}): Unstable_RawConfig {
   const config = unstable_readConfig(
     { config: resolve(GATEWAY_ROOT, "wrangler.jsonc") },
@@ -40,6 +46,14 @@ function integrationGatewayConfig(options: {
     durable_objects: config.durable_objects,
     observability: config.observability,
     r2_buckets: config.r2_buckets,
+    queues: options.managedMailQueue
+      ? {
+          producers: [{
+            binding: "MANAGED_MAIL_OUTBOUND",
+            queue: options.managedMailQueue,
+          }],
+        }
+      : undefined,
     assets: config.assets,
     // CodeMode is an optional paid capability in production. Keep its loader
     // test-only while exercising that runtime boundary in integration tests.
@@ -67,6 +81,48 @@ function integrationGatewayConfig(options: {
           ]
         : []),
     ],
+  };
+}
+
+function integrationEmailConfig(
+  gatewayService: string,
+  queue: string,
+): Unstable_RawConfig {
+  const config = unstable_readConfig(
+    { config: EMAIL_CONFIG_PATH },
+    { hideWarnings: true },
+  );
+  return {
+    name: EMAIL_WORKER,
+    main: resolve(GATEWAY_ROOT, "../adapters/email/src/index.ts"),
+    compatibility_date: config.compatibility_date,
+    compatibility_flags: config.compatibility_flags,
+    observability: config.observability,
+    vars: config.vars,
+    durable_objects: config.durable_objects,
+    migrations: config.migrations,
+    send_email: config.send_email,
+    services: [
+      { binding: "ACCOUNTS", service: ACCOUNTS_WORKER },
+      {
+        binding: "GATEWAY",
+        service: gatewayService,
+        entrypoint: "GatewayEntrypoint",
+      },
+      {
+        binding: "INFERENCE",
+        service: INFERENCE_WORKER,
+        entrypoint: "InferenceService",
+      },
+    ],
+    queues: {
+      consumers: [{
+        queue,
+        max_batch_size: 10,
+        max_batch_timeout: 1,
+        max_retries: 5,
+      }],
+    },
   };
 }
 
@@ -178,6 +234,45 @@ export function createManagedInferenceStackTestHarness(): TestHarness {
       {
         configPath: resolve(GATEWAY_ROOT, "../inference/wrangler.test.jsonc"),
         bindingOverrides: { ACCOUNTS: ACCOUNTS_WORKER },
+      },
+    ],
+  });
+}
+
+export function createManagedMailStackTestHarness(): TestHarness {
+  const gatewayService = "gsv-managed-mail-stack";
+  const queue = "gsv-managed-mail-outbound-stack";
+  return createTestHarness({
+    root: GATEWAY_ROOT,
+    workers: [
+      {
+        config: integrationGatewayConfig({
+          name: gatewayService,
+          managed: true,
+          managedServices: {
+            accounts: ACCOUNTS_WORKER,
+            inference: INFERENCE_WORKER,
+          },
+          managedMailQueue: queue,
+        }),
+      },
+      {
+        config: integrationDependencyConfig(gatewayService),
+      },
+      {
+        configPath: resolve(GATEWAY_ROOT, "../accounts/wrangler.test.jsonc"),
+        vars: {
+          ENVIRONMENT: "development",
+          GSV_ACCOUNT_ORIGIN: "http://localhost",
+          GSV_BASE_DOMAIN: "gsv.space",
+        },
+      },
+      {
+        configPath: resolve(GATEWAY_ROOT, "../inference/wrangler.test.jsonc"),
+        bindingOverrides: { ACCOUNTS: ACCOUNTS_WORKER },
+      },
+      {
+        config: integrationEmailConfig(gatewayService, queue),
       },
     ],
   });

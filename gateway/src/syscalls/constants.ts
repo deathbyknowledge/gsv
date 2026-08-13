@@ -15,6 +15,9 @@ export const CODEMODE_RUN = "codemode.run";
 // Host-routed network operations
 export const NET_FETCH = "net.fetch";
 
+export const MAIL_SEND = "mail.send";
+export const MAIL_STATUS = "mail.status";
+
 // System calls used by the native shell and CodeMode.
 export const SYS_OAUTH_DEVICE_START = "sys.oauth.device.start";
 export const SYS_OAUTH_DEVICE_POLL = "sys.oauth.device.poll";

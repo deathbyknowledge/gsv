@@ -38,6 +38,7 @@ import { KERNEL_V020_ADD_MAILBOXES } from "./v020_add_mailboxes";
 import {
   KERNEL_V021_ISOLATE_MAIL_NOTIFICATIONS,
 } from "./v021_isolate_mail_notifications";
+import { KERNEL_V022_ADD_OUTBOUND_MAIL } from "./v022_add_outbound_mail";
 
 // Used by Kernel DO startup before the individual stores initialize.
 export const KERNEL_SCHEMA_COMPONENT = "kernel";
@@ -64,6 +65,7 @@ export const KERNEL_MIGRATIONS: readonly SqlMigration[] = [
   KERNEL_V019_REMOVE_NOTIFICATIONS,
   KERNEL_V020_ADD_MAILBOXES,
   KERNEL_V021_ISOLATE_MAIL_NOTIFICATIONS,
+  KERNEL_V022_ADD_OUTBOUND_MAIL,
 ];
 
 export function runKernelSqlMigrations(storage: DurableObjectStorage): void {

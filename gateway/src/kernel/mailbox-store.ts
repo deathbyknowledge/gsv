@@ -1,4 +1,7 @@
 import type {
+  ManagedOutboundMailCompletion,
+  ManagedOutboundMailDraft,
+  ManagedOutboundMailState,
   ManagedMailSummary,
   ManagedMailSummaryCategory,
 } from "@humansandmachines/gsv/protocol";
@@ -74,6 +77,32 @@ export type MailMessagePage = {
   messages: MailMessageRecord[];
   count: number;
 };
+
+export type MailOutboundRecord = ManagedOutboundMailDraft & {
+  ownerUid: number;
+  deliveryId: string;
+  bodyPath: string;
+  state: "staging" | ManagedOutboundMailState;
+  providerMessageId: string | null;
+  errorCode: string | null;
+  enqueueAttempts: number;
+  enqueueNextAt: number | null;
+  enqueuedAt: number | null;
+  queuedAt: number | null;
+  completedAt: number | null;
+};
+
+export type RecordMailOutboundInput = Omit<
+  MailOutboundRecord,
+  | "state"
+  | "providerMessageId"
+  | "errorCode"
+  | "enqueueAttempts"
+  | "enqueueNextAt"
+  | "enqueuedAt"
+  | "queuedAt"
+  | "completedAt"
+>;
 
 export class MailboxStore {
   constructor(private readonly sql: SqlStorage) {}
@@ -343,6 +372,164 @@ export class MailboxStore {
     }
   }
 
+  getOutbound(outboundId: string): MailOutboundRecord | null {
+    const row = this.sql.exec<MailOutboundRow>(
+      "SELECT * FROM mail_outbound WHERE outbound_id = ?",
+      outboundId,
+    ).toArray()[0];
+    return row ? outboundFromRow(row) : null;
+  }
+
+  getOutboundForDelivery(ownerUid: number, deliveryId: string): MailOutboundRecord | null {
+    const row = this.sql.exec<MailOutboundRow>(
+      "SELECT * FROM mail_outbound WHERE owner_uid = ? AND delivery_id = ?",
+      ownerUid,
+      deliveryId,
+    ).toArray()[0];
+    return row ? outboundFromRow(row) : null;
+  }
+
+  ensureOutbound(input: RecordMailOutboundInput): {
+    created: boolean;
+    outbound: MailOutboundRecord;
+  } {
+    const existing = this.getOutboundForDelivery(input.ownerUid, input.deliveryId);
+    if (existing) {
+      assertOutboundIdentity(existing, input);
+      return { created: false, outbound: existing };
+    }
+
+    this.sql.exec(
+      `INSERT OR IGNORE INTO mail_outbound (
+         outbound_id, owner_uid, delivery_id, fingerprint,
+         from_address, to_address, subject, body_digest, body_path, text_size,
+         reply_to_message_id, in_reply_to_header, references_header,
+         state, provider_message_id, error_code,
+         created_at, queued_at, completed_at
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'staging', NULL, NULL, ?, NULL, NULL)`,
+      input.outboundId,
+      input.ownerUid,
+      input.deliveryId,
+      input.fingerprint,
+      input.from,
+      input.to,
+      input.subject,
+      input.bodyDigest,
+      input.bodyPath,
+      input.textSize,
+      input.replyToMessageId ?? null,
+      input.inReplyTo ?? null,
+      input.references ?? null,
+      input.createdAt,
+    );
+    const outbound = this.getOutboundForDelivery(input.ownerUid, input.deliveryId);
+    if (!outbound) throw new Error("Outbound mail could not be recorded");
+    assertOutboundIdentity(outbound, input);
+    return { created: true, outbound };
+  }
+
+  markOutboundQueued(outboundId: string, fingerprint: string): MailOutboundRecord {
+    const existing = this.getOutbound(outboundId);
+    if (!existing || existing.fingerprint !== fingerprint) {
+      throw new Error("Outbound mail reference does not match durable state");
+    }
+    if (existing.state === "staging") {
+      this.sql.exec(
+        `UPDATE mail_outbound
+            SET state = 'queued', queued_at = ?
+          WHERE outbound_id = ? AND fingerprint = ? AND state = 'staging'`,
+        Date.now(),
+        outboundId,
+        fingerprint,
+      );
+    }
+    const outbound = this.getOutbound(outboundId);
+    if (!outbound) throw new Error("Outbound mail disappeared after staging");
+    return outbound;
+  }
+
+  beginOutboundEnqueue(
+    outboundId: string,
+    fingerprint: string,
+    nextAt: number,
+  ): MailOutboundRecord {
+    const existing = this.getOutbound(outboundId);
+    if (!existing || existing.fingerprint !== fingerprint) {
+      throw new Error("Outbound mail reference does not match durable state");
+    }
+    if (existing.state !== "queued" || existing.enqueuedAt !== null) {
+      return existing;
+    }
+    this.sql.exec(
+      `UPDATE mail_outbound
+          SET enqueue_attempts = enqueue_attempts + 1,
+              enqueue_next_at = ?
+        WHERE outbound_id = ? AND fingerprint = ?
+          AND state = 'queued' AND enqueued_at IS NULL`,
+      nextAt,
+      outboundId,
+      fingerprint,
+    );
+    return this.getOutbound(outboundId)!;
+  }
+
+  markOutboundEnqueued(
+    outboundId: string,
+    fingerprint: string,
+  ): MailOutboundRecord {
+    const existing = this.getOutbound(outboundId);
+    if (!existing || existing.fingerprint !== fingerprint) {
+      throw new Error("Outbound mail reference does not match durable state");
+    }
+    if (existing.enqueuedAt === null) {
+      this.sql.exec(
+        `UPDATE mail_outbound
+            SET enqueued_at = ?, enqueue_next_at = NULL
+          WHERE outbound_id = ? AND fingerprint = ?
+            AND state IN ('queued', 'accepted', 'failed', 'unknown')`,
+        Date.now(),
+        outboundId,
+        fingerprint,
+      );
+    }
+    return this.getOutbound(outboundId)!;
+  }
+
+  completeOutbound(completion: ManagedOutboundMailCompletion): MailOutboundRecord {
+    const existing = this.getOutbound(completion.outboundId);
+    if (!existing || existing.fingerprint !== completion.fingerprint) {
+      throw new Error("Outbound mail completion does not match durable state");
+    }
+    if (existing.state === "staging") {
+      throw new Error("Outbound mail has not been queued");
+    }
+    if (existing.state !== "queued") {
+      if (
+        existing.state !== completion.state
+        || existing.providerMessageId !== (completion.providerMessageId ?? null)
+        || existing.errorCode !== (completion.errorCode ?? null)
+      ) {
+        throw new Error("Outbound mail completion conflicts with durable state");
+      }
+      return existing;
+    }
+    this.sql.exec(
+      `UPDATE mail_outbound
+          SET state = ?, provider_message_id = ?, error_code = ?,
+              enqueue_next_at = NULL, completed_at = ?
+        WHERE outbound_id = ? AND fingerprint = ? AND state = 'queued'`,
+      completion.state,
+      completion.providerMessageId ?? null,
+      completion.errorCode ?? null,
+      Date.now(),
+      completion.outboundId,
+      completion.fingerprint,
+    );
+    const outbound = this.getOutbound(completion.outboundId);
+    if (!outbound) throw new Error("Outbound mail disappeared after completion");
+    return outbound;
+  }
+
   getMessage(ownerUid: number, messageIdOrPrefix: string): MailMessageRecord | null {
     const exact = this.sql.exec<MailMessageRow>(
       `SELECT mail_messages.*
@@ -503,6 +690,31 @@ type MailIntakeRow = {
   created_at: number;
 };
 
+type MailOutboundRow = {
+  outbound_id: string;
+  owner_uid: number;
+  delivery_id: string;
+  fingerprint: string;
+  from_address: string;
+  to_address: string;
+  subject: string;
+  body_digest: string;
+  body_path: string;
+  text_size: number;
+  reply_to_message_id: string | null;
+  in_reply_to_header: string | null;
+  references_header: string | null;
+  state: MailOutboundRecord["state"];
+  provider_message_id: string | null;
+  error_code: string | null;
+  enqueue_attempts: number;
+  enqueue_next_at: number | null;
+  enqueued_at: number | null;
+  created_at: number;
+  queued_at: number | null;
+  completed_at: number | null;
+};
+
 function mailboxFromRow(row: MailboxRow): MailboxRecord {
   return {
     mailboxId: row.mailbox_id,
@@ -555,6 +767,52 @@ function intakeFromRow(row: MailIntakeRow): MailIntakeRecord {
     receivedAt: row.received_at,
     createdAt: row.created_at,
   };
+}
+
+function outboundFromRow(row: MailOutboundRow): MailOutboundRecord {
+  return {
+    version: 1,
+    outboundId: row.outbound_id,
+    ownerUid: row.owner_uid,
+    deliveryId: row.delivery_id,
+    fingerprint: row.fingerprint,
+    from: row.from_address,
+    to: row.to_address,
+    subject: row.subject,
+    bodyDigest: row.body_digest,
+    bodyPath: row.body_path,
+    textSize: row.text_size,
+    createdAt: row.created_at,
+    ...(row.reply_to_message_id === null
+      ? {}
+      : { replyToMessageId: row.reply_to_message_id }),
+    ...(row.in_reply_to_header === null ? {} : { inReplyTo: row.in_reply_to_header }),
+    ...(row.references_header === null ? {} : { references: row.references_header }),
+    state: row.state,
+    providerMessageId: row.provider_message_id,
+    errorCode: row.error_code,
+    enqueueAttempts: row.enqueue_attempts,
+    enqueueNextAt: row.enqueue_next_at,
+    enqueuedAt: row.enqueued_at,
+    queuedAt: row.queued_at,
+    completedAt: row.completed_at,
+  };
+}
+
+function assertOutboundIdentity(
+  existing: MailOutboundRecord,
+  input: RecordMailOutboundInput,
+): void {
+  if (
+    existing.outboundId !== input.outboundId
+    || existing.ownerUid !== input.ownerUid
+    || existing.deliveryId !== input.deliveryId
+    || existing.fingerprint !== input.fingerprint
+    || existing.bodyDigest !== input.bodyDigest
+    || existing.bodyPath !== input.bodyPath
+  ) {
+    throw new Error("Outbound mail delivery identity conflicts with durable state");
+  }
 }
 
 function parseStringArray(value: string, field: string): string[] {

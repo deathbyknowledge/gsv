@@ -145,5 +145,6 @@ export type { InstallationDirectoryResult, InstallationDirectoryService };
 
 export type GatewayInstallationBindings = {
   INSTALLATION_DIRECTORY?: InstallationDirectoryService & InstallationOnboardingService;
+  MANAGED_MAIL_OUTBOUND?: Queue<import("@humansandmachines/gsv/protocol").ManagedOutboundMailCommand>;
   GSV_CANONICAL_ORIGIN?: string;
 };

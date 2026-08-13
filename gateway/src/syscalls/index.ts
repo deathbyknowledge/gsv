@@ -14,6 +14,7 @@ type SyscallDomain =
   | "shell"
   | "net"
   | "codemode"
+  | "mail"
   | "proc"
   | "repo"
   | "sys"

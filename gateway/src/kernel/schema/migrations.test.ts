@@ -31,7 +31,7 @@ function createTableStatement(name: string): string {
 describe("kernel schema migrations", () => {
   it("starts the kernel component at a v1 baseline", () => {
     expect(KERNEL_SCHEMA_COMPONENT).toBe("kernel");
-    expect(KERNEL_MIGRATIONS).toHaveLength(21);
+    expect(KERNEL_MIGRATIONS).toHaveLength(22);
     expect(KERNEL_MIGRATIONS[0]).toMatchObject({
       id: 1,
       name: "initial_kernel_schema",
@@ -116,6 +116,10 @@ describe("kernel schema migrations", () => {
       id: 21,
       name: "isolate_mail_notifications",
     });
+    expect(KERNEL_MIGRATIONS[21]).toMatchObject({
+      id: 22,
+      name: "add_outbound_mail",
+    });
   });
 
   it("creates the current kernel table set", () => {
@@ -156,6 +160,7 @@ describe("kernel schema migrations", () => {
       "mailboxes",
       "mail_messages",
       "mail_intakes",
+      "mail_outbound",
     ]);
   });
 
@@ -211,6 +216,22 @@ describe("kernel schema migrations", () => {
     expect(intakes).toContain("message_id TEXT NOT NULL");
     expect(statements).toContain(
       "CREATE INDEX IF NOT EXISTS idx_mail_messages_mailbox_received ON mail_messages(mailbox_id, received_at DESC, message_id DESC)",
+    );
+  });
+
+  it("adds replay-safe outbound mail intents", () => {
+    const statements = normalizedStatements();
+    const outbound = createTableStatement("mail_outbound");
+
+    expect(outbound).toContain("outbound_id TEXT PRIMARY KEY");
+    expect(outbound).toContain("UNIQUE(owner_uid, delivery_id)");
+    expect(outbound).toContain("fingerprint TEXT NOT NULL");
+    expect(outbound).toContain("body_digest TEXT NOT NULL");
+    expect(outbound).toContain("body_path TEXT NOT NULL");
+    expect(outbound).toContain("state TEXT NOT NULL");
+    expect(outbound).toContain("'staging', 'queued', 'accepted', 'failed', 'unknown'");
+    expect(statements).toContain(
+      "CREATE INDEX IF NOT EXISTS idx_mail_outbound_owner_created ON mail_outbound(owner_uid, created_at DESC, outbound_id DESC)",
     );
   });
 

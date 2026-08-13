@@ -11,7 +11,7 @@
     "test": "vitest --config vitest.config.ts",
     "test:unit": "vitest run --config vitest.config.ts",
     "typecheck:integration": "tsc --noEmit -p tsconfig.integration.json",
-    "test:integration": "npm run typecheck:integration && npm --prefix ../web run build && vitest run --config vitest.integration.config.ts",
+    "test:integration": "npm --prefix ../packages/gsv run build && npm run typecheck:integration && npm --prefix ../web run build && vitest run --config vitest.integration.config.ts",
     "test:run": "npm run test:unit && npm run test:integration"
   },
   "devDependencies": {

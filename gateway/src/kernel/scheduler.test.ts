@@ -1224,6 +1224,137 @@ describe("scheduler", () => {
     });
   });
 
+  it("gives recurring command mail sends occurrence-specific delivery ids", async () => {
+    const kernel = await getAgentByName<Env, Kernel>(
+      env.KERNEL,
+      `scheduler-mail-delivery-test-${crypto.randomUUID()}`,
+    );
+    const scheduled = await runInDurableObject(kernel, (instance: Kernel) => {
+      const k = instance as unknown as {
+        auth: ScheduleTestAuth;
+        caps: {
+          seed: () => void;
+          grant: (gid: number, capability: string) => { ok: boolean; error?: string };
+        };
+        schedules: ScheduleStore;
+        ctx: DurableObjectState;
+      };
+      k.caps.seed();
+      addTestUser(k.auth);
+      k.caps.grant(USER_IDENTITY.gid, "shell.exec");
+      k.caps.grant(USER_IDENTITY.gid, "mail.send");
+      const now = Date.now();
+      const firstDueAt = now - 2_000;
+      const secondDueAt = firstDueAt + 1;
+      const schedule = k.schedules.create({
+        ownerUid: USER_IDENTITY.uid,
+        creator: schedulePrincipal(),
+        runAs: schedulePrincipal(),
+        name: "recurring mail",
+        enabled: true,
+        expression: { kind: "every", everyMs: 60_000, anchorMs: now - 120_000 },
+        target: {
+          kind: "command.exec",
+          command: "mail send --to mike@example.com --subject Hello --message Scheduled",
+        },
+        now,
+      });
+      k.ctx.storage.sql.exec(
+        "UPDATE schedules SET next_run_at = ? WHERE schedule_id = ?",
+        firstDueAt,
+        schedule.id,
+      );
+      return { scheduleId: schedule.id, firstDueAt, secondDueAt };
+    });
+
+    await runInDurableObject(kernel, (instance: Kernel) =>
+      instance.onScheduleDue(scheduled.scheduleId)
+    );
+    await runInDurableObject(kernel, (instance: Kernel) => {
+      const k = instance as unknown as { ctx: DurableObjectState };
+      k.ctx.storage.sql.exec(
+        "UPDATE schedules SET next_run_at = ? WHERE schedule_id = ?",
+        scheduled.secondDueAt,
+        scheduled.scheduleId,
+      );
+    });
+    await runInDurableObject(kernel, (instance: Kernel) =>
+      instance.onScheduleDue(scheduled.scheduleId)
+    );
+
+    const errors = await runInDurableObject(kernel, (instance: Kernel) =>
+      (instance as unknown as { schedules: ScheduleStore })
+        .schedules
+        .history(scheduled.scheduleId)
+        .map((entry) => entry.error)
+    );
+    expect(errors).toHaveLength(2);
+    expect(errors).toContain(
+      `mail: Managed outbound mail is not available (delivery_id=schedule:${scheduled.scheduleId}:due:${scheduled.firstDueAt}:mail:1)`,
+    );
+    expect(errors).toContain(
+      `mail: Managed outbound mail is not available (delivery_id=schedule:${scheduled.scheduleId}:due:${scheduled.secondDueAt}:mail:1)`,
+    );
+  });
+
+  it("isolates command delivery ids for schedules due at the same time", async () => {
+    const kernel = await getAgentByName<Env, Kernel>(
+      env.KERNEL,
+      `scheduler-mail-collision-test-${crypto.randomUUID()}`,
+    );
+    const scheduled = await runInDurableObject(kernel, (instance: Kernel) => {
+      const k = instance as unknown as {
+        auth: ScheduleTestAuth;
+        caps: {
+          seed: () => void;
+          grant: (gid: number, capability: string) => { ok: boolean; error?: string };
+        };
+        schedules: ScheduleStore;
+        ctx: DurableObjectState;
+      };
+      k.caps.seed();
+      addTestUser(k.auth);
+      k.caps.grant(USER_IDENTITY.gid, "shell.exec");
+      k.caps.grant(USER_IDENTITY.gid, "mail.send");
+      const now = Date.now();
+      const dueAt = now - 1_000;
+      const ids = ["One", "Two"].map((subject) => {
+        const schedule = k.schedules.create({
+          ownerUid: USER_IDENTITY.uid,
+          creator: schedulePrincipal(),
+          runAs: schedulePrincipal(),
+          name: `mail ${subject}`,
+          enabled: true,
+          expression: { kind: "every", everyMs: 60_000, anchorMs: now - 120_000 },
+          target: {
+            kind: "command.exec",
+            command: `mail send --to mike@example.com --subject ${subject} --message Scheduled`,
+          },
+          now,
+        });
+        k.ctx.storage.sql.exec(
+          "UPDATE schedules SET next_run_at = ? WHERE schedule_id = ?",
+          dueAt,
+          schedule.id,
+        );
+        return schedule.id;
+      });
+      return { dueAt, ids };
+    });
+
+    for (const id of scheduled.ids) {
+      await runInDurableObject(kernel, (instance: Kernel) => instance.onScheduleDue(id));
+    }
+
+    const errors = await runInDurableObject(kernel, (instance: Kernel) => {
+      const schedules = (instance as unknown as { schedules: ScheduleStore }).schedules;
+      return scheduled.ids.map((id) => schedules.history(id)[0]?.error);
+    });
+    expect(errors).toEqual(scheduled.ids.map((id) =>
+      `mail: Managed outbound mail is not available (delivery_id=schedule:${id}:due:${scheduled.dueAt}:mail:1)`
+    ));
+  });
+
   it("runs command schedules as the stored run-as account", async () => {
     const kernel = await getAgentByName<Env, Kernel>(
       env.KERNEL,
@@ -1472,6 +1603,76 @@ describe("scheduler", () => {
     expect(schedule?.enabled).toBe(false);
     expect(schedule?.state.lastStatus).toBe("ok");
     expect(schedule?.state.runCount).toBe(1);
+  });
+
+  it("retains one distinct outbound recovery wake after the current wake runs", async () => {
+    const kernel = await getAgentByName<Env, Kernel>(
+      env.KERNEL,
+      `scheduler-mail-recovery-test-${crypto.randomUUID()}`,
+    );
+    const seeded = await runInDurableObject(kernel, async (instance: Kernel) => {
+      const k = instance as unknown as {
+        mailboxes: {
+          ensureOutbound: (input: Record<string, unknown>) => { outbound: { fingerprint: string } };
+          markOutboundQueued: (outboundId: string, fingerprint: string) => unknown;
+        };
+        ctx: DurableObjectState;
+        schedule: (
+          when: Date,
+          callback: string,
+          payload: string,
+          options: Record<string, unknown>,
+        ) => Promise<{ id: string }>;
+      };
+      const outboundId = `mail-recovery-${crypto.randomUUID()}`;
+      const fingerprint = `sha256:${"a".repeat(64)}`;
+      k.mailboxes.ensureOutbound({
+        version: 1,
+        outboundId,
+        ownerUid: USER_IDENTITY.uid,
+        deliveryId: "scheduled-recovery",
+        fingerprint,
+        from: "sam@gsv.space",
+        to: "mike@example.com",
+        subject: "Recovery",
+        bodyDigest: `sha256:${"b".repeat(64)}`,
+        bodyPath: `/home/sam/.gsv/mail/outbox/${outboundId}/message.txt`,
+        textSize: 8,
+        createdAt: Date.now(),
+      });
+      k.mailboxes.markOutboundQueued(outboundId, fingerprint);
+      const wake = await k.schedule(
+        new Date(Date.now() + 1_000),
+        "onManagedOutboundEnqueue",
+        outboundId,
+        { idempotent: false },
+      );
+      k.ctx.storage.sql.exec(
+        "UPDATE cf_agents_schedules SET time = ? WHERE id = ?",
+        Math.floor((Date.now() - 1_000) / 1_000),
+        wake.id,
+      );
+      return { outboundId, wakeId: wake.id };
+    });
+
+    await runDurableObjectAlarm(kernel);
+
+    const state = await runInDurableObject(kernel, (instance: Kernel) => {
+      const k = instance as unknown as { ctx: DurableObjectState };
+      return {
+        outbound: k.ctx.storage.sql.exec<{ state: string; error_code: string | null }>(
+          "SELECT state, error_code FROM mail_outbound WHERE outbound_id = ?",
+          seeded.outboundId,
+        ).one(),
+        wakes: k.ctx.storage.sql.exec<{ id: string; payload: string }>(
+          "SELECT id, payload FROM cf_agents_schedules WHERE callback = 'onManagedOutboundEnqueue'",
+        ).toArray(),
+      };
+    });
+    expect(state.outbound).toEqual({ state: "failed", error_code: "body_unavailable" });
+    expect(state.wakes).toHaveLength(1);
+    expect(state.wakes[0]).toMatchObject({ payload: JSON.stringify(seeded.outboundId) });
+    expect(state.wakes[0]?.id).not.toBe(seeded.wakeId);
   });
 
   it("preserves due work while a managed installation is suspended", async () => {

@@ -58,6 +58,14 @@
       "bucket_name": "gsv-managed-storage"
     }
   ],
+  "queues": {
+    "producers": [
+      {
+        "binding": "MANAGED_MAIL_OUTBOUND",
+        "queue": "gsv-managed-mail-outbound"
+      }
+    ]
+  },
   "ai": {
     "binding": "AI"
   },

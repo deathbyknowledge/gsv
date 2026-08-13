@@ -9,6 +9,9 @@ import type {
   ManagedInboundMailCompletion,
   ManagedInboundMailMetadata,
   ManagedMailGatewayService,
+  ManagedOutboundMailClaimOutcome,
+  ManagedOutboundMailCompletion,
+  ManagedOutboundMailReference,
 } from "@humansandmachines/gsv/protocol";
 import type { Frame } from "./protocol/frames";
 import { buildOAuthClientMetadata } from "./oauth-http";
@@ -202,6 +205,36 @@ export class GatewayEntrypoint
     }
     const kernel = await getKernelByInstallationId(this.env.KERNEL, installationId);
     await kernel.completeManagedInboundMail(completion);
+  }
+
+  async claimManagedOutboundMail(
+    installation: AdapterInstallationContext,
+    reference: ManagedOutboundMailReference,
+  ): Promise<ManagedOutboundMailClaimOutcome> {
+    const installationId = resolveAdapterInstallationId(this.env, installation);
+    if (this.env.INSTALLATION_DIRECTORY) {
+      const gate = await managedInstallationWorkGate(this.env, installationId);
+      if (!gate.allowed) throw new Error(gate.message);
+    }
+    const kernel = await getKernelByInstallationId(this.env.KERNEL, installationId);
+    return await kernel.claimManagedOutboundMail(reference);
+  }
+
+  async completeManagedOutboundMail(
+    installation: AdapterInstallationContext,
+    completion: ManagedOutboundMailCompletion,
+  ): Promise<void> {
+    const installationId = resolveAdapterInstallationId(this.env, installation);
+    const directory = this.env.INSTALLATION_DIRECTORY;
+    if (directory) {
+      const result = await directory.resolveInstallation(installationId);
+      if (!result.found) return;
+      if (result.installationId !== installationId) {
+        throw new Error("Managed installation identity does not match directory state");
+      }
+    }
+    const kernel = await getKernelByInstallationId(this.env.KERNEL, installationId);
+    await kernel.completeManagedOutboundMail(completion);
   }
 }
 

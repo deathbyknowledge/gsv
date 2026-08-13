@@ -2,7 +2,11 @@ import { bodyToBytes } from "@humansandmachines/gsv/protocol";
 import type { InstallationDirectoryResult } from "@humansandmachines/gsv/protocol";
 import { describe, expect, it, vi } from "vitest";
 import type { MailEnv } from "../src/env";
-import { handleIncomingMail } from "../src/index";
+import {
+  handleIncomingMail,
+  handleOutboundBatch,
+  handleOutboundCommand,
+} from "../src/index";
 
 const encoder = new TextEncoder();
 
@@ -29,6 +33,10 @@ function environment(input: {
       MAIL_DAILY_INBOUND_MESSAGE_LIMIT: 250,
       MAIL_DAILY_INBOUND_BYTE_LIMIT: 268_435_456,
       MAIL_DAILY_SUMMARIZATION_LIMIT: 100,
+      MAIL_OUTBOUND_ENABLED: 0,
+      MAIL_MAX_OUTBOUND_TEXT_BYTES: 1_048_576,
+      MAIL_DAILY_OUTBOUND_MESSAGE_LIMIT: 0,
+      MAIL_DAILY_OUTBOUND_BYTE_LIMIT: 0,
       ACCOUNTS: {
         resolveHostname,
         resolveInstallation: vi.fn(async (): Promise<InstallationDirectoryResult> => ({
@@ -38,6 +46,7 @@ function environment(input: {
       MAIL_INSTALLATIONS: { getByName } as unknown as MailEnv["MAIL_INSTALLATIONS"],
       GATEWAY: {} as MailEnv["GATEWAY"],
       INFERENCE: {} as MailEnv["INFERENCE"],
+      EMAIL: {} as MailEnv["EMAIL"],
     },
     getByName,
     resolveHostname,
@@ -146,5 +155,146 @@ describe("managed mail email handler", () => {
     expect(incoming.reject).toHaveBeenCalledWith(
       "Message exceeds this mailbox's size limit",
     );
+  });
+});
+
+function outboundEnvironment(input: {
+  deliveryError?: Error;
+  directoryError?: Error;
+} = {}) {
+  const deliverOutbound = vi.fn(async () => {
+    if (input.deliveryError) throw input.deliveryError;
+  });
+  const getByName = vi.fn(() => ({ deliverOutbound }));
+  const resolveInstallation = vi.fn(async (): Promise<InstallationDirectoryResult> => {
+    if (input.directoryError) throw input.directoryError;
+    return { found: false };
+  });
+  const env = {
+    MAIL_DOMAIN: "gsv.space",
+    GSV_BASE_DOMAIN: "gsv.space",
+    MAIL_MAX_MESSAGE_BYTES: 16_777_216,
+    MAIL_DAILY_INBOUND_MESSAGE_LIMIT: 250,
+    MAIL_DAILY_INBOUND_BYTE_LIMIT: 268_435_456,
+    MAIL_DAILY_SUMMARIZATION_LIMIT: 100,
+    MAIL_OUTBOUND_ENABLED: 1,
+    MAIL_MAX_OUTBOUND_TEXT_BYTES: 1_048_576,
+    MAIL_DAILY_OUTBOUND_MESSAGE_LIMIT: 10,
+    MAIL_DAILY_OUTBOUND_BYTE_LIMIT: 10_000_000,
+    ACCOUNTS: {
+      resolveHostname: vi.fn(async () => ({ found: false as const })),
+      resolveInstallation,
+    },
+    MAIL_INSTALLATIONS: { getByName } as unknown as MailEnv["MAIL_INSTALLATIONS"],
+    GATEWAY: {} as MailEnv["GATEWAY"],
+    INFERENCE: {} as MailEnv["INFERENCE"],
+    EMAIL: {} as MailEnv["EMAIL"],
+  } satisfies MailEnv;
+  return {
+    env,
+    deliverOutbound,
+    getByName,
+    resolveInstallation,
+  };
+}
+
+function outboundCommand(installationId = "installation_hank") {
+  return {
+    version: 1,
+    installationId,
+    outboundId: "outbound-command",
+    fingerprint: `sha256:${"a".repeat(64)}`,
+  };
+}
+
+describe("managed mail outbound queue handler", () => {
+  it("durably admits a trusted command before any directory lookup", async () => {
+    const fixture = outboundEnvironment();
+
+    await handleOutboundCommand(outboundCommand(), fixture.env);
+
+    expect(fixture.resolveInstallation).not.toHaveBeenCalled();
+    expect(fixture.getByName).toHaveBeenCalledWith("installation_hank");
+    expect(fixture.deliverOutbound).toHaveBeenCalledWith(
+      { installationId: "installation_hank" },
+      outboundCommand(),
+    );
+  });
+
+  it("acks durable admission even when Accounts is unavailable", async () => {
+    const fixture = outboundEnvironment({
+      directoryError: new Error("Accounts unavailable"),
+    });
+    const ack = vi.fn();
+    const retry = vi.fn();
+    const batch = {
+      messages: [{
+        body: outboundCommand(),
+        attempts: 100,
+        ack,
+        retry,
+      }],
+    } as unknown as MessageBatch;
+
+    await handleOutboundBatch(batch, fixture.env);
+
+    expect(fixture.resolveInstallation).not.toHaveBeenCalled();
+    expect(fixture.getByName).toHaveBeenCalledWith("installation_hank");
+    expect(ack).toHaveBeenCalledOnce();
+    expect(retry).not.toHaveBeenCalled();
+  });
+
+  it("discards malformed commands without allocating state", async () => {
+    const fixture = outboundEnvironment();
+
+    await handleOutboundCommand({ version: 2 }, fixture.env);
+    await handleOutboundCommand({
+      ...outboundCommand(),
+      fingerprint: "not-a-digest",
+    }, fixture.env);
+
+    expect(fixture.getByName).not.toHaveBeenCalled();
+  });
+
+  it("acknowledges poison messages and retries transient durable admission errors", async () => {
+    const poison = outboundEnvironment();
+    const transient = outboundEnvironment({
+      deliveryError: new Error("Durable Object unavailable"),
+    });
+    const poisonAck = vi.fn();
+    const poisonRetry = vi.fn();
+    const transientAck = vi.fn();
+    const transientRetry = vi.fn();
+    const batch = {
+      messages: [
+        {
+          body: {
+            ...outboundCommand(),
+            fingerprint: "sha256:not-hex",
+          },
+          attempts: 1,
+          ack: poisonAck,
+          retry: poisonRetry,
+        },
+      ],
+    } as unknown as MessageBatch;
+    const retryBatch = {
+      messages: [
+        {
+          body: outboundCommand(),
+          attempts: 1,
+          ack: transientAck,
+          retry: transientRetry,
+        },
+      ],
+    } as unknown as MessageBatch;
+
+    await handleOutboundBatch(batch, poison.env);
+    await handleOutboundBatch(retryBatch, transient.env);
+
+    expect(poisonAck).toHaveBeenCalledOnce();
+    expect(poisonRetry).not.toHaveBeenCalled();
+    expect(transientAck).not.toHaveBeenCalled();
+    expect(transientRetry).toHaveBeenCalledWith({ delaySeconds: 5 });
   });
 });

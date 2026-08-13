@@ -12,6 +12,7 @@ export default defineConfig({
             modules: true,
             script: `
               import { WorkerEntrypoint } from "cloudflare:workers";
+              const installationResolveAttempts = new Map();
               export default class AccountsTest extends WorkerEntrypoint {
                 async resolveHostname(hostname) {
                   if (!hostname.startsWith("active-")) return { found: false };
@@ -29,12 +30,38 @@ export default defineConfig({
                     return { found: false };
                   }
                   const handle = installationId.slice("installation_".length);
+                  const attempts = (installationResolveAttempts.get(installationId) ?? 0) + 1;
+                  installationResolveAttempts.set(installationId, attempts);
+                  if (handle.includes("accounts-outage") && attempts <= 12) {
+                    throw new Error("simulated Accounts outage");
+                  }
+                  if (handle.includes("missing-once") && attempts === 1) {
+                    return { found: false };
+                  }
+                  if (handle.includes("became-inactive")) {
+                    return {
+                      found: true,
+                      state: "restricted",
+                      installationId,
+                      handle,
+                      canonicalOrigin: "https://" + handle + ".gsv.space",
+                    };
+                  }
+                  const resolvedHandle = handle.includes("changed-handle")
+                    ? attempts === 1 ? "hank" : "different-handle"
+                    : handle.includes("accounts-outage")
+                      ? "hank"
+                      : handle.includes("missing-once")
+                        ? "hank"
+                      : handle.startsWith("outbound_")
+                        ? "hank"
+                        : handle;
                   return {
                     found: true,
                     state: "active",
                     installationId,
-                    handle,
-                    canonicalOrigin: "https://" + handle + ".gsv.space",
+                    handle: resolvedHandle,
+                    canonicalOrigin: "https://" + resolvedHandle + ".gsv.space",
                   };
                 }
               }
@@ -47,6 +74,8 @@ export default defineConfig({
               import { WorkerEntrypoint } from "cloudflare:workers";
               const accepted = new Map();
               const failedStorage = new Set();
+              const failedOutboundCompletion = new Set();
+              const outboundClaimAttempts = new Map();
               export default class GatewayTest extends WorkerEntrypoint {
                 async acceptManagedInboundMail(installation, metadata, body) {
                   if (installation.installationId.length === 0) {
@@ -103,6 +132,119 @@ export default defineConfig({
                     ) !== completion.messageId
                   ) {
                     throw new Error("invalid completion");
+                  }
+                }
+                async claimManagedOutboundMail(installation, reference) {
+                  if (
+                    installation.installationId.length === 0
+                    || reference.version !== 1
+                  ) {
+                    throw new Error("invalid outbound claim");
+                  }
+                  const key = installation.installationId + ":" + reference.outboundId;
+                  const attempts = (outboundClaimAttempts.get(key) ?? 0) + 1;
+                  outboundClaimAttempts.set(key, attempts);
+                  if (
+                    reference.outboundId.includes("claim-always-fails")
+                    || (
+                      (
+                        reference.outboundId.includes("claim-retry-once")
+                        || reference.outboundId.includes("changed-handle")
+                      )
+                      && attempts === 1
+                    )
+                  ) {
+                    throw new Error("simulated outbound claim failure");
+                  }
+                  if (reference.outboundId.includes("gateway-body-unavailable")) {
+                    return {
+                      status: "settled",
+                      completion: {
+                        version: 1,
+                        outboundId: reference.outboundId,
+                        fingerprint: reference.fingerprint,
+                        state: "failed",
+                        errorCode: "body_unavailable",
+                      },
+                    };
+                  }
+                  if (reference.outboundId.includes("gateway-terminal-replay")) {
+                    return {
+                      status: "settled",
+                      completion: {
+                        version: 1,
+                        outboundId: reference.outboundId,
+                        fingerprint: reference.fingerprint,
+                        state: "accepted",
+                        providerMessageId: "provider_terminal",
+                      },
+                    };
+                  }
+                  if (reference.outboundId.includes("gateway-reference-mismatch")) {
+                    return {
+                      status: "rejected",
+                      errorCode: "reference_mismatch",
+                    };
+                  }
+                  const text = "Body for " + reference.outboundId;
+                  const bytes = new TextEncoder().encode(text);
+                  const digestBytes = new Uint8Array(
+                    await crypto.subtle.digest("SHA-256", bytes),
+                  );
+                  const bodyDigest = "sha256:" + [...digestBytes]
+                    .map((byte) => byte.toString(16).padStart(2, "0"))
+                    .join("");
+                  return {
+                    status: "ready",
+                    draft: {
+                      version: 1,
+                      outboundId: reference.outboundId,
+                      fingerprint: reference.fingerprint,
+                      from: reference.outboundId.includes("invalid")
+                        ? "invalid address"
+                        : reference.outboundId.includes("sender-mismatch")
+                          ? "attacker@gsv.space"
+                        : "hank@gsv.space",
+                      to: reference.outboundId.includes("oversized-address")
+                        ? "é".repeat(160) + "@example.com"
+                        : "recipient@example.com",
+                      subject: reference.outboundId.includes("oversized-subject")
+                        ? "é".repeat(500)
+                        : "Subject for " + reference.outboundId,
+                      bodyDigest: reference.outboundId.includes("body-corruption")
+                        ? "sha256:" + "0".repeat(64)
+                        : bodyDigest,
+                      textSize: bytes.byteLength,
+                      createdAt: Date.now(),
+                      ...(reference.outboundId.includes("reply")
+                        ? {
+                            replyToMessageId: "message_original",
+                            inReplyTo: "<original@example.com>",
+                            references: "<older@example.com> <original@example.com>",
+                          }
+                        : {}),
+                    },
+                    body: {
+                      length: bytes.byteLength,
+                      stream: new Response(bytes).body,
+                    },
+                  };
+                }
+                async completeManagedOutboundMail(installation, completion) {
+                  if (
+                    installation.installationId.length === 0
+                    || completion.version !== 1
+                    || !["accepted", "failed", "unknown"].includes(completion.state)
+                  ) {
+                    throw new Error("invalid outbound completion");
+                  }
+                  const key = installation.installationId + ":" + completion.outboundId;
+                  if (
+                    completion.outboundId.includes("callback-retry")
+                    && !failedOutboundCompletion.has(key)
+                  ) {
+                    failedOutboundCompletion.add(key);
+                    throw new Error("simulated outbound completion failure");
                   }
                 }
               }

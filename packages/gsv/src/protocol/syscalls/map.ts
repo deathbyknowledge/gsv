@@ -214,6 +214,12 @@ import type {
   SignalWatchArgs,
   SignalWatchResult,
 } from "./signal";
+import type {
+  MailSendArgs,
+  MailSendResult,
+  MailStatusArgs,
+  MailStatusResult,
+} from "./mail";
 
 export type SyscallDomains = {
   "fs.read": { args: FsReadArgs; result: FsReadResult };
@@ -232,6 +238,9 @@ export type SyscallDomains = {
 
   "codemode.exec": { args: CodeModeExecArgs; result: CodeModeExecResult };
   "codemode.run": { args: CodeModeRunArgs; result: CodeModeRunResult };
+
+  "mail.send": { args: MailSendArgs; result: MailSendResult };
+  "mail.status": { args: MailStatusArgs; result: MailStatusResult };
 
   "proc.spawn": { args: ProcSpawnArgs; result: ProcSpawnResult };
   "proc.kill": { args: ProcKillArgs; result: ProcKillResult };

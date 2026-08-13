@@ -11,6 +11,7 @@ export { isAdapterConnectResult } from "./syscalls/adapter";
 export type * from "./syscalls/signal";
 export type * from "./syscalls/interaction-origin";
 export type * from "./syscalls/ai";
+export type * from "./syscalls/mail";
 export type * from "./syscalls/map";
 export * from "./adapters";
 export * from "./adapter-media-body";

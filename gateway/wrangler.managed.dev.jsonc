@@ -55,6 +55,14 @@
       "bucket_name": "gsv-managed-storage-dev"
     }
   ],
+  "queues": {
+    "producers": [
+      {
+        "binding": "MANAGED_MAIL_OUTBOUND",
+        "queue": "gsv-managed-mail-outbound-dev"
+      }
+    ]
+  },
   "assets": {
     "directory": "../web/dist/",
     "binding": "ASSETS",

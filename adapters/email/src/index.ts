@@ -7,6 +7,7 @@ import {
   type ManagedMailIntakeDiagnostic,
   type ManagedMailIntakePage,
   type ManagedMailService as ManagedMailServiceContract,
+  type ManagedOutboundMailCommand,
 } from "@humansandmachines/gsv/protocol";
 import { resolveMailRecipient } from "./address";
 import { mailLimits, type MailEnv } from "./env";
@@ -27,6 +28,10 @@ export default class MailService
 
   async email(message: ForwardableEmailMessage): Promise<void> {
     await handleIncomingMail(message, this.env);
+  }
+
+  async queue(batch: MessageBatch): Promise<void> {
+    await handleOutboundBatch(batch, this.env);
   }
 
   async getIntake(
@@ -54,6 +59,38 @@ export default class MailService
       installation.installationId,
     ).listIntakes(installation, input);
   }
+}
+
+export async function handleOutboundBatch(
+  batch: MessageBatch,
+  env: MailEnv,
+): Promise<void> {
+  for (const message of batch.messages) {
+    try {
+      await handleOutboundCommand(message.body, env);
+      message.ack();
+    } catch (error) {
+      console.error(JSON.stringify({
+        event: "managed_mail_outbound_queue_retry",
+        error: errorName(error),
+      }));
+      message.retry({ delaySeconds: queueRetryDelay(message.attempts) });
+    }
+  }
+}
+
+export async function handleOutboundCommand(
+  value: unknown,
+  env: MailEnv,
+): Promise<void> {
+  const command = parseOutboundCommand(value);
+  if (!command) return;
+  const installation = Object.freeze({
+    installationId: command.installationId,
+  });
+  await env.MAIL_INSTALLATIONS.getByName(
+    installation.installationId,
+  ).deliverOutbound(installation, command);
 }
 
 export async function handleIncomingMail(
@@ -119,15 +156,70 @@ async function requireActiveInstallation(
   if (!isAdapterInstallationContext(value)) {
     throw new Error("Mail installation context is invalid");
   }
-  const result = await env.ACCOUNTS.resolveInstallation(value.installationId);
+  const installation = await resolveActiveInstallation(
+    env,
+    value.installationId,
+  );
+  if (!installation) {
+    throw new Error("Mail installation is unavailable");
+  }
+  return installation;
+}
+
+async function resolveActiveInstallation(
+  env: MailEnv,
+  installationId: string,
+): Promise<AdapterInstallationContext | null> {
+  const result = await env.ACCOUNTS.resolveInstallation(installationId);
   if (
     !result.found
     || result.state !== "active"
-    || result.installationId !== value.installationId
+    || result.installationId !== installationId
   ) {
-    throw new Error("Mail installation is unavailable");
+    return null;
   }
   return Object.freeze({ installationId: result.installationId });
+}
+
+function parseOutboundCommand(value: unknown): ManagedOutboundMailCommand | null {
+  if (!value || typeof value !== "object") return null;
+  const command = value as Record<string, unknown>;
+  if (
+    command.version !== 1
+    || typeof command.installationId !== "string"
+    || !isAdapterInstallationContext({
+      installationId: command.installationId,
+    })
+    || !boundedOutboundId(command.outboundId)
+    || !validFingerprint(command.fingerprint)
+  ) {
+    return null;
+  }
+  return {
+    version: 1,
+    installationId: command.installationId,
+    outboundId: command.outboundId,
+    fingerprint: command.fingerprint,
+  };
+}
+
+function validFingerprint(value: unknown): value is string {
+  return typeof value === "string" && /^sha256:[0-9a-f]{64}$/.test(value);
+}
+
+function boundedOutboundId(value: unknown): value is string {
+  return typeof value === "string"
+    && new TextEncoder().encode(value).byteLength <= 256
+    && /^[A-Za-z0-9](?:[A-Za-z0-9._:\-]*[A-Za-z0-9])?$/.test(value);
+}
+
+function queueRetryDelay(attempts: number): number {
+  const exponent = Math.max(0, Math.min(10, attempts - 1));
+  return Math.min(3_600, 5 * 2 ** exponent);
+}
+
+function errorName(error: unknown): string {
+  return error instanceof Error && error.name ? error.name : "Error";
 }
 
 async function cancelStream(

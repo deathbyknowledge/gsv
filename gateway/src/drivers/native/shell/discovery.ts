@@ -54,6 +54,11 @@ const NATIVE_COMMAND_DESCRIPTORS: Record<string, NativeCommandDescriptor> = {
     "message attach PATH... [--mime TYPE]",
     "message send --to DESTINATION [--message TEXT] [--attach PATH [--mime TYPE]] [--delivery-id ID] [--also]",
   ]),
+  mail: command("Read, send, reply to, and inspect managed email.", "Send email, reply to an inbox message, or check whether a queued email was accepted.", ["email", "inbox", "send", "reply", "status", "delivery"], [], [
+    "mail send --to ADDRESS --subject SUBJECT (--message TEXT | --body PATH) [--delivery-id ID]",
+    "mail reply MESSAGE_ID [--subject SUBJECT] (--message TEXT | --body PATH) [--delivery-id ID]",
+    "mail status DELIVERY_ID",
+  ]),
   rgit: command("Inspect and commit staged ripgit repository changes.", "Work with GSV repo-backed source, diffs, history, branches, or commits.", ["git", "repository", "source", "diff", "commit"], ["ripgit"]),
   ripgit: command("Alias for the rgit repository command.", "Work with GSV repo-backed source, diffs, history, branches, or commits.", ["git", "repository", "source", "diff", "commit"], ["rgit"]),
   sched: command("Create and inspect Kernel schedules and delayed prompts.", "Send a prompt later, wake the current process, or inspect scheduled work.", ["schedule", "reminder", "recurring", "automation", "later", "timer"], ["crontab"], [

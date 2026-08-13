@@ -48,6 +48,56 @@ export type ManagedInboundMailCompletion = {
   summary: ManagedMailSummary;
 };
 
+export type ManagedOutboundMailState =
+  | "queued"
+  | "accepted"
+  | "failed"
+  | "unknown";
+
+export type ManagedOutboundMailReference = {
+  version: 1;
+  outboundId: string;
+  fingerprint: string;
+};
+
+export type ManagedOutboundMailCommand = ManagedOutboundMailReference & {
+  installationId: string;
+};
+
+export type ManagedOutboundMailDraft = ManagedOutboundMailReference & {
+  from: string;
+  to: string;
+  subject: string;
+  bodyDigest: string;
+  textSize: number;
+  createdAt: number;
+  replyToMessageId?: string;
+  inReplyTo?: string;
+  references?: string;
+};
+
+export type ManagedOutboundMailClaim = {
+  draft: ManagedOutboundMailDraft;
+  body: BinaryBody;
+};
+
+export type ManagedOutboundMailCompletion = ManagedOutboundMailReference & {
+  state: Exclude<ManagedOutboundMailState, "queued">;
+  providerMessageId?: string;
+  errorCode?: string;
+};
+
+export type ManagedOutboundMailClaimOutcome =
+  | ({ status: "ready" } & ManagedOutboundMailClaim)
+  | {
+      status: "settled";
+      completion: ManagedOutboundMailCompletion;
+    }
+  | {
+      status: "rejected";
+      errorCode: "reference_mismatch";
+    };
+
 export interface ManagedMailGatewayService {
   acceptManagedInboundMail(
     installation: AdapterInstallationContext,
@@ -57,6 +107,14 @@ export interface ManagedMailGatewayService {
   completeManagedInboundMail(
     installation: AdapterInstallationContext,
     completion: ManagedInboundMailCompletion,
+  ): Promise<void>;
+  claimManagedOutboundMail(
+    installation: AdapterInstallationContext,
+    reference: ManagedOutboundMailReference,
+  ): Promise<ManagedOutboundMailClaimOutcome>;
+  completeManagedOutboundMail(
+    installation: AdapterInstallationContext,
+    completion: ManagedOutboundMailCompletion,
   ): Promise<void>;
 }
 

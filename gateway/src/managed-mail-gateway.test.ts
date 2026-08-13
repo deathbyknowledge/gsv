@@ -53,4 +53,138 @@ describe("managed mail Gateway routing", () => {
     expect(idFromName).not.toHaveBeenCalled();
     expect(cancel).toHaveBeenCalledOnce();
   });
+
+  it("gates outbound claims but allows trusted transport settlement after restriction", async () => {
+    const completeManagedOutboundMail = vi.fn(async () => undefined);
+    const claimManagedOutboundMail = vi.fn(async () => ({
+      status: "ready" as const,
+      draft: {},
+      body: { stream: new ReadableStream(), length: 0 },
+    }));
+    const kernel = { setName: vi.fn(), completeManagedOutboundMail, claimManagedOutboundMail };
+    const resolveInstallation = vi.fn(async () => ({
+      found: true as const,
+      state: "restricted" as const,
+      installationId: "installation-hank",
+      handle: "hank",
+      canonicalOrigin: "https://hank.gsv.space",
+    }));
+    const idFromName = vi.fn(() => "kernel-id");
+    const get = vi.fn(() => kernel);
+    const gateway = Object.create(GatewayEntrypoint.prototype) as GatewayEntrypoint;
+    Object.defineProperty(gateway, "env", {
+      value: {
+        INSTALLATION_DIRECTORY: { resolveInstallation },
+        KERNEL: { idFromName, get },
+      },
+    });
+    const reference = {
+      version: 1 as const,
+      outboundId: "mail-outbound:test",
+      fingerprint: `sha256:${"a".repeat(64)}`,
+    };
+
+    await expect(gateway.claimManagedOutboundMail(
+      { installationId: "installation-hank" },
+      reference,
+    )).rejects.toThrow("suspended");
+    await expect(gateway.completeManagedOutboundMail(
+      { installationId: "installation-hank" },
+      { ...reference, state: "failed", errorCode: "installation_inactive" },
+    )).resolves.toBeUndefined();
+
+    expect(claimManagedOutboundMail).not.toHaveBeenCalled();
+    expect(completeManagedOutboundMail).toHaveBeenCalledWith({
+      ...reference,
+      state: "failed",
+      errorCode: "installation_inactive",
+    });
+  });
+
+  it("acknowledges completion for an authoritatively missing installation without a Kernel", async () => {
+    const resolveInstallation = vi.fn(async () => ({ found: false as const }));
+    const idFromName = vi.fn(() => {
+      throw new Error("Kernel must not be addressed");
+    });
+    const gateway = Object.create(GatewayEntrypoint.prototype) as GatewayEntrypoint;
+    Object.defineProperty(gateway, "env", {
+      value: {
+        INSTALLATION_DIRECTORY: { resolveInstallation },
+        KERNEL: { idFromName },
+      },
+    });
+    const completion = {
+      version: 1 as const,
+      outboundId: "mail-outbound:missing",
+      fingerprint: `sha256:${"b".repeat(64)}`,
+      state: "failed" as const,
+      errorCode: "installation_inactive",
+    };
+
+    await expect(gateway.completeManagedOutboundMail(
+      { installationId: "installation-missing" },
+      completion,
+    )).resolves.toBeUndefined();
+
+    expect(resolveInstallation).toHaveBeenCalledWith("installation-missing");
+    expect(idFromName).not.toHaveBeenCalled();
+  });
+
+  it("rejects directory identity mismatch without allocating a Kernel", async () => {
+    const resolveInstallation = vi.fn(async () => ({
+      found: true as const,
+      state: "active" as const,
+      installationId: "installation-other",
+      handle: "other",
+      canonicalOrigin: "https://other.gsv.space",
+    }));
+    const idFromName = vi.fn();
+    const gateway = Object.create(GatewayEntrypoint.prototype) as GatewayEntrypoint;
+    Object.defineProperty(gateway, "env", {
+      value: {
+        INSTALLATION_DIRECTORY: { resolveInstallation },
+        KERNEL: { idFromName },
+      },
+    });
+
+    await expect(gateway.completeManagedOutboundMail(
+      { installationId: "installation-missing" },
+      {
+        version: 1,
+        outboundId: "mail-outbound:mismatch",
+        fingerprint: `sha256:${"c".repeat(64)}`,
+        state: "failed",
+        errorCode: "installation_inactive",
+      },
+    )).rejects.toThrow("does not match");
+
+    expect(idFromName).not.toHaveBeenCalled();
+  });
+
+  it("propagates directory transport errors without allocating a Kernel", async () => {
+    const resolveInstallation = vi.fn(async () => {
+      throw new Error("directory unavailable");
+    });
+    const idFromName = vi.fn();
+    const gateway = Object.create(GatewayEntrypoint.prototype) as GatewayEntrypoint;
+    Object.defineProperty(gateway, "env", {
+      value: {
+        INSTALLATION_DIRECTORY: { resolveInstallation },
+        KERNEL: { idFromName },
+      },
+    });
+
+    await expect(gateway.completeManagedOutboundMail(
+      { installationId: "installation-missing" },
+      {
+        version: 1,
+        outboundId: "mail-outbound:transport",
+        fingerprint: `sha256:${"d".repeat(64)}`,
+        state: "failed",
+        errorCode: "installation_inactive",
+      },
+    )).rejects.toThrow("directory unavailable");
+
+    expect(idFromName).not.toHaveBeenCalled();
+  });
 });

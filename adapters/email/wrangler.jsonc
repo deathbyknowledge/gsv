@@ -12,7 +12,11 @@
     "MAIL_MAX_MESSAGE_BYTES": 16777216,
     "MAIL_DAILY_INBOUND_MESSAGE_LIMIT": 250,
     "MAIL_DAILY_INBOUND_BYTE_LIMIT": 268435456,
-    "MAIL_DAILY_SUMMARIZATION_LIMIT": 100
+    "MAIL_DAILY_SUMMARIZATION_LIMIT": 100,
+    "MAIL_OUTBOUND_ENABLED": 0,
+    "MAIL_MAX_OUTBOUND_TEXT_BYTES": 1048576,
+    "MAIL_DAILY_OUTBOUND_MESSAGE_LIMIT": 0,
+    "MAIL_DAILY_OUTBOUND_BYTE_LIMIT": 0
   },
   "durable_objects": {
     "bindings": [
@@ -44,6 +48,22 @@
       "entrypoint": "InferenceService"
     }
   ],
+  "send_email": [
+    {
+      "name": "EMAIL"
+    }
+  ],
+  "queues": {
+    "consumers": [
+      {
+        "queue": "gsv-managed-mail-outbound",
+        "max_batch_size": 10,
+        "max_batch_timeout": 5,
+        "max_retries": 5,
+        "dead_letter_queue": "gsv-managed-mail-outbound-dead-letter"
+      }
+    ]
+  },
   "observability": {
     "enabled": true
   }

@@ -8,10 +8,12 @@ import {
   type ManagedInboundMailMetadata,
   type ManagedMailIntakeDiagnostic,
   type ManagedMailIntakePage,
+  type ManagedOutboundMailReference,
   type ManagedMailSummary,
 } from "@humansandmachines/gsv/protocol";
 import { mailLimits, type MailEnv, type MailLimits } from "./env";
 import { parseMail } from "./mime";
+import { OutboundDeliveryCoordinator } from "./outbound";
 import { runMailSqlMigrations } from "./schema/migrations";
 
 const ALARM_BATCH_SIZE = 20;
@@ -42,6 +44,8 @@ export type MailUsageSnapshot = {
   inboundMessages: number;
   inboundBytes: number;
   summarizationAttempts: number;
+  outboundMessages: number;
+  outboundBytes: number;
 };
 
 type IntakeRow = {
@@ -84,12 +88,15 @@ type UsageRow = {
   inbound_messages: number;
   inbound_bytes: number;
   summarization_attempts: number;
+  outbound_messages: number;
+  outbound_bytes: number;
 };
 
 export class MailInstallation extends DurableObject<MailEnv> {
   private readonly installationId: string;
   private readonly limits: MailLimits;
   private readonly activeIntakes = new Map<string, Promise<MailIntakeResult>>();
+  private readonly outbound: OutboundDeliveryCoordinator;
 
   constructor(ctx: DurableObjectState, env: MailEnv) {
     super(ctx, env);
@@ -101,6 +108,12 @@ export class MailInstallation extends DurableObject<MailEnv> {
     this.limits = mailLimits(env);
     runMailSqlMigrations(ctx.storage);
     this.ensureIdentity();
+    this.outbound = new OutboundDeliveryCoordinator(
+      ctx,
+      env,
+      this.installationId,
+      this.limits,
+    );
   }
 
   async intake(
@@ -196,7 +209,8 @@ export class MailInstallation extends DurableObject<MailEnv> {
       throw new Error("Mail usage day is invalid");
     }
     const row = this.ctx.storage.sql.exec<UsageRow>(
-      `SELECT inbound_messages, inbound_bytes, summarization_attempts
+      `SELECT inbound_messages, inbound_bytes, summarization_attempts,
+              outbound_messages, outbound_bytes
        FROM mail_daily_usage
        WHERE day = ?`,
       day,
@@ -207,7 +221,17 @@ export class MailInstallation extends DurableObject<MailEnv> {
       inboundMessages: row?.inbound_messages ?? 0,
       inboundBytes: row?.inbound_bytes ?? 0,
       summarizationAttempts: row?.summarization_attempts ?? 0,
+      outboundMessages: row?.outbound_messages ?? 0,
+      outboundBytes: row?.outbound_bytes ?? 0,
     };
+  }
+
+  async deliverOutbound(
+    installation: AdapterInstallationContext,
+    referenceValue: ManagedOutboundMailReference,
+  ): Promise<void> {
+    this.requireOwnedInstallation(installation);
+    await this.outbound.deliver(referenceValue);
   }
 
   async alarm(): Promise<void> {
@@ -215,7 +239,10 @@ export class MailInstallation extends DurableObject<MailEnv> {
     try {
       this.cleanupExpiredUploads(now);
       this.recoverExpiredSummaryReservations(now);
+      this.outbound.recoverExpiredAttempts(now);
       for (let processed = 0; processed < ALARM_BATCH_SIZE; processed += 1) {
+        if (await this.outbound.processNextCallback(Date.now())) continue;
+        if (await this.outbound.processNextClaim(Date.now())) continue;
         const storage = this.nextStorageIntake(Date.now());
         if (storage) {
           await this.deliverStorage(storage);
@@ -495,7 +522,8 @@ export class MailInstallation extends DurableObject<MailEnv> {
 
   private usageRow(day: string): UsageRow {
     return this.ctx.storage.sql.exec<UsageRow>(
-      `SELECT inbound_messages, inbound_bytes, summarization_attempts
+      `SELECT inbound_messages, inbound_bytes, summarization_attempts,
+              outbound_messages, outbound_bytes
        FROM mail_daily_usage
        WHERE day = ?`,
       day,
@@ -936,7 +964,9 @@ export class MailInstallation extends DurableObject<MailEnv> {
   }
 
   private async scheduleNextAlarm(): Promise<void> {
-    const next = this.ctx.storage.sql.exec<{ next_attempt_at: number | null }>(
+    const inboundNext = this.ctx.storage.sql.exec<{
+      next_attempt_at: number | null;
+    }>(
       `SELECT MIN(next_attempt_at) AS next_attempt_at
        FROM (
          SELECT storage_next_attempt_at AS next_attempt_at
@@ -953,6 +983,12 @@ export class MailInstallation extends DurableObject<MailEnv> {
        )
        WHERE next_attempt_at IS NOT NULL`,
     ).one().next_attempt_at;
+    const outboundNext = this.outbound.nextAlarmAt();
+    const next = inboundNext === null
+      ? outboundNext
+      : outboundNext === null
+        ? inboundNext
+        : Math.min(inboundNext, outboundNext);
     if (next === null) return;
     await this.ctx.storage.setAlarm(Math.max(next, Date.now() + 100));
   }

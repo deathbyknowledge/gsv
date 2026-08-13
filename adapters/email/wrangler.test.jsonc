@@ -12,7 +12,11 @@
     "MAIL_MAX_MESSAGE_BYTES": 16777216,
     "MAIL_DAILY_INBOUND_MESSAGE_LIMIT": 2,
     "MAIL_DAILY_INBOUND_BYTE_LIMIT": 3145728,
-    "MAIL_DAILY_SUMMARIZATION_LIMIT": 1
+    "MAIL_DAILY_SUMMARIZATION_LIMIT": 1,
+    "MAIL_OUTBOUND_ENABLED": 1,
+    "MAIL_MAX_OUTBOUND_TEXT_BYTES": 1048576,
+    "MAIL_DAILY_OUTBOUND_MESSAGE_LIMIT": 2,
+    "MAIL_DAILY_OUTBOUND_BYTE_LIMIT": 6291456
   },
   "durable_objects": {
     "bindings": [
@@ -26,6 +30,11 @@
     {
       "tag": "v1",
       "new_sqlite_classes": ["MailInstallation"]
+    }
+  ],
+  "send_email": [
+    {
+      "name": "EMAIL"
     }
   ]
 }

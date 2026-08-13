@@ -10,6 +10,17 @@ export type ResolvedMailRecipient = {
   handle: string;
 };
 
+export function mailAddressForHandle(
+  handleValue: string,
+  mailDomainValue: string,
+): string {
+  const handle = handleValue.trim().toLowerCase();
+  if (handle !== handleValue || !HANDLE_PATTERN.test(handle)) {
+    throw new Error("Accounts returned an invalid mail handle");
+  }
+  return `${handle}@${parseDomain(mailDomainValue, "MAIL_DOMAIN")}`;
+}
+
 export async function resolveMailRecipient(
   accounts: InstallationDirectoryService,
   addressValue: string,

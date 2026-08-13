@@ -29,6 +29,9 @@ import type {
   ManagedInboundMailAccepted,
   ManagedInboundMailCompletion,
   ManagedInboundMailMetadata,
+  ManagedOutboundMailClaimOutcome,
+  ManagedOutboundMailCompletion,
+  ManagedOutboundMailReference,
   NetFetchArgs,
   ProcessIdentity,
   ScheduleRecord,
@@ -125,6 +128,11 @@ import {
   completeManagedInboundMail as completeKernelManagedInboundMail,
   ensureMailboxNotificationProcess as ensureKernelMailboxNotificationProcess,
 } from "./mailbox";
+import {
+  claimManagedOutboundMail as claimKernelManagedOutboundMail,
+  completeManagedOutboundMail as completeKernelManagedOutboundMail,
+  recoverManagedOutboundEnqueue,
+} from "./outbound-mail";
 import { handleShellExec } from "../drivers/native/shell";
 import { getVisibleTarget } from "./targets";
 import { runKernelSqlMigrations } from "./schema/migrations";
@@ -757,6 +765,26 @@ export class Kernel extends Host<Env> {
     const gate = await this.managedWorkGate();
     if (!gate.allowed) throw new Error(gate.message);
     await completeKernelManagedInboundMail(
+      completion,
+      this.buildKernelContext({}),
+    );
+  }
+
+  async claimManagedOutboundMail(
+    reference: ManagedOutboundMailReference,
+  ): Promise<ManagedOutboundMailClaimOutcome> {
+    const gate = await this.managedWorkGate();
+    if (!gate.allowed) throw new Error(gate.message);
+    return await claimKernelManagedOutboundMail(
+      reference,
+      this.buildKernelContext({}),
+    );
+  }
+
+  async completeManagedOutboundMail(
+    completion: ManagedOutboundMailCompletion,
+  ): Promise<void> {
+    completeKernelManagedOutboundMail(
       completion,
       this.buildKernelContext({}),
     );
@@ -1716,6 +1744,9 @@ export class Kernel extends Host<Env> {
       cancelScheduleWake: async (wakeScheduleId) => {
         await this.cancelSchedule(wakeScheduleId);
       },
+      scheduleManagedOutboundEnqueue: async (outboundId, dueAtMs) => {
+        await this.scheduleManagedOutboundEnqueue(outboundId, dueAtMs);
+      },
       ensureMailboxNotificationProcess: (mailboxId) => (
         this.ensureMailboxNotificationProcess(mailboxId)
       ),
@@ -2255,6 +2286,21 @@ export class Kernel extends Host<Env> {
       scheduleId,
     );
     return sched.id;
+  }
+
+  private async scheduleManagedOutboundEnqueue(
+    outboundId: string,
+    dueAtMs: number,
+  ): Promise<void> {
+    await this.schedule(
+      new Date(Math.max(Date.now() + 10, dueAtMs)),
+      "onManagedOutboundEnqueue",
+      outboundId,
+      {
+        idempotent: false,
+        retry: { maxAttempts: 10, baseDelayMs: 1_000, maxDelayMs: 30_000 },
+      },
+    );
   }
 
   private async handleReq(
@@ -2945,6 +2991,14 @@ export class Kernel extends Host<Env> {
     await this.deliverIpcCall(callId);
   }
 
+  async onManagedOutboundEnqueue(outboundId: string): Promise<void> {
+    await recoverManagedOutboundEnqueue(
+      outboundId,
+      this.buildKernelContext({}),
+      true,
+    );
+  }
+
   async onScheduleDue(scheduleId: string, wake?: { id?: unknown }): Promise<void> {
     const record = this.schedules.getStored(scheduleId);
     const wakeId = typeof wake?.id === "string" ? wake.id : null;
@@ -3121,7 +3175,12 @@ export class Kernel extends Host<Env> {
     occurrenceKey: string,
   ): Promise<unknown> {
     const target = record.target;
-    const ctx = this.buildScheduleContext(record);
+    const ctx = {
+      ...this.buildScheduleContext(record),
+      requestId: target.kind === "command.exec"
+        ? `schedule:${record.id}:${occurrenceKey}`
+        : occurrenceKey,
+    };
     if (target.kind === "command.exec") {
       if (!hasCapability(ctx.identity?.capabilities ?? [], "shell.exec")) {
         throw new Error("Permission denied: shell.exec");

@@ -197,6 +197,36 @@ test("keeps exact syscalls callable when they also own nested namespaces", () =>
   assert.equal(typeof client.sys.setup.assist, "function");
 });
 
+test("exposes the typed mail status namespace", async () => {
+  const { client, socket } = await connectedClient();
+  const pending = client.mail.status({ deliveryId: "delivery-1" });
+  const request = JSON.parse(socket.sent.at(-1));
+
+  assert.equal(request.call, "mail.status");
+  assert.deepEqual(request.args, { deliveryId: "delivery-1" });
+  socket.receive(JSON.stringify({
+    type: "res",
+    id: request.id,
+    ok: true,
+    data: {
+      outbound: {
+        deliveryId: "delivery-1",
+        outboundId: "mail-outbound:1",
+        state: "queued",
+        from: "hank@gsv.space",
+        to: "mike@example.com",
+        subject: "Hello",
+        createdAt: 1,
+        queuedAt: 2,
+        completedAt: null,
+      },
+    },
+  }));
+
+  assert.equal((await pending).outbound.state, "queued");
+  client.close();
+});
+
 test("bodyFromBytes preserves its input buffer", async () => {
   const bytes = new Uint8Array([1, 2, 3]);
   const framed = bodyFromBytes(bytes);
@@ -686,6 +716,32 @@ test("cancels an outbound request before rejecting its timeout", async () => {
       reason: "Request timed out after 10ms: test.slow",
     },
   });
+  client.close();
+});
+
+test("keeps a caller-owned mail delivery id after a lost response", async () => {
+  const client = new GSVClient({
+    WebSocket: FakeWebSocket,
+    defaultRequestTimeoutMs: 10,
+  });
+  await client.connect({
+    url: "ws://test",
+    username: "test",
+    password: "test",
+  });
+  const socket = FakeWebSocket.instance;
+  const deliveryId = "sdk-mail-timeout-1";
+  const pending = client.mail.send({
+    deliveryId,
+    to: "mike@example.com",
+    subject: "Hello",
+    text: "The Gateway may durably admit this before the response is lost.",
+  });
+  const request = JSON.parse(socket.sent.at(-1));
+
+  await assert.rejects(pending, /Request timed out after 10ms: mail\.send/);
+  assert.equal(request.call, "mail.send");
+  assert.equal(request.args.deliveryId, deliveryId);
   client.close();
 });
 

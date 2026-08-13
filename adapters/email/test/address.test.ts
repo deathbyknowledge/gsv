@@ -3,7 +3,7 @@ import type {
   InstallationDirectoryResult,
   InstallationDirectoryService,
 } from "@humansandmachines/gsv/protocol";
-import { resolveMailRecipient } from "../src/address";
+import { mailAddressForHandle, resolveMailRecipient } from "../src/address";
 
 function accounts(
   result: InstallationDirectoryResult,
@@ -17,6 +17,13 @@ function accounts(
 }
 
 describe("managed mail address routing", () => {
+  it("derives a canonical sender from the Accounts handle and mail domain", () => {
+    expect(mailAddressForHandle("hank", "GSV.Space")).toBe("hank@gsv.space");
+    expect(() => mailAddressForHandle("Hank", "gsv.space")).toThrow(
+      "invalid mail handle",
+    );
+  });
+
   it("maps one configured mail address to an active installation hostname", async () => {
     const directory = accounts({
       found: true,

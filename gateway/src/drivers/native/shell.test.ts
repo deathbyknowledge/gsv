@@ -21,6 +21,7 @@ import {
 } from "@humansandmachines/gsv/protocol";
 import type { RequestFrame, ResponseFrame } from "../../protocol/frames";
 import type { InstallationIdentity } from "../../installation/identity";
+import { stableOpaqueId } from "../../shared/stable-id";
 
 const generateMock = vi.hoisted(() => vi.fn());
 
@@ -492,6 +493,7 @@ describe("native shell capability discovery", () => {
     ["run this every weekday morning", "crontab"],
     ["save this workflow for next time", "skills"],
     ["send this file to the chat", "message"],
+    ["send an email to this person", "mail"],
   ])("maps a plain-language task '%s' to %s", async (query, expectedCommand) => {
     const result = await handleShellExec(
       { input: `man --search -- '${query}'` },
@@ -513,6 +515,20 @@ describe("native shell capability discovery", () => {
 
     expect(result.ok).toBe(true);
     expect(result.stdout).toContain("command\ttxt2img\t");
+  });
+
+  it("renders the managed mail manual", async () => {
+    const result = await handleShellExec(
+      { input: "man mail" },
+      makeContext({ capabilities: ["shell.exec", "mail.send", "mail.status"] }),
+    );
+
+    expect(result.ok).toBe(true);
+    expect(result.stdout).toContain("MAIL(1)");
+    expect(result.stdout).toContain("mail send --to ADDRESS");
+    expect(result.stdout).toContain("mail reply MESSAGE_ID");
+    expect(result.stdout).toContain("mail status DELIVERY_ID");
+    expect(result.stdout).toContain("queued");
   });
 
   it("reports the caller's current media capability availability", async () => {
@@ -2190,6 +2206,61 @@ describe("native administration shell commands", () => {
       },
     ]);
     expect(sendFrameToProcessMock).not.toHaveBeenCalled();
+  });
+
+  it("derives native CodeMode mail delivery ids from the outer shell request", async () => {
+    const mailFrames: RequestFrame[] = [];
+    const request = vi.fn(async (frame: RequestFrame): Promise<ResponseFrame> => {
+      if (frame.call === "sys.mcp.list") {
+        return {
+          type: "res",
+          id: frame.id,
+          ok: true,
+          data: { servers: [] },
+        };
+      }
+      if (frame.call === "mail.send") {
+        mailFrames.push(frame);
+        return {
+          type: "res",
+          id: frame.id,
+          ok: true,
+          data: {
+            ok: true,
+            deliveryId: (frame.args as { deliveryId: string }).deliveryId,
+          },
+        };
+      }
+      throw new Error(`unexpected call: ${frame.call}`);
+    });
+    const ctx = makeContext({ capabilities: ["codemode.run"] });
+    ctx.requestId = "native-mail-shell-request";
+    Object.assign(ctx.env, { LOADER: env.LOADER });
+    const input = "codemode -e 'return await mail.send({ to: \"mike@example.com\", text: \"Hello\" })'";
+
+    const first = await handleShellExec({ input }, ctx, { request });
+    const replay = await handleShellExec({ input }, ctx, { request });
+
+    const deliveryBase = await stableOpaqueId("mail-send", [
+      ctx.installationId,
+      ctx.processId!,
+      ctx.requestId,
+      1,
+    ]);
+    expect(first).toMatchObject({ status: "completed", exitCode: 0 });
+    expect(replay).toMatchObject({ status: "completed", exitCode: 0 });
+    expect(mailFrames.map((frame) => frame.args)).toEqual([
+      {
+        to: "mike@example.com",
+        text: "Hello",
+        deliveryId: `${deliveryBase}:1`,
+      },
+      {
+        to: "mike@example.com",
+        text: "Hello",
+        deliveryId: `${deliveryBase}:1`,
+      },
+    ]);
   });
 
   it("releases a CodeMode response body when cancellation wins after dispatch", async () => {

@@ -205,6 +205,7 @@ export type GsvAdapterNamespace = GsvClientNamespaces["adapter"];
 export type GsvAiNamespace = GsvClientNamespaces["ai"];
 export type GsvCodeModeNamespace = GsvClientNamespaces["codemode"];
 export type GsvFsNamespace = GsvClientNamespaces["fs"];
+export type GsvMailNamespace = GsvClientNamespaces["mail"];
 export type GsvNetNamespace = never;
 export type GsvProcNamespace = GsvClientNamespaces["proc"];
 export type GsvRepoNamespace = GsvClientNamespaces["repo"];
@@ -257,6 +258,8 @@ const SYSCALL_NAMES = [
   "shell.exec",
   "codemode.exec",
   "codemode.run",
+  "mail.send",
+  "mail.status",
   "proc.spawn",
   "proc.kill",
   "proc.list",

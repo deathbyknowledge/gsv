@@ -117,6 +117,8 @@ import {
   targetCanHandle,
   type TargetDescriptor,
 } from "./targets";
+import { handleMailSend } from "./outbound-mail";
+import { handleMailStatus } from "./outbound-status";
 export type DispatchDeps = {
   shellSessions: ShellSessionStore;
   connections: Map<string, Connection>;
@@ -303,6 +305,13 @@ async function dispatchNative(
           ok: true,
           ...await forwardToProcess(frame, ctx),
         };
+
+      case "mail.send":
+        data = await handleMailSend(frame.args, ctx);
+        break;
+      case "mail.status":
+        data = handleMailStatus(frame.args, ctx);
+        break;
 
       case "proc.list":
         data = handleProcList(frame.args, ctx);
