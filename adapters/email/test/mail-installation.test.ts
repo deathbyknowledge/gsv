@@ -102,7 +102,7 @@ describe("managed mail installation transport", () => {
       `Subject: first large\r\n\r\n${"a".repeat(600 * 1024)}`,
     );
     const second = encoder.encode(
-      `Subject: second large\r\n\r\n${"b".repeat(600 * 1024)}`,
+      `Subject: second large\r\n\r\n${"b".repeat(3 * 1024 * 1024)}`,
     );
 
     await expect(intakeBytes(stub, installationId, first)).resolves.toMatchObject({
@@ -115,6 +115,37 @@ describe("managed mail installation transport", () => {
       inboundMessages: 1,
       inboundBytes: first.byteLength,
     });
+  });
+
+  it("persists retry bodies larger than one SQLite row as bounded chunks", async () => {
+    const installationId = "installation_mail_chunked_retry";
+    const stub = env.MAIL_INSTALLATIONS.getByName(installationId);
+    const bytes = encoder.encode(
+      `Subject: retry storage\r\n\r\n${"x".repeat(2_200_000)}`,
+    );
+    const accepted = await intakeBytes(stub, installationId, bytes);
+    if (accepted.result.status !== "accepted") {
+      throw new Error("test mail was not accepted");
+    }
+    const intakeId = accepted.result.intakeId;
+
+    await expect(runDurableObjectAlarm(stub)).resolves.toBe(true);
+    const chunks = await runInDurableObject(stub, (_instance, state) =>
+      state.storage.sql.exec<{
+        chunk_count: number;
+        largest_chunk: number;
+        retained_size: number;
+      }>(
+        `SELECT COUNT(*) AS chunk_count,
+                MAX(length(content)) AS largest_chunk,
+                SUM(length(content)) AS retained_size
+         FROM mail_intake_chunks
+         WHERE intake_id = ?`,
+        intakeId,
+      ).one());
+    expect(chunks.chunk_count).toBeGreaterThan(2);
+    expect(chunks.largest_chunk).toBeLessThanOrEqual(1024 * 1024);
+    expect(chunks.retained_size).toBe(bytes.byteLength);
   });
 
   it("stores raw through Gateway before summarizing and compacts the outbox", async () => {
@@ -141,21 +172,23 @@ describe("managed mail installation transport", () => {
     });
     const compacted = await runInDurableObject(stub, (_instance, state) =>
       state.storage.sql.exec<{
-        raw_message: ArrayBuffer | null;
         metadata_json: string | null;
         summary_input_json: string | null;
         summary_json: string | null;
+        raw_chunks: number;
       }>(
-        `SELECT raw_message, metadata_json, summary_input_json, summary_json
+        `SELECT metadata_json, summary_input_json, summary_json,
+                (SELECT COUNT(*) FROM mail_intake_chunks
+                 WHERE mail_intake_chunks.intake_id = mail_intakes.intake_id) AS raw_chunks
          FROM mail_intakes
          WHERE intake_id = ?`,
         intakeId,
       ).one());
     expect(compacted).toEqual({
-      raw_message: null,
       metadata_json: null,
       summary_input_json: null,
       summary_json: null,
+      raw_chunks: 0,
     });
   });
 
@@ -202,9 +235,12 @@ describe("managed mail installation transport", () => {
     });
     const retainedBytes = await runInDurableObject(stub, (_instance, state) =>
       state.storage.sql.exec<{ raw_size: number; retained_size: number }>(
-        `SELECT raw_size, length(raw_message) AS retained_size
+        `SELECT mail_intakes.raw_size,
+                SUM(length(mail_intake_chunks.content)) AS retained_size
          FROM mail_intakes
-         WHERE intake_id = ?`,
+         JOIN mail_intake_chunks USING (intake_id)
+         WHERE mail_intakes.intake_id = ?
+         GROUP BY mail_intakes.intake_id`,
         intakeId,
       ).one());
     expect(retainedBytes).toEqual({

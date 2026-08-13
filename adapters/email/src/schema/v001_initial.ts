@@ -24,12 +24,11 @@ export const MAIL_V001_INITIAL_SCHEMA: MailSqlMigration = {
         intake_id                     TEXT    PRIMARY KEY,
         digest                        TEXT    NOT NULL UNIQUE,
         received_at                   INTEGER NOT NULL,
-        raw_size                      INTEGER NOT NULL CHECK (raw_size >= 0),
+        raw_size                      INTEGER NOT NULL CHECK (raw_size > 0),
         storage_state                 TEXT    NOT NULL CHECK (storage_state IN ('pending', 'stored')),
         summary_state                 TEXT    NOT NULL CHECK (summary_state IN (
           'pending', 'running', 'notifying', 'deferred', 'complete'
         )),
-        raw_message                   BLOB,
         metadata_json                 TEXT,
         summary_input_json            TEXT,
         summary_json                  TEXT,
@@ -44,11 +43,19 @@ export const MAIL_V001_INITIAL_SCHEMA: MailSqlMigration = {
         completed_at                  INTEGER,
         updated_at                    INTEGER NOT NULL,
         CHECK (
-          (storage_state = 'pending' AND raw_message IS NOT NULL AND metadata_json IS NOT NULL)
+          (storage_state = 'pending' AND metadata_json IS NOT NULL)
           OR
-          (storage_state = 'stored' AND raw_message IS NULL AND metadata_json IS NULL
+          (storage_state = 'stored' AND metadata_json IS NULL
             AND message_id IS NOT NULL AND stored_at IS NOT NULL)
         )
+      )
+    `,
+    `
+      CREATE TABLE IF NOT EXISTS mail_intake_chunks (
+        intake_id   TEXT    NOT NULL,
+        chunk_index INTEGER NOT NULL CHECK (chunk_index >= 0),
+        content     BLOB    NOT NULL,
+        PRIMARY KEY (intake_id, chunk_index)
       )
     `,
     `

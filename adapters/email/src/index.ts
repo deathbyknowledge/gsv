@@ -63,7 +63,7 @@ export async function handleIncomingMail(
   const limits = mailLimits(env);
   if (
     !Number.isSafeInteger(message.rawSize)
-    || message.rawSize < 0
+    || message.rawSize <= 0
     || message.rawSize > limits.maxMessageBytes
   ) {
     message.setReject("Message exceeds this mailbox's size limit");

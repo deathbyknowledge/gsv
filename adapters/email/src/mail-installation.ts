@@ -1,5 +1,6 @@
 import { DurableObject } from "cloudflare:workers";
 import {
+  bodyFromBytes,
   bodyToBytes,
   isAdapterInstallationContext,
   type AdapterInstallationContext,
@@ -21,6 +22,7 @@ const MAX_RETRY_MS = 60 * 60 * 1000;
 const MAX_ENVELOPE_ADDRESS_LENGTH = 512;
 const MAX_MESSAGE_ID_LENGTH = 512;
 const MAX_LIST_LIMIT = 100;
+const RAW_CHUNK_BYTES = 1024 * 1024;
 
 export type MailEnvelope = {
   from: string;
@@ -48,7 +50,6 @@ type IntakeRow = {
   raw_size: number;
   storage_state: "pending" | "stored";
   summary_state: "pending" | "running" | "notifying" | "deferred" | "complete";
-  raw_message: ArrayBuffer | null;
   metadata_json: string | null;
   summary_input_json: string | null;
   summary_json: string | null;
@@ -122,7 +123,6 @@ export class MailInstallation extends DurableObject<MailEnv> {
       } catch {
         return { status: "rejected", reason: "invalid" };
       }
-      const rawMessage = exactArrayBuffer(raw);
       const result = this.ctx.storage.transactionSync<MailIntakeResult>(() => {
         const replay = this.intakeByDigest(digest);
         if (replay) return { status: "duplicate", intakeId: replay.intake_id };
@@ -140,19 +140,19 @@ export class MailInstallation extends DurableObject<MailEnv> {
         this.ctx.storage.sql.exec(
           `INSERT INTO mail_intakes (
              intake_id, digest, received_at, raw_size, storage_state,
-             summary_state, raw_message, metadata_json, summary_input_json,
+             summary_state, metadata_json, summary_input_json,
              storage_next_attempt_at, updated_at
-           ) VALUES (?, ?, ?, ?, 'pending', 'pending', ?, ?, ?, ?, ?)`,
+           ) VALUES (?, ?, ?, ?, 'pending', 'pending', ?, ?, ?, ?)`,
           intakeId,
           digest,
           receivedAt,
           raw.byteLength,
-          rawMessage,
           JSON.stringify(parsed.metadata),
           JSON.stringify(parsed.summaryInput),
           receivedAt,
           receivedAt,
         );
+        this.storeRawMessage(intakeId, raw);
         this.ctx.storage.sql.exec(
           `UPDATE mail_daily_usage
            SET inbound_messages = inbound_messages + 1,
@@ -352,11 +352,11 @@ export class MailInstallation extends DurableObject<MailEnv> {
   }
 
   private async deliverStorage(row: IntakeRow): Promise<void> {
-    if (!row.raw_message || !row.metadata_json) {
+    if (!row.metadata_json) {
       throw new Error("Pending mail intake is missing its durable body");
     }
     const metadata = JSON.parse(row.metadata_json) as ManagedInboundMailMetadata;
-    const body = bodyFromArrayBuffer(row.raw_message);
+    const body = bodyFromBytes(this.loadRawMessage(row));
     const now = Date.now();
     try {
       const result = await this.env.GATEWAY.acceptManagedInboundMail(
@@ -369,19 +369,25 @@ export class MailInstallation extends DurableObject<MailEnv> {
         "messageId",
         MAX_MESSAGE_ID_LENGTH,
       );
-      this.ctx.storage.sql.exec(
-        `UPDATE mail_intakes
-         SET storage_state = 'stored', raw_message = NULL, metadata_json = NULL,
-             message_id = ?, storage_attempts = storage_attempts + 1,
-             storage_next_attempt_at = NULL, summary_next_attempt_at = ?,
-             stored_at = ?, updated_at = ?
-         WHERE intake_id = ? AND storage_state = 'pending'`,
-        messageId,
-        now,
-        now,
-        now,
-        row.intake_id,
-      );
+      this.ctx.storage.transactionSync(() => {
+        this.ctx.storage.sql.exec(
+          `UPDATE mail_intakes
+           SET storage_state = 'stored', metadata_json = NULL,
+               message_id = ?, storage_attempts = storage_attempts + 1,
+               storage_next_attempt_at = NULL, summary_next_attempt_at = ?,
+               stored_at = ?, updated_at = ?
+           WHERE intake_id = ? AND storage_state = 'pending'`,
+          messageId,
+          now,
+          now,
+          now,
+          row.intake_id,
+        );
+        this.ctx.storage.sql.exec(
+          "DELETE FROM mail_intake_chunks WHERE intake_id = ?",
+          row.intake_id,
+        );
+      });
     } catch (error) {
       const attempts = row.storage_attempts + 1;
       this.ctx.storage.sql.exec(
@@ -412,6 +418,53 @@ export class MailInstallation extends DurableObject<MailEnv> {
        LIMIT 1`,
       now,
     ).toArray()[0] ?? null;
+  }
+
+  private storeRawMessage(intakeId: string, raw: Uint8Array): void {
+    for (let offset = 0, index = 0; offset < raw.byteLength; index += 1) {
+      const end = Math.min(offset + RAW_CHUNK_BYTES, raw.byteLength);
+      this.ctx.storage.sql.exec(
+        `INSERT INTO mail_intake_chunks (intake_id, chunk_index, content)
+         VALUES (?, ?, ?)`,
+        intakeId,
+        index,
+        exactArrayBuffer(raw.subarray(offset, end)),
+      );
+      offset = end;
+    }
+  }
+
+  private loadRawMessage(row: IntakeRow): Uint8Array {
+    const chunks = this.ctx.storage.sql.exec<{
+      chunk_index: number;
+      content: ArrayBuffer;
+    }>(
+      `SELECT chunk_index, content
+       FROM mail_intake_chunks
+       WHERE intake_id = ?
+       ORDER BY chunk_index`,
+      row.intake_id,
+    ).toArray();
+    const raw = new Uint8Array(row.raw_size);
+    let offset = 0;
+    for (let index = 0; index < chunks.length; index += 1) {
+      const chunk = chunks[index];
+      const bytes = new Uint8Array(chunk.content);
+      if (
+        chunk.chunk_index !== index
+        || bytes.byteLength === 0
+        || bytes.byteLength > RAW_CHUNK_BYTES
+        || offset + bytes.byteLength > raw.byteLength
+      ) {
+        throw new Error("Pending mail intake has invalid durable body chunks");
+      }
+      raw.set(bytes, offset);
+      offset += bytes.byteLength;
+    }
+    if (offset !== raw.byteLength) {
+      throw new Error("Pending mail intake has incomplete durable body chunks");
+    }
+    return raw;
   }
 
   private async processSummary(row: IntakeRow): Promise<void> {
@@ -614,14 +667,14 @@ const INTAKE_DIAGNOSTIC_SELECT = `
   SELECT intake_id, digest, received_at, raw_size, storage_state, summary_state,
          message_id, storage_attempts, summary_attempts, completion_attempts,
          stored_at, completed_at,
-         NULL AS raw_message, NULL AS metadata_json, NULL AS summary_input_json,
+         NULL AS metadata_json, NULL AS summary_input_json,
          NULL AS summary_json
   FROM mail_intakes
 `;
 
 const INTAKE_INTERNAL_SELECT = `
   SELECT intake_id, digest, received_at, raw_size, storage_state, summary_state,
-         raw_message, metadata_json, summary_input_json, summary_json,
+         metadata_json, summary_input_json, summary_json,
          message_id, storage_attempts, summary_attempts, completion_attempts,
          stored_at, completed_at
   FROM mail_intakes
@@ -650,7 +703,7 @@ function parseEnvelope(value: MailEnvelope, maxMessageBytes: number): MailEnvelo
   const rawSize = value?.rawSize;
   if (
     !Number.isSafeInteger(rawSize)
-    || rawSize < 0
+    || rawSize <= 0
     || rawSize > maxMessageBytes
   ) {
     throw new Error("Mail rawSize is invalid");
@@ -770,19 +823,6 @@ function exactArrayBuffer(bytes: Uint8Array): ArrayBuffer {
     return bytes.buffer;
   }
   return bytes.slice().buffer;
-}
-
-function bodyFromArrayBuffer(buffer: ArrayBuffer): BinaryBody {
-  const bytes = new Uint8Array(buffer);
-  return {
-    length: bytes.byteLength,
-    stream: new ReadableStream<Uint8Array>({
-      start(controller) {
-        if (bytes.byteLength > 0) controller.enqueue(bytes);
-        controller.close();
-      },
-    }),
-  };
 }
 
 async function cancelBody(body: BinaryBody, reason: unknown): Promise<void> {
