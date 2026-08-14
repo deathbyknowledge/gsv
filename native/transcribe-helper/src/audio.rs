@@ -5,11 +5,17 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use cpal::traits::{DeviceTrait as _, HostTrait as _, StreamTrait as _};
-use cpal::{FromSample, Sample, SampleFormat, SizedSample, Stream};
+#[cfg(any(target_os = "linux", test))]
+use cpal::{BufferSize, SupportedBufferSize};
+use cpal::{
+    FromSample, Sample, SampleFormat, SizedSample, Stream, StreamConfig, SupportedStreamConfig,
+};
 use crossbeam_channel::{Receiver, Sender};
 use serde::Serialize;
 
 const CAPTURE_BUFFER_DURATION: Duration = Duration::from_secs(5);
+#[cfg(any(target_os = "linux", test))]
+const PULSE_CAPTURE_PERIOD: Duration = Duration::from_millis(40);
 const SILENT_INPUT_DURATION: Duration = Duration::from_secs(2);
 const MAX_INPUT_DEVICES: usize = 32;
 const MAX_DEVICE_NAME_BYTES: usize = 256;
@@ -350,7 +356,7 @@ impl AudioCapture {
             .map_err(|error| format!("microphone is unavailable: {error}"))?;
         let sample_rate = supported.sample_rate();
         let channels = supported.channels() as usize;
-        let config = supported.config();
+        let config = input_stream_config(&device, supported);
         // The packet channel itself is unbounded so a terminal error cannot be lost behind
         // audio, but every non-empty sample packet owns a reservation from the fixed-duration
         // budget below. This bounds both queued samples and the number of queued packets.
@@ -413,6 +419,50 @@ impl AudioCapture {
             sample_rate,
         })
     }
+}
+
+#[cfg(target_os = "linux")]
+fn input_stream_config(device: &cpal::Device, supported: SupportedStreamConfig) -> StreamConfig {
+    let mut config = supported.config();
+    if device
+        .id()
+        .is_ok_and(|id| id.host() == cpal::HostId::PulseAudio)
+    {
+        // Pulse's default record fragment may span seconds, and starting the stream waits for
+        // its first fragment. Request a modest callback period so activation is prompt without
+        // turning capture into a high-frequency realtime workload.
+        config.buffer_size = capture_buffer_size(
+            supported.sample_rate(),
+            supported.buffer_size(),
+            PULSE_CAPTURE_PERIOD,
+        );
+    }
+    config
+}
+
+#[cfg(not(target_os = "linux"))]
+fn input_stream_config(_device: &cpal::Device, supported: SupportedStreamConfig) -> StreamConfig {
+    supported.config()
+}
+
+#[cfg(any(target_os = "linux", test))]
+fn capture_buffer_size(
+    sample_rate: u32,
+    supported: &SupportedBufferSize,
+    period: Duration,
+) -> BufferSize {
+    let SupportedBufferSize::Range { min, max } = *supported else {
+        return BufferSize::Default;
+    };
+    let min = min.max(1);
+    if min > max {
+        return BufferSize::Default;
+    }
+    let frames = u64::from(sample_rate)
+        .saturating_mul(period.as_nanos().min(u64::MAX as u128) as u64)
+        .div_ceil(1_000_000_000)
+        .clamp(u64::from(min), u64::from(max));
+    BufferSize::Fixed(frames as u32)
 }
 
 struct CaptureErrorWriter {
@@ -679,6 +729,53 @@ mod tests {
             actual.extend(receive_samples(&receiver));
         }
         assert_eq!(actual, vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0]);
+    }
+
+    #[test]
+    fn low_latency_capture_period_is_clamped_to_the_supported_range() {
+        let range = SupportedBufferSize::Range {
+            min: 1,
+            max: 16_384,
+        };
+        assert_eq!(
+            capture_buffer_size(48_000, &range, PULSE_CAPTURE_PERIOD),
+            BufferSize::Fixed(1_920)
+        );
+        assert_eq!(
+            capture_buffer_size(
+                48_000,
+                &SupportedBufferSize::Range {
+                    min: 2_048,
+                    max: 16_384,
+                },
+                PULSE_CAPTURE_PERIOD,
+            ),
+            BufferSize::Fixed(2_048)
+        );
+        assert_eq!(
+            capture_buffer_size(
+                48_000,
+                &SupportedBufferSize::Range { min: 1, max: 512 },
+                PULSE_CAPTURE_PERIOD,
+            ),
+            BufferSize::Fixed(512)
+        );
+    }
+
+    #[test]
+    fn capture_period_uses_the_backend_default_without_a_valid_range() {
+        assert_eq!(
+            capture_buffer_size(48_000, &SupportedBufferSize::Unknown, PULSE_CAPTURE_PERIOD),
+            BufferSize::Default
+        );
+        assert_eq!(
+            capture_buffer_size(
+                48_000,
+                &SupportedBufferSize::Range { min: 2, max: 1 },
+                PULSE_CAPTURE_PERIOD,
+            ),
+            BufferSize::Default
+        );
     }
 
     #[test]
