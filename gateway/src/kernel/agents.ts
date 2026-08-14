@@ -185,7 +185,8 @@ export async function ensurePersonalAgent(
       const identity = accountIdentity(auth, reconciled);
       await ensureAccountHomeLayout(ctx.env, identity, {
         userContextUsername: human.username,
-        promptProfile: "personal",
+        seedPromptContext: true,
+        personalAgent: true,
       });
       return { identity, created: false };
     }

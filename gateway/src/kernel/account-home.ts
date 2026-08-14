@@ -31,7 +31,8 @@ export async function ensureAccountHomeLayout(
   identity: ProcessIdentity,
   options: {
     userContextUsername?: string;
-    promptProfile?: "personal" | "worker";
+    seedPromptContext?: boolean;
+    personalAgent?: boolean;
     seedBootContext?: boolean;
     cleanupGeneratedPromptContext?: boolean;
   } = {},
@@ -81,7 +82,7 @@ export async function ensureAccountHomeLayout(
       contentBytes: [],
     });
   }
-  if (options.promptProfile) {
+  if (options.seedPromptContext === true) {
     if (options.seedBootContext === true || bootContext.kind !== "missing") {
       maybePutOrReplaceGeneratedTextFile(
         ops,
@@ -91,7 +92,7 @@ export async function ensureAccountHomeLayout(
         [renderLegacyBootContext(identity)],
       );
     }
-    if (options.promptProfile === "personal") {
+    if (options.personalAgent === true) {
       maybePutTextFile(ops, "context.d/00-role.md", roleContext, PERSONAL_INTELLIGENCE_CONTEXT);
       maybePutTextFile(
         ops,
