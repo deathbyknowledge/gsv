@@ -17,7 +17,6 @@ import {
   LEGACY_MEMORY_CONTEXT_TEMPLATE_V1,
   LEGACY_MEMORY_CONTEXT_TEMPLATE_V2,
   LEGACY_MEMORY_CONTEXT_TEMPLATE_V3,
-  LEGACY_MEMORY_CONTEXT_TEMPLATE_V4,
   LEGACY_OPEN_LOOPS_CONTEXT,
   PERSONAL_STANDING_CONTEXT,
   LEGACY_STYLE_CONTEXT,
@@ -236,7 +235,6 @@ describe("handleAccountCreate", () => {
     expect(memoryContext).toContain("`personal` wiki");
     expect(memoryContext).toContain("skills show memory");
     expect(memoryContext).not.toContain("/src/repos/scout/memory");
-    expect(memoryContext).not.toContain("Master Control");
     expect(ops).not.toContainEqual(
       expect.objectContaining({ path: "context.d/20-open-loops.md" }),
     );
@@ -442,7 +440,6 @@ describe("handleAccountCreate", () => {
     ["v1", LEGACY_MEMORY_CONTEXT_TEMPLATE_V1],
     ["v2", LEGACY_MEMORY_CONTEXT_TEMPLATE_V2],
     ["v3", LEGACY_MEMORY_CONTEXT_TEMPLATE_V3],
-    ["v4", LEGACY_MEMORY_CONTEXT_TEMPLATE_V4],
   ])("reconciles the %s generated personal agent context", async (_version, memoryTemplate) => {
     const state = createCtx();
     provisionExistingPersonalAgent(state);

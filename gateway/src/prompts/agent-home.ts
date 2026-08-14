@@ -112,20 +112,6 @@ export const LEGACY_MEMORY_CONTEXT_TEMPLATE_V3 =
   "\n" +
   "Read `skills show memory` for memory workflows.\n";
 
-// Used by ensureAccountHomeLayout only to recognize the generated worker
-// context immediately preceding the personal-intelligence account model.
-export const LEGACY_MEMORY_CONTEXT_TEMPLATE_V4 =
-  "# Memory\n" +
-  "\n" +
-  "All agents working for the same person share two human-owned kinds of memory:\n" +
-  "\n" +
-  "- The `personal` wiki stores durable, searchable information that is retrieved when needed.\n" +
-  "- The owner's `context.d/10-personal.md` is compact standing memory loaded into every owned agent's prompt.\n" +
-  "\n" +
-  "Do not create a private memory wiki or keep user commitments in this agent's context. Return work to Master Control; it owns the user's open commitments.\n" +
-  "\n" +
-  "Read `skills show memory` for memory workflows.\n";
-
 // Used by ensureAccountHomeLayout to seed context.d/15-memory.md for worker accounts.
 export const DEFAULT_MEMORY_CONTEXT_TEMPLATE =
   "# Memory\n" +

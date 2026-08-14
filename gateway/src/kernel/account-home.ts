@@ -11,7 +11,6 @@ import {
   LEGACY_MEMORY_CONTEXT_TEMPLATE_V1,
   LEGACY_MEMORY_CONTEXT_TEMPLATE_V2,
   LEGACY_MEMORY_CONTEXT_TEMPLATE_V3,
-  LEGACY_MEMORY_CONTEXT_TEMPLATE_V4,
   LEGACY_OPEN_LOOPS_CONTEXT,
   LEGACY_STYLE_CONTEXT,
 } from "../prompts/agent-home";
@@ -333,7 +332,6 @@ function generatedMemoryContexts(username: string): string[] {
     renderLegacyMemoryContextV1(username),
     renderLegacyMemoryContextV2(username),
     LEGACY_MEMORY_CONTEXT_TEMPLATE_V3,
-    LEGACY_MEMORY_CONTEXT_TEMPLATE_V4,
   ];
 }
 
