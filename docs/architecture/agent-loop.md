@@ -87,6 +87,19 @@ any missing built-in paths while preserving existing files.
 The assembled prompt, config, tool list, device list, and approval policy are
 cached in `currentRun` for the duration of that run.
 
+Managed `mail.received` runtime events are a restricted notification path. The
+Kernel sends only the stable message id, receipt time, a summary of at most 280
+bytes, classification, attention flag, and optional confidence. The Process
+rejects extra fields, canonicalizes the summary to one line, and renders the
+quoted email-derived summary as untrusted data rather than instructions. A mail
+notification run is persisted as notify-only, including while queued, and that
+mode is recovered after Durable Object eviction. Notify-only generations
+receive no tools, devices, or MCP bindings. The next human message starts an
+ordinary run with the normal runtime surface restored. A notify-only run may
+take one recovery turn after a
+fabricated tool response; a second such response terminates the run so an
+untrusted email cannot create an unbounded inference loop.
+
 Reply routing does not alter that standing system prompt. The first
 model-visible message that owns a run, and the next such message whenever its
 reply semantics change, receives a concise chronological annotation such as
@@ -125,6 +138,14 @@ The model response can contain text, thinking blocks, and tool calls:
   the same references, and finishes the run.
 - If there are tool calls, the process evaluates approval rules and dispatches
   each allowed call as a syscall frame.
+
+The exact tool names included in each generation request are persisted with the
+run. A returned tool call may be registered or executed only when that exact
+name was offered for that generation. Calls fabricated by a provider, including
+`Shell` or `CodeMode`, are never registered, approved, or dispatched. They are
+still preserved in assistant history with synthetic terminal tool results so
+provider history remains structurally valid and the next model turn can recover
+instead of silently completing or hanging.
 
 Only syscall-backed tools are exposed to the model. Current agent-visible tool
 names are `Read`, `Write`, `Edit`, `Delete`, `Search`, `Shell`, and `CodeMode`;
@@ -249,7 +270,8 @@ The loop treats failures as process events rather than hidden transport details.
 
 - Generation failures are appended as system messages and emitted as
   `proc.run.finished` with `status: "error"`.
-- Unknown tool names become synthetic tool-result errors.
+- Unknown or unoffered tool names become synthetic tool-result errors without
+  being registered or executed.
 - Denied or unapproved tools become tool-result errors visible to the model.
 - Kernel/device routing errors are stored as failed pending tool calls and fed
   back into the next model call.

@@ -183,7 +183,10 @@ apply normally.
 Inbound email is hostile content. The Kernel persists exact bytes before any
 inference call. Summarization uses a fixed server-owned model and prompt with no
 tools, and only its validated bounded result becomes a typed system event for
-the Inbox Process. This reduces the instruction-injection surface but does not
+the owner's Personal intelligence. The event omits separate mailbox
+identifiers, address fields, display names, subjects, raw headers, and bodies.
+Personal handles it in a notification-only run with tool, MCP, and device
+execution disabled. This reduces the instruction-injection surface but does not
 make the sender, links, attachments, or summary trusted.
 
 Explicit outbound mail is a capability-gated `mail.send` syscall for one

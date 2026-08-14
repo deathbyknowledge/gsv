@@ -183,8 +183,8 @@ After deployment:
 - verify its R2, Process, repository, and inference addresses use its immutable
   installation ID; and
 - send mail to the reviewed disposable address, then verify `mail list`,
-  `mail show <messageId>`, `mail show <messageId> --raw`, and the Inbox process
-  event without exposing raw message content as trusted instructions;
+  `mail show <messageId>`, `mail show <messageId> --raw`, and the reduced event
+  reaches Personal without exposing mailbox metadata or raw message content;
 - from that installation, send one text message with `mail send` to the exact
   verified test recipient, replay it with the same delivery ID, and verify only
   one provider message exists and the durable state settles to `accepted`;

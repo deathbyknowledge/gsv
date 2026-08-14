@@ -1,22 +1,25 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+const { ensurePersonalControllerMock } = vi.hoisted(() => ({
+  ensurePersonalControllerMock: vi.fn(),
+}));
+
 vi.mock("../shared/utils", () => ({
   sendFrameToProcess: vi.fn(),
 }));
+vi.mock("./personal-controller", () => ({
+  ensurePersonalController: ensurePersonalControllerMock,
+}));
 
 import { bodyFromBytes } from "@humansandmachines/gsv/protocol";
-import { makeShadowEntry } from "../auth/shadow";
 import { sendFrameToProcess } from "../shared/utils";
 import { runWithRealKernelSql } from "../test-support/real-kernel-sql";
-import { AuthStore } from "./auth-store";
-import { CapabilityStore } from "./capabilities";
+import { AdapterStore } from "./adapter-store";
 import type { KernelContext } from "./context";
 import { MailboxStore } from "./mailbox-store";
-import { ProcessRegistry } from "./processes";
 import {
   acceptManagedInboundMail,
   completeManagedInboundMail,
-  ensureMailboxNotificationProcess,
   managedMailAddressForOwner,
 } from "./mailbox";
 
@@ -48,11 +51,38 @@ const METADATA = {
   attachments: [],
 };
 
+const SENSITIVE_RAW = new TextEncoder().encode([
+  "X-Private-Header: PRIVATE-RAW-HEADER-SENTINEL",
+  "From: PRIVATE-DISPLAY-SENTINEL <private-envelope@example.com>",
+  "To: hank@gsv.space",
+  "Subject: PRIVATE-SUBJECT-SENTINEL",
+  "",
+  "PRIVATE-BODY-SENTINEL",
+].join("\r\n"));
+
+const SENSITIVE_METADATA = {
+  ...METADATA,
+  digest: `sha256:${"b".repeat(64)}`,
+  rawSize: SENSITIVE_RAW.byteLength,
+  envelope: {
+    ...METADATA.envelope,
+    from: "private-envelope@example.com",
+  },
+  from: {
+    name: "PRIVATE-DISPLAY-SENTINEL",
+    address: "private-envelope@example.com",
+  },
+  subject: "PRIVATE-SUBJECT-SENTINEL",
+  text: "PRIVATE-BODY-SENTINEL",
+};
+
 const sendFrameToProcessMock = vi.mocked(sendFrameToProcess);
 
 describe("managed Kernel mailbox", () => {
   beforeEach(() => {
     sendFrameToProcessMock.mockReset();
+    ensurePersonalControllerMock.mockReset();
+    ensurePersonalControllerMock.mockResolvedValue("proc:personal");
   });
 
   it("stores exact mail under the primary human and aliases exact-byte retries", async () => {
@@ -92,10 +122,32 @@ describe("managed Kernel mailbox", () => {
     });
   });
 
-  it("records one summary and idempotently delivers a typed Inbox event", async () => {
+  it("routes one reduced event to Personal even while a DM points to Work", async () => {
     await runWithRealKernelSql(async (sql) => {
-      const ctx = mailboxContext(sql, new MemoryR2Bucket());
-      const accepted = await acceptManagedInboundMail(METADATA, bodyFromBytes(RAW), ctx);
+      const storage = new MemoryR2Bucket();
+      const ctx = mailboxContext(sql, storage);
+      const accepted = await acceptManagedInboundMail(
+        SENSITIVE_METADATA,
+        bodyFromBytes(SENSITIVE_RAW),
+        ctx,
+      );
+      const mailbox = ctx.mailboxes.getPrimaryMailbox()!;
+      ctx.mailboxes.setNotificationUid(mailbox.mailboxId, 4242);
+      ctx.mailboxes.setNotificationPid(mailbox.mailboxId, "proc:legacy-inbox");
+      const dmRoute = {
+        adapter: "telegram",
+        accountId: "managed",
+        actorId: "telegram:42",
+        surfaceKind: "dm" as const,
+        surfaceId: "telegram:42",
+        uid: 1000,
+      };
+      ctx.adapters.surfaceRoutes.setRoute({
+        ...dmRoute,
+        pid: "proc:work",
+        mode: "work",
+        updatedByUid: 1000,
+      });
       sendFrameToProcessMock.mockImplementation(async (_installationId, _pid, frame) => ({
         type: "res",
         id: frame.id,
@@ -109,7 +161,7 @@ describe("managed Kernel mailbox", () => {
 
       const completion = {
         version: 1 as const,
-        intakeId: METADATA.intakeId,
+        intakeId: SENSITIVE_METADATA.intakeId,
         messageId: accepted.messageId,
         summary: {
           summary: "Mike approved the contract.",
@@ -121,28 +173,99 @@ describe("managed Kernel mailbox", () => {
       await completeManagedInboundMail(completion, ctx);
       await completeManagedInboundMail(completion, ctx);
 
-      expect(ctx.ensureMailboxNotificationProcess).toHaveBeenCalledOnce();
+      expect(ensurePersonalControllerMock).toHaveBeenCalledOnce();
+      expect(ensurePersonalControllerMock).toHaveBeenCalledWith(1000, ctx);
       expect(sendFrameToProcessMock).toHaveBeenCalledOnce();
       expect(sendFrameToProcessMock).toHaveBeenCalledWith(
         "installation-1",
-        "proc:inbox",
+        "proc:personal",
         expect.objectContaining({
           call: "proc.runtime.event.deliver",
           args: {
             eventId: accepted.messageId,
-            event: expect.objectContaining({
+            event: {
               type: "mail.received",
               messageId: accepted.messageId,
+              receivedAt: SENSITIVE_METADATA.receivedAt,
               summary: "Mike approved the contract.",
-              envelopeFrom: "mike@example.com",
-            }),
+              category: "work",
+              requiresAttention: true,
+              confidence: 0.94,
+            },
           },
         }),
       );
-      expect(ctx.mailboxes.getMessage(1000, accepted.messageId)).toMatchObject({
+      const deliveredFrame = sendFrameToProcessMock.mock.calls[0]![2];
+      expect(deliveredFrame.args.event).not.toHaveProperty("eventId");
+      const serializedFrame = JSON.stringify(deliveredFrame);
+      for (const sentinel of [
+        "mailbox:1000:primary",
+        "private-envelope@example.com",
+        "PRIVATE-DISPLAY-SENTINEL",
+        "PRIVATE-SUBJECT-SENTINEL",
+        "PRIVATE-RAW-HEADER-SENTINEL",
+        "PRIVATE-BODY-SENTINEL",
+      ]) {
+        expect(serializedFrame).not.toContain(sentinel);
+      }
+
+      const message = ctx.mailboxes.getMessage(1000, accepted.messageId)!;
+      expect(message).toMatchObject({
+        mailboxId: "mailbox:1000:primary",
+        envelopeFrom: "private-envelope@example.com",
+        displayFrom: "PRIVATE-DISPLAY-SENTINEL <private-envelope@example.com>",
+        subject: "PRIVATE-SUBJECT-SENTINEL",
         summary: "Mike approved the contract.",
         eventDeliveredAt: expect.any(Number),
       });
+      expect(storage.bytes(message.rawPath.slice(1))).toEqual(SENSITIVE_RAW);
+      expect(ctx.mailboxes.getMailbox(mailbox.mailboxId)).toMatchObject({
+        notificationUid: 4242,
+        notificationPid: "proc:legacy-inbox",
+      });
+      expect(ctx.adapters.surfaceRoutes.resolvePid(dmRoute)).toBe("proc:work");
+    });
+  });
+
+  it("retries Personal delivery with the same event id after a transient failure", async () => {
+    await runWithRealKernelSql(async (sql) => {
+      const ctx = mailboxContext(sql, new MemoryR2Bucket());
+      const accepted = await acceptManagedInboundMail(METADATA, bodyFromBytes(RAW), ctx);
+      const completion = {
+        version: 1 as const,
+        intakeId: METADATA.intakeId,
+        messageId: accepted.messageId,
+        summary: {
+          summary: "Mike approved the contract.",
+          category: "work" as const,
+          requiresAttention: true,
+          confidence: 0.94,
+        },
+      };
+      sendFrameToProcessMock
+        .mockResolvedValueOnce(null)
+        .mockImplementationOnce(async (_installationId, _pid, frame) => ({
+          type: "res",
+          id: frame.id,
+          ok: true,
+          data: {
+            eventId: accepted.messageId,
+            runId: "runtime-event-run:retry",
+            queued: false,
+          },
+        }));
+
+      await expect(completeManagedInboundMail(completion, ctx))
+        .rejects.toThrow("Personal intelligence returned no valid response");
+      expect(ctx.mailboxes.getMessage(1000, accepted.messageId)?.eventDeliveredAt).toBeNull();
+
+      await completeManagedInboundMail(completion, ctx);
+
+      expect(sendFrameToProcessMock).toHaveBeenCalledTimes(2);
+      expect(sendFrameToProcessMock.mock.calls.map((call) => call[2].args.eventId))
+        .toEqual([accepted.messageId, accepted.messageId]);
+      expect(ctx.mailboxes.getMessage(1000, accepted.messageId)?.eventDeliveredAt)
+        .toEqual(expect.any(Number));
     });
   });
 
@@ -161,81 +284,6 @@ describe("managed Kernel mailbox", () => {
       };
       expect(managedMailAddressForOwner(1000, staging)).toBe("hank@staging.gsv.space");
       expect(managedMailAddressForOwner(1001, staging)).toBeNull();
-    });
-  });
-
-  it("runs Inbox events as a persisted capability-less account", async () => {
-    await runWithRealKernelSql(async (sql) => {
-      const storage = new MemoryR2Bucket();
-      const auth = new AuthStore(sql);
-      await auth.bootstrap();
-      auth.addUser({
-        username: "hank",
-        uid: 1000,
-        gid: 1000,
-        gecos: "Hank",
-        home: "/home/hank",
-        shell: "/bin/init",
-      });
-      auth.setShadow(makeShadowEntry("hank", "password-hash"));
-      auth.addGroup({ name: "hank", gid: 1000, members: [] });
-      auth.updateGroupMembers("users", ["hank"]);
-      const caps = new CapabilityStore(sql);
-      caps.seed();
-      const procs = new ProcessRegistry(sql);
-      procs.spawn("proc:broad-inbox", {
-        uid: 1000,
-        gid: 1000,
-        gids: [1000, 100],
-        username: "hank",
-        home: "/home/hank",
-        cwd: "/home/hank",
-      }, { ownerUid: 1000, label: "Inbox" });
-      const mailboxes = new MailboxStore(sql);
-      const mailbox = mailboxes.ensureMailbox(
-        "mailbox:1000:primary",
-        1000,
-        "hank@gsv.space",
-      );
-      const ctx = {
-        env: { STORAGE: storage as unknown as R2Bucket },
-        installationId: "installation-1",
-        auth,
-        caps,
-        procs,
-        mailboxes,
-      } as unknown as KernelContext;
-      sendFrameToProcessMock.mockImplementation(async (
-        _installationId,
-        _pid,
-        frame,
-      ) => ({
-        type: "res",
-        id: frame.id,
-        ok: true,
-        data: { ok: true },
-      }));
-
-      const pid = await ensureMailboxNotificationProcess(mailbox.mailboxId, ctx);
-      const persisted = mailboxes.getMailbox(mailbox.mailboxId)!;
-      const process = procs.get(pid)!;
-
-      expect(pid).not.toBe("proc:broad-inbox");
-      expect(persisted.notificationUid).toBe(process.uid);
-      expect(process).toMatchObject({
-        ownerUid: 1000,
-        interactive: false,
-        label: "Inbox",
-      });
-      expect(process.uid).not.toBe(1000);
-      expect(auth.getShadowByUsername(process.username)?.hash).toBe("!");
-      expect(caps.resolve(process.gids)).toEqual([]);
-      await expect(ensureMailboxNotificationProcess(mailbox.mailboxId, ctx))
-        .resolves.toBe(pid);
-
-      caps.grant(process.gid, "net.fetch");
-      await expect(ensureMailboxNotificationProcess(mailbox.mailboxId, ctx))
-        .rejects.toThrow("must have no capabilities");
     });
   });
 });
@@ -262,9 +310,9 @@ function mailboxContext(sql: SqlStorage, storage: MemoryR2Bucket): KernelContext
     },
     auth,
     caps: { resolve: () => ["*"] },
+    adapters: new AdapterStore(sql),
     mailboxes: new MailboxStore(sql),
     procs: { list: () => [], get: () => null },
-    ensureMailboxNotificationProcess: vi.fn(async () => "proc:inbox"),
   } as unknown as KernelContext;
 }
 

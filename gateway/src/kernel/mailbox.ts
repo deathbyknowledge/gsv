@@ -1,6 +1,5 @@
 import type {
   BinaryBody,
-  ConnectionIdentity,
   ManagedInboundMailAccepted,
   ManagedInboundMailCompletion,
   ManagedInboundMailMetadata,
@@ -16,20 +15,13 @@ import type {
 } from "../protocol/process-frames";
 import { stableOpaqueId } from "../shared/stable-id";
 import { sendFrameToProcess } from "../shared/utils";
-import {
-  accountIdentity,
-  createAccount,
-  isUsernameAvailable,
-} from "./accounts";
-import { canOwnerDelegateRunAs } from "./account-access";
+import { accountIdentity } from "./accounts";
 import type { KernelContext } from "./context";
-import type { MailboxRecord } from "./mailbox-store";
-import { handleProcSpawn } from "./proc-handlers";
+import { ensurePersonalController } from "./personal-controller";
 
 const MAX_RAW_MAIL_BYTES = 25 * 1024 * 1024;
 const MAX_PARSED_MAIL_TEXT_BYTES = 4 * 1024 * 1024;
 const MAX_MAIL_ATTACHMENTS = 256;
-const INBOX_PROCESS_LABEL = "Inbox";
 const TEXT_ENCODER = new TextEncoder();
 
 export async function acceptManagedInboundMail(
@@ -121,7 +113,7 @@ export async function completeManagedInboundMail(
 
   const mailbox = ctx.mailboxes.getMailbox(summarized.mailboxId);
   if (!mailbox) throw new Error("Mail message belongs to an unknown mailbox");
-  const pid = await ctx.ensureMailboxNotificationProcess(mailbox.mailboxId);
+  const pid = await ensurePersonalController(mailbox.ownerUid, ctx);
   const frame: ProcessRuntimeEventDeliverRequestFrame = {
     type: "req",
     id: crypto.randomUUID(),
@@ -130,12 +122,8 @@ export async function completeManagedInboundMail(
       eventId: summarized.messageId,
       event: {
         type: "mail.received",
-        mailboxId: summarized.mailboxId,
         messageId: summarized.messageId,
         receivedAt: summarized.receivedAt,
-        envelopeFrom: summarized.envelopeFrom,
-        ...(summarized.displayFrom ? { displayFrom: summarized.displayFrom } : {}),
-        ...(summarized.subject !== null ? { subject: summarized.subject } : {}),
         summary: completion.summary.summary,
         category: completion.summary.category,
         requiresAttention: completion.summary.requiresAttention,
@@ -145,106 +133,14 @@ export async function completeManagedInboundMail(
   };
   const response = await sendFrameToProcess(ctx.installationId, pid, frame);
   if (!response || response.type !== "res" || response.id !== frame.id) {
-    throw new Error("Inbox process returned no valid response");
+    throw new Error("Personal intelligence returned no valid response");
   }
   if (!response.ok) throw new Error(response.error.message);
   const result = response.data as ProcessRuntimeEventDeliverResult | undefined;
   if (!result || result.eventId !== summarized.messageId) {
-    throw new Error("Inbox process admitted an unexpected mail event");
+    throw new Error("Personal intelligence admitted an unexpected mail event");
   }
   ctx.mailboxes.markEventDelivered(summarized.messageId);
-}
-
-export async function ensureMailboxNotificationProcess(
-  mailboxId: string,
-  ctx: KernelContext,
-): Promise<string> {
-  const mailbox = ctx.mailboxes.getMailbox(mailboxId);
-  if (!mailbox) throw new Error("Unknown mailbox");
-
-  const human = requireHumanIdentity(ctx, mailbox.ownerUid);
-  const notification = mailbox.notificationUid === null
-    ? await createMailboxNotificationAccount(mailbox, human, ctx)
-    : requireMailboxNotificationIdentity(mailbox, human, ctx);
-  if (mailbox.notificationPid) {
-    const process = ctx.procs.get(mailbox.notificationPid);
-    if (
-      process?.ownerUid === mailbox.ownerUid
-      && process.uid === notification.uid
-    ) {
-      return process.processId;
-    }
-  }
-
-  const identity: ConnectionIdentity = {
-    role: "user",
-    process: human,
-    capabilities: ctx.caps.resolve(human.gids),
-  };
-  const spawnContext: KernelContext = {
-    ...ctx,
-    identity,
-    callerOwnerUid: human.uid,
-  };
-  const spawned = await handleProcSpawn({
-    interactive: false,
-    label: INBOX_PROCESS_LABEL,
-    runAs: notification.username,
-  }, spawnContext);
-  if (!spawned.ok) throw new Error(spawned.error);
-  ctx.mailboxes.setNotificationPid(mailbox.mailboxId, spawned.pid);
-  return spawned.pid;
-}
-
-async function createMailboxNotificationAccount(
-  mailbox: MailboxRecord,
-  human: ProcessIdentity,
-  ctx: KernelContext,
-): Promise<ProcessIdentity> {
-  let suffix = 0;
-  let username = "mailbox";
-  while (!isUsernameAvailable(ctx.auth, username)) {
-    suffix += 1;
-    username = `mailbox${suffix}`;
-  }
-  const created = await createAccount(ctx, {
-    kind: "agent",
-    username,
-    gecos: "Mail notifications",
-    ownerUid: human.uid,
-    shared: false,
-    crossMemberOwner: true,
-  });
-  ctx.mailboxes.setNotificationUid(mailbox.mailboxId, created.identity.uid);
-  return requireMailboxNotificationIdentity(
-    ctx.mailboxes.getMailbox(mailbox.mailboxId)!,
-    human,
-    ctx,
-  );
-}
-
-function requireMailboxNotificationIdentity(
-  mailbox: MailboxRecord,
-  human: ProcessIdentity,
-  ctx: KernelContext,
-): ProcessIdentity {
-  const uid = mailbox.notificationUid;
-  const entry = uid === null ? null : ctx.auth.getPasswdByUid(uid);
-  const shadow = entry ? ctx.auth.getShadowByUsername(entry.username) : null;
-  if (
-    !entry
-    || !shadow
-    || !isLocked(shadow)
-    || ctx.auth.isPersonalAgentUid(entry.uid)
-    || !canOwnerDelegateRunAs(ctx.auth, human.uid, entry)
-  ) {
-    throw new Error("Mailbox notification identity is invalid");
-  }
-  const identity = accountIdentity(ctx.auth, entry);
-  if (ctx.caps.resolve(identity.gids).length !== 0) {
-    throw new Error("Mailbox notification identity must have no capabilities");
-  }
-  return identity;
 }
 
 export function managedMailAddressForOwner(

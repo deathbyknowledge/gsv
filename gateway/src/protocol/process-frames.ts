@@ -9,12 +9,8 @@ import type { Frame, RequestFrame, ResponseErrFrame } from "./frames";
 
 export type ProcessMailReceivedRuntimeEvent = {
   type: "mail.received";
-  mailboxId: string;
   messageId: string;
   receivedAt: number;
-  envelopeFrom: string;
-  displayFrom?: string;
-  subject?: string;
   summary: string;
   category: ManagedMailSummaryCategory;
   requiresAttention: boolean;

@@ -70,7 +70,6 @@ export type KernelContext = {
     outboundId: string,
     dueAtMs: number,
   ) => Promise<void>;
-  ensureMailboxNotificationProcess: (mailboxId: string) => Promise<string>;
   runSchedules: (
     args: SchedulerRunArgs,
     identity?: ConnectionIdentity,

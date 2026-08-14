@@ -82,16 +82,21 @@ the email Worker. The Worker resolves the handle through Accounts before
 addressing its installation-scoped transport Durable Object, persists an exact
 retryable copy, and hands the message to the Gateway over a service binding.
 The Kernel owns the canonical mailbox, filesystem paths, local user assignment,
-and notification Process. The adapter deletes its raw outbox chunks after the
-Kernel acknowledges durable storage; it retains only bounded delivery and usage
-state.
+and delivery to the owner's Personal intelligence. The adapter deletes its raw
+outbox chunks after the Kernel acknowledges durable storage; it retains only
+bounded delivery and usage state.
 
 The handoff has two phases. Raw mail is stored first so inference failure never
 hides a message. A separate fixed, no-tools summarization call produces bounded
-metadata, which the Kernel delivers to a dedicated Inbox Process as a typed
-system event. Raw headers, bodies, and summaries never become service frames or
-model-facing user instructions merely because an external sender supplied
-them.
+metadata, which the Kernel delivers to the owner's Personal intelligence as a
+typed system event. That event contains only the opaque message ID, receipt
+time, bounded summary, category, attention flag, and optional confidence. It
+omits separate mailbox identifiers, address fields, display names, subjects,
+raw headers, and message bodies. Personal handles it in a notification-only
+run: it can tell the user, but cannot execute tools, MCP calls, or device
+actions in that run. The summary remains untrusted external context. Upgrades
+preserve historical Inbox accounts, processes, and mailbox notification fields,
+but new mail neither consults nor updates them.
 
 The protocol source of truth is `packages/gsv/src/protocol/adapters.ts`.
 Gateway-to-adapter bindings expose lifecycle, status, activity, and send
