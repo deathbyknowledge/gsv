@@ -5,6 +5,7 @@ members = [
     "daemon",
     "native",
     "native/transcribe-helper",
+    "native/vision-helper",
 ]
 exclude = ["ripgit"]
 resolver = "2"

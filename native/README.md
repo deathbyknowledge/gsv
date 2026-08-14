@@ -67,6 +67,27 @@ the native connection flow. It reconnects without replaying commands, restores h
 applying live deltas, and preserves an unsent or ambiguously delivered thought visibly. Wayland is
 selected automatically when `WAYLAND_DISPLAY` is present; no Cargo feature is needed.
 
+### Run the local gesture debug proof
+
+The optional vision proof is a separate Rust process. It owns the camera,
+MediaPipe inference, and an extra diagnostic window; it does not send frames to
+Desktop or the gateway and it cannot trigger application actions. Build the
+pinned Linux x86-64 artifact and helper, then opt in explicitly:
+
+```bash
+./scripts/vision-mediapipe/build-linux.sh
+cargo build --package gsv-vision
+GSV_GESTURE_DEBUG=1 cargo run --manifest-path native/Cargo.toml
+```
+
+The MediaPipe build uses Bazel and its hermetic Python toolchain, but neither
+Python nor Bazel is a runtime dependency. The running proof consists of the
+Rust `gsv-vision` helper, the compiled native library, and the verified local
+model. Press `Escape` or close the diagnostic window to stop the proof without
+closing Desktop. See `native/vision-helper/README.md` for the artifact and
+override contract. This proof is development-only and is not packaged in a
+release yet.
+
 ## Interaction grammar
 
 - Start typing anywhere to replace the visible moment with a draft.

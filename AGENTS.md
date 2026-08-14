@@ -55,7 +55,7 @@ Processes have identities, histories, permissions, queues, pending work, and lif
 - `gateway/src/inference/`: provider integration and model transport.
 - `packages/gsv/`: public client and protocol types.
 - `web/`: desktop shell, setup/login, system UI, and browser-side gateway integration.
-- `native/`: GPUI desktop client, text-first interaction model, and native presentation.
+- `native/`: GPUI desktop client, text-first interaction model, native presentation, and isolated local transcription/vision helpers.
 - `cli/`: user, deployment, administration, and OS service-control commands.
 - `daemon/`: the `gsvd` machine driver, concrete tools, transfer ownership, reconnect, logging, and shutdown.
 - `adapters/`: platform-specific messaging workers and identity normalization.
@@ -129,7 +129,7 @@ gsv/
 ├── gateway/       # Kernel, Process, syscalls, inference, filesystem
 ├── packages/gsv/  # Public TypeScript client and protocol
 ├── web/           # Desktop shell and embedded app host
-├── native/        # GPUI text-first native client
+├── native/        # GPUI text-first client and isolated native helpers
 ├── cli/           # Rust operator CLI and local service control
 ├── daemon/        # gsvd machine driver runtime
 ├── adapters/      # WhatsApp, Discord, Telegram, and test channels
@@ -160,6 +160,7 @@ Validate only the surfaces affected by the change:
 - Gateway: `cd gateway && npx tsc --noEmit && npm run test:run`
 - Web: `cd web && npm run check && npm run test:run && npm run build`
 - Native client: `cargo fmt --manifest-path native/Cargo.toml --check && cargo test --manifest-path native/Cargo.toml && cargo clippy --manifest-path native/Cargo.toml --all-targets -- -D warnings`
+- Native vision helper: `cargo fmt --package gsv-vision --check && cargo test --package gsv-vision && cargo clippy --package gsv-vision --all-targets -- -D warnings`
 - Public SDK: `npm run gsv:check && npm test --workspace packages/gsv`
 - CLI: `cargo fmt --package gsv --check && cargo test --package gsv`
 - Device daemon: `cargo fmt --package gsvd --check && cargo test --package gsvd`

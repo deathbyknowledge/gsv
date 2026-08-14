@@ -16,6 +16,7 @@ const WORKSPACE_MANIFESTS = [
   "daemon/Cargo.toml",
   "native/Cargo.toml",
   "native/transcribe-helper/Cargo.toml",
+  "native/vision-helper/Cargo.toml",
 ];
 const WORKSPACE_PACKAGES = [
   "gsv",
@@ -25,6 +26,7 @@ const WORKSPACE_PACKAGES = [
   "gsvd",
   "gsv-native",
   "gsv-transcribe",
+  "gsv-vision",
 ];
 
 function fail(message) {

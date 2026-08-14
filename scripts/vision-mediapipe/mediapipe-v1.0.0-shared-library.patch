@@ -1,0 +1,199 @@
+diff --git a/.bazelrc b/.bazelrc
+index 99a0afd..221408b 100644
+--- a/.bazelrc
++++ b/.bazelrc
+@@ -124,9 +124,3 @@ build:darwin_arm64 --cpu=darwin_arm64
+ 
+ # Turn off maximum stdout size
+ build --experimental_ui_max_stdouterr_bytes=-1
+-
+-# This bazelrc file is meant to be written by a setup script.
+-try-import %workspace%/.configure.bazelrc
+-
+-# This bazelrc file can be used for user-specific custom build settings.
+-try-import %workspace%/.user.bazelrc
+diff --git a/MODULE.bazel b/MODULE.bazel
+index f5b6313..2c19d51 100644
+--- a/MODULE.bazel
++++ b/MODULE.bazel
+@@ -47,6 +47,7 @@ single_version_override(
+ bazel_dep(name = "abseil-cpp", repo_name = "com_google_absl")
+ archive_override(
+     module_name = "abseil-cpp",
++    integrity = "sha256-h+kft4Wi0CM/RZkxev1Xa3c25nMtVXvc39wRmQvTM+8=",
+     strip_prefix = "abseil-cpp-255c84dadd029fd8ad25c5efb5933e47beaa00c7",
+     urls = ["https://github.com/abseil/abseil-cpp/archive/255c84dadd029fd8ad25c5efb5933e47beaa00c7.tar.gz"],
+ )
+@@ -57,6 +58,7 @@ bazel_dep(name = "re2", version = "2025-11-05", repo_name = "com_googlesource_co
+ bazel_dep(name = "protobuf", repo_name = "com_google_protobuf")
+ archive_override(
+     module_name = "protobuf",
++    integrity = "sha256-bgm7yVC6YMOnswKAIQzSha+NfY7V4KbtEBxyr/IujYg=",
+     strip_prefix = "protobuf-6.31.1",
+     urls = ["https://github.com/protocolbuffers/protobuf/archive/refs/tags/v6.31.1.zip"],
+ )
+diff --git a/WORKSPACE b/WORKSPACE
+index c353b11..cdef083 100644
+--- a/WORKSPACE
++++ b/WORKSPACE
+@@ -366,8 +366,9 @@ http_archive(
+ http_archive(
+     name = "easyexif",
+     build_file = "@//third_party:easyexif.BUILD",
+-    strip_prefix = "easyexif-master",
+-    url = "https://github.com/mayanklahiri/easyexif/archive/master.zip",
++    sha256 = "8ed19239fd60c7c58395b70cff855537f5ed5337f06ba5dcbf7593989aedef45",
++    strip_prefix = "easyexif-cd994a3b6009bc3c1f84062e96bd7f5ad16e85f6",
++    url = "https://github.com/mayanklahiri/easyexif/archive/cd994a3b6009bc3c1f84062e96bd7f5ad16e85f6.zip",
+ )
+ 
+ # libyuv
+@@ -473,8 +474,9 @@ http_archive(
+ http_archive(
+     name = "opencv",
+     build_file_content = all_content,
+-    strip_prefix = "opencv-3.4.11",
+-    urls = ["https://github.com/opencv/opencv/archive/3.4.11.tar.gz"],
++    sha256 = "29bc44d68525fe04513d06be57833aa0c1feab1c364bf5a96793b44212009a4d",
++    strip_prefix = "opencv-e8d4259f9ab787b512b9aa1203fc816fb9f19231",
++    urls = ["https://github.com/opencv/opencv/archive/e8d4259f9ab787b512b9aa1203fc816fb9f19231.tar.gz"],
+ )
+ 
+ new_local_repository(
+diff --git a/mediapipe/tasks/c/vision/core/BUILD b/mediapipe/tasks/c/vision/core/BUILD
+index 1cc8a96..50263a3 100644
+--- a/mediapipe/tasks/c/vision/core/BUILD
++++ b/mediapipe/tasks/c/vision/core/BUILD
+@@ -48,6 +48,7 @@ cc_library(
+     srcs = ["image.cc"],
+     hdrs = ["image.h"],
+     deps = IMAGE_DEPS,
++    alwayslink = 1,
+ )
+ 
+ cc_library(
+diff --git a/mediapipe/tasks/c/vision/gesture_recognizer/BUILD b/mediapipe/tasks/c/vision/gesture_recognizer/BUILD
+index 1682081..cd4b9bb 100644
+--- a/mediapipe/tasks/c/vision/gesture_recognizer/BUILD
++++ b/mediapipe/tasks/c/vision/gesture_recognizer/BUILD
+@@ -144,7 +144,10 @@ cc_binary(
+         "nobuilder",
+         "notap",
+     ],
+-    deps = [":gesture_recognizer_lib"],
++    deps = [
++        ":gesture_recognizer_c_lib",
++        "//mediapipe/tasks/c/vision/core:image_c_lib",
++    ],
+ )
+ 
+ # bazel build --config darwin_arm64 -c opt --strip always --define MEDIAPIPE_DISABLE_GPU=1 \
+@@ -161,5 +164,8 @@ cc_binary(
+         "nobuilder",
+         "notap",
+     ],
+-    deps = [":gesture_recognizer_lib"],
++    deps = [
++        ":gesture_recognizer_c_lib",
++        "//mediapipe/tasks/c/vision/core:image_c_lib",
++    ],
+ )
+diff --git a/third_party/BUILD b/third_party/BUILD
+index bf795e2..e164c2e 100644
+--- a/third_party/BUILD
++++ b/third_party/BUILD
+@@ -147,12 +147,6 @@ bzl_library(
+ # linker, so if library A depends on library B, library B must come _after_.
+ # Hence core is at the bottom.
+ OPENCV_MODULES = [
+-    "calib3d",
+-    "features2d",
+-    "highgui",
+-    "video",
+-    "videoio",
+-    "imgcodecs",
+     "imgproc",
+     "core",
+ ]
+@@ -171,23 +165,77 @@ cmake(
+     # here are serving to provide some CMake script configuration options
+     cache_entries = {
+         "CMAKE_BUILD_TYPE": "Release",
++        "CMAKE_SKIP_INSTALL_RPATH": "ON",
++        "CMAKE_SKIP_RPATH": "ON",
+         # The module list is always sorted alphabetically so that we do not
+         # cause a rebuild when changing the link order.
+         "BUILD_LIST": ",".join(sorted(OPENCV_MODULES)),
+         "BUILD_TESTS": "OFF",
+         "BUILD_PERF_TESTS": "OFF",
+         "BUILD_EXAMPLES": "OFF",
++        "BUILD_DOCS": "OFF",
++        "BUILD_IPP_IW": "OFF",
++        "BUILD_ITT": "OFF",
++        "BUILD_JAVA": "OFF",
++        "BUILD_PACKAGE": "OFF",
++        "BUILD_ZLIB": "ON",
+         "BUILD_SHARED_LIBS": "ON" if OPENCV_SHARED_LIBS else "OFF",
++        "BUILD_opencv_apps": "OFF",
++        "BUILD_opencv_js": "OFF",
++        "BUILD_opencv_python2": "OFF",
++        "BUILD_opencv_python3": "OFF",
++        "BUILD_opencv_world": "OFF",
++        "OPENCV_GENERATE_PKGCONFIG": "OFF",
++        "WITH_1394": "OFF",
++        "WITH_ARAVIS": "OFF",
++        "WITH_CLP": "OFF",
++        "WITH_CUDA": "OFF",
++        "WITH_EIGEN": "OFF",
++        "WITH_FFMPEG": "OFF",
++        "WITH_GDAL": "OFF",
++        "WITH_GDCM": "OFF",
++        "WITH_GIGEAPI": "OFF",
++        "WITH_GPHOTO2": "OFF",
++        "WITH_GSTREAMER": "OFF",
++        "WITH_GTK": "OFF",
++        "WITH_HALIDE": "OFF",
++        "WITH_INF_ENGINE": "OFF",
++        "WITH_IPP": "OFF",
+         "WITH_ITT": "OFF",
+         "WITH_JASPER": "OFF",
+-        "WITH_JPEG": "ON",
+-        "WITH_PNG": "ON",
+-        "WITH_TIFF": "ON",
++        "WITH_JPEG": "OFF",
++        "WITH_LAPACK": "OFF",
++        "WITH_LIBV4L": "OFF",
++        "WITH_MFX": "OFF",
++        "WITH_NGRAPH": "OFF",
+         "WITH_OPENCL": "OFF",
++        "WITH_OPENCLAMDBLAS": "OFF",
++        "WITH_OPENCLAMDFFT": "OFF",
++        "WITH_OPENCL_SVM": "OFF",
++        "WITH_OPENEXR": "OFF",
++        "WITH_OPENGL": "OFF",
++        "WITH_OPENNI": "OFF",
++        "WITH_OPENNI2": "OFF",
++        "WITH_OPENMP": "OFF",
++        "WITH_OPENVX": "OFF",
++        "WITH_PNG": "OFF",
++        "WITH_PROTOBUF": "OFF",
++        "WITH_PVAPI": "OFF",
++        "WITH_QT": "OFF",
++        "WITH_QUIRC": "OFF",
++        "WITH_TBB": "OFF",
++        "WITH_TENGINE": "OFF",
++        "WITH_TIFF": "OFF",
++        "WITH_UNICAP": "OFF",
++        "WITH_V4L": "OFF",
++        "WITH_VA": "OFF",
++        "WITH_VA_INTEL": "OFF",
++        "WITH_VTK": "OFF",
+         "WITH_WEBP": "OFF",
++        "WITH_XIMEA": "OFF",
++        "WITH_XINE": "OFF",
+         # Optimization flags
+         "CV_ENABLE_INTRINSICS": "ON",
+-        "WITH_EIGEN": "ON",
+         "WITH_PTHREADS": "ON",
+         "WITH_PTHREADS_PF": "ON",
+         # When building tests, by default Bazel builds them in dynamic mode.

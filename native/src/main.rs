@@ -13,6 +13,7 @@ mod startup;
 mod theme;
 mod transcription;
 mod typography;
+mod vision_debug;
 
 use std::borrow::Cow;
 use std::env;
@@ -43,6 +44,13 @@ fn main() {
         client::DesktopStartup::Failed(message) => {
             eprintln!("GSV Desktop could not start: {message}");
             return;
+        }
+    };
+    let vision_debug = match vision_debug::start_from_env() {
+        Ok(helper) => helper,
+        Err(error) => {
+            eprintln!("GSV gesture debug helper is unavailable: {error}");
+            None
         }
     };
 
@@ -77,6 +85,10 @@ fn main() {
             cx.quit();
         }
     });
+
+    if let Some(helper) = vision_debug {
+        helper.shutdown();
+    }
 }
 
 fn graphical_session_available() -> bool {

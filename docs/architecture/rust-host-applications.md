@@ -63,6 +63,17 @@ presentation, microphone preference, and the same-user local control server.
 Desktop does not need `gsvd` to chat; the daemon only makes the local machine
 available as a syscall target.
 
+Platform-native, high-cost Desktop work runs in separately supervised helpers.
+`gsv-transcribe` owns local microphone capture and speech inference. The
+development-only `gsv-vision` proof owns camera capture, MediaPipe inference,
+and its diagnostic window; camera frames never enter GPUI or the gateway. It is
+started only by the exact `GSV_GESTURE_DEBUG=1` opt-in and currently exposes no
+gesture actions or control IPC. Its runtime is Rust plus a pinned native
+MediaPipe library and model—Python and Bazel are build tools, not Desktop
+runtime dependencies. `gsv-vision` is not part of the release distribution
+until the proof, permissions, packaging, and model-redistribution policy are
+accepted deliberately.
+
 The local protocol exposes `activate`, redacted `status`, `new`, `use`, and the
 narrow `microphone list/use/default` operations. Its endpoint must be accessible
 only to the current OS user. Credentials, drafts, attachment paths, approval
