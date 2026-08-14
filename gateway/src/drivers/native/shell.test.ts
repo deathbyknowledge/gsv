@@ -13,6 +13,8 @@ import {
 import { sendFrameToProcess } from "../../shared/utils";
 import type { KernelContext } from "../../kernel/context";
 import type { DeviceRecord } from "../../kernel/devices";
+import type { ProcessRecord } from "../../kernel/processes";
+import type { SurfaceRouteRecord } from "../../kernel/surface-routes";
 import {
   bodyFromText,
   bodyToBytes,
@@ -79,6 +81,29 @@ function makeDevice(partial: Partial<DeviceRecord> & { device_id: string }): Dev
     last_seen_at: partial.last_seen_at ?? now,
     connected_at: partial.connected_at ?? now,
     disconnected_at: partial.disconnected_at ?? null,
+  };
+}
+
+function makeProcess(
+  partial: Partial<ProcessRecord> & { processId: string },
+): ProcessRecord {
+  return {
+    processId: partial.processId,
+    parentPid: partial.parentPid ?? null,
+    uid: partial.uid ?? IDENTITY.uid,
+    ownerUid: partial.ownerUid ?? IDENTITY.uid,
+    interactive: partial.interactive ?? true,
+    gid: partial.gid ?? IDENTITY.gid,
+    gids: partial.gids ?? [...IDENTITY.gids],
+    username: partial.username ?? IDENTITY.username,
+    home: partial.home ?? IDENTITY.home,
+    cwd: partial.cwd ?? IDENTITY.cwd,
+    state: partial.state ?? "idle",
+    activeRunId: partial.activeRunId ?? null,
+    queuedCount: partial.queuedCount ?? 0,
+    lastActiveAt: partial.lastActiveAt ?? null,
+    label: partial.label ?? null,
+    createdAt: partial.createdAt ?? 1,
   };
 }
 
@@ -315,6 +340,34 @@ function enableTelegramMessaging(ctx: KernelContext) {
   return { adapterSend, link, status };
 }
 
+function enableMessageRouteStore(
+  ctx: KernelContext,
+  processes: ProcessRecord[],
+) {
+  let route: SurfaceRouteRecord | null = null;
+  const setRoute = vi.fn((input: Parameters<KernelContext["adapters"]["surfaceRoutes"]["setRoute"]>[0]) => {
+    route = { ...input, updatedAt: 1_800_000_000_000 };
+    return route;
+  });
+  const clearRoute = vi.fn(() => {
+    const cleared = route !== null;
+    route = null;
+    return cleared;
+  });
+  Object.assign(ctx.adapters.surfaceRoutes, {
+    get: vi.fn(() => route),
+    list: vi.fn(() => route ? [route] : []),
+    setRoute,
+    clearRoute,
+  });
+  ctx.procs = {
+    getOwnerUid: vi.fn(() => IDENTITY.uid),
+    list: vi.fn(() => processes),
+    get: vi.fn((pid: string) => processes.find((process) => process.processId === pid) ?? null),
+  } as unknown as KernelContext["procs"];
+  return { setRoute, clearRoute };
+}
+
 describe("native shell execution", () => {
   it("keeps command stderr visible on non-zero exits", async () => {
     const result = await handleShellExec(
@@ -469,7 +522,7 @@ describe("native shell capability discovery", () => {
 
     expect(result.ok).toBe(true);
     expect(result.stdout).toContain("GSV live capability manual");
-    expect(result.stdout).toContain("message      Send messages and file attachments");
+    expect(result.stdout).toContain("message      Send messages, attach files, and route adapter chats");
     expect(result.stdout).toContain("skills       Inspect and maintain reusable agent workflows");
     expect(result.stdout).not.toContain("GSV manual pages");
   });
@@ -483,6 +536,7 @@ describe("native shell capability discovery", () => {
     ["run this every weekday morning", "crontab"],
     ["save this workflow for next time", "skills"],
     ["send this file to the chat", "message"],
+    ["start a new chat in this conversation", "message"],
   ])("maps a plain-language task '%s' to %s", async (query, expectedCommand) => {
     const result = await handleShellExec(
       { input: `man --search -- '${query}'` },
@@ -544,6 +598,7 @@ describe("native shell capability discovery", () => {
     expect(result.stdout).toContain("message current [--json]");
     expect(result.stdout).toContain("[--delivery-id ID] [--also]");
     expect(result.stdout).toContain("message send --to DESTINATION");
+    expect(result.stdout).toContain("message route set --process PID_OR_LABEL");
     expect(result.stdout).toContain("--attach PATH");
   });
 
@@ -2871,6 +2926,94 @@ describe("native administration shell commands", () => {
       expect.objectContaining({ text: "opaque route" }),
       undefined,
     );
+  });
+
+  it("shows and changes the process route for an adapter chat", async () => {
+    const ctx = makeContext({
+      capabilities: ["shell.exec", "adapter.route"],
+      processRunId: "run-telegram-route",
+    });
+    enableTelegramMessaging(ctx);
+    const target = makeProcess({
+      processId: "proc:groceries",
+      label: "groceries",
+      username: "helper",
+      uid: 1001,
+    });
+    const { setRoute, clearRoute } = enableMessageRouteStore(ctx, [target]);
+
+    const set = await handleShellExec({
+      input: "message route set --process groceries",
+    }, ctx);
+    expect(set).toMatchObject({ status: "completed", exitCode: 0 });
+    expect(set.stdout).toContain("routed=true");
+    expect(set.stdout).toContain("process=proc:groceries");
+    expect(set.stdout).not.toContain("chat-42");
+    expect(set.stdout).not.toContain("account=bot");
+    expect(setRoute).toHaveBeenCalledWith(expect.objectContaining({
+      adapter: "telegram",
+      accountId: "bot",
+      actorId: "chat-42",
+      surfaceKind: "dm",
+      surfaceId: "chat-42",
+      uid: IDENTITY.uid,
+      pid: "proc:groceries",
+      updatedByUid: IDENTITY.uid,
+    }));
+
+    const shown = await handleShellExec({ input: "message route show --json" }, ctx);
+    expect(shown).toMatchObject({ status: "completed", exitCode: 0 });
+    expect(JSON.parse(shown.stdout)).toMatchObject({
+      routes: [{
+        chat: "Telegram direct message",
+        process: "proc:groceries",
+        processState: "idle",
+        processLabel: "groceries",
+      }],
+    });
+    expect(shown.stdout).not.toContain("chat-42");
+    expect(shown.stdout).not.toContain('"bot"');
+
+    const listed = await handleShellExec({ input: "message route list" }, ctx);
+    expect(listed).toMatchObject({ status: "completed", exitCode: 0 });
+    expect(listed.stdout).toContain("proc:groceries");
+    expect(listed.stdout).toContain("Telegram direct message");
+    expect(listed.stdout).not.toContain("chat-42");
+
+    const cleared = await handleShellExec({ input: "message route clear" }, ctx);
+    expect(cleared).toMatchObject({ status: "completed", exitCode: 0 });
+    expect(cleared.stdout).toContain("cleared=true");
+    expect(clearRoute).toHaveBeenCalledTimes(1);
+  });
+
+  it("only routes chats to owned interactive processes", async () => {
+    const ctx = makeContext({
+      capabilities: ["shell.exec", "adapter.route"],
+      processRunId: "run-telegram-route-denied",
+    });
+    enableTelegramMessaging(ctx);
+    enableMessageRouteStore(ctx, [makeProcess({
+      processId: "proc:background",
+      label: "background",
+      interactive: false,
+    })]);
+
+    const result = await handleShellExec({
+      input: "message route set --process background",
+    }, ctx);
+    expect(result).toMatchObject({ status: "failed", exitCode: 1 });
+    expect(result.stderr).toContain("No owned interactive process matches");
+
+    enableMessageRouteStore(ctx, [makeProcess({
+      processId: "proc:foreign",
+      label: "foreign",
+      ownerUid: 2000,
+    })]);
+    const foreign = await handleShellExec({
+      input: "message route set --process foreign",
+    }, ctx);
+    expect(foreign).toMatchObject({ status: "failed", exitCode: 1 });
+    expect(foreign.stderr).toContain("Process not found");
   });
 
   it("bridges a GSV file into an explicit adapter message body", async () => {

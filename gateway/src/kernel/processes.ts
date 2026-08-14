@@ -39,6 +39,36 @@ export type ProcessRecord = {
   createdAt: number;
 };
 
+export type ProcessSelectorResult =
+  | { kind: "found"; record: ProcessRecord }
+  | { kind: "ambiguous"; records: ProcessRecord[] }
+  | { kind: "missing" };
+
+export function findInteractiveProcess(
+  selector: string,
+  processes: readonly ProcessRecord[],
+): ProcessSelectorResult {
+  const normalized = selector.trim().toLowerCase();
+  if (!normalized) return { kind: "missing" };
+
+  const interactive = processes.filter((record) => record.interactive);
+  const exact = interactive.find((record) => record.processId.toLowerCase() === normalized);
+  if (exact) return { kind: "found", record: exact };
+
+  const matches = interactive.filter((record) => {
+    const pid = record.processId.toLowerCase();
+    const shortPid = pid.slice(0, 13);
+    const label = record.label?.trim().toLowerCase();
+    return pid.startsWith(normalized)
+      || shortPid === normalized
+      || shortPid.startsWith(normalized)
+      || label === normalized;
+  });
+  if (matches.length === 1) return { kind: "found", record: matches[0] };
+  if (matches.length > 1) return { kind: "ambiguous", records: matches };
+  return { kind: "missing" };
+}
+
 export class ProcessRegistry {
   constructor(private readonly sql: SqlStorage) {}
 

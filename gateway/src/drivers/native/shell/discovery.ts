@@ -48,9 +48,13 @@ const NATIVE_COMMAND_DESCRIPTORS: Record<string, NativeCommandDescriptor> = {
   codemode: command("Run a reusable JavaScript GSV tool workflow.", "Combine several shell, filesystem, or connected integration operations in one scripted workflow.", ["script", "workflow", "automation", "tools", "javascript"]),
   mcp: command("Discover and call connected MCP integrations.", "Use an external connected service or search its available integration tools.", ["integration", "service", "connector", "api", "tools", "mcp"]),
   proc: command("Inspect, delegate to, message, and control GSV agent processes.", "Create a subagent, delegate a task, contact another agent, or inspect agent history and lifecycle.", ["agent", "subagent", "delegate", "process", "message", "history"]),
-  message: command("Send messages and file attachments through the active process run.", "Attach a generated or copied file to the automatic final reply, or send an additional message through a chat adapter.", ["chat", "reply", "send", "attachment", "file", "image", "photo", "audio", "document"], [], [
+  message: command("Send messages, attach files, and route adapter chats.", "Attach a file to the automatic reply, send an additional adapter message, or choose which process receives future messages from a chat.", ["chat", "reply", "send", "attachment", "file", "image", "photo", "audio", "document", "route", "conversation", "new chat", "switch process"], [], [
     "message current [--json]",
     "message destinations [--all] [--json]",
+    "message route show [--to here|DESTINATION] [--json]",
+    "message route list [--json]",
+    "message route set --process PID_OR_LABEL [--to here|DESTINATION] [--json]",
+    "message route clear [--to here|DESTINATION] [--json]",
     "message attach PATH... [--mime TYPE]",
     "message send --to DESTINATION [--message TEXT] [--attach PATH [--mime TYPE]] [--delivery-id ID] [--also]",
   ]),

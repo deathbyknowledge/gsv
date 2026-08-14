@@ -129,6 +129,13 @@ sends text or one filesystem attachment as an extra message. An explicit
 send to the current automatic destination requires `--also`, preventing an
 accidental duplicate final reply.
 
+`message route` is the user- and agent-facing control for the persistent
+surface-to-process mapping. It selects destinations through `here`, opaque GSV
+ids, or unambiguous generic labels rather than provider fields, and only accepts
+owned interactive processes. Changing the persistent route does not change the
+current run route: the current answer returns to its origin, while the next
+inbound message enters the newly selected process.
+
 Each adapter derives a stable account-scoped ingress `deliveryId` from the
 provider's complete event identity. For example, WhatsApp includes the group
 participant as well as the stanza id. Before link, command, approval, routing,

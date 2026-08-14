@@ -5,6 +5,7 @@ import type {
 } from "@humansandmachines/gsv/protocol";
 import type { KernelContext } from "./context";
 import type { IdentityLinkRecord } from "./identity-links";
+import type { SurfaceRouteRecord } from "./surface-routes";
 import { resolveCallerOwnerUid } from "./context";
 import { stableOpaqueId } from "../shared/stable-id";
 
@@ -93,7 +94,7 @@ export function assertAdapterMessageDestinationAccess(
 
 export async function listVisibleAdapterMessageDestinations(
   ctx: KernelContext,
-  options: { includeOffline?: boolean } = {},
+  options: { includeOffline?: boolean; includeUnavailable?: boolean } = {},
 ): Promise<VisibleAdapterMessageDestination[]> {
   if (!ctx.identity || ctx.identity.role !== "user") {
     return [];
@@ -109,7 +110,7 @@ export async function listVisibleAdapterMessageDestinations(
     if (!options.includeOffline && !online) {
       return;
     }
-    if (!adapterSendServiceAvailable(ctx, adapter)) {
+    if (!options.includeUnavailable && !adapterSendServiceAvailable(ctx, adapter)) {
       return;
     }
     const destination = normalizeAdapterMessageDestination({
@@ -122,7 +123,7 @@ export async function listVisibleAdapterMessageDestinations(
     const key = destinationKey(destination);
     candidateMap.set(key, {
       id: "",
-      label: `${adapterDisplayName(adapter)} ${surfaceLabel(destination.surface)}`,
+      label: adapterMessageDestinationLabel(destination),
       online,
       destination,
     });
@@ -159,7 +160,7 @@ export async function listVisibleAdapterMessageDestinations(
 export async function resolveVisibleAdapterMessageDestination(
   query: string,
   ctx: KernelContext,
-  options: { includeOffline?: boolean } = {},
+  options: { includeOffline?: boolean; includeUnavailable?: boolean } = {},
 ): Promise<VisibleAdapterMessageDestination> {
   const needle = query.trim().toLowerCase();
   if (!needle) {
@@ -188,6 +189,40 @@ export async function resolveVisibleAdapterMessageDestination(
   );
 }
 
+export function updateAdapterMessageDestinationRoute(
+  destination: AdapterMessageDestination,
+  pid: string | null,
+  ctx: KernelContext,
+): SurfaceRouteRecord | null {
+  const normalized = normalizeAdapterMessageDestination(destination);
+  const ownerUid = resolveCallerOwnerUid(ctx);
+  assertAdapterMessageDestinationAccess(normalized, ownerUid, ctx);
+  const key = adapterMessageDestinationRouteKey(normalized);
+  const existing = ctx.adapters.surfaceRoutes.get(key);
+  if (existing && existing.uid !== ownerUid) {
+    throw new Error("Adapter route ownership does not match the linked identity");
+  }
+  if (!pid) {
+    if (existing) ctx.adapters.surfaceRoutes.clearRoute(key);
+    return null;
+  }
+
+  const process = ctx.procs.get(pid);
+  if (!process || process.ownerUid !== ownerUid) {
+    throw new Error("Process not found");
+  }
+  if (!process.interactive) {
+    throw new Error("Adapter destinations can only route to interactive processes");
+  }
+
+  return ctx.adapters.surfaceRoutes.setRoute({
+    ...key,
+    uid: ownerUid,
+    pid: process.processId,
+    updatedByUid: ctx.identity!.process.uid,
+  });
+}
+
 export async function adapterMessageDestinationId(
   destination: AdapterMessageDestination,
   ownerUid: number,
@@ -202,6 +237,13 @@ export async function adapterMessageDestinationId(
     normalized.surface.id,
     normalized.surface.threadId ?? null,
   ]);
+}
+
+export function adapterMessageDestinationLabel(
+  destination: AdapterMessageDestination,
+): string {
+  const normalized = normalizeAdapterMessageDestination(destination);
+  return `${adapterDisplayName(normalized.adapter)} ${surfaceLabel(normalized.surface)}`;
 }
 
 export function identityLinkAllowsSurface(
@@ -260,6 +302,24 @@ function destinationKey(destination: AdapterMessageDestination): string {
     destination.surface.id,
     destination.surface.threadId ?? "",
   ].join("\0");
+}
+
+export function adapterMessageDestinationRouteKey(destination: AdapterMessageDestination): {
+  adapter: string;
+  accountId: string;
+  actorId: string;
+  surfaceKind: AdapterSurfaceKind;
+  surfaceId: string;
+  threadId?: string;
+} {
+  return {
+    adapter: destination.adapter,
+    accountId: destination.accountId,
+    actorId: destination.actorId,
+    surfaceKind: destination.surface.kind,
+    surfaceId: destination.surface.id,
+    ...(destination.surface.threadId ? { threadId: destination.surface.threadId } : {}),
+  };
 }
 
 function adapterSendServiceAvailable(ctx: KernelContext, adapter: string): boolean {

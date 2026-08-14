@@ -109,6 +109,12 @@ Explicit outbound delivery resolves an opaque authorized surface from
 `message destinations`; adapter account status and administration remain on
 the `adapter.*` control-plane API.
 
+The native `message route` command exposes the persistent mapping without
+requiring adapter-specific fields. It resolves `here`, opaque destination ids,
+or unambiguous labels, and can show, list, set, or clear routes. The Kernel
+requires the destination to belong to the caller and the selected process to be
+an owned interactive process.
+
 Inbound behavior:
 
 - Linked actor: resolve the local uid and deliver to a process.

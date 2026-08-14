@@ -51,6 +51,7 @@ import { ensurePersonalAgent } from "./agents";
 import { ensureMasterControlProcess } from "./master-control";
 import { canOwnerRunAsAccount } from "./account-access";
 import { isLocked } from "../auth/shadow";
+import { findInteractiveProcess } from "./processes";
 import type { AdapterStatusRecord } from "./adapter-status";
 import type { IdentityLinkRecord } from "./identity-links";
 import {
@@ -1698,7 +1699,7 @@ async function handleAdapterCommand(args: {
       return replyToAdapterCommand(message, "This chat now uses a new personal-agent process.");
     }
 
-    const processMatch = findProcessForSelector(selector, uid, ctx);
+    const processMatch = findInteractiveProcess(selector, ctx.procs.list(uid));
     if (processMatch.kind === "ambiguous") {
       return replyToAdapterCommand(message, `More than one process matches "${selector}". Use a longer process id from /list.`);
     }
@@ -1822,42 +1823,6 @@ function renderAdapterRouteList(uid: number, ctx: KernelContext): string {
 
   lines.push("", "Use /use personal, /use <agent-name>, or /use <process-id>.");
   return lines.join("\n");
-}
-
-type ProcessSelectorResult =
-  | { kind: "found"; record: NonNullable<ReturnType<KernelContext["procs"]["get"]>> }
-  | { kind: "ambiguous" }
-  | { kind: "missing" };
-
-function findProcessForSelector(selector: string, uid: number, ctx: KernelContext): ProcessSelectorResult {
-  const normalized = selector.trim().toLowerCase();
-  if (!normalized) {
-    return { kind: "missing" };
-  }
-
-  const processes = ctx.procs.list(uid).filter((record) => record.interactive);
-  const exact = processes.find((record) => record.processId.toLowerCase() === normalized);
-  if (exact) {
-    return { kind: "found", record: exact };
-  }
-
-  const matches = processes.filter((record) => {
-    const pid = record.processId.toLowerCase();
-    const shortPid = shortProcessId(record.processId).toLowerCase();
-    const label = record.label?.trim().toLowerCase();
-    return pid.startsWith(normalized)
-      || shortPid === normalized
-      || shortPid.startsWith(normalized)
-      || label === normalized;
-  });
-
-  if (matches.length === 1) {
-    return { kind: "found", record: matches[0] };
-  }
-  if (matches.length > 1) {
-    return { kind: "ambiguous" };
-  }
-  return { kind: "missing" };
 }
 
 type RunnableAgent = {

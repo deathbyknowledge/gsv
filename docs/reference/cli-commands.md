@@ -58,6 +58,10 @@ proc send <pid> [--metadata-json json] <message>
 proc call <pid> [--metadata-json json] [--timeout 60s] <message>
 message current [--json]
 message destinations [--all] [--json]
+message route show [--to here|DESTINATION] [--json]
+message route list [--json]
+message route set --process PID_OR_LABEL [--to here|DESTINATION] [--json]
+message route clear [--to here|DESTINATION] [--json]
 message attach PATH... [--mime TYPE]
 message send --to DESTINATION [--message TEXT] [--attach PATH [--mime TYPE]] [--delivery-id ID] [--also]
 img2txt [caption] [--length short|normal|long] [--stream] IMAGE
@@ -108,6 +112,16 @@ also includes known authorized destinations whose adapter account is offline.
 Group, channel, and thread entries appear only after the linked actor addresses
 GSV on that exact surface. Entries use opaque GSV ids and generic labels;
 provider account, actor, surface, and message ids are not printed.
+
+`message route` manages the persistent mapping from an authorized adapter
+conversation to one of the owner's interactive processes. `--to` defaults to
+`here` during an adapter-originated run; elsewhere, pass an opaque destination
+id or unambiguous label from `message destinations --all`. `route set` accepts
+a full or unique process-id prefix or an unambiguous process label. A route
+change controls future inbound messages only, so the run making the change
+still returns its final reply to the conversation that started it. To begin a
+fresh conversation, create a process with `proc spawn`, then route the chat to
+the returned pid.
 
 `img2txt` uses Moondream 3.1 as its only image reader. With no subcommand it
 returns a normal caption. `query` requires the caller's prompt; there is no
