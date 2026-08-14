@@ -92,12 +92,15 @@ The inbound path looks like this:
    top-level media body.
 4. The Kernel resolves the adapter account and external actor.
 5. The Kernel checks the identity link and non-DM activation policy.
-6. The Kernel records the actor/thread-scoped observed surface and resolves its
-   process route.
+6. A private DM updates the owner's last-active linked private destination and
+   resolves PERSONAL HOME or an explicit work override. A shared surface
+   resolves its actor/thread-scoped persisted route.
 7. Media is streamed into process-owned storage, and the Kernel creates the run
    reply route before admitting the message.
-8. The message is delivered to the routed process. Any unrouted surface starts
-   a new interactive process running as the owner's personal agent.
+8. The message is delivered to the routed process. Unrouted private DMs converge
+   on the owner's canonical personal controller without writing a route; an
+   unrouted group, channel, or thread starts and binds a separate interactive
+   process running as the owner's personal agent.
 9. The process runs the normal agent loop and emits `proc.run.*` signals.
 
 The important point is that inbound adapter traffic does not create a special
@@ -108,12 +111,15 @@ Desktop use.
 
 The automatic outbound path is the reverse:
 
-1. A process produces terminal output.
+1. A process produces terminal output or requests HIL.
 2. The Kernel looks up the exact run route created during admission.
-3. It rechecks the linked actor's destination authority.
-4. If the route is an adapter route, the Kernel sends the reply through the
+3. If no exact route exists and this is the canonical personal controller, the
+   Kernel may materialize an adapter run route from the owner's last-active
+   linked private destination. Other processes never use this fallback.
+4. It rechecks the linked actor's destination authority.
+5. If the route is an adapter route, the Kernel sends the reply through the
    adapter worker.
-5. The adapter worker formats it for the chat platform and delivers it.
+6. The adapter worker formats it for the chat platform and delivers it.
 
 Again, the adapter is a transport surface, not the place where durable agent
 state lives. The agent normally returns its final answer without calling an
@@ -128,12 +134,15 @@ sends text or one filesystem attachment as an extra message. An explicit
 send to the current automatic destination requires `--also`, preventing an
 accidental duplicate final reply.
 
-`message route` is the user- and agent-facing control for the persistent
-surface-to-process mapping. It selects destinations through `here`, opaque GSV
-ids, or unambiguous generic labels rather than provider fields, and only accepts
-owned interactive processes. Changing the persistent route does not change the
-current run route: the current answer returns to its origin, while the next
-inbound message enters the newly selected process.
+`message route` is the process-facing control for persistent group, channel,
+and thread mappings. It selects destinations through `here`, opaque GSV ids, or
+unambiguous generic labels rather than provider fields, and only accepts owned
+interactive processes. The canonical personal process may also set a private
+DM to an owned non-personal process when that exact latest DM message started
+its current run. This opens an explicitly labeled INTERNAL WORK / WORK SESSION;
+the human uses `/home` for the canonical PERSONAL HOME.
+Changing a selection does not change an existing run route: the current answer
+returns to its origin, while the next inbound message enters the new selection.
 
 Each adapter derives a stable account-scoped ingress `deliveryId` from the
 provider's complete event identity. For example, WhatsApp includes the group
@@ -221,14 +230,21 @@ platform's mention or reply semantics. The Kernel drops other non-DM messages.
 
 ## Surface routing
 
-After an actor is linked and addresses GSV on a surface, the Kernel can route
-that observed destination to a specific process. The key includes adapter,
-account, actor, surface kind, surface id, and optional thread id.
+After an actor is linked, a private DM defaults to the owner's one canonical
+personal controller. No default route row is stored. At the user's request,
+that controller can open a direct line to an existing non-personal process;
+the current answer confirms it and the next message enters work. The Kernel
+rejects a late handoff if a newer private message or selection won. `/home`
+clears the override immediately and gives the personal controller a typed
+return event containing the work PID without mirroring the transcript. Tokened
+HIL decisions search only the owner's `waiting_hil` interactive processes,
+which preserves approval correlation after leaving a work session.
 
-That means inbound adapter traffic can continue in its routed process or move
-to another existing process. When no route exists, the surface starts and binds
-an independent interactive process running as the owner's personal agent.
-Explicit `/use` and `message route` process selection remain available.
+Groups, channels, and threads use actor-scoped surface routes. Their key
+includes adapter, account, actor, surface kind, surface id, and optional thread
+id. When none exists, the shared surface starts and binds an independent
+interactive process running as the owner's personal agent. `message route`
+remains available for these non-private surfaces.
 
 This is what lets GSV keep one durable process model while still supporting
 multiple external surfaces. Actor scope is important: two linked GSV users can
@@ -287,6 +303,14 @@ resume or reconcile the exact operation before completing the receipt. V014
 adds the adapter-owned provider delivery id. During an upgrade, legacy receipts
 are reused only when the old actor-scoped identity resolves unambiguously;
 ambiguous legacy matches fail closed instead of repeating side effects.
+
+V023 adds the unique per-owner personal-controller slot. V024 adds explicit
+`legacy`, `work`, and `surface` route modes: existing private rows drain as
+legacy while existing non-private rows remain shared-surface routes. V025 adds
+the one-per-owner last-active private adapter destination. Its timestamp-aware
+upsert prevents an older provider replay from replacing newer private activity,
+and future timestamps are clamped to receipt time so they cannot freeze the
+pointer. Every fallback still rechecks the live identity link before delivery.
 
 ## Platform-specific quirks stay inside the adapter
 

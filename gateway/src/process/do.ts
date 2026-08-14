@@ -88,6 +88,9 @@ import type {
   ProcessRequestFrame,
   ProcessRunAttachArgs,
   ProcessRunAttachResult,
+  ProcessRuntimeEvent,
+  ProcessRuntimeEventDeliverArgs,
+  ProcessRuntimeEventDeliverResponseFrame,
   ProcessScheduleDeliverArgs,
   ProcessScheduleDeliverResponseFrame,
 } from "../protocol/process-frames";
@@ -273,7 +276,19 @@ type PreparedToolArgs = {
 
 const PROCESS_KILLED_TOMBSTONE_KEY = "__gsv_process_killed__";
 
-function tombstoneKilledProcessStorage(storage: DurableObjectStorage): void {
+type ProcessKilledTombstone = {
+  version: 1;
+  pid: string;
+  uid: number | null;
+  result: Extract<ProcKillResult, { ok: true }>;
+  cleanup: "pending" | "completed";
+  pendingCleanup: Array<"alarm" | "media">;
+};
+
+function tombstoneKilledProcessStorage(
+  storage: DurableObjectStorage,
+  tombstone: ProcessKilledTombstone,
+): void {
   storage.transactionSync(() => {
     const tableNames = storage.sql.exec<{ name: string }>(
       `SELECT name
@@ -293,7 +308,7 @@ function tombstoneKilledProcessStorage(storage: DurableObjectStorage): void {
     for (const key of kvKeys) {
       storage.kv.delete(key);
     }
-    storage.kv.put(PROCESS_KILLED_TOMBSTONE_KEY, true);
+    storage.kv.put(PROCESS_KILLED_TOMBSTONE_KEY, tombstone);
   });
 }
 
@@ -324,6 +339,7 @@ type RuntimeEventAdmission =
 
 const TOOL_APPROVAL_OVERRIDES_KEY = "toolApprovalOverrides";
 const MAX_RUN_FINISH_DELIVERY_ATTEMPTS = 10;
+const MAX_KILL_ARCHIVE_ATTEMPTS = 3;
 const HANDLED_IPC_CALLS_KEY = "handledIpcCalls";
 const ABORTED_RUN_IDS_KEY = "abortedRunIds";
 const DELIVERY_NOTICE_IDS_KEY = "deliveryNoticeIds";
@@ -604,6 +620,25 @@ function isWatchedSignalPayload(
   return !!value && typeof value === "object" && (value as { watched?: unknown }).watched === true;
 }
 
+function normalizeProcessRuntimeEvent(value: unknown): ProcessRuntimeEvent | null {
+  if (!value || typeof value !== "object") return null;
+  const event = value as Record<string, unknown>;
+  if (event.type !== "adapter.work.returned") return null;
+  const workPid = normalizeOptionalString(event.workPid);
+  if (!workPid || !/^[a-zA-Z0-9._:-]{1,200}$/.test(workPid)) return null;
+  return { type: event.type, workPid };
+}
+
+function formatProcessRuntimeEvent(event: ProcessRuntimeEvent): string {
+  if (event.type === "adapter.work.returned") {
+    return [
+      `The user returned from work process \`${event.workPid}\` to their personal intelligence.`,
+      "No work-session transcript was attached to this event.",
+    ].join("\n");
+  }
+  throw new Error("Unsupported runtime event");
+}
+
 function formatScheduleEventMessage(payload: unknown): string {
   const value = payload && typeof payload === "object"
     ? payload as Record<string, unknown>
@@ -767,6 +802,17 @@ function emptyProcessArchive(): ProcessArchiveResult {
   };
 }
 
+function messageSnapshotsMatch(
+  expected: MessageRecord[],
+  current: MessageRecord[],
+): boolean {
+  return current.length === expected.length
+    && current.every((message, index) => (
+      JSON.stringify(serializeArchivedMessage(message))
+        === JSON.stringify(serializeArchivedMessage(expected[index]!))
+    ));
+}
+
 function historyArchiveFilename(generation: number): string {
   return `history.gen-${generation}.jsonl.gz`;
 }
@@ -904,10 +950,18 @@ export class Process extends Host<Env> {
   private lifecycleEpoch = 0;
   private queuedSendAdmission: Promise<void> = Promise.resolve();
   private killed = false;
+  private killedTombstone: ProcessKilledTombstone | null = null;
+  private killedCleanupTransition: Promise<Extract<ProcKillResult, { ok: true }>> | null = null;
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
-    this.killed = ctx.storage.kv.get<boolean>(PROCESS_KILLED_TOMBSTONE_KEY) === true;
+    const killedTombstone = ctx.storage.kv.get<ProcessKilledTombstone | true>(
+      PROCESS_KILLED_TOMBSTONE_KEY,
+    );
+    this.killedTombstone = killedTombstone && killedTombstone !== true
+      ? killedTombstone
+      : null;
+    this.killed = killedTombstone === true || this.killedTombstone !== null;
     if (!this.killed) {
       runProcessSqlMigrations(ctx.storage);
     }
@@ -972,7 +1026,8 @@ export class Process extends Host<Env> {
   }
 
   private isInitialized(): boolean {
-    return this.store.getValue("pid") !== null
+    return !this.killed
+      && this.store.getValue("pid") !== null
       && this.store.getValue("identity") !== null;
   }
 
@@ -993,6 +1048,27 @@ export class Process extends Host<Env> {
     if (this.killed) {
       if (frame.type === "req") {
         await frame.body?.stream.cancel("Process no longer exists").catch(() => {});
+        if (frame.call === "proc.kill" && this.killedTombstone) {
+          try {
+            const data = await this.completeKilledProcessCleanup();
+            return {
+              type: "res",
+              id: frame.id,
+              ok: true,
+              data,
+            } satisfies ResponseOkFrame;
+          } catch (error) {
+            return {
+              type: "res",
+              id: frame.id,
+              ok: false,
+              error: {
+                code: 500,
+                message: error instanceof Error ? error.message : String(error),
+              },
+            } satisfies ResponseErrFrame;
+          }
+        }
         return {
           type: "res",
           id: frame.id,
@@ -1049,12 +1125,18 @@ export class Process extends Host<Env> {
           frame.body,
           this.runAbortSignal(pending.runId),
         );
+        if (this.killed || !this.store.getPending(frame.id)) {
+          return;
+        }
         this.rememberShellSessionTargetFromResult(pending.call, pending.args, result);
         this.store.resolve(
           frame.id,
           formatAgentToolResponse(pending.call, pending.args, result),
         );
       } catch (error) {
+        if (this.killed) {
+          return;
+        }
         this.store.fail(
           frame.id,
           error instanceof Error ? error.message : String(error),
@@ -1073,8 +1155,12 @@ export class Process extends Host<Env> {
    */
   private async handleReq(
     frame: ProcessRequestFrame,
-  ): Promise<ResponseFrame | ProcessScheduleDeliverResponseFrame | ProcessAdapterDeliverResponseFrame | null> {
+  ): Promise<ResponseFrame | ProcessRuntimeEventDeliverResponseFrame | ProcessScheduleDeliverResponseFrame | ProcessAdapterDeliverResponseFrame | null> {
     try {
+      if (frame.call === "proc.runtime.event.deliver") {
+        const result = await this.handleProcessRuntimeEvent(frame.args);
+        return { type: "res", id: frame.id, ok: true, data: result };
+      }
       if (frame.call === "proc.adapter.deliver") {
         const { runId, ...args } = frame.args;
         const result = await this.handleProcSend(args, runId);
@@ -1245,7 +1331,10 @@ export class Process extends Host<Env> {
         type: "res",
         id: frame.id,
         ok: false,
-        error: { code: 500, message },
+        error: {
+          code: this.killed && frame.call !== "proc.kill" ? 410 : 500,
+          message,
+        },
       };
     }
   }
@@ -1266,7 +1355,9 @@ export class Process extends Host<Env> {
     if (args.media?.some((item) => "data" in item)) {
       return { ok: false, error: "proc.send media.data was removed; use proc.media.write" };
     }
-    const mediaPrefix = processMediaPrefix(this.identity.uid, this.pid);
+    const identity = this.identity;
+    const pid = this.pid;
+    const mediaPrefix = processMediaPrefix(identity.uid, pid);
     if (args.media?.some((item) =>
       typeof item.key === "string"
       && item.key.length > 0
@@ -1290,14 +1381,17 @@ export class Process extends Host<Env> {
       const releaseMedia = await this.acquireMediaKeyAdmissions(mediaKeys);
       const releaseAdmission = await this.acquireQueuedSendAdmission();
       try {
+        if (this.killed || !this.isInitialized()) {
+          return { ok: false, error: "Process no longer exists" };
+        }
         if (admittedRunId) {
           const existing = this.existingRunAdmission(runId);
           if (existing) return existing;
         }
         const media = await storeIncomingProcessMedia(
           this.env.STORAGE,
-          this.identity.uid,
-          this.pid,
+          identity.uid,
+          pid,
           args.media,
           await this.resolveMediaProcessingOptions(args.media),
         );
@@ -1329,7 +1423,7 @@ export class Process extends Host<Env> {
           this.maybeStartTaskTitleGeneration(args.message);
           this.currentRun = { runId };
           this.ctx.waitUntil(this.scheduleTick(runId).catch(async (error) => {
-            if (this.currentRun?.runId !== runId) {
+            if (this.handleRunStopped(runId)) {
               return;
             }
             await this.finishRun(runId, {
@@ -1412,7 +1506,7 @@ export class Process extends Host<Env> {
         )));
       } else {
         this.ctx.waitUntil(this.scheduleTick(runId).catch(async (error) => {
-          if (this.currentRun?.runId !== runId) {
+          if (this.handleRunStopped(runId)) {
             return;
           }
           const message = `Failed to schedule process run: ${error instanceof Error ? error.message : String(error)}`;
@@ -1558,6 +1652,11 @@ export class Process extends Host<Env> {
     messageId: number,
     input: NonNullable<ProcSendArgs["media"]>,
   ): Promise<void> {
+    if (this.killed) {
+      return;
+    }
+    const pid = this.pid;
+    const uid = this.identity.uid;
     const signal = this.runAbortSignal(runId);
     try {
       const options = await raceWithAbort(
@@ -1567,8 +1666,8 @@ export class Process extends Host<Env> {
       const media = await raceWithAbort(
         storeIncomingProcessMedia(
           this.env.STORAGE,
-          this.identity.uid,
-          this.pid,
+          uid,
+          pid,
           input,
           { ...options, signal },
         ),
@@ -1577,6 +1676,9 @@ export class Process extends Host<Env> {
       const releaseLifecycle = await this.acquireLifecycleTransition();
       let admitted = false;
       try {
+        if (this.killed) {
+          return;
+        }
         const run = this.currentRun;
         this.ctx.storage.transactionSync(() => {
           if (run?.runId === runId && run.pendingMediaMessageId === messageId) {
@@ -1596,7 +1698,7 @@ export class Process extends Host<Env> {
           runId,
           messageId,
         }).catch((error) => {
-          console.warn(`[Process] Failed to emit media change for ${this.pid}:`, error);
+          console.warn(`[Process] Failed to emit media change for ${pid}:`, error);
         }));
       }
       if (!admitted) {
@@ -1605,7 +1707,7 @@ export class Process extends Host<Env> {
       try {
         await this.scheduleTick(runId);
       } catch (error) {
-        if (this.currentRun?.runId !== runId) {
+        if (this.handleRunStopped(runId)) {
           return;
         }
         const message = `Failed to schedule process run: ${error instanceof Error ? error.message : String(error)}`;
@@ -1618,16 +1720,19 @@ export class Process extends Host<Env> {
         });
       }
     } catch (error) {
-      if (signal.aborted) {
+      if (signal.aborted || this.killed) {
         return;
       }
-      const prefix = processMediaPrefix(this.identity.uid, this.pid);
+      const prefix = processMediaPrefix(uid, pid);
       const keys = input.flatMap((item) =>
         typeof item.key === "string" && item.key.startsWith(prefix) ? [item.key] : []
       );
       const releaseLifecycle = await this.acquireLifecycleTransition();
       let unreferenced: string[];
       try {
+        if (this.killed) {
+          return;
+        }
         this.store.clearMessageMedia(messageId, runId);
         unreferenced = keys.filter((key) => !this.store.referencesMediaKey(key));
       } finally {
@@ -1653,6 +1758,9 @@ export class Process extends Host<Env> {
   ): Promise<void> {
     const releaseLifecycle = await this.acquireLifecycleTransition();
     try {
+      if (this.killed) {
+        return;
+      }
       const run = this.currentRun;
       if (run?.runId !== runId || run.pendingMediaMessageId !== messageId) {
         return;
@@ -1849,6 +1957,9 @@ export class Process extends Host<Env> {
     const pid = this.pid;
     const releaseLifecycle = await this.acquireLifecycleTransition();
     try {
+      if (this.killed) {
+        throw new Error("Process no longer exists");
+      }
       const run = this.currentRun;
       if (!run || (args.runId !== undefined && args.runId !== run.runId)) {
         return { ok: true, pid, aborted: false };
@@ -2217,6 +2328,10 @@ export class Process extends Host<Env> {
     if (!object) {
       return { data: { ok: false, error: "media not found" } };
     }
+    if (this.killed) {
+      await object.body.cancel("Process no longer exists").catch(() => {});
+      return { data: { ok: false, error: "Process no longer exists" } };
+    }
     if (!this.isValidOwnedArchiveObject(key, object)) {
       await object.body.cancel("Invalid archived media ownership").catch(() => {});
       return { data: { ok: false, error: "media key is outside this process" } };
@@ -2331,6 +2446,9 @@ export class Process extends Host<Env> {
     try {
       const releaseLifecycle = await this.acquireLifecycleTransition();
       try {
+        if (this.killed) {
+          return { ok: false, error: "the process run is no longer active" };
+        }
         const run = this.currentRun;
         if (!run || run.runId !== runId) {
           return { ok: false, error: "the process run is no longer active" };
@@ -2385,7 +2503,7 @@ export class Process extends Host<Env> {
     args: ProcMediaWriteArgs,
     body?: FrameBody,
   ): Promise<ProcMediaWriteResult> {
-    if (!this.isInitialized()) {
+    if (this.killed || !this.isInitialized()) {
       await body?.stream.cancel("Process no longer exists").catch(() => {});
       return { ok: false, error: "Process no longer exists" };
     }
@@ -2407,7 +2525,8 @@ export class Process extends Host<Env> {
       return { ok: false, error: "proc.media.write requires mimeType" };
     }
     const pid = this.pid;
-    const uid = this.identity.uid;
+    const identity = this.identity;
+    const uid = identity.uid;
     const lifecycleEpoch = this.lifecycleEpoch;
     const requestedMediaId = args.mediaId?.trim();
     if (
@@ -2443,7 +2562,8 @@ export class Process extends Host<Env> {
       const releaseFinalLifecycle = await this.acquireLifecycleTransition();
       try {
         if (
-          !this.isInitialized()
+          this.killed
+          || !this.isInitialized()
           || this.pid !== pid
           || this.identity.uid !== uid
           || this.lifecycleEpoch !== lifecycleEpoch
@@ -2459,6 +2579,10 @@ export class Process extends Host<Env> {
 
       if (requestedMediaId) {
         const existing = await this.env.STORAGE.head(key);
+        if (this.killed || uploadController.signal.aborted) {
+          await body.stream.cancel("Process reset during media upload").catch(() => {});
+          return { ok: false, error: "Process reset during media upload" };
+        }
         if (existing) {
           const existingMimeType = existing.httpMetadata?.contentType || "application/octet-stream";
           if (
@@ -2486,7 +2610,8 @@ export class Process extends Host<Env> {
           const releaseLifecycle = await this.acquireLifecycleTransition();
           try {
             if (
-              !this.isInitialized()
+              this.killed
+              || !this.isInitialized()
               || this.pid !== pid
               || this.identity.uid !== uid
               || this.lifecycleEpoch !== lifecycleEpoch
@@ -2517,7 +2642,7 @@ export class Process extends Host<Env> {
           httpMetadata: { contentType: mimeType },
           customMetadata: {
             uid: String(uid),
-            gid: String(this.identity.gid),
+            gid: String(identity.gid),
             mode: "400",
             processId: pid,
             descriptorId,
@@ -2554,7 +2679,8 @@ export class Process extends Host<Env> {
       const releaseLifecycle = await this.acquireLifecycleTransition();
       try {
         if (
-          !this.isInitialized()
+          this.killed
+          || !this.isInitialized()
           || this.pid !== pid
           || this.identity.uid !== uid
           || this.lifecycleEpoch !== lifecycleEpoch
@@ -2595,7 +2721,7 @@ export class Process extends Host<Env> {
       await body.stream.cancel("proc.media.delete does not accept a body").catch(() => {});
       return { ok: false, error: "proc.media.delete does not accept a body" };
     }
-    if (!this.isInitialized()) {
+    if (this.killed || !this.isInitialized()) {
       return { ok: false, error: "Process no longer exists" };
     }
     const key = typeof args.key === "string" ? args.key.trim() : "";
@@ -2612,7 +2738,7 @@ export class Process extends Host<Env> {
     try {
       const releaseLifecycle = await this.acquireLifecycleTransition();
       try {
-        if (!this.isInitialized()) {
+        if (this.killed || !this.isInitialized()) {
           return { ok: false, error: "Process no longer exists" };
         }
         if (
@@ -2744,6 +2870,7 @@ export class Process extends Host<Env> {
     const explicitSummary = normalizeOptionalString(args.summary);
     const generateSummary = args.generateSummary === true;
     const stopped = () =>
+      this.killed ||
       options.signal?.aborted === true ||
       (options.activeRunId !== undefined && this.currentRun?.runId !== options.activeRunId);
     if (!explicitSummary && !generateSummary) {
@@ -2771,11 +2898,11 @@ export class Process extends Host<Env> {
     let lifecycleEpoch = 0;
     const releaseSnapshot = await this.acquireLifecycleTransition();
     try {
-      if (!options.allowActive && this.currentRun) {
-        return { ok: false, error: "Process is active" };
-      }
       if (stopped()) {
         return { ok: false, error: "Compaction was cancelled" };
+      }
+      if (!options.allowActive && this.currentRun) {
+        return { ok: false, error: "Process is active" };
       }
       lifecycleEpoch = this.lifecycleEpoch;
       generation = this.store.getHistoryGeneration();
@@ -2843,6 +2970,9 @@ export class Process extends Host<Env> {
       }
       const releaseInstall = await this.acquireLifecycleTransition();
       try {
+        if (stopped()) {
+          return { ok: false, error: "Compaction was cancelled" };
+        }
         const currentGeneration = this.store.getHistoryGeneration();
         const currentRecords = this.store.getHistoryPrefixMessages({
           throughMessageId: toMessageId,
@@ -2908,7 +3038,7 @@ export class Process extends Host<Env> {
 
     await this.deleteUnreferencedActiveMedia(selectedMediaKeys).catch((error) => {
       console.warn(
-        `[Process] Failed to clean compacted history media for ${this.pid}: ${
+        `[Process] Failed to clean compacted history media for ${pid}: ${
           error instanceof Error ? error.message : String(error)
         }`,
       );
@@ -2939,6 +3069,10 @@ export class Process extends Host<Env> {
     messages: MessageRecord[],
     signal?: AbortSignal,
   ): Promise<string> {
+    if (this.killed) {
+      throw new Error("Process no longer exists");
+    }
+    const pid = this.pid;
     const primary = await this.resolveCheckpointConfig(signal);
     if (!primary) {
       throw new Error("AI config unavailable");
@@ -2959,7 +3093,7 @@ export class Process extends Host<Env> {
           config,
           context,
           options: generationOptions,
-          sessionAffinityKey: `${this.pid}:compaction`,
+          sessionAffinityKey: `${pid}:compaction`,
           signal,
         });
         const summary = generated.trim();
@@ -2993,9 +3127,13 @@ export class Process extends Host<Env> {
   }
 
   private async emitProcessLifecycle(payload: Record<string, unknown>): Promise<void> {
+    if (this.killed) {
+      return;
+    }
+    const pid = this.pid;
     await this.emitProcChanged(["lifecycle", "messages"], payload).catch((error) => {
       console.warn(
-        `[Process] Failed to emit proc.changed lifecycle for ${this.pid}: ${
+        `[Process] Failed to emit proc.changed lifecycle for ${pid}: ${
           error instanceof Error ? error.message : String(error)
         }`,
       );
@@ -3006,6 +3144,8 @@ export class Process extends Host<Env> {
     args: ProcHistoryExportArgs,
     signal?: AbortSignal,
   ): Promise<ProcHistoryExportResult> {
+    const pid = this.pid;
+    const archiveDir = this.historyArchiveDir();
     const segmentId = normalizeOptionalString(args.segmentId);
     const throughMessageId = args.throughMessageId;
     if (Boolean(segmentId) === (throughMessageId !== undefined)) {
@@ -3023,6 +3163,9 @@ export class Process extends Host<Env> {
       const releaseSnapshot = await this.acquireLifecycleTransition();
       try {
         signal?.throwIfAborted();
+        if (this.killed) {
+          return { ok: false, error: "Process no longer exists" };
+        }
         if (segmentId) {
           segment = this.store.getHistorySegment(segmentId);
           if (!segment) {
@@ -3053,13 +3196,13 @@ export class Process extends Host<Env> {
       if (segment) {
         const archivePaths = [segment.archivePath];
         if (snapshotMessages.length > 0) {
-          const path = await this.archiveForkMessages(snapshotMessages, signal);
+          const path = await this.archiveForkMessages(archiveDir, snapshotMessages, signal);
           archivePaths.push(path);
           temporaryArchivePaths.push(path);
         }
         return {
           ok: true,
-          sourcePid: this.pid,
+          sourcePid: pid,
           archivePaths,
           temporaryArchivePaths,
           segment,
@@ -3067,11 +3210,11 @@ export class Process extends Host<Env> {
         };
       }
 
-      const path = await this.archiveForkMessages(snapshotMessages, signal);
+      const path = await this.archiveForkMessages(archiveDir, snapshotMessages, signal);
       temporaryArchivePaths.push(path);
       return {
         ok: true,
-        sourcePid: this.pid,
+        sourcePid: pid,
         archivePaths: [path],
         temporaryArchivePaths,
         throughMessageId,
@@ -3089,10 +3232,11 @@ export class Process extends Host<Env> {
   }
 
   private async archiveForkMessages(
+    archiveDir: string,
     messages: MessageRecord[],
     signal?: AbortSignal,
   ): Promise<string> {
-    const key = `${this.historyArchiveDir()}/fork-${crypto.randomUUID()}.jsonl.gz`;
+    const key = `${archiveDir}/fork-${crypto.randomUUID()}.jsonl.gz`;
     await this.archiveMessageRecords(key, messages, signal);
     return `/${key}`;
   }
@@ -3111,6 +3255,9 @@ export class Process extends Host<Env> {
 
     const releaseLifecycle = await this.acquireLifecycleTransition();
     try {
+      if (this.killed) {
+        return { ok: false, error: "Process no longer exists" };
+      }
       if (this.currentRun || this.store.messageCount() > 0 || this.store.queueSize() > 0) {
         return { ok: false, error: "Target process history is not empty" };
       }
@@ -3314,6 +3461,9 @@ export class Process extends Host<Env> {
   private async handleProcReset(): Promise<ProcResetResult> {
     const releaseLifecycle = await this.acquireLifecycleTransition();
     try {
+      if (this.killed) {
+        throw new Error("Process no longer exists");
+      }
       const pid = this.pid;
       await this.resetExecutionState("process.reset");
       const totalMessages = this.store.messageCount();
@@ -3344,63 +3494,241 @@ export class Process extends Host<Env> {
   }): Promise<ProcKillResult> {
     const releaseLifecycle = await this.acquireLifecycleTransition();
     try {
+      if (this.killed) {
+        if (!this.killedTombstone) {
+          throw new Error("Process no longer exists");
+        }
+        return await this.completeKilledProcessCleanup();
+      }
       const initialized = this.isInitialized();
       const pid = initialized ? this.pid : args.pid;
       if (!pid) {
         throw new Error("Process not initialized — pid missing");
       }
-      const shouldArchive = args.archive !== false;
-      if (initialized && this.currentRun) {
-        await this.sendSignal("proc.run.finished", this.runFinishedPayload(
-          this.currentRun,
+      const identity = initialized ? this.identity : null;
+      let archive = emptyProcessArchive();
+
+      if (args.archive !== false && initialized) {
+        let stable = false;
+        for (let attempt = 0; attempt < MAX_KILL_ARCHIVE_ATTEMPTS; attempt += 1) {
+          const messages = this.store.getMessages({ limit: null });
+          if (messages.length === 0) {
+            stable = true;
+            break;
+          }
+          const generation = this.store.getHistoryGeneration();
+          const archiveId = crypto.randomUUID();
+          const key = `${this.historyArchiveDir()}/${archiveId}.${historyArchiveFilename(generation)}`;
+          await this.archiveMessageRecords(key, messages);
+          const currentMessages = this.store.getMessages({ limit: null });
+          if (
+            generation === this.store.getHistoryGeneration()
+            && messageSnapshotsMatch(messages, currentMessages)
+          ) {
+            const archivePath = `/${key}`;
+            archive = {
+              archivedMessages: messages.length,
+              archivedTo: archivePath,
+              archives: [{
+                generation,
+                messages: messages.length,
+                path: archivePath,
+              }],
+            };
+            stable = true;
+            break;
+          }
+          await this.deleteFailedCompactionArchive(key);
+        }
+        if (!stable) {
+          throw new Error("Process history changed repeatedly during kill");
+        }
+      }
+
+      const activeRun = initialized ? this.currentRun : null;
+      const finishPayload = activeRun
+        ? this.runFinishedPayload(
+          activeRun,
           {
             status: "aborted",
             reason: "process.kill",
             text: null,
           },
           0,
-        ));
-      }
-      if (initialized) {
-        await this.resetExecutionState("process.kill", false);
-      }
-      const totalMessages = initialized ? this.store.messageCount() : 0;
-
-      const archive = shouldArchive && totalMessages > 0
-        ? await this.archiveHistoryMessages(crypto.randomUUID())
-        : emptyProcessArchive();
-
-      if (initialized) {
-        await deleteProcessMedia(this.env.STORAGE, this.identity.uid, pid);
-      }
-
-      // A killed process is gone. Its transcript was archived above, so wipe the
-      // Process DO only after cancellation and cleanup have completed.
-      const existingAlarm = await this.ctx.storage.getAlarm();
-      await this.ctx.storage.deleteAlarm();
-      try {
-        tombstoneKilledProcessStorage(this.ctx.storage);
-      } catch (error) {
-        if (existingAlarm !== null) {
-          await this.ctx.storage.setAlarm(existingAlarm);
+        )
+        : null;
+      const pendingRequestIds = new Set(this.codeModeResponses.keys());
+      if (activeRun) {
+        for (const result of this.store.getResults(activeRun.runId)) {
+          if (result.status === "registered" || result.status === "pending") {
+            pendingRequestIds.add(result.dispatchId);
+          }
         }
-        throw error;
       }
-      this.killed = true;
 
-      return {
+      const result = {
         ok: true,
         pid,
         archivedMessages: archive.archivedMessages,
         archivedTo: archive.archivedTo,
         archives: archive.archives,
-      };
+      } satisfies Extract<ProcKillResult, { ok: true }>;
+      const killedTombstone = {
+        version: 1,
+        pid,
+        uid: identity?.uid ?? null,
+        result,
+        cleanup: "pending",
+        pendingCleanup: [
+          "alarm" as const,
+          ...(identity ? ["media" as const] : []),
+        ],
+      } satisfies ProcessKilledTombstone;
+
+      tombstoneKilledProcessStorage(this.ctx.storage, killedTombstone);
+      this.killedTombstone = killedTombstone;
+      this.killed = true;
+      try {
+        this.terminateKilledExecution(
+          new Error("Process execution was reset: process.kill"),
+        );
+      } catch {
+        console.warn(`[Process] Post-kill execution cleanup failed for ${pid}`);
+      }
+
+      const bestEffort: Array<{
+        label: string;
+        run: () => Promise<unknown>;
+      }> = [
+        ...(finishPayload
+          ? [{
+              label: "finish notification",
+              run: () => this.sendSignal("proc.run.finished", finishPayload, pid),
+            }]
+          : []),
+        ...(pendingRequestIds.size > 0
+          ? [{
+              label: "request cancellation",
+              run: () => cancelProcessRequests(
+                pid,
+                [...pendingRequestIds],
+                "Process execution was reset: process.kill",
+              ),
+            }]
+          : []),
+      ];
+      return await this.completeKilledProcessCleanup(async () => {
+        const bestEffortResults = await Promise.allSettled(
+          bestEffort.map(({ run }) => Promise.resolve().then(run)),
+        );
+        bestEffortResults.forEach((settled, index) => {
+          if (settled.status === "rejected") {
+            console.warn(`[Process] Post-kill ${bestEffort[index]!.label} failed for ${pid}`);
+          }
+        });
+      });
     } finally {
       releaseLifecycle();
     }
   }
 
-  private async resetExecutionState(reason: string, emitFinish = true): Promise<void> {
+  private async completeKilledProcessCleanup(
+    beforeCleanup?: () => Promise<void>,
+  ): Promise<Extract<ProcKillResult, { ok: true }>> {
+    if (this.killedCleanupTransition) {
+      return await this.killedCleanupTransition;
+    }
+    const cleanup = (async () => {
+      await beforeCleanup?.();
+      return await this.runKilledProcessCleanup();
+    })();
+    this.killedCleanupTransition = cleanup;
+    try {
+      return await cleanup;
+    } finally {
+      if (this.killedCleanupTransition === cleanup) {
+        this.killedCleanupTransition = null;
+      }
+    }
+  }
+
+  private async runKilledProcessCleanup(): Promise<Extract<ProcKillResult, { ok: true }>> {
+    const tombstone = this.killedTombstone;
+    if (!tombstone) {
+      throw new Error("Process terminal state is unavailable");
+    }
+    if (tombstone.cleanup === "completed") {
+      return tombstone.result;
+    }
+    const cleanup = tombstone.pendingCleanup.map<{
+      kind: ProcessKilledTombstone["pendingCleanup"][number];
+      label: string;
+      run: () => Promise<unknown>;
+    }>((kind) => {
+      switch (kind) {
+        case "alarm":
+          return { kind, label: "alarm cleanup", run: () => this.ctx.storage.deleteAlarm() };
+        case "media":
+          return {
+            kind,
+            label: "media cleanup",
+            run: () => deleteProcessMedia(
+              this.env.STORAGE,
+              tombstone.uid!,
+              tombstone.pid,
+            ),
+          };
+      }
+    });
+    const cleanupResults = await Promise.allSettled(
+      cleanup.map(({ run }) => Promise.resolve().then(run)),
+    );
+    const pendingCleanup: ProcessKilledTombstone["pendingCleanup"] = [];
+    cleanupResults.forEach((settled, index) => {
+      if (settled.status === "rejected") {
+        pendingCleanup.push(cleanup[index]!.kind);
+        console.warn(`[Process] Post-kill ${cleanup[index]!.label} failed for ${tombstone.pid}`);
+      }
+    });
+    if (pendingCleanup.length > 0) {
+      const pending = {
+        ...tombstone,
+        cleanup: "pending",
+        pendingCleanup,
+      } satisfies ProcessKilledTombstone;
+      this.ctx.storage.kv.put(PROCESS_KILLED_TOMBSTONE_KEY, pending);
+      this.killedTombstone = pending;
+      throw new Error("Process was killed but terminal cleanup is pending");
+    }
+    const completed = {
+      ...tombstone,
+      cleanup: "completed",
+      pendingCleanup: [],
+    } satisfies ProcessKilledTombstone;
+    this.ctx.storage.kv.put(PROCESS_KILLED_TOMBSTONE_KEY, completed);
+    this.killedTombstone = completed;
+    return completed.result;
+  }
+
+  private terminateKilledExecution(reason: Error): void {
+    this.lifecycleEpoch += 1;
+    this.abortTaskTitleGeneration(reason);
+    this.abortMediaUploads(reason);
+    for (const controller of this.requestControllers.values()) {
+      controller.abort(reason);
+    }
+    this.requestControllers.clear();
+    for (const controller of this.runAbortControllers.values()) {
+      controller.abort(reason);
+    }
+    this.runAbortControllers.clear();
+    this.rejectCodeModeWaiters(null, "Process execution state was reset");
+    this.cancelledRequests.clear();
+    this.activeTickRunIds.clear();
+    this.deferredTickRunIds.clear();
+  }
+
+  private async resetExecutionState(reason: string): Promise<void> {
     this.lifecycleEpoch += 1;
     const resetError = new Error(`Process execution was reset: ${reason}`);
     this.abortTaskTitleGeneration(resetError);
@@ -3414,13 +3742,11 @@ export class Process extends Host<Env> {
       this.ingestToolResults(activeRun.runId, this.store.getResults(activeRun.runId), {
         interruptPending: `Process execution was reset: ${reason}`,
       });
-      if (emitFinish) {
-        this.emitRunFinished(activeRun, {
-          status: "aborted",
-          reason,
-          text: null,
-        });
-      }
+      this.emitRunFinished(activeRun, {
+        status: "aborted",
+        reason,
+        text: null,
+      });
     }
     this.currentRun = null;
     this.store.clearPendingToolCalls();
@@ -3497,6 +3823,9 @@ export class Process extends Host<Env> {
    * Each tick resets the subrequest counter.
    */
   private async scheduleTick(runId: string): Promise<void> {
+    if (this.killed) {
+      return;
+    }
     const run = this.currentRun;
     if (!run || run.runId !== runId) {
       return;
@@ -3509,6 +3838,9 @@ export class Process extends Host<Env> {
   }
 
   async onMediaPreparationTimeout(runId: string): Promise<void> {
+    if (this.killed) {
+      return;
+    }
     const run = this.currentRun;
     if (run?.runId !== runId || run.pendingMediaMessageId === undefined) {
       return;
@@ -3523,7 +3855,7 @@ export class Process extends Host<Env> {
 
   async onToolDispatchTimeout(input: { runId: string; dispatchId: string }): Promise<void> {
     const { runId, dispatchId } = input;
-    if (this.currentRun?.runId !== runId) {
+    if (this.handleRunStopped(runId)) {
       return;
     }
     const tool = this.store.getResults(runId).find((result) => result.dispatchId === dispatchId);
@@ -3574,7 +3906,12 @@ export class Process extends Host<Env> {
     let wakeRunId: string | null = null;
     const releaseLifecycle = await this.acquireLifecycleTransition();
     const timestamp = Date.now();
+    let pid: string | null = null;
     try {
+      if (this.killed) {
+        return;
+      }
+      pid = this.pid;
       if (!this.store.getValue("pid") || !this.store.getValue("identity")) {
         return;
       }
@@ -3628,18 +3965,18 @@ export class Process extends Host<Env> {
       content,
       timestamp,
     }).catch((error) => {
-      console.warn(`[Process] Failed to emit IPC message change for ${this.pid}:`, error);
+      console.warn(`[Process] Failed to emit IPC message change for ${pid}:`, error);
     }));
     if (wakeRunId) {
       this.ctx.waitUntil(this.emitProcChanged(["queue"], {
         enqueuedRunId: wakeRunId,
       }).catch((error) => {
-        console.warn(`[Process] Failed to emit IPC queue change for ${this.pid}:`, error);
+        console.warn(`[Process] Failed to emit IPC queue change for ${pid}:`, error);
       }));
     } else if (nextRunId) {
       const runId = nextRunId;
       this.ctx.waitUntil(this.scheduleTick(runId).catch(async (error) => {
-        if (this.currentRun?.runId !== runId) {
+        if (this.handleRunStopped(runId)) {
           return;
         }
         const message = `Failed to schedule delegated task: ${error instanceof Error ? error.message : String(error)}`;
@@ -3676,6 +4013,31 @@ export class Process extends Host<Env> {
       throw new Error(admission.error);
     }
     this.maybeStartTaskTitleGeneration(args.message);
+    return { runId: admission.runId, queued: admission.queued };
+  }
+
+  private async handleProcessRuntimeEvent(
+    args: ProcessRuntimeEventDeliverArgs,
+  ): Promise<{ runId: string; queued: boolean }> {
+    const eventId = normalizeOptionalString(args.eventId);
+    if (!eventId || !/^[a-zA-Z0-9._:-]{1,200}$/.test(eventId)) {
+      throw new Error("Runtime event id is invalid");
+    }
+    const event = normalizeProcessRuntimeEvent(args.event);
+    if (!event) {
+      throw new Error("Runtime event is invalid");
+    }
+    const admission = await this.handleRuntimeEvent(
+      formatProcessRuntimeEvent(event),
+      event.type,
+      {
+        distinctRun: true,
+        runId: eventId,
+      },
+    );
+    if (!admission.ok) {
+      throw new Error(admission.error);
+    }
     return { runId: admission.runId, queued: admission.queued };
   }
 
@@ -3773,7 +4135,7 @@ export class Process extends Host<Env> {
     } else if (nextRunId) {
       const runId = nextRunId;
       this.ctx.waitUntil(this.scheduleTick(runId).catch(async (error) => {
-        if (this.currentRun?.runId !== runId) {
+        if (this.handleRunStopped(runId)) {
           return;
         }
         const message = `Failed to schedule runtime event: ${errorMessageFromUnknown(error)}`;
@@ -3787,7 +4149,7 @@ export class Process extends Host<Env> {
       }));
       this.ctx.waitUntil(this.announceRun(runId, reason));
     }
-    const admittedRunId = nextRunId ?? wakeRunId ?? this.currentRun?.runId;
+    const admittedRunId = nextRunId ?? wakeRunId ?? (this.killed ? null : this.currentRun?.runId);
     if (!admittedRunId) {
       return { ok: false, error: "runtime event was not assigned to a run" };
     }
@@ -3800,6 +4162,9 @@ export class Process extends Host<Env> {
 
   async tick(input: { runId: string; generation: number }): Promise<void> {
     const { runId, generation } = input;
+    if (this.killed) {
+      return;
+    }
     const run = this.currentRun;
     if (
       !run
@@ -3819,7 +4184,7 @@ export class Process extends Host<Env> {
     this.activeTickRunIds.add(runId);
     this.ctx.waitUntil(this.runTick(runId)
       .catch((error) => {
-        if (this.currentRun?.runId !== runId) {
+        if (this.handleRunStopped(runId)) {
           return;
         }
         return this.finishRun(runId, {
@@ -3833,7 +4198,7 @@ export class Process extends Host<Env> {
         this.activeTickRunIds.delete(runId);
         if (
           this.deferredTickRunIds.delete(runId)
-          && this.currentRun?.runId === runId
+          && !this.handleRunStopped(runId)
         ) {
           return this.scheduleTick(runId).catch((error) => this.finishRun(runId, {
             reason: "schedule.error",
@@ -3847,6 +4212,9 @@ export class Process extends Host<Env> {
 
   private async runTick(runId: string): Promise<void> {
     await this.lifecycleTransition;
+    if (this.killed) {
+      return;
+    }
     let run = this.currentRun;
     if (!run || run.runId !== runId) {
       return;
@@ -3930,8 +4298,9 @@ export class Process extends Host<Env> {
       parameters: t.inputSchema as Tool["parameters"],
     }));
     const buildGenerationContext = async (): Promise<Context> => {
-      const pendingRuntimeEventsInContext = this.currentRun?.runId === runId
-        ? this.currentRun.pendingRuntimeEvents ?? 0
+      const activeRun = this.killed ? null : this.currentRun;
+      const pendingRuntimeEventsInContext = activeRun?.runId === runId
+        ? activeRun.pendingRuntimeEvents ?? 0
         : 0;
       const messages = await this.buildContextMessages();
       this.consumeRuntimeEventsInContext(runId, pendingRuntimeEventsInContext);
@@ -3985,6 +4354,9 @@ export class Process extends Host<Env> {
         return "stopped";
       }
       context = await buildGenerationContext();
+      if (this.handleRunStopped(runId)) {
+        return "stopped";
+      }
       contextState = await this.updateContextState(runId, config, context);
       if (this.handleRunStopped(runId)) {
         return "stopped";
@@ -4004,6 +4376,9 @@ export class Process extends Host<Env> {
       config: AiConfigResult,
     ): Promise<"ready" | "stopped"> => {
       context = await buildGenerationContext();
+      if (this.handleRunStopped(runId)) {
+        return "stopped";
+      }
       contextState = await this.updateContextState(runId, config, context);
       if (this.handleRunStopped(runId)) {
         return "stopped";
@@ -4370,6 +4745,9 @@ export class Process extends Host<Env> {
     }
 
     context = await buildGenerationContext();
+    if (this.handleRunStopped(runId)) {
+      return;
+    }
     await this.updateContextState(runId, run.config!, context, response.usage, assistantMetadata?.usage);
     if (this.handleRunStopped(runId)) {
       return;
@@ -4557,6 +4935,9 @@ export class Process extends Host<Env> {
   private async finishRun(runId: string, options: RunFinishOptions): Promise<void> {
     const releaseLifecycle = await this.acquireLifecycleTransition();
     try {
+      if (this.killed) {
+        return;
+      }
       const run = this.currentRun;
       if (!run || run.runId !== runId) {
         return;
@@ -4592,7 +4973,7 @@ export class Process extends Host<Env> {
   }
 
   private consumeRuntimeEventsInContext(runId: string, count: number): void {
-    if (count <= 0) {
+    if (this.killed || count <= 0) {
       return;
     }
     const run = this.currentRun;
@@ -4789,6 +5170,7 @@ export class Process extends Host<Env> {
     usage?: AssistantMessage["usage"],
     usageState?: ProcUsageState,
   ): Promise<ProcContextState> {
+    const pid = this.pid;
     const { count: messageCount, lastMessageId } = this.store.messageStats();
     const state = buildProcContextState({
       runId,
@@ -4809,7 +5191,7 @@ export class Process extends Host<Env> {
       context: state,
     }).catch((error) => {
       console.warn(
-        `[Process] Failed to emit proc.changed context for ${this.pid}: ${
+        `[Process] Failed to emit proc.changed context for ${pid}: ${
           error instanceof Error ? error.message : String(error)
         }`,
       );
@@ -4827,9 +5209,10 @@ export class Process extends Host<Env> {
     signal?: AbortSignal,
   ): Promise<ResultOf<T>> {
     signal?.throwIfAborted();
+    const pid = this.pid;
     const id = crypto.randomUUID();
     const frame = { type: "req", id, call, args } as RequestFrame;
-    const pending = sendFrameToKernel(this.pid, frame);
+    const pending = sendFrameToKernel(pid, frame);
     let rejectAbort: ((reason: unknown) => void) | undefined;
     const aborted = signal && new Promise<never>((_resolve, reject) => {
       rejectAbort = reject;
@@ -4840,7 +5223,7 @@ export class Process extends Host<Env> {
         : "Request cancelled";
       this.ctx.waitUntil(
         cancelProcessRequests(
-          this.pid,
+          pid,
           [id],
           reason,
         ).catch(() => 0),
@@ -4878,6 +5261,8 @@ export class Process extends Host<Env> {
     if (target === "gsv") {
       return undefined;
     }
+    const pid = this.pid;
+    const runSignal = runId ? this.runAbortSignal(runId) : undefined;
     return async (input, init) => {
       const requestedRedirect = init?.redirect ?? (input instanceof Request ? input.redirect : undefined);
       const redirect = requestedRedirect === "follow"
@@ -4886,7 +5271,6 @@ export class Process extends Host<Env> {
         ? requestedRedirect
         : undefined;
       const callerSignal = init?.signal ?? (input instanceof Request ? input.signal : undefined);
-      const runSignal = runId ? this.runAbortSignal(runId) : undefined;
       const signal = runSignal && callerSignal
         ? AbortSignal.any([runSignal, callerSignal])
         : runSignal ?? callerSignal;
@@ -4908,12 +5292,13 @@ export class Process extends Host<Env> {
           timeoutMs,
           outbound.body,
           requestId,
+          pid,
         ),
         request.signal,
         outbound.body,
         (reason) => {
           this.ctx.waitUntil(cancelProcessRequests(
-            this.pid,
+            pid,
             [requestId],
             reason instanceof Error ? reason.message : undefined,
           ).catch(() => 0));
@@ -4924,6 +5309,9 @@ export class Process extends Host<Env> {
   }
 
   private runAbortSignal(runId: string): AbortSignal {
+    if (this.killed) {
+      return AbortSignal.abort(new Error("Process no longer exists"));
+    }
     let controller = this.runAbortControllers.get(runId);
     if (!controller) {
       controller = new AbortController();
@@ -4938,9 +5326,10 @@ export class Process extends Host<Env> {
     ttlMs?: number,
     body?: FrameBody,
     requestId?: string,
+    pid = this.pid,
   ): Promise<ResponseOkFrame<"net.fetch">> {
     return await requestProcessNetFetch(
-      this.pid,
+      pid,
       target,
       args,
       {
@@ -4965,8 +5354,12 @@ export class Process extends Host<Env> {
   /**
    * Send a signal frame to the kernel for relay to client connections.
    */
-  private async sendSignal(signal: string, payload?: unknown): Promise<void> {
-    await sendFrameToKernel(this.pid, {
+  private async sendSignal(
+    signal: string,
+    payload?: unknown,
+    pid = this.pid,
+  ): Promise<void> {
+    await sendFrameToKernel(pid, {
       type: "sig",
       signal,
       payload,
@@ -4977,7 +5370,7 @@ export class Process extends Host<Env> {
     runId: string,
     reason: string,
   ): Promise<void> {
-    if (this.currentRun?.runId !== runId) {
+    if (this.handleRunStopped(runId)) {
       return;
     }
     try {
@@ -4994,10 +5387,14 @@ export class Process extends Host<Env> {
   }
 
   private async emitToolStarted(payload: Record<string, unknown>): Promise<void> {
+    if (this.killed) {
+      return;
+    }
+    const pid = this.pid;
     try {
       await this.sendSignal("proc.run.tool.started", payload);
     } catch (error) {
-      console.warn(`[Process] Failed to emit tool start for ${this.pid}:`, error);
+      console.warn(`[Process] Failed to emit tool start for ${pid}:`, error);
     }
   }
 
@@ -5006,7 +5403,7 @@ export class Process extends Host<Env> {
     seq: number,
     event: AssistantMessageEvent,
   ): Promise<void> {
-    if (!this.interactive) return;
+    if (this.killed || !this.interactive) return;
     await this.sendSignal("proc.run.stream", {
       pid: this.pid,
       runId,
@@ -5136,6 +5533,9 @@ export class Process extends Host<Env> {
   }
 
   async onRunFinishDelivery(runId: string): Promise<void> {
+    if (this.killed) {
+      return;
+    }
     const pending = JSON.parse(
       this.store.getValue(PENDING_RUN_FINISHES_KEY) ?? "[]",
     ) as Array<Record<string, unknown> & { runId: string }>;
@@ -5147,6 +5547,9 @@ export class Process extends Host<Env> {
       const { deliveryAttempts: _deliveryAttempts, ...signalPayload } = payload;
       await this.sendSignal("proc.run.finished", signalPayload);
     } catch (error) {
+      if (this.killed) {
+        return;
+      }
       console.warn(`[Process] Failed to emit finish for ${runId}:`, error);
       const attempts = typeof payload.deliveryAttempts === "number"
         && Number.isSafeInteger(payload.deliveryAttempts)
@@ -5175,6 +5578,9 @@ export class Process extends Host<Env> {
       return;
     }
 
+    if (this.killed) {
+      return;
+    }
     this.removePendingRunFinish(runId);
   }
 
@@ -5193,25 +5599,33 @@ export class Process extends Host<Env> {
     changes: string[],
     payload: Record<string, unknown> = {},
   ): Promise<void> {
+    if (this.killed) {
+      return;
+    }
+    const pid = this.pid;
     try {
       await this.sendSignal("proc.changed", {
-        pid: this.pid,
+        pid,
         changes,
         queuedCount: this.store.queueSize(),
         timestamp: Date.now(),
         ...payload,
       });
     } catch (error) {
-      console.warn(`[Process] Failed to emit state change for ${this.pid}:`, error);
+      console.warn(`[Process] Failed to emit state change for ${pid}:`, error);
     }
   }
 
   private async resolveCheckpointConfig(signal?: AbortSignal): Promise<AiConfigResult | null> {
+    if (this.killed) {
+      return null;
+    }
     if (this.currentRun?.config) {
       return this.currentRun.config;
     }
     try {
-      return await this.resolveAiConfig(signal);
+      const config = await this.resolveAiConfig(signal);
+      return this.killed ? null : config;
     } catch (error) {
       if (signal?.aborted) return null;
       console.warn("[Process] Failed to resolve AI config for compaction:", error);
@@ -5318,6 +5732,7 @@ export class Process extends Host<Env> {
     if (this.handleRunStopped(runId) || !this.store.getPending(dispatchId)) {
       return;
     }
+    const pid = this.pid;
 
     const reqFrame: RequestFrame = {
       type: "req",
@@ -5327,10 +5742,10 @@ export class Process extends Host<Env> {
       runId,
     } as RequestFrame;
 
-    const response = await sendFrameToKernel(this.pid, reqFrame);
+    const response = await sendFrameToKernel(pid, reqFrame);
 
     if (response && response.type === "res") {
-      if (!this.store.getPending(dispatchId)) {
+      if (this.handleRunStopped(runId) || !this.store.getPending(dispatchId)) {
         await cancelResponseBody(response, "Tool call is no longer pending");
         return;
       }
@@ -5343,9 +5758,15 @@ export class Process extends Host<Env> {
             res.body,
             this.runAbortSignal(runId),
           );
+          if (this.handleRunStopped(runId) || !this.store.getPending(dispatchId)) {
+            return;
+          }
           this.rememberShellSessionTargetFromResult(call, args, result);
           this.store.resolve(dispatchId, formatAgentToolResponse(call, args, result));
         } catch (error) {
+          if (this.handleRunStopped(runId)) {
+            return;
+          }
           this.store.fail(
             dispatchId,
             error instanceof Error ? error.message : String(error),
@@ -5472,6 +5893,10 @@ export class Process extends Host<Env> {
     if (!object) {
       return null;
     }
+    if (this.killed) {
+      await object.body.cancel("Process no longer exists").catch(() => {});
+      return null;
+    }
     if (
       !this.isValidOwnedArchiveObject(key, object, { expectedContentType })
       || object.size > MAX_PROCESS_MEDIA_READ_BYTES
@@ -5504,13 +5929,14 @@ export class Process extends Host<Env> {
       httpMetadata?: { contentType?: string };
     },
     expected: { sourceEtag?: string; expectedContentType?: string } = {},
+    identity = this.identity,
   ): boolean {
-    if (!key.startsWith(this.archiveMediaPrefix())) return true;
+    if (!key.startsWith(agentArchiveMediaPrefix(identity.home))) return true;
     return isValidAgentArchiveMediaObject({
-      home: this.identity.home,
+      home: identity.home,
       key,
-      uid: this.identity.uid,
-      gid: this.identity.gid,
+      uid: identity.uid,
+      gid: identity.gid,
       object,
       expectedSourceEtag: expected.sourceEtag,
       expectedContentType: expected.expectedContentType,
@@ -5542,6 +5968,9 @@ export class Process extends Host<Env> {
     try {
       const releaseLifecycle = await this.acquireLifecycleTransition();
       try {
+        if (this.killed) {
+          return;
+        }
         const prefix = processMediaPrefix(this.identity.uid, this.pid);
         const unreferenced = candidates.filter((key) =>
           key.startsWith(prefix)
@@ -5581,7 +6010,10 @@ export class Process extends Host<Env> {
       const releaseMedia = await this.acquireMediaKeyAdmissions(sourceKeys);
       let retry = false;
       try {
-        const rewrites = await this.persistArchivedMediaKeys(sourceKeys);
+        const rewrites = await this.persistArchivedMediaKeys(
+          sourceKeys,
+          this.runAbortSignal(runId),
+        );
         const promoted = snapshot.map((item): RunOutputMedia => {
           const rewrite = rewrites.get(item.key);
           if (!rewrite) return item;
@@ -5593,6 +6025,9 @@ export class Process extends Host<Env> {
 
         const releaseLifecycle = await this.acquireLifecycleTransition();
         try {
+          if (this.handleRunStopped(runId)) {
+            return [];
+          }
           const activeRun = this.currentRun;
           if (!activeRun || activeRun.runId !== runId) return [];
           if (JSON.stringify(activeRun.outputMedia ?? []) !== JSON.stringify(snapshot)) {
@@ -5625,6 +6060,8 @@ export class Process extends Host<Env> {
     signal?: AbortSignal,
   ): Promise<Map<string, ArchivedMediaRewrite>> {
     const rewrites = new Map<string, ArchivedMediaRewrite>();
+    const identity = this.identity;
+    const archivePrefix = agentArchiveMediaPrefix(identity.home);
 
     for (const sourceKey of [...new Set(sourceKeys)].sort()) {
       signal?.throwIfAborted();
@@ -5634,7 +6071,7 @@ export class Process extends Host<Env> {
         continue;
       }
       const archiveId = await stableOpaqueId("archived-media", [sourceKey, sourceHead.etag]);
-      const archivedKey = `${this.archiveMediaPrefix()}${archiveId}`;
+      const archivedKey = `${archivePrefix}${archiveId}`;
       const sourceContentType = sourceHead.httpMetadata?.contentType?.trim()
         || "application/octet-stream";
       const existing = await this.env.STORAGE.head(archivedKey);
@@ -5643,7 +6080,7 @@ export class Process extends Host<Env> {
         && this.isValidOwnedArchiveObject(archivedKey, existing, {
           sourceEtag: sourceHead.etag,
           expectedContentType: sourceContentType,
-        });
+        }, identity);
       if (existing && !reusable) {
         throw new Error(`archived media content-address collision: ${archivedKey}`);
       }
@@ -5683,8 +6120,8 @@ export class Process extends Host<Env> {
               contentType: sourceContentType,
             },
             customMetadata: {
-              uid: String(this.identity.uid),
-              gid: String(this.identity.gid),
+              uid: String(identity.uid),
+              gid: String(identity.gid),
               mode: "400",
               purpose: "conversation-media",
               sourceEtag: sourceHead.etag,
@@ -5712,7 +6149,7 @@ export class Process extends Host<Env> {
           || !this.isValidOwnedArchiveObject(archivedKey, copied, {
             sourceEtag: sourceHead.etag,
             expectedContentType: sourceContentType,
-          })
+          }, identity)
         ) {
           throw new Error(`failed to verify archived media: ${archivedKey}`);
         }
@@ -5873,7 +6310,7 @@ export class Process extends Host<Env> {
       : this.dispatchSyscall(runId, dispatchId, syscall, args);
     this.ctx.waitUntil(execution
       .catch((error) => {
-        if (this.store.getPending(dispatchId)) {
+        if (!this.killed && this.store.getPending(dispatchId)) {
           this.store.fail(dispatchId, errorMessageFromUnknown(error));
         }
       })
@@ -5881,9 +6318,11 @@ export class Process extends Host<Env> {
   }
 
   private async resumeResolvedToolRun(runId: string): Promise<void> {
+    if (this.handleRunStopped(runId)) {
+      return;
+    }
     if (
-      this.currentRun?.runId !== runId
-      || this.store.getPendingHilForRun(runId)
+      this.store.getPendingHilForRun(runId)
       || !this.store.isRunResolved(runId)
     ) {
       return;
@@ -5891,6 +6330,9 @@ export class Process extends Host<Env> {
     try {
       await this.scheduleTick(runId);
     } catch (error) {
+      if (this.handleRunStopped(runId)) {
+        return;
+      }
       await this.finishRun(runId, {
         reason: "schedule.error",
         status: "error",
@@ -5909,6 +6351,9 @@ export class Process extends Host<Env> {
         { runId, dispatchId },
       );
     } catch (error) {
+      if (this.handleRunStopped(runId)) {
+        return false;
+      }
       this.store.fail(
         dispatchId,
         `Failed to schedule tool timeout: ${error instanceof Error ? error.message : String(error)}`,
@@ -6023,6 +6468,7 @@ export class Process extends Host<Env> {
 
     try {
       const signal = this.runAbortSignal(runId);
+      const capabilities = this.currentRun?.config?.capabilities ?? [];
       const result = await executeCodeMode(
         this.env,
         args.code,
@@ -6031,7 +6477,7 @@ export class Process extends Host<Env> {
             runId,
             dispatchId,
             approvalPolicy,
-            capabilities: this.currentRun?.config?.capabilities ?? [],
+            capabilities,
           },
           call,
           toolArgs,
@@ -6042,12 +6488,18 @@ export class Process extends Host<Env> {
           signal,
         },
       );
+      if (this.handleRunStopped(runId) || !this.store.getPending(dispatchId)) {
+        return;
+      }
       this.store.resolve(
         dispatchId,
         result,
         result.status === "failed" ? "failed" : "completed",
       );
     } catch (error) {
+      if (this.handleRunStopped(runId) || !this.store.getPending(dispatchId)) {
+        return;
+      }
       this.store.resolve(dispatchId, {
         status: "failed",
         error: error instanceof Error ? error.message : String(error),
@@ -6188,6 +6640,7 @@ export class Process extends Host<Env> {
     signal?: AbortSignal,
   ): Promise<ResponseFrame> {
     signal?.throwIfAborted();
+    const pid = this.pid;
     const request = createCodeModeRequest(call, args);
     const reqFrame: RequestFrame = {
       type: "req",
@@ -6202,7 +6655,7 @@ export class Process extends Host<Env> {
       const timeoutId = setTimeout(() => {
         this.codeModeResponses.delete(id);
         this.ctx.waitUntil(
-          cancelProcessRequests(this.pid, [id], `${call} timed out`).catch(() => 0),
+          cancelProcessRequests(pid, [id], `${call} timed out`).catch(() => 0),
         );
         reject(new Error(`Timed out waiting for ${call}`));
       }, CODE_MODE_NESTED_SYSCALL_TIMEOUT_MS);
@@ -6211,7 +6664,7 @@ export class Process extends Host<Env> {
     void pending.catch(() => {});
 
     const operation = (async () => {
-      const response = await sendFrameToKernel(this.pid, reqFrame);
+      const response = await sendFrameToKernel(pid, reqFrame);
       if (response && response.type === "res") {
         const waiter = this.codeModeResponses.get(id);
         if (!waiter || (runId !== null && this.handleRunStopped(runId))) {
@@ -6245,7 +6698,7 @@ export class Process extends Host<Env> {
             waiter.reject(new Error(reason));
           }
           this.ctx.waitUntil(
-            cancelProcessRequests(this.pid, [id], reason).catch(() => 0),
+            cancelProcessRequests(pid, [id], reason).catch(() => 0),
           );
         },
         onLateResolve: (response) => {
@@ -6547,7 +7000,7 @@ export class Process extends Host<Env> {
   }
 
   private handleRunStopped(runId: string): boolean {
-    return this.currentRun?.runId !== runId;
+    return this.killed || this.currentRun?.runId !== runId;
   }
 
   private rememberAbortedRun(runId: string): void {

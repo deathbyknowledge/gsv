@@ -39,6 +39,38 @@ export type ProcessScheduleDeliverResponseFrame =
     }
   | ResponseErrFrame;
 
+export type ProcessRuntimeEvent = {
+  type: "adapter.work.returned";
+  workPid: string;
+};
+
+export type ProcessRuntimeEventDeliverArgs = {
+  eventId: string;
+  event: ProcessRuntimeEvent;
+};
+
+export type ProcessRuntimeEventDeliverRequestFrame = {
+  type: "req";
+  id: string;
+  call: "proc.runtime.event.deliver";
+  args: ProcessRuntimeEventDeliverArgs;
+  body?: undefined;
+};
+
+export type ProcessRuntimeEventDeliverResult = {
+  runId: string;
+  queued: boolean;
+};
+
+export type ProcessRuntimeEventDeliverResponseFrame =
+  | {
+      type: "res";
+      id: string;
+      ok: true;
+      data: ProcessRuntimeEventDeliverResult;
+    }
+  | ResponseErrFrame;
+
 export type ProcessAdapterDeliverArgs = {
   runId: string;
   pid: string;
@@ -98,11 +130,13 @@ export type ProcessRunAttachResponseFrame =
 
 export type ProcessRequestFrame =
   | RequestFrame
+  | ProcessRuntimeEventDeliverRequestFrame
   | ProcessScheduleDeliverRequestFrame
   | ProcessAdapterDeliverRequestFrame
   | ProcessRunAttachRequestFrame;
 export type ProcessInboundFrame =
   | Frame
+  | ProcessRuntimeEventDeliverRequestFrame
   | ProcessScheduleDeliverRequestFrame
   | ProcessAdapterDeliverRequestFrame
   | ProcessRunAttachRequestFrame;

@@ -729,7 +729,8 @@ function messageUsage(): string {
     "`message send` creates an additional outbound message. Use --to here --also only when an",
     "extra message on the current reply surface is intentional.",
     "Use `message destinations` and copy its opaque GSV id; do not use provider ids.",
-    "Use `message route` to inspect or change which interactive process receives future input.",
+    "Use `message route` to inspect routing, open a private-DM work direct line from personal,",
+    "or manage groups, channels, and threads.",
     "Copy a remote-device file to GSV first, then pass its local path to --attach.",
     "",
   ].join("\n");
@@ -743,7 +744,11 @@ function messageRouteUsage(): string {
     "  message route set --process PID_OR_LABEL [--to here|DESTINATION] [--json]",
     "  message route clear [--to here|DESTINATION] [--json]",
     "",
-    "The destination defaults to the current adapter chat. Routes affect future inbound messages;",
+    "`show` and `list` inspect adapter routing. Groups, channels, and threads support `set`",
+    "and `clear`. On the exact private DM that started its current run, only the personal",
+    "intelligence can use `set` to open a direct line to owned non-personal work.",
+    "Use /home inside the DM to return to personal intelligence.",
+    "The destination defaults to the current adapter chat. Changes affect future inbound messages;",
     "the current run's final response still returns to the surface that started it.",
     "",
   ].join("\n");

@@ -7,7 +7,7 @@ import { handleSysBootstrap } from "./bootstrap";
 import { ensureAccountHomeLayout } from "../account-home";
 import { RipgitClient } from "../../fs";
 import { seedBuiltinSkillsToHome } from "./skills-seed";
-import { ensurePersonalAgent } from "../agents";
+import { ensurePersonalController } from "../personal-controller";
 
 const USERNAME_RE = /^[a-z_][a-z0-9_-]{0,31}$/;
 
@@ -336,7 +336,7 @@ export async function handleSysSetup(
     };
 
     await timeSetupStep(timings, "provision-personal-agent", async () => {
-      await ensurePersonalAgent(ctx, processIdentity, agentName);
+      await ensurePersonalController(uid, ctx, agentName);
     });
 
     const rootShadow = auth.getShadowByUsername("root");

@@ -44,13 +44,15 @@ import type { RequestFrame, ResponseOkFrame } from "../protocol/frames";
 import type {
   ProcessAdapterDeliverRequestFrame,
   ProcessAdapterDeliverResponseFrame,
+  ProcessRuntimeEventDeliverRequestFrame,
+  ProcessRuntimeEventDeliverResponseFrame,
 } from "../protocol/process-frames";
 import { sendFrameToProcess } from "../shared/utils";
 import { stableOpaqueId } from "../shared/stable-id";
 import { ensurePersonalAgent } from "./agents";
-import { canOwnerRunAsAccount } from "./account-access";
-import { isLocked } from "../auth/shadow";
-import { findInteractiveProcess } from "./processes";
+import { ensurePersonalController } from "./personal-controller";
+import type { ProcessRecord } from "./processes";
+import type { SurfaceRouteRecord } from "./surface-routes";
 import type { AdapterStatusRecord } from "./adapter-status";
 import type { IdentityLinkRecord } from "./identity-links";
 import {
@@ -109,7 +111,24 @@ type AdapterIngressHilRecovery = {
   decision: "approve" | "deny";
   remember: boolean;
 };
-type AdapterIngressRecovery = AdapterIngressProcessRecovery | AdapterIngressHilRecovery;
+type AdapterIngressWorkReturnRecovery = {
+  kind: "work_return";
+  uid: number;
+  workPid: string;
+  route: {
+    adapter: string;
+    accountId: string;
+    actorId: string;
+    surfaceKind: "dm";
+    surfaceId: string;
+    threadId?: string;
+    mode: SurfaceRouteRecord["mode"];
+  };
+};
+type AdapterIngressRecovery =
+  | AdapterIngressProcessRecovery
+  | AdapterIngressHilRecovery
+  | AdapterIngressWorkReturnRecovery;
 export type AdapterHilRequest = {
   requestId: string;
   toolName: string;
@@ -948,6 +967,19 @@ async function resolveClaimedAdapterInbound(input: {
     return { ok: false, error: `Unknown local user uid=${uid}` };
   }
 
+  if (recovery === null && message.surface.kind === "dm") {
+    const link = ctx.adapters.identityLinks.get(adapter, accountId, actorId);
+    if (link?.uid === uid && identityLinkAllowsSurface(link, message.surface)) {
+      ctx.adapters.privateDestinations.recordActivity(uid, {
+        kind: "adapter",
+        adapter,
+        accountId,
+        actorId,
+        surface: message.surface,
+      }, message.messageId, adapterPrivateActivityAt(message.timestamp));
+    }
+  }
+
   if (recovery?.kind === "process_delivery") {
     if (recovery.uid !== uid) {
       return { ok: false, error: "Adapter ingress owner changed during recovery" };
@@ -971,13 +1003,32 @@ async function resolveClaimedAdapterInbound(input: {
       reconciling: true,
     });
   }
+  if (recovery?.kind === "work_return") {
+    if (recovery.uid !== uid) {
+      return { ok: false, error: "Adapter ingress owner changed during recovery" };
+    }
+    const personalPid = await deliverAdapterWorkReturnedEvent(
+      recovery,
+      receiptId,
+      ctx,
+    );
+    const personal = ctx.procs.get(personalPid);
+    return {
+      ok: true,
+      reply: {
+        text: `[PERSONAL HOME] Returned to ${personal ? describeProcessRoute(personal) : shortProcessId(personalPid)}.`,
+        replyToId: message.messageId,
+      },
+    };
+  }
 
   const command = await handleAdapterCommand({
     adapter,
     accountId,
     message,
     uid,
-    operationId: receiptId,
+    receiptId,
+    claimToken,
     ctx,
   });
   if (command.handled) {
@@ -987,33 +1038,45 @@ async function resolveClaimedAdapterInbound(input: {
     };
   }
 
-  const pid = await resolveAdapterRoute(
-    adapter,
-    accountId,
-    actorId,
-    message.surface,
-    uid,
-    receiptId,
-    userIdentity,
-    ctx,
-  );
-  ctx.adapters.surfaceRoutes.setRoute({
-    adapter,
-    accountId,
-    actorId,
-    surfaceKind: message.surface.kind,
-    surfaceId: message.surface.id,
-    threadId: message.surface.threadId,
-    uid,
-    pid,
-    updatedByUid: uid,
-  });
+  const parsedDecision = message.surface.kind === "dm"
+    ? parseHilDecision(message.text)
+    : null;
+  let pid: string;
+  let pendingHil: AdapterHilRequest | null;
+  if (parsedDecision?.requestToken) {
+    const correlated = await findPendingHilDecisionTarget(
+      uid,
+      parsedDecision.requestToken,
+      ctx,
+    );
+    if (correlated.kind !== "found") {
+      return {
+        ok: true,
+        reply: {
+          text: correlated.kind === "ambiguous"
+            ? "I found more than one pending approval with that token. Open Chat to resolve it safely."
+            : "I could not find a pending approval with that token. Use the token from the latest approval prompt.",
+          replyToId: message.messageId,
+        },
+      };
+    }
+    pid = correlated.pid;
+    pendingHil = correlated.pending;
+  } else {
+    pid = await resolveAdapterRoute(
+      adapter,
+      accountId,
+      actorId,
+      message.surface,
+      uid,
+      receiptId,
+      userIdentity,
+      ctx,
+    );
+    pendingHil = await getPendingHil(pid);
+  }
 
-  const pendingHil = await getPendingHil(pid);
   if (pendingHil) {
-    const parsedDecision = message.surface.kind === "dm"
-      ? parseHilDecision(message.text)
-      : null;
     const decision = parsedDecision?.requestToken === adapterHilRequestToken(pendingHil.requestId)
       ? parsedDecision
       : null;
@@ -1022,9 +1085,20 @@ async function resolveClaimedAdapterInbound(input: {
       return {
         ok: true,
         reply: {
-          text: parsedDecision
-            ? renderAdapterHilCorrelationFailure(pendingHil, message.surface.kind)
-            : renderAdapterHilPrompt(pendingHil, message.surface.kind, "reminder"),
+          text: prefixAdapterDmProcessReply(
+            parsedDecision
+              ? renderAdapterHilCorrelationFailure(pendingHil, message.surface.kind)
+              : renderAdapterHilPrompt(pendingHil, message.surface.kind, "reminder"),
+            pid,
+            {
+              kind: "adapter",
+              adapter,
+              accountId,
+              actorId,
+              surface: message.surface,
+            },
+            ctx,
+          ),
           replyToId: message.messageId,
         },
       };
@@ -1114,12 +1188,17 @@ async function deliverAdapterHilDecision(input: {
       return {
         ok: true,
         reply: {
-          text: renderAdapterHilPrompt(current, message.surface.kind, "reminder"),
+          text: prefixAdapterDmProcessReply(
+            renderAdapterHilPrompt(current, message.surface.kind, "reminder"),
+            recovery.pid,
+            adapterDestinationForInbound(adapter, accountId, message),
+            ctx,
+          ),
           replyToId: message.messageId,
         },
       };
     }
-    return adapterHilDecisionAcknowledgement(message, recovery);
+    return adapterHilDecisionAcknowledgement(message, recovery, ctx, adapter, accountId);
   }
 
   const nextPendingHil = normalizeAdapterHilRequest(data?.pendingHil);
@@ -1127,26 +1206,39 @@ async function deliverAdapterHilDecision(input: {
     return {
       ok: true,
       reply: {
-        text: renderAdapterHilPrompt(nextPendingHil, message.surface.kind, "reminder"),
+        text: prefixAdapterDmProcessReply(
+          renderAdapterHilPrompt(nextPendingHil, message.surface.kind, "reminder"),
+          recovery.pid,
+          adapterDestinationForInbound(adapter, accountId, message),
+          ctx,
+        ),
         replyToId: message.messageId,
       },
     };
   }
-  return adapterHilDecisionAcknowledgement(message, recovery);
+  return adapterHilDecisionAcknowledgement(message, recovery, ctx, adapter, accountId);
 }
 
 function adapterHilDecisionAcknowledgement(
   message: AdapterInboundMessage,
   recovery: AdapterIngressHilRecovery,
+  ctx: KernelContext,
+  adapter: string,
+  accountId: string,
 ): AdapterInboundDisposition {
   return {
     ok: true,
     reply: {
-      text: recovery.decision === "approve"
-        ? recovery.remember
-          ? "Approved. I will remember this for this conversation."
-          : "Approved. Continuing."
-        : "Denied. Continuing.",
+      text: prefixAdapterDmProcessReply(
+        recovery.decision === "approve"
+          ? recovery.remember
+            ? "Approved. I will remember this for this conversation."
+            : "Approved. Continuing."
+          : "Denied. Continuing.",
+        recovery.pid,
+        adapterDestinationForInbound(adapter, accountId, message),
+        ctx,
+      ),
       replyToId: message.messageId,
     },
   };
@@ -1198,17 +1290,20 @@ async function deliverAdapterInboundToProcess(input: {
 
   const { uid, pid, runId, origin } = recovery;
   const media = recovery.media.length > 0 ? recovery.media : undefined;
-  ctx.adapters.surfaceRoutes.setRoute({
-    adapter,
-    accountId,
-    actorId,
-    surfaceKind: message.surface.kind,
-    surfaceId: message.surface.id,
-    threadId: message.surface.threadId,
-    uid,
-    pid,
-    updatedByUid: uid,
-  });
+  if (message.surface.kind !== "dm") {
+    ctx.adapters.surfaceRoutes.setRoute({
+      adapter,
+      accountId,
+      actorId,
+      surfaceKind: message.surface.kind,
+      surfaceId: message.surface.id,
+      threadId: message.surface.threadId,
+      uid,
+      pid,
+      mode: "surface",
+      updatedByUid: uid,
+    });
+  }
   ctx.runRoutes.setAdapterRoute({
     runId,
     processId: pid,
@@ -1294,6 +1389,24 @@ function normalizeAdapterIngressRecovery(value: unknown): AdapterIngressRecovery
       && recovery.origin.kind === "adapter"
     ) {
       return recovery as AdapterIngressProcessRecovery;
+    }
+  } else if (recovery.kind === "work_return") {
+    const route = recovery.route && typeof recovery.route === "object"
+      ? recovery.route as Partial<AdapterIngressWorkReturnRecovery["route"]>
+      : null;
+    if (
+      Number.isSafeInteger(recovery.uid)
+      && typeof recovery.workPid === "string"
+      && route
+      && typeof route.adapter === "string"
+      && typeof route.accountId === "string"
+      && typeof route.actorId === "string"
+      && route.surfaceKind === "dm"
+      && typeof route.surfaceId === "string"
+      && (route.threadId === undefined || typeof route.threadId === "string")
+      && (route.mode === "legacy" || route.mode === "work" || route.mode === "surface")
+    ) {
+      return recovery as AdapterIngressWorkReturnRecovery;
     }
   }
   throw new Error("Invalid adapter ingress recovery checkpoint");
@@ -1583,17 +1696,29 @@ async function resolveAdapterRoute(
     threadId: surface.threadId,
     uid,
   };
-  const routedPid = ctx.adapters.surfaceRoutes.resolvePid(routeKey);
-  if (routedPid) {
-    const routedProcess = ctx.procs.get(routedPid);
-    if (routedProcess && routedProcess.ownerUid === uid && routedProcess.interactive) {
-      return routedPid;
+
+  if (surface.kind === "dm") {
+    return (await resolvePrivateDmSelection(routeKey, uid, ctx)).process.processId;
+  }
+
+  const route = ctx.adapters.surfaceRoutes.resolveRoute(routeKey);
+  if (route) {
+    const routedProcess = ctx.procs.get(route.pid);
+    if (
+      route.mode === "surface"
+      && isOwnedInteractiveProcess(routedProcess, uid)
+    ) {
+      return routedProcess.processId;
     }
-    ctx.adapters.surfaceRoutes.clearRoute(routeKey);
+    ctx.adapters.surfaceRoutes.clearRouteIfMatches({
+      ...routeKey,
+      pid: route.pid,
+      mode: route.mode,
+    });
   }
 
   const personalAgent = await ensurePersonalAgent(ctx, userIdentity);
-  return spawnAdapterAgentProcess(
+  const pid = await spawnAdapterAgentProcess(
     {
       uid: personalAgent.identity.uid,
       username: personalAgent.identity.username,
@@ -1604,6 +1729,13 @@ async function resolveAdapterRoute(
     operationId,
     ctx,
   );
+  ctx.adapters.surfaceRoutes.setRoute({
+    ...routeKey,
+    pid,
+    mode: "surface",
+    updatedByUid: uid,
+  });
+  return pid;
 }
 
 async function handleAdapterCommand(args: {
@@ -1611,10 +1743,11 @@ async function handleAdapterCommand(args: {
   accountId: string;
   message: AdapterInboundMessage;
   uid: number;
-  operationId: string;
+  receiptId: string;
+  claimToken: string;
   ctx: KernelContext;
 }): Promise<AdapterCommandResult> {
-  const { adapter, accountId, message, uid, operationId, ctx } = args;
+  const { adapter, accountId, message, uid, receiptId, claimToken, ctx } = args;
   if (message.surface.kind !== "dm") {
     return { handled: false };
   }
@@ -1624,150 +1757,157 @@ async function handleAdapterCommand(args: {
     return { handled: false };
   }
 
-  const [rawCommand, ...rest] = text.split(/\s+/);
+  const [rawCommand] = text.split(/\s+/);
   const command = rawCommand.toLowerCase();
-  const selector = rest.join(" ").trim();
   const actorId = resolveActorId(message);
   if (!actorId) {
     return replyToAdapterCommand(message, "This adapter message has no linked actor identity.");
   }
+  const routeKey = {
+    adapter,
+    accountId,
+    actorId,
+    surfaceKind: message.surface.kind,
+    surfaceId: message.surface.id,
+    threadId: message.surface.threadId,
+    uid,
+  };
 
   if (command === "/help") {
     return replyToAdapterCommand(message, renderAdapterCommandHelp());
   }
 
   if (command === "/where") {
-    const routed = resolveExistingAdapterRoute(
-      adapter,
-      accountId,
-      actorId,
-      message.surface,
-      uid,
-      ctx,
-    );
+    const selection = await resolvePrivateDmSelection(routeKey, uid, ctx);
     return replyToAdapterCommand(
       message,
-      routed
-        ? `This chat is routed to ${describeProcessRoute(routed)}.`
-        : "This chat is not routed to a live process. Send a message to start one, or use /list to choose a target.",
+      selection.route
+        ? `[INTERNAL WORK / WORK SESSION] ${describeProcessRoute(selection.process)} [${selection.process.state}]. Use /home to return.`
+        : `[PERSONAL HOME] ${describeProcessRoute(selection.process)} [${selection.process.state}].`,
     );
   }
 
-  if (command === "/list") {
-    return replyToAdapterCommand(message, renderAdapterRouteList(uid, ctx));
-  }
-
-  if (command === "/use") {
-    if (!selector) {
-      return replyToAdapterCommand(message, "Usage: /use personal, /use <process-id>, or /use <agent-name>.");
-    }
-
-    const normalized = selector.toLowerCase();
-    if (normalized === "personal" || normalized === "default" || normalized === "home") {
-      const identity = identityForUid(uid, ctx);
-      if (!identity) {
-        return replyToAdapterCommand(message, "Your local user identity is unavailable.");
-      }
-      const personalAgent = await ensurePersonalAgent(ctx, identity);
-      const pid = await spawnAdapterAgentProcess(
-        {
-          uid: personalAgent.identity.uid,
-          username: personalAgent.identity.username,
-          label: personalAgent.identity.username,
-          identity: personalAgent.identity,
-        },
-        uid,
-        operationId,
-        ctx,
+  if (command === "/home") {
+    const selectedRoute = ctx.adapters.surfaceRoutes.resolveRoute(routeKey);
+    if (!selectedRoute) {
+      const personalPid = await ensurePersonalController(uid, ctx);
+      const personal = ctx.procs.get(personalPid);
+      return replyToAdapterCommand(
+        message,
+        `[PERSONAL HOME] Already using ${personal ? describeProcessRoute(personal) : shortProcessId(personalPid)}.`,
       );
-      ctx.adapters.surfaceRoutes.setRoute({
-        adapter,
-        accountId,
-        actorId,
-        surfaceKind: message.surface.kind,
-        surfaceId: message.surface.id,
-        threadId: message.surface.threadId,
-        uid,
-        pid,
-        updatedByUid: uid,
-      });
-      return replyToAdapterCommand(message, "This chat now uses a new personal-agent process.");
     }
 
-    const processMatch = findInteractiveProcess(selector, ctx.procs.list(uid));
-    if (processMatch.kind === "ambiguous") {
-      return replyToAdapterCommand(message, `More than one process matches "${selector}". Use a longer process id from /list.`);
-    }
-    if (processMatch.kind === "found") {
-      ctx.adapters.surfaceRoutes.setRoute({
-        adapter,
-        accountId,
-        actorId,
-        surfaceKind: message.surface.kind,
-        surfaceId: message.surface.id,
-        threadId: message.surface.threadId,
-        uid,
-        pid: processMatch.record.processId,
-        updatedByUid: uid,
-      });
-      return replyToAdapterCommand(message, `This chat now uses ${describeProcessRoute(processMatch.record)}.`);
-    }
-
-    const agent = findRunnableAgent(selector, uid, ctx);
-    if (!agent) {
-      return replyToAdapterCommand(message, `I could not find a process or agent named "${selector}". Use /list to see available targets.`);
-    }
-
-    const pid = await spawnAdapterAgentProcess(
-      agent,
+    const recovery: AdapterIngressWorkReturnRecovery = {
+      kind: "work_return",
       uid,
-      operationId,
+      workPid: selectedRoute.pid,
+      route: {
+        adapter: selectedRoute.adapter,
+        accountId: selectedRoute.accountId,
+        actorId: selectedRoute.actorId,
+        surfaceKind: "dm",
+        surfaceId: selectedRoute.surfaceId,
+        ...(selectedRoute.threadId ? { threadId: selectedRoute.threadId } : {}),
+        mode: selectedRoute.mode,
+      },
+    };
+    ctx.adapters.ingressReceipts.checkpoint(receiptId, claimToken, recovery);
+    const personalPid = await deliverAdapterWorkReturnedEvent(
+      recovery,
+      receiptId,
       ctx,
     );
-    ctx.adapters.surfaceRoutes.setRoute({
-      adapter,
-      accountId,
-      actorId,
-      surfaceKind: message.surface.kind,
-      surfaceId: message.surface.id,
-      threadId: message.surface.threadId,
-      uid,
-      pid,
-      updatedByUid: uid,
-    });
-    return replyToAdapterCommand(message, `This chat now uses ${agent.username}.`);
+    const personal = ctx.procs.get(personalPid);
+    return replyToAdapterCommand(
+      message,
+      `[PERSONAL HOME] Returned to ${personal ? describeProcessRoute(personal) : shortProcessId(personalPid)}.`,
+    );
   }
 
   return replyToAdapterCommand(message, `Unknown command: ${rawCommand}\n\n${renderAdapterCommandHelp()}`);
 }
 
-function resolveExistingAdapterRoute(
-  adapter: string,
-  accountId: string,
-  actorId: string,
-  surface: AdapterSurface,
+async function deliverAdapterWorkReturnedEvent(
+  recovery: AdapterIngressWorkReturnRecovery,
+  receiptId: string,
+  ctx: KernelContext,
+): Promise<string> {
+  ctx.adapters.surfaceRoutes.clearRouteIfMatches({
+    ...recovery.route,
+    pid: recovery.workPid,
+  });
+  const personalPid = await ensurePersonalController(recovery.uid, ctx);
+  const eventId = `adapter-home:${receiptId}`;
+  const request: ProcessRuntimeEventDeliverRequestFrame = {
+    type: "req",
+    id: crypto.randomUUID(),
+    call: "proc.runtime.event.deliver",
+    args: {
+      eventId,
+      event: {
+        type: "adapter.work.returned",
+        workPid: recovery.workPid,
+      },
+    },
+  };
+  const response = await sendFrameToProcess(personalPid, request) as (
+    ProcessRuntimeEventDeliverResponseFrame | null
+  );
+  if (
+    !response
+    || response.type !== "res"
+    || response.id !== request.id
+    || !response.ok
+    || response.data.runId !== eventId
+  ) {
+    throw new Error("Personal return event was not admitted");
+  }
+  return personalPid;
+}
+
+async function resolvePrivateDmSelection(
+  routeKey: {
+    adapter: string;
+    accountId: string;
+    actorId: string;
+    surfaceKind: AdapterSurface["kind"];
+    surfaceId: string;
+    threadId?: string;
+    uid: number;
+  },
   uid: number,
   ctx: KernelContext,
-): NonNullable<ReturnType<KernelContext["procs"]["get"]>> | null {
-  const routeKey = {
-    adapter,
-    accountId,
-    actorId,
-    surfaceKind: surface.kind,
-    surfaceId: surface.id,
-    threadId: surface.threadId,
-    uid,
-  };
-  const routedPid = ctx.adapters.surfaceRoutes.resolvePid(routeKey);
-  if (!routedPid) {
-    return null;
+): Promise<{ process: ProcessRecord; route: SurfaceRouteRecord | null }> {
+  const route = ctx.adapters.surfaceRoutes.resolveRoute(routeKey);
+  if (route) {
+    const routedProcess = ctx.procs.get(route.pid);
+    if (route.mode === "work" && isOwnedInteractiveProcess(routedProcess, uid)) {
+      return { process: routedProcess, route };
+    }
+    if (
+      route.mode === "legacy"
+      && isOwnedInteractiveProcess(routedProcess, uid)
+      && await shouldDrainLegacyDmRoute(routedProcess, ctx)
+    ) {
+      return { process: routedProcess, route };
+    }
+    const cleared = ctx.adapters.surfaceRoutes.clearRouteIfMatches({
+      ...routeKey,
+      pid: route.pid,
+      mode: route.mode,
+    });
+    if (!cleared) {
+      return resolvePrivateDmSelection(routeKey, uid, ctx);
+    }
   }
-  const routedProcess = ctx.procs.get(routedPid);
-  if (routedProcess && routedProcess.ownerUid === uid && routedProcess.interactive) {
-    return routedProcess;
+
+  const personalPid = await ensurePersonalController(uid, ctx);
+  const personal = ctx.procs.get(personalPid);
+  if (!isOwnedInteractiveProcess(personal, uid) || !personal.isPersonalController) {
+    throw new Error("Personal controller is unavailable");
   }
-  ctx.adapters.surfaceRoutes.clearRoute(routeKey);
-  return null;
+  return { process: personal, route: null };
 }
 
 function replyToAdapterCommand(message: AdapterInboundMessage, text: string): AdapterCommandResult {
@@ -1783,41 +1923,40 @@ function replyToAdapterCommand(message: AdapterInboundMessage, text: string): Ad
 function renderAdapterCommandHelp(): string {
   return [
     "Adapter commands:",
-    "/list - show available agents and active processes",
-    "/where - show where this chat is routed",
-    "/use personal - start a new personal-agent process",
-    "/use <process-id> - route this chat to an active process",
-    "/use <agent-name> - start and route this chat to an agent",
+    "/where - show PERSONAL HOME or the selected WORK SESSION",
+    "/home - leave the work session and return to personal home",
     "",
     "When approval is pending, reply approve, deny, or approve always.",
   ].join("\n");
 }
 
-function renderAdapterRouteList(uid: number, ctx: KernelContext): string {
-  const agents = listRunnableAgents(uid, ctx);
-  const processes = ctx.procs.list(uid).filter((record) => record.interactive);
-  const lines = ["Available routes:"];
+function isOwnedInteractiveProcess(
+  process: ProcessRecord | null,
+  ownerUid: number,
+): process is ProcessRecord {
+  return Boolean(process?.interactive && process.ownerUid === ownerUid);
+}
 
-  lines.push("", "Agents:");
-  if (agents.length === 0) {
-    lines.push("- none");
-  } else {
-    for (const agent of agents.slice(0, 8)) {
-      lines.push(`- ${agent.username}${agent.label ? ` (${agent.label})` : ""}`);
-    }
+function processHasUnfinishedWork(process: ProcessRecord): boolean {
+  return process.state !== "idle"
+    || process.activeRunId !== null
+    || process.queuedCount > 0;
+}
+
+async function shouldDrainLegacyDmRoute(
+  process: ProcessRecord,
+  ctx: KernelContext,
+): Promise<boolean> {
+  if (processHasUnfinishedWork(process)) {
+    return true;
   }
-
-  lines.push("", "Processes:");
-  if (processes.length === 0) {
-    lines.push("- none");
-  } else {
-    for (const process of processes.slice(0, 8)) {
-      lines.push(`- ${shortProcessId(process.processId)} ${process.label || process.username} [${process.state}]`);
-    }
+  const inspection = await inspectPendingHil(process.processId);
+  if (!inspection.ok) {
+    return true;
   }
-
-  lines.push("", "Use /use personal, /use <agent-name>, or /use <process-id>.");
-  return lines.join("\n");
+  const current = ctx.procs.get(process.processId);
+  return current !== null
+    && (processHasUnfinishedWork(current) || inspection.pending !== null);
 }
 
 type RunnableAgent = {
@@ -1826,56 +1965,6 @@ type RunnableAgent = {
   label: string;
   identity: ProcessIdentity;
 };
-
-function findRunnableAgent(selector: string, ownerUid: number, ctx: KernelContext): RunnableAgent | null {
-  const normalized = selector.trim().toLowerCase();
-  return listRunnableAgents(ownerUid, ctx).find((agent) => (
-    agent.username.toLowerCase() === normalized
-    || agent.label.toLowerCase() === normalized
-  )) ?? null;
-}
-
-function listRunnableAgents(ownerUid: number, ctx: KernelContext): RunnableAgent[] {
-  const entries = ctx.auth.getPasswdEntries();
-  const personalAgentUid = ctx.auth.getPersonalAgentUid(ownerUid);
-  const agents: RunnableAgent[] = [];
-
-  for (const entry of entries) {
-    if (entry.uid !== personalAgentUid) {
-      const shadow = ctx.auth.getShadowByUsername(entry.username);
-      if (!shadow || !isLocked(shadow)) {
-        continue;
-      }
-    }
-    if (entry.uid < 1000 && entry.uid !== personalAgentUid) {
-      continue;
-    }
-    if (!canOwnerRunAsAccount(ctx.auth, ownerUid, entry, false)) {
-      continue;
-    }
-
-    agents.push({
-      uid: entry.uid,
-      username: entry.username,
-      label: entry.gecos?.trim() || entry.username,
-      identity: {
-        uid: entry.uid,
-        gid: entry.gid,
-        gids: ctx.auth.resolveGids(entry.username, entry.gid),
-        username: entry.username,
-        home: entry.home,
-        cwd: entry.home,
-      },
-    });
-  }
-
-  agents.sort((left, right) => {
-    if (left.uid === personalAgentUid) return -1;
-    if (right.uid === personalAgentUid) return 1;
-    return left.username.localeCompare(right.username);
-  });
-  return agents;
-}
 
 async function spawnAdapterAgentProcess(
   agent: RunnableAgent,
@@ -1909,6 +1998,57 @@ async function spawnAdapterAgentProcess(
 
 function describeProcessRoute(record: NonNullable<ReturnType<KernelContext["procs"]["get"]>>): string {
   return `${shortProcessId(record.processId)} ${record.label || record.username}`;
+}
+
+export function prefixAdapterDmProcessReply(
+  text: string,
+  processId: string,
+  destination: AdapterMessageDestination,
+  ctx: KernelContext,
+): string {
+  if (destination.surface.kind !== "dm") {
+    return text;
+  }
+  const process = ctx.procs.get(processId);
+  if (process?.isPersonalController === false) {
+    return text ? `[WORK SESSION] ${text}` : "[WORK SESSION]";
+  }
+  if (process?.isPersonalController === true) {
+    const currentRoute = ctx.adapters.surfaceRoutes.resolveRoute({
+      adapter: destination.adapter,
+      accountId: destination.accountId,
+      actorId: destination.actorId,
+      surfaceKind: destination.surface.kind,
+      surfaceId: destination.surface.id,
+      threadId: destination.surface.threadId,
+      uid: process.ownerUid,
+    });
+    if (currentRoute?.mode === "work") {
+      return text ? `[PERSONAL INTELLIGENCE] ${text}` : "[PERSONAL INTELLIGENCE]";
+    }
+  }
+  return text;
+}
+
+function adapterDestinationForInbound(
+  adapter: string,
+  accountId: string,
+  message: AdapterInboundMessage,
+): AdapterMessageDestination {
+  return {
+    kind: "adapter",
+    adapter,
+    accountId,
+    actorId: resolveActorId(message) ?? message.surface.id,
+    surface: message.surface,
+  };
+}
+
+function adapterPrivateActivityAt(timestamp: number | undefined): number {
+  const now = Date.now();
+  return typeof timestamp === "number" && Number.isSafeInteger(timestamp) && timestamp > 0
+    ? Math.min(timestamp, now)
+    : now;
 }
 
 function shortProcessId(pid: string): string {
@@ -1949,6 +2089,13 @@ function adapterInteractionOrigin(
 }
 
 async function getPendingHil(pid: string): Promise<AdapterHilRequest | null> {
+  const inspection = await inspectPendingHil(pid);
+  return inspection.ok ? inspection.pending : null;
+}
+
+async function inspectPendingHil(
+  pid: string,
+): Promise<{ ok: true; pending: AdapterHilRequest | null } | { ok: false }> {
   const response = await sendFrameToProcess(pid, {
     type: "req",
     id: crypto.randomUUID(),
@@ -1957,11 +2104,52 @@ async function getPendingHil(pid: string): Promise<AdapterHilRequest | null> {
   } as RequestFrame);
 
   if (!response || response.type !== "res" || !response.ok) {
-    return null;
+    return { ok: false };
   }
 
-  const data = (response as { data?: { pendingHil?: unknown } }).data;
-  return normalizeAdapterHilRequest(data?.pendingHil);
+  const data = (response as { data?: { ok?: boolean; pendingHil?: unknown } }).data;
+  if (data?.ok === false) {
+    return { ok: false };
+  }
+  return { ok: true, pending: normalizeAdapterHilRequest(data?.pendingHil) };
+}
+
+async function findPendingHilDecisionTarget(
+  ownerUid: number,
+  requestToken: string,
+  ctx: KernelContext,
+): Promise<
+  | { kind: "found"; pid: string; pending: AdapterHilRequest }
+  | { kind: "missing" }
+  | { kind: "ambiguous" }
+> {
+  const candidates = ctx.procs.list(ownerUid).filter((process) => (
+    process.interactive && process.state === "waiting_hil"
+  ));
+  const inspected = await Promise.all(candidates.map(async (process) => ({
+    process,
+    inspection: await inspectPendingHil(process.processId),
+  })));
+  const matches = inspected.filter(({ inspection }) => (
+    inspection.ok
+    && inspection.pending !== null
+    && adapterHilRequestToken(inspection.pending.requestId) === requestToken
+  ));
+  if (matches.length === 0) {
+    return { kind: "missing" };
+  }
+  if (matches.length > 1) {
+    return { kind: "ambiguous" };
+  }
+  const match = matches[0];
+  if (!match.inspection.ok || !match.inspection.pending) {
+    return { kind: "missing" };
+  }
+  return {
+    kind: "found",
+    pid: match.process.processId,
+    pending: match.inspection.pending,
+  };
 }
 
 export function normalizeAdapterHilRequest(

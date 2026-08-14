@@ -34,6 +34,15 @@ import {
   KERNEL_V018_REMOVE_CONVERSATION_REGISTRY,
 } from "./v018_remove_conversation_registry";
 import { KERNEL_V019_REMOVE_NOTIFICATIONS } from "./v019_remove_notifications";
+import {
+  KERNEL_V023_ADD_PERSONAL_CONTROLLER_SLOT,
+} from "./v023_add_personal_controller_slot";
+import {
+  KERNEL_V024_ADD_SURFACE_ROUTE_MODES,
+} from "./v024_add_surface_route_modes";
+import {
+  KERNEL_V025_ADD_PRIVATE_ADAPTER_DESTINATIONS,
+} from "./v025_add_private_adapter_destinations";
 
 // Used by Kernel DO startup before the individual stores initialize.
 export const KERNEL_SCHEMA_COMPONENT = "kernel";
@@ -58,6 +67,9 @@ export const KERNEL_MIGRATIONS: readonly SqlMigration[] = [
   KERNEL_V017_REORDER_SYSTEM_CONTEXT,
   KERNEL_V018_REMOVE_CONVERSATION_REGISTRY,
   KERNEL_V019_REMOVE_NOTIFICATIONS,
+  KERNEL_V023_ADD_PERSONAL_CONTROLLER_SLOT,
+  KERNEL_V024_ADD_SURFACE_ROUTE_MODES,
+  KERNEL_V025_ADD_PRIVATE_ADAPTER_DESTINATIONS,
 ];
 
 export function runKernelSqlMigrations(storage: DurableObjectStorage): void {

@@ -5,6 +5,7 @@ import {
   type AdapterGatewayResponseFrame,
   type AdapterInboundResult,
   type ProcAiConfigSetResult,
+  type ProcHilRequest,
 } from "@humansandmachines/gsv/protocol";
 import type { TestHarness } from "wrangler";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
@@ -336,37 +337,31 @@ describe("gateway runtime integration", () => {
     }));
 
     const beforePersonal = await client.proc.list();
-    const usePersonalFrame = inboundFrame({
-      id: "use-personal",
-      deliveryId: "use-personal-delivery",
-      messageId: "use-personal-message",
-      text: "/use personal",
+    const personalProcesses = beforePersonal.processes.filter(({ personal }) => personal);
+    expect(personalProcesses).toHaveLength(1);
+
+    const homeFrame = inboundFrame({
+      id: "home",
+      deliveryId: "home-delivery",
+      messageId: "home-message",
+      text: "/home",
     });
-    const usePersonal = inboundResult(await sendServiceFrame(harness, usePersonalFrame));
-    expect(usePersonal).toMatchObject({
+    const home = inboundResult(await sendServiceFrame(harness, homeFrame));
+    expect(home).toMatchObject({
       ok: true,
       reply: {
         deliveryId: expect.stringMatching(/^adapter-ingress:[0-9a-f]{64}:reply$/),
-        text: "This chat now uses a new personal-agent process.",
-        replyToId: "use-personal-message",
+        text: expect.stringContaining("[PERSONAL HOME]"),
+        replyToId: "home-message",
       },
     });
     expect(inboundResult(await sendServiceFrame(harness, {
-      ...usePersonalFrame,
-      id: "use-personal-replay",
-    }))).toEqual({ ...usePersonal, replayed: "completed" });
+      ...homeFrame,
+      id: "home-replay",
+    }))).toEqual({ ...home, replayed: "completed" });
 
     const afterPersonal = await client.proc.list();
-    const newPersonalProcesses = afterPersonal.processes.filter(({ pid }) =>
-      !beforePersonal.processes.some((process) => process.pid === pid)
-    );
-    expect(newPersonalProcesses).toEqual([
-      expect.objectContaining({
-        pid: expect.stringMatching(/^proc:adapter-ingress:[0-9a-f]{64}$/),
-        username: "runtime-agent",
-        interactive: true,
-      }),
-    ]);
+    expect(afterPersonal.processes).toEqual(beforePersonal.processes);
 
     const wherePersonal = inboundResult(await sendServiceFrame(harness, inboundFrame({
       id: "where-personal",
@@ -375,7 +370,7 @@ describe("gateway runtime integration", () => {
       text: "/where",
     })));
     expect(wherePersonal.reply).toMatchObject({
-      text: expect.stringContaining(newPersonalProcesses[0]!.pid.slice(0, 13)),
+      text: expect.stringContaining(personalProcesses[0]!.pid.slice(0, 13)),
       replyToId: "where-personal-message",
     });
 
@@ -384,31 +379,84 @@ describe("gateway runtime integration", () => {
       interactive: true,
     });
     if (!target.ok) throw new Error(target.error);
+    await configureDeterministicAi(client, personalProcesses[0]!.pid, ai.baseUrl);
     await configureDeterministicAi(client, target.pid, ai.baseUrl);
 
-    const useTarget = inboundResult(await sendServiceFrame(harness, inboundFrame({
-      id: "use-target",
-      deliveryId: "use-target-delivery",
-      messageId: "use-target-message",
-      text: `/use ${target.pid}`,
+    ai.enqueue(
+      {
+        kind: "tool-calls",
+        calls: [{
+          id: "route-work-call",
+          name: "Shell",
+          arguments: {
+            input: `message route set --process ${target.pid} --to here`,
+          },
+        }],
+      },
+      { kind: "text", chunks: ["work direct line ready"] },
+    );
+    const workTarget = inboundResult(await sendServiceFrame(harness, inboundFrame({
+      id: "work-target",
+      deliveryId: "work-target-delivery",
+      messageId: "work-target-message",
+      text: "Open a direct line to the prepared work process.",
     })));
-    expect(useTarget.reply).toMatchObject({
-      text: expect.stringContaining(target.pid.slice(0, 13)),
-      replyToId: "use-target-message",
+    expect(workTarget).toMatchObject({
+      ok: true,
+      delivered: {
+        pid: personalProcesses[0]!.pid,
+        runId: expect.any(String),
+        queued: false,
+      },
     });
+    if (!workTarget.delivered) throw new Error("Personal handoff run was not admitted");
 
-    const whereTarget = inboundResult(await sendServiceFrame(harness, inboundFrame({
-      id: "where-target",
-      deliveryId: "where-target-delivery",
-      messageId: "where-target-message",
-      text: "/where",
-    })));
-    expect(whereTarget.reply).toMatchObject({
-      text: expect.stringContaining(target.pid.slice(0, 13)),
-      replyToId: "where-target-message",
+    const pendingRoute = await waitForPendingHil(
+      client,
+      personalProcesses[0]!.pid,
+      workTarget.delivered.runId,
+    );
+    expect(pendingRoute).toMatchObject({
+      toolName: "Shell",
+      syscall: "shell.exec",
+      args: {
+        input: `message route set --process ${target.pid} --to here`,
+      },
     });
+    expect(await client.proc.hil({
+      pid: personalProcesses[0]!.pid,
+      requestId: pendingRoute.requestId,
+      decision: "approve",
+    })).toMatchObject({
+      ok: true,
+      pid: personalProcesses[0]!.pid,
+      requestId: pendingRoute.requestId,
+      resumed: true,
+    });
+    await waitFor(async () => {
+      const history = await client.proc.history({ pid: personalProcesses[0]!.pid });
+      return history.ok
+        && history.activeRunId === null
+        && history.messages.some(({ role, runId, content }) => (
+          role === "toolResult"
+          && runId === workTarget.delivered?.runId
+          && JSON.stringify(content).includes(target.pid)
+        ));
+    }, "personal controller to set the work route");
+    let personalRouteReply: RecordedOutboundMessage | undefined;
+    await waitFor(async () => {
+      personalRouteReply = (await listOutbound(harness, ACCOUNT_ID)).find(({ message }) => (
+        message.replyToId === "work-target-message"
+        && message.text.includes("work direct line ready")
+      ));
+      return personalRouteReply !== undefined;
+    }, "personal route confirmation");
+    expect(personalRouteReply?.message.text).toBe(
+      "[PERSONAL INTELLIGENCE] work direct line ready",
+    );
 
     const beforeNormal = await client.proc.list();
+    const workOutboundOffset = (await listOutbound(harness, ACCOUNT_ID)).length;
     const firstNormalFrame = inboundFrame({
       id: "normal-one",
       deliveryId: "normal-one-delivery",
@@ -431,14 +479,20 @@ describe("gateway runtime integration", () => {
       },
     });
 
-    const firstOutbound = await waitForOutbound(harness, ACCOUNT_ID, 1);
-    expect(firstOutbound[0]).toMatchObject({
+    const firstOutbound = await waitForOutbound(
+      harness,
+      ACCOUNT_ID,
+      workOutboundOffset + 1,
+    );
+    expect(firstOutbound.find(({ message }) => (
+      message.replyToId === "normal-one-message"
+    ))).toMatchObject({
       accountId: ACCOUNT_ID,
       message: {
         deliveryId: expect.any(String),
         surface: SURFACE,
         actorId: ACTOR_ID,
-        text: INTEGRATION_REPLY,
+        text: `[WORK SESSION] ${INTEGRATION_REPLY}`,
         replyToId: "normal-one-message",
       },
     });
@@ -451,11 +505,17 @@ describe("gateway runtime integration", () => {
     })));
     expect(secondNormal.delivered).toMatchObject({ pid: target.pid, queued: false });
 
-    const twoOutbound = await waitForOutbound(harness, ACCOUNT_ID, 2);
-    expect(twoOutbound[1]?.message).toMatchObject({
+    const twoOutbound = await waitForOutbound(
+      harness,
+      ACCOUNT_ID,
+      workOutboundOffset + 2,
+    );
+    expect(twoOutbound.find(({ message }) => (
+      message.replyToId === "normal-two-message"
+    ))?.message).toMatchObject({
       surface: SURFACE,
       actorId: ACTOR_ID,
-      text: INTEGRATION_REPLY,
+      text: `[WORK SESSION] ${INTEGRATION_REPLY}`,
       replyToId: "normal-two-message",
     });
 
@@ -512,10 +572,43 @@ describe("gateway runtime integration", () => {
       id: "normal-one-replay",
     }));
     expect(replayedNormal).toEqual({ ...firstNormal, replayed: "completed" });
-    expect(await listOutbound(harness, ACCOUNT_ID)).toHaveLength(2);
+    expect(await listOutbound(harness, ACCOUNT_ID)).toHaveLength(twoOutbound.length);
     expect(await client.proc.history({ pid: target.pid })).toMatchObject({
       ok: true,
       messageCount: 4,
+    });
+
+    const returnHomeFrame = inboundFrame({
+      id: "return-home",
+      deliveryId: "return-home-delivery",
+      messageId: "return-home-message",
+      text: "/home",
+    });
+    const returnedHome = inboundResult(await sendServiceFrame(harness, returnHomeFrame));
+    expect(returnedHome).toMatchObject({
+      ok: true,
+      reply: {
+        text: expect.stringContaining("[PERSONAL HOME]"),
+        replyToId: "return-home-message",
+      },
+    });
+    expect(inboundResult(await sendServiceFrame(harness, {
+      ...returnHomeFrame,
+      id: "return-home-replay",
+    }))).toEqual({ ...returnedHome, replayed: "completed" });
+
+    const afterHome = inboundResult(await sendServiceFrame(harness, inboundFrame({
+      id: "after-home",
+      deliveryId: "after-home-delivery",
+      messageId: "after-home-message",
+      text: "back at personal home",
+    })));
+    expect(afterHome).toMatchObject({
+      ok: true,
+      delivered: {
+        pid: personalProcesses[0]!.pid,
+        runId: expect.any(String),
+      },
     });
   });
 
@@ -594,6 +687,26 @@ async function processHistoryCounts(client: GSVClient): Promise<Array<{
     if (!history.ok) throw new Error(history.error);
     return { pid, messageCount: history.messageCount };
   }));
+}
+
+async function waitForPendingHil(
+  client: GSVClient,
+  pid: string,
+  runId: string,
+): Promise<ProcHilRequest> {
+  let pending: ProcHilRequest | null = null;
+  await waitFor(async () => {
+    const history = await client.proc.history({ pid });
+    if (!history.ok || history.pendingHil?.runId !== runId) {
+      return false;
+    }
+    pending = history.pendingHil;
+    return true;
+  }, `pending approval for ${runId}`);
+  if (!pending) {
+    throw new Error(`Process ${pid} did not expose approval for ${runId}`);
+  }
+  return pending;
 }
 
 function inboundFrame(options: {

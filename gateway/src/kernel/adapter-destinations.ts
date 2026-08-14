@@ -203,6 +203,9 @@ export function updateAdapterMessageDestinationRoute(
     throw new Error("Adapter route ownership does not match the linked identity");
   }
   if (!pid) {
+    if (normalized.surface.kind === "dm") {
+      throw new Error("Use /home in the private DM to return to personal intelligence");
+    }
     if (existing) ctx.adapters.surfaceRoutes.clearRoute(key);
     return null;
   }
@@ -215,12 +218,91 @@ export function updateAdapterMessageDestinationRoute(
     throw new Error("Adapter destinations can only route to interactive processes");
   }
 
+  if (normalized.surface.kind === "dm") {
+    return setPrivateDmWorkRoute(normalized, process, existing, ownerUid, ctx);
+  }
+
   return ctx.adapters.surfaceRoutes.setRoute({
     ...key,
     uid: ownerUid,
     pid: process.processId,
+    mode: "surface",
     updatedByUid: ctx.identity!.process.uid,
   });
+}
+
+function setPrivateDmWorkRoute(
+  destination: AdapterMessageDestination,
+  target: NonNullable<ReturnType<KernelContext["procs"]["get"]>>,
+  existing: SurfaceRouteRecord | null,
+  ownerUid: number,
+  ctx: KernelContext,
+): SurfaceRouteRecord {
+  if (target.isPersonalController) {
+    throw new Error("A private DM direct line must target a non-personal work process");
+  }
+  const callerPid = ctx.processId;
+  const runId = ctx.processRunId;
+  const controller = ctx.procs.getPersonalController(ownerUid);
+  if (
+    !callerPid
+    || !runId
+    || controller?.processId !== callerPid
+    || !controller.isPersonalController
+    || controller.activeRunId !== runId
+  ) {
+    throw new Error("Only the personal intelligence can open a private DM direct line");
+  }
+
+  const runRoute = ctx.runRoutes.get(runId);
+  if (
+    runRoute?.kind !== "adapter"
+    || runRoute.processId !== callerPid
+    || runRoute.uid !== ownerUid
+    || !runRoute.replyToId
+    || !sameAdapterMessageDestination(runRoute.destination, destination)
+  ) {
+    throw new Error("A private DM direct line requires the exact conversation that started this run");
+  }
+
+  const latest = ctx.adapters.privateDestinations.get(ownerUid);
+  if (
+    !latest
+    || latest.messageId !== runRoute.replyToId
+    || !sameAdapterMessageDestination(latest.destination, destination)
+    || !ctx.adapters.ingressReceipts.isLatestPrivateMessage(destination, runRoute.replyToId)
+  ) {
+    throw new Error("The private conversation changed before the direct line could be opened");
+  }
+
+  if (existing?.mode === "work" && existing.pid === target.processId) {
+    return existing;
+  }
+  if (existing) {
+    throw new Error("The private conversation selection changed before the direct line could be opened");
+  }
+
+  return ctx.adapters.surfaceRoutes.setRoute({
+    ...adapterMessageDestinationRouteKey(destination),
+    uid: ownerUid,
+    pid: target.processId,
+    mode: "work",
+    updatedByUid: ctx.identity!.process.uid,
+  });
+}
+
+function sameAdapterMessageDestination(
+  left: AdapterMessageDestination,
+  right: AdapterMessageDestination,
+): boolean {
+  const normalizedLeft = normalizeAdapterMessageDestination(left);
+  const normalizedRight = normalizeAdapterMessageDestination(right);
+  return normalizedLeft.adapter === normalizedRight.adapter
+    && normalizedLeft.accountId === normalizedRight.accountId
+    && normalizedLeft.actorId === normalizedRight.actorId
+    && normalizedLeft.surface.kind === normalizedRight.surface.kind
+    && normalizedLeft.surface.id === normalizedRight.surface.id
+    && (normalizedLeft.surface.threadId ?? "") === (normalizedRight.surface.threadId ?? "");
 }
 
 export async function adapterMessageDestinationId(

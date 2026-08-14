@@ -96,12 +96,16 @@ Try it from your phone, away from your desk: *What's on my Mac's clipboard?*
 ### Commands
 
 ```
-/list               show available agents and active processes
-/where              show where this chat is routed
-/use personal       start and route to a new personal-agent task
-/use <process-id>   route this chat to an active process
-/use <agent-name>   start and route this chat to an agent
+/where                          show PERSONAL HOME or the selected WORK SESSION
+/home                           return this direct message to personal home
 ```
+
+Ask your personal intelligence when you want a direct line to one piece of its
+work. It selects the work process internally, confirms what will receive the
+next message, and remains your personal intelligence. The current answer still
+comes from personal home; later messages use the visibly labeled work session
+until you enter `/home`. Returning home also gives the personal intelligence a
+small process event naming the work process, without copying its transcript.
 
 When a direct-message approval is pending, copy one of the full commands shown
 in that prompt. Each includes a unique `hil[...]` token; do not omit it or reuse

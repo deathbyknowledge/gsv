@@ -31,7 +31,7 @@ function createTableStatement(name: string): string {
 describe("kernel schema migrations", () => {
   it("starts the kernel component at a v1 baseline", () => {
     expect(KERNEL_SCHEMA_COMPONENT).toBe("kernel");
-    expect(KERNEL_MIGRATIONS).toHaveLength(19);
+    expect(KERNEL_MIGRATIONS).toHaveLength(22);
     expect(KERNEL_MIGRATIONS[0]).toMatchObject({
       id: 1,
       name: "initial_kernel_schema",
@@ -108,6 +108,18 @@ describe("kernel schema migrations", () => {
       id: 19,
       name: "remove_notifications",
     });
+    expect(KERNEL_MIGRATIONS[19]).toMatchObject({
+      id: 23,
+      name: "add_personal_controller_slot",
+    });
+    expect(KERNEL_MIGRATIONS[20]).toMatchObject({
+      id: 24,
+      name: "add_surface_route_modes",
+    });
+    expect(KERNEL_MIGRATIONS[21]).toMatchObject({
+      id: 25,
+      name: "add_private_adapter_destinations",
+    });
   });
 
   it("creates the current kernel table set", () => {
@@ -164,6 +176,35 @@ describe("kernel schema migrations", () => {
 
   it("removes obsolete process context metadata", () => {
     expect(normalizedStatements()).toContain("ALTER TABLE processes DROP COLUMN context_files_json");
+  });
+
+  it("adds one personal controller slot per process owner", () => {
+    const statements = normalizedStatements();
+    expect(statements).toContain(
+      "ALTER TABLE processes ADD COLUMN is_personal_controller INTEGER NOT NULL DEFAULT 0 CHECK (is_personal_controller IN (0, 1))",
+    );
+    expect(statements).toContain(
+      "CREATE UNIQUE INDEX IF NOT EXISTS idx_processes_personal_controller_owner ON processes(owner_uid) WHERE is_personal_controller = 1",
+    );
+  });
+
+  it("classifies existing surface routes for the DM cutover", () => {
+    const statements = normalizedStatements();
+    expect(statements).toContain(
+      "ALTER TABLE surface_routes ADD COLUMN route_mode TEXT NOT NULL DEFAULT 'legacy' CHECK (route_mode IN ('legacy', 'work', 'surface'))",
+    );
+    expect(statements).toContain(
+      "UPDATE surface_routes SET route_mode = 'surface' WHERE surface_kind != 'dm'",
+    );
+    expect(statements).toContain(
+      "CREATE INDEX IF NOT EXISTS idx_surface_routes_mode_pid ON surface_routes(route_mode, pid)",
+    );
+  });
+
+  it("stores one last-active private adapter destination per owner", () => {
+    expect(normalizedStatements()).toContain(
+      "CREATE TABLE private_adapter_destinations ( uid INTEGER PRIMARY KEY, adapter TEXT NOT NULL, account_id TEXT NOT NULL, actor_id TEXT NOT NULL, surface_id TEXT NOT NULL, thread_id TEXT NOT NULL DEFAULT '', message_id TEXT NOT NULL, updated_at INTEGER NOT NULL )",
+    );
   });
 
   it("removes the parallel conversation registry", () => {

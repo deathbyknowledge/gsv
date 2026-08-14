@@ -21,6 +21,13 @@ This keeps lifecycle state aligned:
 Parallel threads are therefore parallel processes. They have independent queues,
 cancellation, permissions, labels, and future histories.
 
+Each human also has one personal process. This is the default place where their
+personal intelligence receives direct conversation and user-level events. The
+Kernel marks the current process in its registry; the pid itself remains an
+ordinary random process id. Reset keeps the same personal process, while kill
+removes it and the next personal interaction creates a fresh one. Old pids are
+never reused.
+
 ## Frames, events, and signals
 
 `SignalFrame` is the existing asynchronous transport frame:
@@ -63,16 +70,25 @@ target process.
 
 ## Personal intelligence and delegation
 
-Each human's personal agent account is the personal intelligence they interact
-with. Parentless `proc.spawn` calls default to that account. Direct conversations
-are ordinary interactive processes, so separate surfaces or explicitly started
-chats may have independent histories without introducing a global controller
-PID.
+Each human's personal agent account is the identity of their personal
+intelligence: it owns the role, home, capabilities, and shared memory. One
+interactive process is its current personal conversation. Web, CLI, and
+unrouted private messaging surfaces resolve that process instead of selecting
+the newest process or creating one per surface.
+
+The personal marker is a stable role, not an immortal pid and not a special
+kind of Process Durable Object. Killing it leaves the role temporarily empty;
+the next personal entry point creates a fresh ordinary process and marks it.
+Other processes may run as the same personal agent account, but they are work
+with independent histories and never become the personal process by recency or
+label. `proc.list` reports the distinction explicitly.
 
 The personal agent's account home contains its role, voice, and compact open
 commitments. Those files are shared by every process running as that account,
-while each process retains its own history and lifecycle. Commitments are
-model-maintained text rather than a Kernel schema.
+while each process retains its own history and lifecycle. The personal process
+is the normal user-facing place where delegated results and ambient events
+return; real child processes still use ordinary parent pids for lifecycle and
+IPC. Commitments are model-maintained text rather than a Kernel schema.
 
 For bounded work, `proc delegate` creates a non-interactive child and a bounded
 `proc.ipc.call`. The child inherits the personal account unless `--as ACCOUNT`

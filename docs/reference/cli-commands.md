@@ -33,8 +33,8 @@ gsv shell
 for the matching `proc.run.finished` signal for up to 120 seconds. The
 interactive prompt returns after each message is accepted so another message
 can supersede an active run; type `quit` or `exit` to leave. `--pid` targets a
-specific process; when omitted, the CLI creates one process and uses it for the
-whole command. Set `GSV_CLIENT_DEBUG=1` to trace run-signal matching.
+specific process; when omitted, the CLI uses the user's personal
+intelligence process. Set `GSV_CLIENT_DEBUG=1` to trace run-signal matching.
 
 `shell` opens an interactive prompt backed by the gateway `shell.exec` syscall.
 Commands run inside the gateway OS context, not directly on your local machine.
@@ -95,7 +95,9 @@ the source process receives either
 `ipc.reply` or `ipc.timeout` as a delegated task event. In a process-backed
 shell, `proc self` prints the current process id and the shell exports it as
 `GSV_PID`; a top-level user shell has no current process, so `proc self` exits
-with an error there.
+with an error there. `proc list` labels the one canonical process as
+`kind=personal`; all other entries are `kind=work`, even when they run as the
+same personal-agent account.
 
 `message current` reports where the current run's final answer is delivered
 automatically. For an adapter run, both text and JSON output include an opaque
@@ -112,15 +114,19 @@ Group, channel, and thread entries appear only after the linked actor addresses
 GSV on that exact surface. Entries use opaque GSV ids and generic labels;
 provider account, actor, surface, and message ids are not printed.
 
-`message route` manages the persistent mapping from an authorized adapter
-conversation to one of the owner's interactive processes. `--to` defaults to
-`here` during an adapter-originated run; elsewhere, pass an opaque destination
-id or unambiguous label from `message destinations --all`. `route set` accepts
-a full or unique process-id prefix or an unambiguous process label. A route
-change controls future inbound messages only, so the run making the change
-still returns its final reply to the conversation that started it. To begin a
-fresh conversation, create a process with `proc spawn`, then route the chat to
-the returned pid.
+`message route show` and `message route list` inspect adapter routing. `route
+set` and `route clear` manage persistent mappings for groups, channels, and
+threads. On a private DM, only the canonical personal process can use `route
+set`, only from the exact latest inbound run on that DM, and only to an owned
+interactive non-personal process. The human uses `/home` inside the messaging
+app to return to personal intelligence; `route clear` does not clear a DM.
+`--to` defaults to `here` during an adapter-originated run; elsewhere, pass an
+opaque destination id or unambiguous label from `message destinations --all`.
+`route set` accepts a full or unique process-id prefix or an unambiguous process
+label. A route change controls future inbound messages only, so the run making
+the change still returns its final reply to the conversation that started it.
+Repeated `route set` calls from the same current run to the same work process
+are idempotent. Newer private activity or a newer selection fences a late call.
 
 `img2txt` uses Moondream 3.1 as its only image reader. With no subcommand it
 returns a normal caption. `query` requires the caller's prompt; there is no

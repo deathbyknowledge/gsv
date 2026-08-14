@@ -39,6 +39,7 @@ import {
   findProcessAiModelProfile,
   omitProcessAiConfigSecrets,
 } from "../process/ai-config";
+import { invalidatePersonalControllerReadiness } from "./personal-controller";
 
 const DEFAULT_IPC_CALL_TIMEOUT_MS = 60_000;
 const MIN_IPC_CALL_TIMEOUT_MS = 1_000;
@@ -53,7 +54,10 @@ export function handleProcList(
   // human owner, otherwise it filters on the agent's uid and sees nothing.
   const callerOwnerUid = resolveCallerOwnerUid(ctx);
   const isRoot = callerOwnerUid === 0;
-  const uid = args.uid ?? (isRoot ? undefined : callerOwnerUid);
+  if (!isRoot && args.uid !== undefined && args.uid !== callerOwnerUid) {
+    throw new Error(`Permission denied: cannot list processes for uid=${args.uid}`);
+  }
+  const uid = isRoot ? args.uid : callerOwnerUid;
 
   const records = ctx.procs.list(uid);
 
@@ -62,6 +66,7 @@ export function handleProcList(
     uid: r.ownerUid,
     username: r.username,
     interactive: r.interactive,
+    personal: r.isPersonalController,
     parentPid: r.parentPid,
     state: r.state,
     activeRunId: r.activeRunId,
@@ -155,6 +160,7 @@ export async function handleProcSpawn(
     cwd: resolveSpawnCwd(args.cwd, baseIdentity),
   };
 
+  let registered = false;
   try {
     ctx.procs.spawn(pid, spawnIdentity, {
       parentPid: parentPid ?? undefined,
@@ -163,6 +169,7 @@ export async function handleProcSpawn(
       label,
       cwd: spawnIdentity.cwd,
     });
+    registered = true;
 
     const requestId = crypto.randomUUID();
     const response = await sendFrameToProcess(pid, {
@@ -187,6 +194,12 @@ export async function handleProcSpawn(
       throw new Error("proc.setidentity rejected initialization");
     }
   } catch (error) {
+    if (!registered) {
+      return {
+        ok: false,
+        error: `Failed to register process: ${error instanceof Error ? error.message : String(error)}`,
+      };
+    }
     try {
       await rollbackSpawn(ctx, pid);
     } catch (rollbackError) {
@@ -388,6 +401,10 @@ async function rollbackSpawn(
     throw new Error("proc.kill returned no valid response");
   }
   if (!response.ok) {
+    if (response.error.code === 410) {
+      ctx.procs.kill(pid);
+      return;
+    }
     throw new Error(response.error.message);
   }
   if ((response.data as { ok?: unknown } | undefined)?.ok !== true) {
@@ -662,6 +679,9 @@ export async function forwardToProcess(
     : frame.call === "proc.ai.config.set"
       ? withProcAiConfigProfile(frame as RequestFrame<"proc.ai.config.set">, ctx, proc.ownerUid)
       : frame;
+  if (frame.call === "proc.kill" && proc.isPersonalController) {
+    invalidatePersonalControllerReadiness(proc.ownerUid, pid, ctx.procs);
+  }
   const responsePromise = sendFrameToProcess(pid, processFrame);
   let cancellation: Promise<unknown> | undefined;
   const signal = frame.call === "codemode.run" || frame.call === "proc.history.compact"
@@ -706,13 +726,7 @@ export async function forwardToProcess(
           "Target process was reset",
         );
       } else if (frame.call === "proc.kill") {
-        ctx.runRoutes.clearForProcess(pid);
-        ctx.failIpcCallsByTarget(
-          proc.ownerUid,
-          pid,
-          "Target process was killed",
-        );
-        ctx.procs.kill(pid);
+        reconcileKilledProcess(proc.ownerUid, pid, ctx);
       }
       const responseData = res.data;
       const runData = responseData as { runId?: unknown } | undefined;
@@ -734,6 +748,10 @@ export async function forwardToProcess(
         ...(res.body ? { body: res.body } : {}),
       };
     } else {
+      if (frame.call === "proc.kill" && res.error.code === 410) {
+        ctx.ipcCalls.cancelBySourcePid({ uid: proc.ownerUid, sourcePid: pid });
+        reconcileKilledProcess(proc.ownerUid, pid, ctx);
+      }
       throw new Error((res as { error: { message: string } }).error.message);
     }
   }
@@ -741,6 +759,16 @@ export async function forwardToProcess(
   return {
     data: { ok: true, status: "delivered" } as ResultOf<SyscallName>,
   };
+}
+
+function reconcileKilledProcess(
+  ownerUid: number,
+  pid: string,
+  ctx: KernelContext,
+): void {
+  ctx.runRoutes.clearForProcess(pid);
+  ctx.failIpcCallsByTarget(ownerUid, pid, "Target process was killed");
+  ctx.procs.kill(pid);
 }
 
 function withRedactedProcAiConfigGet(

@@ -138,9 +138,13 @@ processes.
 
 For unlinked actors, direct messages receive a link challenge such as
 `gsv auth link CODE`. Non-DM messages from unlinked actors are dropped. Once
-linked, adapter messages are delivered to the user's routed process or their
-newly created personal-agent process. Pending human-in-the-loop approvals can be
-answered from a linked DM surface.
+linked, a direct message is delivered to the user's personal controller unless
+that controller opened a direct line to an owned work process from the exact
+current DM run. A newer private message or selection fences a late route
+change, and `/home` always returns the surface to personal intelligence. A
+linked group, channel, or thread follows its actor-scoped route; the first
+message on an unrouted shared surface creates a separate interactive process.
+Pending human-in-the-loop approvals can be answered from a linked DM surface.
 
 ## Git
 

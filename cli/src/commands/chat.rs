@@ -36,6 +36,32 @@ fn signal_run_id(payload: &Value) -> Option<String> {
         .map(ToOwned::to_owned)
 }
 
+fn implicit_personal_owner_uid(identity: &Value) -> Result<u64, &'static str> {
+    let owner_uid = identity
+        .get("process")
+        .and_then(|process| process.get("uid"))
+        .and_then(Value::as_u64)
+        .ok_or("sys.connect returned no current user")?;
+    if owner_uid == 0 {
+        return Err("root has no implicit personal intelligence; pass --pid");
+    }
+    Ok(owner_uid)
+}
+
+fn personal_process_id(payload: &Value, owner_uid: u64) -> Option<String> {
+    payload
+        .get("processes")?
+        .as_array()?
+        .iter()
+        .find(|process| {
+            process.get("personal").and_then(Value::as_bool) == Some(true)
+                && process.get("uid").and_then(Value::as_u64) == Some(owner_uid)
+        })?
+        .get("pid")?
+        .as_str()
+        .map(ToOwned::to_owned)
+}
+
 fn process_chat_signal(
     debug_enabled: bool,
     signal: &str,
@@ -310,19 +336,17 @@ pub(crate) async fn run_client(
     let pid = match pid {
         Some(pid) => pid,
         None => {
-            let spawned = client.request_ok("proc.spawn", Some(json!({}))).await?;
-            if spawned.get("ok").and_then(Value::as_bool) != Some(true) {
-                let error = spawned
-                    .get("error")
-                    .and_then(Value::as_str)
-                    .unwrap_or("proc.spawn failed");
-                return Err(error.to_string().into());
-            }
-            spawned
-                .get("pid")
-                .and_then(Value::as_str)
-                .ok_or("proc.spawn returned no pid")?
-                .to_string()
+            let owner_uid = client
+                .connection()
+                .connect_result
+                .as_ref()
+                .ok_or("sys.connect returned no current user")
+                .and_then(|result| implicit_personal_owner_uid(&result.identity))?;
+            let processes = client
+                .request_ok("proc.list", Some(json!({ "uid": owner_uid })))
+                .await?;
+            personal_process_id(&processes, owner_uid)
+                .ok_or("proc.list returned no personal intelligence process")?
         }
     };
     debug_log(debug_enabled, format!("chat process pid={pid}"));
@@ -450,4 +474,72 @@ pub(crate) async fn run_client(
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{implicit_personal_owner_uid, personal_process_id};
+    use serde_json::json;
+
+    #[test]
+    fn selects_the_personal_process_instead_of_recent_work() {
+        let payload = json!({
+            "processes": [
+                { "pid": "proc:work", "uid": 1000, "personal": false },
+                { "pid": "proc:personal", "uid": 1000, "personal": true }
+            ]
+        });
+
+        assert_eq!(
+            personal_process_id(&payload, 1000).as_deref(),
+            Some("proc:personal")
+        );
+    }
+
+    #[test]
+    fn selects_only_the_current_users_personal_process() {
+        let payload = json!({
+            "processes": [
+                { "pid": "proc:other", "uid": 1001, "personal": true },
+                { "pid": "proc:self", "uid": 1000, "personal": true }
+            ]
+        });
+
+        assert_eq!(
+            personal_process_id(&payload, 1000).as_deref(),
+            Some("proc:self")
+        );
+    }
+
+    #[test]
+    fn resolves_the_current_user_from_the_authenticated_identity() {
+        let identity = json!({
+            "role": "user",
+            "process": { "uid": 1000, "username": "sam" }
+        });
+
+        assert_eq!(implicit_personal_owner_uid(&identity), Ok(1000));
+    }
+
+    #[test]
+    fn requires_root_to_choose_an_explicit_process() {
+        let identity = json!({
+            "role": "user",
+            "process": { "uid": 0, "username": "root" }
+        });
+
+        assert_eq!(
+            implicit_personal_owner_uid(&identity),
+            Err("root has no implicit personal intelligence; pass --pid")
+        );
+    }
+
+    #[test]
+    fn rejects_a_list_without_a_personal_process() {
+        let payload = json!({
+            "processes": [{ "pid": "proc:work", "uid": 1000, "personal": false }]
+        });
+
+        assert_eq!(personal_process_id(&payload, 1000), None);
+    }
 }

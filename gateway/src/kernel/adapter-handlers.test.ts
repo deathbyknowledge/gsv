@@ -18,9 +18,16 @@ import {
   type AdapterInboundArgs,
   type BinaryBody,
 } from "@humansandmachines/gsv/protocol";
+import { runWithRealKernelSql } from "../test-support/real-kernel-sql";
+import { PrivateAdapterDestinationStore } from "./private-adapter-destinations";
+
+const ensurePersonalControllerMock = vi.hoisted(() => vi.fn());
 
 vi.mock("../shared/utils", () => ({
   sendFrameToProcess: vi.fn(),
+}));
+vi.mock("./personal-controller", () => ({
+  ensurePersonalController: ensurePersonalControllerMock,
 }));
 
 type FakeAdapterStatusStore = {
@@ -38,6 +45,7 @@ type MakeContextOptions = {
   runRoute?: Record<string, unknown> | null;
   ingressReceipts?: Record<string, unknown>;
   callerOwnerUid?: number;
+  processState?: "idle" | "queued" | "running" | "waiting_tool" | "waiting_hil";
 };
 
 function makeStorageBucket() {
@@ -99,12 +107,13 @@ function makeContext(
     uid: personalAgent.uid,
     ownerUid: human.uid,
     interactive: true,
+    isPersonalController: true,
     gid: personalAgent.gid,
     gids: [human.gid],
     username: personalAgent.username,
     home: personalAgent.home,
     cwd: personalAgent.home,
-    state: "idle",
+    state: options.processState ?? "idle",
     activeRunId: null,
     queuedCount: 0,
     lastActiveAt: null,
@@ -195,6 +204,41 @@ function makeContext(
     }),
     ...options.ingressReceipts,
   };
+  let surfaceRoute = options.surfaceRoute
+    ? { mode: "surface", ...options.surfaceRoute }
+    : options.routePid !== undefined && options.routePid !== null
+      ? {
+          adapter: "whatsapp",
+          accountId: "primary",
+          actorId: "wa:+123",
+          surfaceKind: "dm",
+          surfaceId: "dm-1",
+          uid: human.uid,
+          pid: options.routePid,
+          mode: "work",
+          updatedAt: 1,
+          updatedByUid: human.uid,
+        }
+      : null;
+  const resolveSurfaceRoute = vi.fn((key: { uid: number }) => (
+    surfaceRoute && surfaceRoute.uid === key.uid ? surfaceRoute : null
+  ));
+  const setSurfaceRoute = vi.fn((input: Record<string, unknown>) => {
+    surfaceRoute = { ...input, updatedAt: Date.now() };
+    return surfaceRoute;
+  });
+  const clearSurfaceRoute = vi.fn(() => {
+    const cleared = surfaceRoute !== null;
+    surfaceRoute = null;
+    return cleared;
+  });
+  const clearSurfaceRouteIfMatches = vi.fn((input: { pid: string; mode: string }) => {
+    if (surfaceRoute?.pid !== input.pid || surfaceRoute.mode !== input.mode) {
+      return false;
+    }
+    surfaceRoute = null;
+    return true;
+  });
 
   return {
     env: {
@@ -245,6 +289,7 @@ function makeContext(
     procs: {
       get: vi.fn((pid: string) => pid === "pid-1" ? processRecord : null),
       getOwnerUid: vi.fn((pid: string) => pid === "pid-1" ? human.uid : null),
+      getPersonalController: vi.fn((ownerUid: number) => ownerUid === human.uid ? processRecord : null),
       list: vi.fn(() => [processRecord]),
       spawn: vi.fn(),
       kill: vi.fn(() => true),
@@ -272,11 +317,19 @@ function makeContext(
         })),
       },
       surfaceRoutes: {
-        resolvePid: vi.fn(() => options.routePid === undefined ? "pid-1" : options.routePid),
-        get: vi.fn(() => options.surfaceRoute ?? null),
-        list: vi.fn(() => []),
-        setRoute: vi.fn(),
-        clearRoute: vi.fn(() => Boolean(options.routePid === undefined ? "pid-1" : options.routePid)),
+        resolvePid: vi.fn((key: { uid: number }) => resolveSurfaceRoute(key)?.pid ?? null),
+        resolveRoute: resolveSurfaceRoute,
+        get: vi.fn(() => surfaceRoute),
+        list: vi.fn(() => surfaceRoute ? [surfaceRoute] : []),
+        setRoute: setSurfaceRoute,
+        clearRoute: clearSurfaceRoute,
+        clearRouteIfMatches: clearSurfaceRouteIfMatches,
+        clearLegacyForProcess: vi.fn(),
+      },
+      privateDestinations: {
+        recordActivity: vi.fn(),
+        get: vi.fn(() => null),
+        clearIfMatches: vi.fn(() => false),
       },
       ingressReceipts: ingressReceiptStore,
     },
@@ -285,6 +338,9 @@ function makeContext(
       get: vi.fn(() => options.runRoute ?? null),
       delete: vi.fn(),
     },
+    defer: vi.fn((promise: Promise<unknown>) => {
+      void promise;
+    }),
     broadcastToUserUid: vi.fn(),
     identity: options.identity ?? {
       role: "service",
@@ -300,6 +356,8 @@ const sendFrameToProcessMock = vi.mocked(sendFrameToProcess);
 describe("adapter lifecycle handlers", () => {
   beforeEach(() => {
     sendFrameToProcessMock.mockReset();
+    ensurePersonalControllerMock.mockReset();
+    ensurePersonalControllerMock.mockResolvedValue("pid-1");
   });
 
   it("notifies root and linked users when adapter state changes", () => {
@@ -1220,6 +1278,7 @@ describe("adapter lifecycle handlers", () => {
 
     expect(result).toEqual({ ok: true, droppedReason: "not_addressed" });
     expect(ctx.adapters.surfaceRoutes.setRoute).not.toHaveBeenCalled();
+    expect(ctx.adapters.privateDestinations.recordActivity).not.toHaveBeenCalled();
     expect(ctx.runRoutes.setAdapterRoute).not.toHaveBeenCalled();
     expect(sendFrameToProcessMock).not.toHaveBeenCalled();
   });
@@ -1229,7 +1288,20 @@ describe("adapter lifecycle handlers", () => {
       CHANNEL_DISCORD: {
         adapterSetActivity: vi.fn(async () => ({ ok: true as const })),
       },
-    }, { upsert: vi.fn() });
+    }, { upsert: vi.fn() }, {
+      surfaceRoute: {
+        adapter: "discord",
+        accountId: "primary",
+        actorId: "discord:user:42",
+        surfaceKind: "group",
+        surfaceId: "shared-channel",
+        uid: 1000,
+        pid: "pid-1",
+        mode: "surface",
+        updatedAt: 1,
+        updatedByUid: 1000,
+      },
+    });
     let admittedRunId = "";
     sendFrameToProcessMock.mockImplementation(async (_pid: string, frame: any) => {
       if (frame.call === "proc.history") {
@@ -1370,7 +1442,7 @@ describe("adapter lifecycle handlers", () => {
   });
 
   it("replays completed commands across actor alias normalization", async () => {
-    const ctx = makeContext({}, { upsert: vi.fn() }, { routePid: "pid-1" });
+    const ctx = makeContext({}, { upsert: vi.fn() });
     const inbound = {
       adapter: "whatsapp",
       accountId: "primary",
@@ -1378,7 +1450,7 @@ describe("adapter lifecycle handlers", () => {
         messageId: "command-once",
         surface: { kind: "dm" as const, id: "dm-1" },
         actor: { id: "wa:lid:123" },
-        text: "/use personal",
+        text: "/help",
       },
     };
 
@@ -1393,19 +1465,25 @@ describe("adapter lifecycle handlers", () => {
 
     expect(first.reply?.deliveryId).toMatch(/^adapter-ingress:[0-9a-f]{64}:reply$/);
     expect(replay).toEqual({ ...first, replayed: "completed" });
-    expect(ctx.adapters.surfaceRoutes.setRoute).toHaveBeenCalledTimes(1);
-    expect(sendFrameToProcessMock).toHaveBeenCalledTimes(1);
-    expect(sendFrameToProcessMock).toHaveBeenCalledWith(
-      expect.stringMatching(/^proc:adapter-ingress:/),
-      expect.objectContaining({
-        call: "proc.setidentity",
-        args: expect.objectContaining({ autoTitle: true }),
-      }),
-    );
+    expect(ctx.adapters.surfaceRoutes.setRoute).not.toHaveBeenCalled();
+    expect(sendFrameToProcessMock).not.toHaveBeenCalled();
   });
 
   it("keeps equal WhatsApp stanza ids distinct across group participants", async () => {
-    const ctx = makeContext({}, { upsert: vi.fn() }, { routePid: "pid-1" });
+    const ctx = makeContext({}, { upsert: vi.fn() }, {
+      surfaceRoute: {
+        adapter: "whatsapp",
+        accountId: "primary",
+        actorId: "wa:lid:a",
+        surfaceKind: "group",
+        surfaceId: "group@g.us",
+        uid: 1000,
+        pid: "pid-1",
+        mode: "surface",
+        updatedAt: 1,
+        updatedByUid: 1000,
+      },
+    });
     sendFrameToProcessMock.mockImplementation(async (_pid: string, frame: any) => {
       if (frame.call === "proc.history") {
         return { type: "res", id: frame.id, ok: true, data: { pendingHil: null } };
@@ -1454,7 +1532,7 @@ describe("adapter lifecycle handlers", () => {
   });
 
   it("reclaims a prepared command reply after completion is interrupted", async () => {
-    const ctx = makeContext({}, { upsert: vi.fn() }, { routePid: "pid-1" });
+    const ctx = makeContext({}, { upsert: vi.fn() });
     const receipts = ctx.adapters.ingressReceipts;
     const completePrepared = receipts.complete.bind(receipts);
     let completionAttempts = 0;
@@ -1472,7 +1550,7 @@ describe("adapter lifecycle handlers", () => {
         messageId: "command-outbox-retry",
         surface: { kind: "dm" as const, id: "dm-1" },
         actor: { id: "wa:+123" },
-        text: "/use personal",
+        text: "/help",
       },
     };
 
@@ -1482,9 +1560,11 @@ describe("adapter lifecycle handlers", () => {
     expect(replay).toMatchObject({
       ok: true,
       replayed: "completed",
-      reply: { text: "This chat now uses a new personal-agent process." },
+      reply: { text: expect.stringContaining("/home - leave the work session") },
     });
-    expect(ctx.adapters.surfaceRoutes.setRoute).toHaveBeenCalledTimes(1);
+    expect(replay.reply?.text).not.toContain("/work");
+    expect(replay.reply?.text).not.toContain("/list");
+    expect(ctx.adapters.surfaceRoutes.setRoute).not.toHaveBeenCalled();
     expect(receipts.complete).toHaveBeenCalledTimes(2);
   });
 
@@ -1966,6 +2046,7 @@ describe("adapter lifecycle handlers", () => {
     expect(sendFrameToProcessMock.mock.calls.filter(([, frame]) => (
       frame.call === "proc.media.write"
     ))).toHaveLength(1);
+    expect(ctx.adapters.surfaceRoutes.setRoute).not.toHaveBeenCalled();
     expect(adapterSetActivity).not.toHaveBeenCalled();
   });
 
@@ -2024,7 +2105,7 @@ describe("adapter lifecycle handlers", () => {
         },
       },
     } as any);
-    const ctx = makeContext({}, { upsert: vi.fn() });
+    const ctx = makeContext({}, { upsert: vi.fn() }, { processState: "waiting_hil" });
 
     const result = await handleAdapterInbound({
       adapter: "discord",
@@ -2038,8 +2119,7 @@ describe("adapter lifecycle handlers", () => {
       },
     }, ctx);
 
-    expect(result.reply?.text).toContain("couldn’t verify");
-    expect(result.reply?.text).toContain('"approve hil[hil-new]"');
+    expect(result.reply?.text).toContain("could not find a pending approval");
     expect(result.reply?.text).not.toContain('"approve hil[hil-old]"');
     expect(sendFrameToProcessMock).toHaveBeenCalledTimes(1);
   });
@@ -2114,6 +2194,7 @@ describe("adapter lifecycle handlers", () => {
         CHANNEL_WHATSAPP: service,
       },
       status,
+      { processState: "waiting_hil" },
     );
 
     const result = await handleAdapterInbound(
@@ -2172,7 +2253,7 @@ describe("adapter lifecycle handlers", () => {
       CHANNEL_WHATSAPP: {
         adapterSetActivity: vi.fn(async () => ({ ok: true as const })),
       },
-    }, { upsert: vi.fn() });
+    }, { upsert: vi.fn() }, { processState: "waiting_hil" });
     const inbound = {
       adapter: "whatsapp",
       accountId: "primary",
@@ -2238,7 +2319,7 @@ describe("adapter lifecycle handlers", () => {
       }
       throw new Error(`Unexpected call: ${frame.call}`);
     });
-    const ctx = makeContext({}, { upsert: vi.fn() });
+    const ctx = makeContext({}, { upsert: vi.fn() }, { processState: "waiting_hil" });
     const inbound = {
       adapter: "whatsapp",
       accountId: "primary",
@@ -2302,7 +2383,7 @@ describe("adapter lifecycle handlers", () => {
       }
       throw new Error(`Unexpected call: ${frame.call}`);
     });
-    const ctx = makeContext({}, { upsert: vi.fn() });
+    const ctx = makeContext({}, { upsert: vi.fn() }, { processState: "waiting_hil" });
     const inbound = {
       adapter: "telegram",
       accountId: "bot",
@@ -2362,6 +2443,7 @@ describe("adapter lifecycle handlers", () => {
         CHANNEL_WHATSAPP: service,
       },
       status,
+      { processState: "waiting_hil" },
     );
 
     const result = await handleAdapterInbound(
@@ -2393,7 +2475,7 @@ describe("adapter lifecycle handlers", () => {
     );
   });
 
-  it("adapter.inbound starts and routes to an agent with /use agent-name", async () => {
+  it.each(["/work helper", "/list"])("does not expose the removed DM command %s", async (text) => {
     const status = { upsert: vi.fn() };
     const ctx = makeContext({}, status, { routePid: null });
 
@@ -2405,46 +2487,484 @@ describe("adapter lifecycle handlers", () => {
           messageId: "msg-9",
           surface: { kind: "dm", id: "dm-1" },
           actor: { id: "wa:+123" },
-          text: "/use helper",
+          text,
         },
       },
       ctx,
     );
 
-    expect(result.reply?.text).toContain("helper");
-    expect(ctx.procs.spawn).toHaveBeenCalledWith(
-      expect.stringMatching(/^proc:/),
-      expect.objectContaining({ username: "helper" }),
-      expect.objectContaining({ ownerUid: 1000, interactive: true }),
-    );
-    expect(sendFrameToProcessMock).toHaveBeenCalledWith(
-      expect.stringMatching(/^proc:/),
+    expect(result.reply?.text).toContain(`Unknown command: ${text.split(" ")[0]}`);
+    expect(result.reply?.text).not.toContain("/work -");
+    expect(result.reply?.text).not.toContain("/list -");
+    expect(ctx.procs.spawn).not.toHaveBeenCalled();
+    expect(ctx.adapters.surfaceRoutes.setRoute).not.toHaveBeenCalled();
+  });
+
+  it("returns home immediately while a selected work process is still running", async () => {
+    const ctx = makeContext({}, { upsert: vi.fn() }, {
+      surfaceRoute: {
+        adapter: "whatsapp",
+        accountId: "primary",
+        actorId: "wa:+123",
+        surfaceKind: "dm",
+        surfaceId: "dm-1",
+        uid: 1000,
+        pid: "proc:running-work",
+        mode: "work",
+        updatedAt: 1,
+        updatedByUid: 1000,
+      },
+    });
+    const personal = ctx.procs.get("pid-1")!;
+    const work = {
+      ...personal,
+      processId: "proc:running-work",
+      isPersonalController: false,
+      state: "running" as const,
+      activeRunId: "run-work",
+    };
+    vi.mocked(ctx.procs.get).mockImplementation((pid: string) => (
+      pid === personal.processId ? personal : pid === work.processId ? work : null
+    ));
+    vi.mocked(ctx.procs.list).mockReturnValue([personal, work]);
+    sendFrameToProcessMock.mockImplementation(async (_pid: string, frame: any) => ({
+      type: "res",
+      id: frame.id,
+      ok: true,
+      data: { runId: frame.args.eventId, queued: false },
+    }));
+
+    const result = await handleAdapterInbound({
+      adapter: "whatsapp",
+      accountId: "primary",
+      message: {
+        messageId: "leave-running-work",
+        surface: { kind: "dm", id: "dm-1" },
+        actor: { id: "wa:+123" },
+        text: "/home",
+      },
+    }, ctx);
+
+    expect(result.reply?.text).toContain("[PERSONAL HOME]");
+    expect(ctx.adapters.ingressReceipts.checkpoint).toHaveBeenCalledWith(
+      expect.stringMatching(/^adapter-ingress:/),
+      expect.stringMatching(/^claim:adapter-ingress:/),
       expect.objectContaining({
-        call: "proc.setidentity",
-        args: expect.objectContaining({
-          autoTitle: true,
-          identity: expect.objectContaining({ username: "helper" }),
+        kind: "work_return",
+        uid: 1000,
+        workPid: work.processId,
+        route: expect.objectContaining({
+          adapter: "whatsapp",
+          accountId: "primary",
+          actorId: "wa:+123",
+          surfaceKind: "dm",
+          surfaceId: "dm-1",
+          mode: "work",
         }),
       }),
     );
-    expect(ctx.adapters.surfaceRoutes.setRoute).toHaveBeenCalledWith({
+    expect(ctx.adapters.surfaceRoutes.clearRouteIfMatches).toHaveBeenCalledWith(
+      expect.objectContaining({
+        pid: work.processId,
+        mode: "work",
+      }),
+    );
+    expect(ctx.adapters.surfaceRoutes.resolveRoute(expect.anything())).toBeNull();
+    expect(sendFrameToProcessMock).toHaveBeenCalledWith(personal.processId, expect.objectContaining({
+      call: "proc.runtime.event.deliver",
+      args: {
+        eventId: expect.stringMatching(/^adapter-home:adapter-ingress:/),
+        event: {
+          type: "adapter.work.returned",
+          workPid: work.processId,
+        },
+      },
+    }));
+    expect(vi.mocked(ctx.adapters.ingressReceipts.checkpoint).mock.invocationCallOrder[0])
+      .toBeLessThan(vi.mocked(ctx.adapters.surfaceRoutes.clearRouteIfMatches).mock.invocationCallOrder[0]!);
+    expect(ctx.defer).not.toHaveBeenCalled();
+  });
+
+  it("retries a failed work-return event against the current personal controller", async () => {
+    const ctx = makeContext({}, { upsert: vi.fn() }, {
+      surfaceRoute: {
+        adapter: "whatsapp",
+        accountId: "primary",
+        actorId: "wa:+123",
+        surfaceKind: "dm",
+        surfaceId: "dm-1",
+        uid: 1000,
+        pid: "proc:unreachable-work",
+        mode: "work",
+        updatedAt: 1,
+        updatedByUid: 1000,
+      },
+    });
+    const originalPersonal = ctx.procs.get("pid-1")!;
+    const replacementPersonal = {
+      ...originalPersonal,
+      processId: "pid-2",
+      createdAt: 2,
+    };
+    vi.mocked(ctx.procs.get).mockImplementation((pid: string) => (
+      pid === originalPersonal.processId
+        ? originalPersonal
+        : pid === replacementPersonal.processId
+          ? replacementPersonal
+          : null
+    ));
+    ensurePersonalControllerMock
+      .mockResolvedValueOnce(originalPersonal.processId)
+      .mockResolvedValueOnce(replacementPersonal.processId);
+    sendFrameToProcessMock
+      .mockRejectedValueOnce(new Error("process unavailable"))
+      .mockImplementationOnce(async (_pid: string, frame: any) => ({
+        type: "res",
+        id: frame.id,
+        ok: true,
+        data: { runId: frame.args.eventId, queued: false },
+      }));
+
+    const inbound = {
       adapter: "whatsapp",
       accountId: "primary",
-      actorId: "wa:+123",
-      surfaceKind: "dm",
-      surfaceId: "dm-1",
-      threadId: undefined,
-      uid: 1000,
-      pid: expect.stringMatching(/^proc:/),
-      updatedByUid: 1000,
+      deliveryId: "leave-unreachable-work",
+      message: {
+        messageId: "leave-unreachable-work",
+        surface: { kind: "dm", id: "dm-1" },
+        actor: { id: "wa:+123" },
+        text: "/home",
+      },
+    } as const;
+
+    await expect(handleAdapterInbound(inbound, ctx)).rejects.toThrow("process unavailable");
+    expect(ctx.adapters.surfaceRoutes.resolveRoute(expect.anything())).toBeNull();
+
+    const recovered = await handleAdapterInbound(inbound, ctx);
+    expect(recovered.reply?.text).toContain("[PERSONAL HOME]");
+    expect(recovered.reply?.text).toContain(replacementPersonal.processId.slice(0, 13));
+    expect(ctx.adapters.ingressReceipts.checkpoint).toHaveBeenCalledTimes(1);
+    expect(ctx.adapters.surfaceRoutes.clearRouteIfMatches).toHaveBeenCalledTimes(2);
+    expect(sendFrameToProcessMock).toHaveBeenNthCalledWith(
+      1,
+      originalPersonal.processId,
+      expect.objectContaining({
+        call: "proc.runtime.event.deliver",
+        args: expect.objectContaining({
+          eventId: expect.stringMatching(/^adapter-home:adapter-ingress:/),
+        }),
+      }),
+    );
+    expect(sendFrameToProcessMock).toHaveBeenNthCalledWith(
+      2,
+      replacementPersonal.processId,
+      expect.objectContaining({
+        call: "proc.runtime.event.deliver",
+        args: expect.objectContaining({
+          eventId: expect.stringMatching(/^adapter-home:adapter-ingress:/),
+        }),
+      }),
+    );
+    expect(sendFrameToProcessMock.mock.calls[1]?.[1].args.eventId)
+      .toBe(sendFrameToProcessMock.mock.calls[0]?.[1].args.eventId);
+
+    expect(await handleAdapterInbound(inbound, ctx)).toEqual({
+      ...recovered,
+      replayed: "completed",
+    });
+    expect(sendFrameToProcessMock).toHaveBeenCalledTimes(2);
+  });
+
+  it.each([
+    { label: "equal timestamps", timestamp: 100, initialNow: 1_000, newerNow: 1_000, retryNow: 1_000 },
+    { label: "missing timestamps", timestamp: undefined, initialNow: 1_000, newerNow: 2_000, retryNow: 3_000 },
+  ])("does not let recovered /home activity replace a newer private DM with $label", async ({
+    timestamp,
+    initialNow,
+    newerNow,
+    retryNow,
+  }) => {
+    await runWithRealKernelSql(async (sql) => {
+      const links = {
+        whatsapp: {
+          adapter: "whatsapp",
+          accountId: "primary",
+          actorId: "wa:+123",
+          uid: 1000,
+          createdAt: 1,
+          linkedByUid: 1000,
+          metadata: { surfaceKind: "dm", surfaceId: "dm-a" },
+        },
+        telegram: {
+          adapter: "telegram",
+          accountId: "bot",
+          actorId: "telegram:user:1",
+          uid: 1000,
+          createdAt: 1,
+          linkedByUid: 1000,
+          metadata: { surfaceKind: "dm", surfaceId: "dm-b" },
+        },
+      };
+      const ctx = makeContext({}, { upsert: vi.fn() }, {
+        surfaceRoute: {
+          adapter: "whatsapp",
+          accountId: "primary",
+          actorId: "wa:+123",
+          surfaceKind: "dm",
+          surfaceId: "dm-a",
+          uid: 1000,
+          pid: "proc:work",
+          mode: "work",
+          updatedAt: 1,
+          updatedByUid: 1000,
+        },
+        identityLinks: {
+          get: vi.fn((adapter: "whatsapp" | "telegram") => links[adapter]),
+        },
+      });
+      const privateDestinations = new PrivateAdapterDestinationStore(sql);
+      ctx.adapters.privateDestinations = privateDestinations;
+      const personal = ctx.procs.get("pid-1")!;
+      const work = {
+        ...personal,
+        processId: "proc:work",
+        isPersonalController: false,
+        state: "running" as const,
+        activeRunId: "run-work",
+      };
+      vi.mocked(ctx.procs.get).mockImplementation((pid: string) => (
+        pid === personal.processId ? personal : pid === work.processId ? work : null
+      ));
+      vi.mocked(ctx.procs.list).mockReturnValue([personal, work]);
+      let now = initialNow;
+      const nowSpy = vi.spyOn(Date, "now").mockImplementation(() => now);
+      sendFrameToProcessMock
+        .mockRejectedValueOnce(new Error("personal process unavailable"))
+        .mockImplementationOnce(async (_pid: string, frame: any) => ({
+          type: "res",
+          id: frame.id,
+          ok: true,
+          data: { runId: frame.args.eventId, queued: false },
+        }));
+
+      const home = {
+        adapter: "whatsapp",
+        accountId: "primary",
+        deliveryId: "failed-home-a",
+        message: {
+          messageId: "failed-home-a",
+          surface: { kind: "dm", id: "dm-a" },
+          actor: { id: "wa:+123" },
+          text: "/home",
+          ...(timestamp === undefined ? {} : { timestamp }),
+        },
+      } as const;
+
+      try {
+        await expect(handleAdapterInbound(home, ctx)).rejects.toThrow(
+          "personal process unavailable",
+        );
+        now = newerNow;
+        await handleAdapterInbound({
+          adapter: "telegram",
+          accountId: "bot",
+          deliveryId: "newer-dm-b",
+          message: {
+            messageId: "newer-dm-b",
+            surface: { kind: "dm", id: "dm-b" },
+            actor: { id: "telegram:user:1" },
+            text: "/help",
+            ...(timestamp === undefined ? {} : { timestamp }),
+          },
+        }, ctx);
+        now = retryNow;
+        await expect(handleAdapterInbound(home, ctx)).resolves.toMatchObject({
+          ok: true,
+          reply: { text: expect.stringContaining("[PERSONAL HOME]") },
+        });
+      } finally {
+        nowSpy.mockRestore();
+      }
+
+      expect(privateDestinations.get(1000)).toMatchObject({
+        messageId: "newer-dm-b",
+        destination: {
+          adapter: "telegram",
+          accountId: "bot",
+          actorId: "telegram:user:1",
+          surface: { kind: "dm", id: "dm-b" },
+        },
+      });
     });
   });
 
-  it("starts a personal-agent process for each unrouted adapter surface", async () => {
+  it("correlates a tokened approval to waiting work after the DM returned home", async () => {
+    const ctx = makeContext({}, { upsert: vi.fn() });
+    const personal = ctx.procs.get("pid-1")!;
+    const work = {
+      ...personal,
+      processId: "proc:waiting-work",
+      isPersonalController: false,
+      state: "waiting_hil" as const,
+      activeRunId: "run-work",
+    };
+    vi.mocked(ctx.procs.get).mockImplementation((pid: string) => (
+      pid === personal.processId ? personal : pid === work.processId ? work : null
+    ));
+    vi.mocked(ctx.procs.list).mockReturnValue([personal, work]);
+    sendFrameToProcessMock
+      .mockResolvedValueOnce({
+        type: "res",
+        id: "history-work",
+        ok: true,
+        data: {
+          pendingHil: {
+            requestId: "hil-work",
+            toolName: "Shell",
+            syscall: "shell.exec",
+            args: { input: "date" },
+          },
+        },
+      } as any)
+      .mockResolvedValueOnce({
+        type: "res",
+        id: "approve-work",
+        ok: true,
+        data: { ok: true, pendingHil: null },
+      } as any);
+
+    const result = await handleAdapterInbound({
+      adapter: "telegram",
+      accountId: "bot",
+      message: {
+        messageId: "approve-work-from-home",
+        surface: { kind: "dm", id: "chat-1" },
+        actor: { id: "telegram:user:1" },
+        text: "approve hil[hil-work]",
+      },
+    }, ctx);
+
+    expect(result.reply?.text).toBe("[WORK SESSION] Approved. Continuing.");
+    expect(sendFrameToProcessMock).toHaveBeenNthCalledWith(
+      2,
+      work.processId,
+      expect.objectContaining({ call: "proc.hil" }),
+    );
+    expect(ensurePersonalControllerMock).not.toHaveBeenCalled();
+    expect(ctx.adapters.surfaceRoutes.setRoute).not.toHaveBeenCalled();
+  });
+
+  it("drains an active legacy DM route but clears it once idle", async () => {
+    const route = {
+      adapter: "telegram",
+      accountId: "bot",
+      actorId: "telegram:user:1",
+      surfaceKind: "dm",
+      surfaceId: "chat-1",
+      uid: 1000,
+      pid: "proc:legacy",
+      mode: "legacy",
+      updatedAt: 1,
+      updatedByUid: 1000,
+    };
+    const ctx = makeContext({}, { upsert: vi.fn() }, { surfaceRoute: route });
+    const personal = ctx.procs.get("pid-1")!;
+    let legacy = {
+      ...personal,
+      processId: route.pid,
+      isPersonalController: false,
+      state: "running" as const,
+      activeRunId: "run-legacy",
+    };
+    vi.mocked(ctx.procs.get).mockImplementation((pid: string) => (
+      pid === personal.processId ? personal : pid === legacy.processId ? legacy : null
+    ));
+    vi.mocked(ctx.procs.list).mockImplementation(() => [personal, legacy]);
     sendFrameToProcessMock.mockImplementation(async (_pid: string, frame: any) => {
-      if (frame.call === "proc.setidentity") {
-        return { type: "res", id: frame.id, ok: true, data: { ok: true } };
+      if (frame.call === "proc.history") {
+        return { type: "res", id: frame.id, ok: true, data: { pendingHil: null } };
       }
+      if (frame.call === "proc.adapter.deliver") {
+        return {
+          type: "res",
+          id: frame.id,
+          ok: true,
+          data: { ok: true, runId: frame.args.runId, queued: false },
+        };
+      }
+      throw new Error(`Unexpected call: ${frame.call}`);
+    });
+
+    const first = await handleAdapterInbound({
+      adapter: "telegram",
+      accountId: "bot",
+      message: {
+        messageId: "legacy-active",
+        surface: { kind: "dm", id: "chat-1" },
+        actor: { id: "telegram:user:1" },
+        text: "continue old work",
+      },
+    }, ctx);
+    expect(first.delivered?.pid).toBe(legacy.processId);
+    expect(ctx.adapters.surfaceRoutes.clearRouteIfMatches).not.toHaveBeenCalled();
+
+    legacy = { ...legacy, state: "idle", activeRunId: null };
+    const second = await handleAdapterInbound({
+      adapter: "telegram",
+      accountId: "bot",
+      message: {
+        messageId: "legacy-idle",
+        surface: { kind: "dm", id: "chat-1" },
+        actor: { id: "telegram:user:1" },
+        text: "back home",
+      },
+    }, ctx);
+    expect(second.delivered?.pid).toBe(personal.processId);
+    expect(ctx.adapters.surfaceRoutes.clearRouteIfMatches).toHaveBeenCalledWith(
+      expect.objectContaining({ pid: legacy.processId, mode: "legacy" }),
+    );
+    expect(ctx.adapters.surfaceRoutes.setRoute).not.toHaveBeenCalled();
+  });
+
+  it("records only authenticated linked private-DM activity as the owner fallback", async () => {
+    const now = vi.spyOn(Date, "now").mockReturnValue(1_800_000_000_000);
+    const link = {
+      adapter: "telegram",
+      accountId: "bot",
+      actorId: "telegram:user:1",
+      uid: 1000,
+      createdAt: 1,
+      linkedByUid: 1000,
+      metadata: { surfaceKind: "dm", surfaceId: "chat-1" },
+    };
+    const ctx = makeContext({}, { upsert: vi.fn() }, {
+      identityLinks: { get: vi.fn(() => link) },
+    });
+
+    await handleAdapterInbound({
+      adapter: "telegram",
+      accountId: "bot",
+      message: {
+        messageId: "linked-private-activity",
+        surface: { kind: "dm", id: "chat-1" },
+        actor: { id: "telegram:user:1" },
+        text: "/help",
+        timestamp: Number.MAX_SAFE_INTEGER,
+      },
+    }, ctx);
+
+    expect(ctx.adapters.privateDestinations.recordActivity).toHaveBeenCalledWith(1000, {
+      kind: "adapter",
+      adapter: "telegram",
+      accountId: "bot",
+      actorId: "telegram:user:1",
+      surface: { kind: "dm", id: "chat-1", threadId: undefined },
+    }, "linked-private-activity", 1_800_000_000_000);
+    now.mockRestore();
+  });
+
+  it("converges unrouted private surfaces on the personal controller without persisting routes", async () => {
+    sendFrameToProcessMock.mockImplementation(async (_pid: string, frame: any) => {
       if (frame.call === "proc.history") {
         return { type: "res", id: frame.id, ok: true, data: { pendingHil: null } };
       }
@@ -2464,18 +2984,6 @@ describe("adapter lifecycle handlers", () => {
       throw new Error(`Unexpected call: ${frame.call}`);
     });
     const ctx = makeContext({}, { upsert: vi.fn() }, { routePid: null });
-    const records = new Map<string, Record<string, unknown>>();
-    vi.mocked(ctx.procs.get).mockImplementation((pid: string) => (
-      records.get(pid) as never ?? null
-    ));
-    vi.mocked(ctx.procs.spawn).mockImplementation((pid, identity, options) => {
-      records.set(pid, {
-        processId: pid,
-        ownerUid: options.ownerUid,
-        interactive: options.interactive,
-        username: identity.username,
-      });
-    });
 
     const first = await handleAdapterInbound({
       adapter: "whatsapp",
@@ -2498,22 +3006,11 @@ describe("adapter lifecycle handlers", () => {
       },
     }, ctx);
 
-    expect(first).toMatchObject({ ok: true, delivered: { pid: expect.stringMatching(/^proc:/) } });
-    expect(second).toMatchObject({ ok: true, delivered: { pid: expect.stringMatching(/^proc:/) } });
-    expect(first.delivered?.pid).not.toBe(second.delivered?.pid);
-    expect(ctx.procs.spawn).toHaveBeenCalledTimes(2);
-    expect(ctx.procs.spawn).toHaveBeenNthCalledWith(
-      1,
-      first.delivered?.pid,
-      expect.objectContaining({ username: "sam-agent" }),
-      expect.objectContaining({
-        ownerUid: 1000,
-        interactive: true,
-      }),
-    );
-    expect(sendFrameToProcessMock.mock.calls.filter(([, frame]) => (
-      frame.call === "proc.setidentity"
-    ))).toHaveLength(2);
+    expect(first).toMatchObject({ ok: true, delivered: { pid: "pid-1" } });
+    expect(second).toMatchObject({ ok: true, delivered: { pid: "pid-1" } });
+    expect(ctx.procs.spawn).not.toHaveBeenCalled();
+    expect(ctx.adapters.surfaceRoutes.setRoute).not.toHaveBeenCalled();
+    expect(ensurePersonalControllerMock).toHaveBeenCalledTimes(2);
     expect(sendFrameToProcessMock.mock.calls.filter(([, frame]) => (
       frame.call === "proc.adapter.deliver"
     ))).toHaveLength(2);

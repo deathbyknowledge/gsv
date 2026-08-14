@@ -9,6 +9,8 @@ import type {
   ProcessInboundFrame,
   ProcessRunAttachRequestFrame,
   ProcessRunAttachResponseFrame,
+  ProcessRuntimeEventDeliverRequestFrame,
+  ProcessRuntimeEventDeliverResponseFrame,
   ProcessScheduleDeliverRequestFrame,
   ProcessScheduleDeliverResponseFrame,
 } from "../protocol/process-frames";
@@ -73,6 +75,10 @@ export function sendFrameToProcess(
 ): Promise<ProcessScheduleDeliverResponseFrame | null>;
 export function sendFrameToProcess(
   pid: string,
+  frame: ProcessRuntimeEventDeliverRequestFrame,
+): Promise<ProcessRuntimeEventDeliverResponseFrame | null>;
+export function sendFrameToProcess(
+  pid: string,
   frame: ProcessRunAttachRequestFrame,
 ): Promise<ProcessRunAttachResponseFrame | null>;
 export function sendFrameToProcess(
@@ -86,6 +92,7 @@ export async function sendFrameToProcess(
   | Frame
   | ProcessScheduleDeliverResponseFrame
   | ProcessAdapterDeliverResponseFrame
+  | ProcessRuntimeEventDeliverResponseFrame
   | ProcessRunAttachResponseFrame
   | null
 > {

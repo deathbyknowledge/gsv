@@ -21,6 +21,7 @@ import type {
   ProcessAdapterDeliverArgs,
   ProcessAdapterDeliverRequestFrame,
   ProcessRunAttachRequestFrame,
+  ProcessRuntimeEventDeliverRequestFrame,
   ProcessScheduleDeliverArgs,
   ProcessScheduleDeliverRequestFrame,
 } from "../protocol/process-frames";
@@ -71,6 +72,24 @@ function makeAdapterDeliverReq(
     id: crypto.randomUUID(),
     call: "proc.adapter.deliver",
     args,
+  };
+}
+
+function makeRuntimeEventReq(
+  eventId: string,
+  workPid: string,
+): ProcessRuntimeEventDeliverRequestFrame {
+  return {
+    type: "req",
+    id: crypto.randomUUID(),
+    call: "proc.runtime.event.deliver",
+    args: {
+      eventId,
+      event: {
+        type: "adapter.work.returned",
+        workPid,
+      },
+    },
   };
 }
 
@@ -837,6 +856,49 @@ describe("Process DO — mechanical", () => {
   });
 
   describe("model context", () => {
+    it("admits a typed work-return event exactly once", async () => {
+      const stub = await initProcess("mech-work-return-event", ROOT_IDENTITY);
+      const firstRequest = makeRuntimeEventReq(
+        "adapter-home:event-1",
+        "proc:work-1",
+      );
+      const first = await stub.recvFrame(firstRequest);
+      await evictDurableObject(stub);
+      const replayRequest = makeRuntimeEventReq(
+        "adapter-home:event-1",
+        "proc:work-1",
+      );
+      const replay = await stub.recvFrame(replayRequest);
+
+      expect(first).toMatchObject({
+        type: "res",
+        id: firstRequest.id,
+        ok: true,
+        data: { runId: "adapter-home:event-1", queued: false },
+      });
+      expect(replay).toMatchObject({
+        type: "res",
+        id: replayRequest.id,
+        ok: true,
+        data: { runId: "adapter-home:event-1", queued: false },
+      });
+
+      const messages = await runInDurableObject(stub, (instance: Process) => (
+        (instance as any).store.getMessages()
+      ));
+      const admitted = messages.filter((message: any) => (
+        message.runId === "adapter-home:event-1"
+        && message.content.includes("returned from work process")
+      ));
+      expect(admitted).toHaveLength(1);
+      expect(admitted[0]).toMatchObject({
+        role: "system",
+        runId: "adapter-home:event-1",
+      });
+      expect(admitted[0].content).toContain("returned from work process `proc:work-1`");
+      expect(admitted[0].content).toContain("No work-session transcript was attached");
+    });
+
     it("includes process system messages as model-visible events", async () => {
       const pid = "mech-system-context-1";
       const stub = await initProcess(pid, ROOT_IDENTITY);
@@ -8977,25 +9039,962 @@ describe("Process DO — mechanical", () => {
       });
     });
 
-    it("does not tear down an active executor when run-finish delivery fails", async () => {
-      const pid = "mech-kill-finish-failure";
+    it("preserves live execution state when history archival fails", async () => {
+      const pid = "mech-kill-archive-failure";
+      const runId = "run-kill-archive-failure";
+      const stub = await initProcess(pid, ROOT_IDENTITY);
+
+      const failed = await runInDurableObject(stub, async (instance: Process, state) => {
+        const process = instance as any;
+        process.currentRun = { runId };
+        process.store.appendMessage("user", "survive archive failure", { runId });
+        process.store.enqueue("queued-after-archive-failure", "queued work must survive");
+        process.store.register(
+          "dispatch-archive-failure",
+          "call-archive-failure",
+          runId,
+          "fs.read",
+          { path: "/tmp/archive" },
+        );
+        process.store.setPendingHil({
+          requestId: "hil-archive-failure",
+          runId,
+          toolCallId: "call-archive-failure",
+          toolName: "Read",
+          syscall: "fs.read",
+          args: { path: "/tmp/archive" },
+          createdAt: Date.now(),
+        });
+        process.archiveMessageRecords = vi.fn(async () => {
+          throw new Error("injected archive failure");
+        });
+        process.sendSignal = vi.fn(async () => {});
+
+        const response = await process.recvFrame(makeReq("proc.kill", {}));
+        return {
+          response,
+          killed: process.killed,
+          currentRun: process.currentRun,
+          tools: process.store.getResults(runId),
+          pendingHil: process.store.getPendingHilForRun(runId),
+          queueSize: process.store.queueSize(),
+          finishCalls: process.sendSignal.mock.calls.length,
+          tombstone: state.storage.kv.get("__gsv_process_killed__"),
+        };
+      });
+
+      expect(failed).toMatchObject({
+        response: { ok: false, error: { message: "injected archive failure" } },
+        killed: false,
+        currentRun: { runId },
+        tools: [expect.objectContaining({
+          dispatchId: "dispatch-archive-failure",
+          status: "registered",
+        })],
+        pendingHil: { requestId: "hil-archive-failure", runId },
+        queueSize: 1,
+        finishCalls: 0,
+        tombstone: undefined,
+      });
+
+      await evictDurableObject(stub);
+      await expect(runInDurableObject(stub, (instance: Process) => {
+        const process = instance as any;
+        return {
+          currentRun: process.currentRun,
+          tools: process.store.getResults(runId),
+          pendingHil: process.store.getPendingHilForRun(runId),
+          queueSize: process.store.queueSize(),
+        };
+      })).resolves.toMatchObject({
+        currentRun: { runId },
+        tools: [expect.objectContaining({
+          dispatchId: "dispatch-archive-failure",
+          status: "registered",
+        })],
+        pendingHil: { requestId: "hil-archive-failure", runId },
+        queueSize: 1,
+      });
+      await expect(stub.recvFrame(
+        makeReq("proc.kill", { archive: false }),
+      )).resolves.toMatchObject({ ok: true, data: { ok: true, pid } });
+    });
+
+    it("retries the archive when provider output lands during upload", async () => {
+      const pid = "mech-kill-stable-archive";
+      const runId = "run-kill-stable-archive";
+      const stub = await initProcess(pid, ROOT_IDENTITY);
+
+      const result = await runInDurableObject(stub, async (instance: Process) => {
+        const process = instance as any;
+        let releaseGeneration!: () => void;
+        let markGenerationStarted!: () => void;
+        let releaseArchive!: () => void;
+        let markArchiveStarted!: () => void;
+        let markAssistantAppended!: () => void;
+        const generationBlocked = new Promise<void>((resolve) => {
+          releaseGeneration = resolve;
+        });
+        const generationStarted = new Promise<void>((resolve) => {
+          markGenerationStarted = resolve;
+        });
+        const archiveBlocked = new Promise<void>((resolve) => {
+          releaseArchive = resolve;
+        });
+        const archiveStarted = new Promise<void>((resolve) => {
+          markArchiveStarted = resolve;
+        });
+        const assistantAppended = new Promise<void>((resolve) => {
+          markAssistantAppended = resolve;
+        });
+        process.generation = {
+          async generate() {
+            markGenerationStarted();
+            await generationBlocked;
+            return {
+              role: "assistant",
+              content: [{ type: "text", text: "provider completed during archive" }],
+              api: "test",
+              provider: "test",
+              model: "test",
+              usage: testUsage(),
+              stopReason: "stop",
+              timestamp: Date.now(),
+            };
+          },
+          async generateText() {
+            return "";
+          },
+        };
+        process.sendSignal = vi.fn(async () => {});
+        const appendMessage = process.store.appendMessage.bind(process.store);
+        vi.spyOn(process.store, "appendMessage").mockImplementation((...args: any[]) => {
+          const messageId = appendMessage(...args);
+          if (args[0] === "assistant" && args[1] === "provider completed during archive") {
+            markAssistantAppended();
+          }
+          return messageId;
+        });
+        const archiveMessageRecords = process.archiveMessageRecords.bind(process);
+        let archiveAttempts = 0;
+        const archiveSnapshots: any[][] = [];
+        process.archiveMessageRecords = vi.fn(async (...args: any[]) => {
+          archiveAttempts += 1;
+          archiveSnapshots.push(args[1]);
+          if (archiveAttempts === 1) {
+            markArchiveStarted();
+            await archiveBlocked;
+            return;
+          }
+          await archiveMessageRecords(...args);
+        });
+        const activeMediaKey = `var/media/0/${pid}/stable.png`;
+        await process.env.STORAGE.put(activeMediaKey, new Uint8Array([4, 5, 6]), {
+          httpMetadata: { contentType: "image/png" },
+          customMetadata: {
+            uid: "0",
+            gid: "0",
+            mode: "400",
+            processId: pid,
+          },
+        });
+        process.store.appendMessage("user", "answer before kill", {
+          runId,
+          media: JSON.stringify([{
+            type: "image",
+            mimeType: "image/png",
+            filename: "stable.png",
+            size: 3,
+            key: activeMediaKey,
+            path: `/${activeMediaKey}`,
+          }]),
+          origin: JSON.stringify({
+            kind: "adapter",
+            adapter: "telegram",
+            accountId: "bot",
+            actorId: "telegram:user:1",
+            surface: { kind: "dm", id: "chat-1" },
+          }),
+        });
+        process.store.appendMessage("assistant", "checking", {
+          runId,
+          toolCalls: JSON.stringify({
+            toolCalls: [{
+              type: "toolCall",
+              id: "historical-call",
+              name: "Read",
+              arguments: { path: "/tmp/stable" },
+            }],
+          }),
+        });
+        process.store.appendToolResult(
+          "historical-call",
+          "fs.read",
+          "stable result",
+          false,
+          runId,
+          "completed",
+        );
+        process.currentRun = {
+          runId,
+          config: {
+            executor: { kind: "process", pid },
+            profile: "task",
+            provider: "test",
+            model: "test",
+            apiKey: "",
+            reasoning: "off",
+            maxTokens: 8192,
+            contextWindowTokens: 128000,
+            contextWindowSource: "config",
+            maxContextBytes: 32768,
+            generationStreaming: "off",
+          },
+          tools: [],
+          devices: [],
+          mcpServers: [],
+          systemPrompt: "Test system prompt.",
+          approvalPolicy: { default: "auto", rules: [] },
+        };
+
+        const ticking = process.runTick(runId);
+        await generationStarted;
+        const killing = process.recvFrame(makeReq("proc.kill", {}));
+        await archiveStarted;
+        releaseGeneration();
+        await assistantAppended;
+        expect(process.store.getMessages({ limit: null })).toHaveLength(4);
+        releaseArchive();
+        const response = await killing;
+        await ticking;
+        const archivePath = response.data.archives[0].path;
+        const archived = archiveSnapshots.at(-1)!;
+        const archivedMedia = await process.env.STORAGE.list({
+          prefix: "root/.gsv/media/archived-media:",
+        });
+        await process.env.STORAGE.delete([
+          archivePath.replace(/^\//, ""),
+          ...archivedMedia.objects.map((object: any) => object.key),
+        ]);
+        return {
+          response,
+          archiveAttempts,
+          contents: archived.map((message: any) => message.content),
+          origin: JSON.parse(archived[0].origin),
+          media: JSON.parse(archived[0].media),
+          toolCalls: JSON.parse(archived[1].toolCalls).toolCalls,
+        };
+      });
+
+      expect(result.response).toMatchObject({
+        ok: true,
+        data: { ok: true, pid, archivedMessages: 4 },
+      });
+      expect(result.archiveAttempts).toBe(2);
+      expect(result.contents).toEqual([
+        "answer before kill",
+        "checking",
+        "stable result",
+        "provider completed during archive",
+      ]);
+      expect(result.origin).toMatchObject({
+        kind: "adapter",
+        adapter: "telegram",
+        surface: { kind: "dm", id: "chat-1" },
+      });
+      expect(result.media).toEqual([
+        expect.objectContaining({ key: expect.stringContaining("stable.png") }),
+      ]);
+      expect(result.toolCalls).toEqual([
+        expect.objectContaining({ id: "historical-call", name: "Read" }),
+      ]);
+    });
+
+    it("serializes concurrent kills behind one terminal archive commit", async () => {
+      const pid = "mech-kill-concurrent-commit";
+      const stub = await initProcess(pid, ROOT_IDENTITY);
+
+      const result = await runInDurableObject(stub, async (instance: Process, state) => {
+        const process = instance as any;
+        process.store.appendMessage("user", "archive exactly once");
+        let releaseArchive!: () => void;
+        let markArchiveStarted!: () => void;
+        const archiveBlocked = new Promise<void>((resolve) => {
+          releaseArchive = resolve;
+        });
+        const archiveStarted = new Promise<void>((resolve) => {
+          markArchiveStarted = resolve;
+        });
+        process.archiveMessageRecords = vi.fn(async () => {
+          markArchiveStarted();
+          await archiveBlocked;
+        });
+        const transactionSync = vi.spyOn(state.storage, "transactionSync");
+
+        const first = process.recvFrame(makeReq("proc.kill", {}));
+        await archiveStarted;
+        const second = process.recvFrame(makeReq("proc.kill", {}));
+        releaseArchive();
+        const responses = await Promise.all([first, second]);
+
+        return {
+          responses,
+          archiveCalls: process.archiveMessageRecords.mock.calls.length,
+          terminalCommits: transactionSync.mock.calls.length,
+          tombstone: state.storage.kv.get("__gsv_process_killed__"),
+        };
+      });
+
+      expect(result.archiveCalls).toBe(1);
+      expect(result.terminalCommits).toBe(1);
+      expect(result.responses[0]).toMatchObject({
+        ok: true,
+        data: { ok: true, pid, archivedMessages: 1 },
+      });
+      expect(result.responses[1].data).toEqual(result.responses[0].data);
+      expect(result.tombstone).toMatchObject({
+        pid,
+        cleanup: "completed",
+        result: result.responses[0].data,
+      });
+    });
+
+    it("ignores a provider completion released after the terminal commit", async () => {
+      const pid = "mech-kill-late-provider";
+      const runId = "run-kill-late-provider";
       const stub = await initProcess(pid, ROOT_IDENTITY);
 
       await runInDurableObject(stub, async (instance: Process) => {
         const process = instance as any;
-        process.currentRun = { runId: "run-kill-failure" };
-        process.sendSignal = vi.fn(async () => {
-          throw new Error("finish route unavailable");
+        let releaseGeneration!: () => void;
+        let markGenerationStarted!: () => void;
+        const generationBlocked = new Promise<void>((resolve) => {
+          releaseGeneration = resolve;
+        });
+        const generationStarted = new Promise<void>((resolve) => {
+          markGenerationStarted = resolve;
+        });
+        process.generation = {
+          async generate() {
+            markGenerationStarted();
+            await generationBlocked;
+            return {
+              role: "assistant",
+              content: [{ type: "text", text: "late provider output" }],
+              api: "test",
+              provider: "test",
+              model: "test",
+              usage: testUsage(),
+              stopReason: "stop",
+              timestamp: Date.now(),
+            };
+          },
+          async generateText() {
+            return "";
+          },
+        };
+        process.sendSignal = vi.fn(async () => {});
+        process.store.appendMessage("user", "kill while provider is blocked", { runId });
+        process.currentRun = {
+          runId,
+          config: {
+            executor: { kind: "process", pid },
+            profile: "task",
+            provider: "test",
+            model: "test",
+            apiKey: "",
+            reasoning: "off",
+            maxTokens: 8192,
+            contextWindowTokens: 128000,
+            contextWindowSource: "config",
+            maxContextBytes: 32768,
+            generationStreaming: "off",
+          },
+          tools: [],
+          devices: [],
+          mcpServers: [],
+          systemPrompt: "Test system prompt.",
+          approvalPolicy: { default: "auto", rules: [] },
+        };
+
+        const ticking = process.runTick(runId);
+        await generationStarted;
+        await expect(process.recvFrame(
+          makeReq("proc.kill", { archive: false }),
+        )).resolves.toMatchObject({ ok: true, data: { ok: true, pid } });
+        releaseGeneration();
+        await expect(ticking).resolves.toBeUndefined();
+        await expect(process.recvFrame(makeReq("proc.history", {}))).resolves.toMatchObject({
+          ok: false,
+          error: { code: 410 },
+        });
+      });
+    });
+
+    it("rejects a queued runtime send released after the terminal commit", async () => {
+      const pid = "mech-kill-queued-runtime-send";
+      const stub = await initProcess(pid, ROOT_IDENTITY);
+
+      await runInDurableObject(stub, async (instance: Process) => {
+        const process = instance as any;
+        const releaseAdmission = await process.acquireQueuedSendAdmission();
+        const acquireQueuedSendAdmission = process.acquireQueuedSendAdmission.bind(process);
+        let markAdmissionStarted!: () => void;
+        const admissionStarted = new Promise<void>((resolve) => {
+          markAdmissionStarted = resolve;
+        });
+        process.acquireQueuedSendAdmission = vi.fn(async () => {
+          markAdmissionStarted();
+          return await acquireQueuedSendAdmission();
         });
 
-        const response = await process.recvFrame(makeReq("proc.kill", { archive: false }));
-        expect(response).toMatchObject({
-          ok: false,
-          error: { message: "finish route unavailable" },
+        const sending = process.handleProcSend({
+          message: "queued scheduler work",
+          origin: { kind: "scheduler", scheduleId: "schedule-after-kill" },
         });
-        expect(process.isInitialized()).toBe(true);
-        expect(process.currentRun).toMatchObject({ runId: "run-kill-failure" });
+        await admissionStarted;
+        await expect(process.recvFrame(
+          makeReq("proc.kill", { archive: false }),
+        )).resolves.toMatchObject({ ok: true, data: { ok: true, pid } });
+        releaseAdmission();
+        await expect(sending).resolves.toEqual({
+          ok: false,
+          error: "Process no longer exists",
+        });
       });
+    });
+
+    it("ignores context media hydration released after the terminal commit", async () => {
+      const pid = "mech-kill-late-context-media";
+      const runId = "run-kill-late-context-media";
+      const key = `var/media/0/${pid}/context.png`;
+      const stub = await initProcess(pid, ROOT_IDENTITY);
+      await env.STORAGE.put(key, new Uint8Array([1, 2, 3]), {
+        httpMetadata: { contentType: "image/png" },
+      });
+
+      await runInDurableObject(stub, async (instance: Process) => {
+        const process = instance as any;
+        const originalEnv = process.env;
+        let releaseRead!: () => void;
+        let markReadStarted!: () => void;
+        const readBlocked = new Promise<void>((resolve) => {
+          releaseRead = resolve;
+        });
+        const readStarted = new Promise<void>((resolve) => {
+          markReadStarted = resolve;
+        });
+        process.env = {
+          ...originalEnv,
+          STORAGE: {
+            get: vi.fn(async (requestedKey: string) => {
+              const object = await originalEnv.STORAGE.get(requestedKey);
+              markReadStarted();
+              await readBlocked;
+              return object;
+            }),
+            list: (...args: any[]) => originalEnv.STORAGE.list(...args),
+            delete: (...args: any[]) => originalEnv.STORAGE.delete(...args),
+          },
+        };
+        process.sendSignal = vi.fn(async () => {});
+        process.store.appendMessage("user", "inspect the image", {
+          runId,
+          media: JSON.stringify([{
+            type: "image",
+            mimeType: "image/png",
+            key,
+            path: `/${key}`,
+            size: 3,
+          }]),
+        });
+        process.currentRun = {
+          runId,
+          config: {
+            executor: { kind: "process", pid },
+            profile: "task",
+            provider: "test",
+            model: "test",
+            apiKey: "",
+            reasoning: "off",
+            maxTokens: 8192,
+            contextWindowTokens: 128000,
+            contextWindowSource: "config",
+            maxContextBytes: 32768,
+            generationStreaming: "off",
+          },
+          tools: [],
+          devices: [],
+          mcpServers: [],
+          systemPrompt: "Test system prompt.",
+          approvalPolicy: { default: "auto", rules: [] },
+        };
+
+        const ticking = process.runTick(runId);
+        await readStarted;
+        await expect(process.recvFrame(
+          makeReq("proc.kill", { archive: false }),
+        )).resolves.toMatchObject({ ok: true, data: { ok: true, pid } });
+        releaseRead();
+        await expect(ticking).resolves.toBeUndefined();
+        process.env = originalEnv;
+      });
+    });
+
+    it("ignores tool body materialization released after the terminal commit", async () => {
+      const pid = "mech-kill-late-tool-body";
+      const runId = "run-kill-late-tool-body";
+      const stub = await initProcess(pid, ROOT_IDENTITY);
+
+      await runInDurableObject(stub, async (instance: Process) => {
+        const process = instance as any;
+        let releaseBody!: () => void;
+        let markBodyStarted!: () => void;
+        const bodyBlocked = new Promise<void>((resolve) => {
+          releaseBody = resolve;
+        });
+        const bodyStarted = new Promise<void>((resolve) => {
+          markBodyStarted = resolve;
+        });
+        let cancelled = false;
+        process.currentRun = { runId };
+        process.store.register(
+          "dispatch-kill-late-body",
+          "call-kill-late-body",
+          runId,
+          "fs.read",
+          { path: "/tmp/late" },
+        );
+        process.store.markDispatched("dispatch-kill-late-body");
+        process.sendSignal = vi.fn(async () => {});
+
+        const handling = process.handleRes({
+          type: "res",
+          id: "dispatch-kill-late-body",
+          ok: true,
+          data: {
+            ok: true,
+            path: "/tmp/late",
+            kind: "text",
+            contentType: "text/plain",
+            size: 1,
+            lines: 1,
+          },
+          body: {
+            stream: new ReadableStream({
+              pull() {
+                markBodyStarted();
+                return bodyBlocked;
+              },
+              cancel() {
+                cancelled = true;
+              },
+            }),
+            length: 1,
+          },
+        });
+        await bodyStarted;
+        await expect(process.recvFrame(
+          makeReq("proc.kill", { archive: false }),
+        )).resolves.toMatchObject({ ok: true, data: { ok: true, pid } });
+        releaseBody();
+        await expect(handling).resolves.toBeUndefined();
+        expect(cancelled).toBe(true);
+      });
+    });
+
+    it("ignores pending finish delivery released after the terminal commit", async () => {
+      const pid = "mech-kill-late-finish-delivery";
+      const runId = "run-kill-late-finish-delivery";
+      const stub = await initProcess(pid, ROOT_IDENTITY);
+
+      await runInDurableObject(stub, async (instance: Process) => {
+        const process = instance as any;
+        let releaseSignal!: () => void;
+        let markSignalStarted!: () => void;
+        const signalBlocked = new Promise<void>((resolve) => {
+          releaseSignal = resolve;
+        });
+        const signalStarted = new Promise<void>((resolve) => {
+          markSignalStarted = resolve;
+        });
+        process.store.setValue("pendingRunFinishes", JSON.stringify([{
+          pid,
+          runId,
+          status: "ok",
+          reason: "turn.complete",
+          text: "done",
+          queuedCount: 0,
+          timestamp: 1,
+        }]));
+        process.sendSignal = vi.fn(async (signal: string) => {
+          if (signal === "proc.run.finished") {
+            markSignalStarted();
+            await signalBlocked;
+          }
+        });
+
+        const delivery = process.onRunFinishDelivery(runId);
+        await signalStarted;
+        await expect(process.recvFrame(
+          makeReq("proc.kill", { archive: false }),
+        )).resolves.toMatchObject({ ok: true, data: { ok: true, pid } });
+        releaseSignal();
+        await expect(delivery).resolves.toBeUndefined();
+      });
+    });
+
+    it("ignores a schedule rejection delivered after the terminal commit", async () => {
+      const pid = "mech-kill-late-schedule";
+      const stub = await initProcess(pid, ROOT_IDENTITY);
+
+      await runInDurableObject(stub, async (instance: Process) => {
+        const process = instance as any;
+        let rejectSchedule!: (error: Error) => void;
+        let markScheduleStarted!: () => void;
+        const scheduleStarted = new Promise<void>((resolve) => {
+          markScheduleStarted = resolve;
+        });
+        const scheduled = new Promise<void>((_resolve, reject) => {
+          rejectSchedule = reject;
+        });
+        process.scheduleTick = vi.fn(() => {
+          markScheduleStarted();
+          return scheduled;
+        });
+        process.sendSignal = vi.fn(async () => {});
+        const finishRun = vi.spyOn(process, "finishRun");
+
+        await expect(process.handleProcSend({
+          message: "schedule after kill",
+          origin: { kind: "client", connectionId: "client-1" },
+        })).resolves.toMatchObject({ ok: true, status: "started" });
+        await scheduleStarted;
+        await expect(process.recvFrame(
+          makeReq("proc.kill", { archive: false }),
+        )).resolves.toMatchObject({ ok: true, data: { ok: true, pid } });
+        rejectSchedule(new Error("late scheduler rejection"));
+        await scheduled.catch(() => {});
+        await Promise.resolve();
+        expect(finishRun).not.toHaveBeenCalled();
+      });
+    });
+
+    it("stops a requested-id media write whose head resolves after kill", async () => {
+      const pid = "mech-kill-late-media-head";
+      const mediaId = "requested-after-kill";
+      const key = `var/media/0/${pid}/${mediaId}`;
+      const stub = await initProcess(pid, ROOT_IDENTITY);
+
+      await runInDurableObject(stub, async (instance: Process) => {
+        const process = instance as any;
+        const originalEnv = process.env;
+        let releaseHead!: () => void;
+        let markHeadStarted!: () => void;
+        const headBlocked = new Promise<void>((resolve) => {
+          releaseHead = resolve;
+        });
+        const headStarted = new Promise<void>((resolve) => {
+          markHeadStarted = resolve;
+        });
+        process.env = {
+          ...originalEnv,
+          STORAGE: {
+            head: vi.fn(async (requestedKey: string) => {
+              if (requestedKey === key) {
+                markHeadStarted();
+                await headBlocked;
+                return null;
+              }
+              return await originalEnv.STORAGE.head(requestedKey);
+            }),
+            list: (...args: any[]) => originalEnv.STORAGE.list(...args),
+            delete: (...args: any[]) => originalEnv.STORAGE.delete(...args),
+            put: (...args: any[]) => originalEnv.STORAGE.put(...args),
+          },
+        };
+        const writeFrame = {
+          ...makeReq("proc.media.write", {
+            type: "image",
+            mimeType: "image/png",
+            mediaId,
+          }),
+          body: bodyFromBytes(new Uint8Array([1])),
+        } as RequestFrame;
+
+        const writing = process.recvFrame(writeFrame);
+        await headStarted;
+        await expect(process.recvFrame(
+          makeReq("proc.kill", { archive: false }),
+        )).resolves.toMatchObject({ ok: true, data: { ok: true, pid } });
+        releaseHead();
+        await expect(writing).resolves.toMatchObject({
+          ok: true,
+          data: { ok: false, error: "Process reset during media upload" },
+        });
+        process.env = originalEnv;
+      });
+    });
+
+    it("persists cleanup debt and retries it without reviving the process", async () => {
+      const pid = "mech-kill-finish-failure";
+      const stub = await initProcess(pid, ROOT_IDENTITY);
+
+      const killed = await runInDurableObject(stub, async (instance: Process, state) => {
+        const process = instance as any;
+        const originalEnv = process.env;
+        const mediaDelete = vi.fn(async () => {
+          expect(state.storage.kv.get("__gsv_process_killed__")).toMatchObject({
+            pid,
+            cleanup: "pending",
+          });
+          throw new Error("media delete unavailable");
+        });
+        process.env = {
+          ...originalEnv,
+          STORAGE: {
+            list: vi.fn(async () => ({
+              objects: [{ key: `var/media/0/${pid}/pending.png` }],
+              truncated: false,
+            })),
+            delete: mediaDelete,
+          },
+        };
+        process.currentRun = { runId: "run-kill-failure" };
+        process.sendSignal = vi.fn(async () => {
+          expect(state.storage.kv.get("__gsv_process_killed__")).toMatchObject({
+            pid,
+            cleanup: "pending",
+          });
+          throw new Error("finish route unavailable");
+        });
+        await state.storage.setAlarm(Date.now() + 60_000);
+        const deleteAlarm = vi.spyOn(state.storage, "deleteAlarm").mockRejectedValue(
+          new Error("alarm cleanup unavailable"),
+        );
+
+        try {
+          const response = await process.recvFrame(makeReq("proc.kill", { archive: false }));
+          return {
+            response,
+            killed: process.killed,
+            mediaDeleteCalls: mediaDelete.mock.calls.length,
+            finishCalls: process.sendSignal.mock.calls.length,
+            tombstone: state.storage.kv.get("__gsv_process_killed__"),
+          };
+        } finally {
+          deleteAlarm.mockRestore();
+          process.env = originalEnv;
+        }
+      });
+
+      expect(killed).toMatchObject({
+        response: {
+          ok: false,
+          error: { message: "Process was killed but terminal cleanup is pending" },
+        },
+        killed: true,
+        mediaDeleteCalls: 1,
+        finishCalls: 1,
+        tombstone: {
+          version: 1,
+          pid,
+          uid: 0,
+          result: { ok: true, pid, archivedMessages: 0, archives: [] },
+          cleanup: "pending",
+        },
+      });
+      await expect(stub.recvFrame(makeReq("proc.history", {}))).resolves.toMatchObject({
+        ok: false,
+        error: { code: 410, message: "Process no longer exists" },
+      });
+      await evictDurableObject(stub);
+      await expect(stub.recvFrame(makeReq("proc.kill", { pid, archive: false })))
+        .resolves.toMatchObject({
+          ok: true,
+          data: { ok: true, pid, archivedMessages: 0, archives: [] },
+        });
+      await expect(runInDurableObject(stub, (_instance: Process, state) => (
+        state.storage.kv.get("__gsv_process_killed__")
+      ))).resolves.toMatchObject({
+        pid,
+        cleanup: "completed",
+      });
+    });
+
+    it("coalesces concurrent retries of pending terminal cleanup", async () => {
+      const pid = "mech-kill-concurrent-cleanup";
+      const stub = await initProcess(pid, ROOT_IDENTITY);
+
+      const result = await runInDurableObject(stub, async (instance: Process, state) => {
+        const process = instance as any;
+        const originalEnv = process.env;
+        let listCalls = 0;
+        let markRetryStarted!: () => void;
+        let releaseRetry!: () => void;
+        const retryStarted = new Promise<void>((resolve) => {
+          markRetryStarted = resolve;
+        });
+        const retryBlocked = new Promise<void>((resolve) => {
+          releaseRetry = resolve;
+        });
+        const list = vi.fn(async () => {
+          listCalls += 1;
+          if (listCalls === 1) {
+            return {
+              objects: [{ key: `var/media/0/${pid}/pending.png` }],
+              truncated: false,
+            };
+          }
+          markRetryStarted();
+          await retryBlocked;
+          return { objects: [], truncated: false };
+        });
+        process.env = {
+          ...originalEnv,
+          STORAGE: {
+            list,
+            delete: vi.fn(async () => {
+              throw new Error("media delete unavailable");
+            }),
+          },
+        };
+
+        const initial = await process.recvFrame(
+          makeReq("proc.kill", { archive: false }),
+        );
+        const firstRetry = process.recvFrame(makeReq("proc.kill", { archive: false }));
+        await retryStarted;
+        const secondRetry = process.recvFrame(makeReq("proc.kill", { archive: false }));
+        releaseRetry();
+        const retries = await Promise.all([firstRetry, secondRetry]);
+        const tombstone = state.storage.kv.get("__gsv_process_killed__");
+        process.env = originalEnv;
+        return { initial, retries, listCalls, tombstone };
+      });
+
+      expect(result.initial).toMatchObject({
+        ok: false,
+        error: { message: "Process was killed but terminal cleanup is pending" },
+      });
+      expect(result.listCalls).toBe(2);
+      expect(result.retries[0]).toMatchObject({
+        ok: true,
+        data: { ok: true, pid, archivedMessages: 0, archives: [] },
+      });
+      expect(result.retries[1].data).toEqual(result.retries[0].data);
+      expect(result.tombstone).toMatchObject({
+        pid,
+        cleanup: "completed",
+        pendingCleanup: [],
+      });
+    });
+
+    it("keeps finish notification best-effort after the terminal commit", async () => {
+      const pid = "mech-kill-best-effort-finish";
+      const runId = "run-kill-best-effort-finish";
+      const stub = await initProcess(pid, ROOT_IDENTITY);
+
+      const first = await runInDurableObject(stub, async (instance: Process, state) => {
+        const process = instance as any;
+        process.currentRun = { runId };
+        process.sendSignal = vi.fn(async () => {
+          throw new Error("finish transport unavailable");
+        });
+        const response = await process.recvFrame(
+          makeReq("proc.kill", { archive: false }),
+        );
+        return {
+          response,
+          finishCalls: process.sendSignal.mock.calls.length,
+          tombstone: state.storage.kv.get("__gsv_process_killed__"),
+        };
+      });
+
+      expect(first).toMatchObject({
+        response: {
+          ok: true,
+          data: { ok: true, pid, archivedMessages: 0, archives: [] },
+        },
+        finishCalls: 1,
+        tombstone: { pid, cleanup: "completed", pendingCleanup: [] },
+      });
+
+      await evictDurableObject(stub);
+      const replay = await runInDurableObject(stub, async (instance: Process) => {
+        const process = instance as any;
+        process.sendSignal = vi.fn(async () => {});
+        const response = await process.recvFrame(
+          makeReq("proc.kill", { pid, archive: false }),
+        );
+        return { response, finishCalls: process.sendSignal.mock.calls.length };
+      });
+      expect(replay.response.data).toEqual(first.response.data);
+      expect(replay.finishCalls).toBe(0);
+    });
+
+    it("delivers persisted output media before deleting live process media", async () => {
+      const pid = "mech-kill-finish-media-order";
+      const runId = "run-kill-finish-media-order";
+      const key = `var/media/0/${pid}/reply.png`;
+      const stub = await initProcess(pid, ROOT_IDENTITY);
+      await env.STORAGE.put(key, new Uint8Array([7, 8, 9]), {
+        httpMetadata: { contentType: "image/png" },
+      });
+
+      const result = await runInDurableObject(stub, async (instance: Process) => {
+        const process = instance as any;
+        const media = [{
+          type: "image",
+          mimeType: "image/png",
+          key,
+          path: `/${key}`,
+          size: 3,
+        }];
+        let mediaPresentDuringFinish = false;
+        let finishPayload: any = null;
+        let releaseFinish!: () => void;
+        let markFinishStarted!: () => void;
+        const finishBlocked = new Promise<void>((resolve) => {
+          releaseFinish = resolve;
+        });
+        const finishStarted = new Promise<void>((resolve) => {
+          markFinishStarted = resolve;
+        });
+        process.currentRun = {
+          runId,
+          outputMedia: media,
+          outputMediaPersisted: true,
+        };
+        process.sendSignal = vi.fn(async (signal: string, payload: unknown) => {
+          if (signal === "proc.run.finished") {
+            finishPayload = payload;
+            mediaPresentDuringFinish = await process.env.STORAGE.head(key) !== null;
+            markFinishStarted();
+            await finishBlocked;
+          }
+        });
+
+        const first = process.recvFrame(makeReq("proc.kill", { archive: false }));
+        await finishStarted;
+        const second = process.recvFrame(makeReq("proc.kill", { archive: false }));
+        const mediaPresentDuringRetry = await process.env.STORAGE.head(key) !== null;
+        releaseFinish();
+        const responses = await Promise.all([first, second]);
+        return {
+          responses,
+          finishPayload,
+          mediaPresentDuringFinish,
+          mediaPresentDuringRetry,
+        };
+      });
+
+      expect(result.responses[0]).toMatchObject({ ok: true, data: { ok: true, pid } });
+      expect(result.responses[1].data).toEqual(result.responses[0].data);
+      expect(result.mediaPresentDuringFinish).toBe(true);
+      expect(result.mediaPresentDuringRetry).toBe(true);
+      expect(result.finishPayload).toMatchObject({ pid, runId, media: [{ key }] });
+      expect(await env.STORAGE.head(key)).toBeNull();
     });
 
     it("finishes the active run and leaves the executor empty and dead", async () => {
@@ -9087,6 +10086,13 @@ describe("Process DO — mechanical", () => {
       await evictDurableObject(stub);
 
       await expect(stub.recvFrame(
+        makeReq("proc.kill", { pid, archive: false }),
+      )).resolves.toMatchObject({
+        ok: true,
+        data: { ok: true, pid, archivedMessages: 0, archives: [] },
+      });
+
+      await expect(stub.recvFrame(
         makeReq("proc.setidentity", { pid, identity: ROOT_IDENTITY }),
       )).resolves.toMatchObject({
         ok: false,
@@ -9100,7 +10106,12 @@ describe("Process DO — mechanical", () => {
         ).toArray().map((row) => row.name),
       }))).resolves.toEqual({
         killed: true,
-        tombstone: true,
+        tombstone: expect.objectContaining({
+          version: 1,
+          pid,
+          cleanup: "completed",
+          result: expect.objectContaining({ ok: true, pid }),
+        }),
         tables: expect.not.arrayContaining([
           "conversations",
           "messages",
@@ -9111,12 +10122,32 @@ describe("Process DO — mechanical", () => {
 
     it("rolls back the storage wipe when the terminal commit fails", async () => {
       const pid = "mech-kill-atomic-rollback";
+      const runId = "run-kill-atomic-rollback";
       const stub = await initProcess(pid, ROOT_IDENTITY);
       const alarmAt = Date.now() + 60_000;
 
       const failed = await runInDurableObject(stub, async (instance: Process, state) => {
         const process = instance as any;
-        process.store.appendMessage("user", "survive the failed kill");
+        process.currentRun = { runId };
+        process.store.appendMessage("user", "survive the failed kill", { runId });
+        process.store.enqueue("queued-after-failed-kill", "queued work must survive");
+        process.store.register(
+          "dispatch-terminal-failure",
+          "call-terminal-failure",
+          runId,
+          "fs.read",
+          { path: "/tmp/terminal" },
+        );
+        process.store.setPendingHil({
+          requestId: "hil-terminal-failure",
+          runId,
+          toolCallId: "call-terminal-failure",
+          toolName: "Read",
+          syscall: "fs.read",
+          args: { path: "/tmp/terminal" },
+          createdAt: Date.now(),
+        });
+        process.sendSignal = vi.fn(async () => {});
         state.storage.kv.put("kill-rollback-sentinel", "present");
         await state.storage.setAlarm(alarmAt);
 
@@ -9142,6 +10173,11 @@ describe("Process DO — mechanical", () => {
           alarm: await state.storage.getAlarm(),
           sentinel: state.storage.kv.get("kill-rollback-sentinel"),
           tombstone: state.storage.kv.get("__gsv_process_killed__"),
+          queueSize: process.store.queueSize(),
+          currentRun: process.currentRun,
+          tools: process.store.getResults(runId),
+          pendingHil: process.store.getPendingHilForRun(runId),
+          finishCalls: process.sendSignal.mock.calls.length,
           tables: state.storage.sql.exec<{ name: string }>(
             "SELECT name FROM sqlite_master WHERE type = 'table'",
           ).toArray().map((row) => row.name),
@@ -9157,15 +10193,43 @@ describe("Process DO — mechanical", () => {
         alarm: alarmAt,
         sentinel: "present",
         tombstone: undefined,
+        queueSize: 1,
+        currentRun: { runId },
+        tools: [expect.objectContaining({
+          dispatchId: "dispatch-terminal-failure",
+          status: "registered",
+        })],
+        pendingHil: { requestId: "hil-terminal-failure", runId },
+        finishCalls: 0,
         tables: expect.arrayContaining(["messages", "process_kv"]),
       });
 
       await evictDurableObject(stub);
-      const history = await stub.recvFrame(makeReq("proc.history", {})) as ResponseOkFrame;
-      expect(history).toMatchObject({ ok: true });
-      expect((history.data as any).messages).toEqual([
+      const recovered = await runInDurableObject(stub, (instance: Process) => {
+        const process = instance as any;
+        return {
+          messages: process.store.getMessages(),
+          queueSize: process.store.queueSize(),
+          currentRun: process.currentRun,
+          tools: process.store.getResults(runId),
+          pendingHil: process.store.getPendingHilForRun(runId),
+        };
+      });
+      expect(recovered.messages).toEqual([
         expect.objectContaining({ content: "survive the failed kill" }),
       ]);
+      expect(recovered.queueSize).toBe(1);
+      expect(recovered.currentRun).toMatchObject({ runId });
+      expect(recovered.tools).toEqual([
+        expect.objectContaining({
+          dispatchId: "dispatch-terminal-failure",
+          status: "registered",
+        }),
+      ]);
+      expect(recovered.pendingHil).toMatchObject({
+        requestId: "hil-terminal-failure",
+        runId,
+      });
 
       await expect(stub.recvFrame(
         makeReq("proc.kill", { pid, archive: false }),

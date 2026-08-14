@@ -577,6 +577,7 @@ export type ProcListEntry = {
   username: string;
   /** Whether the process can hold an interactive (human-in-the-loop) conversation. */
   interactive: boolean;
+  personal: boolean;
   parentPid: string | null;
   state: string;
   activeRunId: string | null;

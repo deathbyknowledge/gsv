@@ -50,6 +50,7 @@ export type KernelContext = {
   requestSignal?: AbortSignal;
   callerOwnerUid?: number;
   serverVersion: string;
+  defer: (promise: Promise<unknown>) => void;
   broadcastToUserUid: (uid: number, signal: string, payload?: unknown) => void;
   scheduleIpcCallTimeout: (
     callId: string,

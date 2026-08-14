@@ -52,7 +52,7 @@ import {
 import { ShellSessionStore, type ShellSessionStatus } from "./shell-sessions";
 import { ProcessRegistry, type ProcessState } from "./processes";
 import { AdapterStore } from "./adapter-store";
-import { RunRouteStore, type AdapterRunRoute, type RunRoute } from "./run-routes";
+import { RunRouteStore, type AdapterRunRoute } from "./run-routes";
 import { OAuthStore } from "./oauth-store";
 import { McpServerStore } from "./mcp-store";
 import { SignalWatchStore, type SignalWatchRecord } from "./signal-watches";
@@ -98,6 +98,7 @@ import {
   handleAdapterSend,
   deliverAdapterReply,
   normalizeAdapterHilRequest,
+  prefixAdapterDmProcessReply,
   renderAdapterHilPrompt,
   setAdapterActivityForKernel,
 } from "./adapter-handlers";
@@ -109,7 +110,7 @@ import type {
 import { isRepoPublic } from "./repo-visibility";
 import { canReadRepo, canWriteRepo } from "./repo";
 import { forwardToProcess, handleProcSpawn } from "./proc-handlers";
-import { ensurePersonalAgent } from "./agents";
+import { ensurePersonalController } from "./personal-controller";
 import { handleShellExec } from "../drivers/native/shell";
 import { getVisibleTarget } from "./targets";
 import { runKernelSqlMigrations } from "./schema/migrations";
@@ -718,13 +719,31 @@ export class Kernel extends Host<Env> {
 
     if (!isUserProcessSignal(frame.signal)) return;
 
-    const isHilRequest = frame.signal === "proc.run.hil.requested";
-    const route = runId ? this.runRoutes.get(runId) : null;
+    let route = runId ? this.runRoutes.get(runId) : null;
 
     // Client-facing process signals route by the owning human (owner_uid), not the
     // run-as identity (which may be the personal agent account).
-    if (isHilRequest || !route) {
-      this.broadcastToUserUid(ownerUid, frame.signal, frame.payload);
+    this.broadcastToUserUid(ownerUid, frame.signal, frame.payload);
+
+    if (frame.signal === "proc.run.finished") {
+      const process = this.procs.get(processId);
+      if (
+        process?.state === "idle"
+        && process.activeRunId === null
+        && process.queuedCount === 0
+      ) {
+        this.adapters.surfaceRoutes.clearLegacyForProcess(processId);
+      }
+    }
+    if (
+      !route
+      && runId
+      && (
+        frame.signal === "proc.run.hil.requested"
+        || frame.signal === "proc.run.finished"
+      )
+    ) {
+      route = this.materializePersonalAdapterFallback(processId, runId, ownerUid);
     }
     if (!runId || !route) {
       return;
@@ -736,9 +755,6 @@ export class Kernel extends Host<Env> {
     }
 
     if (route.kind === "connection") {
-      if (!isHilRequest) {
-        this.deliverSignalToConnection(route, frame, ownerUid);
-      }
       if (frame.signal === "proc.run.finished") {
         this.runRoutes.delete(runId);
       }
@@ -757,6 +773,37 @@ export class Kernel extends Host<Env> {
       return;
     }
     await this.deliverSignalToAdapter(route, frame);
+  }
+
+  private materializePersonalAdapterFallback(
+    processId: string,
+    runId: string,
+    ownerUid: number,
+  ): AdapterRunRoute | null {
+    const process = this.procs.get(processId);
+    if (!process?.isPersonalController || process.ownerUid !== ownerUid) {
+      return null;
+    }
+    const preferred = this.adapters.privateDestinations.get(ownerUid);
+    if (!preferred) {
+      return null;
+    }
+    const ctx = this.buildProcessContext(processId, runId);
+    if (!ctx) {
+      return null;
+    }
+    try {
+      assertAdapterMessageDestinationAccess(preferred.destination, ownerUid, ctx);
+    } catch {
+      this.adapters.privateDestinations.clearIfMatches(ownerUid, preferred.destination);
+      return null;
+    }
+    return this.runRoutes.setAdapterRoute({
+      runId,
+      processId,
+      uid: ownerUid,
+      destination: preferred.destination,
+    });
   }
 
   private async attemptAdapterSignalDelivery(
@@ -1184,20 +1231,6 @@ export class Kernel extends Host<Env> {
     });
   }
 
-  private deliverSignalToConnection(
-    route: Extract<RunRoute, { kind: "connection" }>,
-    frame: SignalFrame,
-    uid: number,
-  ): void {
-    const conn = this.connections.get(route.connectionId);
-    if (!conn) {
-      this.broadcastToUserUid(uid, frame.signal, frame.payload);
-      return;
-    }
-
-    conn.send(JSON.stringify(frame));
-  }
-
   private async deliverSignalToAdapter(
     route: AdapterRunRoute,
     frame: SignalFrame,
@@ -1309,6 +1342,7 @@ export class Kernel extends Host<Env> {
       assertAdapterMessageDestinationAccess(route.destination, route.uid, ctx);
     } catch (error) {
       await cancelBinaryBody(body, error);
+      ctx.adapters.privateDestinations.clearIfMatches(route.uid, route.destination);
       // Revocation is a permanent delivery outcome, not a transport outage.
       // A HIL signal was already broadcast to any connected GSV client, and a
       // terminal result must not retry forever after the user removes access.
@@ -1325,6 +1359,12 @@ export class Kernel extends Host<Env> {
 
     const result = await deliverAdapterReply(route.destination, route.uid, {
       ...message,
+      text: prefixAdapterDmProcessReply(
+        message.text,
+        route.processId,
+        route.destination,
+        ctx,
+      ),
       replyToId: message.replyToId ?? route.replyToId,
     }, ctx, body);
     if (!result.ok) {
@@ -1581,6 +1621,7 @@ export class Kernel extends Host<Env> {
       requestSignal: options.requestSignal,
       callerOwnerUid: options.callerOwnerUid,
       serverVersion: SERVER_VERSION,
+      defer: (promise) => this.ctx.waitUntil(promise),
       broadcastToUserUid: this.broadcastToUserUid.bind(this),
       scheduleIpcCallTimeout: this.scheduleIpcCallTimeout.bind(this),
       failIpcCallsByTarget: this.failIpcCallsByTarget.bind(this),
@@ -2319,6 +2360,15 @@ export class Kernel extends Host<Env> {
       clientId: clientId || undefined,
       clientPlatform: clientPlatform || undefined,
     } satisfies ConnectionState & { step: "connected"; identity: ConnectionIdentity };
+
+    if (
+      outcome.identity.role === "user"
+      && outcome.identity.process.uid >= 1000
+      && !ctx.auth.isPersonalAgentUid(outcome.identity.process.uid)
+    ) {
+      await ensurePersonalController(outcome.identity.process.uid, ctx);
+    }
+
     this.activateConnection(connection, newState);
 
     if (outcome.identity.role === "driver") {
@@ -2326,7 +2376,6 @@ export class Kernel extends Host<Env> {
     }
 
     if (outcome.identity.role === "user") {
-      await ensurePersonalAgent(ctx, outcome.identity.process);
       this.reconcileOwnedIdentities(outcome.identity.process.uid);
     }
 

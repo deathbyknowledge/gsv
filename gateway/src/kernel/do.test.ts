@@ -889,7 +889,21 @@ describe("Kernel user signal broadcasts", () => {
 describe("Kernel process signal routing", () => {
   function buildKernel(route: Record<string, unknown>) {
     const kernel = Object.create(Kernel.prototype) as any;
-    kernel.procs = { getOwnerUid: vi.fn(() => 1000) };
+    kernel.procs = {
+      getOwnerUid: vi.fn(() => 1000),
+      get: vi.fn(() => ({
+        processId: "proc-1",
+        ownerUid: 1000,
+        isPersonalController: false,
+        state: "idle",
+        activeRunId: null,
+        queuedCount: 0,
+      })),
+    };
+    kernel.adapters = {
+      surfaceRoutes: { clearLegacyForProcess: vi.fn() },
+      privateDestinations: { get: vi.fn(() => null), clearIfMatches: vi.fn() },
+    };
     kernel.dispatchSignalWatches = vi.fn(async () => {});
     kernel.runRoutes = { get: vi.fn(() => route), delete: vi.fn() };
     kernel.broadcastToUserUid = vi.fn();
@@ -897,6 +911,74 @@ describe("Kernel process signal routing", () => {
     kernel.deliverSignalToAdapter = vi.fn(async () => ({ state: "delivered" }));
     kernel.schedule = vi.fn(async () => ({ id: "scheduled-delivery" }));
     return kernel;
+  }
+
+  const preferredDestination = {
+    kind: "adapter" as const,
+    adapter: "telegram",
+    accountId: "bot",
+    actorId: "telegram:user:42",
+    surface: { kind: "dm" as const, id: "chat-42" },
+  };
+
+  function buildPersonalFallbackKernel(options: {
+    exactRoute?: Record<string, unknown> | null;
+    preferred?: typeof preferredDestination | null;
+    authorized?: boolean;
+  } = {}) {
+    const kernel = buildKernel((options.exactRoute ?? null) as any);
+    const process = {
+      processId: "proc-1",
+      ownerUid: 1000,
+      isPersonalController: true,
+      state: "idle",
+      activeRunId: null,
+      queuedCount: 0,
+    };
+    kernel.procs.get.mockReturnValue(process);
+    const preferred = options.preferred === undefined
+      ? preferredDestination
+      : options.preferred;
+    const getPreferred = vi.fn(() => preferred
+      ? { uid: 1000, destination: preferred, updatedAt: 1 }
+      : null);
+    const clearPreferred = vi.fn(() => true);
+    kernel.adapters.privateDestinations = {
+      get: getPreferred,
+      clearIfMatches: clearPreferred,
+    };
+    const link = options.authorized === false
+      ? null
+      : {
+          adapter: "telegram",
+          accountId: "bot",
+          actorId: "telegram:user:42",
+          uid: 1000,
+          metadata: { surfaceKind: "dm", surfaceId: "chat-42" },
+        };
+    kernel.buildProcessContext = vi.fn(() => ({
+      procs: kernel.procs,
+      adapters: {
+        identityLinks: { get: vi.fn(() => link) },
+        surfaceRoutes: { get: vi.fn(() => null), resolveRoute: vi.fn(() => null) },
+        privateDestinations: kernel.adapters.privateDestinations,
+      },
+    }));
+    const setAdapterRoute = vi.fn((input) => ({
+      kind: "adapter",
+      ...input,
+      createdAt: 1,
+      expiresAt: 2,
+    }));
+    kernel.runRoutes.setAdapterRoute = setAdapterRoute;
+    kernel.attemptAdapterSignalDelivery = vi.fn(async () => {});
+    kernel.queueAdapterSignalDelivery = vi.fn(async () => {});
+    return {
+      kernel,
+      getPreferred,
+      clearPreferred,
+      setAdapterRoute,
+    };
   }
 
   const connectionRoute = {
@@ -1011,6 +1093,116 @@ describe("Kernel process signal routing", () => {
       }),
       expect.objectContaining({ idempotent: true }),
     );
+  });
+
+  it("routes a background personal terminal result to the last active private destination", async () => {
+    const { kernel, setAdapterRoute } = buildPersonalFallbackKernel();
+    const frame = {
+      type: "sig",
+      signal: "proc.run.finished",
+      payload: { pid: "proc-1", runId: "run-background", text: "Mail is ready.", queuedCount: 0 },
+    };
+
+    await kernel.handleProcessSignal("proc-1", frame);
+
+    expect(setAdapterRoute).toHaveBeenCalledWith({
+      runId: "run-background",
+      processId: "proc-1",
+      uid: 1000,
+      destination: preferredDestination,
+    });
+    expect(kernel.attemptAdapterSignalDelivery).toHaveBeenCalledWith(
+      expect.objectContaining({ destination: preferredDestination }),
+      frame,
+      1,
+    );
+    expect(kernel.broadcastToUserUid).toHaveBeenCalledOnce();
+  });
+
+  it("routes a background personal HIL request to the last active private destination", async () => {
+    const { kernel, setAdapterRoute } = buildPersonalFallbackKernel();
+    const frame = {
+      type: "sig",
+      signal: "proc.run.hil.requested",
+      payload: hilPayload("run-background-hil", "hil-background"),
+    };
+
+    await kernel.handleProcessSignal("proc-1", frame);
+
+    expect(setAdapterRoute).toHaveBeenCalledOnce();
+    expect(kernel.queueAdapterSignalDelivery).toHaveBeenCalledWith(
+      expect.objectContaining({ destination: preferredDestination }),
+      frame,
+      1,
+    );
+  });
+
+  it("drops and clears a revoked personal fallback before adapter delivery", async () => {
+    const { kernel, setAdapterRoute, clearPreferred } = buildPersonalFallbackKernel({
+      authorized: false,
+    });
+    const frame = {
+      type: "sig",
+      signal: "proc.run.finished",
+      payload: { pid: "proc-1", runId: "run-revoked", text: "done", queuedCount: 0 },
+    };
+
+    await kernel.handleProcessSignal("proc-1", frame);
+
+    expect(clearPreferred).toHaveBeenCalledWith(1000, preferredDestination);
+    expect(setAdapterRoute).not.toHaveBeenCalled();
+    expect(kernel.attemptAdapterSignalDelivery).not.toHaveBeenCalled();
+    expect(kernel.broadcastToUserUid).toHaveBeenCalledOnce();
+  });
+
+  it("keeps exact Web routes exclusive and leaves no-destination personal runs Web-only", async () => {
+    const exact = {
+      kind: "connection",
+      runId: "run-web",
+      processId: "proc-1",
+      uid: 1000,
+      connectionId: "web-1",
+    };
+    const web = buildPersonalFallbackKernel({ exactRoute: exact });
+    await web.kernel.handleProcessSignal("proc-1", {
+      type: "sig",
+      signal: "proc.run.finished",
+      payload: { pid: "proc-1", runId: "run-web", text: "web", queuedCount: 0 },
+    });
+    expect(web.getPreferred).not.toHaveBeenCalled();
+    expect(web.setAdapterRoute).not.toHaveBeenCalled();
+
+    const noDestination = buildPersonalFallbackKernel({ preferred: null });
+    await noDestination.kernel.handleProcessSignal("proc-1", {
+      type: "sig",
+      signal: "proc.run.finished",
+      payload: { pid: "proc-1", runId: "run-no-destination", text: "web only", queuedCount: 0 },
+    });
+    expect(noDestination.setAdapterRoute).not.toHaveBeenCalled();
+    expect(noDestination.kernel.broadcastToUserUid).toHaveBeenCalledOnce();
+  });
+
+  it("clears legacy DM routes only after a process becomes fully idle", async () => {
+    const terminal = {
+      type: "sig",
+      signal: "proc.run.finished",
+      payload: { pid: "proc-1", runId: "run-1", text: "done", queuedCount: 0 },
+    };
+    const idle = buildKernel(connectionRoute);
+    await idle.handleProcessSignal("proc-1", terminal);
+    expect(idle.adapters.surfaceRoutes.clearLegacyForProcess).toHaveBeenCalledWith("proc-1");
+
+    const queued = buildKernel(connectionRoute);
+    queued.procs.get.mockReturnValue({
+      processId: "proc-1",
+      ownerUid: 1000,
+      isPersonalController: false,
+      state: "queued",
+      activeRunId: null,
+      queuedCount: 1,
+    });
+    await queued.handleProcessSignal("proc-1", terminal);
+    expect(queued.adapters.surfaceRoutes.clearLegacyForProcess).not.toHaveBeenCalled();
   });
 
   it("suppresses a queued HIL prompt after its approval is resolved", async () => {
@@ -1165,7 +1357,7 @@ describe("Kernel process signal routing", () => {
     expect(first.noticeId).not.toBe(second.noticeId);
   });
 
-  it("keeps ordinary run signals exclusive to their connection route", async () => {
+  it("broadcasts ordinary run signals once instead of duplicating the origin route", async () => {
     const kernel = buildKernel(connectionRoute);
     const frame = {
       type: "sig",
@@ -1175,8 +1367,9 @@ describe("Kernel process signal routing", () => {
 
     await kernel.handleProcessSignal("proc-1", frame);
 
-    expect(kernel.broadcastToUserUid).not.toHaveBeenCalled();
-    expect(kernel.deliverSignalToConnection).toHaveBeenCalledWith(connectionRoute, frame, 1000);
+    expect(kernel.broadcastToUserUid).toHaveBeenCalledOnce();
+    expect(kernel.broadcastToUserUid).toHaveBeenCalledWith(1000, frame.signal, frame.payload);
+    expect(kernel.deliverSignalToConnection).not.toHaveBeenCalled();
   });
 
   it("durably retries a terminal adapter reply without deleting its route", async () => {
@@ -1395,6 +1588,8 @@ describe("Kernel adapter route replies", () => {
   function replyContext(options: {
     authorized: boolean;
     adapterSend: ReturnType<typeof vi.fn>;
+    personal?: boolean;
+    currentMode?: "work" | null;
   }) {
     const link = options.authorized
       ? {
@@ -1407,9 +1602,22 @@ describe("Kernel adapter route replies", () => {
       : null;
     return {
       env: { CHANNEL_TELEGRAM: { adapterSend: options.adapterSend } },
+      procs: {
+        get: vi.fn(() => ({
+          processId: "proc-1",
+          ownerUid: 1000,
+          isPersonalController: options.personal ?? true,
+        })),
+      },
       adapters: {
         identityLinks: { get: vi.fn(() => link) },
-        surfaceRoutes: { get: vi.fn(() => null) },
+        surfaceRoutes: {
+          get: vi.fn(() => null),
+          resolveRoute: vi.fn(() => options.currentMode
+            ? { pid: "proc:selected-work", mode: options.currentMode }
+            : null),
+        },
+        privateDestinations: { clearIfMatches: vi.fn(() => false) },
       },
     };
   }
@@ -1489,6 +1697,45 @@ describe("Kernel adapter route replies", () => {
         media: undefined,
         replyToId: "incoming-42",
       },
+      undefined,
+    );
+  });
+
+  it.each([
+    {
+      label: "work output",
+      personal: false,
+      currentMode: null,
+      expected: "[WORK SESSION] late work result",
+    },
+    {
+      label: "late personal output after selecting work",
+      personal: true,
+      currentMode: "work" as const,
+      expected: "[PERSONAL INTELLIGENCE] late work result",
+    },
+  ])("labels $label on a private surface", async ({
+    personal,
+    currentMode,
+    expected,
+  }) => {
+    const adapterSend = vi.fn(async () => ({ ok: true as const }));
+    const kernel = Object.create(Kernel.prototype) as any;
+    kernel.buildProcessContext = vi.fn(() => replyContext({
+      authorized: true,
+      adapterSend,
+      personal,
+      currentMode,
+    }));
+
+    await kernel.deliverAdapterRouteReply(route, {
+      deliveryId: `run-adapter-reply:label:${personal}`,
+      text: "late work result",
+    });
+
+    expect(adapterSend).toHaveBeenCalledWith(
+      "bot",
+      expect.objectContaining({ text: expected }),
       undefined,
     );
   });
