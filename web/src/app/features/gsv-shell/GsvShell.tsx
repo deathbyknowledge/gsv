@@ -4,7 +4,11 @@ import { IconMenu } from "../../components/ui/IconMenu";
 import { StatusDot } from "../../components/ui/StatusDot";
 import type { StatusTone } from "../../components/ui/StatusDot";
 import { ChatDock, type StartedChatProcess } from "../chat/components/ChatDock";
-import type { ChatAgentData, ChatAgentSelection, ChatProcessSummary } from "../chat/domain";
+import {
+  canStartChatWork,
+  type ChatAgentData,
+  type ChatProcessSummary,
+} from "../chat/domain";
 import {
   normalizeTargetChatProcess,
   TARGET_CHAT_PROCESS_EVENT,
@@ -32,6 +36,11 @@ import {
   type ShellSurfaceId,
 } from "./domain/shellModel";
 import { buildShellChatAgent } from "./domain/chatAgentModel";
+import {
+  resolveChatProcessTargets,
+  resolveChatViewerUid,
+  selectWorkSessionProcess,
+} from "./domain/chatProcessSelection";
 import { buildDesktopObjectsFromConsole } from "./domain/desktopObjects";
 import { useGsvShellState } from "./hooks/useGsvShellState";
 import "./styles/gsvShell.css";
@@ -164,8 +173,8 @@ export function GsvShell({
     }
   }, [desktopVisible]);
 
-  const [selectedChatPid, setSelectedChatPid] = useState<string | null>(null);
-  const [selectedChatAgentId, setSelectedChatAgentId] = useState<string | null>(null);
+  const [personalChatPid, setPersonalChatPid] = useState<string | null>(null);
+  const [workSessionPid, setWorkSessionPid] = useState<string | null>(null);
   const [pendingChatProcess, setPendingChatProcess] = useState<ChatProcessSummary | null>(null);
   // Bumped by NEW TASK actions to ask the chat dock for a fresh task (rather than
   // just reopening the dock on whatever was last selected).
@@ -174,57 +183,89 @@ export function GsvShell({
     shell.setChatOpen(true);
     setNewTaskSignal((value) => value + 1);
   };
-  const chatProcesses = useChatProcessList();
-  const chatProcessList = chatProcesses.data ?? [];
-  const selectedListedChatProcess = selectedChatPid
-    ? chatProcessList.find((process) => process.pid === selectedChatPid) ?? null
-    : null;
-  const selectedPendingChatProcess = pendingChatProcess?.pid === selectedChatPid
-    ? pendingChatProcess
-    : null;
-  const activeChatProcess = selectedChatAgentId
-    ? null
-    : selectedChatPid
-      ? selectedListedChatProcess ?? selectedPendingChatProcess
-      : chatProcessList[0] ?? null;
+  const chatOwnerUid = resolveChatViewerUid(
+    consoleOverview.data?.accounts ?? [],
+    sessionUsername,
+  );
+  useEffect(() => {
+    setPersonalChatPid(null);
+    setWorkSessionPid(null);
+    setPendingChatProcess(null);
+  }, [chatOwnerUid, desktopVisible, sessionUsername]);
+  const chatProcesses = useChatProcessList({
+    args: { uid: chatOwnerUid ?? 0 },
+    enabled: chatOwnerUid !== null,
+  });
+  const chatProcessList = chatOwnerUid === null ? [] : chatProcesses.data ?? [];
+  const chatTargets = resolveChatProcessTargets({
+    ownerUid: chatOwnerUid,
+    pendingProcess: pendingChatProcess,
+    personalPid: personalChatPid,
+    processes: chatProcessList,
+    workSessionPid,
+  });
+  const activeChatProcess = chatTargets.activeProcess;
+  const listedWorkSessionProcess = chatTargets.targetedProcess;
+  const personalChatProcess = chatTargets.personalProcess;
+  const workSessionActive = chatTargets.workSessionActive;
+  const personalAgentUsername = consoleOverview.data?.accounts.find(
+    (account) => account.relation === "personal-agent",
+  )?.username ?? "";
 
   useEffect(() => {
-    if (pendingChatProcess && chatProcessList.some((process) => process.pid === pendingChatProcess.pid)) {
-      setPendingChatProcess(null);
+    if (personalChatProcess && personalChatProcess.pid !== personalChatPid) {
+      setPersonalChatPid(personalChatProcess.pid);
     }
-  }, [chatProcessList, pendingChatProcess]);
+  }, [personalChatPid, personalChatProcess]);
 
   useEffect(() => {
     if (
-      selectedChatPid &&
-      !selectedPendingChatProcess &&
-      !chatProcesses.isLoading &&
-      !chatProcesses.isFetching &&
-      !chatProcessList.some((process) => process.pid === selectedChatPid)
+      pendingChatProcess
+      && (
+        chatOwnerUid === null
+        || pendingChatProcess.uid !== chatOwnerUid
+        || chatProcessList.some((process) => process.pid === pendingChatProcess.pid)
+      )
     ) {
-      setSelectedChatPid(null);
+      setPendingChatProcess(null);
     }
-  }, [chatProcessList, chatProcesses.isFetching, chatProcesses.isLoading, selectedChatPid, selectedPendingChatProcess]);
+  }, [chatOwnerUid, chatProcessList, pendingChatProcess]);
 
   useEffect(() => {
-    if (!selectedChatAgentId || !consoleOverview.data) {
-      return;
+    if (
+      workSessionPid &&
+      !pendingChatProcess &&
+      !chatProcesses.isLoading &&
+      !chatProcesses.isFetching &&
+      !chatProcessList.some((process) => process.pid === workSessionPid)
+    ) {
+      setWorkSessionPid(null);
     }
-    const hasSelectedAgent = consoleOverview.data.accounts.some((account) => `account:${account.uid}` === selectedChatAgentId);
-    if (!hasSelectedAgent) {
-      setSelectedChatAgentId(null);
+  }, [chatProcessList, chatProcesses.isFetching, chatProcesses.isLoading, pendingChatProcess, workSessionPid]);
+
+  useEffect(() => {
+    if (listedWorkSessionProcess?.personal) {
+      setWorkSessionPid(null);
+      setPendingChatProcess(null);
     }
-  }, [consoleOverview.data, selectedChatAgentId]);
+  }, [listedWorkSessionProcess]);
 
   useEffect(() => {
     const handleTargetEvent = (event: Event) => {
       const target = normalizeTargetChatProcess((event as CustomEvent).detail);
-      if (!target) {
+      if (!target || chatOwnerUid === null) {
         return;
       }
-      setSelectedChatPid(target.pid);
+      const workProcess = selectWorkSessionProcess(
+        chatProcessList,
+        target.pid,
+        chatOwnerUid,
+      );
+      if (!workProcess) {
+        return;
+      }
+      setWorkSessionPid(target.pid);
       setPendingChatProcess(null);
-      setSelectedChatAgentId(null);
       shell.setChatOpen(true);
     };
 
@@ -232,47 +273,47 @@ export function GsvShell({
     return () => {
       window.removeEventListener(TARGET_CHAT_PROCESS_EVENT, handleTargetEvent);
     };
-  }, [shell]);
+  }, [chatOwnerUid, chatProcessList, shell]);
 
   const chatStatus = statusForRunState(activeChatProcess?.runState);
   const chatStatusLabel = activeChatProcess?.runState.replaceAll("_", " ") ?? (
     chatProcesses.isLoading ? "loading" : "no process"
   );
-  const chatContextLabel = activeChatProcess ? "process history" : "no history";
+  const chatContextLabel = activeChatProcess ? "conversation history" : "no history";
   const chatAgent = useMemo<ChatAgentData | null>(() => {
     return buildShellChatAgent({
       activeProcess: activeChatProcess,
       accounts: consoleOverview.data?.accounts ?? [],
       chatProcesses: chatProcessList,
       config: consoleConfig.config,
-      consoleProcesses: consoleOverview.data?.processes ?? [],
-      selectedAgentId: selectedChatAgentId,
-      sessionUsername,
+      ownerUid: chatOwnerUid,
       statusLabel: chatStatusLabel,
     });
-  }, [activeChatProcess, chatProcessList, chatStatusLabel, consoleConfig.config, consoleOverview.data, selectedChatAgentId, sessionUsername]);
-  const selectChatAgent = (selection: ChatAgentSelection): void => {
-    if (selection.processId) {
-      setSelectedChatPid(selection.processId);
-      setPendingChatProcess(selection.process ?? null);
-      setSelectedChatAgentId(null);
+  }, [activeChatProcess, chatProcessList, chatStatusLabel, consoleConfig.config, consoleOverview.data, sessionUsername]);
+  const openWorkSession = (processId: string, process: ChatProcessSummary | null): void => {
+    const listedProcess = selectWorkSessionProcess(
+      chatProcessList,
+      processId,
+      chatOwnerUid,
+    );
+    if (!listedProcess || (process && process.pid !== listedProcess.pid)) {
+      setWorkSessionPid(null);
+      setPendingChatProcess(null);
       return;
     }
-    if (selection.agentId) {
-      setSelectedChatPid(null);
-      setPendingChatProcess(null);
-      setSelectedChatAgentId(selection.agentId);
-    }
+    setWorkSessionPid(processId);
+    setPendingChatProcess(null);
   };
   const selectStartedChatProcess = (process: StartedChatProcess): void => {
+    if (chatOwnerUid === null) {
+      return;
+    }
     const now = Date.now();
-    const selectedAgentUid = selectedChatAgentId?.startsWith("account:")
-      ? Number(selectedChatAgentId.slice("account:".length))
-      : NaN;
     setPendingChatProcess({
       pid: process.pid,
-      uid: Number.isFinite(selectedAgentUid) ? selectedAgentUid : (activeChatProcess?.uid ?? 0),
-      username: chatAgent?.runAs || activeChatProcess?.username || sessionUsername,
+      uid: chatOwnerUid,
+      username: personalChatProcess?.username || personalAgentUsername || sessionUsername,
+      personal: false,
       interactive: true,
       parentPid: null,
       state: "idle",
@@ -281,13 +322,13 @@ export function GsvShell({
       queuedCount: 0,
       lastActiveAt: now,
       label: process.label ?? null,
-      title: process.label?.trim() || "New task",
+      title: process.label?.trim() || "New work",
       createdAt: now,
-      cwd: process.cwd || activeChatProcess?.cwd || "",
+      cwd: process.cwd || personalChatProcess?.cwd || activeChatProcess?.cwd || "",
     });
-    setSelectedChatPid(process.pid);
-    setSelectedChatAgentId(null);
+    setWorkSessionPid(process.pid);
   };
+  const canStartNewWork = canStartChatWork(chatAgent);
   // Navigation that unmounts the active screen is routed through the unsaved
   // guard: a dirty screen prompts "discard changes?" first, a clean one passes
   // straight through.
@@ -459,7 +500,7 @@ export function GsvShell({
                       onOpenSurface={openShellSurface}
                       onOpenSectionCreate={createSectionObject}
                       onOpenChat={() => shell.setChatOpen(true)}
-                      onNewTask={requestNewTask}
+                      onNewTask={canStartNewWork ? requestNewTask : undefined}
                       onLibraryRouteChange={shell.syncActiveLibraryRoute}
                       onSettingsRouteChange={shell.syncActiveSettingsRoute}
                       libraryRoute={activeLibraryRoute}
@@ -547,6 +588,7 @@ export function GsvShell({
         </main>
 
         <ChatDock
+          key={`chat:${sessionUsername}:${chatOwnerUid ?? "none"}:${desktopVisible ? "visible" : "hidden"}`}
           newTaskSignal={newTaskSignal}
           open={shell.chatOpen}
           width={shell.resolvedChatWidth}
@@ -556,17 +598,24 @@ export function GsvShell({
           onResizeStart={shell.startChatDrag}
           onToggleOpen={() => shell.setChatOpen((value) => !value)}
           onToggleMax={shell.toggleChatMax}
-          onOpenCrew={() => openSettingsRoute("crew")}
           onOpenModels={() => openSettingsRoute("models")}
-          onOpenTasks={() => openSettingsRoute("tasks")}
+          onOpenTasks={() => openShellSurface("runtime")}
           onProcessStarted={selectStartedChatProcess}
+          onOpenWorkSession={openWorkSession}
+          onBackToPersonal={() => {
+            setWorkSessionPid(null);
+            setPendingChatProcess(null);
+          }}
+          workSession={workSessionActive ? {
+            title: activeChatProcess?.title ?? workSessionPid ?? "Work",
+            personalName: canStartNewWork ? chatAgent?.name ?? "Personal intelligence" : null,
+          } : null}
           title={activeChatProcess?.title ?? "Chat"}
           status={chatStatus}
           statusLabel={chatStatusLabel}
           contextLabel={chatContextLabel}
           agent={chatAgent}
           userLabel={sessionUsername}
-          onSelectAgent={selectChatAgent}
         />
 
         {shell.mobileLayout ? (

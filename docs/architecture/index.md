@@ -54,11 +54,19 @@ is allowed to do something and where the request should go.
 
 ### Agent Processes
 
-Agents are durable processes, not sessions. Each task has its own process,
-created with `proc.spawn` or `proc.fork`. A process has a PID, uid/gid identity,
-parent, profile, current working directory, optional workspace, state, and
-persistent message history. A personal agent is a run-as account, not a default
-process.
+Agents are durable processes, not sessions. Each body of work has its own
+process, created with `proc.spawn` or `proc.fork`. A process has a PID, uid/gid
+identity, parent, profile, current working directory, optional workspace, state,
+and persistent message history.
+
+Each human has one personal agent account that acts as their personal
+intelligence, plus one current personal process where direct conversations and
+user-level events converge. The Kernel records that role explicitly; it is not
+inferred from recency, labels, or account name. Its pid remains replaceable and
+ordinary. Custom agent accounts provide specialized identities when explicitly
+selected. A delegated child inherits its parent's account by default and acts
+in a bounded worker role; other processes remain visible work rather than
+alternative personal intelligences.
 
 Process state lives in a Process Durable Object with its own SQLite database.
 That database stores active messages, pending tool calls, queued messages,

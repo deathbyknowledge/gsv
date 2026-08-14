@@ -4,9 +4,8 @@
  * Each human gets a 1:1 personal agent that is a real user account in the
  * Unix-like identity model: its own uid, its own private primary group
  * (gid = uid, User Private Group), and its own /home. The agent is the
- * default run-as identity for processes spawned without an explicit account,
- * while the human remains the process
- * owner (routing, visibility, quotas).
+ * default run-as identity for the user's personal intelligence, while the
+ * human remains the process owner (routing, visibility, quotas).
  *
  * Bidirectional group membership wires the relationship:
  *   - the agent joins the human's private group (so it can act on the human's
@@ -37,6 +36,7 @@ import {
 } from "./accounts";
 import { canOwnerRunAsAccount } from "./account-access";
 import { ensureAccountHomeLayout } from "./account-home";
+import { ensurePersonalMemory } from "./personal-memory";
 
 /**
  * Curated, tasteful default names for the personal agent. The first available
@@ -175,6 +175,8 @@ export async function ensurePersonalAgent(
     return { identity: human, created: false };
   }
 
+  await ensurePersonalMemory(ctx, human);
+
   const existingUid = auth.getPersonalAgentUid(human.uid);
   if (existingUid !== null) {
     const entry = auth.getPasswdByUid(existingUid);
@@ -184,6 +186,7 @@ export async function ensurePersonalAgent(
       await ensureAccountHomeLayout(ctx.env, identity, {
         userContextUsername: human.username,
         seedPromptContext: true,
+        personalAgent: true,
       });
       return { identity, created: false };
     }
@@ -221,7 +224,6 @@ export async function handleAccountCreate(
   if (!name) {
     throw new Error(`Invalid or unavailable username: ${String(args.username)}`);
   }
-
   if (kind === "human") {
     // Creating human accounts is an administrative action.
     if (!caller.capabilities.includes("*")) {

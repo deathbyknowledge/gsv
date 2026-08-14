@@ -39,6 +39,15 @@ import {
   KERNEL_V021_ISOLATE_MAIL_NOTIFICATIONS,
 } from "./v021_isolate_mail_notifications";
 import { KERNEL_V022_ADD_OUTBOUND_MAIL } from "./v022_add_outbound_mail";
+import {
+  KERNEL_V023_ADD_PERSONAL_CONTROLLER_SLOT,
+} from "./v023_add_personal_controller_slot";
+import {
+  KERNEL_V024_ADD_SURFACE_ROUTE_MODES,
+} from "./v024_add_surface_route_modes";
+import {
+  KERNEL_V025_ADD_PRIVATE_ADAPTER_DESTINATIONS,
+} from "./v025_add_private_adapter_destinations";
 
 // Used by Kernel DO startup before the individual stores initialize.
 export const KERNEL_SCHEMA_COMPONENT = "kernel";
@@ -66,6 +75,9 @@ export const KERNEL_MIGRATIONS: readonly SqlMigration[] = [
   KERNEL_V020_ADD_MAILBOXES,
   KERNEL_V021_ISOLATE_MAIL_NOTIFICATIONS,
   KERNEL_V022_ADD_OUTBOUND_MAIL,
+  KERNEL_V023_ADD_PERSONAL_CONTROLLER_SLOT,
+  KERNEL_V024_ADD_SURFACE_ROUTE_MODES,
+  KERNEL_V025_ADD_PRIVATE_ADAPTER_DESTINATIONS,
 ];
 
 export function runKernelSqlMigrations(storage: DurableObjectStorage): void {

@@ -119,6 +119,34 @@ describe("runSqlMigrations", () => {
     expect(sql.statements.filter((statement) => statement === "CREATE TABLE first_table (id TEXT PRIMARY KEY)")).toHaveLength(1);
   });
 
+  it("allows new migrations after unrelated ledger entries absent from the current release", () => {
+    const sql = createMockSqlStorage();
+    sql.applied.push({
+      component: "kernel",
+      id: 90,
+      name: "removed_experiment_one",
+      checksum: "deadbeef",
+      applied_at: 1,
+    });
+    sql.applied.push({
+      component: "kernel",
+      id: 91,
+      name: "removed_experiment_two",
+      checksum: "decafbad",
+      applied_at: 2,
+    });
+    const next: SqlMigration = {
+      id: 93,
+      name: "next_release",
+      statements: ["CREATE TABLE next_release (id TEXT PRIMARY KEY)"],
+    };
+
+    runSqlMigrations(sql, "kernel", [next]);
+
+    expect(sql.statements).toContain("CREATE TABLE next_release (id TEXT PRIMARY KEY)");
+    expect(sql.applied.map(({ id }) => id)).toEqual([90, 91, 93]);
+  });
+
   it("rejects applied migrations whose content changed", () => {
     const sql = createMockSqlStorage();
 

@@ -458,8 +458,8 @@ Runtime behavior:
 
 | Syscall | Handler | Behavior |
 |---|---|---|
-| `proc.list` | `handleProcList` | Reads the kernel process registry. Root defaults to all processes; non-root defaults to own uid, though an explicit `uid` is currently honored by the handler. |
-| `proc.spawn` | `handleProcSpawn` | Resolves the run-as identity, registers a process, sends kernel-only `proc.setidentity`, and optionally admits the initial prompt. |
+| `proc.list` | `handleProcList` | Reads the kernel process registry. Each entry reports whether it occupies its owner's one personal-process slot. Root defaults to all processes and may filter by `uid`; non-root is always scoped to its owning human. |
+| `proc.spawn` | `handleProcSpawn` | Resolves the run-as identity (the personal agent for a parentless default, the parent for an inherited child, or explicit `runAs`), registers a process, sends kernel-only `proc.setidentity`, and optionally admits the initial prompt. |
 | `proc.send` | Process DO `handleProcSend` | Admits work into the target process history. A direct user message supersedes the active run; process and scheduler messages remain FIFO queued. Media entries contain process-scoped keys returned by `proc.media.write` or external URLs; inline `media.data` is not accepted. Media-bearing messages are admitted immediately and generation starts after background preparation. Kernel-owned paths can preallocate a run id, which the Process reconciles against active, queued, and recorded admissions. |
 | `proc.ipc.send` | `handleProcIpcSend` | Process-callable same-owner IPC. Validates that the caller is a registered process, the target exists, and source/target owners match, then sends kernel-only `proc.ipc.deliver` to the target Process DO. The target receives a visible user message envelope and starts or queues a run. |
 | `proc.ipc.call` | `handleProcIpcCall` | Process-callable bounded same-owner IPC. Creates a call id and deadline, delivers the request to the target process, and later sends either `ipc.reply` or `ipc.timeout` to the source process. The syscall returns after acceptance, not after the target replies. |
@@ -471,7 +471,7 @@ Runtime behavior:
 | `proc.media.write` | Process DO | Streams one request body directly into process-scoped R2 storage. The body descriptor must declare its exact length so R2 receives a fixed-length stream. An internal caller may supply `mediaId` as an idempotency key: an exact repeated descriptor drains the repeated body and returns the original reference, while conflicting metadata is rejected. Returns a stable media reference for `proc.send`, including its read-only `/var/media/{uid}/{pid}/{id}` filesystem path. |
 | `proc.media.delete` | Process DO | Idempotently deletes one unreferenced process-scoped media object. Keys outside the target process or already referenced by process history are rejected. Used to roll back uploads that are not admitted by `proc.send`. |
 | `proc.history.policy.get` | Process DO | Returns the process context-overflow policy. The default is `auto-compact` at 90% pressure while retaining the newest 80 stored messages. |
-| `proc.history.policy.set` | Process DO | Sets the process context-overflow policy. Supported `overflow` values are `auto-compact` and `fail`; the policy is applied during run preflight. |
+| `proc.history.policy.set` | Process DO | Sets the process context-overflow policy. Supported `overflow` values are `auto-compact` and `fail`; the policy is applied during run preflight and after a provider-confirmed overflow. Provider overflow does not advance the main generation fallback chain. |
 | `proc.history.compact` | Process DO | Archives an old history prefix, inserts a visible system summary marker, and records a `compaction` segment. Requires a supplied or generated summary and exactly one of `keepLast` or `throughMessageId`. |
 | `proc.history.segment.read` | Process DO | Reads paged messages from a compacted segment without restoring them into active history. |
 | `proc.history.segments` | Process DO | Lists compacted segments, including archive paths and summary marker ids. |
@@ -572,7 +572,7 @@ type ProcIpcCallResult =
 type ProcessSyscalls = {
   "proc.list": {
     args: { uid?: number };
-    result: { processes: Array<{ pid: string; uid: number; username: string; interactive: boolean; parentPid: string | null; state: string; activeRunId: string | null; queuedCount: number; lastActiveAt: number | null; label: string | null; createdAt: number; cwd: string }> };
+    result: { processes: Array<{ pid: string; uid: number; username: string; interactive: boolean; personal: boolean; parentPid: string | null; state: string; activeRunId: string | null; queuedCount: number; lastActiveAt: number | null; label: string | null; createdAt: number; cwd: string }> };
   };
 
   "proc.spawn": {
@@ -1143,11 +1143,19 @@ type AdapterSyscalls = {
 
 ### Reply and destination routing
 
-An admitted process run receives exactly one automatic route. Client-originated
-runs route to that client connection. Adapter-originated runs route to the
-linked actor's exact adapter, account, surface, and optional thread. HIL and
-terminal run signals use the same route; agents normally return their answer
-without calling `adapter.send`.
+Client- and adapter-originated admitted process runs receive one automatic
+route. Client-originated runs route to that client connection. Adapter-originated
+runs route to the linked actor's exact adapter, account, surface, and optional
+thread. Other runs can be route-less. HIL and terminal run signals use the exact
+route when one exists; agents normally return their answer without calling
+`adapter.send`.
+
+Every user-visible process signal is still broadcast to the owner's connected
+clients. If a route-less HIL request or terminal result comes from the owner's
+canonical personal process, the Kernel may also deliver it to that owner's
+last-active linked private DM. An exact connection or adapter route always wins,
+the live identity link is rechecked before delivery, and no other process uses
+this fallback.
 
 An adapter HIL prompt includes the exact pending request identity as
 `hil[requestId]`. An adapter approval or denial is accepted only when it carries
@@ -1164,10 +1172,15 @@ notification delivery.
 
 Observed adapter surface routes are keyed by adapter, account, actor, surface
 kind, surface id, and thread id. They record the owner uid and selected process.
-The actor dimension allows multiple linked GSV users to use one shared external
-surface without overwriting one another. Userland destination enumeration joins
-these rows back to the caller's live identity links; raw platform ids do not
-become authorized merely because an adapter account exists.
+A private DM has no route row while it uses personal home. The canonical
+personal process can open an explicit work override from the exact latest run
+on that DM; `/home` clears it and sends the personal process a typed return
+event containing the selected work PID but no transcript. Groups, channels,
+and threads use actor-scoped shared-surface routes. The actor dimension allows multiple linked
+GSV users to use one shared external surface without overwriting one another.
+Userland destination enumeration joins these rows back to the caller's live
+identity links; raw platform ids do not become authorized merely because an
+adapter account exists.
 
 Durable delayed destinations use this minimum stable address:
 

@@ -8,7 +8,6 @@ import type {
 import type { Frame, RequestFrame, ResponseErrFrame } from "./frames";
 
 export type ProcessMailReceivedRuntimeEvent = {
-  eventId: string;
   type: "mail.received";
   mailboxId: string;
   messageId: string;
@@ -22,9 +21,17 @@ export type ProcessMailReceivedRuntimeEvent = {
   confidence?: number;
 };
 
-export type ProcessRuntimeEvent = ProcessMailReceivedRuntimeEvent;
+export type ProcessAdapterWorkReturnedRuntimeEvent = {
+  type: "adapter.work.returned";
+  workPid: string;
+};
+
+export type ProcessRuntimeEvent =
+  | ProcessMailReceivedRuntimeEvent
+  | ProcessAdapterWorkReturnedRuntimeEvent;
 
 export type ProcessRuntimeEventDeliverArgs = {
+  eventId: string;
   event: ProcessRuntimeEvent;
 };
 

@@ -8,6 +8,7 @@ import { BUILTIN_SKILL_FILES } from "./builtin-skills";
 
 const TARGET_SKILLS_ROOT = "skills.d";
 const SKILLS_DIR_MARKER = `${TARGET_SKILLS_ROOT}/.dir`;
+const TEXT_DECODER = new TextDecoder();
 
 export type BuiltinSkillSeedResult = {
   username: string;
@@ -41,8 +42,16 @@ export async function seedBuiltinSkillsToHome(
     const targetPath = `${TARGET_SKILLS_ROOT}/${skill.path}`;
     const existing = existingSkills[index];
     if (existing.kind !== "missing") {
-      skipped += 1;
-      continue;
+      const previousContents: readonly string[] = "previousContents" in skill
+        ? skill.previousContents
+        : [];
+      if (
+        existing.kind !== "file"
+        || !previousContents.includes(TEXT_DECODER.decode(existing.bytes))
+      ) {
+        skipped += 1;
+        continue;
+      }
     }
 
     ops.push({

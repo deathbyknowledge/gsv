@@ -127,8 +127,8 @@ export async function completeManagedInboundMail(
     id: crypto.randomUUID(),
     call: "proc.runtime.event.deliver",
     args: {
+      eventId: summarized.messageId,
       event: {
-        eventId: summarized.messageId,
         type: "mail.received",
         mailboxId: summarized.mailboxId,
         messageId: summarized.messageId,

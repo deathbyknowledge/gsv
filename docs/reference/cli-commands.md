@@ -33,8 +33,8 @@ gsv shell
 for the matching `proc.run.finished` signal for up to 120 seconds. The
 interactive prompt returns after each message is accepted so another message
 can supersede an active run; type `quit` or `exit` to leave. `--pid` targets a
-specific process; when omitted, the CLI creates one process and uses it for the
-whole command. Set `GSV_CLIENT_DEBUG=1` to trace run-signal matching.
+specific process; when omitted, the CLI uses the user's personal
+intelligence process. Set `GSV_CLIENT_DEBUG=1` to trace run-signal matching.
 
 `shell` opens an interactive prompt backed by the gateway `shell.exec` syscall.
 Commands run inside the gateway OS context, not directly on your local machine.
@@ -58,6 +58,10 @@ proc send <pid> [--metadata-json json] <message>
 proc call <pid> [--metadata-json json] [--timeout 60s] <message>
 message current [--json]
 message destinations [--all] [--json]
+message route show [--to here|DESTINATION] [--json]
+message route list [--json]
+message route set --process PID_OR_LABEL [--to here|DESTINATION] [--json]
+message route clear [--to here|DESTINATION] [--json]
 message attach PATH... [--mime TYPE]
 message send --to DESTINATION [--message TEXT] [--attach PATH [--mime TYPE]] [--delivery-id ID] [--also]
 img2txt [caption] [--length short|normal|long] [--stream] IMAGE
@@ -78,8 +82,10 @@ sched remove <id>
 sched run <id> [--force]
 ```
 
-`proc spawn` always creates a fresh process. Its prompt is fire-and-forget, and
-any answer remains in that child process's history. Unknown options are
+`proc spawn` always creates a fresh process. A parentless spawn defaults to the
+owner's personal agent, and a child inherits its parent unless `--as` selects
+another owned agent account. Its prompt is fire-and-forget, and any answer
+remains in that child process's history. Unknown options are
 rejected; use `--` before a positional prompt that begins with `-`. Use
 `--non-interactive` for scheduled background work. `proc delegate` creates a
 bounded child and reports the result to its caller as a process event; it
@@ -89,10 +95,14 @@ the source process receives either
 `ipc.reply` or `ipc.timeout` as a delegated task event. In a process-backed
 shell, `proc self` prints the current process id and the shell exports it as
 `GSV_PID`; a top-level user shell has no current process, so `proc self` exits
-with an error there.
+with an error there. `proc list` labels the one canonical process as
+`kind=personal`; all other entries are `kind=work`, even when they run as the
+same personal-agent account.
 
 `message current` reports where the current run's final answer is delivered
-automatically. `message attach` adds one or more GSV filesystem files to that
+automatically. For an adapter run, both text and JSON output include an opaque
+destination id suitable for a later `message send --to`; raw provider ids stay
+hidden. `message attach` adds one or more GSV filesystem files to that
 same final answer for native clients and adapter origins; it does not create an
 extra message. Existing files in the current process's `/var/media` directory
 are reused, while other readable files are staged there. Return the answer
@@ -103,6 +113,20 @@ also includes known authorized destinations whose adapter account is offline.
 Group, channel, and thread entries appear only after the linked actor addresses
 GSV on that exact surface. Entries use opaque GSV ids and generic labels;
 provider account, actor, surface, and message ids are not printed.
+
+`message route show` and `message route list` inspect adapter routing. `route
+set` and `route clear` manage persistent mappings for groups, channels, and
+threads. On a private DM, only the canonical personal process can use `route
+set`, only from the exact latest inbound run on that DM, and only to an owned
+interactive non-personal process. The human uses `/home` inside the messaging
+app to return to personal intelligence; `route clear` does not clear a DM.
+`--to` defaults to `here` during an adapter-originated run; elsewhere, pass an
+opaque destination id or unambiguous label from `message destinations --all`.
+`route set` accepts a full or unique process-id prefix or an unambiguous process
+label. A route change controls future inbound messages only, so the run making
+the change still returns its final reply to the conversation that started it.
+Repeated `route set` calls from the same current run to the same work process
+are idempotent. Newer private activity or a newer selection fences a late call.
 
 `img2txt` uses Moondream 3.1 as its only image reader. With no subcommand it
 returns a normal caption. `query` requires the caller's prompt; there is no
@@ -337,14 +361,13 @@ Treat that QR like a password. If terminal rendering fails, the CLI hides the
 underlying payload. `--config-json` must be a JSON object and is passed to the
 adapter implementation. WhatsApp accepts `{"force":true}` only as destructive
 recovery: it clears the existing linked-device authentication and starts a new
-QR pairing. Routine reconnects and the ten-minute connection-lease refresh do not use it.
+QR pairing. Routine transport recovery does not use it.
 
 Cloudflare lets an active outbound connection prevent Durable Object eviction
-for at most 15 minutes. Ten minutes after each successful WhatsApp connection,
-the account alarm closes that transport and reconnects with the stored
-linked-device credentials. The reconnect establishes a fresh outbound
-connection lease before Cloudflare's per-connection keepalive cap; the alarm
-does not extend the old lease or keep the object alive by itself.
+for at most 15 minutes. The account schedules an alarm every 30 seconds so an
+incoming event reaches the Durable Object before Cloudflare's minimum idle
+eviction window. Routine residency maintenance therefore keeps the same
+WhatsApp provider session; only an unhealthy transport reconnects.
 
 If the account is paired but a direct message gets no link-code reply, first
 confirm `gsv adapter status` reports connected and authenticated. Send a fresh

@@ -51,13 +51,14 @@ const GSV_DRAWER = "gsv";
 
 /** Unambiguous GSV system surfaces. "settings" is handled separately because it
  *  is overloaded (crew/tasks/config/object-detail all route through it). */
-const GSV_PLAIN_SURFACES: ShellSurfaceId[] = ["files", "repositories", "library", "terminal"];
+const GSV_PLAIN_SURFACES: ShellSurfaceId[] = ["files", "repositories", "library", "terminal", "runtime"];
 
 const GSV_RAIL_ITEMS: { label: string; surface: ShellSurfaceId }[] = [
   { label: "FILES", surface: "files" },
   { label: "LIBRARY", surface: "library" },
   { label: "TERMINAL", surface: "terminal" },
   { label: "REPOS", surface: "repositories" },
+  { label: "WORK", surface: "runtime" },
   { label: "OVERVIEW", surface: "settings" },
 ];
 
@@ -147,6 +148,19 @@ export function ShellRail({
 
   const isSectionActive = ownsActiveObject;
   const gsvActive = activeSectionId === GSV_DRAWER;
+  const isGsvItemActive = (surface: ShellSurfaceId): boolean => {
+    if (!gsvActive) {
+      return false;
+    }
+    if (surface === "runtime") {
+      return activeSurface === "runtime"
+        || (activeSurface === "settings" && settingsKind === "tasks");
+    }
+    if (surface === "settings") {
+      return activeSurface === "settings" && settingsView === "overview";
+    }
+    return activeSurface === surface;
+  };
 
   // Shared by both the expanded rows and the collapsed icon dots so collapsed
   // navigation follows the same per-object flow.
@@ -271,7 +285,7 @@ export function ShellRail({
                   <button
                     key={item.surface}
                     type="button"
-                    class={`gsv-rail-subitem${gsvActive && activeSurface === item.surface ? " is-active" : ""}`}
+                    class={`gsv-rail-subitem${isGsvItemActive(item.surface) ? " is-active" : ""}`}
                     onClick={() => onOpenSurface(item.surface)}
                   >
                     {item.label}

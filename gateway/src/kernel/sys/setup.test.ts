@@ -1,9 +1,14 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { KernelContext } from "../context";
 
-const { handleSysBootstrapMock, seedBuiltinSkillsToHomeMock } = vi.hoisted(() => ({
+const {
+  handleSysBootstrapMock,
+  seedBuiltinSkillsToHomeMock,
+  ensurePersonalControllerMock,
+} = vi.hoisted(() => ({
   handleSysBootstrapMock: vi.fn(),
   seedBuiltinSkillsToHomeMock: vi.fn(),
+  ensurePersonalControllerMock: vi.fn(),
 }));
 
 vi.mock("./bootstrap", () => ({
@@ -12,6 +17,10 @@ vi.mock("./bootstrap", () => ({
 
 vi.mock("./skills-seed", () => ({
   seedBuiltinSkillsToHome: seedBuiltinSkillsToHomeMock,
+}));
+
+vi.mock("../personal-controller", () => ({
+  ensurePersonalController: ensurePersonalControllerMock,
 }));
 
 import { handleSysSetup, recoverCompletedSysSetup } from "./setup";
@@ -175,6 +184,7 @@ describe("handleSysSetup", () => {
       changed: true,
     });
     seedBuiltinSkillsToHomeMock.mockResolvedValue({ username: "root", copied: 0, skipped: 0 });
+    ensurePersonalControllerMock.mockResolvedValue("proc:personal");
   });
 
   it("creates first user, ai config, and node token", async () => {
@@ -218,6 +228,7 @@ describe("handleSysSetup", () => {
     expect(result.user.username).toBe("alice");
     expect(result.server).toEqual({ version: "0.0.1-test", release: "dev" });
     expect(result.nodeToken?.allowedDeviceId).toBe("macbook");
+    expect(ensurePersonalControllerMock).toHaveBeenCalledWith(1000, ctx, undefined);
   });
 
   it("uses GSV included inference as the managed first-boot default", async () => {

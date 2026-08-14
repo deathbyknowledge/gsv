@@ -129,6 +129,7 @@ describe("managed Kernel mailbox", () => {
         expect.objectContaining({
           call: "proc.runtime.event.deliver",
           args: {
+            eventId: accepted.messageId,
             event: expect.objectContaining({
               type: "mail.received",
               messageId: accepted.messageId,

@@ -21,6 +21,13 @@ This keeps lifecycle state aligned:
 Parallel threads are therefore parallel processes. They have independent queues,
 cancellation, permissions, labels, and future histories.
 
+Each human also has one personal process. This is the default place where their
+personal intelligence receives direct conversation and user-level events. The
+Kernel marks the current process in its registry; the pid itself remains an
+ordinary random process id. Reset keeps the same personal process, while kill
+removes it and the next personal interaction creates a fresh one. Old pids are
+never reused.
+
 ## Frames, events, and signals
 
 `SignalFrame` is the existing asynchronous transport frame:
@@ -60,6 +67,39 @@ process as `ipc.reply` or `ipc.timeout`.
 
 The target pid is sufficient: IPC cannot select another history inside the
 target process.
+
+## Personal intelligence and delegation
+
+Each human's personal agent account is the identity of their personal
+intelligence: it owns the role, home, capabilities, and shared memory. One
+interactive process is its current personal conversation. Web, CLI, and
+unrouted private messaging surfaces resolve that process instead of selecting
+the newest process or creating one per surface.
+
+The personal marker is a stable role, not an immortal pid and not a special
+kind of Process Durable Object. Killing it leaves the role temporarily empty;
+the next personal entry point creates a fresh ordinary process and marks it.
+Other processes may run as the same personal agent account, but they are work
+with independent histories and never become the personal process by recency or
+label. `proc.list` reports the distinction explicitly.
+
+The personal agent's account home contains its role, voice, and compact open
+commitments. Those files are shared by every process running as that account,
+while each process retains its own history and lifecycle. The personal process
+is the normal user-facing place where delegated results and ambient events
+return; real child processes still use ordinary parent pids for lifecycle and
+IPC. Commitments are model-maintained text rather than a Kernel schema.
+
+For bounded work, `proc delegate` creates a non-interactive child and a bounded
+`proc.ipc.call`. The child inherits the personal account unless `--as ACCOUNT`
+selects a specialized owned agent. The delegated-task envelope places an
+inherited child in worker mode. Acceptance returns immediately; completion or
+timeout later re-enters the caller as a process event.
+
+During an adapter turn, `message current --json` exposes the current surface as
+an opaque GSV destination id. The personal intelligence can store that id with
+a commitment and use `message send --to DESTINATION` if a result merits a later
+update. Provider account, actor, and surface identifiers remain hidden.
 
 ## History, compaction, and branching
 
@@ -161,9 +201,11 @@ sched add --to DESTINATION --name NAME --after 10m --message "Send this text"
 ```
 
 `--here` requires a process-backed shell and creates a `process.event` for the
-current pid. During an adapter run it captures the authorized adapter destination
-in `replyTo`; the future terminal answer follows that destination. Without an
-adapter route, the result remains in process history.
+current pid. Inside a pending IPC call, it instead targets the calling process,
+so future work created by a delegated worker returns to its controller. During
+an adapter run it captures the authorized adapter destination in `replyTo`; the
+future terminal answer follows that destination. Without an adapter route, the
+result remains in the target process history.
 
 `--to` creates an `adapter.send` action and sends the stored text directly
 without running an agent. The scheduler validates destination ownership when a

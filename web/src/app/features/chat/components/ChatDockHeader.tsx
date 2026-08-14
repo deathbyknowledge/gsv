@@ -19,7 +19,6 @@ type ChatDockHeaderProps = {
   contextPercent: number | null;
   contextTitle: string;
   effectiveStatus: StatusTone;
-  hasActiveProcess: boolean;
   mobileLayout: boolean;
   /** Starting mobile view — catalog/story staging only; the app always starts
    *  on "primary". */
@@ -27,6 +26,7 @@ type ChatDockHeaderProps = {
   modelLabel: string;
   openPopover: ChatPopoverId | null;
   reasoningLabel: string;
+  showStartAction: boolean;
   spawnPending: boolean;
   speakReplies: boolean;
   speechStatus: string;
@@ -59,12 +59,12 @@ export function ChatDockHeader({
   contextPercent,
   contextTitle,
   effectiveStatus,
-  hasActiveProcess,
   mobileLayout,
   initialMobileView = "primary",
   modelLabel,
   openPopover,
   reasoningLabel,
+  showStartAction,
   spawnPending,
   speakReplies,
   speechStatus,
@@ -168,13 +168,13 @@ export function ChatDockHeader({
     </button>
   );
 
-  const startButton = () => !hasActiveProcess ? (
+  const startButton = () => showStartAction ? (
     <button
       type="button"
       class="gsv-chat-command gsv-chat-command-start"
       disabled={spawnPending}
       onClick={onStartProcess}
-      aria-label="Start process"
+      aria-label="Start new work"
     >
       <Icon name="plus" size={15} />
     </button>
@@ -239,7 +239,7 @@ export function ChatDockHeader({
             <button
               type="button"
               class="gsv-chat-m-toggle"
-              aria-label={mobileView === "primary" ? "Show more controls" : "Back to task and model"}
+              aria-label={mobileView === "primary" ? "Show more controls" : "Back to work and model"}
               onClick={onToggleMobileView}
             >
               {mobileView === "primary" ? <MoreVerticalGlyph size={18} /> : <ArrowLeftGlyph size={18} />}
@@ -254,11 +254,11 @@ export function ChatDockHeader({
   return (
     <header class="gsv-chat-head">
       <div class="gsv-chat-agent">
-        <Hint text="View agent profile & switch agents" position="bottom-start">
+        <Hint text="View personal intelligence and work" position="bottom-start">
           {agentMain(true)}
         </Hint>
         <div class="gsv-chat-agent-meta-row">
-          <Hint text="View activity & tasks" position="bottom-start">
+          <Hint text="View current work" position="bottom-start">
             {tasksTrigger()}
           </Hint>
         </div>
@@ -269,7 +269,7 @@ export function ChatDockHeader({
       <div class="gsv-chat-actions">
         <div class="gsv-chat-action-row">
           {start ? (
-            <Hint text="Start an interactive process" position="bottom-end">
+            <Hint text="Start new work" position="bottom-end">
               {start}
             </Hint>
           ) : null}

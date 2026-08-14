@@ -24,6 +24,47 @@ const IDENTITY: ProcessIdentity = {
 };
 const TEST_INSTALLATION_ID = "singleton" as KernelContext["installationId"];
 
+const PERSONAL_AGENT_ACCOUNT = {
+  username: "sam-agent",
+  uid: 2000,
+  gid: 2000,
+  gecos: "Sam Agent",
+  home: "/home/sam-agent",
+  shell: "/bin/init",
+};
+
+function makePersonalAgentAuth() {
+  return {
+    getPasswdByUsername: vi.fn((username: string) => (
+      username === PERSONAL_AGENT_ACCOUNT.username ? PERSONAL_AGENT_ACCOUNT : null
+    )),
+    getPasswdByUid: vi.fn((uid: number) => {
+      if (uid === IDENTITY.uid) {
+        return {
+          username: IDENTITY.username,
+          uid: IDENTITY.uid,
+          gid: IDENTITY.gid,
+          gecos: IDENTITY.username,
+          home: IDENTITY.home,
+          shell: "/bin/init",
+        };
+      }
+      return uid === PERSONAL_AGENT_ACCOUNT.uid ? PERSONAL_AGENT_ACCOUNT : null;
+    }),
+    getShadowByUsername: vi.fn((username: string) => (
+      username === PERSONAL_AGENT_ACCOUNT.username ? { username, hash: "!" } : null
+    )),
+    getGroupByGid: vi.fn((gid: number) => (
+      gid === PERSONAL_AGENT_ACCOUNT.gid
+        ? { name: PERSONAL_AGENT_ACCOUNT.username, gid, members: [IDENTITY.username] }
+        : null
+    )),
+    getPersonalAgentUid: vi.fn(() => PERSONAL_AGENT_ACCOUNT.uid),
+    isPersonalAgentUid: vi.fn((uid: number) => uid === PERSONAL_AGENT_ACCOUNT.uid),
+    resolveGids: vi.fn((_username: string, gid: number) => [gid]),
+  };
+}
+
 const sendFrameToProcessMock = vi.mocked(sendFrameToProcess);
 
 // A parent process record (owned by the caller) used by parented-spawn tests,
@@ -582,6 +623,7 @@ describe("proc handlers", () => {
       "proc-1",
       "Target process was reset",
     );
+    expect(ctx.procs.kill).not.toHaveBeenCalled();
   });
 
   it("unregisters a killed process after its history is archived", async () => {
@@ -618,6 +660,100 @@ describe("proc handlers", () => {
     );
   });
 
+  it.each(["archive failed", "terminal commit failed"])(
+    "retains a process registration when proc.kill reports %s",
+    async (message) => {
+      const ctx = makeForwardContext();
+      sendFrameToProcessMock.mockResolvedValueOnce({
+        type: "res",
+        id: "kill-failed",
+        ok: false,
+        error: { code: 500, message },
+      } satisfies ResponseFrame);
+
+      await expect(forwardToProcess({
+        type: "req",
+        id: "kill-failed",
+        call: "proc.kill",
+        args: { pid: "proc-1" },
+      } as RequestFrame, ctx)).rejects.toThrow(message);
+
+      expect(ctx.procs.kill).not.toHaveBeenCalled();
+      expect(ctx.runRoutes.clearForProcess).not.toHaveBeenCalled();
+    },
+  );
+
+  it("reconciles Kernel state after terminal cleanup succeeds on retry", async () => {
+    const ctx = makeForwardContext();
+    sendFrameToProcessMock
+      .mockImplementationOnce(async (_installationId, _pid, frame) => ({
+        type: "res",
+        id: (frame as RequestFrame).id,
+        ok: false,
+        error: {
+          code: 500,
+          message: "Process was killed but terminal cleanup is pending",
+        },
+      }))
+      .mockImplementationOnce(async (_installationId, _pid, frame) => ({
+        type: "res",
+        id: (frame as RequestFrame).id,
+        ok: true,
+        data: {
+          ok: true,
+          pid: "proc-1",
+          archivedMessages: 0,
+          archives: [],
+        },
+      }));
+    const request = {
+      type: "req",
+      id: "kill-cleanup-retry",
+      call: "proc.kill",
+      args: { pid: "proc-1" },
+    } as RequestFrame;
+
+    await expect(forwardToProcess(request, ctx)).rejects.toThrow(
+      "terminal cleanup is pending",
+    );
+    expect(ctx.procs.kill).not.toHaveBeenCalled();
+
+    await expect(forwardToProcess(request, ctx)).resolves.toMatchObject({
+      data: { ok: true, pid: "proc-1" },
+    });
+    expect(ctx.procs.kill).toHaveBeenCalledWith("proc-1");
+    expect(ctx.runRoutes.clearForProcess).toHaveBeenCalledWith("proc-1");
+  });
+
+  it("unregisters a process when a retried kill reports it already dead", async () => {
+    const ctx = makeForwardContext();
+    sendFrameToProcessMock.mockResolvedValueOnce({
+      type: "res",
+      id: "kill-already-dead",
+      ok: false,
+      error: { code: 410, message: "Process no longer exists" },
+    } satisfies ResponseFrame);
+
+    await expect(forwardToProcess({
+      type: "req",
+      id: "kill-already-dead",
+      call: "proc.kill",
+      args: { pid: "proc-1" },
+    } as RequestFrame, ctx)).rejects.toThrow("Process no longer exists");
+
+    expect(ctx.ipcCalls.cancelBySourcePid).toHaveBeenCalledWith({
+      uid: IDENTITY.uid,
+      sourcePid: "proc-1",
+    });
+    expect(ctx.runRoutes.clearForProcess).toHaveBeenCalledWith("proc-1");
+    expect(ctx.failIpcCallsByTarget).toHaveBeenCalledWith(
+      IDENTITY.uid,
+      "proc-1",
+      "Target process was killed",
+    );
+    expect(ctx.procs.kill).toHaveBeenCalledWith("proc-1");
+  });
+
   it("cleans up pending IPC call when delivery reports failure", async () => {
     sendFrameToProcessMock.mockResolvedValue({
       type: "res",
@@ -649,14 +785,6 @@ describe("proc handlers", () => {
   });
 
   it("spawns a fresh top-level process when explicit cwd is requested", async () => {
-    const personalAgent = {
-      username: "sam-agent",
-      uid: 2000,
-      gid: 2000,
-      gecos: "sam agent",
-      home: "/home/sam-agent",
-      shell: "/bin/init",
-    };
     const ctx = {
       installationId: TEST_INSTALLATION_ID,
       env: {
@@ -666,12 +794,7 @@ describe("proc handlers", () => {
         process: IDENTITY,
         capabilities: ["*"],
       },
-      auth: {
-        isPersonalAgentUid: vi.fn(() => false),
-        getPersonalAgentUid: vi.fn((uid: number) => uid === IDENTITY.uid ? personalAgent.uid : null),
-        getPasswdByUid: vi.fn((uid: number) => uid === personalAgent.uid ? personalAgent : null),
-        resolveGids: vi.fn((_username: string, gid: number) => [gid]),
-      },
+      auth: makePersonalAgentAuth(),
       procs: {
         get: vi.fn(() => null),
         spawn: vi.fn(),
@@ -691,8 +814,8 @@ describe("proc handlers", () => {
     expect(ctx.procs.spawn).toHaveBeenCalledWith(
       expect.any(String),
       expect.objectContaining({
-        uid: personalAgent.uid,
-        username: personalAgent.username,
+        uid: PERSONAL_AGENT_ACCOUNT.uid,
+        username: PERSONAL_AGENT_ACCOUNT.username,
         cwd: "/src/repos/sam/demo-a/tools/demo-tool",
       }),
       expect.objectContaining({
@@ -727,14 +850,6 @@ describe("proc handlers", () => {
   });
 
   it("spawns a fresh top-level process when requested without explicit cwd", async () => {
-    const personalAgent = {
-      username: "sam-agent",
-      uid: 2000,
-      gid: 2000,
-      gecos: "sam agent",
-      home: "/home/sam-agent",
-      shell: "/bin/init",
-    };
     const ctx = {
       installationId: TEST_INSTALLATION_ID,
       env: {
@@ -744,12 +859,7 @@ describe("proc handlers", () => {
         process: IDENTITY,
         capabilities: ["*"],
       },
-      auth: {
-        getPersonalAgentUid: vi.fn((uid: number) => uid === IDENTITY.uid ? personalAgent.uid : null),
-        getPasswdByUid: vi.fn((uid: number) => uid === personalAgent.uid ? personalAgent : null),
-        isPersonalAgentUid: vi.fn((uid: number) => uid === personalAgent.uid),
-        resolveGids: vi.fn((_username: string, gid: number) => [gid]),
-      },
+      auth: makePersonalAgentAuth(),
       procs: {
         get: vi.fn(() => null),
         spawn: vi.fn(),
@@ -760,13 +870,13 @@ describe("proc handlers", () => {
 
     expect(result).toMatchObject({
       ok: true,
-      cwd: "/home/sam-agent",
+      cwd: PERSONAL_AGENT_ACCOUNT.home,
     });
     expect(ctx.procs.spawn).toHaveBeenCalledWith(
       expect.any(String),
       expect.objectContaining({
-        uid: personalAgent.uid,
-        username: personalAgent.username,
+        uid: PERSONAL_AGENT_ACCOUNT.uid,
+        username: PERSONAL_AGENT_ACCOUNT.username,
       }),
       expect.objectContaining({
         ownerUid: IDENTITY.uid,
@@ -858,7 +968,7 @@ describe("proc handlers", () => {
       kill: vi.fn(() => true),
     };
     const ctx = {
-    installationId: TEST_INSTALLATION_ID,
+      installationId: TEST_INSTALLATION_ID,
       processId: SPAWN_PARENT.processId,
       callerOwnerUid: IDENTITY.uid,
       identity: {
@@ -874,6 +984,70 @@ describe("proc handlers", () => {
       ok: false,
       error: expect.stringContaining("rollback failed: finish route unavailable"),
     });
+    expect(procs.kill).not.toHaveBeenCalled();
+  });
+
+  it("removes a failed spawn when a repeated rollback finds the Process dead", async () => {
+    sendFrameToProcessMock
+      .mockResolvedValueOnce(null)
+      .mockImplementationOnce(async (_installationId, _pid, frame) => ({
+        type: "res",
+        id: (frame as RequestFrame).id,
+        ok: false,
+        error: { code: 410, message: "Process no longer exists" },
+      }));
+    const procs = {
+      get: vi.fn(() => SPAWN_PARENT),
+      spawn: vi.fn(),
+      kill: vi.fn(() => true),
+    };
+    const ctx = {
+      installationId: TEST_INSTALLATION_ID,
+      processId: SPAWN_PARENT.processId,
+      callerOwnerUid: IDENTITY.uid,
+      identity: {
+        process: IDENTITY,
+        capabilities: ["proc.spawn"],
+      },
+      procs,
+    } as unknown as KernelContext;
+
+    const result = await handleProcSpawn({}, ctx);
+    const pid = procs.spawn.mock.calls[0]?.[0];
+
+    expect(result).toMatchObject({
+      ok: false,
+      error: expect.not.stringContaining("rollback failed"),
+    });
+    expect(procs.kill).toHaveBeenCalledWith(pid);
+  });
+
+  it("does not roll back an existing process when registry insertion fails", async () => {
+    const procs = {
+      get: vi.fn(() => SPAWN_PARENT),
+      spawn: vi.fn(() => {
+        throw new Error("process id already exists");
+      }),
+      kill: vi.fn(() => true),
+    };
+    const ctx = {
+      installationId: TEST_INSTALLATION_ID,
+      processId: SPAWN_PARENT.processId,
+      callerOwnerUid: IDENTITY.uid,
+      identity: {
+        process: IDENTITY,
+        capabilities: ["proc.spawn"],
+      },
+      procs,
+    } as unknown as KernelContext;
+
+    const result = await handleProcSpawn({}, ctx);
+
+    expect(result).toEqual({
+      ok: false,
+      error: "Failed to register process: process id already exists",
+    });
+    expect(sendFrameToProcessMock).not.toHaveBeenCalled();
     expect(procs.kill).not.toHaveBeenCalled();
   });
 
@@ -1242,6 +1416,43 @@ describe("resolveRunAsIdentity", () => {
 });
 
 describe("handleProcList", () => {
+  it("exposes the personal controller marker", () => {
+    const ctx = {
+      identity: {
+        role: "user",
+        process: IDENTITY,
+        capabilities: ["proc.list"],
+      },
+      procs: {
+        list: vi.fn(() => [{
+          processId: "proc:personal",
+          parentPid: null,
+          uid: PERSONAL_AGENT_ACCOUNT.uid,
+          ownerUid: IDENTITY.uid,
+          interactive: true,
+          isPersonalController: true,
+          gid: PERSONAL_AGENT_ACCOUNT.gid,
+          gids: [PERSONAL_AGENT_ACCOUNT.gid],
+          username: PERSONAL_AGENT_ACCOUNT.username,
+          home: PERSONAL_AGENT_ACCOUNT.home,
+          cwd: PERSONAL_AGENT_ACCOUNT.home,
+          state: "idle",
+          activeRunId: null,
+          queuedCount: 0,
+          lastActiveAt: null,
+          label: null,
+          createdAt: 1,
+        }]),
+      },
+    } as unknown as KernelContext;
+
+    expect(handleProcList({}, ctx).processes[0]).toMatchObject({
+      pid: "proc:personal",
+      uid: IDENTITY.uid,
+      personal: true,
+    });
+  });
+
   it("filters by the owning human when an agent process lists its user's processes", () => {
     const list = vi.fn(() => []);
     const ctx = {
@@ -1267,6 +1478,14 @@ describe("handleProcList", () => {
 
     handleProcList({}, ctx);
     expect(list).toHaveBeenCalledWith(1000);
+
+    list.mockClear();
+    handleProcList({ uid: 1000 }, ctx);
+    expect(list).toHaveBeenCalledWith(1000);
+
+    expect(() => handleProcList({ uid: 2000 }, ctx)).toThrow(
+      "Permission denied: cannot list processes for uid=2000",
+    );
   });
 
   it("lets root list all processes and honors an explicit uid filter", () => {

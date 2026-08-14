@@ -40,6 +40,7 @@ type ListTemplateProps = {
 
   /** Left column — the action surface. */
   connectLabel: string;
+  connectDisabled?: boolean;
   onConnect?: () => void;
   search?: ListTemplateSearch;
   /** Optional filter controls (Selects, chips). */
@@ -84,6 +85,7 @@ export function ListTemplate({
   rows,
   emptyObject,
   connectLabel,
+  connectDisabled = false,
   onConnect,
   search,
   filters,
@@ -122,7 +124,7 @@ export function ListTemplate({
           ) : null}
           {filters ? <div class="gsv-list-template-filters">{filters}</div> : null}
           <div class="gsv-list-template-connect">
-            <Button variant="primary" block label={connectLabel} onClick={onConnect} />
+            <Button variant="primary" block label={connectLabel} disabled={connectDisabled} onClick={onConnect} />
           </div>
         </section>
 

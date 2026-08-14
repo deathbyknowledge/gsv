@@ -1,7 +1,10 @@
 import type { ProcessIdentity } from "@humansandmachines/gsv/protocol";
 import { describe, expect, it, vi } from "vitest";
 import type { RipgitClient, RipgitPathResult } from "../../fs";
-import { BUILTIN_SKILL_FILES } from "./builtin-skills";
+import {
+  BUILTIN_SKILL_FILES,
+  LEGACY_MEMORY_SKILL,
+} from "./builtin-skills";
 import { seedBuiltinSkillsToHome } from "./skills-seed";
 
 const IDENTITY: ProcessIdentity = {
@@ -106,5 +109,36 @@ describe("seedBuiltinSkillsToHome", () => {
     expect(operations).not.toContainEqual(
       expect.objectContaining({ path: `skills.d/${firstPath}` }),
     );
+  });
+
+  it("upgrades the untouched generated memory skill", async () => {
+    const files = new Map<string, RipgitPathResult>([
+      ["skills.d", { kind: "tree", entries: [] }],
+      ...BUILTIN_SKILL_FILES.map((skill) => [
+        `skills.d/${skill.path}`,
+        textFile(skill.path === "memory/SKILL.md" ? LEGACY_MEMORY_SKILL : "custom skill"),
+      ] as const),
+    ]);
+    const { client, apply } = makeClient(files);
+
+    const result = await seedBuiltinSkillsToHome(client, IDENTITY);
+
+    expect(result).toEqual({
+      username: "alice",
+      copied: 1,
+      skipped: BUILTIN_SKILL_FILES.length - 1,
+    });
+    const operations = apply.mock.calls[0]?.[4] as Array<{
+      type: string;
+      path: string;
+      contentBytes: number[];
+    }>;
+    expect(operations).toHaveLength(1);
+    expect(operations[0]).toMatchObject({
+      type: "put",
+      path: "skills.d/memory/SKILL.md",
+    });
+    expect(new TextDecoder().decode(new Uint8Array(operations[0]?.contentBytes ?? [])))
+      .toContain("human, not to an individual agent");
   });
 });

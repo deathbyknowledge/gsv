@@ -1,4 +1,4 @@
-import { useMemo, useState } from "preact/hooks";
+import { useEffect, useMemo, useState } from "preact/hooks";
 import { ListTemplate } from "../list-template/ListTemplate";
 import {
   ConsolePage,
@@ -6,6 +6,10 @@ import {
 } from "../components/ConsolePageTemplate";
 import type { ConsoleListSelection } from "../domain/consoleListTypes";
 import type { ConsoleProcess, ConsoleResourceState } from "../domain/consoleModels";
+import {
+  consoleWorkProcesses,
+  findConsoleWorkProcess,
+} from "../domain/consoleProcesses";
 import { useConsoleListSelection } from "../hooks/useConsoleListSelection";
 import { useConsoleProcesses } from "../hooks/useConsoleData";
 import { RuntimeDetailPage } from "./RuntimeDetailPage";
@@ -42,9 +46,10 @@ function RuntimeConsoleSection({
   refreshing: boolean;
 }) {
   const [query, setQuery] = useState("");
+  const workProcesses = useMemo(() => consoleWorkProcesses(processes), [processes]);
   const rows = useMemo(() => {
     const q = query.trim().toLowerCase();
-    return processes
+    return workProcesses
       .filter((process) => !q || process.label.toLowerCase().includes(q))
       .map((process) => ({
         id: process.pid,
@@ -55,17 +60,18 @@ function RuntimeConsoleSection({
         statusLabel: statusForProcess(process),
         onOpen: () => onOpenDetail(process),
       }));
-  }, [processes, query, onOpenDetail]);
+  }, [workProcesses, query, onOpenDetail]);
 
   return (
     <ListTemplate
-      listTitle="TASKS"
-      listMeta={refreshing ? "REFRESHING" : `${processes.filter(isActiveProcess).length}/${processes.length} ACTIVE`}
-      emptyObject="TASKS"
+      listTitle="WORK"
+      listMeta={refreshing ? "REFRESHING" : `${workProcesses.filter(isActiveProcess).length}/${workProcesses.length} ACTIVE`}
+      emptyObject="WORK"
       rows={rows}
-      connectLabel="NEW TASK"
+      connectLabel="NEW WORK"
+      connectDisabled={!onNewTask}
       onConnect={onNewTask}
-      search={{ value: query, placeholder: "Search tasks…", onChange: setQuery }}
+      search={{ value: query, placeholder: "Search work…", onChange: setQuery }}
     />
   );
 }
@@ -75,7 +81,7 @@ function renderRuntimeDetail(
   id: string,
   onBack: () => void,
 ) {
-  const process = processes.find((entry) => entry.pid === id);
+  const process = findConsoleWorkProcess(processes, id);
   return process ? <RuntimeDetailPage process={process} onBack={onBack} /> : null;
 }
 
@@ -94,13 +100,24 @@ export function RuntimePage({
     kind: "tasks",
     onSelectionChange,
   });
+  const selectedProcessId = selectedDetail?.kind === "tasks" ? selectedDetail.id : null;
+
+  useEffect(() => {
+    if (!selectedProcessId) {
+      return;
+    }
+    const selectedProcess = processes.data?.find((process) => process.pid === selectedProcessId);
+    if (selectedProcess?.personal) {
+      selectDetail(null);
+    }
+  }, [processes.data, selectDetail, selectedProcessId]);
 
   return (
     <ConsolePage flush>
       <ConsoleResourceBoundary
         resource={resourceWithLocalEmptyState(processes.resource)}
-        emptyLabel="NO TASKS"
-        errorLabel="TASKS"
+        emptyLabel="NO WORK"
+        errorLabel="WORK"
         render={(data) => (
           selectedDetail?.kind === "tasks"
             ? renderRuntimeDetail(data, selectedDetail.id, () => selectDetail(null)) ?? (

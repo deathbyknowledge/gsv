@@ -50,7 +50,7 @@ export function RuntimeDetailPage({ onBack, process }: RuntimeDetailPageProps) {
             />
             <Button
               variant="secondary"
-              label={pending && action.variables?.action === "reset" ? "RESETTING" : "RESET TASK"}
+              label={pending && action.variables?.action === "reset" ? "RESETTING" : "RESET WORK"}
               disabled={pending}
               onClick={() => setConfirmAction("reset")}
             />
@@ -60,19 +60,19 @@ export function RuntimeDetailPage({ onBack, process }: RuntimeDetailPageProps) {
         dangerAction={(
           <Button
             variant="dangerGhost"
-            label={pending && action.variables?.action === "kill" ? "KILLING" : "KILL TASK"}
+            label={pending && action.variables?.action === "kill" ? "KILLING" : "KILL WORK"}
             disabled={pending}
             onClick={() => setConfirmAction("kill")}
           />
         )}
         icon={iconForProcess(process)}
         title={process.label}
-        typeLabel="GSV · TASK"
+        typeLabel="GSV · WORK"
         statusLabel={statusForProcess(process)}
         tone={toneForProcess(process)}
         blurb={processBlurb(process)}
-        parentLabel="TASKS"
-        primaryLabel="OPEN CHAT"
+        parentLabel="WORK"
+        primaryLabel="OPEN WORK SESSION"
         onPrimary={openChat}
         sections={processDetailSections(process)}
         onBack={onBack}
@@ -117,17 +117,17 @@ function taskActionConfirmation(action: TaskAction, process: ConsoleProcess): {
   if (action === "reset") {
     return {
       action,
-      confirmLabel: "RESET TASK",
+      confirmLabel: "RESET WORK",
       title: "CONFIRM RESET",
-      message: `Reset task "${process.label}"?`,
-      note: "The current history is archived and the task returns to a clean state.",
+      message: `Reset work "${process.label}"?`,
+      note: "The current history is archived and the work returns to a clean state.",
     };
   }
   return {
     action,
-    confirmLabel: "KILL TASK",
+    confirmLabel: "KILL WORK",
     title: "CONFIRM KILL",
-    message: `Kill task "${process.label}"?`,
+    message: `Kill work "${process.label}"?`,
     note: "The process is archived and removed from runtime.",
   };
 }

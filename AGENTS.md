@@ -47,6 +47,8 @@ GSV is Linux-inspired because familiar, orthogonal semantics reduce instruction 
 
 Processes have identities, histories, permissions, queues, pending work, and lifecycles. Subagents and subprocesses are not special chat records. Preserve process invariants across normal completion, interruption, restart, and teardown.
 
+The personal agent account is the user's personal intelligence. One Kernel-marked interactive process receives its top-level conversation across user interfaces; its pid is replaceable and otherwise follows ordinary process lifecycle. Other processes are visible work, even when they run as the same account. They share natural-language commitments through the account's `context.d` and delegate bounded work through the existing process and IPC primitives. A delegated process is an ordinary process acting in a worker role, not a second orchestration runtime.
+
 ### Prefer fewer mechanisms
 
 - Consolidate duplicate paths and delete obsolete ones when behavior remains clear.
@@ -85,6 +87,7 @@ Keep platform-specific identity and delivery behavior in its adapter. Keep visua
 - Cancellation must propagate to the component that owns the active operation.
 - Request cancellation does not recursively kill an already-created durable shell session unless that contract explicitly says so.
 - `proc.abort` stops the active run, `proc.reset` resets history while preserving the process, and `proc.kill` tears the process down.
+- A successfully killed pid remains terminal across Durable Object eviction and must never be reused for a replacement process.
 - Archive and media cleanup must remain coherent across reset and kill.
 
 ### Protocol and routing
@@ -94,6 +97,7 @@ Keep platform-specific identity and delivery behavior in its adapter. Keep visua
 - Device disconnects, timeouts, malformed responses, and caller cancellation must clean up routes and bodies.
 - Filesystem, shell, and network behavior must remain consistent between local gateway and device implementations.
 - Adapters receive stable actor and surface semantics; channel-specific identifiers do not leak into generic RPCs.
+- Private user surfaces default to the personal process. Direct access to another process is an explicit, visibly labeled work session; opening one surface must not silently redefine the user's personal intelligence elsewhere.
 
 ### Data and security
 

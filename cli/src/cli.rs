@@ -531,7 +531,7 @@ pub(crate) enum ProcAction {
     /// Spawn a new process
     Spawn {
         /// Account to run the process as a username or uid
-        /// (defaults to your personal agent)
+        /// (default: personal agent)
         #[arg(long = "as", visible_alias = "run-as")]
         run_as: Option<String>,
 

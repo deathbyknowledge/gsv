@@ -10,12 +10,19 @@ import type { GsvFs } from "../../../fs/gsv-fs";
 import type { KernelContext } from "../../../kernel/context";
 import { handleAdapterSend } from "../../../kernel/adapter-handlers";
 import {
+  type VisibleAdapterMessageDestination,
   adapterMessageDestinationId,
+  adapterMessageDestinationLabel,
+  adapterMessageDestinationRouteKey,
+  assertAdapterMessageDestinationAccess,
   listVisibleAdapterMessageDestinations,
   resolveVisibleAdapterMessageDestination,
+  updateAdapterMessageDestinationRoute,
 } from "../../../kernel/adapter-destinations";
 import { resolveCallerOwnerUid } from "../../../kernel/context";
+import { findInteractiveProcess, type ProcessRecord } from "../../../kernel/processes";
 import type { RunRoute } from "../../../kernel/run-routes";
+import type { SurfaceRouteRecord } from "../../../kernel/surface-routes";
 import type { RequestFrame } from "../../../protocol/frames";
 import type {
   ProcessRunAttachRequestFrame,
@@ -66,9 +73,11 @@ async function runMessageCommand(
     case "-h":
       return completed(messageUsage());
     case "current":
-      return showCurrentReplyDestination(rest, ctx);
+      return await showCurrentReplyDestination(rest, ctx);
     case "destinations":
       return await listDestinations(rest, ctx);
+    case "route":
+      return await manageMessageRoute(rest, ctx);
     case "attach":
       return attachToReply(rest, shellCtx, fs, ctx);
     case "send":
@@ -240,16 +249,26 @@ async function rollbackStagedReplyMedia(
   } as RequestFrame<"proc.media.delete">)));
 }
 
-function showCurrentReplyDestination(args: string[], ctx: KernelContext): ExecResult {
+async function showCurrentReplyDestination(
+  args: string[],
+  ctx: KernelContext,
+): Promise<ExecResult> {
   const json = parseOnlyFlags(args, new Set(["--json"])).has("--json");
   const route = currentRunRoute(ctx);
   const current = describeCurrentRoute(route);
+  const destinationId = route?.kind === "adapter"
+    ? await adapterMessageDestinationId(route.destination, resolveCallerOwnerUid(ctx))
+    : undefined;
   if (json) {
-    return completed(`${JSON.stringify(current, null, 2)}\n`);
+    return completed(`${JSON.stringify({
+      ...current,
+      ...(destinationId ? { destinationId } : {}),
+    }, null, 2)}\n`);
   }
   return completed([
     `automatic reply: ${current.label}`,
     `transport: ${current.transport}`,
+    ...(destinationId ? [`destination: ${destinationId}`] : []),
     "Explicit `message send` commands create additional outbound messages.",
     "Return the current answer normally unless an additional or cross-channel message was requested.",
     "",
@@ -283,6 +302,190 @@ async function listDestinations(args: string[], ctx: KernelContext): Promise<Exe
     lines.push("(none)");
   }
   return completed(`${lines.join("\n")}\n`);
+}
+
+async function manageMessageRoute(
+  args: string[],
+  ctx: KernelContext,
+): Promise<ExecResult> {
+  requireCommandCapability(ctx, "adapter.route");
+  const [action = "show", ...rest] = args;
+
+  if (action === "help" || action === "--help" || action === "-h") {
+    return completed(messageRouteUsage());
+  }
+  if (action === "list") {
+    const json = parseOnlyFlags(rest, new Set(["--json"])).has("--json");
+    return renderMessageRoutes(await listMessageRoutes(ctx), json);
+  }
+
+  if (action === "show" || action === "set" || action === "clear") {
+    const options = parseMessageRouteOptions(rest, action === "set");
+    const destination = await resolveRouteDestination(options.to, ctx);
+    if (action === "show") {
+      return renderMessageRoutes([
+        messageRouteForDestination(destination, ctx),
+      ], options.json);
+    }
+    if (action === "clear") {
+      const cleared = messageRouteForDestination(destination, ctx).route !== null;
+      updateAdapterMessageDestinationRoute(destination.destination, null, ctx);
+      return completed(options.json
+        ? `${JSON.stringify({ cleared, destination: destination.id }, null, 2)}\n`
+        : `cleared=${cleared ? "true" : "false"}\ndestination=${destination.id}\n`);
+    }
+
+    const process = resolveInteractiveProcess(options.process!, ctx);
+    const route = updateAdapterMessageDestinationRoute(
+      destination.destination,
+      process.processId,
+      ctx,
+    )!;
+    return completed(options.json
+      ? `${JSON.stringify({
+        routed: true,
+        destination: destination.id,
+        process: route.pid,
+        processLabel: process.label,
+      }, null, 2)}\n`
+      : [
+          "routed=true",
+          `destination=${destination.id}`,
+          `process=${route.pid}`,
+          ...(process.label ? [`process_label=${JSON.stringify(process.label)}`] : []),
+          "",
+        ].join("\n"));
+  }
+
+  throw new Error(`unknown route command: ${action}\n${messageRouteUsage()}`);
+}
+
+type MessageRouteView = {
+  destination: VisibleAdapterMessageDestination;
+  route: SurfaceRouteRecord | null;
+  process: ProcessRecord | null;
+};
+
+async function listMessageRoutes(ctx: KernelContext): Promise<MessageRouteView[]> {
+  const destinations = await listVisibleAdapterMessageDestinations(ctx, {
+    includeOffline: true,
+    includeUnavailable: true,
+  });
+  return destinations.map((destination) => messageRouteForDestination(destination, ctx))
+    .filter((view) => view.route !== null);
+}
+
+function messageRouteForDestination(
+  destination: VisibleAdapterMessageDestination,
+  ctx: KernelContext,
+): MessageRouteView {
+  const ownerUid = resolveCallerOwnerUid(ctx);
+  assertAdapterMessageDestinationAccess(destination.destination, ownerUid, ctx);
+  const route = ctx.adapters.surfaceRoutes.get(
+    adapterMessageDestinationRouteKey(destination.destination),
+  );
+  if (route && route.uid !== ownerUid) {
+    throw new Error("Adapter route ownership does not match the linked identity");
+  }
+  const process = route ? ctx.procs.get(route.pid) : null;
+  return {
+    destination,
+    route,
+    process: process?.ownerUid === ownerUid ? process : null,
+  };
+}
+
+function renderMessageRoutes(routes: MessageRouteView[], json: boolean): ExecResult {
+  const rows = routes.map(({ destination, route, process }) => ({
+    destination: destination.id,
+    chat: destination.label,
+    online: destination.online,
+    process: route?.pid ?? null,
+    processState: route ? process?.state ?? "missing" : null,
+    processLabel: process?.label ?? null,
+    updatedAt: route?.updatedAt ?? null,
+  }));
+  if (json) return completed(`${JSON.stringify({ routes: rows }, null, 2)}\n`);
+
+  const lines = ["DESTINATION\tPROCESS\tSTATE\tCHAT\tPROCESS LABEL"];
+  for (const row of rows) {
+    lines.push([
+      row.destination,
+      row.process ?? "(none)",
+      row.processState ?? "unrouted",
+      row.chat,
+      row.processLabel ?? "",
+    ].join("\t"));
+  }
+  if (rows.length === 0) lines.push("(none)");
+  return completed(`${lines.join("\n")}\n`);
+}
+
+function parseMessageRouteOptions(
+  args: string[],
+  requireProcess: boolean,
+): { to: string; process?: string; json: boolean } {
+  let to = "here";
+  let process: string | undefined;
+  let json = false;
+  for (let index = 0; index < args.length; index += 1) {
+    const current = args[index];
+    if (current === "--to") {
+      index += 1;
+      to = requireShellOptionValue(args[index], current);
+      continue;
+    }
+    if (current === "--process" && requireProcess) {
+      index += 1;
+      process = requireShellOptionValue(args[index], current);
+      continue;
+    }
+    if (current === "--json") {
+      json = true;
+      continue;
+    }
+    throw new Error(`unexpected argument: ${current}`);
+  }
+  if (requireProcess && !process) {
+    throw new Error("message route set requires --process");
+  }
+  return { to, ...(process ? { process } : {}), json };
+}
+
+async function resolveRouteDestination(
+  query: string,
+  ctx: KernelContext,
+): Promise<VisibleAdapterMessageDestination> {
+  if (query.trim().toLowerCase() !== "here") {
+    return resolveVisibleAdapterMessageDestination(query, ctx, {
+      includeOffline: true,
+      includeUnavailable: true,
+    });
+  }
+
+  const destination = destinationFromCurrentRoute(ctx);
+  const status = ctx.adapters.status.get(destination.adapter, destination.accountId);
+  return {
+    id: await adapterMessageDestinationId(destination, resolveCallerOwnerUid(ctx)),
+    label: adapterMessageDestinationLabel(destination),
+    online: status?.connected === true && status.authenticated === true,
+    destination,
+  };
+}
+
+function resolveInteractiveProcess(selector: string, ctx: KernelContext): ProcessRecord {
+  const match = findInteractiveProcess(
+    selector,
+    ctx.procs.list(resolveCallerOwnerUid(ctx)),
+  );
+  if (match.kind === "found") return match.record;
+  if (match.kind === "ambiguous") {
+    throw new Error(
+      `Process selector is ambiguous: ${match.records.slice(0, 5)
+        .map((process) => process.processId).join(", ")}`,
+    );
+  }
+  throw new Error(`No owned interactive process matches: ${selector}`);
 }
 
 async function sendMessage(
@@ -518,6 +721,10 @@ function messageUsage(): string {
     "Usage:",
     "  message current [--json]",
     "  message destinations [--all] [--json]",
+    "  message route show [--to here|DESTINATION] [--json]",
+    "  message route list [--json]",
+    "  message route set --process PID_OR_LABEL [--to here|DESTINATION] [--json]",
+    "  message route clear [--to here|DESTINATION] [--json]",
     "  message attach PATH... [--mime TYPE]",
     "  message send --to DESTINATION [--message TEXT] [--attach PATH [--mime TYPE]] [--delivery-id ID] [--also]",
     "",
@@ -526,7 +733,27 @@ function messageUsage(): string {
     "`message send` creates an additional outbound message. Use --to here --also only when an",
     "extra message on the current reply surface is intentional.",
     "Use `message destinations` and copy its opaque GSV id; do not use provider ids.",
+    "Use `message route` to inspect routing, open a private-DM work direct line from personal,",
+    "or manage groups, channels, and threads.",
     "Copy a remote-device file to GSV first, then pass its local path to --attach.",
+    "",
+  ].join("\n");
+}
+
+function messageRouteUsage(): string {
+  return [
+    "Usage:",
+    "  message route show [--to here|DESTINATION] [--json]",
+    "  message route list [--json]",
+    "  message route set --process PID_OR_LABEL [--to here|DESTINATION] [--json]",
+    "  message route clear [--to here|DESTINATION] [--json]",
+    "",
+    "`show` and `list` inspect adapter routing. Groups, channels, and threads support `set`",
+    "and `clear`. On the exact private DM that started its current run, only the personal",
+    "intelligence can use `set` to open a direct line to owned non-personal work.",
+    "Use /home inside the DM to return to personal intelligence.",
+    "The destination defaults to the current adapter chat. Changes affect future inbound messages;",
+    "the current run's final response still returns to the surface that started it.",
     "",
   ].join("\n");
 }

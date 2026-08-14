@@ -25,8 +25,9 @@ export type ProcMediaInput = {
 export type ProcSpawnArgs = {
   /**
    * Account to run the process as a username or uid string. Defaults to the
-   * caller's personal agent. The caller must own the account or hold membership
-   * in its private group (root may run as anyone).
+   * caller's personal agent for a top-level process and the parent account for
+   * a child. The caller must own the account or hold membership in its
+   * private group (root may run as anyone).
    */
   runAs?: string;
   /** Whether the process can request human-in-the-loop approval. Background spawns set false. */
@@ -576,6 +577,7 @@ export type ProcListEntry = {
   username: string;
   /** Whether the process can hold an interactive (human-in-the-loop) conversation. */
   interactive: boolean;
+  personal: boolean;
   parentPid: string | null;
   state: string;
   activeRunId: string | null;

@@ -1047,11 +1047,11 @@ function UserMessage({
   // Built once, routed by breakpoint: desktop puts them in the meta row,
   // mobile in the swipe rail — never both (no duplicate controls for AT).
   const branchAction = message.messageId && onBranch ? (
-    <Hint text="Branch a new task from this message">
+    <Hint text="Branch new work from this message">
       <button
         type="button"
         class="gsv-mm-btn"
-        aria-label="Branch a new task from this message"
+        aria-label="Branch new work from this message"
         onClick={() => onBranch(message.messageId as number)}
       >
         <svg width="13" height="13" viewBox="0 0 16 16" aria-hidden="true">
@@ -1801,8 +1801,8 @@ function nestedScrollerCanScrollUp(target: EventTarget | null, boundary: HTMLEle
 export function ChatTranscript({
   action,
   activeRunId = null,
-  emptyDescription = "Process history will appear here when a task is available.",
-  emptyTitle = "No active task",
+  emptyDescription = "Process history will appear here when work is available.",
+  emptyTitle = "No active work",
   errorMessage = "Process history could not be loaded.",
   feedback = [],
   hasOlderMessages = false,
@@ -2068,7 +2068,7 @@ export function ChatTranscript({
     >
       {state === "loading" ? (
         <TranscriptState
-          title="Loading process history"
+          title="Loading conversation history"
           description="Fetching the latest transcript for this process."
           tone="loading"
         />

@@ -51,6 +51,7 @@ export type ChatAgentData = {
   tasksTotal?: number;
   tasks?: readonly ChatAgentTaskData[];
   crew?: readonly ChatAgentCrewData[];
+  canStartWork?: boolean;
 };
 
 export type ChatAgentTaskView = {
@@ -117,6 +118,31 @@ const DEFAULT_AGENT_IMAGE = "/img/agent-0.png";
 function cleanText(value: string | undefined, fallback: string): string {
   const text = value?.trim();
   return text && text.length > 0 ? text : fallback;
+}
+
+export function canStartChatWork(agent: ChatAgentData | null | undefined): boolean {
+  return Boolean(agent) && agent?.canStartWork !== false;
+}
+
+export function chatEmptyState(
+  agent: ChatAgentData | null | undefined,
+  hasActiveProcess: boolean,
+): { description: string; showStartAction: boolean; title: string } {
+  if (hasActiveProcess) {
+    return {
+      title: "No messages yet",
+      description: "This conversation has no visible messages yet.",
+      showStartAction: false,
+    };
+  }
+  const showStartAction = canStartChatWork(agent);
+  return {
+    title: "Personal intelligence unavailable",
+    description: showStartAction
+      ? "Start new work or wait for your personal intelligence to become available."
+      : "This account has no personal intelligence. Chat and new work are unavailable.",
+    showStartAction,
+  };
 }
 
 export function formatChatReasoningLabel(value: string | undefined, fallback = "MEDIUM"): string {

@@ -186,6 +186,7 @@ struct ProcListPayload {
 struct ProcListEntryPayload {
     pid: String,
     uid: u32,
+    personal: bool,
     parent_pid: Option<String>,
     state: String,
     active_run_id: Option<String>,
@@ -247,8 +248,9 @@ fn print_proc_list(processes: &[ProcListEntryPayload]) {
 
     for process in processes {
         println!(
-            "{} state={} uid={} queue={} active={} parent={} label={} created={} last_active={}",
+            "{} kind={} state={} uid={} queue={} active={} parent={} label={} created={} last_active={}",
             process.pid,
+            if process.personal { "personal" } else { "work" },
             process.state,
             process.uid,
             process.queued_count.unwrap_or(0),

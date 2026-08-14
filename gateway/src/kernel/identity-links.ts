@@ -1,3 +1,5 @@
+import type { AdapterSurface } from "../adapter-interface";
+
 export type IdentityLinkRecord = {
   adapter: string;
   accountId: string;
@@ -69,6 +71,39 @@ export class IdentityLinkStore {
       actorId,
     ).toArray();
     return rows[0]?.uid ?? null;
+  }
+
+  bindSurfaceIfMissing(
+    adapter: string,
+    accountId: string,
+    actorId: string,
+    surface: AdapterSurface,
+  ): IdentityLinkRecord | null {
+    const existing = this.get(adapter, accountId, actorId);
+    if (!existing) return null;
+    const metadata = existing.metadata ?? {};
+    if (
+      typeof metadata.surfaceKind === "string"
+      || typeof metadata.surfaceId === "string"
+    ) {
+      return existing;
+    }
+    const nextMetadata = {
+      ...metadata,
+      surfaceKind: surface.kind,
+      surfaceId: surface.id,
+      ...(surface.threadId ? { threadId: surface.threadId } : {}),
+    };
+    this.sql.exec(
+      `UPDATE identity_links
+          SET metadata_json = ?
+        WHERE adapter = ? AND account_id = ? AND actor_id = ?`,
+      JSON.stringify(nextMetadata),
+      adapter,
+      accountId,
+      actorId,
+    );
+    return { ...existing, metadata: nextMetadata };
   }
 
   get(adapter: string, accountId: string, actorId: string): IdentityLinkRecord | null {

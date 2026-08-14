@@ -12,8 +12,7 @@ import {
   pairingSessionExpired,
   reconnectDelayMs,
   restartDelayMs,
-  socketLeaseAction,
-  SOCKET_LEASE_REFRESH_INTERVAL_MS,
+  SOCKET_RESIDENCY_ALARM_INTERVAL_MS,
   SocketOperationQueue,
 } from "../src/lifecycle";
 import {
@@ -22,36 +21,10 @@ import {
 } from "../src/types";
 import type { WhatsAppAccountState } from "../src/types";
 
-const healthySocketLease = {
-  hasSocket: true,
-  stateConnected: true,
-  socketAuthenticated: true,
-  webSocketOpen: true,
-};
-
 describe("WhatsApp lifecycle policy", () => {
-  it("refreshes a healthy transport only when its lease is due", () => {
-    expect(SOCKET_LEASE_REFRESH_INTERVAL_MS).toBeLessThan(15 * 60 * 1_000);
-    expect(socketLeaseAction(60_000, healthySocketLease, 10_000)).toBe("wait");
-    expect(socketLeaseAction(60_000, healthySocketLease, 60_000)).toBe("refresh");
-  });
-
-  it("recovers an unhealthy established lease without waiting for expiry", () => {
-    const healthSignals = Object.keys(healthySocketLease) as Array<
-      keyof typeof healthySocketLease
-    >;
-    for (const field of healthSignals) {
-      expect(socketLeaseAction(60_000, {
-        ...healthySocketLease,
-        [field]: false,
-      }, 10_000))
-        .toBe("recover");
-    }
-    expect(socketLeaseAction(undefined, {
-      ...healthySocketLease,
-      webSocketOpen: false,
-    }, 10_000))
-      .toBe("wait");
+  it("schedules residency alarms before Cloudflare's minimum idle eviction", () => {
+    expect(SOCKET_RESIDENCY_ALARM_INTERVAL_MS).toBeGreaterThan(0);
+    expect(SOCKET_RESIDENCY_ALARM_INTERVAL_MS).toBeLessThan(70_000);
   });
 
   it("distinguishes restart, replacement, logout, and corrupt auth", () => {
@@ -178,11 +151,13 @@ describe("WhatsApp state upgrade", () => {
       accountId: "default",
       status: "logged_out" as const,
       rotationAt: 42_000,
+      leaseRefreshAt: 43_000,
       lastMessageAt: 41_000,
     };
     expect(restoreWhatsAppAccountState(
       stored as WhatsAppAccountState & {
         rotationAt: number;
+        leaseRefreshAt: number;
         lastMessageAt: number;
       },
       undefined,

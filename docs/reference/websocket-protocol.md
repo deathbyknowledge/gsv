@@ -264,6 +264,9 @@ Current role defaults from `buildSignalList()`:
 - `proc.run.started`
 - `proc.run.stream`
 - `proc.run.retrying`
+  - Carries `attempt`, `nextAttempt`, `maxAttempts`, and a sanitized `reason`.
+    A retry after context compaction stays on the active model and has no
+    `fallback` field; model fallback transitions include their source and target.
 - `proc.run.output`
   - Carries assembled assistant text/thinking and, when present, process-owned
     `media` references registered for the automatic final reply.

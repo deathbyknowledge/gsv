@@ -199,12 +199,12 @@ const MOCK_ACCOUNTS: ConsoleAccount[] = [
 const MOCK_PROCESSES: ConsoleProcess[] = [
   {
     pid: "p1", label: "nightly-digest", state: "running", rawState: "running", uid: 1001,
-    username: "aria", profile: "default", cwd: "~/repos/gsv", parentPid: null, interactive: false,
+    username: "aria", profile: "default", cwd: "~/repos/gsv", parentPid: null, interactive: false, personal: false,
     activeRunId: "r1", queuedCount: 0, createdAt: 0, lastActiveAt: 0,
   },
   {
     pid: "p2", label: "index-rebuild", state: "queued", rawState: "queued", uid: 1002,
-    username: "orso", profile: "default", cwd: "~/data", parentPid: null, interactive: false,
+    username: "orso", profile: "default", cwd: "~/data", parentPid: null, interactive: false, personal: false,
     activeRunId: null, queuedCount: 1, createdAt: 0, lastActiveAt: 0,
   },
 ];

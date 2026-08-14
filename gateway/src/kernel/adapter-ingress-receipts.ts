@@ -1,5 +1,6 @@
 import type {
   AdapterInboundResult,
+  AdapterMessageDestination,
   AdapterSurfaceKind,
 } from "@humansandmachines/gsv/protocol";
 import { isAdapterInboundResult } from "@humansandmachines/gsv/protocol";
@@ -216,6 +217,45 @@ export class AdapterIngressReceiptStore {
       receiptId,
       claimToken,
     );
+  }
+
+  isLatestPrivateMessage(
+    destination: AdapterMessageDestination,
+    providerMessageId: string,
+  ): boolean {
+    if (destination.kind !== "adapter" || destination.surface.kind !== "dm") {
+      return false;
+    }
+    const messageId = providerMessageId.trim();
+    if (!messageId) return false;
+    const threadId = destination.surface.threadId?.trim() || "";
+    const current = this.sql.exec<{ receipt_order: number }>(
+      `SELECT rowid AS receipt_order
+         FROM adapter_ingress_receipts
+        WHERE adapter = ? AND account_id = ? AND surface_kind = 'dm'
+          AND surface_id = ? AND thread_id = ? AND provider_message_id = ?
+        ORDER BY rowid DESC
+        LIMIT 1`,
+      destination.adapter,
+      destination.accountId,
+      destination.surface.id,
+      threadId,
+      messageId,
+    ).toArray()[0];
+    if (!current) return false;
+    const newer = this.sql.exec<{ present: number }>(
+      `SELECT 1 AS present
+         FROM adapter_ingress_receipts
+        WHERE adapter = ? AND account_id = ? AND surface_kind = 'dm'
+          AND surface_id = ? AND thread_id = ? AND rowid > ?
+        LIMIT 1`,
+      destination.adapter,
+      destination.accountId,
+      destination.surface.id,
+      threadId,
+      current.receipt_order,
+    ).toArray()[0];
+    return newer === undefined;
   }
 
   private prune(now = Date.now()): void {

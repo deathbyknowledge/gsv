@@ -7,7 +7,9 @@ GSV assembles process prompts from explicit context providers, not from hidden a
 Prompt context is collected in provider order:
 
 1. **System context** from `config/ai/context.d/*.md`.
-2. **Home context** from `~/context.d/*.md`.
+2. **Program context** from the run-as agent's `~/context.d/*.md`.
+3. **User context** from the human owner's `~/context.d/*.md` when the
+   process runs as an owned agent account.
 
 GSV can also assemble a compact skill index from layered `skills.d`
 directories. `config/ai/skills/index_mode`, or the per-user override
@@ -18,20 +20,31 @@ discovery. Start unfamiliar tasks with
 `man --search -- '<plain-language goal>'`; follow its `NEXT` action to open a
 matching command, skill, target, or connected integration.
 
-Home context files are loaded lexically, include only non-empty `.md` files, and are bounded by `config/ai/max_context_bytes`.
+Context files are loaded lexically within each layer, include only non-empty
+`.md` files, and are bounded by `config/ai/max_context_bytes`.
 
-## Home Context: `~/context.d/`
+## Program and User Context
 
-Use `~/context.d/*.md` for small, curated user-global notes that should be available to most processes. This is for standing context, not raw logs or a private database.
+An agent's own `~/context.d/*.md` is program context: its role, voice, and
+compact role-local working state. The human owner's context is shared user
+context for every agent owned by that person. In an owned agent's assembled
+prompt, it appears under the editable `<user>` root even though `~` continues
+to refer to the agent's own home.
 
-Good examples:
+Conventional files include:
 
 ```text
-~/context.d/00-constitution.md
-~/context.d/20-current-priorities.md
+<agent home>/context.d/00-role.md
+<agent home>/context.d/05-voice.md
+<human home>/context.d/10-personal.md
 ```
 
-Keep these files short and stable. Put durable reference material under `~/knowledge/` instead, where it can be searched and retrieved deliberately.
+Keep both layers short and stable. The shared `10-personal.md` is for explicit
+facts and preferences that should affect nearly every interaction. Detailed or
+occasionally relevant personal information belongs in the human-owned
+`personal` wiki, where agents retrieve it deliberately. Open commitments stay
+in the personal agent's account-local context, shared by its conversation
+processes, rather than either personal-memory layer.
 
 ## Skills: `skills.d/`
 
@@ -96,7 +109,10 @@ Use the GSV target for GSV filesystem paths. Use a device target only when inten
 
 ## What Belongs Where
 
-Use `~/context.d/` for concise standing context. Use `skills.d/` for reusable procedures. Use `~/knowledge/` for durable, searchable reference material.
+Use agent `~/context.d/` for concise role-local context, the human owner's
+`context.d/10-personal.md` for shared standing personal context, `skills.d/`
+for reusable procedures, and the human-owned `personal` wiki for durable,
+searchable personal memory.
 
 ## See also
 

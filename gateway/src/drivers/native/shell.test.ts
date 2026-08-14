@@ -13,6 +13,8 @@ import {
 import { sendFrameToProcess } from "../../shared/utils";
 import type { KernelContext } from "../../kernel/context";
 import type { DeviceRecord } from "../../kernel/devices";
+import type { ProcessRecord } from "../../kernel/processes";
+import type { SurfaceRouteRecord } from "../../kernel/surface-routes";
 import {
   bodyFromText,
   bodyToBytes,
@@ -83,6 +85,30 @@ function makeDevice(partial: Partial<DeviceRecord> & { device_id: string }): Dev
     last_seen_at: partial.last_seen_at ?? now,
     connected_at: partial.connected_at ?? now,
     disconnected_at: partial.disconnected_at ?? null,
+  };
+}
+
+function makeProcess(
+  partial: Partial<ProcessRecord> & { processId: string },
+): ProcessRecord {
+  return {
+    processId: partial.processId,
+    parentPid: partial.parentPid ?? null,
+    uid: partial.uid ?? IDENTITY.uid,
+    ownerUid: partial.ownerUid ?? IDENTITY.uid,
+    interactive: partial.interactive ?? true,
+    isPersonalController: partial.isPersonalController ?? false,
+    gid: partial.gid ?? IDENTITY.gid,
+    gids: partial.gids ?? [...IDENTITY.gids],
+    username: partial.username ?? IDENTITY.username,
+    home: partial.home ?? IDENTITY.home,
+    cwd: partial.cwd ?? IDENTITY.cwd,
+    state: partial.state ?? "idle",
+    activeRunId: partial.activeRunId ?? null,
+    queuedCount: partial.queuedCount ?? 0,
+    lastActiveAt: partial.lastActiveAt ?? null,
+    label: partial.label ?? null,
+    createdAt: partial.createdAt ?? 1,
   };
 }
 
@@ -201,7 +227,9 @@ function makeContext(options?: {
     } as unknown as KernelContext["adapters"],
     runRoutes: null as never,
     schedules: options?.schedules,
-    ipcCalls: options?.ipcCalls,
+    ipcCalls: options?.ipcCalls ?? {
+      findPendingByTargetRun: vi.fn(() => null),
+    } as unknown as KernelContext["ipcCalls"],
     connection: null,
     identity: {
       role: "user",
@@ -295,6 +323,12 @@ function enableTelegramMessaging(ctx: KernelContext) {
       get: vi.fn(() => null),
       list: vi.fn(() => []),
     },
+    privateDestinations: {
+      get: vi.fn(() => null),
+    },
+    ingressReceipts: {
+      isLatestPrivateMessage: vi.fn(() => true),
+    },
     status: {
       get: vi.fn((adapter: string, accountId: string) =>
         adapter === status.adapter && accountId === status.accountId ? status : null),
@@ -317,12 +351,81 @@ function enableTelegramMessaging(ctx: KernelContext) {
             actorId: "chat-42",
             surface: { kind: "dm", id: "chat-42" },
           },
+          replyToId: "msg-1",
           createdAt: 1,
           expiresAt: Date.now() + 60_000,
         }
       : null),
   } as unknown as KernelContext["runRoutes"];
   return { adapterSend, link, status };
+}
+
+function enableMessageRouteStore(
+  ctx: KernelContext,
+  processes: ProcessRecord[],
+) {
+  let route: SurfaceRouteRecord | null = null;
+  const setRoute = vi.fn((input: Parameters<KernelContext["adapters"]["surfaceRoutes"]["setRoute"]>[0]) => {
+    route = { ...input, updatedAt: 1_800_000_000_000 };
+    return route;
+  });
+  const clearRoute = vi.fn(() => {
+    const cleared = route !== null;
+    route = null;
+    return cleared;
+  });
+  Object.assign(ctx.adapters.surfaceRoutes, {
+    get: vi.fn(() => route),
+    list: vi.fn(() => route ? [route] : []),
+    setRoute,
+    clearRoute,
+  });
+  ctx.procs = {
+    getOwnerUid: vi.fn(() => IDENTITY.uid),
+    getPersonalController: vi.fn((ownerUid: number) => (
+      ownerUid === IDENTITY.uid
+        ? processes.find((process) => process.isPersonalController) ?? null
+        : null
+    )),
+    list: vi.fn(() => processes),
+    get: vi.fn((pid: string) => processes.find((process) => process.processId === pid) ?? null),
+  } as unknown as KernelContext["procs"];
+  return { setRoute, clearRoute };
+}
+
+function enablePrivateDmHandoff(
+  ctx: KernelContext,
+  latestMessageId = "msg-1",
+) {
+  const controller = makeProcess({
+    processId: ctx.processId!,
+    isPersonalController: true,
+    activeRunId: ctx.processRunId ?? null,
+    label: "personal",
+  });
+  const target = makeProcess({
+    processId: "proc:groceries",
+    label: "groceries",
+    username: "helper",
+    uid: 1001,
+  });
+  const destination = {
+    kind: "adapter" as const,
+    adapter: "telegram",
+    accountId: "bot",
+    actorId: "chat-42",
+    surface: { kind: "dm" as const, id: "chat-42" },
+  };
+  ctx.adapters.privateDestinations = {
+    get: vi.fn(() => ({
+      uid: IDENTITY.uid,
+      destination,
+      messageId: latestMessageId,
+      updatedAt: 1,
+    })),
+  } as unknown as KernelContext["adapters"]["privateDestinations"];
+  const routeStore = enableMessageRouteStore(ctx, [controller, target]);
+  return { controller, target, destination, ...routeStore };
 }
 
 describe("native shell execution", () => {
@@ -479,7 +582,7 @@ describe("native shell capability discovery", () => {
 
     expect(result.ok).toBe(true);
     expect(result.stdout).toContain("GSV live capability manual");
-    expect(result.stdout).toContain("message      Send messages and file attachments");
+    expect(result.stdout).toContain("message      Send messages, attach files, and route adapter chats");
     expect(result.stdout).toContain("skills       Inspect and maintain reusable agent workflows");
     expect(result.stdout).not.toContain("GSV manual pages");
   });
@@ -494,6 +597,7 @@ describe("native shell capability discovery", () => {
     ["save this workflow for next time", "skills"],
     ["send this file to the chat", "message"],
     ["send an email to this person", "mail"],
+    ["start a new chat in this conversation", "message"],
   ])("maps a plain-language task '%s' to %s", async (query, expectedCommand) => {
     const result = await handleShellExec(
       { input: `man --search -- '${query}'` },
@@ -569,6 +673,10 @@ describe("native shell capability discovery", () => {
     expect(result.stdout).toContain("message current [--json]");
     expect(result.stdout).toContain("[--delivery-id ID] [--also]");
     expect(result.stdout).toContain("message send --to DESTINATION");
+    expect(result.stdout).toContain("message route set --process PID_OR_LABEL");
+    expect(result.stdout).toContain("personal intelligence");
+    expect(result.stdout).toContain("temporary work direct line");
+    expect(result.stdout).toContain("Use /home inside that DM");
     expect(result.stdout).toContain("--attach PATH");
   });
 
@@ -1462,7 +1570,11 @@ describe("proc native command", () => {
       uid: IDENTITY.uid,
     }));
     const callId = createdCall.callId;
-    expect(scheduleIpcCallTimeout).toHaveBeenCalledWith(callId, createdCall.deadlineAt);
+    expect(scheduleIpcCallTimeout).toHaveBeenCalledWith(
+      callId,
+      createdCall.deadlineAt,
+      { terminateTargetOnTimeout: true },
+    );
   });
 
   it("rejects delegation from a top-level shell before spawning", async () => {
@@ -2903,6 +3015,7 @@ describe("native administration shell commands", () => {
     const { adapterSend } = enableTelegramMessaging(ctx);
 
     const current = await handleShellExec({ input: "message current" }, ctx);
+    const currentJson = await handleShellExec({ input: "message current --json" }, ctx);
     const duplicate = await handleShellExec({
       input: 'message send --to here --message "duplicate reply"',
     }, ctx);
@@ -2913,6 +3026,11 @@ describe("native administration shell commands", () => {
     expect(current).toMatchObject({ status: "completed", exitCode: 0 });
     expect(current.stdout).toContain("automatic reply: Telegram direct message");
     expect(current.stdout).toContain("create additional outbound messages");
+    const destinationId = JSON.parse(currentJson.stdout).destinationId as string;
+    expect(destinationId).toMatch(/^message-destination:[0-9a-f]{64}$/);
+    expect(current.stdout).toContain(`destination: ${destinationId}`);
+    expect(current.stdout).not.toContain("chat-42");
+    expect(currentJson.stdout).not.toContain("chat-42");
     expect(duplicate.status).toBe("failed");
     expect(duplicate.stderr).toContain("automatic reply destination");
     expect(duplicate.stderr).toContain("--also");
@@ -2965,6 +3083,279 @@ describe("native administration shell commands", () => {
       expect.objectContaining({ text: "opaque route" }),
       undefined,
     );
+  });
+
+  it("shows and changes the process route for an adapter group", async () => {
+    const ctx = makeContext({
+      capabilities: ["shell.exec", "adapter.route"],
+      processRunId: "run-telegram-route",
+    });
+    const { link } = enableTelegramMessaging(ctx);
+    link.metadata = { surfaceKind: "group", surfaceId: "group-42" };
+    ctx.runRoutes = {
+      get: vi.fn(() => ({
+        kind: "adapter",
+        runId: ctx.processRunId!,
+        processId: ctx.processId!,
+        uid: IDENTITY.uid,
+        destination: {
+          kind: "adapter",
+          adapter: "telegram",
+          accountId: "bot",
+          actorId: "chat-42",
+          surface: { kind: "group", id: "group-42" },
+        },
+      })),
+    } as unknown as KernelContext["runRoutes"];
+    const target = makeProcess({
+      processId: "proc:groceries",
+      label: "groceries",
+      username: "helper",
+      uid: 1001,
+    });
+    const { setRoute, clearRoute } = enableMessageRouteStore(ctx, [target]);
+
+    const set = await handleShellExec({
+      input: "message route set --process groceries",
+    }, ctx);
+    expect(set).toMatchObject({ status: "completed", exitCode: 0 });
+    expect(set.stdout).toContain("routed=true");
+    expect(set.stdout).toContain("process=proc:groceries");
+    expect(set.stdout).not.toContain("chat-42");
+    expect(set.stdout).not.toContain("account=bot");
+    expect(setRoute).toHaveBeenCalledWith(expect.objectContaining({
+      adapter: "telegram",
+      accountId: "bot",
+      actorId: "chat-42",
+      surfaceKind: "group",
+      surfaceId: "group-42",
+      uid: IDENTITY.uid,
+      pid: "proc:groceries",
+      mode: "surface",
+      updatedByUid: IDENTITY.uid,
+    }));
+
+    const shown = await handleShellExec({ input: "message route show --json" }, ctx);
+    expect(shown).toMatchObject({ status: "completed", exitCode: 0 });
+    expect(JSON.parse(shown.stdout)).toMatchObject({
+      routes: [{
+        chat: "Telegram group",
+        process: "proc:groceries",
+        processState: "idle",
+        processLabel: "groceries",
+      }],
+    });
+    expect(shown.stdout).not.toContain("chat-42");
+    expect(shown.stdout).not.toContain('"bot"');
+
+    const listed = await handleShellExec({ input: "message route list" }, ctx);
+    expect(listed).toMatchObject({ status: "completed", exitCode: 0 });
+    expect(listed.stdout).toContain("proc:groceries");
+    expect(listed.stdout).toContain("Telegram group");
+    expect(listed.stdout).not.toContain("chat-42");
+
+    const cleared = await handleShellExec({ input: "message route clear" }, ctx);
+    expect(cleared).toMatchObject({ status: "completed", exitCode: 0 });
+    expect(cleared.stdout).toContain("cleared=true");
+    expect(clearRoute).toHaveBeenCalledTimes(1);
+  });
+
+  it("lets the exact personal DM run open an owned work direct line", async () => {
+    const ctx = makeContext({
+      capabilities: ["shell.exec", "adapter.route"],
+      processRunId: "run-personal-handoff",
+    });
+    enableTelegramMessaging(ctx);
+    const { target, setRoute } = enablePrivateDmHandoff(ctx);
+
+    const first = await handleShellExec({
+      input: "message route set --process groceries",
+    }, ctx);
+    const replay = await handleShellExec({
+      input: "message route set --process groceries",
+    }, ctx);
+
+    expect(first).toMatchObject({ status: "completed", exitCode: 0 });
+    expect(replay).toMatchObject({ status: "completed", exitCode: 0 });
+    expect(first.stdout).toContain(`process=${target.processId}`);
+    expect(setRoute).toHaveBeenCalledTimes(1);
+    expect(setRoute).toHaveBeenCalledWith(expect.objectContaining({
+      adapter: "telegram",
+      accountId: "bot",
+      actorId: "chat-42",
+      surfaceKind: "dm",
+      surfaceId: "chat-42",
+      uid: IDENTITY.uid,
+      pid: target.processId,
+      mode: "work",
+      updatedByUid: IDENTITY.uid,
+    }));
+  });
+
+  it("fences a personal DM handoff after newer private activity", async () => {
+    const ctx = makeContext({
+      capabilities: ["shell.exec", "adapter.route"],
+      processRunId: "run-stale-personal-handoff",
+    });
+    enableTelegramMessaging(ctx);
+    const { setRoute } = enablePrivateDmHandoff(ctx, "newer-message");
+
+    const result = await handleShellExec({
+      input: "message route set --process groceries",
+    }, ctx);
+
+    expect(result).toMatchObject({ status: "failed", exitCode: 1 });
+    expect(result.stderr).toContain("conversation changed before the direct line");
+    expect(setRoute).not.toHaveBeenCalled();
+  });
+
+  it("rejects a handoff from a superseded personal run", async () => {
+    const ctx = makeContext({
+      capabilities: ["shell.exec", "adapter.route"],
+      processRunId: "run-superseded-personal-handoff",
+    });
+    enableTelegramMessaging(ctx);
+    const { controller, setRoute } = enablePrivateDmHandoff(ctx);
+    controller.activeRunId = "run-newer-personal-activity";
+
+    const result = await handleShellExec({
+      input: "message route set --process groceries",
+    }, ctx);
+
+    expect(result).toMatchObject({ status: "failed", exitCode: 1 });
+    expect(result.stderr).toContain("Only the personal intelligence");
+    expect(setRoute).not.toHaveBeenCalled();
+  });
+
+  it("fences a delayed handoff after a later /home with an older provider timestamp", async () => {
+    const ctx = makeContext({
+      capabilities: ["shell.exec", "adapter.route"],
+      processRunId: "run-delayed-before-home",
+    });
+    enableTelegramMessaging(ctx);
+    const { setRoute } = enablePrivateDmHandoff(ctx, "msg-1");
+    ctx.adapters.ingressReceipts.isLatestPrivateMessage = vi.fn(() => false);
+
+    const result = await handleShellExec({
+      input: "message route set --process groceries",
+    }, ctx);
+
+    expect(result).toMatchObject({ status: "failed", exitCode: 1 });
+    expect(result.stderr).toContain("conversation changed before the direct line");
+    expect(ctx.adapters.privateDestinations.get(IDENTITY.uid)).toMatchObject({
+      messageId: "msg-1",
+      updatedAt: 1,
+    });
+    expect(ctx.adapters.ingressReceipts.isLatestPrivateMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ surface: { kind: "dm", id: "chat-42" } }),
+      "msg-1",
+    );
+    expect(setRoute).not.toHaveBeenCalled();
+  });
+
+  it("fences a personal DM handoff after its selection changed", async () => {
+    const ctx = makeContext({
+      capabilities: ["shell.exec", "adapter.route"],
+      processRunId: "run-reselected-personal-handoff",
+    });
+    enableTelegramMessaging(ctx);
+    const { setRoute } = enablePrivateDmHandoff(ctx);
+    const other = makeProcess({ processId: "proc:newer-work", label: "newer" });
+    ctx.procs.get = vi.fn((pid: string) => (
+      pid === other.processId ? other : pid === "proc:groceries"
+        ? makeProcess({ processId: "proc:groceries", label: "groceries" })
+        : pid === ctx.processId
+          ? makeProcess({ processId: ctx.processId!, isPersonalController: true })
+          : null
+    ));
+    ctx.adapters.surfaceRoutes.setRoute({
+      adapter: "telegram",
+      accountId: "bot",
+      actorId: "chat-42",
+      surfaceKind: "dm",
+      surfaceId: "chat-42",
+      uid: IDENTITY.uid,
+      pid: other.processId,
+      mode: "work",
+      updatedByUid: IDENTITY.uid,
+    });
+    setRoute.mockClear();
+
+    const result = await handleShellExec({
+      input: "message route set --process groceries",
+    }, ctx);
+
+    expect(result).toMatchObject({ status: "failed", exitCode: 1 });
+    expect(result.stderr).toContain("selection changed before the direct line");
+    expect(setRoute).not.toHaveBeenCalled();
+  });
+
+  it("rejects private DM route changes from a top-level user shell", async () => {
+    const ctx = makeContext({
+      capabilities: ["shell.exec", "adapter.route"],
+    });
+    delete ctx.processId;
+    enableTelegramMessaging(ctx);
+    const target = makeProcess({
+      processId: "proc:groceries",
+      label: "groceries",
+    });
+    const { setRoute, clearRoute } = enableMessageRouteStore(ctx, [target]);
+
+    const set = await handleShellExec({
+      input: "message route set --process groceries --to telegram",
+    }, ctx);
+    expect(set).toMatchObject({ status: "failed", exitCode: 1 });
+    expect(set.stderr).toContain("Only the personal intelligence can open a private DM direct line");
+
+    const cleared = await handleShellExec({
+      input: "message route clear --to telegram",
+    }, ctx);
+    expect(cleared).toMatchObject({ status: "failed", exitCode: 1 });
+    expect(cleared.stderr).toContain("Use /home in the private DM");
+    expect(setRoute).not.toHaveBeenCalled();
+    expect(clearRoute).not.toHaveBeenCalled();
+  });
+
+  it("explains the personal-intelligence DM handoff boundary", async () => {
+    const result = await handleShellExec(
+      { input: "message route --help" },
+      makeContext({ capabilities: ["shell.exec", "adapter.route"] }),
+    );
+
+    expect(result).toMatchObject({ status: "completed", exitCode: 0 });
+    expect(result.stdout).toContain("intelligence can use `set`");
+    expect(result.stdout).toContain("Use /home inside the DM to return");
+  });
+
+  it("only routes chats to owned interactive processes", async () => {
+    const ctx = makeContext({
+      capabilities: ["shell.exec", "adapter.route"],
+      processRunId: "run-telegram-route-denied",
+    });
+    enableTelegramMessaging(ctx);
+    enableMessageRouteStore(ctx, [makeProcess({
+      processId: "proc:background",
+      label: "background",
+      interactive: false,
+    })]);
+
+    const result = await handleShellExec({
+      input: "message route set --process background",
+    }, ctx);
+    expect(result).toMatchObject({ status: "failed", exitCode: 1 });
+    expect(result.stderr).toContain("No owned interactive process matches");
+
+    enableMessageRouteStore(ctx, [makeProcess({
+      processId: "proc:foreign",
+      label: "foreign",
+      ownerUid: 2000,
+    })]);
+    const foreign = await handleShellExec({
+      input: "message route set --process foreign",
+    }, ctx);
+    expect(foreign).toMatchObject({ status: "failed", exitCode: 1 });
+    expect(foreign.stderr).toContain("Process not found");
   });
 
   it("bridges a GSV file into an explicit adapter message body", async () => {
@@ -3319,7 +3710,7 @@ describe("native administration shell commands", () => {
     expect(create).toHaveBeenCalledTimes(1);
   });
 
-  it("schedules an event into the caller process", async () => {
+  it("returns a delegated schedule to the IPC caller", async () => {
     const wake = vi.fn(async () => "wake-here");
     const setWakeScheduleId = vi.fn();
     const create = vi.fn((input) => ({
@@ -3344,9 +3735,14 @@ describe("native administration shell commands", () => {
         runCount: 0,
       },
     }));
-    const caller = {
+    const worker = {
       processId: "task:shell",
       uid: IDENTITY.uid,
+      ownerUid: IDENTITY.uid,
+    };
+    const caller = {
+      processId: "proc:personal-chat",
+      uid: 2000,
       ownerUid: IDENTITY.uid,
     };
 
@@ -3357,14 +3753,21 @@ describe("native administration shell commands", () => {
       makeContext({
         capabilities: ["sched.add", "proc.send"],
         procs: {
-          get: vi.fn((pid: string) => pid === caller.processId ? caller : null),
+          get: vi.fn((pid: string) => [worker, caller].find((proc) => proc.processId === pid) ?? null),
           getOwnerUid: vi.fn(() => IDENTITY.uid),
         } as Partial<KernelContext["procs"]>,
+        ipcCalls: {
+          findPendingByTargetRun: vi.fn(() => ({
+            sourcePid: caller.processId,
+            sourceRunId: null,
+          })),
+        } as unknown as KernelContext["ipcCalls"],
         schedules: {
           create,
           setWakeScheduleId,
         } as unknown as KernelContext["schedules"],
         scheduleScheduleWake: wake,
+        processRunId: "run-worker",
       }),
     );
 
@@ -3375,7 +3778,7 @@ describe("native administration shell commands", () => {
       expression: { kind: "every", everyMs: 120_000 },
       target: {
         kind: "process.event",
-        pid: "task:shell",
+        pid: "proc:personal-chat",
         message: "Send a niche animal fact.",
       },
     }));

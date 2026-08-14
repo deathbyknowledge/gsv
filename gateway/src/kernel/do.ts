@@ -61,7 +61,7 @@ import {
 import { ShellSessionStore, type ShellSessionStatus } from "./shell-sessions";
 import { ProcessRegistry, type ProcessState } from "./processes";
 import { AdapterStore } from "./adapter-store";
-import { RunRouteStore, type AdapterRunRoute, type RunRoute } from "./run-routes";
+import { RunRouteStore, type AdapterRunRoute } from "./run-routes";
 import { OAuthStore } from "./oauth-store";
 import { McpServerStore } from "./mcp-store";
 import { MailboxStore } from "./mailbox-store";
@@ -111,6 +111,7 @@ import {
   handleAdapterSend,
   deliverAdapterReply,
   normalizeAdapterHilRequest,
+  prefixAdapterDmProcessReply,
   renderAdapterHilPrompt,
   setAdapterActivityForKernel,
 } from "./adapter-handlers";
@@ -121,8 +122,8 @@ import type {
 } from "../protocol/process-frames";
 import { isRepoPublic } from "./repo-visibility";
 import { canReadRepo, canWriteRepo } from "./repo";
-import { handleProcSpawn } from "./proc-handlers";
-import { ensurePersonalAgent } from "./agents";
+import { forwardToProcess, handleProcSpawn } from "./proc-handlers";
+import { ensurePersonalController } from "./personal-controller";
 import {
   acceptManagedInboundMail as acceptKernelManagedInboundMail,
   completeManagedInboundMail as completeKernelManagedInboundMail,
@@ -152,6 +153,11 @@ const MAX_PROCESS_REQUEST_CANCELLATIONS = 1024;
 const MAX_REQUEST_CANCEL_REASON_LENGTH = 512;
 const MAX_ONE_SHOT_SCHEDULE_DELIVERY_ATTEMPTS = 10;
 const MAX_ADAPTER_SIGNAL_DELIVERY_ATTEMPTS = 10;
+
+type IpcCallTimeout = {
+  callId: string;
+  terminateTargetOnTimeout?: boolean;
+};
 
 type AdapterSignalDeliveryOutcome =
   | { state: "delivered" }
@@ -869,13 +875,31 @@ export class Kernel extends Host<Env> {
 
     if (!isUserProcessSignal(frame.signal)) return;
 
-    const isHilRequest = frame.signal === "proc.run.hil.requested";
-    const route = runId ? this.runRoutes.get(runId) : null;
+    let route = runId ? this.runRoutes.get(runId) : null;
 
     // Client-facing process signals route by the owning human (owner_uid), not the
     // run-as identity (which may be the personal agent account).
-    if (isHilRequest || !route) {
-      this.broadcastToUserUid(ownerUid, frame.signal, frame.payload);
+    this.broadcastToUserUid(ownerUid, frame.signal, frame.payload);
+
+    if (frame.signal === "proc.run.finished") {
+      const process = this.procs.get(processId);
+      if (
+        process?.state === "idle"
+        && process.activeRunId === null
+        && process.queuedCount === 0
+      ) {
+        this.adapters.surfaceRoutes.clearLegacyForProcess(processId);
+      }
+    }
+    if (
+      !route
+      && runId
+      && (
+        frame.signal === "proc.run.hil.requested"
+        || frame.signal === "proc.run.finished"
+      )
+    ) {
+      route = this.materializePersonalAdapterFallback(processId, runId, ownerUid);
     }
     if (!runId || !route) {
       return;
@@ -887,9 +911,6 @@ export class Kernel extends Host<Env> {
     }
 
     if (route.kind === "connection") {
-      if (!isHilRequest) {
-        this.deliverSignalToConnection(route, frame, ownerUid);
-      }
       if (frame.signal === "proc.run.finished") {
         this.runRoutes.delete(runId);
       }
@@ -908,6 +929,37 @@ export class Kernel extends Host<Env> {
       return;
     }
     await this.deliverSignalToAdapter(route, frame);
+  }
+
+  private materializePersonalAdapterFallback(
+    processId: string,
+    runId: string,
+    ownerUid: number,
+  ): AdapterRunRoute | null {
+    const process = this.procs.get(processId);
+    if (!process?.isPersonalController || process.ownerUid !== ownerUid) {
+      return null;
+    }
+    const preferred = this.adapters.privateDestinations.get(ownerUid);
+    if (!preferred) {
+      return null;
+    }
+    const ctx = this.buildProcessContext(processId, runId);
+    if (!ctx) {
+      return null;
+    }
+    try {
+      assertAdapterMessageDestinationAccess(preferred.destination, ownerUid, ctx);
+    } catch {
+      this.adapters.privateDestinations.clearIfMatches(ownerUid, preferred.destination);
+      return null;
+    }
+    return this.runRoutes.setAdapterRoute({
+      runId,
+      processId,
+      uid: ownerUid,
+      destination: preferred.destination,
+    });
   }
 
   private async attemptAdapterSignalDelivery(
@@ -1253,6 +1305,9 @@ export class Kernel extends Host<Env> {
     const response = {
       text: typeof payload.text === "string" ? payload.text : null,
       usage: payload.usage ?? null,
+      ...(Array.isArray(payload.media) && payload.media.length > 0
+        ? { media: payload.media }
+        : {}),
     };
     const status = typeof payload.status === "string" ? payload.status : "ok";
     const reason = typeof payload.reason === "string" ? payload.reason : null;
@@ -1330,20 +1385,6 @@ export class Kernel extends Host<Env> {
         ...(call.error ? { error: call.error } : {}),
       },
     });
-  }
-
-  private deliverSignalToConnection(
-    route: Extract<RunRoute, { kind: "connection" }>,
-    frame: SignalFrame,
-    uid: number,
-  ): void {
-    const conn = this.connections.get(route.connectionId);
-    if (!conn) {
-      this.broadcastToUserUid(uid, frame.signal, frame.payload);
-      return;
-    }
-
-    conn.send(JSON.stringify(frame));
   }
 
   private async deliverSignalToAdapter(
@@ -1461,6 +1502,7 @@ export class Kernel extends Host<Env> {
       assertAdapterMessageDestinationAccess(route.destination, route.uid, ctx);
     } catch (error) {
       await cancelBinaryBody(body, error);
+      ctx.adapters.privateDestinations.clearIfMatches(route.uid, route.destination);
       // Revocation is a permanent delivery outcome, not a transport outage.
       // A HIL signal was already broadcast to any connected GSV client, and a
       // terminal result must not retry forever after the user removes access.
@@ -1477,6 +1519,12 @@ export class Kernel extends Host<Env> {
 
     const result = await deliverAdapterReply(route.destination, route.uid, {
       ...message,
+      text: prefixAdapterDmProcessReply(
+        message.text,
+        route.processId,
+        route.destination,
+        ctx,
+      ),
       replyToId: message.replyToId ?? route.replyToId,
     }, ctx, body);
     if (!result.ok) {
@@ -1737,6 +1785,7 @@ export class Kernel extends Host<Env> {
       requestSignal: options.requestSignal,
       callerOwnerUid: options.callerOwnerUid,
       serverVersion: SERVER_VERSION,
+      defer: (promise) => this.ctx.waitUntil(promise),
       broadcastToUserUid: this.broadcastToUserUid.bind(this),
       scheduleIpcCallTimeout: this.scheduleIpcCallTimeout.bind(this),
       failIpcCallsByTarget: this.failIpcCallsByTarget.bind(this),
@@ -2263,11 +2312,17 @@ export class Kernel extends Host<Env> {
     }
   }
 
-  private async scheduleIpcCallTimeout(callId: string, deadlineAt: number): Promise<string> {
+  private async scheduleIpcCallTimeout(
+    callId: string,
+    deadlineAt: number,
+    options?: { terminateTargetOnTimeout?: boolean },
+  ): Promise<string> {
     const sched = await this.schedule(
       new Date(Math.ceil(Math.max(Date.now() + 1_000, deadlineAt) / 1_000) * 1_000),
       "onIpcCallTimeout",
-      callId,
+      options?.terminateTargetOnTimeout
+        ? { callId, terminateTargetOnTimeout: true } satisfies IpcCallTimeout
+        : callId,
     );
     return sched.id;
   }
@@ -2533,6 +2588,15 @@ export class Kernel extends Host<Env> {
       clientId: clientId || undefined,
       clientPlatform: clientPlatform || undefined,
     } satisfies ConnectionState & { step: "connected"; identity: ConnectionIdentity };
+
+    if (
+      outcome.identity.role === "user"
+      && outcome.identity.process.uid >= 1000
+      && !ctx.auth.isPersonalAgentUid(outcome.identity.process.uid)
+    ) {
+      await ensurePersonalController(outcome.identity.process.uid, ctx);
+    }
+
     this.activateConnection(connection, newState);
 
     if (outcome.identity.role === "driver") {
@@ -2540,7 +2604,6 @@ export class Kernel extends Host<Env> {
     }
 
     if (outcome.identity.role === "user") {
-      await ensurePersonalAgent(ctx, outcome.identity.process);
       this.reconcileOwnedIdentities(outcome.identity.process.uid);
     }
 
@@ -2981,10 +3044,28 @@ export class Kernel extends Host<Env> {
     this.deliverToOrigin(expired.origin, timeoutFrame);
   }
 
-  async onIpcCallTimeout(callId: string): Promise<void> {
+  async onIpcCallTimeout(input: string | IpcCallTimeout): Promise<void> {
+    const callId = typeof input === "string" ? input : input.callId;
+    const call = this.ipcCalls.get(callId);
     const timedOut = this.ipcCalls.timeout(callId);
     if (!timedOut) return;
     this.queueIpcCallDelivery(callId);
+    if (typeof input !== "string" && input.terminateTargetOnTimeout && call) {
+      await this.terminateTimedOutIpcTarget(call).catch((error) => {
+        console.warn(`[Kernel] Failed to terminate timed-out delegated process ${call.targetPid}:`, error);
+      });
+    }
+  }
+
+  private async terminateTimedOutIpcTarget(call: IpcCallRecord): Promise<void> {
+    const ctx = this.buildProcessContext(call.sourcePid);
+    if (!ctx) return;
+    await forwardToProcess({
+      type: "req",
+      id: crypto.randomUUID(),
+      call: "proc.kill",
+      args: { pid: call.targetPid, archive: false },
+    } as RequestFrame, ctx);
   }
 
   async onIpcCallDelivery(callId: string): Promise<void> {

@@ -62,7 +62,7 @@ function surfaceTail(surface: ShellSurfaceId): string {
     return "GSV · CONSOLE";
   }
   if (surface === "runtime") {
-    return "GSV · RUNTIME";
+    return "GSV · WORK";
   }
   if (surface === "messengers") {
     return "GSV · MESSENGERS";
@@ -120,11 +120,11 @@ function settingsRouteLabel(route: SettingsRoute): string {
   if (route.detailLabel) {
     return route.detailLabel;
   }
-  return route.kind === "tasks" ? "TASKS" : shellSurfaceLabel(route.kind);
+  return route.kind === "tasks" ? "WORK" : shellSurfaceLabel(route.kind);
 }
 
 function settingsListRouteLabel(kind: ConsoleListKind): string {
-  return kind === "tasks" ? "TASKS" : shellSurfaceLabel(kind);
+  return kind === "tasks" ? "WORK" : shellSurfaceLabel(kind);
 }
 
 function settingsListDetailLabel(route: Extract<SettingsRoute, { view: "list" }>): string {
@@ -133,7 +133,7 @@ function settingsListDetailLabel(route: Extract<SettingsRoute, { view: "list" }>
     if (route.kind === "integrations") return "NEW INTEGRATION";
     if (route.kind === "messengers") return "NEW MESSENGER";
     if (route.kind === "library") return "NEW PAGE";
-    return "NEW TASK";
+    return "NEW WORK";
   }
   return route.detailLabel ?? route.detailId ?? settingsListRouteLabel(route.kind);
 }
@@ -169,7 +169,7 @@ function settingsRouteTail(route: SettingsRoute): string {
     return route.kind === "models" ? "GSV · MODELS" : "GSV · RUNTIME";
   }
   if (route.kind === "tasks") {
-    return "GSV · TASKS";
+    return "GSV · WORK";
   }
   return surfaceTail(route.kind);
 }
@@ -275,7 +275,7 @@ export function GsvConsole({
     } = {},
   ) => {
     if (kind === "tasks") {
-      return <RuntimePage {...options} onNewTask={onNewTask ?? onOpenChat} />;
+      return <RuntimePage {...options} onNewTask={onNewTask} />;
     }
     if (kind === "machines") {
       return <MachinesPage {...options} />;
@@ -488,7 +488,7 @@ export function GsvConsole({
             />
           )
         ) : activeSurface === "runtime" ? (
-          <RuntimePage key={surfaceDetailSeq} onNewTask={onNewTask ?? onOpenChat} onSelectionChange={setSurfaceDetail} />
+          <RuntimePage key={surfaceDetailSeq} onNewTask={onNewTask} onSelectionChange={setSurfaceDetail} />
         ) : activeSurface === "crew" ? (
           <ConsoleCrewPage onManageAgent={openAgent} onCreateAgent={openNewAgent} />
         ) : activeSurface === "agent" ? (

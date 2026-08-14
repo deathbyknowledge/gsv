@@ -99,8 +99,8 @@ export const LEGACY_MEMORY_CONTEXT_TEMPLATE_V2 =
   "\n" +
   "Do not store secrets, credentials, tokens, or raw private data in memory. Summarize only what is useful and appropriate to remember.\n";
 
-// Used by ensureAccountHomeLayout to seed context.d/15-memory.md for agent accounts.
-export const DEFAULT_MEMORY_CONTEXT_TEMPLATE =
+// The generated memory context immediately preceding the shared Personal wiki.
+export const LEGACY_MEMORY_CONTEXT_TEMPLATE_V3 =
   "# Memory\n" +
   "\n" +
   "GSV has two kinds of memory:\n" +
@@ -111,6 +111,28 @@ export const DEFAULT_MEMORY_CONTEXT_TEMPLATE =
   "Keep standing memory small. If an active commitment or unresolved task must remain visible, create `~/context.d/20-open-loops.md` and remove it once resolved.\n" +
   "\n" +
   "Read `skills show memory` for memory workflows.\n";
+
+// Used by ensureAccountHomeLayout to seed context.d/15-memory.md for worker accounts.
+export const DEFAULT_MEMORY_CONTEXT_TEMPLATE =
+  "# Memory\n" +
+  "\n" +
+  "All agents working for the same person share two human-owned kinds of memory:\n" +
+  "\n" +
+  "- The `personal` wiki stores durable, searchable information that is retrieved when needed.\n" +
+  "- The owner's `context.d/10-personal.md` is compact standing memory loaded into every owned agent's prompt.\n" +
+  "\n" +
+  "Do not create a private memory wiki or keep user commitments in this agent's context.\n" +
+  "\n" +
+  "Read `skills show memory` for memory workflows.\n";
+
+export const PERSONAL_STANDING_CONTEXT = `# Personal Context
+
+This is the user's shared standing memory. Every agent working for this user sees it.
+
+Keep only concise, explicit, stable facts or preferences that materially affect future interactions. Replace corrected facts instead of accumulating contradictions. Do not put open commitments, detailed history, inferred traits, secrets, or transient request details here; durable information that can be retrieved when needed belongs in the Personal wiki.
+
+No standing facts or preferences recorded yet.
+`;
 
 // Used by ensureAccountHomeLayout only to delete the exact generated
 // context.d/20-open-loops.md file.

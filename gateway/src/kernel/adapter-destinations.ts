@@ -5,6 +5,7 @@ import type {
 } from "@humansandmachines/gsv/protocol";
 import type { KernelContext } from "./context";
 import type { IdentityLinkRecord } from "./identity-links";
+import type { SurfaceRouteRecord } from "./surface-routes";
 import { resolveCallerOwnerUid } from "./context";
 import { stableOpaqueId } from "../shared/stable-id";
 
@@ -93,7 +94,7 @@ export function assertAdapterMessageDestinationAccess(
 
 export async function listVisibleAdapterMessageDestinations(
   ctx: KernelContext,
-  options: { includeOffline?: boolean } = {},
+  options: { includeOffline?: boolean; includeUnavailable?: boolean } = {},
 ): Promise<VisibleAdapterMessageDestination[]> {
   if (!ctx.identity || ctx.identity.role !== "user") {
     return [];
@@ -109,7 +110,7 @@ export async function listVisibleAdapterMessageDestinations(
     if (!options.includeOffline && !online) {
       return;
     }
-    if (!adapterSendServiceAvailable(ctx, adapter)) {
+    if (!options.includeUnavailable && !adapterSendServiceAvailable(ctx, adapter)) {
       return;
     }
     const destination = normalizeAdapterMessageDestination({
@@ -122,7 +123,7 @@ export async function listVisibleAdapterMessageDestinations(
     const key = destinationKey(destination);
     candidateMap.set(key, {
       id: "",
-      label: `${adapterDisplayName(adapter)} ${surfaceLabel(destination.surface)}`,
+      label: adapterMessageDestinationLabel(destination),
       online,
       destination,
     });
@@ -159,7 +160,7 @@ export async function listVisibleAdapterMessageDestinations(
 export async function resolveVisibleAdapterMessageDestination(
   query: string,
   ctx: KernelContext,
-  options: { includeOffline?: boolean } = {},
+  options: { includeOffline?: boolean; includeUnavailable?: boolean } = {},
 ): Promise<VisibleAdapterMessageDestination> {
   const needle = query.trim().toLowerCase();
   if (!needle) {
@@ -188,6 +189,122 @@ export async function resolveVisibleAdapterMessageDestination(
   );
 }
 
+export function updateAdapterMessageDestinationRoute(
+  destination: AdapterMessageDestination,
+  pid: string | null,
+  ctx: KernelContext,
+): SurfaceRouteRecord | null {
+  const normalized = normalizeAdapterMessageDestination(destination);
+  const ownerUid = resolveCallerOwnerUid(ctx);
+  assertAdapterMessageDestinationAccess(normalized, ownerUid, ctx);
+  const key = adapterMessageDestinationRouteKey(normalized);
+  const existing = ctx.adapters.surfaceRoutes.get(key);
+  if (existing && existing.uid !== ownerUid) {
+    throw new Error("Adapter route ownership does not match the linked identity");
+  }
+  if (!pid) {
+    if (normalized.surface.kind === "dm") {
+      throw new Error("Use /home in the private DM to return to personal intelligence");
+    }
+    if (existing) ctx.adapters.surfaceRoutes.clearRoute(key);
+    return null;
+  }
+
+  const process = ctx.procs.get(pid);
+  if (!process || process.ownerUid !== ownerUid) {
+    throw new Error("Process not found");
+  }
+  if (!process.interactive) {
+    throw new Error("Adapter destinations can only route to interactive processes");
+  }
+
+  if (normalized.surface.kind === "dm") {
+    return setPrivateDmWorkRoute(normalized, process, existing, ownerUid, ctx);
+  }
+
+  return ctx.adapters.surfaceRoutes.setRoute({
+    ...key,
+    uid: ownerUid,
+    pid: process.processId,
+    mode: "surface",
+    updatedByUid: ctx.identity!.process.uid,
+  });
+}
+
+function setPrivateDmWorkRoute(
+  destination: AdapterMessageDestination,
+  target: NonNullable<ReturnType<KernelContext["procs"]["get"]>>,
+  existing: SurfaceRouteRecord | null,
+  ownerUid: number,
+  ctx: KernelContext,
+): SurfaceRouteRecord {
+  if (target.isPersonalController) {
+    throw new Error("A private DM direct line must target a non-personal work process");
+  }
+  const callerPid = ctx.processId;
+  const runId = ctx.processRunId;
+  const controller = ctx.procs.getPersonalController(ownerUid);
+  if (
+    !callerPid
+    || !runId
+    || controller?.processId !== callerPid
+    || !controller.isPersonalController
+    || controller.activeRunId !== runId
+  ) {
+    throw new Error("Only the personal intelligence can open a private DM direct line");
+  }
+
+  const runRoute = ctx.runRoutes.get(runId);
+  if (
+    runRoute?.kind !== "adapter"
+    || runRoute.processId !== callerPid
+    || runRoute.uid !== ownerUid
+    || !runRoute.replyToId
+    || !sameAdapterMessageDestination(runRoute.destination, destination)
+  ) {
+    throw new Error("A private DM direct line requires the exact conversation that started this run");
+  }
+
+  const latest = ctx.adapters.privateDestinations.get(ownerUid);
+  if (
+    !latest
+    || latest.messageId !== runRoute.replyToId
+    || !sameAdapterMessageDestination(latest.destination, destination)
+    || !ctx.adapters.ingressReceipts.isLatestPrivateMessage(destination, runRoute.replyToId)
+  ) {
+    throw new Error("The private conversation changed before the direct line could be opened");
+  }
+
+  if (existing?.mode === "work" && existing.pid === target.processId) {
+    return existing;
+  }
+  if (existing) {
+    throw new Error("The private conversation selection changed before the direct line could be opened");
+  }
+
+  return ctx.adapters.surfaceRoutes.setRoute({
+    ...adapterMessageDestinationRouteKey(destination),
+    uid: ownerUid,
+    pid: target.processId,
+    mode: "work",
+    updatedByUid: ctx.identity!.process.uid,
+  });
+}
+
+function sameAdapterMessageDestination(
+  left: AdapterMessageDestination,
+  right: AdapterMessageDestination,
+): boolean {
+  const normalizedLeft = normalizeAdapterMessageDestination(left);
+  const normalizedRight = normalizeAdapterMessageDestination(right);
+  return normalizedLeft.adapter === normalizedRight.adapter
+    && normalizedLeft.accountId === normalizedRight.accountId
+    && normalizedLeft.actorId === normalizedRight.actorId
+    && normalizedLeft.surface.kind === normalizedRight.surface.kind
+    && normalizedLeft.surface.id === normalizedRight.surface.id
+    && (normalizedLeft.surface.threadId ?? "") === (normalizedRight.surface.threadId ?? "");
+}
+
 export async function adapterMessageDestinationId(
   destination: AdapterMessageDestination,
   ownerUid: number,
@@ -202,6 +319,13 @@ export async function adapterMessageDestinationId(
     normalized.surface.id,
     normalized.surface.threadId ?? null,
   ]);
+}
+
+export function adapterMessageDestinationLabel(
+  destination: AdapterMessageDestination,
+): string {
+  const normalized = normalizeAdapterMessageDestination(destination);
+  return `${adapterDisplayName(normalized.adapter)} ${surfaceLabel(normalized.surface)}`;
 }
 
 export function identityLinkAllowsSurface(
@@ -260,6 +384,24 @@ function destinationKey(destination: AdapterMessageDestination): string {
     destination.surface.id,
     destination.surface.threadId ?? "",
   ].join("\0");
+}
+
+export function adapterMessageDestinationRouteKey(destination: AdapterMessageDestination): {
+  adapter: string;
+  accountId: string;
+  actorId: string;
+  surfaceKind: AdapterSurfaceKind;
+  surfaceId: string;
+  threadId?: string;
+} {
+  return {
+    adapter: destination.adapter,
+    accountId: destination.accountId,
+    actorId: destination.actorId,
+    surfaceKind: destination.surface.kind,
+    surfaceId: destination.surface.id,
+    ...(destination.surface.threadId ? { threadId: destination.surface.threadId } : {}),
+  };
 }
 
 function adapterSendServiceAvailable(ctx: KernelContext, adapter: string): boolean {
