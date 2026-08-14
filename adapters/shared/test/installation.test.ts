@@ -51,11 +51,64 @@ describe("adapter installation identity", () => {
     )).toThrow("Adapter account identity mismatch");
   });
 
+  it("keeps legacy construction while rejecting malformed scoped identities", () => {
+    expect(adapterAccountDurableObjectName(
+      { installationId: "singleton" },
+      "account:inst_first:default",
+    )).toBe("account:inst_first:default");
+    expect(() => parseAdapterAccountDurableObjectName("account:default"))
+      .toThrow("name is invalid");
+    expect(() => parseAdapterAccountDurableObjectName("account:singleton:default"))
+      .toThrow("name is invalid");
+    expect(() => parseAdapterAccountDurableObjectName("account:inst_first:"))
+      .toThrow("name is invalid");
+    expect(() => parseAdapterAccountDurableObjectName("account:inst_first:%"))
+      .toThrow("name is invalid");
+    expect(() => parseAdapterAccountDurableObjectName(
+      "account:inst_first:%64efault",
+    )).toThrow("name is invalid");
+  });
+
+  it("recovers a reserved standalone name only from matching legacy state", () => {
+    const name = "account:legacy:raw";
+    expect(resolveAdapterAccountDurableObjectIdentity(name, {
+      accountId: name,
+    })).toEqual({
+      installationId: "singleton",
+      accountId: name,
+    });
+    expect(resolveAdapterAccountDurableObjectIdentity(name, {
+      installationId: "singleton",
+      accountId: name,
+    })).toEqual({
+      installationId: "singleton",
+      accountId: name,
+    });
+    const malformedName = "account:singleton:raw";
+    expect(resolveAdapterAccountDurableObjectIdentity(malformedName, {
+      accountId: malformedName,
+    })).toEqual({
+      installationId: "singleton",
+      accountId: malformedName,
+    });
+    expect(() => resolveAdapterAccountDurableObjectIdentity(malformedName, {}))
+      .toThrow("name is invalid");
+    expect(() => resolveAdapterAccountDurableObjectIdentity(malformedName, {
+      accountId: "other",
+    })).toThrow("name is invalid");
+    expect(() => resolveAdapterAccountDurableObjectIdentity(malformedName, {
+      installationId: "inst_first",
+      accountId: malformedName,
+    })).toThrow("name is invalid");
+  });
+
   it("rejects names Cloudflare cannot expose through ctx.id.name", () => {
     expect(() => adapterAccountDurableObjectName(
       { installationId: "inst_first" },
       "a".repeat(1_025),
     )).toThrow("Adapter account Durable Object name is too long");
+    expect(() => parseAdapterAccountDurableObjectName("a".repeat(1_025)))
+      .toThrow("Adapter account Durable Object name is too long");
   });
 
   it("recovers persisted identity when an opaque lookup omits the DO name", () => {

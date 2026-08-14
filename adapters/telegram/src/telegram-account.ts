@@ -454,6 +454,7 @@ export class TelegramAccount extends DurableObject<Env> {
     const accountIdentity = assertAdapterAccountDurableObjectIdentity(
       this.ctx.id.name,
       normalizedAccountId,
+      this.state,
     );
     if (
       this.state.installationId

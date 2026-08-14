@@ -15,6 +15,18 @@ import {
   adapterAccountDurableObjectName,
   parseAdapterInstallationContext,
 } from "../../shared/src/installation";
+import {
+  resolveAdapterActivityRpcArgs,
+  resolveAdapterConnectRpcArgs,
+  resolveAdapterDisconnectRpcArgs,
+  resolveAdapterSendRpcArgs,
+  resolveAdapterStatusRpcArgs,
+  type AdapterActivityRpcArgs,
+  type AdapterConnectRpcArgs,
+  type AdapterDisconnectRpcArgs,
+  type AdapterSendRpcArgs,
+  type AdapterStatusRpcArgs,
+} from "../../shared/src/rpc-compat";
 import type {
   AdapterAccountStatus,
   AdapterActivity,
@@ -50,12 +62,30 @@ const DISCORD_API = "https://discord.com/api/v10";
 export class DiscordChannel extends WorkerEntrypoint<Env> implements AdapterWorkerInterface {
   readonly adapterId = "discord";
 
+  async adapterConnect(
+    accountId: string,
+    config?: Record<string, unknown>,
+  ): Promise<AdapterConnectResult>;
+  async adapterConnect(
+    installation: AdapterInstallationContext,
+    accountId: string,
+    config?: Record<string, unknown>,
+  ): Promise<AdapterConnectResult>;
+  async adapterConnect(...args: AdapterConnectRpcArgs): Promise<AdapterConnectResult> {
+    const resolved = resolveAdapterConnectRpcArgs(args);
+    return await this.#adapterConnectForInstallation(
+      resolved.installation,
+      resolved.accountId,
+      resolved.config,
+    );
+  }
+
   /**
    * Canonical adapter lifecycle entrypoint used by gateway.
    */
   // DONT RENAME TO connect() because Cloudflare service bindings already expose
   // a built-in socket connect() method, which hijacks adapter RPC calls.
-  async adapterConnect(
+  async #adapterConnectForInstallation(
     installation: AdapterInstallationContext,
     accountId: string,
     config: Record<string, unknown> = {},
@@ -87,10 +117,25 @@ export class DiscordChannel extends WorkerEntrypoint<Env> implements AdapterWork
     };
   }
 
+  async adapterDisconnect(
+    accountId: string,
+  ): Promise<AdapterDisconnectResult>;
+  async adapterDisconnect(
+    installation: AdapterInstallationContext,
+    accountId: string,
+  ): Promise<AdapterDisconnectResult>;
+  async adapterDisconnect(...args: AdapterDisconnectRpcArgs): Promise<AdapterDisconnectResult> {
+    const resolved = resolveAdapterDisconnectRpcArgs(args);
+    return await this.#adapterDisconnectForInstallation(
+      resolved.installation,
+      resolved.accountId,
+    );
+  }
+
   /**
    * Canonical adapter lifecycle entrypoint used by gateway.
    */
-  async adapterDisconnect(
+  async #adapterDisconnectForInstallation(
     installation: AdapterInstallationContext,
     accountId: string,
   ): Promise<AdapterDisconnectResult> {
@@ -107,10 +152,25 @@ export class DiscordChannel extends WorkerEntrypoint<Env> implements AdapterWork
     }
   }
 
+  async adapterStatus(
+    accountId?: string,
+  ): Promise<AdapterAccountStatus[]>;
+  async adapterStatus(
+    installation: AdapterInstallationContext,
+    accountId?: string,
+  ): Promise<AdapterAccountStatus[]>;
+  async adapterStatus(...args: AdapterStatusRpcArgs): Promise<AdapterAccountStatus[]> {
+    const resolved = resolveAdapterStatusRpcArgs(args);
+    return await this.#adapterStatusForInstallation(
+      resolved.installation,
+      resolved.accountId,
+    );
+  }
+
   /**
    * Get status of Discord connection(s).
    */
-  async adapterStatus(
+  async #adapterStatusForInstallation(
     installation: AdapterInstallationContext,
     accountId?: string,
   ): Promise<AdapterAccountStatus[]> {
@@ -124,10 +184,31 @@ export class DiscordChannel extends WorkerEntrypoint<Env> implements AdapterWork
     return [];
   }
 
+  async adapterSend(
+    accountId: string,
+    message: AdapterOutboundMessage,
+    binaryBody?: BinaryBody,
+  ): Promise<AdapterSendResult>;
+  async adapterSend(
+    installation: AdapterInstallationContext,
+    accountId: string,
+    message: AdapterOutboundMessage,
+    binaryBody?: BinaryBody,
+  ): Promise<AdapterSendResult>;
+  async adapterSend(...args: AdapterSendRpcArgs): Promise<AdapterSendResult> {
+    const resolved = await resolveAdapterSendRpcArgs(args);
+    return await this.#adapterSendForInstallation(
+      resolved.installation,
+      resolved.accountId,
+      resolved.message,
+      resolved.body,
+    );
+  }
+
   /**
    * Send a message to a Discord channel.
    */
-  async adapterSend(
+  async #adapterSendForInstallation(
     installation: AdapterInstallationContext,
     accountId: string,
     message: AdapterOutboundMessage,
@@ -148,6 +229,29 @@ export class DiscordChannel extends WorkerEntrypoint<Env> implements AdapterWork
   }
 
   async adapterSetActivity(
+    accountId: string,
+    surface: AdapterSurface,
+    activity: AdapterActivity,
+  ): Promise<{ ok: true } | { ok: false; error: string }>;
+  async adapterSetActivity(
+    installation: AdapterInstallationContext,
+    accountId: string,
+    surface: AdapterSurface,
+    activity: AdapterActivity,
+  ): Promise<{ ok: true } | { ok: false; error: string }>;
+  async adapterSetActivity(
+    ...args: AdapterActivityRpcArgs
+  ): Promise<{ ok: true } | { ok: false; error: string }> {
+    const resolved = resolveAdapterActivityRpcArgs(args);
+    return await this.#adapterSetActivityForInstallation(
+      resolved.installation,
+      resolved.accountId,
+      resolved.surface,
+      resolved.activity,
+    );
+  }
+
+  async #adapterSetActivityForInstallation(
     installation: AdapterInstallationContext,
     accountId: string,
     surface: AdapterSurface,

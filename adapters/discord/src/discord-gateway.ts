@@ -154,6 +154,12 @@ export class DiscordGateway extends DurableObject<Env> {
       ? assertAdapterAccountDurableObjectIdentity(
           this.ctx.id.name,
           accountId,
+          {
+            installationId: this.ctx.id.name
+              ? undefined
+              : LEGACY_STANDALONE_ADAPTER_INSTALLATION_ID,
+            accountId: this.state.accountId,
+          },
         ).accountId
       : undefined;
     if (this.ws && this.state.connected) {

@@ -43,6 +43,11 @@ type RememberLidPnMappings = (
   mappings: BaileysEventMap["messaging-history.set"]["lidPnMappings"],
 ) => Promise<void>;
 
+type EnsureAccount = (
+  this: WhatsAppAccount,
+  accountId: string,
+) => Promise<void>;
+
 const accountMethod = <T>(name: string): T =>
   Reflect.get(WhatsAppAccount.prototype, name) as T;
 
@@ -400,5 +405,31 @@ describe("WhatsApp account session identity", () => {
     await rememberMappings.call(account, 5, 7, socket, [currentMapping]);
     expect(bindLidPnMappings).toHaveBeenCalledOnce();
     expect(bindLidPnMappings).toHaveBeenCalledWith([currentMapping]);
+  });
+});
+
+describe("WhatsApp account Durable Object identity", () => {
+  it("reuses a reserved standalone name only when existing state proves it", async () => {
+    const accountId = "account:singleton:legacy";
+    const ensureAccount = accountMethod<EnsureAccount>("ensureAccount");
+    const persisted = vi.fn(async () => undefined);
+    const existing = fakeAccount({
+      ctx: { id: { name: accountId } },
+      state: { ...defaultWhatsAppAccountState(), accountId },
+      persistStateAndSchedule: persisted,
+    });
+
+    await expect(ensureAccount.call(existing, accountId)).resolves.toBeUndefined();
+    expect(persisted).not.toHaveBeenCalled();
+
+    const empty = fakeAccount({
+      ctx: { id: { name: accountId } },
+      state: defaultWhatsAppAccountState(),
+      persistStateAndSchedule: persisted,
+    });
+    await expect(ensureAccount.call(empty, accountId))
+      .rejects.toThrow("name is invalid");
+    expect(accountField<{ accountId: string }>(empty, "state").accountId).toBe("");
+    expect(persisted).not.toHaveBeenCalled();
   });
 });

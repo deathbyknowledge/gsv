@@ -25,6 +25,18 @@ import type {
   ManagedInferenceService,
 } from "@humansandmachines/gsv/protocol";
 import { SINGLETON_INSTALLATION_ID } from "../../src/installation/identity";
+import {
+  resolveAdapterActivityRpcArgs,
+  resolveAdapterConnectRpcArgs,
+  resolveAdapterDisconnectRpcArgs,
+  resolveAdapterSendRpcArgs,
+  resolveAdapterStatusRpcArgs,
+  type AdapterActivityRpcArgs,
+  type AdapterConnectRpcArgs,
+  type AdapterDisconnectRpcArgs,
+  type AdapterSendRpcArgs,
+  type AdapterStatusRpcArgs,
+} from "../../../adapters/shared/src/rpc-compat";
 
 type ImportRequest = {
   remoteUrl?: unknown;
@@ -319,6 +331,26 @@ export default class TestDependencies
   }
 
   async adapterConnect(
+    accountId: string,
+    config?: Record<string, unknown>,
+  ): Promise<{ ok: true; connected: true; authenticated: true; message: string }>;
+  async adapterConnect(
+    installation: AdapterInstallationContext,
+    accountId: string,
+    config?: Record<string, unknown>,
+  ): Promise<{ ok: true; connected: true; authenticated: true; message: string }>;
+  async adapterConnect(
+    ...args: AdapterConnectRpcArgs
+  ): Promise<{ ok: true; connected: true; authenticated: true; message: string }> {
+    const resolved = resolveAdapterConnectRpcArgs(args);
+    return await this.#adapterConnectForInstallation(
+      resolved.installation,
+      resolved.accountId,
+      resolved.config,
+    );
+  }
+
+  async #adapterConnectForInstallation(
     _installation: AdapterInstallationContext,
     _accountId: string,
     _config?: Record<string, unknown>,
@@ -332,6 +364,23 @@ export default class TestDependencies
   }
 
   async adapterDisconnect(
+    accountId: string,
+  ): Promise<{ ok: true; message: string }>;
+  async adapterDisconnect(
+    installation: AdapterInstallationContext,
+    accountId: string,
+  ): Promise<{ ok: true; message: string }>;
+  async adapterDisconnect(
+    ...args: AdapterDisconnectRpcArgs
+  ): Promise<{ ok: true; message: string }> {
+    const resolved = resolveAdapterDisconnectRpcArgs(args);
+    return await this.#adapterDisconnectForInstallation(
+      resolved.installation,
+      resolved.accountId,
+    );
+  }
+
+  async #adapterDisconnectForInstallation(
     _installation: AdapterInstallationContext,
     _accountId: string,
   ): Promise<{ ok: true; message: string }> {
@@ -339,6 +388,29 @@ export default class TestDependencies
   }
 
   async adapterSend(
+    accountId: string,
+    message: AdapterOutboundMessage,
+    body?: BinaryBody,
+  ): Promise<{ ok: true; messageId: string }>;
+  async adapterSend(
+    installation: AdapterInstallationContext,
+    accountId: string,
+    message: AdapterOutboundMessage,
+    body?: BinaryBody,
+  ): Promise<{ ok: true; messageId: string }>;
+  async adapterSend(
+    ...args: AdapterSendRpcArgs
+  ): Promise<{ ok: true; messageId: string }> {
+    const resolved = await resolveAdapterSendRpcArgs(args);
+    return await this.#adapterSendForInstallation(
+      resolved.installation,
+      resolved.accountId,
+      resolved.message,
+      resolved.body,
+    );
+  }
+
+  async #adapterSendForInstallation(
     installation: AdapterInstallationContext,
     accountId: string,
     message: AdapterOutboundMessage,
@@ -356,6 +428,29 @@ export default class TestDependencies
   }
 
   async adapterSetActivity(
+    accountId: string,
+    surface: AdapterSurface,
+    activity: AdapterActivity,
+  ): Promise<{ ok: true }>;
+  async adapterSetActivity(
+    installation: AdapterInstallationContext,
+    accountId: string,
+    surface: AdapterSurface,
+    activity: AdapterActivity,
+  ): Promise<{ ok: true }>;
+  async adapterSetActivity(
+    ...args: AdapterActivityRpcArgs
+  ): Promise<{ ok: true }> {
+    const resolved = resolveAdapterActivityRpcArgs(args);
+    return await this.#adapterSetActivityForInstallation(
+      resolved.installation,
+      resolved.accountId,
+      resolved.surface,
+      resolved.activity,
+    );
+  }
+
+  async #adapterSetActivityForInstallation(
     _installation: AdapterInstallationContext,
     _accountId: string,
     _surface: AdapterSurface,
@@ -365,6 +460,21 @@ export default class TestDependencies
   }
 
   async adapterStatus(
+    accountId?: string,
+  ): Promise<AdapterAccountStatus[]>;
+  async adapterStatus(
+    installation: AdapterInstallationContext,
+    accountId?: string,
+  ): Promise<AdapterAccountStatus[]>;
+  async adapterStatus(...args: AdapterStatusRpcArgs): Promise<AdapterAccountStatus[]> {
+    const resolved = resolveAdapterStatusRpcArgs(args);
+    return await this.#adapterStatusForInstallation(
+      resolved.installation,
+      resolved.accountId,
+    );
+  }
+
+  async #adapterStatusForInstallation(
     _installation: AdapterInstallationContext,
     _accountId?: string,
   ): Promise<AdapterAccountStatus[]> {

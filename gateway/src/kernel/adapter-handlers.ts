@@ -64,8 +64,33 @@ import {
   MAX_MESSAGE_MEDIA_PART_BYTES,
   MAX_MESSAGE_MEDIA_TOTAL_BYTES,
 } from "../shared/message-media-limits";
+import { SINGLETON_INSTALLATION_ID } from "../installation/identity";
 
-type AdapterServiceBinding = Fetcher & Partial<AdapterWorkerInterface>;
+type LegacyStandaloneAdapterService = {
+  adapterConnect(
+    accountId: string,
+    config?: Record<string, unknown>,
+  ): ReturnType<AdapterWorkerInterface["adapterConnect"]>;
+  adapterDisconnect(
+    accountId: string,
+  ): ReturnType<AdapterWorkerInterface["adapterDisconnect"]>;
+  adapterSend(
+    accountId: string,
+    message: AdapterOutboundMessage,
+    body?: BinaryBody,
+  ): ReturnType<AdapterWorkerInterface["adapterSend"]>;
+  adapterSetActivity(
+    accountId: string,
+    surface: AdapterSurface,
+    activity: AdapterActivity,
+  ): ReturnType<AdapterWorkerInterface["adapterSetActivity"]>;
+  adapterStatus(
+    accountId?: string,
+  ): ReturnType<AdapterWorkerInterface["adapterStatus"]>;
+};
+type AdapterServiceBinding = Fetcher
+  & Partial<AdapterWorkerInterface>
+  & Partial<LegacyStandaloneAdapterService>;
 type AdapterCommandResult = {
   handled: boolean;
   reply?: {
@@ -152,11 +177,7 @@ export async function handleAdapterConnect(
     }
     let connectResult: unknown;
     try {
-      connectResult = await service.adapterConnect(
-        adapterInstallationContext(ctx),
-        accountId,
-        args.config,
-      );
+      connectResult = await callAdapterConnect(service, ctx, accountId, args.config);
     } catch {
       logAdapterBoundaryFailure("error", "connect_worker_failed");
       return { ok: false, error: `Adapter connect failed: ${adapter}` };
@@ -228,10 +249,7 @@ export async function handleAdapterDisconnect(
   try {
     let result: unknown;
     try {
-      result = await service.adapterDisconnect(
-        adapterInstallationContext(ctx),
-        accountId,
-      );
+      result = await callAdapterDisconnect(service, ctx, accountId);
     } catch {
       logAdapterBoundaryFailure("error", "disconnect_worker_failed");
       return { ok: false, error: `Adapter disconnect failed: ${adapter}` };
@@ -440,12 +458,7 @@ async function deliverAdapterMessage(
 
   let result: unknown;
   try {
-    result = await service.adapterSend(
-      adapterInstallationContext(ctx),
-      accountId,
-      outbound,
-      body,
-    );
+    result = await callAdapterSend(service, ctx.installationId, accountId, outbound, body);
   } catch {
     return {
       ok: false,
@@ -594,10 +607,7 @@ export async function handleAdapterStatus(
     const refreshAccountIds = adapterStatusRefreshAccountIds(ctx, adapter, accountId);
     for (const refreshAccountId of refreshAccountIds) {
       try {
-        const statuses: unknown = await service.adapterStatus(
-          adapterInstallationContext(ctx),
-          refreshAccountId,
-        );
+        const statuses: unknown = await callAdapterStatus(service, ctx, refreshAccountId);
         if (!isAdapterWorkerStatusResult(statuses)) {
           logAdapterBoundaryFailure("error", "status_invalid_response");
           continue;
@@ -1518,8 +1528,9 @@ export async function setAdapterActivityForKernel(
   }
 
   try {
-    const result: unknown = await service.adapterSetActivity(
-      { installationId },
+    const result: unknown = await callAdapterSetActivity(
+      service,
+      installationId,
       accountId,
       surface,
       activity,
@@ -1547,10 +1558,7 @@ async function refreshAdapterStatus(
   }
 
   try {
-    const statuses: unknown = await service.adapterStatus(
-      adapterInstallationContext(ctx),
-      accountId,
-    );
+    const statuses: unknown = await callAdapterStatus(service, ctx, accountId);
     if (!isAdapterWorkerStatusResult(statuses)) {
       logAdapterBoundaryFailure("error", "status_invalid_response");
       return null;
@@ -1570,6 +1578,61 @@ function adapterInstallationContext(
   ctx: KernelContext,
 ): AdapterInstallationContext {
   return { installationId: ctx.installationId };
+}
+
+function callAdapterConnect(
+  service: AdapterServiceBinding,
+  ctx: KernelContext,
+  accountId: string,
+  config?: Record<string, unknown>,
+) {
+  return ctx.installationId === SINGLETON_INSTALLATION_ID
+    ? service.adapterConnect!(accountId, config)
+    : service.adapterConnect!(adapterInstallationContext(ctx), accountId, config);
+}
+
+function callAdapterDisconnect(
+  service: AdapterServiceBinding,
+  ctx: KernelContext,
+  accountId: string,
+) {
+  return ctx.installationId === SINGLETON_INSTALLATION_ID
+    ? service.adapterDisconnect!(accountId)
+    : service.adapterDisconnect!(adapterInstallationContext(ctx), accountId);
+}
+
+function callAdapterSend(
+  service: AdapterServiceBinding,
+  installationId: KernelContext["installationId"],
+  accountId: string,
+  message: AdapterOutboundMessage,
+  body?: BinaryBody,
+) {
+  return installationId === SINGLETON_INSTALLATION_ID
+    ? service.adapterSend!(accountId, message, body)
+    : service.adapterSend!({ installationId }, accountId, message, body);
+}
+
+function callAdapterSetActivity(
+  service: AdapterServiceBinding,
+  installationId: KernelContext["installationId"],
+  accountId: string,
+  surface: AdapterSurface,
+  activity: AdapterActivity,
+) {
+  return installationId === SINGLETON_INSTALLATION_ID
+    ? service.adapterSetActivity!(accountId, surface, activity)
+    : service.adapterSetActivity!({ installationId }, accountId, surface, activity);
+}
+
+function callAdapterStatus(
+  service: AdapterServiceBinding,
+  ctx: KernelContext,
+  accountId?: string,
+) {
+  return ctx.installationId === SINGLETON_INSTALLATION_ID
+    ? service.adapterStatus!(accountId)
+    : service.adapterStatus!(adapterInstallationContext(ctx), accountId);
 }
 
 function logAdapterBoundaryFailure(

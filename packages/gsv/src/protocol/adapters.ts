@@ -387,6 +387,7 @@ export type AdapterGatewayFrame =
 
 /** Gateway RPC surface consumed by adapter workers through a service binding. */
 export interface AdapterGatewayInterface<Frame = AdapterGatewayFrame> {
+  serviceFrame(frame: Frame): Promise<Frame | null>;
   serviceFrame(
     installation: AdapterInstallationContext,
     frame: Frame,
@@ -401,14 +402,26 @@ export interface AdapterWorkerInterface {
    * method name for socket connections and would bypass the adapter RPC.
    */
   adapterConnect(
+    accountId: string,
+    config?: Record<string, unknown>,
+  ): Promise<AdapterWorkerConnectResult>;
+  adapterConnect(
     installation: AdapterInstallationContext,
     accountId: string,
     config?: Record<string, unknown>,
   ): Promise<AdapterWorkerConnectResult>;
   adapterDisconnect(
+    accountId: string,
+  ): Promise<AdapterWorkerDisconnectResult>;
+  adapterDisconnect(
     installation: AdapterInstallationContext,
     accountId: string,
   ): Promise<AdapterWorkerDisconnectResult>;
+  adapterSend(
+    accountId: string,
+    message: AdapterOutboundMessage,
+    body?: BinaryBody,
+  ): Promise<AdapterWorkerSendResult>;
   adapterSend(
     installation: AdapterInstallationContext,
     accountId: string,
@@ -416,11 +429,19 @@ export interface AdapterWorkerInterface {
     body?: BinaryBody,
   ): Promise<AdapterWorkerSendResult>;
   adapterSetActivity(
+    accountId: string,
+    surface: AdapterSurface,
+    activity: AdapterActivity,
+  ): Promise<AdapterWorkerActivityResult>;
+  adapterSetActivity(
     installation: AdapterInstallationContext,
     accountId: string,
     surface: AdapterSurface,
     activity: AdapterActivity,
   ): Promise<AdapterWorkerActivityResult>;
+  adapterStatus(
+    accountId?: string,
+  ): Promise<AdapterAccountStatus[]>;
   adapterStatus(
     installation: AdapterInstallationContext,
     accountId?: string,

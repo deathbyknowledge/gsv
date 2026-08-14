@@ -13,6 +13,10 @@ import type {
   ManagedOutboundMailCompletion,
   ManagedOutboundMailReference,
 } from "@humansandmachines/gsv/protocol";
+import {
+  cancelBinaryBody,
+  isAdapterInstallationContext,
+} from "@humansandmachines/gsv/protocol";
 import type { Frame } from "./protocol/frames";
 import { buildOAuthClientMetadata } from "./oauth-http";
 import {
@@ -140,35 +144,38 @@ export class GatewayEntrypoint
   extends WorkerEntrypoint<Env & GatewayInstallationBindings>
   implements GatewayAdapterInterface, ManagedMailGatewayService
 {
-  async serviceFrame(
+  serviceFrame(frame: Frame): Promise<Frame | null>;
+  serviceFrame(
     installation: AdapterInstallationContext,
     frame: Frame,
+  ): Promise<Frame | null>;
+  async serviceFrame(
+    ...args:
+      | [frame: Frame]
+      | [installation: AdapterInstallationContext, frame: Frame]
   ): Promise<Frame | null> {
-    const body = "body" in frame ? frame.body : undefined;
+    const values = args as unknown[];
     try {
-      const installationId = resolveAdapterInstallationId(this.env, installation);
-      if (this.env.INSTALLATION_DIRECTORY) {
-        const gate = await managedInstallationWorkGate(this.env, installationId);
-        if (!gate.allowed) {
-          if (body && !body.stream.locked) {
-            await body.stream.cancel(gate.message).catch(() => {});
-          }
-          return frame.type === "req"
-            ? {
-                type: "res",
-                id: frame.id,
-                ok: false,
-                error: { code: gate.code, message: gate.message },
-              }
-            : null;
-        }
+      if (values.length === 1) {
+        return await routeAdapterServiceFrame(
+          this.env,
+          { installationId: SINGLETON_INSTALLATION_ID },
+          requireAdapterServiceFrame(values[0]),
+        );
       }
-      const kernel = await getKernelByInstallationId(this.env.KERNEL, installationId);
-      return await kernel.serviceFrame(frame);
+      if (values.length === 2 && isAdapterInstallationContext(values[0])) {
+        return await routeAdapterServiceFrame(
+          this.env,
+          values[0],
+          requireAdapterServiceFrame(values[1]),
+        );
+      }
+      throw new Error("Gateway serviceFrame RPC arguments are invalid");
     } catch (error) {
-      if (body && !body.stream.locked) {
-        await body.stream.cancel("Gateway service request failed").catch(() => {});
-      }
+      await Promise.all(
+        adapterServiceFrameBodyCandidates(values)
+          .map((body) => cancelBinaryBody(body, "Gateway service request failed")),
+      );
       console.error("[GatewayEntrypoint] serviceFrame failed:", error);
       return null;
     }
@@ -235,6 +242,98 @@ export class GatewayEntrypoint
     }
     const kernel = await getKernelByInstallationId(this.env.KERNEL, installationId);
     await kernel.completeManagedOutboundMail(completion);
+  }
+}
+
+async function routeAdapterServiceFrame(
+  bindings: Env & GatewayInstallationBindings,
+  installation: AdapterInstallationContext,
+  frame: Frame,
+): Promise<Frame | null> {
+  const body = binaryBodyCandidate((frame as { body?: unknown }).body);
+  try {
+    const installationId = resolveAdapterInstallationId(bindings, installation);
+    if (bindings.INSTALLATION_DIRECTORY) {
+      const gate = await managedInstallationWorkGate(bindings, installationId);
+      if (!gate.allowed) {
+        if (body && !body.stream.locked) {
+          await body.stream.cancel(gate.message).catch(() => {});
+        }
+        return frame.type === "req"
+          ? {
+              type: "res",
+              id: frame.id,
+              ok: false,
+              error: { code: gate.code, message: gate.message },
+            }
+          : null;
+      }
+    }
+    const kernel = await getKernelByInstallationId(bindings.KERNEL, installationId);
+    return await kernel.serviceFrame(frame);
+  } catch (error) {
+    if (body && !body.stream.locked) {
+      await body.stream.cancel("Gateway service request failed").catch(() => {});
+    }
+    console.error("[GatewayEntrypoint] serviceFrame failed:", error);
+    return null;
+  }
+}
+
+function requireAdapterServiceFrame(value: unknown): Frame {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error("Gateway serviceFrame frame is invalid");
+  }
+  const frame = value as Record<string, unknown>;
+  if (frame.body !== undefined && !binaryBodyCandidate(frame.body)) {
+    throw new Error("Gateway serviceFrame body is invalid");
+  }
+  if (frame.type === "req") {
+    if (
+      typeof frame.id !== "string"
+      || typeof frame.call !== "string"
+      || !("args" in frame)
+    ) {
+      throw new Error("Gateway serviceFrame frame is invalid");
+    }
+    return value as Frame;
+  }
+  if (frame.type === "res") {
+    if (typeof frame.id !== "string" || typeof frame.ok !== "boolean") {
+      throw new Error("Gateway serviceFrame frame is invalid");
+    }
+    return value as Frame;
+  }
+  if (frame.type === "sig" && typeof frame.signal === "string") {
+    return value as Frame;
+  }
+  throw new Error("Gateway serviceFrame frame is invalid");
+}
+
+function adapterServiceFrameBodyCandidates(values: unknown[]): BinaryBody[] {
+  const bodies = new Set<BinaryBody>();
+  for (const value of values) {
+    if (!value || typeof value !== "object" || Array.isArray(value)) continue;
+    try {
+      const body = binaryBodyCandidate((value as { body?: unknown }).body);
+      if (body) bodies.add(body);
+    } catch {
+      continue;
+    }
+  }
+  return [...bodies];
+}
+
+function binaryBodyCandidate(value: unknown): BinaryBody | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return undefined;
+  }
+  try {
+    return (value as { stream?: unknown }).stream instanceof ReadableStream
+      ? value as BinaryBody
+      : undefined;
+  } catch {
+    return undefined;
   }
 }
 

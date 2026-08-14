@@ -598,7 +598,16 @@ export class WhatsAppAccount extends DurableObject<Env> {
   private async ensureAccount(accountId: string): Promise<void> {
     const normalized = accountId.trim();
     if (!normalized) throw new Error("WhatsApp account ID is required");
-    assertAdapterAccountDurableObjectIdentity(this.ctx.id.name, normalized);
+    assertAdapterAccountDurableObjectIdentity(
+      this.ctx.id.name,
+      normalized,
+      {
+        installationId: this.ctx.id.name
+          ? undefined
+          : LEGACY_STANDALONE_ADAPTER_INSTALLATION_ID,
+        accountId: this.state.accountId,
+      },
+    );
     if (this.state.accountId && this.state.accountId !== normalized) {
       throw new Error("WhatsApp account ID mismatch");
     }

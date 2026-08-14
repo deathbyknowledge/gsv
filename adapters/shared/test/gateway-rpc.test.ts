@@ -30,12 +30,23 @@ function trackedBody(): {
 }
 
 function binding(
-  serviceFrame: (
+  scopedServiceFrame: (
     installation: AdapterInstallationContext,
     frame: GatewayFrame,
   ) => Promise<GatewayFrame | null>,
 ): AdapterGatewayBinding {
-  return { serviceFrame };
+  const serviceFrame = vi.fn(async (
+    installationOrFrame: AdapterInstallationContext | GatewayFrame,
+    scopedFrame?: GatewayFrame,
+  ) => scopedFrame
+    ? await scopedServiceFrame(
+        installationOrFrame as AdapterInstallationContext,
+        scopedFrame,
+      )
+    : null);
+  return {
+    serviceFrame: serviceFrame as AdapterGatewayBinding["serviceFrame"],
+  };
 }
 
 describe("callAdapterGateway", () => {
@@ -68,7 +79,57 @@ describe("callAdapterGateway", () => {
       { value: 1 },
       request.body,
     )).resolves.toEqual({ accepted: true });
+    expect(serviceFrame).toHaveBeenCalledOnce();
     expect(request.cancelled()).toBeUndefined();
+  });
+
+  it("uses the legacy one-argument Gateway RPC for standalone", async () => {
+    const serviceFrame = vi.fn(async (frame: GatewayFrame) => ({
+      type: "res" as const,
+      id: frame.type === "req" ? frame.id : "unexpected",
+      ok: true,
+      data: { accepted: true },
+    }));
+    const gateway: AdapterGatewayBinding = {
+      serviceFrame,
+    };
+
+    await expect(callAdapterGateway<{ accepted: boolean }>(
+      gateway,
+      { installationId: "singleton" },
+      "adapter.inbound",
+      { value: 1 },
+    )).resolves.toEqual({ accepted: true });
+    expect(serviceFrame).toHaveBeenCalledOnce();
+    expect(serviceFrame).toHaveBeenCalledWith(expect.objectContaining({
+      type: "req",
+      call: "adapter.inbound",
+    }));
+  });
+
+  it("uses the already-deployed two-argument Gateway RPC for managed installations", async () => {
+    const serviceFrame = vi.fn(async (
+      installation: AdapterInstallationContext,
+      frame: GatewayFrame,
+    ) => ({
+      type: "res" as const,
+      id: frame.type === "req" ? frame.id : "unexpected",
+      ok: true,
+      data: { installationId: installation.installationId },
+    }));
+    const gateway = binding(serviceFrame);
+
+    await expect(callAdapterGateway<{ installationId: string }>(
+      gateway,
+      INSTALLATION,
+      "adapter.inbound",
+      {},
+    )).resolves.toEqual({ installationId: INSTALLATION.installationId });
+    expect(serviceFrame).toHaveBeenCalledOnce();
+    expect(serviceFrame).toHaveBeenCalledWith(
+      INSTALLATION,
+      expect.objectContaining({ type: "req", call: "adapter.inbound" }),
+    );
   });
 
   it("cancels the request body when the binding throws or returns no response", async () => {

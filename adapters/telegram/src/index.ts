@@ -5,6 +5,18 @@ import {
   LEGACY_STANDALONE_ADAPTER_INSTALLATION_ID,
   parseAdapterInstallationContext,
 } from "../../shared/src/installation";
+import {
+  resolveAdapterActivityRpcArgs,
+  resolveAdapterConnectRpcArgs,
+  resolveAdapterDisconnectRpcArgs,
+  resolveAdapterSendRpcArgs,
+  resolveAdapterStatusRpcArgs,
+  type AdapterActivityRpcArgs,
+  type AdapterConnectRpcArgs,
+  type AdapterDisconnectRpcArgs,
+  type AdapterSendRpcArgs,
+  type AdapterStatusRpcArgs,
+} from "../../shared/src/rpc-compat";
 import type {
   AdapterAccountStatus,
   AdapterActivity,
@@ -60,6 +72,24 @@ export class TelegramChannel
   readonly adapterId = "telegram";
 
   async adapterConnect(
+    accountId: string,
+    config?: Record<string, unknown>,
+  ): Promise<AdapterConnectResult>;
+  async adapterConnect(
+    installation: AdapterInstallationContext,
+    accountId: string,
+    config?: Record<string, unknown>,
+  ): Promise<AdapterConnectResult>;
+  async adapterConnect(...args: AdapterConnectRpcArgs): Promise<AdapterConnectResult> {
+    const resolved = resolveAdapterConnectRpcArgs(args);
+    return await this.#adapterConnectForInstallation(
+      resolved.installation,
+      resolved.accountId,
+      resolved.config,
+    );
+  }
+
+  async #adapterConnectForInstallation(
     installation: AdapterInstallationContext,
     accountId: string,
     config: Record<string, unknown> = {},
@@ -111,7 +141,7 @@ export class TelegramChannel
       };
     }
 
-    const [status] = await this.adapterStatus(installation, accountId);
+    const [status] = await this.#adapterStatusForInstallation(installation, accountId);
     return {
       ok: true,
       connected: status?.connected ?? true,
@@ -121,6 +151,21 @@ export class TelegramChannel
   }
 
   async adapterDisconnect(
+    accountId: string,
+  ): Promise<AdapterDisconnectResult>;
+  async adapterDisconnect(
+    installation: AdapterInstallationContext,
+    accountId: string,
+  ): Promise<AdapterDisconnectResult>;
+  async adapterDisconnect(...args: AdapterDisconnectRpcArgs): Promise<AdapterDisconnectResult> {
+    const resolved = resolveAdapterDisconnectRpcArgs(args);
+    return await this.#adapterDisconnectForInstallation(
+      resolved.installation,
+      resolved.accountId,
+    );
+  }
+
+  async #adapterDisconnectForInstallation(
     installation: AdapterInstallationContext,
     accountId: string,
   ): Promise<AdapterDisconnectResult> {
@@ -138,6 +183,21 @@ export class TelegramChannel
   }
 
   async adapterStatus(
+    accountId?: string,
+  ): Promise<AdapterAccountStatus[]>;
+  async adapterStatus(
+    installation: AdapterInstallationContext,
+    accountId?: string,
+  ): Promise<AdapterAccountStatus[]>;
+  async adapterStatus(...args: AdapterStatusRpcArgs): Promise<AdapterAccountStatus[]> {
+    const resolved = resolveAdapterStatusRpcArgs(args);
+    return await this.#adapterStatusForInstallation(
+      resolved.installation,
+      resolved.accountId,
+    );
+  }
+
+  async #adapterStatusForInstallation(
     installation: AdapterInstallationContext,
     accountId?: string,
   ): Promise<AdapterAccountStatus[]> {
@@ -164,6 +224,27 @@ export class TelegramChannel
   }
 
   async adapterSend(
+    accountId: string,
+    message: AdapterOutboundMessage,
+    body?: BinaryBody,
+  ): Promise<AdapterSendResult>;
+  async adapterSend(
+    installation: AdapterInstallationContext,
+    accountId: string,
+    message: AdapterOutboundMessage,
+    body?: BinaryBody,
+  ): Promise<AdapterSendResult>;
+  async adapterSend(...args: AdapterSendRpcArgs): Promise<AdapterSendResult> {
+    const resolved = await resolveAdapterSendRpcArgs(args);
+    return await this.#adapterSendForInstallation(
+      resolved.installation,
+      resolved.accountId,
+      resolved.message,
+      resolved.body,
+    );
+  }
+
+  async #adapterSendForInstallation(
     installation: AdapterInstallationContext,
     accountId: string,
     message: AdapterOutboundMessage,
@@ -185,6 +266,29 @@ export class TelegramChannel
   }
 
   async adapterSetActivity(
+    accountId: string,
+    surface: AdapterSurface,
+    activity: AdapterActivity,
+  ): Promise<{ ok: true } | { ok: false; error: string }>;
+  async adapterSetActivity(
+    installation: AdapterInstallationContext,
+    accountId: string,
+    surface: AdapterSurface,
+    activity: AdapterActivity,
+  ): Promise<{ ok: true } | { ok: false; error: string }>;
+  async adapterSetActivity(
+    ...args: AdapterActivityRpcArgs
+  ): Promise<{ ok: true } | { ok: false; error: string }> {
+    const resolved = resolveAdapterActivityRpcArgs(args);
+    return await this.#adapterSetActivityForInstallation(
+      resolved.installation,
+      resolved.accountId,
+      resolved.surface,
+      resolved.activity,
+    );
+  }
+
+  async #adapterSetActivityForInstallation(
     installation: AdapterInstallationContext,
     accountId: string,
     surface: AdapterSurface,

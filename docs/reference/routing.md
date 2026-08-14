@@ -8,17 +8,18 @@ caller-provided values from public Git requests. Ripgit maps logical
 `{owner}/{repo}` slugs to installation-specific Repository Durable Objects.
 The standalone `singleton` route retains the historical `{owner}/{repo}` name.
 
-Adapter service-binding RPC carries the same trusted installation identity in
-both directions. Gateway-to-adapter calls derive it from the Kernel context;
-adapter-to-Gateway calls normally recover it from the owning account Durable
-Object's immutable name. Managed adapter account objects use a collision-free
-internal name derived from `{installationId, accountId}`. `singleton` retains the
-historical unscoped account object name for standalone upgrades. Public webhook
-payloads and adapter frame arguments cannot choose this identity. Managed
-Telegram webhook routes use an opaque Durable Object ID, so Telegram accounts
-also persist the validated installation ID for callbacks reached through
-`idFromString()`. Legacy standalone webhook paths keep their existing account
-identifier.
+Managed adapter service-binding RPC carries the same trusted installation
+identity in both directions. Gateway-to-adapter calls derive it from the Kernel
+context; adapter-to-Gateway calls normally recover it from the owning account
+Durable Object's immutable name. Standalone calls retain their historical
+unscoped argument lists and are interpreted as `singleton`. Managed adapter
+account objects use a collision-free internal name derived from
+`{installationId, accountId}`. `singleton` retains the historical unscoped
+account object name for standalone upgrades. Public webhook payloads and adapter
+frame arguments cannot choose this identity. Managed Telegram webhook routes
+use an opaque Durable Object ID, so Telegram accounts also persist the validated
+installation ID for callbacks reached through `idFromString()`. Legacy
+standalone webhook paths keep their existing account identifier.
 
 Managed lifecycle routing uses two directory lookups with different trust
 inputs. Public HTTP resolves an accepted hostname, while durable adapter,
@@ -95,10 +96,11 @@ history in another process. There is no default process or second
 process-local conversation identifier.
 
 PIDs are installation-local. Process Durable Object lookups combine the
-trusted installation ID with the PID in one canonical Durable Object name.
-Each Process derives both immutable identifiers from that name; routing
-identity is not persisted separately or repeated in delivered frames. The
-standalone `singleton` installation uses the same composite naming scheme.
+trusted installation ID with the PID in one canonical Durable Object name for
+managed installations. The standalone `singleton` installation retains the
+historical raw PID as its Durable Object name. Each Process derives both
+immutable identifiers from that name; routing identity is not persisted
+separately or repeated in delivered frames.
 
 The Kernel stores process metadata in the `processes` table: owner uid, run-as
 identity, parent PID, cwd, interactive flag, runtime state, active run id,

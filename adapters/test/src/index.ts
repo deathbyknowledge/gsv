@@ -23,6 +23,22 @@ import {
   adapterAccountDurableObjectName,
   parseAdapterInstallationContext,
 } from "../../shared/src/installation";
+import {
+  callAdapterGateway,
+  type AdapterGatewayBinding,
+} from "../../shared/src/gateway-rpc";
+import {
+  resolveAdapterActivityRpcArgs,
+  resolveAdapterConnectRpcArgs,
+  resolveAdapterDisconnectRpcArgs,
+  resolveAdapterSendRpcArgs,
+  resolveAdapterStatusRpcArgs,
+  type AdapterActivityRpcArgs,
+  type AdapterConnectRpcArgs,
+  type AdapterDisconnectRpcArgs,
+  type AdapterSendRpcArgs,
+  type AdapterStatusRpcArgs,
+} from "../../shared/src/rpc-compat";
 import type {
   AdapterAccountStatus,
   AdapterActivity,
@@ -36,16 +52,7 @@ import type {
   AdapterSurface,
   AdapterWorkerInterface,
   BinaryBody,
-  GatewayFrame,
-  GatewayRequestFrame,
 } from "../../shared/src/types";
-
-type GatewayAdapterBinding = Fetcher & {
-  serviceFrame: (
-    installation: AdapterInstallationContext,
-    frame: GatewayFrame,
-  ) => Promise<GatewayFrame | null>;
-};
 
 type RecordedMessage = {
   direction: "in" | "out";
@@ -54,7 +61,7 @@ type RecordedMessage = {
 };
 
 interface Env {
-  GATEWAY: GatewayAdapterBinding;
+  GATEWAY: Fetcher & AdapterGatewayBinding;
   TEST_CHANNEL_STATE: DurableObjectNamespace;
 }
 
@@ -187,6 +194,26 @@ export class TestChannel extends WorkerEntrypoint<Env> implements AdapterWorkerI
   }
 
   async adapterConnect(
+    accountId: string,
+    config?: Record<string, unknown>,
+  ): Promise<{ ok: true; connected: true; authenticated: true; message: string }>;
+  async adapterConnect(
+    installation: AdapterInstallationContext,
+    accountId: string,
+    config?: Record<string, unknown>,
+  ): Promise<{ ok: true; connected: true; authenticated: true; message: string }>;
+  async adapterConnect(
+    ...args: AdapterConnectRpcArgs
+  ): Promise<{ ok: true; connected: true; authenticated: true; message: string }> {
+    const resolved = resolveAdapterConnectRpcArgs(args);
+    return await this.#adapterConnectForInstallation(
+      resolved.installation,
+      resolved.accountId,
+      resolved.config,
+    );
+  }
+
+  async #adapterConnectForInstallation(
     installation: AdapterInstallationContext,
     accountId: string,
     _config: Record<string, unknown> = {},
@@ -203,6 +230,23 @@ export class TestChannel extends WorkerEntrypoint<Env> implements AdapterWorkerI
   }
 
   async adapterDisconnect(
+    accountId: string,
+  ): Promise<{ ok: true; message: string }>;
+  async adapterDisconnect(
+    installation: AdapterInstallationContext,
+    accountId: string,
+  ): Promise<{ ok: true; message: string }>;
+  async adapterDisconnect(
+    ...args: AdapterDisconnectRpcArgs
+  ): Promise<{ ok: true; message: string }> {
+    const resolved = resolveAdapterDisconnectRpcArgs(args);
+    return await this.#adapterDisconnectForInstallation(
+      resolved.installation,
+      resolved.accountId,
+    );
+  }
+
+  async #adapterDisconnectForInstallation(
     installation: AdapterInstallationContext,
     accountId: string,
   ): Promise<{ ok: true; message: string }> {
@@ -213,6 +257,21 @@ export class TestChannel extends WorkerEntrypoint<Env> implements AdapterWorkerI
   }
 
   async adapterStatus(
+    accountId?: string,
+  ): Promise<AdapterAccountStatus[]>;
+  async adapterStatus(
+    installation: AdapterInstallationContext,
+    accountId?: string,
+  ): Promise<AdapterAccountStatus[]>;
+  async adapterStatus(...args: AdapterStatusRpcArgs): Promise<AdapterAccountStatus[]> {
+    const resolved = resolveAdapterStatusRpcArgs(args);
+    return await this.#adapterStatusForInstallation(
+      resolved.installation,
+      resolved.accountId,
+    );
+  }
+
+  async #adapterStatusForInstallation(
     installation: AdapterInstallationContext,
     accountId?: string,
   ): Promise<AdapterAccountStatus[]> {
@@ -236,6 +295,27 @@ export class TestChannel extends WorkerEntrypoint<Env> implements AdapterWorkerI
    * Records it in the account's Durable Object.
    */
   async adapterSend(
+    accountId: string,
+    message: AdapterOutboundMessage,
+    body?: BinaryBody,
+  ): Promise<AdapterSendResult>;
+  async adapterSend(
+    installation: AdapterInstallationContext,
+    accountId: string,
+    message: AdapterOutboundMessage,
+    body?: BinaryBody,
+  ): Promise<AdapterSendResult>;
+  async adapterSend(...args: AdapterSendRpcArgs): Promise<AdapterSendResult> {
+    const resolved = await resolveAdapterSendRpcArgs(args);
+    return await this.#adapterSendForInstallation(
+      resolved.installation,
+      resolved.accountId,
+      resolved.message,
+      resolved.body,
+    );
+  }
+
+  async #adapterSendForInstallation(
     installation: AdapterInstallationContext,
     accountId: string,
     message: AdapterOutboundMessage,
@@ -324,6 +404,29 @@ export class TestChannel extends WorkerEntrypoint<Env> implements AdapterWorkerI
   }
 
   async adapterSetActivity(
+    accountId: string,
+    surface: AdapterSurface,
+    activity: AdapterActivity,
+  ): Promise<{ ok: true } | { ok: false; error: string }>;
+  async adapterSetActivity(
+    installation: AdapterInstallationContext,
+    accountId: string,
+    surface: AdapterSurface,
+    activity: AdapterActivity,
+  ): Promise<{ ok: true } | { ok: false; error: string }>;
+  async adapterSetActivity(
+    ...args: AdapterActivityRpcArgs
+  ): Promise<{ ok: true } | { ok: false; error: string }> {
+    const resolved = resolveAdapterActivityRpcArgs(args);
+    return await this.#adapterSetActivityForInstallation(
+      resolved.installation,
+      resolved.accountId,
+      resolved.surface,
+      resolved.activity,
+    );
+  }
+
+  async #adapterSetActivityForInstallation(
     installation: AdapterInstallationContext,
     _accountId: string,
     _surface: AdapterSurface,
@@ -378,28 +481,13 @@ export class TestChannel extends WorkerEntrypoint<Env> implements AdapterWorkerI
     console.log(`[TestChannel] Simulating inbound from ${surface.id}: ${text}`);
 
     try {
-      const frame: GatewayRequestFrame = {
-        type: "req",
-        id: crypto.randomUUID(),
-        call: "adapter.inbound",
-        args: { adapter: "test", accountId, deliveryId: messageId, message },
-        ...(options?.body ? { body: options.body } : {}),
-      };
-      const response = await this.env.GATEWAY.serviceFrame(
+      const result = await callAdapterGateway<AdapterInboundResult>(
+        this.env.GATEWAY,
         parsedInstallation,
-        frame,
+        "adapter.inbound",
+        { adapter: "test", accountId, deliveryId: messageId, message },
+        options?.body,
       );
-      if (!response || response.type !== "res") {
-        return { ok: false, messageId, error: "No response from gateway serviceFrame" };
-      }
-      if (!response.ok) {
-        return {
-          ok: false,
-          messageId,
-          error: response.error?.message || "Gateway rejected message",
-        };
-      }
-      const result = (response.data ?? {}) as AdapterInboundResult;
       if (!result.ok) {
         return { ok: false, messageId, error: result.error || "Gateway rejected message" };
       }

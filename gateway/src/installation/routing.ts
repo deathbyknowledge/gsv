@@ -27,10 +27,15 @@ export function processDurableObjectName(
 ): string {
   const parsedInstallationId = parseInstallationId(installationId);
   const parsedPid = parseProcessId(pid);
-  const name = `${PROCESS_DURABLE_OBJECT_PREFIX}${encodeURIComponent(parsedInstallationId)}:${encodeURIComponent(parsedPid)}`;
-  if (new TextEncoder().encode(name).byteLength > MAX_DURABLE_OBJECT_NAME_BYTES) {
-    throw new Error("Process Durable Object name is too long");
+  if (parsedInstallationId === SINGLETON_INSTALLATION_ID) {
+    if (parsedPid.startsWith(PROCESS_DURABLE_OBJECT_PREFIX)) {
+      throw new Error("Standalone pid conflicts with managed Process addressing");
+    }
+    assertProcessDurableObjectNameLength(parsedPid);
+    return parsedPid;
   }
+  const name = `${PROCESS_DURABLE_OBJECT_PREFIX}${encodeURIComponent(parsedInstallationId)}:${encodeURIComponent(parsedPid)}`;
+  assertProcessDurableObjectNameLength(name);
   return name;
 }
 
@@ -40,15 +45,18 @@ export function parseProcessDurableObjectName(
   if (!name)
     throw new Error("Process Durable Objects must be accessed by name");
 
-  if (!name.startsWith(PROCESS_DURABLE_OBJECT_PREFIX))
-    throw new Error("Process Durable Object name is invalid");
+  if (!name.startsWith(PROCESS_DURABLE_OBJECT_PREFIX)) {
+    const pid = parseProcessId(name);
+    assertProcessDurableObjectNameLength(name);
+    return { installationId: SINGLETON_INSTALLATION_ID, pid };
+  }
 
   const separator = name.indexOf(":", PROCESS_DURABLE_OBJECT_PREFIX.length);
   if (separator === -1)
     throw new Error("Process Durable Object name is invalid");
 
   try {
-    const installationId = parseInstallationId(decodeURIComponent(
+    const installationId = parseManagedInstallationId(decodeURIComponent(
       name.slice(PROCESS_DURABLE_OBJECT_PREFIX.length, separator),
     ));
     const pid = parseProcessId(decodeURIComponent(name.slice(separator + 1)));
@@ -68,6 +76,12 @@ function parseProcessId(value: unknown): string {
   if (typeof value !== "string" || value.length === 0)
     throw new Error("pid must be a non-empty string");
   return value;
+}
+
+function assertProcessDurableObjectNameLength(name: string): void {
+  if (new TextEncoder().encode(name).byteLength > MAX_DURABLE_OBJECT_NAME_BYTES) {
+    throw new Error("Process Durable Object name is too long");
+  }
 }
 
 function getGatewayInstallationRoutingSource(

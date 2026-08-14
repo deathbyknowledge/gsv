@@ -1,5 +1,6 @@
 import type { AdapterGatewayInterface } from "../../../packages/gsv/src/protocol/adapters.js";
 import { cancelBinaryBody } from "./media-body";
+import { LEGACY_STANDALONE_ADAPTER_INSTALLATION_ID } from "./installation";
 import type {
   AdapterInstallationContext,
   BinaryBody,
@@ -32,7 +33,9 @@ export async function callAdapterGateway<T = unknown>(
 
   let response: GatewayFrame | null;
   try {
-    response = await gateway.serviceFrame(installation, frame);
+    response = installation.installationId === LEGACY_STANDALONE_ADAPTER_INSTALLATION_ID
+      ? await gateway.serviceFrame(frame)
+      : await gateway.serviceFrame(installation, frame);
   } catch (error) {
     await cancelBinaryBody(body, error);
     throw error;

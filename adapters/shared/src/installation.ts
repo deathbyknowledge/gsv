@@ -5,6 +5,7 @@ import {
 
 export const LEGACY_STANDALONE_ADAPTER_INSTALLATION_ID = "singleton";
 const MAX_DURABLE_OBJECT_NAME_BYTES = 1_024;
+const ADAPTER_ACCOUNT_DURABLE_OBJECT_PREFIX = "account:";
 
 export type AdapterAccountDurableObjectIdentity = AdapterInstallationContext & {
   accountId: string;
@@ -30,10 +31,8 @@ export function adapterAccountDurableObjectName(
   }
   const name = parsed.installationId === LEGACY_STANDALONE_ADAPTER_INSTALLATION_ID
     ? normalizedAccountId
-    : `account:${encodeURIComponent(parsed.installationId)}:${encodeURIComponent(normalizedAccountId)}`;
-  if (new TextEncoder().encode(name).byteLength > MAX_DURABLE_OBJECT_NAME_BYTES) {
-    throw new Error("Adapter account Durable Object name is too long");
-  }
+    : `${ADAPTER_ACCOUNT_DURABLE_OBJECT_PREFIX}${encodeURIComponent(parsed.installationId)}:${encodeURIComponent(normalizedAccountId)}`;
+  assertAdapterAccountDurableObjectNameLength(name);
   return name;
 }
 
@@ -44,12 +43,14 @@ export function parseAdapterAccountDurableObjectName(
     throw new Error("Adapter account Durable Object must be accessed by name");
   }
 
-  const prefix = "account:";
-  const separator = name.indexOf(":", prefix.length);
-  if (name.startsWith(prefix) && separator !== -1) {
+  const hasManagedPrefix = name.startsWith(ADAPTER_ACCOUNT_DURABLE_OBJECT_PREFIX);
+  const separator = name.indexOf(":", ADAPTER_ACCOUNT_DURABLE_OBJECT_PREFIX.length);
+  if (hasManagedPrefix && separator !== -1) {
     try {
       const installation = parseAdapterInstallationContext({
-        installationId: decodeURIComponent(name.slice(prefix.length, separator)),
+        installationId: decodeURIComponent(
+          name.slice(ADAPTER_ACCOUNT_DURABLE_OBJECT_PREFIX.length, separator),
+        ),
       });
       const accountId = decodeURIComponent(name.slice(separator + 1)).trim();
       if (
@@ -62,7 +63,11 @@ export function parseAdapterAccountDurableObjectName(
       // Fall through to the standalone compatibility name.
     }
   }
+  if (hasManagedPrefix) {
+    throw new Error("Adapter account Durable Object name is invalid");
+  }
 
+  assertAdapterAccountDurableObjectNameLength(name);
   return Object.freeze({
     installationId: LEGACY_STANDALONE_ADAPTER_INSTALLATION_ID,
     accountId: name,
@@ -72,8 +77,14 @@ export function parseAdapterAccountDurableObjectName(
 export function assertAdapterAccountDurableObjectIdentity(
   name: string | undefined,
   accountId: string,
+  stored?: {
+    installationId?: unknown;
+    accountId?: unknown;
+  },
 ): AdapterAccountDurableObjectIdentity {
-  const identity = parseAdapterAccountDurableObjectName(name);
+  const identity = stored
+    ? resolveAdapterAccountDurableObjectIdentity(name, stored)
+    : parseAdapterAccountDurableObjectName(name);
   if (identity.accountId !== accountId.trim()) {
     throw new Error("Adapter account identity mismatch");
   }
@@ -88,6 +99,28 @@ export function resolveAdapterAccountDurableObjectIdentity(
   },
 ): AdapterAccountDurableObjectIdentity {
   if (name) {
+    if (
+      name.startsWith(ADAPTER_ACCOUNT_DURABLE_OBJECT_PREFIX)
+      && stored.accountId === name
+    ) {
+      const storedInstallationId = stored.installationId;
+      const storedInstallation = storedInstallationId === undefined
+        || storedInstallationId === null
+        ? LEGACY_STANDALONE_ADAPTER_INSTALLATION_ID
+        : parseAdapterInstallationContext({
+            installationId: storedInstallationId,
+          }).installationId;
+      if (storedInstallation === LEGACY_STANDALONE_ADAPTER_INSTALLATION_ID) {
+        const accountId = adapterAccountDurableObjectName(
+          { installationId: LEGACY_STANDALONE_ADAPTER_INSTALLATION_ID },
+          name,
+        );
+        return Object.freeze({
+          installationId: LEGACY_STANDALONE_ADAPTER_INSTALLATION_ID,
+          accountId,
+        });
+      }
+    }
     const identity = parseAdapterAccountDurableObjectName(name);
     if (
       typeof stored.accountId === "string"
@@ -117,4 +150,10 @@ export function resolveAdapterAccountDurableObjectIdentity(
     throw new Error("Adapter account identity is unavailable");
   }
   return Object.freeze({ ...installation, accountId });
+}
+
+function assertAdapterAccountDurableObjectNameLength(name: string): void {
+  if (new TextEncoder().encode(name).byteLength > MAX_DURABLE_OBJECT_NAME_BYTES) {
+    throw new Error("Adapter account Durable Object name is too long");
+  }
 }
