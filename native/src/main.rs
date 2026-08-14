@@ -46,10 +46,10 @@ fn main() {
             return;
         }
     };
-    let vision_debug = match vision_debug::start_from_env() {
+    let vision = match vision_debug::start_from_env() {
         Ok(helper) => helper,
         Err(error) => {
-            eprintln!("GSV gesture debug helper is unavailable: {error}");
+            eprintln!("GSV gesture controls are unavailable: {error}");
             None
         }
     };
@@ -73,9 +73,18 @@ fn main() {
                 window_min_size: Some(size(px(720.0), px(520.0))),
                 ..Default::default()
             },
-            |window, cx| {
-                let view = cx
-                    .new(|cx| GsvApp::new(window, cx, client, demo, sound_enabled, reduced_motion));
+            move |window, cx| {
+                let view = cx.new(|cx| {
+                    GsvApp::new_with_vision(
+                        window,
+                        cx,
+                        client,
+                        demo,
+                        sound_enabled,
+                        reduced_motion,
+                        vision,
+                    )
+                });
                 cx.new(|cx| Root::new(view, window, cx))
             },
         );
@@ -85,10 +94,6 @@ fn main() {
             cx.quit();
         }
     });
-
-    if let Some(helper) = vision_debug {
-        helper.shutdown();
-    }
 }
 
 fn graphical_session_available() -> bool {

@@ -113,6 +113,13 @@ impl VoiceCommandSender {
     pub fn send(&self, command: VoiceCommand) -> Result<(), SendError<VoiceCommand>> {
         self.0.send(command)
     }
+
+    #[cfg(test)]
+    pub(crate) fn closed_for_test() -> Self {
+        let (sender, receiver) = mpsc::channel();
+        drop(receiver);
+        Self(sender)
+    }
 }
 
 pub(crate) fn coalesce_for_ui(events: impl IntoIterator<Item = VoiceEvent>) -> Vec<VoiceEvent> {

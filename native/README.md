@@ -67,26 +67,36 @@ the native connection flow. It reconnects without replaying commands, restores h
 applying live deltas, and preserves an unsent or ambiguously delivered thought visibly. Wayland is
 selected automatically when `WAYLAND_DISPLAY` is present; no Cargo feature is needed.
 
-### Run the local gesture debug proof
+### Run experimental local gesture controls
 
-The optional vision proof is a separate Rust process. It owns the camera,
-MediaPipe inference, and an extra diagnostic window; it does not send frames to
-Desktop or the gateway and it cannot trigger application actions. Build the
-pinned Linux x86-64 artifact and helper, then opt in explicitly:
+The optional vision helper is a separate Rust process. It owns the camera,
+MediaPipe inference, and temporal gesture recognition; it never sends frames or
+landmarks to Desktop or the gateway. Build the pinned Linux x86-64 artifact and
+helper, then opt in explicitly. Headless controls use:
 
 ```bash
 ./scripts/vision-mediapipe/build-linux.sh
 cargo build --package gsv-vision
+GSV_GESTURES=1 cargo run --manifest-path native/Cargo.toml
+```
+
+To see the camera, landmarks, scores, and the same live recognizer while testing:
+
+```bash
 GSV_GESTURE_DEBUG=1 cargo run --manifest-path native/Cargo.toml
 ```
 
 The MediaPipe build uses Bazel and its hermetic Python toolchain, but neither
 Python nor Bazel is a runtime dependency. The running proof consists of the
 Rust `gsv-vision` helper, the compiled native library, and the verified local
-model. Press `Escape` or close the diagnostic window to stop the proof without
-closing Desktop. See `native/vision-helper/README.md` for the artifact and
-override contract. This proof is development-only and is not packaged in a
-release yet.
+model. During active dictation, hold two open palms steadily to arm the gesture
+grammar. Open palm + closed fist latches SEND HOLD; two open palms explicitly
+release it and re-arm; open palm + thumbs-up finalizes and sends through the
+normal conversation transaction. Missing tracking never releases HOLD. Press
+`Escape` or close the diagnostic window to stop debug mode without closing
+Desktop. See `native/vision-helper/README.md` for thresholds, artifacts, and
+the override contract. Gesture controls remain experimental and are not
+packaged in a release yet.
 
 ## Interaction grammar
 

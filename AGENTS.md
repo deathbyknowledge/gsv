@@ -160,7 +160,7 @@ Validate only the surfaces affected by the change:
 - Gateway: `cd gateway && npx tsc --noEmit && npm run test:run`
 - Web: `cd web && npm run check && npm run test:run && npm run build`
 - Native client: `cargo fmt --manifest-path native/Cargo.toml --check && cargo test --manifest-path native/Cargo.toml && cargo clippy --manifest-path native/Cargo.toml --all-targets -- -D warnings`
-- Native vision helper: `cargo fmt --package gsv-vision --check && cargo test --package gsv-vision && cargo clippy --package gsv-vision --all-targets -- -D warnings`
+- Native vision helper and control protocol: `cargo fmt --package gsv-vision --package gsv-vision-control --check && cargo test --package gsv-vision --package gsv-vision-control && cargo clippy --package gsv-vision --package gsv-vision-control --all-targets -- -D warnings`
 - Public SDK: `npm run gsv:check && npm test --workspace packages/gsv`
 - CLI: `cargo fmt --package gsv --check && cargo test --package gsv`
 - Device daemon: `cargo fmt --package gsvd --check && cargo test --package gsvd`

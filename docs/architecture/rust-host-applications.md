@@ -65,14 +65,19 @@ available as a syscall target.
 
 Platform-native, high-cost Desktop work runs in separately supervised helpers.
 `gsv-transcribe` owns local microphone capture and speech inference. The
-development-only `gsv-vision` proof owns camera capture, MediaPipe inference,
-and its diagnostic window; camera frames never enter GPUI or the gateway. It is
-started only by the exact `GSV_GESTURE_DEBUG=1` opt-in and currently exposes no
-gesture actions or control IPC. Its runtime is Rust plus a pinned native
-MediaPipe library and model—Python and Bazel are build tools, not Desktop
-runtime dependencies. `gsv-vision` is not part of the release distribution
-until the proof, permissions, packaging, and model-redistribution policy are
-accepted deliberately.
+experimental `gsv-vision` helper owns camera capture, MediaPipe inference, and
+temporal gesture recognition; camera frames and landmarks never enter GPUI or
+the gateway. `GSV_GESTURES=1` starts it headlessly, while the exact
+`GSV_GESTURE_DEBUG=1` opt-in adds its local diagnostic window. A private,
+bounded parent-child protocol carries only typed semantic intents. Desktop
+grants an action lease for one active voice request, and the helper echoes that
+request and its random supervisor session on every intent so stale work cannot
+act on later dictation. Desktop remains the owner of HOLD, RELEASE, finalizing
+transcription, and conversation submission. Its runtime is Rust plus a pinned
+native MediaPipe library and model—Python and Bazel are build tools, not
+Desktop runtime dependencies. `gsv-vision` is not part of the release
+distribution until permissions, packaging, additional platforms, and the
+model-redistribution policy are accepted deliberately.
 
 The local protocol exposes `activate`, redacted `status`, `new`, `use`, and the
 narrow `microphone list/use/default` operations. Its endpoint must be accessible

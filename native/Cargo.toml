@@ -11,6 +11,7 @@ gpui-component = "=0.5.1"
 gsv-client = { path = "../crates/gsv-client" }
 gsv-config = { path = "../crates/gsv-config" }
 gsv-desktop-control = { path = "../crates/gsv-desktop-control" }
+gsv-vision-control = { path = "../crates/gsv-vision-control" }
 image = "=0.25.10"
 infer = { version = "0.16", default-features = false }
 markdown = "=1.0.0"
@@ -23,6 +24,9 @@ tempfile = "3"
 url = "2"
 usvg = "=0.45.1"
 uuid = { version = "1", features = ["v4"] }
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
 
 [dev-dependencies]
 gpui = { version = "=0.2.2", features = ["test-support"] }

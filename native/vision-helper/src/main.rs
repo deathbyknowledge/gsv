@@ -1,4 +1,6 @@
 mod camera;
+mod control;
+mod control_transport;
 mod debug_window;
 mod mediapipe;
 mod observation;
@@ -11,7 +13,7 @@ use std::fmt::{self, Display, Formatter};
 use std::fs::File;
 use std::io::{self, BufReader, Read};
 use std::path::{Path, PathBuf};
-use std::process::{self, ExitCode};
+use std::process::ExitCode;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::thread;
@@ -21,6 +23,8 @@ use crossbeam_channel::{bounded, Receiver, Sender, TryRecvError, TrySendError};
 use sha2::{Digest, Sha256};
 
 use crate::camera::{CameraConfig, CameraStream, FrameReader};
+use crate::control::{ControlHand, ControlIntent, ControlSample, GestureControl};
+use crate::control_transport::{ControlContext, HelperControl};
 use crate::debug_window::{DebugWindow, DebugWindowConfig};
 use crate::mediapipe::GestureRecognizer;
 use crate::observation::{FrameView, Observation};
@@ -28,6 +32,7 @@ use crate::observation::{FrameView, Observation};
 const MODEL_BYTES: u64 = 8_373_440;
 const MODEL_SHA256: &str = "97952348cf6a6a4915c2ea1496b4b37ebabc50cbbf80571435643c455f2b0482";
 const PARENT_STDIN_WATCHDOG: &str = "GSV_VISION_PARENT_STDIN";
+const DEBUG_WINDOW_MARKER: &str = "GSV_VISION_DEBUG_WINDOW";
 const FIRST_FRAME_TIMEOUT: Duration = Duration::from_secs(5);
 const INFERENCE_POLL: Duration = Duration::from_millis(100);
 const MAX_CAMERA_INDEX: u32 = 63;
@@ -44,6 +49,7 @@ enum VisionError {
     WindowUnavailable,
     InferenceUnavailable,
     WorkerUnavailable,
+    ProtocolUnavailable,
 }
 
 impl Display for VisionError {
@@ -59,6 +65,7 @@ impl Display for VisionError {
             Self::WindowUnavailable => "the local gesture debug window is unavailable",
             Self::InferenceUnavailable => "local gesture inference failed",
             Self::WorkerUnavailable => "the local gesture inference worker could not start",
+            Self::ProtocolUnavailable => "the local gesture control channel is unavailable",
         })
     }
 }
@@ -86,7 +93,22 @@ fn main() -> ExitCode {
 }
 
 fn run() -> Result<(), VisionError> {
-    start_parent_watchdog(env::var_os(PARENT_STDIN_WATCHDOG).as_deref())?;
+    let supervised = parent_watchdog_enabled(env::var_os(PARENT_STDIN_WATCHDOG).as_deref());
+    let control =
+        HelperControl::start_from_environment().map_err(|_| VisionError::ProtocolUnavailable)?;
+    if supervised != control.is_some() {
+        return Err(VisionError::ProtocolUnavailable);
+    }
+    let debug_window =
+        !supervised || exact_marker_enabled(env::var_os(DEBUG_WINDOW_MARKER).as_deref());
+    let outcome = run_pipeline(control.clone(), debug_window);
+    if let (Some(control), Err(error)) = (&control, outcome) {
+        let _ = control.publish_terminal_lifecycle(error.lifecycle_state());
+    }
+    outcome
+}
+
+fn run_pipeline(control: Option<HelperControl>, debug_window: bool) -> Result<(), VisionError> {
     let assets = resolve_assets(
         env::var_os("GSV_MEDIAPIPE_LIBRARY"),
         env::var_os("GSV_VISION_MODEL"),
@@ -108,6 +130,7 @@ fn run() -> Result<(), VisionError> {
     let (failure_sender, failure_receiver) = bounded(1);
     let worker_stop = Arc::clone(&stop);
     let worker_reader = reader.clone();
+    let worker_control = control.clone();
     let worker = thread::Builder::new()
         .name("gsv-vision-inference".to_string())
         .spawn(move || {
@@ -118,54 +141,48 @@ fn run() -> Result<(), VisionError> {
                 annotated_sender,
                 replacement_receiver,
                 failure_sender,
+                worker_control,
             );
         })
         .map_err(|_| VisionError::WorkerUnavailable)?;
 
-    let outcome = run_window(&reader, &annotated_receiver, &failure_receiver);
+    let outcome = if debug_window {
+        run_window(&reader, &annotated_receiver, &failure_receiver)
+    } else {
+        run_headless(&failure_receiver)
+    };
     stop.store(true, Ordering::Release);
     camera.request_stop();
     let _ = camera.shutdown();
     // Native inference is not uniformly interruptible. Dropping the handle
     // detaches it; returning from this helper process remains the hard bound.
     drop(worker);
+    if outcome.is_ok() {
+        if let Some(control) = &control {
+            let _ = control.publish_terminal_lifecycle(gsv_vision_control::LifecycleState::Stopped);
+        }
+    }
     outcome
 }
 
-fn start_parent_watchdog(value: Option<&OsStr>) -> Result<(), VisionError> {
-    if !parent_watchdog_enabled(value) {
-        return Ok(());
-    }
-    thread::Builder::new()
-        .name("gsv-vision-parent-watchdog".to_string())
-        .spawn(|| {
-            let stdin = io::stdin();
-            let _ = wait_for_parent_eof(stdin.lock());
-            // Parent loss is the hard teardown boundary for native camera and
-            // inference calls, which are not uniformly interruptible.
-            process::exit(0);
-        })
-        .map(|_| ())
-        .map_err(|_| VisionError::WorkerUnavailable)
+fn parent_watchdog_enabled(value: Option<&OsStr>) -> bool {
+    exact_marker_enabled(value)
 }
 
-fn parent_watchdog_enabled(value: Option<&OsStr>) -> bool {
+fn exact_marker_enabled(value: Option<&OsStr>) -> bool {
     value == Some(OsStr::new("1"))
 }
 
-fn wait_for_parent_eof(mut input: impl Read) -> io::Result<()> {
-    let mut ignored = [0_u8; 64];
-    loop {
-        if input.read(&mut ignored)? == 0 {
-            return Ok(());
-        }
-    }
+fn run_headless(failure_receiver: &Receiver<VisionError>) -> Result<(), VisionError> {
+    Err(failure_receiver
+        .recv()
+        .unwrap_or(VisionError::InferenceUnavailable))
 }
 
 fn run_window(
     reader: &FrameReader,
     annotated_receiver: &Receiver<AnnotatedFrame>,
-    failure_receiver: &Receiver<()>,
+    failure_receiver: &Receiver<VisionError>,
 ) -> Result<(), VisionError> {
     let first = reader
         .wait_latest(0, FIRST_FRAME_TIMEOUT)
@@ -178,9 +195,8 @@ fn run_window(
 
     while window.is_open() && !window.should_close() {
         match failure_receiver.try_recv() {
-            Ok(()) | Err(TryRecvError::Disconnected) => {
-                return Err(VisionError::InferenceUnavailable)
-            }
+            Ok(error) => return Err(error),
+            Err(TryRecvError::Disconnected) => return Err(VisionError::InferenceUnavailable),
             Err(TryRecvError::Empty) => {}
         }
 
@@ -215,21 +231,29 @@ fn inference_worker(
     stop: Arc<AtomicBool>,
     output: Sender<AnnotatedFrame>,
     replacement_receiver: Receiver<AnnotatedFrame>,
-    failure: Sender<()>,
+    failure: Sender<VisionError>,
+    control_link: Option<HelperControl>,
 ) {
     let Ok(mut recognizer) = GestureRecognizer::load(&assets.library, &assets.model) else {
-        let _ = failure.try_send(());
+        let _ = failure.try_send(VisionError::InferenceUnavailable);
         return;
     };
-
     let mut last_sequence = 0;
+    let first_frame_started = Instant::now();
+    let mut ready_published = false;
     let mut first_capture = None;
     let mut last_timestamp = None;
+    let mut gesture_control = GestureControl::default();
+    let mut control_revision = 0;
+    let mut control_voice_request_id = None;
     while !stop.load(Ordering::Acquire) {
         let Some(delivery) = reader.wait_latest(last_sequence, INFERENCE_POLL) else {
             let stats = reader.stats();
-            if stats.failed || !stats.running {
-                let _ = failure.try_send(());
+            if stats.failed
+                || !stats.running
+                || first_frame_timed_out(last_sequence, first_frame_started, Instant::now())
+            {
+                let _ = failure.try_send(VisionError::CameraStopped);
                 return;
             }
             continue;
@@ -241,15 +265,121 @@ fn inference_worker(
             &mut last_timestamp,
         );
         let Ok(observation) = recognizer.recognize(&delivery.frame, timestamp) else {
-            let _ = failure.try_send(());
+            let _ = failure.try_send(VisionError::InferenceUnavailable);
             return;
         };
+        if !ready_published {
+            if let Some(control) = &control_link {
+                if !control.publish_lifecycle(gsv_vision_control::LifecycleState::Ready) {
+                    let _ = failure.try_send(VisionError::ProtocolUnavailable);
+                    return;
+                }
+            }
+            ready_published = true;
+        }
+        if let Some(control_link) = &control_link {
+            let context = control_link.context();
+            if let Some(voice_request_id) = sync_control_context(
+                &mut gesture_control,
+                &mut control_revision,
+                &mut control_voice_request_id,
+                context,
+            ) {
+                if let Some(intent) = observe_control(
+                    &mut gesture_control,
+                    &observation,
+                    delivery.frame.captured_at,
+                ) {
+                    let intent = match intent {
+                        ControlIntent::EngageAutoSendHold => {
+                            gsv_vision_control::GestureIntent::Hold
+                        }
+                        ControlIntent::ReleaseAutoSendHold => {
+                            gsv_vision_control::GestureIntent::ReleaseHold
+                        }
+                        ControlIntent::Send => gsv_vision_control::GestureIntent::Send,
+                    };
+                    if !control_link.publish_intent(voice_request_id, intent) {
+                        let _ = failure.try_send(VisionError::ProtocolUnavailable);
+                        return;
+                    }
+                }
+            }
+        }
         let annotated = AnnotatedFrame {
             frame: delivery.frame,
             observation,
         };
         if !publish_latest(&output, &replacement_receiver, annotated) {
             return;
+        }
+    }
+}
+
+fn first_frame_timed_out(last_sequence: u64, started_at: Instant, checked_at: Instant) -> bool {
+    last_sequence == 0 && checked_at.saturating_duration_since(started_at) >= FIRST_FRAME_TIMEOUT
+}
+
+fn sync_control_context(
+    control: &mut GestureControl,
+    current_revision: &mut u64,
+    current_voice_request_id: &mut Option<u64>,
+    context: ControlContext,
+) -> Option<u64> {
+    if context.revision != *current_revision {
+        if *current_voice_request_id == context.voice_request_id {
+            control.synchronize_hold(context.held);
+        } else {
+            control.reset(context.held);
+        }
+        *current_revision = context.revision;
+        *current_voice_request_id = context.voice_request_id;
+    }
+    context.voice_request_id
+}
+
+fn observe_control(
+    control: &mut GestureControl,
+    observation: &Observation,
+    captured_at: Instant,
+) -> Option<ControlIntent> {
+    match observation.hands.as_slice() {
+        [first, second] => {
+            let hands = [
+                ControlHand::new(&first.gesture, first.gesture_score),
+                ControlHand::new(&second.gesture, second.gesture_score),
+            ];
+            control.observe(ControlSample {
+                frame_sequence: observation.frame_sequence,
+                captured_at,
+                observed_at: observation.observed_at,
+                hands: &hands,
+            })
+        }
+        _ => control.observe(ControlSample {
+            frame_sequence: observation.frame_sequence,
+            captured_at,
+            observed_at: observation.observed_at,
+            hands: &[],
+        }),
+    }
+}
+
+impl VisionError {
+    fn lifecycle_state(self) -> gsv_vision_control::LifecycleState {
+        match self {
+            Self::AssetsUnavailable
+            | Self::InvalidLibraryOverride
+            | Self::InvalidModelOverride
+            | Self::InvalidModel => gsv_vision_control::LifecycleState::AssetsUnavailable,
+            Self::InvalidCamera | Self::CameraUnavailable => {
+                gsv_vision_control::LifecycleState::CameraUnavailable
+            }
+            Self::CameraStopped => gsv_vision_control::LifecycleState::CameraStopped,
+            Self::WindowUnavailable => gsv_vision_control::LifecycleState::WindowUnavailable,
+            Self::InferenceUnavailable => gsv_vision_control::LifecycleState::InferenceUnavailable,
+            Self::WorkerUnavailable => gsv_vision_control::LifecycleState::WorkerUnavailable,
+            Self::ProtocolUnavailable => gsv_vision_control::LifecycleState::ProtocolError,
         }
     }
 }
@@ -429,9 +559,10 @@ mod tests {
     }
 
     #[test]
-    fn parent_watchdog_ignores_pipe_content_until_eof() {
-        wait_for_parent_eof(Cursor::new(b"not an IPC message"))
-            .expect("finite input should end at EOF");
+    fn debug_window_is_an_exact_opt_in_for_supervised_runs() {
+        assert!(!exact_marker_enabled(None));
+        assert!(!exact_marker_enabled(Some(OsStr::new("true"))));
+        assert!(exact_marker_enabled(Some(OsStr::new("1"))));
     }
 
     #[test]
@@ -456,10 +587,66 @@ mod tests {
     }
 
     #[test]
+    fn first_frame_wait_has_the_same_hard_deadline_in_headless_mode() {
+        let started_at = Instant::now();
+        assert!(!first_frame_timed_out(
+            0,
+            started_at,
+            started_at + FIRST_FRAME_TIMEOUT - Duration::from_millis(1),
+        ));
+        assert!(first_frame_timed_out(
+            0,
+            started_at,
+            started_at + FIRST_FRAME_TIMEOUT,
+        ));
+        assert!(!first_frame_timed_out(
+            1,
+            started_at,
+            started_at + FIRST_FRAME_TIMEOUT + Duration::from_secs(1),
+        ));
+    }
+
+    #[test]
     fn known_development_artifact_is_architecture_specific() {
         assert_eq!(
             development_artifact_name().is_some(),
             env::consts::OS == "linux" && env::consts::ARCH == "x86_64"
         );
+    }
+
+    #[test]
+    fn context_revision_resets_in_flight_control_state_and_preserves_hold() {
+        let mut control = GestureControl::default();
+        let mut revision = 0;
+        let mut request_id = None;
+        assert_eq!(
+            sync_control_context(
+                &mut control,
+                &mut revision,
+                &mut request_id,
+                ControlContext {
+                    voice_request_id: Some(9),
+                    held: true,
+                    revision: 1,
+                },
+            ),
+            Some(9)
+        );
+        assert_eq!(control.state(), crate::control::ControlState::Holding);
+
+        assert_eq!(
+            sync_control_context(
+                &mut control,
+                &mut revision,
+                &mut request_id,
+                ControlContext {
+                    voice_request_id: None,
+                    held: false,
+                    revision: 2,
+                },
+            ),
+            None
+        );
+        assert_eq!(control.state(), crate::control::ControlState::NeedsReady);
     }
 }

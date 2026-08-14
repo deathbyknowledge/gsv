@@ -21,6 +21,12 @@ use super::{
 
 const MICROPHONE_SAVE_TIMEOUT: Duration = Duration::from_secs(2);
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum VoiceTerminalIntent {
+    KeepDraft,
+    SendAfterFinal,
+}
+
 #[derive(Debug)]
 pub(super) struct VoiceDraft {
     request_id: u64,
@@ -29,6 +35,50 @@ pub(super) struct VoiceDraft {
     pub(super) rendered: String,
     revision: i32,
     stopping: bool,
+    gesture_held: bool,
+    terminal_intent: VoiceTerminalIntent,
+}
+
+impl VoiceDraft {
+    pub(super) fn new(request_id: u64, before: String, after: String, rendered: String) -> Self {
+        Self {
+            request_id,
+            before,
+            after,
+            rendered,
+            revision: -1,
+            stopping: false,
+            gesture_held: false,
+            terminal_intent: VoiceTerminalIntent::KeepDraft,
+        }
+    }
+
+    fn hold_for_gesture(&mut self) -> bool {
+        if self.stopping || self.gesture_held {
+            return false;
+        }
+        self.gesture_held = true;
+        true
+    }
+
+    fn release_gesture_hold(&mut self) -> bool {
+        if self.stopping || !self.gesture_held {
+            return false;
+        }
+        self.gesture_held = false;
+        true
+    }
+
+    fn request_gesture_send(&mut self) -> bool {
+        if self.stopping
+            || self.gesture_held
+            || self.terminal_intent == VoiceTerminalIntent::SendAfterFinal
+        {
+            return false;
+        }
+        self.terminal_intent = VoiceTerminalIntent::SendAfterFinal;
+        true
+    }
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -802,14 +852,12 @@ impl GsvApp {
         let cursor = value.floor_char_boundary(cursor);
         let request_id = self.next_voice_request_id;
         self.next_voice_request_id = self.next_voice_request_id.wrapping_add(1).max(1);
-        self.voice_draft = Some(VoiceDraft {
+        self.voice_draft = Some(VoiceDraft::new(
             request_id,
-            before: value[..cursor].to_string(),
-            after: value[cursor..].to_string(),
-            rendered: value.clone(),
-            revision: -1,
-            stopping: false,
-        });
+            value[..cursor].to_string(),
+            value[cursor..].to_string(),
+            value.clone(),
+        ));
         self.voice_notice = Some("PREPARING VOICE INPUT".to_string());
         if !value.is_empty() {
             self.reveal_voice_draft_if_needed(&value, window, cx);
@@ -833,6 +881,71 @@ impl GsvApp {
         cx.notify();
     }
 
+    /// Latches gesture hold for the active dictation request. Hold suppresses
+    /// gesture-driven sending but deliberately leaves microphone capture and
+    /// transcript updates running.
+    pub(super) fn gesture_hold_dictation(&mut self, cx: &mut Context<Self>) -> bool {
+        let changed = self
+            .voice_draft
+            .as_mut()
+            .is_some_and(VoiceDraft::hold_for_gesture);
+        if changed {
+            cx.notify();
+        }
+        changed
+    }
+
+    /// Releases gesture hold only after an explicit resume gesture. Tracking
+    /// loss must not call this method.
+    pub(super) fn gesture_release_dictation_hold(&mut self, cx: &mut Context<Self>) -> bool {
+        let changed = self
+            .voice_draft
+            .as_mut()
+            .is_some_and(VoiceDraft::release_gesture_hold);
+        if changed {
+            cx.notify();
+        }
+        changed
+    }
+
+    /// Finalizes the active request and records that its matching authoritative
+    /// final transcript may be sent. The final event still rechecks the active
+    /// conversation before entering the normal submission owner.
+    pub(super) fn gesture_send_dictation_now(&mut self, cx: &mut Context<Self>) -> bool {
+        let Some(request_id) = self.voice_draft.as_ref().map(|voice| voice.request_id) else {
+            return false;
+        };
+        if !self
+            .voice_draft
+            .as_mut()
+            .is_some_and(VoiceDraft::request_gesture_send)
+        {
+            return false;
+        }
+        self.finish_dictation(cx);
+        self.voice_draft.as_ref().is_some_and(|voice| {
+            voice.request_id == request_id
+                && voice.stopping
+                && voice.terminal_intent == VoiceTerminalIntent::SendAfterFinal
+        })
+    }
+
+    pub(super) fn dictation_is_gesture_held(&self) -> bool {
+        self.voice_draft
+            .as_ref()
+            .is_some_and(|voice| voice.gesture_held)
+    }
+
+    pub(super) fn active_voice_request_id(&self) -> Option<u64> {
+        self.voice_draft.as_ref().map(|voice| voice.request_id)
+    }
+
+    pub(super) fn voice_request_accepts_gestures(&self, request_id: u64) -> bool {
+        self.voice_draft
+            .as_ref()
+            .is_some_and(|voice| voice.request_id == request_id && !voice.stopping)
+    }
+
     pub(super) fn finish_dictation(&mut self, cx: &mut Context<Self>) {
         let Some(voice) = self.voice_draft.as_ref() else {
             return;
@@ -848,12 +961,14 @@ impl GsvApp {
                 if let Some(voice) = self.voice_draft.as_mut() {
                     voice.stopping = true;
                 }
+                self.disable_vision_for_voice(request_id);
                 self.voice_notice = Some("FINISHING VOICE INPUT".to_string());
             }
             Err(_) => {
                 // A failed terminal command means the supervisor cannot own
                 // this session anymore. Keep the latest visible words and
                 // release the UI state so typing is never held hostage.
+                self.disable_vision_for_voice(request_id);
                 self.voice_draft = None;
                 self.voice_notice = Some("VOICE INPUT UNAVAILABLE · KEEP TYPING".to_string());
             }
@@ -908,6 +1023,11 @@ impl GsvApp {
                 phase,
                 progress,
             } if self.voice_request_is(request_id) => {
+                if phase == VoicePhase::Listening {
+                    self.enable_vision_for_voice(request_id);
+                } else if phase == VoicePhase::Finishing {
+                    self.disable_vision_for_voice(request_id);
+                }
                 if self
                     .voice_draft
                     .as_ref()
@@ -924,6 +1044,10 @@ impl GsvApp {
                 committed,
                 tentative,
             } if self.voice_request_is(request_id) => {
+                // Listening snapshots are intentionally coalescible under UI
+                // backpressure. A matching partial is equally authoritative
+                // evidence that this request owns the live microphone.
+                self.enable_vision_for_voice(request_id);
                 let Some(voice) = self.voice_draft.as_mut() else {
                     return;
                 };
@@ -934,17 +1058,25 @@ impl GsvApp {
                 let transcript = format!("{committed}{tentative}");
                 let composition = compose_voice_text(&voice.before, &transcript, &voice.after);
                 let stopping = voice.stopping;
+                let held = voice.gesture_held;
                 voice.rendered.clone_from(&composition.value);
                 self.reveal_voice_draft_if_needed(&composition.value, window, cx);
                 self.interaction.on_input(composition.value.clone());
                 self.set_input_value_at(composition.value, composition.cursor, window, cx);
                 self.voice_notice = Some(if stopping {
                     "FINISHING VOICE INPUT".to_string()
+                } else if held {
+                    if self.vision_lifecycle == Some(gsv_vision_control::LifecycleState::Ready) {
+                        "LISTENING · SEND HELD · SHOW TWO OPEN PALMS".to_string()
+                    } else {
+                        "LISTENING · SEND HELD · GESTURES UNAVAILABLE".to_string()
+                    }
                 } else {
                     voice_phase_notice(VoicePhase::Listening, None)
                 });
             }
             VoiceEvent::Final { request_id, text } if self.voice_request_is(request_id) => {
+                self.disable_vision_for_voice(request_id);
                 let Some(voice) = self.voice_draft.take() else {
                     return;
                 };
@@ -953,19 +1085,32 @@ impl GsvApp {
                         (voice.revision < 0).then(|| "NO SPEECH HEARD · CHECK INPUT".to_string());
                     return;
                 }
+                if !self.voice_final_conversation_is_safe(&voice, cx) {
+                    self.voice_notice = None;
+                    return;
+                }
                 let composition = compose_voice_text(&voice.before, &text, &voice.after);
                 self.reveal_voice_draft_if_needed(&composition.value, window, cx);
                 self.interaction.on_input(composition.value.clone());
-                self.set_input_value_at(composition.value, composition.cursor, window, cx);
+                self.set_input_value_at(composition.value.clone(), composition.cursor, window, cx);
                 self.voice_notice = None;
+                if voice.terminal_intent == VoiceTerminalIntent::SendAfterFinal
+                    && self.voice_final_send_is_safe()
+                {
+                    self.submit_conversation(composition.value, window, cx);
+                }
             }
             VoiceEvent::Cancelled { request_id } if self.voice_request_is(request_id) => {
+                self.disable_vision_for_voice(request_id);
                 self.voice_draft = None;
                 self.voice_notice = None;
             }
             VoiceEvent::Error { request_id, code }
                 if request_id.is_none_or(|request_id| self.voice_request_is(request_id)) =>
             {
+                if let Some(request_id) = self.active_voice_request_id() {
+                    self.disable_vision_for_voice(request_id);
+                }
                 self.voice_draft = None;
                 self.voice_notice = Some(voice_error_notice(code).to_string());
                 if matches!(
@@ -996,6 +1141,28 @@ impl GsvApp {
             .is_some_and(|voice| voice.request_id == request_id)
     }
 
+    fn voice_final_conversation_is_safe(&self, voice: &VoiceDraft, cx: &Context<Self>) -> bool {
+        self.login.is_none()
+            && !self.desktop_switch_pending
+            && self.microphone_chooser.is_none()
+            && self.conversation.mode == SurfaceMode::Conversation
+            && !self.interaction.is_approval()
+            && !self.interaction.is_approval_submitting()
+            && !self.interaction.is_submitting()
+            && self.input.read(cx).value().as_ref() == voice.rendered
+    }
+
+    fn voice_final_send_is_safe(&self) -> bool {
+        self.login.is_none()
+            && !self.desktop_switch_pending
+            && self.microphone_chooser.is_none()
+            && self.conversation.mode == SurfaceMode::Conversation
+            && self.interaction.layer == super::CanvasLayer::Draft
+            && !self.interaction.is_approval()
+            && !self.interaction.is_approval_submitting()
+            && !self.interaction.is_submitting()
+    }
+
     pub(super) fn cancel_dictation(
         &mut self,
         restore_base: bool,
@@ -1005,6 +1172,7 @@ impl GsvApp {
         let Some(voice) = self.voice_draft.take() else {
             return;
         };
+        self.disable_vision_for_voice(voice.request_id);
         let command_failed = self
             .voice_commands
             .send(VoiceCommand::Cancel {
@@ -1170,6 +1338,7 @@ mod tests {
     use gpui_component::Root;
 
     use crate::app::bind_keys;
+    use crate::client::ClientCommand;
 
     use super::*;
 
@@ -1219,6 +1388,34 @@ mod tests {
             voice_phase_notice(VoicePhase::Listening, None),
             "LISTENING · SPEAK NOW · PRESS AGAIN TO FINISH"
         );
+    }
+
+    #[test]
+    fn gesture_hold_is_latched_until_an_explicit_release() {
+        let mut voice = VoiceDraft::new(7, String::new(), String::new(), String::new());
+
+        assert!(voice.hold_for_gesture());
+        assert!(!voice.hold_for_gesture());
+        assert!(!voice.request_gesture_send());
+
+        assert!(voice.release_gesture_hold());
+        assert!(!voice.release_gesture_hold());
+        assert!(voice.request_gesture_send());
+        assert!(!voice.request_gesture_send());
+        assert_eq!(voice.terminal_intent, VoiceTerminalIntent::SendAfterFinal);
+    }
+
+    #[test]
+    fn stopping_voice_rejects_gesture_state_changes() {
+        let mut voice = VoiceDraft::new(7, String::new(), String::new(), String::new());
+        voice.gesture_held = true;
+        voice.stopping = true;
+
+        assert!(!voice.hold_for_gesture());
+        assert!(!voice.release_gesture_hold());
+        assert!(!voice.request_gesture_send());
+        assert!(voice.gesture_held);
+        assert_eq!(voice.terminal_intent, VoiceTerminalIntent::KeepDraft);
     }
 
     #[test]
@@ -1295,6 +1492,293 @@ mod tests {
         assert!(status[0].is_default);
         assert_eq!(status[1].name.as_str(), "USB microphone");
         assert!(!status[1].is_default);
+    }
+
+    #[gpui::test]
+    fn failed_gesture_stop_keeps_the_real_voice_error(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            gpui_component::init(cx);
+            bind_keys(cx);
+            crate::register_fonts(cx);
+            crate::configure_theme(cx);
+        });
+
+        let (command_tx, _command_rx) = tokio::sync::mpsc::unbounded_channel();
+        let (_event_tx, event_rx) = tokio::sync::mpsc::unbounded_channel();
+        let client = crate::client::ClientHandle {
+            commands: command_tx,
+            events: event_rx,
+            login: None,
+        };
+        let app = Rc::new(RefCell::new(None));
+        let app_for_window = app.clone();
+        let window = cx.update(|cx| {
+            cx.open_window(WindowOptions::default(), move |window, cx| {
+                let view = cx.new(|cx| GsvApp::new(window, cx, client, true, false, true));
+                *app_for_window.borrow_mut() = Some(view.clone());
+                cx.new(|cx| Root::new(view, window, cx))
+            })
+            .expect("the GPUI surface should open")
+        });
+
+        let app = app.borrow().clone().expect("app entity should be retained");
+        let window_handle: gpui::AnyWindowHandle = window.into();
+        window_handle
+            .update(cx, |_, _, cx| {
+                app.update(cx, |app, cx| {
+                    app.voice_commands =
+                        crate::transcription::VoiceCommandSender::closed_for_test();
+                    app.voice_draft = Some(VoiceDraft::new(
+                        40,
+                        String::new(),
+                        String::new(),
+                        String::new(),
+                    ));
+                    assert!(!app.gesture_send_dictation_now(cx));
+                    assert!(app.voice_draft.is_none());
+                    assert_eq!(
+                        app.voice_notice.as_deref(),
+                        Some("VOICE INPUT UNAVAILABLE · KEEP TYPING")
+                    );
+                });
+            })
+            .expect("window remains open");
+    }
+
+    #[gpui::test]
+    fn matching_final_with_send_intent_uses_the_conversation_submission_owner(
+        cx: &mut TestAppContext,
+    ) {
+        cx.update(|cx| {
+            gpui_component::init(cx);
+            bind_keys(cx);
+            crate::register_fonts(cx);
+            crate::configure_theme(cx);
+        });
+
+        let (command_tx, mut command_rx) = tokio::sync::mpsc::unbounded_channel();
+        let (_event_tx, event_rx) = tokio::sync::mpsc::unbounded_channel();
+        let client = crate::client::ClientHandle {
+            commands: command_tx,
+            events: event_rx,
+            login: None,
+        };
+        let app = Rc::new(RefCell::new(None));
+        let app_for_window = app.clone();
+        let window = cx.update(|cx| {
+            cx.open_window(WindowOptions::default(), move |window, cx| {
+                let view = cx.new(|cx| GsvApp::new(window, cx, client, true, false, true));
+                *app_for_window.borrow_mut() = Some(view.clone());
+                cx.new(|cx| Root::new(view, window, cx))
+            })
+            .expect("the GPUI surface should open")
+        });
+
+        cx.run_until_parked();
+        cx.simulate_input(window.into(), "draft partial");
+        cx.run_until_parked();
+        let app = app.borrow().clone().expect("app entity should be retained");
+        let window_handle: gpui::AnyWindowHandle = window.into();
+        window_handle
+            .update(cx, |_, window, cx| {
+                app.update(cx, |app, cx| {
+                    let mut voice = VoiceDraft::new(
+                        41,
+                        String::new(),
+                        String::new(),
+                        "draft partial".to_string(),
+                    );
+                    voice.revision = 1;
+                    assert!(voice.request_gesture_send());
+                    voice.stopping = true;
+                    app.voice_draft = Some(voice);
+                    app.handle_voice_event(
+                        VoiceEvent::Final {
+                            request_id: 41,
+                            text: "authoritative final".to_string(),
+                        },
+                        window,
+                        cx,
+                    );
+                });
+            })
+            .expect("window remains open");
+
+        assert!(matches!(
+            command_rx.try_recv(),
+            Ok(ClientCommand::Send { message, .. }) if message == "authoritative final"
+        ));
+        assert!(command_rx.try_recv().is_err());
+        cx.update(|cx| {
+            let app = app.read(cx);
+            assert!(app.voice_draft.is_none());
+            assert!(app.interaction.is_submitting());
+            assert!(app.input.read(cx).value().is_empty());
+        });
+    }
+
+    #[gpui::test]
+    fn blank_or_unsafe_final_never_sends_and_preserves_the_visible_draft(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            gpui_component::init(cx);
+            bind_keys(cx);
+            crate::register_fonts(cx);
+            crate::configure_theme(cx);
+        });
+
+        let (command_tx, mut command_rx) = tokio::sync::mpsc::unbounded_channel();
+        let (_event_tx, event_rx) = tokio::sync::mpsc::unbounded_channel();
+        let client = crate::client::ClientHandle {
+            commands: command_tx,
+            events: event_rx,
+            login: None,
+        };
+        let app = Rc::new(RefCell::new(None));
+        let app_for_window = app.clone();
+        let window = cx.update(|cx| {
+            cx.open_window(WindowOptions::default(), move |window, cx| {
+                let view = cx.new(|cx| GsvApp::new(window, cx, client, true, false, true));
+                *app_for_window.borrow_mut() = Some(view.clone());
+                cx.new(|cx| Root::new(view, window, cx))
+            })
+            .expect("the GPUI surface should open")
+        });
+
+        cx.run_until_parked();
+        cx.simulate_input(window.into(), "draft stays here");
+        cx.run_until_parked();
+        let app = app.borrow().clone().expect("app entity should be retained");
+        let window_handle: gpui::AnyWindowHandle = window.into();
+        window_handle
+            .update(cx, |_, window, cx| {
+                app.update(cx, |app, cx| {
+                    let mut voice = VoiceDraft::new(
+                        42,
+                        String::new(),
+                        String::new(),
+                        "draft stays here".to_string(),
+                    );
+                    voice.revision = 1;
+                    voice.terminal_intent = VoiceTerminalIntent::SendAfterFinal;
+                    voice.stopping = true;
+                    app.voice_draft = Some(voice);
+                    app.handle_voice_event(
+                        VoiceEvent::Final {
+                            request_id: 42,
+                            text: "   ".to_string(),
+                        },
+                        window,
+                        cx,
+                    );
+                });
+            })
+            .expect("window remains open");
+
+        cx.update(|cx| {
+            let app = app.read(cx);
+            assert_eq!(app.input.read(cx).value().as_ref(), "draft stays here");
+            assert_eq!(app.interaction.visible_draft(), Some("draft stays here"));
+        });
+        assert!(command_rx.try_recv().is_err());
+
+        window_handle
+            .update(cx, |_, window, cx| {
+                app.update(cx, |app, cx| {
+                    let mut voice = VoiceDraft::new(
+                        43,
+                        String::new(),
+                        String::new(),
+                        "draft stays here".to_string(),
+                    );
+                    voice.revision = 2;
+                    voice.terminal_intent = VoiceTerminalIntent::SendAfterFinal;
+                    voice.stopping = true;
+                    app.voice_draft = Some(voice);
+                    app.conversation.mode = SurfaceMode::Terminal;
+                    app.handle_voice_event(
+                        VoiceEvent::Final {
+                            request_id: 43,
+                            text: "must not reach the shell".to_string(),
+                        },
+                        window,
+                        cx,
+                    );
+                });
+            })
+            .expect("window remains open");
+
+        cx.update(|cx| {
+            let app = app.read(cx);
+            assert_eq!(app.input.read(cx).value().as_ref(), "draft stays here");
+            assert_eq!(app.interaction.visible_draft(), Some("draft stays here"));
+        });
+        assert!(command_rx.try_recv().is_err());
+    }
+
+    #[gpui::test]
+    fn failed_gesture_submission_restores_the_authoritative_final(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            gpui_component::init(cx);
+            bind_keys(cx);
+            crate::register_fonts(cx);
+            crate::configure_theme(cx);
+        });
+
+        let (command_tx, command_rx) = tokio::sync::mpsc::unbounded_channel();
+        drop(command_rx);
+        let (_event_tx, event_rx) = tokio::sync::mpsc::unbounded_channel();
+        let client = crate::client::ClientHandle {
+            commands: command_tx,
+            events: event_rx,
+            login: None,
+        };
+        let app = Rc::new(RefCell::new(None));
+        let app_for_window = app.clone();
+        let window = cx.update(|cx| {
+            cx.open_window(WindowOptions::default(), move |window, cx| {
+                let view = cx.new(|cx| GsvApp::new(window, cx, client, true, false, true));
+                *app_for_window.borrow_mut() = Some(view.clone());
+                cx.new(|cx| Root::new(view, window, cx))
+            })
+            .expect("the GPUI surface should open")
+        });
+
+        cx.run_until_parked();
+        cx.simulate_input(window.into(), "draft partial");
+        cx.run_until_parked();
+        let app = app.borrow().clone().expect("app entity should be retained");
+        let window_handle: gpui::AnyWindowHandle = window.into();
+        window_handle
+            .update(cx, |_, window, cx| {
+                app.update(cx, |app, cx| {
+                    let mut voice = VoiceDraft::new(
+                        44,
+                        String::new(),
+                        String::new(),
+                        "draft partial".to_string(),
+                    );
+                    voice.revision = 1;
+                    voice.terminal_intent = VoiceTerminalIntent::SendAfterFinal;
+                    voice.stopping = true;
+                    app.voice_draft = Some(voice);
+                    app.handle_voice_event(
+                        VoiceEvent::Final {
+                            request_id: 44,
+                            text: "authoritative final".to_string(),
+                        },
+                        window,
+                        cx,
+                    );
+                });
+            })
+            .expect("window remains open");
+
+        cx.update(|cx| {
+            let app = app.read(cx);
+            assert_eq!(app.input.read(cx).value().as_ref(), "authoritative final");
+            assert_eq!(app.interaction.visible_draft(), Some("authoritative final"));
+            assert!(!app.interaction.is_submitting());
+        });
     }
 
     #[gpui::test]

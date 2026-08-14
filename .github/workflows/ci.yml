@@ -459,19 +459,19 @@ jobs:
       - name: Check Desktop and helpers
         run: >-
           cargo check --locked --package gsv-native --package gsv-transcribe
-          --package gsv-vision
+          --package gsv-vision --package gsv-vision-control
 
       - name: Check formatting
         run: >-
           cargo fmt --package gsv-native --package gsv-transcribe
-          --package gsv-vision --check
+          --package gsv-vision --package gsv-vision-control --check
 
       - name: Test Desktop and helpers
         run: >-
           cargo test --locked --package gsv-native --package gsv-transcribe
-          --package gsv-vision
+          --package gsv-vision --package gsv-vision-control
 
       - name: Lint Desktop and helpers
         run: >-
           cargo clippy --locked --package gsv-native --package gsv-transcribe
-          --package gsv-vision --all-targets -- -D warnings
+          --package gsv-vision --package gsv-vision-control --all-targets -- -D warnings

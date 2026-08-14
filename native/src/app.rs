@@ -30,6 +30,7 @@ use crate::typography::TypeLayout;
 use gsv_config::MicrophonePreference;
 use gsv_desktop_control::{DesktopStatus, GatewayState, OperationError, ProcessId, WindowState};
 
+mod gesture;
 mod login;
 mod media;
 mod microphone;
@@ -263,6 +264,9 @@ pub struct GsvApp {
     microphone_save_cancellation: Option<Arc<AtomicBool>>,
     microphone_save_task: Option<Task<()>>,
     next_voice_request_id: u64,
+    vision_context: Option<crate::vision_debug::VisionContextSender>,
+    vision_voice_request_id: Option<u64>,
+    vision_lifecycle: Option<gsv_vision_control::LifecycleState>,
     _input_subscription: Subscription,
     _login_subscription: Option<Subscription>,
     _event_task: Task<()>,
@@ -272,6 +276,7 @@ pub struct GsvApp {
     _attachment_preparation_task: Task<()>,
     _media_file_task: Task<()>,
     _voice_task: Task<()>,
+    _vision_task: Option<Task<()>>,
 }
 
 impl GsvApp {
@@ -517,6 +522,7 @@ impl GsvApp {
         }
     }
 
+    #[cfg(test)]
     pub fn new(
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -524,6 +530,26 @@ impl GsvApp {
         demo: bool,
         sound_enabled: bool,
         reduced_motion: bool,
+    ) -> Self {
+        Self::new_with_vision(
+            window,
+            cx,
+            client,
+            demo,
+            sound_enabled,
+            reduced_motion,
+            None,
+        )
+    }
+
+    pub(crate) fn new_with_vision(
+        window: &mut Window,
+        cx: &mut Context<Self>,
+        client: ClientHandle,
+        demo: bool,
+        sound_enabled: bool,
+        reduced_motion: bool,
+        vision: Option<crate::vision_debug::VisionHandle>,
     ) -> Self {
         let ClientHandle {
             commands,
@@ -691,6 +717,21 @@ impl GsvApp {
                 }
             }
         });
+        let vision_context = vision.as_ref().map(|handle| handle.context.clone());
+        let vision_task = vision.map(|mut handle| {
+            cx.spawn_in(window, async move |this, cx| {
+                while let Some(event) = handle.events.recv().await {
+                    if this
+                        .update_in(cx, |this, _window, cx| {
+                            this.handle_vision_event(event, cx);
+                        })
+                        .is_err()
+                    {
+                        break;
+                    }
+                }
+            })
+        });
 
         Self {
             conversation: if demo {
@@ -773,6 +814,9 @@ impl GsvApp {
             microphone_save_cancellation: None,
             microphone_save_task: None,
             next_voice_request_id: 1,
+            vision_context,
+            vision_voice_request_id: None,
+            vision_lifecycle: None,
             _input_subscription: input_subscription,
             _login_subscription: login_subscription,
             _event_task: event_task,
@@ -782,6 +826,7 @@ impl GsvApp {
             _attachment_preparation_task: attachment_preparation_task,
             _media_file_task: media_file_task,
             _voice_task: voice_task,
+            _vision_task: vision_task,
         }
     }
 

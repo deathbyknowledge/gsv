@@ -3043,8 +3043,10 @@ dependencies = [
  "gsv-client",
  "gsv-config",
  "gsv-desktop-control",
+ "gsv-vision-control",
  "image",
  "infer",
+ "libc",
  "markdown",
  "mime_guess",
  "reqwest",
@@ -3077,10 +3079,20 @@ version = "0.4.1"
 dependencies = [
  "crossbeam-channel",
  "font8x8",
+ "gsv-vision-control",
+ "libc",
  "libloading",
  "minifb",
  "nokhwa",
  "sha2 0.10.9",
+]
+
+[[package]]
+name = "gsv-vision-control"
+version = "0.4.1"
+dependencies = [
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

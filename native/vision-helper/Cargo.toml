@@ -7,9 +7,13 @@ publish = false
 [dependencies]
 crossbeam-channel = "0.5"
 font8x8 = "0.3.1"
+gsv-vision-control = { path = "../../crates/gsv-vision-control" }
 libloading = "0.8.9"
 minifb = "0.28.0"
 sha2 = "0.10"
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
 
 [target.'cfg(target_os = "linux")'.dependencies]
 nokhwa = { version = "0.10.11", default-features = false, features = ["decoding", "input-v4l"] }
