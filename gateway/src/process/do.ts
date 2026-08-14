@@ -271,6 +271,32 @@ type PreparedToolArgs = {
   missingShellSessionTarget: boolean;
 };
 
+const PROCESS_KILLED_TOMBSTONE_KEY = "__gsv_process_killed__";
+
+function tombstoneKilledProcessStorage(storage: DurableObjectStorage): void {
+  storage.transactionSync(() => {
+    const tableNames = storage.sql.exec<{ name: string }>(
+      `SELECT name
+       FROM sqlite_master
+       WHERE type = 'table'
+         AND name NOT LIKE 'sqlite_%'
+         AND substr(lower(name), 1, 4) != '_cf_'
+         AND substr(lower(name), 1, 5) != '__cf_'
+       ORDER BY name`,
+    ).toArray().map((row) => row.name);
+    const kvKeys = [...storage.kv.list()].map(([key]) => key);
+
+    for (const tableName of tableNames) {
+      const quotedName = `"${tableName.replaceAll('"', '""')}"`;
+      storage.sql.exec(`DROP TABLE IF EXISTS ${quotedName}`);
+    }
+    for (const key of kvKeys) {
+      storage.kv.delete(key);
+    }
+    storage.kv.put(PROCESS_KILLED_TOMBSTONE_KEY, true);
+  });
+}
+
 type ArchivedMessageRecord = {
   id?: number;
   runId?: string;
@@ -881,11 +907,17 @@ export class Process extends Host<Env> {
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
-    runProcessSqlMigrations(ctx.storage);
+    this.killed = ctx.storage.kv.get<boolean>(PROCESS_KILLED_TOMBSTONE_KEY) === true;
+    if (!this.killed) {
+      runProcessSqlMigrations(ctx.storage);
+    }
     this.store = new ProcessStore(ctx.storage.sql);
     this.ripgit = env.RIPGIT
       ? new RipgitClient(env.RIPGIT)
       : null;
+    if (this.killed) {
+      return;
+    }
     const recoveredRun = this.currentRun;
     if (
       recoveredRun?.pendingMediaMessageId !== undefined
@@ -3344,8 +3376,16 @@ export class Process extends Host<Env> {
 
       // A killed process is gone. Its transcript was archived above, so wipe the
       // Process DO only after cancellation and cleanup have completed.
+      const existingAlarm = await this.ctx.storage.getAlarm();
       await this.ctx.storage.deleteAlarm();
-      await this.ctx.storage.deleteAll();
+      try {
+        tombstoneKilledProcessStorage(this.ctx.storage);
+      } catch (error) {
+        if (existingAlarm !== null) {
+          await this.ctx.storage.setAlarm(existingAlarm);
+        }
+        throw error;
+      }
       this.killed = true;
 
       return {

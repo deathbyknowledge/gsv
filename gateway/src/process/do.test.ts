@@ -1,6 +1,10 @@
 import { describe, it, expect, vi } from "vitest";
 import { env } from "cloudflare:workers";
-import { runInDurableObject, runDurableObjectAlarm } from "cloudflare:test";
+import {
+  evictDurableObject,
+  runInDurableObject,
+  runDurableObjectAlarm,
+} from "cloudflare:test";
 import { createAssistantMessageEventStream } from "@earendil-works/pi-ai";
 import type { Process } from "./do";
 import { Kernel } from "../kernel/do";
@@ -9053,7 +9057,7 @@ describe("Process DO — mechanical", () => {
         }),
       });
       expect(killed.alarm).toBeNull();
-      expect(killed.keys).toEqual([]);
+      expect(killed.keys).toEqual(["__gsv_process_killed__"]);
       expect(killed.tables).not.toEqual(expect.arrayContaining([
         "conversations",
         "messages",
@@ -9064,6 +9068,115 @@ describe("Process DO — mechanical", () => {
         makeReq("proc.setidentity", { pid, identity: ROOT_IDENTITY }),
       );
       expect(reuse).toMatchObject({
+        ok: false,
+        error: { code: 410, message: "Process no longer exists" },
+      });
+    });
+
+    it("keeps a killed pid dead after Durable Object eviction", async () => {
+      const pid = "mech-kill-eviction";
+      const stub = await initProcess(pid, ROOT_IDENTITY);
+
+      await expect(stub.recvFrame(
+        makeReq("proc.kill", { pid, archive: false }),
+      )).resolves.toMatchObject({
+        ok: true,
+        data: { ok: true, pid },
+      });
+
+      await evictDurableObject(stub);
+
+      await expect(stub.recvFrame(
+        makeReq("proc.setidentity", { pid, identity: ROOT_IDENTITY }),
+      )).resolves.toMatchObject({
+        ok: false,
+        error: { code: 410, message: "Process no longer exists" },
+      });
+      await expect(runInDurableObject(stub, (instance: Process, state) => ({
+        killed: (instance as any).killed,
+        tombstone: state.storage.kv.get("__gsv_process_killed__"),
+        tables: state.storage.sql.exec<{ name: string }>(
+          "SELECT name FROM sqlite_master WHERE type = 'table'",
+        ).toArray().map((row) => row.name),
+      }))).resolves.toEqual({
+        killed: true,
+        tombstone: true,
+        tables: expect.not.arrayContaining([
+          "conversations",
+          "messages",
+          "process_kv",
+        ]),
+      });
+    });
+
+    it("rolls back the storage wipe when the terminal commit fails", async () => {
+      const pid = "mech-kill-atomic-rollback";
+      const stub = await initProcess(pid, ROOT_IDENTITY);
+      const alarmAt = Date.now() + 60_000;
+
+      const failed = await runInDurableObject(stub, async (instance: Process, state) => {
+        const process = instance as any;
+        process.store.appendMessage("user", "survive the failed kill");
+        state.storage.kv.put("kill-rollback-sentinel", "present");
+        await state.storage.setAlarm(alarmAt);
+
+        const realTransactionSync = state.storage.transactionSync.bind(state.storage);
+        const transactionSpy = vi.spyOn(state.storage, "transactionSync").mockImplementation(
+          (closure) => realTransactionSync(() => {
+            closure();
+            throw new Error("injected terminal commit failure");
+          }),
+        );
+        let response;
+        try {
+          response = await process.recvFrame(
+            makeReq("proc.kill", { pid, archive: false }),
+          );
+        } finally {
+          transactionSpy.mockRestore();
+        }
+
+        return {
+          response,
+          killed: process.killed,
+          alarm: await state.storage.getAlarm(),
+          sentinel: state.storage.kv.get("kill-rollback-sentinel"),
+          tombstone: state.storage.kv.get("__gsv_process_killed__"),
+          tables: state.storage.sql.exec<{ name: string }>(
+            "SELECT name FROM sqlite_master WHERE type = 'table'",
+          ).toArray().map((row) => row.name),
+        };
+      });
+
+      expect(failed).toMatchObject({
+        response: {
+          ok: false,
+          error: { message: "injected terminal commit failure" },
+        },
+        killed: false,
+        alarm: alarmAt,
+        sentinel: "present",
+        tombstone: undefined,
+        tables: expect.arrayContaining(["messages", "process_kv"]),
+      });
+
+      await evictDurableObject(stub);
+      const history = await stub.recvFrame(makeReq("proc.history", {})) as ResponseOkFrame;
+      expect(history).toMatchObject({ ok: true });
+      expect((history.data as any).messages).toEqual([
+        expect.objectContaining({ content: "survive the failed kill" }),
+      ]);
+
+      await expect(stub.recvFrame(
+        makeReq("proc.kill", { pid, archive: false }),
+      )).resolves.toMatchObject({
+        ok: true,
+        data: { ok: true, pid },
+      });
+      await evictDurableObject(stub);
+      await expect(stub.recvFrame(
+        makeReq("proc.setidentity", { pid, identity: ROOT_IDENTITY }),
+      )).resolves.toMatchObject({
         ok: false,
         error: { code: 410, message: "Process no longer exists" },
       });
