@@ -132,8 +132,7 @@ When no route exists, any surface creates and binds an interactive process that
 runs as the user's personal agent. Later messages reuse the route. Selecting
 `/use personal` creates and routes to a new personal-agent process; selecting an
 existing PID updates the route. `message route clear` removes the binding so the
-next inbound message starts a new chat. The upgrade migration clears routes to
-the retired controller processes but preserves their accounts and histories.
+next inbound message starts a new chat.
 
 Human-in-the-loop replies are routed specially. If the target process has a
 pending HIL request, its adapter DM prompt includes `hil[requestId]`. Only an
