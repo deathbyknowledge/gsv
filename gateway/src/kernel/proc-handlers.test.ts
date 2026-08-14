@@ -23,19 +23,19 @@ const IDENTITY: ProcessIdentity = {
   cwd: "/home/sam",
 };
 
-const MASTER_CONTROL_ACCOUNT = {
-  username: `_gsv_mc_${IDENTITY.uid}`,
+const PERSONAL_AGENT_ACCOUNT = {
+  username: "sam-agent",
   uid: 2000,
   gid: 2000,
-  gecos: "Master Control",
-  home: `/home/_gsv_mc_${IDENTITY.uid}`,
+  gecos: "Sam Agent",
+  home: "/home/sam-agent",
   shell: "/bin/init",
 };
 
-function makeMasterControlAuth() {
+function makePersonalAgentAuth() {
   return {
     getPasswdByUsername: vi.fn((username: string) => (
-      username === MASTER_CONTROL_ACCOUNT.username ? MASTER_CONTROL_ACCOUNT : null
+      username === PERSONAL_AGENT_ACCOUNT.username ? PERSONAL_AGENT_ACCOUNT : null
     )),
     getPasswdByUid: vi.fn((uid: number) => {
       if (uid === IDENTITY.uid) {
@@ -48,17 +48,18 @@ function makeMasterControlAuth() {
           shell: "/bin/init",
         };
       }
-      return uid === MASTER_CONTROL_ACCOUNT.uid ? MASTER_CONTROL_ACCOUNT : null;
+      return uid === PERSONAL_AGENT_ACCOUNT.uid ? PERSONAL_AGENT_ACCOUNT : null;
     }),
     getShadowByUsername: vi.fn((username: string) => (
-      username === MASTER_CONTROL_ACCOUNT.username ? { username, hash: "!" } : null
+      username === PERSONAL_AGENT_ACCOUNT.username ? { username, hash: "!" } : null
     )),
     getGroupByGid: vi.fn((gid: number) => (
-      gid === MASTER_CONTROL_ACCOUNT.gid
-        ? { name: MASTER_CONTROL_ACCOUNT.username, gid, members: [IDENTITY.username] }
+      gid === PERSONAL_AGENT_ACCOUNT.gid
+        ? { name: PERSONAL_AGENT_ACCOUNT.username, gid, members: [IDENTITY.username] }
         : null
     )),
-    getPersonalAgentUid: vi.fn(() => null),
+    getPersonalAgentUid: vi.fn(() => PERSONAL_AGENT_ACCOUNT.uid),
+    isPersonalAgentUid: vi.fn((uid: number) => uid === PERSONAL_AGENT_ACCOUNT.uid),
     resolveGids: vi.fn((_username: string, gid: number) => [gid]),
   };
 }
@@ -682,7 +683,7 @@ describe("proc handlers", () => {
         process: IDENTITY,
         capabilities: ["*"],
       },
-      auth: makeMasterControlAuth(),
+      auth: makePersonalAgentAuth(),
       procs: {
         get: vi.fn(() => null),
         spawn: vi.fn(),
@@ -702,8 +703,8 @@ describe("proc handlers", () => {
     expect(ctx.procs.spawn).toHaveBeenCalledWith(
       expect.any(String),
       expect.objectContaining({
-        uid: MASTER_CONTROL_ACCOUNT.uid,
-        username: MASTER_CONTROL_ACCOUNT.username,
+        uid: PERSONAL_AGENT_ACCOUNT.uid,
+        username: PERSONAL_AGENT_ACCOUNT.username,
         cwd: "/src/repos/sam/demo-a/tools/demo-tool",
       }),
       expect.objectContaining({
@@ -733,7 +734,7 @@ describe("proc handlers", () => {
         process: IDENTITY,
         capabilities: ["*"],
       },
-      auth: makeMasterControlAuth(),
+      auth: makePersonalAgentAuth(),
       procs: {
         get: vi.fn(() => null),
         spawn: vi.fn(),
@@ -744,13 +745,13 @@ describe("proc handlers", () => {
 
     expect(result).toMatchObject({
       ok: true,
-      cwd: MASTER_CONTROL_ACCOUNT.home,
+      cwd: PERSONAL_AGENT_ACCOUNT.home,
     });
     expect(ctx.procs.spawn).toHaveBeenCalledWith(
       expect.any(String),
       expect.objectContaining({
-        uid: MASTER_CONTROL_ACCOUNT.uid,
-        username: MASTER_CONTROL_ACCOUNT.username,
+        uid: PERSONAL_AGENT_ACCOUNT.uid,
+        username: PERSONAL_AGENT_ACCOUNT.username,
       }),
       expect.objectContaining({
         ownerUid: IDENTITY.uid,

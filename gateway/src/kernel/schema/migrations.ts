@@ -37,6 +37,9 @@ import { KERNEL_V019_REMOVE_NOTIFICATIONS } from "./v019_remove_notifications";
 import {
   KERNEL_V020_ROUTE_PERSONAL_DMS_TO_MASTER_CONTROL,
 } from "./v020_route_personal_dms_to_master_control";
+import {
+  KERNEL_V021_CLEAR_LEGACY_CONTROLLER_ROUTES,
+} from "./v021_clear_legacy_controller_routes";
 
 // Used by Kernel DO startup before the individual stores initialize.
 export const KERNEL_SCHEMA_COMPONENT = "kernel";
@@ -62,6 +65,7 @@ export const KERNEL_MIGRATIONS: readonly SqlMigration[] = [
   KERNEL_V018_REMOVE_CONVERSATION_REGISTRY,
   KERNEL_V019_REMOVE_NOTIFICATIONS,
   KERNEL_V020_ROUTE_PERSONAL_DMS_TO_MASTER_CONTROL,
+  KERNEL_V021_CLEAR_LEGACY_CONTROLLER_ROUTES,
 ];
 
 export function runKernelSqlMigrations(storage: DurableObjectStorage): void {

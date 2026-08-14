@@ -594,7 +594,7 @@ export function renderManualPage(topic: string): string | null {
         "PERSONAL MEMORY",
         "  Personal memory belongs to the human and is shared by every agent working for them.",
         "  Use `personal` for durable notes; stable standing facts belong in the owner's context.d/10-personal.md.",
-        "  Open commitments remain in Master Control until their user-facing loop closes.",
+        "  Open commitments remain with the personal intelligence until their user-facing loop closes.",
         "  Examples:",
         "    wiki info personal",
         "    wiki search Alice --prefix personal/pages",

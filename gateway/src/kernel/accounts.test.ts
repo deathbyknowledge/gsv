@@ -2,23 +2,22 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { KernelContext } from "./context";
 import type { ConnectionIdentity, ProcessIdentity } from "@humansandmachines/gsv/protocol";
 import {
-  ensureMasterControlAgent,
   ensurePersonalAgent,
   handleAccountCreate,
   handleAccountList,
-  masterControlUsername,
 } from "./agents";
 import {
-  MASTER_CONTROL_COMMITMENTS_CONTEXT,
-  MASTER_CONTROL_CONTEXT,
-  MASTER_CONTROL_VOICE_CONTEXT,
-} from "../prompts/master-control";
+  PERSONAL_INTELLIGENCE_COMMITMENTS_CONTEXT,
+  PERSONAL_INTELLIGENCE_CONTEXT,
+  PERSONAL_INTELLIGENCE_VOICE_CONTEXT,
+} from "../prompts/personal-intelligence";
 import {
   LEGACY_BOOT_CONTEXT_TEMPLATE,
   LEGACY_DEFAULT_USER_CONTEXT_TEMPLATE,
   LEGACY_MEMORY_CONTEXT_TEMPLATE_V1,
   LEGACY_MEMORY_CONTEXT_TEMPLATE_V2,
   LEGACY_MEMORY_CONTEXT_TEMPLATE_V3,
+  LEGACY_MEMORY_CONTEXT_TEMPLATE_V4,
   LEGACY_OPEN_LOOPS_CONTEXT,
   PERSONAL_STANDING_CONTEXT,
   LEGACY_STYLE_CONTEXT,
@@ -237,6 +236,7 @@ describe("handleAccountCreate", () => {
     expect(memoryContext).toContain("`personal` wiki");
     expect(memoryContext).toContain("skills show memory");
     expect(memoryContext).not.toContain("/src/repos/scout/memory");
+    expect(memoryContext).not.toContain("Master Control");
     expect(ops).not.toContainEqual(
       expect.objectContaining({ path: "context.d/20-open-loops.md" }),
     );
@@ -297,13 +297,23 @@ describe("handleAccountCreate", () => {
       .toContain("keep it as an active assignment even if the conversation changes topic");
     expect(new TextDecoder().decode(new Uint8Array(bootContextOp?.contentBytes ?? [])))
       .not.toContain("Your program home");
-    expect(agentOps).toContainEqual(
+    const roleContextOp = agentOps.find((op) => op.path === "context.d/00-role.md");
+    const voiceContextOp = agentOps.find((op) => op.path === "context.d/05-voice.md");
+    const commitmentsContextOp = agentOps.find((op) => (
+      op.path === "context.d/10-commitments.md"
+    ));
+    expect(new TextDecoder().decode(new Uint8Array(roleContextOp?.contentBytes ?? [])))
+      .toBe(PERSONAL_INTELLIGENCE_CONTEXT);
+    expect(new TextDecoder().decode(new Uint8Array(voiceContextOp?.contentBytes ?? [])))
+      .toBe(PERSONAL_INTELLIGENCE_VOICE_CONTEXT);
+    expect(new TextDecoder().decode(new Uint8Array(commitmentsContextOp?.contentBytes ?? [])))
+      .toBe(PERSONAL_INTELLIGENCE_COMMITMENTS_CONTEXT);
+    expect(agentOps).not.toContainEqual(
       expect.objectContaining({ type: "put", path: "context.d/00-style.md" }),
     );
-    const memoryContextOp = agentOps.find((op) => op.path === "context.d/15-memory.md");
-    expect(memoryContextOp).toBeTruthy();
-    expect(new TextDecoder().decode(new Uint8Array(memoryContextOp?.contentBytes ?? [])))
-      .toContain("human-owned kinds of memory");
+    expect(agentOps).not.toContainEqual(
+      expect.objectContaining({ type: "put", path: "context.d/15-memory.md" }),
+    );
     expect(agentOps).not.toContainEqual(
       expect.objectContaining({ path: "context.d/20-open-loops.md" }),
     );
@@ -361,16 +371,6 @@ describe("handleAccountCreate", () => {
     await expect(handleAccountCreate({ kind: "agent", username: "Bad Name" }, ctx)).rejects.toThrow(
       /unavailable|invalid/i,
     );
-  });
-
-  it("reserves Master Control account names for the system", async () => {
-    const { ctxFor } = createCtx();
-    const ctx = ctxFor(userIdentity(1000, "alice", ["account.create"]));
-
-    await expect(handleAccountCreate({
-      kind: "agent",
-      username: masterControlUsername(1000),
-    }, ctx)).rejects.toThrow(/reserved system username/i);
   });
 
   it("requires root to create a human account", async () => {
@@ -442,6 +442,7 @@ describe("handleAccountCreate", () => {
     ["v1", LEGACY_MEMORY_CONTEXT_TEMPLATE_V1],
     ["v2", LEGACY_MEMORY_CONTEXT_TEMPLATE_V2],
     ["v3", LEGACY_MEMORY_CONTEXT_TEMPLATE_V3],
+    ["v4", LEGACY_MEMORY_CONTEXT_TEMPLATE_V4],
   ])("reconciles the %s generated personal agent context", async (_version, memoryTemplate) => {
     const state = createCtx();
     provisionExistingPersonalAgent(state);
@@ -478,8 +479,11 @@ describe("handleAccountCreate", () => {
     const ops = state.ripgitApplyBodies.flatMap((body) => body.ops);
     expect(ops).toEqual(expect.arrayContaining([
       expect.objectContaining({ type: "put", path: "context.d/00-boot.md" }),
-      expect.objectContaining({ type: "put", path: "context.d/00-style.md" }),
-      expect.objectContaining({ type: "put", path: "context.d/15-memory.md" }),
+      expect.objectContaining({ type: "put", path: "context.d/00-role.md" }),
+      expect.objectContaining({ type: "put", path: "context.d/05-voice.md" }),
+      expect.objectContaining({ type: "put", path: "context.d/10-commitments.md" }),
+      expect.objectContaining({ type: "delete", path: "context.d/00-style.md" }),
+      expect.objectContaining({ type: "delete", path: "context.d/15-memory.md" }),
       expect.objectContaining({ type: "delete", path: "context.d/20-open-loops.md" }),
       expect.objectContaining({ type: "delete", path: "context.d/05-persona.md" }),
       expect.objectContaining({ type: "delete", path: "context.d/10-user.md" }),
@@ -487,9 +491,9 @@ describe("handleAccountCreate", () => {
     const bootOp = ops.find((op) => op.path === "context.d/00-boot.md");
     expect(new TextDecoder().decode(new Uint8Array(bootOp?.contentBytes ?? [])))
       .toContain("This GSV was just created");
-    const memoryOp = ops.find((op) => op.path === "context.d/15-memory.md");
-    expect(new TextDecoder().decode(new Uint8Array(memoryOp?.contentBytes ?? [])))
-      .toContain("human-owned kinds of memory");
+    const roleOp = ops.find((op) => op.path === "context.d/00-role.md");
+    expect(new TextDecoder().decode(new Uint8Array(roleOp?.contentBytes ?? [])))
+      .toContain("one continuous personal intelligence");
   });
 
   it("preserves customized personal agent context during reconciliation", async () => {
@@ -512,59 +516,6 @@ describe("handleAccountCreate", () => {
     for (const path of customPaths) {
       expect(ops).not.toContainEqual(expect.objectContaining({ path }));
     }
-  });
-});
-
-describe("ensureMasterControlAgent", () => {
-  beforeEach(() => vi.clearAllMocks());
-
-  it("creates an isolated controller account with compact controller context", async () => {
-    const state = createCtx();
-    const ctx = state.ctxFor(
-      userIdentity(1000, "alice", ["account.create"]),
-      { ripgit: true },
-    );
-
-    const result = await ensureMasterControlAgent(ctx, ctx.identity!.process);
-
-    expect(result).toMatchObject({
-      created: true,
-      identity: {
-        username: masterControlUsername(1000),
-        home: `/home/${masterControlUsername(1000)}`,
-      },
-    });
-    expect(state.shadow.get(masterControlUsername(1000))).toBe("!");
-    expect(state.groups.find((group) => group.name === masterControlUsername(1000))?.members)
-      .toContain("alice");
-
-    const ops = state.ripgitApplyBodies
-      .filter((body) => body.owner === masterControlUsername(1000))
-      .flatMap((body) => body.ops);
-    const contextFiles = ops.filter((op) => op.type === "put" && op.path.startsWith("context.d/"));
-    expect(contextFiles.map((op) => op.path)).toEqual([
-      "context.d/.dir",
-      "context.d/00-master-control.md",
-      "context.d/05-voice.md",
-      "context.d/10-commitments.md",
-    ]);
-    const controller = contextFiles.find((op) => op.path === "context.d/00-master-control.md");
-    const voice = contextFiles.find((op) => op.path === "context.d/05-voice.md");
-    const commitments = contextFiles.find((op) => op.path === "context.d/10-commitments.md");
-    expect(new TextDecoder().decode(new Uint8Array(controller?.contentBytes ?? [])))
-      .toBe(MASTER_CONTROL_CONTEXT);
-    expect(new TextDecoder().decode(new Uint8Array(voice?.contentBytes ?? [])))
-      .toBe(MASTER_CONTROL_VOICE_CONTEXT);
-    expect(new TextDecoder().decode(new Uint8Array(commitments?.contentBytes ?? [])))
-      .toBe(MASTER_CONTROL_COMMITMENTS_CONTEXT);
-    expect(new TextDecoder().decode(new Uint8Array(controller?.contentBytes ?? [])))
-      .toContain("The user is not here to operate a cloud computer");
-    expect(new TextDecoder().decode(new Uint8Array(controller?.contentBytes ?? [])))
-      .toContain("`personal` wiki");
-    expect(ops).not.toContainEqual(expect.objectContaining({ path: "context.d/08-user.md" }));
-    expect(ops).not.toContainEqual(expect.objectContaining({ path: "context.d/00-style.md" }));
-    expect(ops).not.toContainEqual(expect.objectContaining({ path: "context.d/15-memory.md" }));
-    expect(ops).not.toContainEqual(expect.objectContaining({ path: "context.d/20-open-loops.md" }));
   });
 });
 

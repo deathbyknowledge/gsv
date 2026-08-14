@@ -82,9 +82,8 @@ sched remove <id>
 sched run <id> [--force]
 ```
 
-`proc spawn` always creates a fresh process. A parentless interactive spawn
-defaults to the owner's Master Control account; `--non-interactive` defaults to
-the personal agent, and a child inherits its parent unless `--as` selects
+`proc spawn` always creates a fresh process. A parentless spawn defaults to the
+owner's personal agent, and a child inherits its parent unless `--as` selects
 another owned agent account. Its prompt is fire-and-forget, and any answer
 remains in that child process's history. Unknown options are
 rejected; use `--` before a positional prompt that begins with `-`. Use

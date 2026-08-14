@@ -96,9 +96,8 @@ The inbound path looks like this:
    process route.
 7. Media is streamed into process-owned storage, and the Kernel creates the run
    reply route before admitting the message.
-8. The message is delivered to the routed process. An unrouted DM enters the
-   owner's durable Master Control process; an unrouted shared surface starts a
-   personal-agent process.
+8. The message is delivered to the routed process. Any unrouted surface starts
+   a new interactive process running as the owner's personal agent.
 9. The process runs the normal agent loop and emits `proc.run.*` signals.
 
 The important point is that inbound adapter traffic does not create a special
@@ -227,10 +226,9 @@ that observed destination to a specific process. The key includes adapter,
 account, actor, surface kind, surface id, and optional thread id.
 
 That means inbound adapter traffic can continue in its routed process or move
-to another existing process. When no route exists, a linked DM converges on the
-owner's single Master Control process; group, channel, and thread traffic starts
-an independent personal-agent process. Explicit `/use` process selection remains
-available.
+to another existing process. When no route exists, the surface starts and binds
+an independent interactive process running as the owner's personal agent.
+Explicit `/use` and `message route` process selection remain available.
 
 This is what lets GSV keep one durable process model while still supporting
 multiple external surfaces. Actor scope is important: two linked GSV users can

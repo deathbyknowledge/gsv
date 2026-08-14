@@ -22,10 +22,7 @@ import type {
 } from "../protocol/frames";
 import type { ArgsOf, ResultOf, SyscallName, ToolDefinition } from "../syscalls";
 import type { CodeModeExecArgs, CodeModeRunArgs, CodeModeRunResult } from "../syscalls/codemode";
-import {
-  COMPACTION_SUMMARY_SYSTEM_PROMPT,
-  MASTER_CONTROL_COMPACTION_SUMMARY_SYSTEM_PROMPT,
-} from "../prompts/compaction";
+import { COMPACTION_SUMMARY_SYSTEM_PROMPT } from "../prompts/compaction";
 import type {
   AiConfigResult,
   AiTextGenerateConfig,
@@ -764,12 +761,11 @@ function formatCompactionSummaryMessage(input: {
   ].join("\n");
 }
 
-function defaultHistoryPolicy(pid?: string): ProcHistoryContextPolicy {
-  const masterControl = pid?.startsWith("proc:master-control:") === true;
+function defaultHistoryPolicy(): ProcHistoryContextPolicy {
   return {
     overflow: "auto-compact",
-    compactAtPressure: masterControl ? 0.65 : 0.9,
-    keepLast: masterControl ? 24 : 80,
+    compactAtPressure: 0.9,
+    keepLast: 80,
     updatedAt: 0,
   };
 }
@@ -2674,7 +2670,7 @@ export class Process extends Host<Env> {
   }
 
   private getHistoryContextPolicy(): ProcHistoryContextPolicy {
-    const fallback = defaultHistoryPolicy(this.pid);
+    const fallback = defaultHistoryPolicy();
     const raw = this.store.getValue("historyPolicy");
     if (!raw) {
       return fallback;
@@ -2916,12 +2912,7 @@ export class Process extends Host<Env> {
       throw new Error("AI config unavailable");
     }
 
-    const context = buildCompactionSummaryContext(
-      messages,
-      this.pid.startsWith("proc:master-control:")
-        ? MASTER_CONTROL_COMPACTION_SUMMARY_SYSTEM_PROMPT
-        : COMPACTION_SUMMARY_SYSTEM_PROMPT,
-    );
+    const context = buildCompactionSummaryContext(messages);
     const generationOptions: AiTextGenerateOptions = {
       maxTokens: 768,
       reasoning: "off",

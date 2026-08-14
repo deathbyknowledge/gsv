@@ -32,7 +32,7 @@ import { REQUEST_CANCEL_SIGNAL } from "@humansandmachines/gsv/protocol";
 import { sendFrameToProcess } from "../shared/utils";
 import { raceWithAbort } from "../shared/abort";
 import { resolveUserPath } from "../fs";
-import { ensureMasterControlAgent, ensurePersonalAgent } from "./agents";
+import { ensurePersonalAgent } from "./agents";
 import { accountIdentity } from "./accounts";
 import { canOwnerDelegateRunAs } from "./account-access";
 import {
@@ -114,9 +114,8 @@ export async function handleProcSpawn(
   // The spawning human owns the process. The run-as identity is, in order of
   // precedence: an explicit `runAs` account, the parent's identity (so children
   // of an agent also run as that agent), or — for a parentless spawn — the
-  // caller's Master Control account for interaction or personal agent for
-  // non-interactive background work. Delegated children inherit or select a
-  // worker account explicitly.
+  // caller's personal agent. A delegated child inherits this identity unless
+  // a specialized agent is selected explicitly.
   const ownerUid = parent ? parent.ownerUid : callerOwnerUid;
   const inheritParentIdentity = parent && (
     parentIsCurrentCaller ||
@@ -147,9 +146,7 @@ export async function handleProcSpawn(
       return { ok: false, error: `Process owner does not exist: uid=${ownerUid}` };
     }
     const ownerIdentity = accountIdentity(ctx.auth, owner);
-    const provision = interactive
-      ? await ensureMasterControlAgent(ctx, ownerIdentity)
-      : await ensurePersonalAgent(ctx, ownerIdentity);
+    const provision = await ensurePersonalAgent(ctx, ownerIdentity);
     baseIdentity = provision.identity;
   }
 

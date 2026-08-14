@@ -31,7 +31,7 @@ function createTableStatement(name: string): string {
 describe("kernel schema migrations", () => {
   it("starts the kernel component at a v1 baseline", () => {
     expect(KERNEL_SCHEMA_COMPONENT).toBe("kernel");
-    expect(KERNEL_MIGRATIONS).toHaveLength(20);
+    expect(KERNEL_MIGRATIONS).toHaveLength(21);
     expect(KERNEL_MIGRATIONS[0]).toMatchObject({
       id: 1,
       name: "initial_kernel_schema",
@@ -111,6 +111,10 @@ describe("kernel schema migrations", () => {
     expect(KERNEL_MIGRATIONS[19]).toMatchObject({
       id: 20,
       name: "route_personal_dms_to_master_control",
+    });
+    expect(KERNEL_MIGRATIONS[20]).toMatchObject({
+      id: 21,
+      name: "clear_legacy_controller_routes",
     });
   });
 
@@ -196,6 +200,12 @@ describe("kernel schema migrations", () => {
     expect(statement).toContain("JOIN personal_agents ON personal_agents.agent_uid = processes.uid");
     expect(statement).toContain("processes.process_id = surface_routes.pid");
     expect(statement).toContain("personal_agents.owner_uid = surface_routes.uid");
+  });
+
+  it("clears routes to legacy controller processes", () => {
+    expect(normalizedStatements()).toContain(
+      "DELETE FROM surface_routes WHERE pid LIKE 'proc:master-control:%'",
+    );
   });
 
   it("moves explicit system context overrides to the new lexical order", () => {

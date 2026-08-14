@@ -61,28 +61,29 @@ process as `ipc.reply` or `ipc.timeout`.
 The target pid is sufficient: IPC cannot select another history inside the
 target process.
 
-## Master Control and delegation
+## Personal intelligence and delegation
 
-Master Control is a dedicated, locked agent account owned by each human. It is
-provisioned lazily and uses the same account, process, tool, permission, and IPC
-mechanisms as every other agent. A parentless interactive `proc.spawn` defaults
-to this account, while non-interactive background work retains the personal
-agent default. An unrouted linked adapter DM enters a deterministic, durable
-Master Control process for its owner; shared surfaces retain their independent
-routing.
+Each human's personal agent account is the personal intelligence they interact
+with. Parentless `proc.spawn` calls default to that account. Direct conversations
+are ordinary interactive processes, so separate surfaces or explicitly started
+chats may have independent histories without introducing a global controller
+PID.
 
-The account home deliberately starts with only
-`context.d/00-master-control.md` and `context.d/10-commitments.md`. Commitments
-are concise, model-maintained text rather than a Kernel schema. For substantial
-work, the controller uses `proc delegate --as ACCOUNT`, which creates a
-non-interactive worker process and a bounded `proc.ipc.call`. Acceptance returns
-immediately; completion or timeout later re-enters Master Control as a process
-event. Worker processes keep the selected agent account's own context.
+The personal agent's account home contains its role, voice, and compact open
+commitments. Those files are shared by every process running as that account,
+while each process retains its own history and lifecycle. Commitments are
+model-maintained text rather than a Kernel schema.
+
+For bounded work, `proc delegate` creates a non-interactive child and a bounded
+`proc.ipc.call`. The child inherits the personal account unless `--as ACCOUNT`
+selects a specialized owned agent. The delegated-task envelope places an
+inherited child in worker mode. Acceptance returns immediately; completion or
+timeout later re-enters the caller as a process event.
 
 During an adapter turn, `message current --json` exposes the current surface as
-an opaque GSV destination id. Master Control can store that id with a commitment
-and use `message send --to DESTINATION` if a worker result merits a later update.
-Provider account, actor, and surface identifiers remain hidden.
+an opaque GSV destination id. The personal intelligence can store that id with
+a commitment and use `message send --to DESTINATION` if a result merits a later
+update. Provider account, actor, and surface identifiers remain hidden.
 
 ## History, compaction, and branching
 

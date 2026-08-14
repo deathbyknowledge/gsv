@@ -207,16 +207,16 @@ describe("gateway integration", () => {
       if (!spawned.ok) {
         throw new Error(spawned.error);
       }
-      expect(spawned.cwd).toBe("/home/_gsv_mc_1000");
+      expect(spawned.cwd).toBe("/home/harness-agent");
 
       const afterSpawn = await client.proc.list();
       expect(afterSpawn.processes).toHaveLength(beforeSpawn.processes.length + 1);
       expect(afterSpawn.processes).toContainEqual(expect.objectContaining({
         pid: spawned.pid,
-        username: "_gsv_mc_1000",
+        username: "harness-agent",
         label: "integration child",
         interactive: true,
-        cwd: "/home/_gsv_mc_1000",
+        cwd: "/home/harness-agent",
       }));
 
       const history = await client.proc.history({ pid: spawned.pid });

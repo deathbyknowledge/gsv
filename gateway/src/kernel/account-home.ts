@@ -11,9 +11,15 @@ import {
   LEGACY_MEMORY_CONTEXT_TEMPLATE_V1,
   LEGACY_MEMORY_CONTEXT_TEMPLATE_V2,
   LEGACY_MEMORY_CONTEXT_TEMPLATE_V3,
+  LEGACY_MEMORY_CONTEXT_TEMPLATE_V4,
   LEGACY_OPEN_LOOPS_CONTEXT,
   LEGACY_STYLE_CONTEXT,
 } from "../prompts/agent-home";
+import {
+  PERSONAL_INTELLIGENCE_COMMITMENTS_CONTEXT,
+  PERSONAL_INTELLIGENCE_CONTEXT,
+  PERSONAL_INTELLIGENCE_VOICE_CONTEXT,
+} from "../prompts/personal-intelligence";
 import { LEGACY_DEFAULT_PERSONA_CONTEXT_TEMPLATE } from "../prompts/persona";
 
 const TEXT_ENCODER = new TextEncoder();
@@ -25,7 +31,7 @@ export async function ensureAccountHomeLayout(
   identity: ProcessIdentity,
   options: {
     userContextUsername?: string;
-    seedPromptContext?: boolean;
+    promptProfile?: "personal" | "worker";
     seedBootContext?: boolean;
     cleanupGeneratedPromptContext?: boolean;
   } = {},
@@ -41,7 +47,10 @@ export async function ensureAccountHomeLayout(
   const [
     contextDir,
     bootContext,
+    roleContext,
     styleContext,
+    voiceContext,
+    commitmentsContext,
     personaContext,
     memoryContext,
     constitutionContext,
@@ -51,7 +60,10 @@ export async function ensureAccountHomeLayout(
   ] = await Promise.all([
     client.readPath(repo, "context.d"),
     client.readPath(repo, "context.d/00-boot.md"),
+    client.readPath(repo, "context.d/00-role.md"),
     client.readPath(repo, "context.d/00-style.md"),
+    client.readPath(repo, "context.d/05-voice.md"),
+    client.readPath(repo, "context.d/10-commitments.md"),
     client.readPath(repo, "context.d/05-persona.md"),
     client.readPath(repo, "context.d/15-memory.md"),
     client.readPath(repo, "context.d/00-constitution.md"),
@@ -69,7 +81,7 @@ export async function ensureAccountHomeLayout(
       contentBytes: [],
     });
   }
-  if (options.seedPromptContext === true) {
+  if (options.promptProfile) {
     if (options.seedBootContext === true || bootContext.kind !== "missing") {
       maybePutOrReplaceGeneratedTextFile(
         ops,
@@ -79,24 +91,50 @@ export async function ensureAccountHomeLayout(
         [renderLegacyBootContext(identity)],
       );
     }
-    maybePutOrReplaceGeneratedTextFile(
-      ops,
-      "context.d/00-style.md",
-      styleContext,
-      DEFAULT_STYLE_CONTEXT,
-      [LEGACY_STYLE_CONTEXT],
-    );
-    maybePutOrReplaceGeneratedTextFile(
-      ops,
-      "context.d/15-memory.md",
-      memoryContext,
-      renderMemoryContext(identity.username),
-      [
-        renderLegacyMemoryContextV1(identity.username),
-        renderLegacyMemoryContextV2(identity.username),
-        LEGACY_MEMORY_CONTEXT_TEMPLATE_V3,
-      ],
-    );
+    if (options.promptProfile === "personal") {
+      maybePutTextFile(ops, "context.d/00-role.md", roleContext, PERSONAL_INTELLIGENCE_CONTEXT);
+      maybePutTextFile(
+        ops,
+        "context.d/05-voice.md",
+        voiceContext,
+        PERSONAL_INTELLIGENCE_VOICE_CONTEXT,
+      );
+      maybePutTextFile(
+        ops,
+        "context.d/10-commitments.md",
+        commitmentsContext,
+        PERSONAL_INTELLIGENCE_COMMITMENTS_CONTEXT,
+      );
+      maybeDeleteGeneratedTextFile(
+        ops,
+        "context.d/00-style.md",
+        styleContext,
+        [DEFAULT_STYLE_CONTEXT, LEGACY_STYLE_CONTEXT],
+      );
+      maybeDeleteGeneratedTextFile(
+        ops,
+        "context.d/15-memory.md",
+        memoryContext,
+        generatedMemoryContexts(identity.username),
+      );
+    } else {
+      maybePutOrReplaceGeneratedTextFile(
+        ops,
+        "context.d/00-style.md",
+        styleContext,
+        DEFAULT_STYLE_CONTEXT,
+        [LEGACY_STYLE_CONTEXT],
+      );
+      maybePutOrReplaceGeneratedTextFile(
+        ops,
+        "context.d/15-memory.md",
+        memoryContext,
+        renderMemoryContext(identity.username),
+        generatedMemoryContexts(identity.username).filter((text) => (
+          text !== renderMemoryContext(identity.username)
+        )),
+      );
+    }
     maybeDeleteGeneratedTextFile(
       ops,
       "context.d/20-open-loops.md",
@@ -138,12 +176,7 @@ export async function ensureAccountHomeLayout(
       ops,
       "context.d/15-memory.md",
       memoryContext,
-      [
-        renderMemoryContext(identity.username),
-        renderLegacyMemoryContextV1(identity.username),
-        renderLegacyMemoryContextV2(identity.username),
-        LEGACY_MEMORY_CONTEXT_TEMPLATE_V3,
-      ],
+      generatedMemoryContexts(identity.username),
     );
     maybeDeleteGeneratedTextFile(
       ops,
@@ -291,6 +324,16 @@ function renderLegacyMemoryContextV2(username: string): string {
   return renderPromptTemplate(LEGACY_MEMORY_CONTEXT_TEMPLATE_V2, {
     "program.username": username,
   });
+}
+
+function generatedMemoryContexts(username: string): string[] {
+  return [
+    renderMemoryContext(username),
+    renderLegacyMemoryContextV1(username),
+    renderLegacyMemoryContextV2(username),
+    LEGACY_MEMORY_CONTEXT_TEMPLATE_V3,
+    LEGACY_MEMORY_CONTEXT_TEMPLATE_V4,
+  ];
 }
 
 function renderPromptTemplate(template: string, values: Record<string, string>): string {

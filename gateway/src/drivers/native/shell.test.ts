@@ -3394,8 +3394,8 @@ describe("native administration shell commands", () => {
       uid: IDENTITY.uid,
       ownerUid: IDENTITY.uid,
     };
-    const controller = {
-      processId: "proc:master-control",
+    const caller = {
+      processId: "proc:personal-chat",
       uid: 2000,
       ownerUid: IDENTITY.uid,
     };
@@ -3407,12 +3407,12 @@ describe("native administration shell commands", () => {
       makeContext({
         capabilities: ["sched.add", "proc.send"],
         procs: {
-          get: vi.fn((pid: string) => [worker, controller].find((proc) => proc.processId === pid) ?? null),
+          get: vi.fn((pid: string) => [worker, caller].find((proc) => proc.processId === pid) ?? null),
           getOwnerUid: vi.fn(() => IDENTITY.uid),
         } as Partial<KernelContext["procs"]>,
         ipcCalls: {
           findPendingByTargetRun: vi.fn(() => ({
-            sourcePid: controller.processId,
+            sourcePid: caller.processId,
             sourceRunId: null,
           })),
         } as unknown as KernelContext["ipcCalls"],
@@ -3432,7 +3432,7 @@ describe("native administration shell commands", () => {
       expression: { kind: "every", everyMs: 120_000 },
       target: {
         kind: "process.event",
-        pid: "proc:master-control",
+        pid: "proc:personal-chat",
         message: "Send a niche animal fact.",
       },
     }));

@@ -28,9 +28,11 @@ interaction:
 
 The conventional shared file is `context.d/10-personal.md`. An owned agent sees
 it under the editable `<user>` prompt root; `~` still refers to that agent's own
-home. Keep shared context short and specific. Role instructions, voice, and
-Master Control's open commitments stay in the relevant agent account instead.
-Detailed or occasionally relevant information belongs in the Personal wiki.
+home. Keep shared context short and specific. Role instructions, voice, and the
+personal intelligence's open commitments stay in the personal agent account
+instead. Because these are account files, every process running as the personal
+agent sees the same standing state. Detailed or occasionally relevant
+information belongs in the Personal wiki.
 
 ## Personal wiki
 
@@ -95,8 +97,8 @@ need a memory search.
 
 Explicit, unambiguous requests to remember something can be written directly.
 Potential duplicates, corrections, ambiguous people or projects, and inferred
-outcomes require a search and merge. Master Control delegates that discovery;
-workers perform it using the shared `personal` collection.
+outcomes require a search and merge. A direct-interaction process delegates that
+discovery; workers perform it using the shared `personal` collection.
 
 This keeps the prompt small and the behavior inspectable:
 

@@ -4,9 +4,8 @@
  * Each human gets a 1:1 personal agent that is a real user account in the
  * Unix-like identity model: its own uid, its own private primary group
  * (gid = uid, User Private Group), and its own /home. The agent is the
- * default worker identity for delegated work, while the human remains the
- * process owner (routing, visibility, quotas). Top-level interaction processes
- * run as the owner's dedicated Master Control account.
+ * default run-as identity for the user's personal intelligence, while the
+ * human remains the process owner (routing, visibility, quotas).
  *
  * Bidirectional group membership wires the relationship:
  *   - the agent joins the human's private group (so it can act on the human's
@@ -37,11 +36,6 @@ import {
 } from "./accounts";
 import { canOwnerRunAsAccount } from "./account-access";
 import { ensureAccountHomeLayout } from "./account-home";
-import {
-  MASTER_CONTROL_COMMITMENTS_CONTEXT,
-  MASTER_CONTROL_CONTEXT,
-  MASTER_CONTROL_VOICE_CONTEXT,
-} from "../prompts/master-control";
 import { ensurePersonalMemory } from "./personal-memory";
 
 /**
@@ -69,29 +63,12 @@ export type PersonalAgentProvision = {
   created: boolean;
 };
 
-export type MasterControlProvision = {
-  identity: ProcessIdentity;
-  created: boolean;
-};
-
-export const MASTER_CONTROL_DISPLAY_NAME = "Master Control";
-const MASTER_CONTROL_USERNAME_PREFIX = "_gsv_mc_";
-
-export function masterControlUsername(ownerUid: number): string {
-  return `${MASTER_CONTROL_USERNAME_PREFIX}${ownerUid}`;
-}
-
-function isMasterControlUsername(username: string): boolean {
-  return username.startsWith(MASTER_CONTROL_USERNAME_PREFIX);
-}
-
 /**
  * Validate and normalize a user-supplied agent name. Returns null when the
  * name is malformed or already taken (caller may then fall back to a default).
  */
 export function normalizeAgentName(auth: AuthStore, value: unknown): string | null {
-  const username = normalizeAccountName(auth, value);
-  return username && !isMasterControlUsername(username) ? username : null;
+  return normalizeAccountName(auth, value);
 }
 
 function pickAgentName(auth: AuthStore, preferred?: string): string {
@@ -208,7 +185,7 @@ export async function ensurePersonalAgent(
       const identity = accountIdentity(auth, reconciled);
       await ensureAccountHomeLayout(ctx.env, identity, {
         userContextUsername: human.username,
-        seedPromptContext: true,
+        promptProfile: "personal",
       });
       return { identity, created: false };
     }
@@ -225,61 +202,6 @@ export async function ensurePersonalAgent(
     crossMemberOwner: true,
     personalAgentOf: human.uid,
   });
-}
-
-/**
- * Ensure the owner's dedicated controller account exists. Unlike ordinary
- * agent accounts it receives only the compact controller and commitments
- * context; personal and custom agents retain their own worker context.
- */
-export async function ensureMasterControlAgent(
-  ctx: KernelContext,
-  human: ProcessIdentity,
-): Promise<MasterControlProvision> {
-  if (human.uid < 1000) {
-    return { identity: human, created: false };
-  }
-
-  const username = masterControlUsername(human.uid);
-  const existing = ctx.auth.getPasswdByUsername(username);
-  if (existing) {
-    const shadow = ctx.auth.getShadowByUsername(username);
-    if (
-      existing.gecos !== MASTER_CONTROL_DISPLAY_NAME
-      || !shadow
-      || !isLocked(shadow)
-      || !canOwnerRunAsAccount(ctx.auth, human.uid, existing, false)
-    ) {
-      throw new Error(`Reserved Master Control account is unavailable: ${username}`);
-    }
-    const identity = accountIdentity(ctx.auth, existing);
-    await ensureAccountHomeLayout(ctx.env, identity, {
-      userContextUsername: human.username,
-      seedPromptContext: false,
-      cleanupGeneratedPromptContext: true,
-    });
-    return { identity, created: false };
-  }
-
-  if (ctx.auth.getGroupByName(username)) {
-    throw new Error(`Reserved Master Control account is unavailable: ${username}`);
-  }
-
-  const created = await createAccount(ctx, {
-    kind: "agent",
-    username,
-    gecos: MASTER_CONTROL_DISPLAY_NAME,
-    ownerUid: human.uid,
-    shared: true,
-    crossMemberOwner: true,
-    seedPromptContext: false,
-    contextFiles: [
-      { name: "00-master-control.md", text: MASTER_CONTROL_CONTEXT },
-      { name: "05-voice.md", text: MASTER_CONTROL_VOICE_CONTEXT },
-      { name: "10-commitments.md", text: MASTER_CONTROL_COMMITMENTS_CONTEXT },
-    ],
-  });
-  return { identity: created.identity, created: true };
 }
 
 /**
@@ -301,10 +223,6 @@ export async function handleAccountCreate(
   if (!name) {
     throw new Error(`Invalid or unavailable username: ${String(args.username)}`);
   }
-  if (isMasterControlUsername(name)) {
-    throw new Error(`Reserved system username: ${name}`);
-  }
-
   if (kind === "human") {
     // Creating human accounts is an administrative action.
     if (!caller.capabilities.includes("*")) {

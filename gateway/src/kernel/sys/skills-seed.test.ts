@@ -1,7 +1,11 @@
 import type { ProcessIdentity } from "@humansandmachines/gsv/protocol";
 import { describe, expect, it, vi } from "vitest";
 import type { RipgitClient, RipgitPathResult } from "../../fs";
-import { BUILTIN_SKILL_FILES, LEGACY_MEMORY_SKILL } from "./builtin-skills";
+import {
+  BUILTIN_SKILL_FILES,
+  LEGACY_MASTER_CONTROL_MEMORY_SKILL,
+  LEGACY_MEMORY_SKILL,
+} from "./builtin-skills";
 import { seedBuiltinSkillsToHome } from "./skills-seed";
 
 const IDENTITY: ProcessIdentity = {
@@ -108,12 +112,15 @@ describe("seedBuiltinSkillsToHome", () => {
     );
   });
 
-  it("upgrades the untouched generated memory skill", async () => {
+  it.each([
+    ["per-agent", LEGACY_MEMORY_SKILL],
+    ["Master Control", LEGACY_MASTER_CONTROL_MEMORY_SKILL],
+  ])("upgrades the untouched %s memory skill", async (_version, legacySkill) => {
     const files = new Map<string, RipgitPathResult>([
       ["skills.d", { kind: "tree", entries: [] }],
       ...BUILTIN_SKILL_FILES.map((skill) => [
         `skills.d/${skill.path}`,
-        textFile(skill.path === "memory/SKILL.md" ? LEGACY_MEMORY_SKILL : "custom skill"),
+        textFile(skill.path === "memory/SKILL.md" ? legacySkill : "custom skill"),
       ] as const),
     ]);
     const { client, apply } = makeClient(files);
@@ -137,5 +144,7 @@ describe("seedBuiltinSkillsToHome", () => {
     });
     expect(new TextDecoder().decode(new Uint8Array(operations[0]?.contentBytes ?? [])))
       .toContain("human, not to an individual agent");
+    expect(new TextDecoder().decode(new Uint8Array(operations[0]?.contentBytes ?? [])))
+      .not.toContain("Master Control");
   });
 });

@@ -59,11 +59,12 @@ created with `proc.spawn` or `proc.fork`. A process has a PID, uid/gid identity,
 parent, profile, current working directory, optional workspace, state, and
 persistent message history.
 
-Each human also has a lazily provisioned Master Control account. Parentless
-interaction processes run as that account, and unrouted private adapter messages
-converge on one durable Master Control process per owner. Personal and custom
-agent accounts are worker identities selected explicitly or through delegation;
-Master Control does not introduce a second process runtime.
+Each human has one personal agent account that acts as their personal
+intelligence. Parentless processes run as that account by default, and each
+unrouted messaging surface starts an ordinary interactive process there. Custom
+agent accounts provide specialized identities when explicitly selected. A
+delegated child inherits its parent's account by default and acts in a bounded
+worker role; there is no separate controller runtime or global controller PID.
 
 Process state lives in a Process Durable Object with its own SQLite database.
 That database stores active messages, pending tool calls, queued messages,

@@ -120,14 +120,6 @@ function makeContext(
     home: "/home/helper",
     shell: "/bin/init",
   };
-  const masterControl = {
-    uid: 1003,
-    gid: 1003,
-    username: "_gsv_mc_1000",
-    gecos: "Master Control",
-    home: "/home/_gsv_mc_1000",
-    shell: "/bin/init",
-  };
   const ingressReceipts = new Map<string, {
     state: "in_progress" | "completed";
     result?: Record<string, unknown>;
@@ -216,33 +208,29 @@ function makeContext(
         if (uid === human.uid) return human;
         if (uid === personalAgent.uid) return personalAgent;
         if (uid === helperAgent.uid) return helperAgent;
-        if (uid === masterControl.uid) return masterControl;
         return null;
       }),
-      getPasswdEntries: vi.fn(() => [human, personalAgent, helperAgent, masterControl]),
+      getPasswdEntries: vi.fn(() => [human, personalAgent, helperAgent]),
       getPasswdByUsername: vi.fn((username: string) => {
         if (username === human.username) return human;
         if (username === personalAgent.username) return personalAgent;
         if (username === helperAgent.username) return helperAgent;
-        if (username === masterControl.username) return masterControl;
         return null;
       }),
       getShadowByUsername: vi.fn((username: string) => (
         username === personalAgent.username
           || username === helperAgent.username
-          || username === masterControl.username
           ? { username, hash: "!", lastchanged: "", min: "", max: "", warn: "", inactive: "", expire: "", reserved: "" }
           : { username, hash: "$hash", lastchanged: "", min: "", max: "", warn: "", inactive: "", expire: "", reserved: "" }
       )),
       getGroupByGid: vi.fn((gid: number) => {
         if (gid === personalAgent.gid) return { name: personalAgent.username, gid, members: [human.username] };
         if (gid === helperAgent.gid) return { name: helperAgent.username, gid, members: [human.username] };
-        if (gid === masterControl.gid) return { name: masterControl.username, gid, members: [human.username] };
         if (gid === human.gid) {
           return {
             name: human.username,
             gid,
-            members: [personalAgent.username, helperAgent.username, masterControl.username],
+            members: [personalAgent.username, helperAgent.username],
           };
         }
         return null;
@@ -2452,7 +2440,7 @@ describe("adapter lifecycle handlers", () => {
     });
   });
 
-  it("routes unrouted DMs through one durable Master Control process", async () => {
+  it("starts a personal-agent process for each unrouted adapter surface", async () => {
     sendFrameToProcessMock.mockImplementation(async (_pid: string, frame: any) => {
       if (frame.call === "proc.setidentity") {
         return { type: "res", id: frame.id, ok: true, data: { ok: true } };
@@ -2476,18 +2464,17 @@ describe("adapter lifecycle handlers", () => {
       throw new Error(`Unexpected call: ${frame.call}`);
     });
     const ctx = makeContext({}, { upsert: vi.fn() }, { routePid: null });
-    const masterPid = "proc:master-control:1000";
-    let masterRecord: Record<string, unknown> | null = null;
+    const records = new Map<string, Record<string, unknown>>();
     vi.mocked(ctx.procs.get).mockImplementation((pid: string) => (
-      pid === masterPid ? masterRecord as never : null
+      records.get(pid) as never ?? null
     ));
     vi.mocked(ctx.procs.spawn).mockImplementation((pid, identity, options) => {
-      masterRecord = {
+      records.set(pid, {
         processId: pid,
         ownerUid: options.ownerUid,
         interactive: options.interactive,
         username: identity.username,
-      };
+      });
     });
 
     const first = await handleAdapterInbound({
@@ -2511,57 +2498,25 @@ describe("adapter lifecycle handlers", () => {
       },
     }, ctx);
 
-    expect(first).toMatchObject({ ok: true, delivered: { pid: masterPid } });
-    expect(second).toMatchObject({ ok: true, delivered: { pid: masterPid } });
-    expect(ctx.procs.spawn).toHaveBeenCalledTimes(1);
-    expect(ctx.procs.spawn).toHaveBeenCalledWith(
-      masterPid,
-      expect.objectContaining({ username: "_gsv_mc_1000" }),
+    expect(first).toMatchObject({ ok: true, delivered: { pid: expect.stringMatching(/^proc:/) } });
+    expect(second).toMatchObject({ ok: true, delivered: { pid: expect.stringMatching(/^proc:/) } });
+    expect(first.delivered?.pid).not.toBe(second.delivered?.pid);
+    expect(ctx.procs.spawn).toHaveBeenCalledTimes(2);
+    expect(ctx.procs.spawn).toHaveBeenNthCalledWith(
+      1,
+      first.delivered?.pid,
+      expect.objectContaining({ username: "sam-agent" }),
       expect.objectContaining({
         ownerUid: 1000,
         interactive: true,
-        label: "Master Control",
       }),
     );
     expect(sendFrameToProcessMock.mock.calls.filter(([, frame]) => (
       frame.call === "proc.setidentity"
-    ))).toHaveLength(1);
+    ))).toHaveLength(2);
     expect(sendFrameToProcessMock.mock.calls.filter(([, frame]) => (
       frame.call === "proc.adapter.deliver"
     ))).toHaveLength(2);
-  });
-
-  it("rolls back a Master Control process when initialization fails", async () => {
-    sendFrameToProcessMock.mockImplementation(async (_pid: string, frame: any) => {
-      if (frame.call === "proc.setidentity") {
-        return null;
-      }
-      if (frame.call === "proc.kill") {
-        return { type: "res", id: frame.id, ok: true, data: { ok: true } };
-      }
-      throw new Error(`Unexpected call: ${frame.call}`);
-    });
-    const ctx = makeContext({}, { upsert: vi.fn() }, { routePid: null });
-
-    await expect(handleAdapterInbound({
-      adapter: "whatsapp",
-      accountId: "primary",
-      message: {
-        messageId: "mc-init-failure",
-        surface: { kind: "dm", id: "dm-1" },
-        actor: { id: "wa:+123" },
-        text: "Hello?",
-      },
-    }, ctx)).rejects.toThrow("Master Control initialization returned no valid response");
-
-    expect(ctx.procs.kill).toHaveBeenCalledWith("proc:master-control:1000");
-    expect(sendFrameToProcessMock).toHaveBeenLastCalledWith(
-      "proc:master-control:1000",
-      expect.objectContaining({
-        call: "proc.kill",
-        args: { pid: "proc:master-control:1000", archive: false },
-      }),
-    );
   });
 
   it("forwards the original outbound body without reading it and cancels after delivery", async () => {

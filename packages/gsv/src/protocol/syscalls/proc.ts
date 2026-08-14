@@ -25,9 +25,8 @@ export type ProcMediaInput = {
 export type ProcSpawnArgs = {
   /**
    * Account to run the process as a username or uid string. Defaults to the
-   * caller's Master Control account for a top-level interactive process, the
-   * personal agent for top-level non-interactive work, and the parent account
-   * for a child. The caller must own the account or hold membership in its
+   * caller's personal agent for a top-level process and the parent account for
+   * a child. The caller must own the account or hold membership in its
    * private group (root may run as anyone).
    */
   runAs?: string;

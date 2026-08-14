@@ -6471,83 +6471,6 @@ describe("Process DO — mechanical", () => {
 
     });
 
-    it("uses continuation-oriented summaries for Master Control", async () => {
-      const pid = "proc:master-control:9101";
-      const stub = await initProcess(pid, ROOT_IDENTITY);
-      const models: string[] = [];
-
-      await runInDurableObject(stub, (instance: Process) => {
-        const process = instance as any;
-        const store = process.store;
-        store.appendMessage("user", "old user goal", {});
-        store.appendMessage("assistant", "old assistant decision", {});
-        store.appendMessage("user", "keep this", {});
-        process.currentRun = {
-          runId: "config-source",
-          config: {
-            executor: { kind: "process", pid },
-            profile: "task",
-            provider: "workers-ai",
-            model: "@cf/test/model",
-            apiKey: "",
-            reasoning: "off",
-            maxTokens: 4096,
-            fallbacks: [{
-              provider: "openrouter",
-              model: "fallback-model",
-              apiKey: "fallback-key",
-              maxTokens: 4096,
-              contextWindowTokens: 32768,
-              contextWindowSource: "config",
-              generationTimeoutMs: 180000,
-            }],
-          },
-        };
-        const checkpointConfig = process.currentRun.config;
-        process.currentRun = null;
-        process.resolveCheckpointConfig = async () => checkpointConfig;
-        process.generation = {
-          async generate() {
-            throw new Error("unexpected chat generation");
-          },
-          async generateText(request: any) {
-            models.push(request.config.model);
-            expect(request.context.systemPrompt).toContain("one ongoing relationship");
-            expect(request.options).toMatchObject({
-              maxTokens: 768,
-              reasoning: "off",
-              timeoutMs: 30000,
-            });
-            expect(request.context.messages[0].content).toContain("old user goal");
-            if (request.config.model === "@cf/test/model") {
-              throw new Error("primary unavailable");
-            }
-            return "Generated compact summary.";
-          },
-        };
-      });
-
-      const compactRes = (await stub.recvFrame(
-        makeReq("proc.history.compact", {
-          keepLast: 1,
-          generateSummary: true,
-        }),
-      )) as ResponseOkFrame;
-      expect(compactRes.data).toMatchObject({
-        ok: true,
-        pid,
-        archivedMessages: 2,
-      });
-      expect(models).toEqual(["@cf/test/model", "fallback-model"]);
-
-      await runInDurableObject(stub, (instance: Process) => {
-        const process = instance as any;
-        const messages = process.store.getMessages();
-        expect(messages[0].content).toContain("Generated compact summary.");
-        process.currentRun = null;
-      });
-    });
-
     it("builds bounded compaction input from complete JSON records", async () => {
       const pid = "mech-conversation-compact-jsonl";
       const stub = await initProcess(pid, ROOT_IDENTITY);
@@ -7030,25 +6953,6 @@ describe("Process DO — mechanical", () => {
           overflow: "auto-compact",
           compactAtPressure: 0.82,
           keepLast: 42,
-        },
-      });
-    });
-
-    it("uses a lower-pressure, short-tail history policy for Master Control", async () => {
-      const pid = "proc:master-control:9102";
-      const stub = await initProcess(pid, ROOT_IDENTITY);
-
-      const response = (await stub.recvFrame(
-        makeReq("proc.history.policy.get", {}),
-      )) as ResponseOkFrame;
-      expect(response.data).toMatchObject({
-        ok: true,
-        pid,
-        policy: {
-          overflow: "auto-compact",
-          compactAtPressure: 0.65,
-          keepLast: 24,
-          updatedAt: 0,
         },
       });
     });

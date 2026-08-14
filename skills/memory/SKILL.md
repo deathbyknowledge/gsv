@@ -10,7 +10,7 @@ Memory belongs to the human, not to an individual agent. Every agent working for
 - The `personal` wiki contains durable information that is searched and loaded when relevant.
 - The owner's `context.d/10-personal.md` contains a very small set of stable facts and preferences that should affect nearly every interaction. It appears under the editable `<user>` context root in the prompt; do not confuse it with the current agent's `~/context.d/`.
 
-Master Control's private commitments file is working state, not personal memory. Do not copy open tasks into the wiki merely because they exist. Record an outcome later only when it is useful history.
+The personal intelligence's account-local commitments file is working state, not personal memory. Do not copy open tasks into the wiki merely because they exist. Record an outcome later only when it is useful history.
 
 ## Decide When to Read
 
@@ -30,7 +30,7 @@ Use `wiki info personal` when the page location is unknown. Once a relevant page
 
 Write immediately when the user explicitly says to remember an unambiguous fact or corrects an existing fact. Also write a concrete, stable fact or preference that the user states explicitly when it will materially improve future help.
 
-Search and merge before writing when the fact may already exist, refers to an ambiguous person or project, supersedes older information, or belongs on more than one existing page. Master Control should delegate this investigative memory work; a worker already assigned the work may perform it directly.
+Search and merge before writing when the fact may already exist, refers to an ambiguous person or project, supersedes older information, or belongs on more than one existing page. In a direct user interaction, the personal intelligence should delegate this investigative memory work; a worker already assigned the work may perform it directly.
 
 Append a journal entry for a meaningful event or outcome whose chronology may matter later. Use ISO dates:
 
@@ -60,4 +60,4 @@ Use `man wiki` for exact wiki syntax and general wiki workflows.
 
 Edit the owner's `context.d/10-personal.md` only for explicit, stable facts or preferences that should be present in almost every interaction. Use the path shown on the `<user>` context root. Keep the file small, preserve its purpose statement, and replace corrected facts.
 
-Detailed history, evidence, project notes, people notes, and facts that matter only sometimes belong in the Personal wiki. Open commitments remain with Master Control until the user-facing loop closes.
+Detailed history, evidence, project notes, people notes, and facts that matter only sometimes belong in the Personal wiki. Open commitments remain with the personal intelligence until the user-facing loop closes.
