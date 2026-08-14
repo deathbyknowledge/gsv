@@ -715,6 +715,7 @@ export function createSessionService(client: GSVClient): SessionService {
 
   const lock = (reason = "Session locked"): void => {
     cancelSilentReconnect();
+    const lockGeneration = reconnectGeneration;
     const previousTokenId = currentSessionToken?.tokenId ?? null;
     clearStoredSessionToken();
     pendingSetupLogin = null;
@@ -723,21 +724,24 @@ export function createSessionService(client: GSVClient): SessionService {
       queueRevoke(previousTokenId);
     }
 
+    setSnapshot({
+      phase: "locked",
+      url: deriveGatewayUrlFromOrigin(),
+      username: snapshot.username,
+      connectionId: null,
+      message: reason,
+      setupResult: null,
+    });
+
     void (async () => {
       await Promise.race([
         drainPendingRevokes("ui session lock"),
         waitFor(LOCK_REVOKE_WAIT_MS),
       ]);
 
-      client.disconnect();
-      setSnapshot({
-        phase: "locked",
-        url: deriveGatewayUrlFromOrigin(),
-        username: snapshot.username,
-        connectionId: null,
-        message: reason,
-        setupResult: null,
-      });
+      if (reconnectGeneration === lockGeneration && snapshot.phase === "locked") {
+        client.disconnect();
+      }
     })();
   };
 

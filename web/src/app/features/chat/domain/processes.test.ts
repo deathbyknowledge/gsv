@@ -7,6 +7,7 @@ function process(label: string | null): ProcListEntry {
     pid: "proc:task",
     uid: 2000,
     username: "sam-agent",
+    personal: true,
     interactive: true,
     parentPid: null,
     state: "idle",
@@ -20,12 +21,16 @@ function process(label: string | null): ProcListEntry {
 }
 
 describe("normalizeProcessSummary", () => {
-  it("shows a neutral placeholder until an unnamed task receives its title", () => {
-    expect(normalizeProcessSummary(process(null)).title).toBe("New task");
+  it("shows a neutral placeholder until unnamed work receives its title", () => {
+    expect(normalizeProcessSummary(process(null)).title).toBe("New work");
   });
 
-  it("uses the generated process label as the task title", () => {
+  it("uses the generated process label as the work title", () => {
     expect(normalizeProcessSummary(process("Review migration plan")).title)
       .toBe("Review migration plan");
+  });
+
+  it("preserves the canonical personal marker", () => {
+    expect(normalizeProcessSummary(process("Home")).personal).toBe(true);
   });
 });

@@ -1,15 +1,16 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/preact-query";
 import type { ComponentChildren } from "preact";
-import { useState } from "preact/hooks";
+import { useEffect, useRef } from "preact/hooks";
 import { GatewayProvider } from "../services/gateway/GatewayProvider";
 import { GatewaySignalInvalidator } from "../services/query/GatewaySignalInvalidator";
-import { SessionProvider } from "../services/session/SessionProvider";
+import { SessionProvider, useSession } from "../services/session/SessionProvider";
+import type { SessionSnapshot } from "../services/session/sessionService";
 
 type AppProvidersProps = {
   children: ComponentChildren;
 };
 
-function createWebQueryClient(): QueryClient {
+export function createWebQueryClient(): QueryClient {
   return new QueryClient({
     defaultOptions: {
       queries: {
@@ -25,16 +26,53 @@ function createWebQueryClient(): QueryClient {
   });
 }
 
-export function AppProviders({ children }: AppProvidersProps) {
-  const [queryClient] = useState(createWebQueryClient);
+export type ScopedWebQueryClient = {
+  client: QueryClient;
+  scope: string;
+};
 
+export function webQuerySessionScope(snapshot: SessionSnapshot): string {
+  const username = snapshot.username.trim();
+  return snapshot.phase === "ready" && username ? `user:${username}` : "signed-out";
+}
+
+export function resolveScopedWebQueryClient(
+  current: ScopedWebQueryClient | null,
+  scope: string,
+): ScopedWebQueryClient {
+  return current?.scope === scope
+    ? current
+    : { client: createWebQueryClient(), scope };
+}
+
+function SessionQueryProvider({ children }: AppProvidersProps) {
+  const { snapshot } = useSession();
+  const stateRef = useRef<ScopedWebQueryClient | null>(null);
+  const state = resolveScopedWebQueryClient(
+    stateRef.current,
+    webQuerySessionScope(snapshot),
+  );
+  stateRef.current = state;
+
+  useEffect(() => {
+    return () => state.client.clear();
+  }, [state.client]);
+
+  return (
+    <QueryClientProvider client={state.client}>
+      <GatewaySignalInvalidator />
+      {children}
+    </QueryClientProvider>
+  );
+}
+
+export function AppProviders({ children }: AppProvidersProps) {
   return (
     <GatewayProvider>
       <SessionProvider>
-        <QueryClientProvider client={queryClient}>
-          <GatewaySignalInvalidator />
+        <SessionQueryProvider>
           {children}
-        </QueryClientProvider>
+        </SessionQueryProvider>
       </SessionProvider>
     </GatewayProvider>
   );

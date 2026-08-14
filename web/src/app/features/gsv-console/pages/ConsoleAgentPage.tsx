@@ -22,6 +22,7 @@ import type {
   ConsoleResourceState,
   ConsoleTarget,
 } from "../domain/consoleModels";
+import { consoleWorkProcesses } from "../domain/consoleProcesses";
 import {
   modelOptionsForConfig,
   type ConsoleModelOption,
@@ -169,7 +170,8 @@ function AgentEditorSurface({
   const rootRef = useRef<HTMLDivElement>(null);
   const [width, setWidth] = useState(0);
   const [activeEditorTab, setActiveEditorTab] = useState<AgentEditorTab>("general");
-  const processes = (processResource.data ?? []).filter((process) => ownsProcess(account, process));
+  const processes = consoleWorkProcesses(processResource.data ?? [])
+    .filter((process) => ownsProcess(account, process));
   const context = useConsoleAgentContext(account.username);
   const saveBehavior = useSaveConsoleAgentBehavior();
   const saveContext = useSaveConsoleAgentContext();
@@ -445,7 +447,7 @@ function avatarStatusForProcesses(account: ConsoleAccount, processes: readonly C
 
 function tasksForProcesses(processes: readonly ConsoleProcess[]): AgentEditorTask[] {
   if (processes.length === 0) {
-    return [{ name: "No process activity", status: "idle" }];
+    return [{ name: "No work yet", status: "idle" }];
   }
   return processes.map((process) => ({
     name: process.label || process.pid,

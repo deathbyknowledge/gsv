@@ -16,6 +16,7 @@ import type {
   ConsoleTarget,
   ConsoleTargetKind,
 } from "./consoleModels";
+import { consoleWorkProcesses } from "./consoleProcesses";
 import {
   isModelProfilesConfigKey,
   redactModelProfilesConfigValue,
@@ -133,10 +134,11 @@ export function buildConsoleOverviewData(input: {
 }
 
 export function summarizeConsoleOverview(data: ConsoleOverviewData): ConsoleOverviewCounts {
+  const processes = consoleWorkProcesses(data.processes);
   return {
-    processes: data.processes.length,
-    activeProcesses: data.processes.filter((entry) => entry.activeRunId || entry.state === "running").length,
-    queuedProcesses: data.processes.filter((entry) => entry.queuedCount > 0 || entry.state === "queued").length,
+    processes: processes.length,
+    activeProcesses: processes.filter((entry) => entry.activeRunId || entry.state === "running").length,
+    queuedProcesses: processes.filter((entry) => entry.queuedCount > 0 || entry.state === "queued").length,
     targets: data.targets.length,
     onlineTargets: data.targets.filter((entry) => entry.online).length,
     accounts: data.accounts.length,
@@ -192,6 +194,7 @@ function normalizeProcess(value: unknown): ConsoleProcess | null {
     cwd: nonEmptyString(record.cwd) ?? "",
     parentPid: nonEmptyString(record.parentPid),
     interactive: record.interactive === true,
+    personal: record.personal === true,
     activeRunId,
     queuedCount,
     createdAt: numberOrNull(record.createdAt),

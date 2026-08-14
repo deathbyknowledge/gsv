@@ -12,10 +12,11 @@ import { Hint, closeAllTooltips } from "../../../components/ui/Tooltip";
 import type { JSX } from "preact";
 import {
   buildChatAgentViewModel,
+  canStartChatWork,
+  chatEmptyState,
   formatChatReasoningLabel,
   type ChatAgentData,
   type ChatAgentStatus,
-  type ChatAgentSelection,
   type ChatModelProfileData,
 } from "../domain/agent";
 import {
@@ -52,6 +53,12 @@ import { ChatReasoningPanel, type ChatReasoningTarget } from "./ChatReasoningPan
 import { ChatDockHeader } from "./ChatDockHeader";
 import { ChatDockPopovers, type ChatPopoverId } from "./ChatDockPopovers";
 import { ChatTranscript, type ChatDockMessage } from "./ChatTranscript";
+import {
+  ChatWorkSessionAnnouncement,
+  ChatWorkSessionBanner,
+  focusChatSessionTarget,
+  type ChatWorkSession,
+} from "./ChatWorkSessionBanner";
 import { formatCount, formatCurrencyCost, shortId } from "./chatUiFormat";
 import "./ChatDock.css";
 
@@ -62,6 +69,33 @@ export type StartedChatProcess = {
   label?: string;
   pid: string;
 };
+
+type ChatBranchRequest = {
+  canStartNewTask: boolean;
+  forkPending: boolean;
+  hasActiveProcess: boolean;
+  messageId: number;
+  mutate: (input: { pid: string; throughMessageId: number }) => void;
+  processId: string;
+};
+
+export function requestChatBranch({
+  canStartNewTask,
+  forkPending,
+  hasActiveProcess,
+  messageId,
+  mutate,
+  processId,
+}: ChatBranchRequest): boolean {
+  if (!canStartNewTask || !hasActiveProcess || forkPending) {
+    return false;
+  }
+  mutate({
+    pid: processId,
+    throughMessageId: messageId,
+  });
+  return true;
+}
 
 /** What fills the dock below the (always-present) header: the chat itself, the
  *  agent tasks panel, the full-body reasoning panel, or the archive browser. */
@@ -84,11 +118,12 @@ type ChatDockProps = {
   onResizeStart: (event: JSX.TargetedMouseEvent<HTMLDivElement>) => void;
   onToggleOpen: () => void;
   onToggleMax: () => void;
-  onOpenCrew: () => void;
   onOpenModels?: () => void;
   onOpenTasks?: () => void;
   onProcessStarted?: (process: StartedChatProcess) => void;
-  onSelectAgent?: (selection: ChatAgentSelection) => void;
+  onOpenWorkSession?: (processId: string, process: ChatProcessSummary | null) => void;
+  onBackToPersonal: () => void;
+  workSession?: ChatWorkSession | null;
   /** Increment to request a fresh task (e.g. the Tasks list NEW TASK action):
    *  opens the dock and spawns a new interactive process rather than reopening
    *  whatever was last selected. */
@@ -226,11 +261,12 @@ export function ChatDock({
   onResizeStart,
   onToggleOpen,
   onToggleMax,
-  onOpenCrew,
   onOpenModels,
   onOpenTasks,
   onProcessStarted,
-  onSelectAgent,
+  onOpenWorkSession,
+  onBackToPersonal,
+  workSession = null,
   newTaskSignal = 0,
 }: ChatDockProps) {
   const [bodyState, setBodyState] = useState<ChatBodyState>("chat");
@@ -250,9 +286,10 @@ export function ChatDock({
   /** Snapshot of the last dismissed control error — a new distinct error re-shows. */
   const [dismissedError, setDismissedError] = useState("");
   const activeProcessId = agent?.processId?.trim() ?? "";
-  const startRunAs = agent?.runAs?.trim() ?? "";
   const hasActiveProcess = activeProcessId.length > 0;
-  const canStartProcess = Boolean(agent);
+  const hasWorkSession = workSession !== null;
+  const previousChatSurface = useRef({ open, workSessionActive: hasWorkSession });
+  const canStartProcess = canStartChatWork(agent);
   const chatRuntime = useChatRuntime({
     enabled: hasActiveProcess,
     processId: activeProcessId,
@@ -306,6 +343,20 @@ export function ChatDock({
       setOpenPopover(null);
     }
   }, [open]);
+
+  useLayoutEffect(() => {
+    const previous = previousChatSurface.current;
+    if (
+      open
+      && (
+        previous.workSessionActive !== hasWorkSession
+        || (!previous.open && hasWorkSession)
+      )
+    ) {
+      focusChatSessionTarget(asideRef.current, hasWorkSession);
+    }
+    previousChatSurface.current = { open, workSessionActive: hasWorkSession };
+  }, [hasWorkSession, open]);
 
   useEffect(() => {
     if (
@@ -429,14 +480,11 @@ export function ChatDock({
       ? "loading"
       : "ready";
   const transcriptError = errorMessage(processHistory.error, "Process history could not be loaded.");
-  const emptyTitle = hasActiveProcess ? "No visible process messages" : "No process attached";
-  const emptyDescription = hasActiveProcess
-    ? "This process has not written user, assistant, system, or tool result messages yet."
-    : "Start an interactive process to begin a native chat session.";
+  const emptyState = chatEmptyState(agent, hasActiveProcess);
   const compactPending = compactHistory.isPending;
   const compactFailed = compactHistory.isError;
   const composerLocked = hasActiveProcess && (compactPending || compactFailed);
-  const inputDisabled = (!hasActiveProcess && !canStartProcess && !processLookupLoading) || composerLocked;
+  const inputDisabled = !hasActiveProcess || composerLocked;
   const archiveOpen = bodyState === "archive";
   const sendChatDraft = useCallback(async (
     message: string,
@@ -459,7 +507,6 @@ export function ChatDock({
     if (!targetPid) {
       const spawned = await spawnProcess.mutateAsync({
         interactive: true,
-        ...(startRunAs ? { runAs: startRunAs } : {}),
       });
       signal?.throwIfAborted();
       targetPid = spawned.pid;
@@ -496,7 +543,6 @@ export function ChatDock({
     onProcessStarted,
     sendMessage,
     spawnProcess,
-    startRunAs,
   ]);
   const appendDictationDraft = useCallback((text: string) => {
     const dictation = text.trim();
@@ -590,7 +636,7 @@ export function ChatDock({
       : hilDecision.isError
         ? errorMessage(hilDecision.error, "Tool approval could not be applied.")
         : forkProcess.isError
-          ? errorMessage(forkProcess.error, "Task could not be branched.")
+          ? errorMessage(forkProcess.error, "Work could not be branched.")
           : setProcessAiConfig.isError
             ? errorMessage(setProcessAiConfig.error, "Process model settings could not be updated.")
             : attachmentError;
@@ -629,7 +675,6 @@ export function ChatDock({
     }
     spawnProcess.mutate({
       interactive: true,
-      ...(startRunAs ? { runAs: startRunAs } : {}),
     }, {
       onSuccess: (result) => {
         onProcessStarted?.(result);
@@ -647,7 +692,7 @@ export function ChatDock({
     setStoppingRun(requestedStop);
     const target = displayedTargetRef.current;
     const stillDisplayed = () => displayedTargetRef.current.pid === target.pid;
-    feedback.begin("abort", "Stopping task");
+    feedback.begin("abort", "Stopping work");
     abortProcess.mutate({
       pid: activeProcessId,
       ...(runId ? { runId } : {}),
@@ -656,7 +701,7 @@ export function ChatDock({
         // A switch mid-flight already cleared the line; resolving would
         // upsert it into the newly displayed transcript.
         if (stillDisplayed()) {
-          feedback.resolve("abort", "attention", "Task interrupted");
+          feedback.resolve("abort", "attention", "Work interrupted");
         }
       },
       onError: () => {
@@ -666,7 +711,7 @@ export function ChatDock({
             : current
         ));
         if (stillDisplayed()) {
-          feedback.resolve("abort", "error", "Error trying to stop task");
+          feedback.resolve("abort", "error", "Error trying to stop work");
         }
       },
     });
@@ -743,16 +788,17 @@ export function ChatDock({
   };
 
   const branchFromMessage = (messageId: number) => {
-    if (!hasActiveProcess || forkProcess.isPending) {
-      return;
-    }
-    forkProcess.mutate({
-      pid: activeProcessId,
-      throughMessageId: messageId,
-    }, {
-      onSuccess: (result) => {
-        onProcessStarted?.(result);
-      },
+    requestChatBranch({
+      canStartNewTask,
+      forkPending: forkProcess.isPending,
+      hasActiveProcess,
+      messageId,
+      processId: activeProcessId,
+      mutate: (input) => forkProcess.mutate(input, {
+        onSuccess: (result) => {
+          onProcessStarted?.(result);
+        },
+      }),
     });
   };
 
@@ -766,7 +812,6 @@ export function ChatDock({
     compactHistory.reset();
     spawnProcess.mutate({
       interactive: true,
-      ...(startRunAs ? { runAs: startRunAs } : {}),
     }, {
       onSuccess: (result) => {
         onProcessStarted?.(result);
@@ -862,6 +907,13 @@ export function ChatDock({
     }
   };
 
+  const backToPersonal = () => {
+    setOpenPopover(null);
+    setBodyState("chat");
+    setReasoningTarget(null);
+    onBackToPersonal();
+  };
+
   const openReasoning = (target: ChatReasoningTarget) => {
     setReasoningTarget(target);
     setBodyState("reasoning");
@@ -877,14 +929,11 @@ export function ChatDock({
 
   const openTaskProcess = (processId: string, process: ChatProcessSummary | null) => {
     const targetProcessId = processId.trim();
-    if (!targetProcessId || !onSelectAgent) {
+    if (!targetProcessId || !onOpenWorkSession) {
       return;
     }
     setOpenPopover(null);
-    onSelectAgent({
-      processId: targetProcessId,
-      ...(process ? { process } : {}),
-    });
+    onOpenWorkSession(targetProcessId, process);
   };
 
   const closePopoverFromOutsideClick = (event: JSX.TargetedMouseEvent<HTMLElement>) => {
@@ -936,52 +985,63 @@ export function ChatDock({
       const left = Math.min(Math.max(triggerRect.left - mainRect.left, margin), maxLeft);
       popover.style.left = `${left}px`;
       popover.style.right = "auto";
-      popover.style.top = `${triggerRect.bottom - mainRect.top + 6}px`;
+      popover.style.top = hasWorkSession
+        ? "6px"
+        : `${triggerRect.bottom - mainRect.top + 6}px`;
     };
     positionPopover();
     window.addEventListener("resize", positionPopover);
     return () => window.removeEventListener("resize", positionPopover);
-  }, [openPopover, mobileLayout, currentModelLabel, currentReasoningLabel]);
+  }, [openPopover, mobileLayout, currentModelLabel, currentReasoningLabel, hasWorkSession]);
 
   if (!open) {
     return (
-      <button
-        ref={minimizedChat.launcherRef}
-        type="button"
-        class={`gsv-chat-min${minimizedChat.dragging ? " is-dragging" : ""}`}
-        style={minimizedChat.style}
-        aria-keyshortcuts="ArrowUp ArrowDown ArrowLeft ArrowRight"
-        aria-label={`Open chat with ${activeAgent.name}; use arrow keys to move`}
-        title="Open chat; drag or use arrow keys to move"
-        onClick={minimizedChat.onClick}
-        onKeyDown={minimizedChat.onKeyDown}
-        onLostPointerCapture={minimizedChat.onLostPointerCapture}
-        onPointerCancel={minimizedChat.onPointerCancel}
-        onPointerDown={minimizedChat.onPointerDown}
-        onPointerMove={minimizedChat.onPointerMove}
-        onPointerUp={minimizedChat.onPointerUp}
-      >
-        <AgentImage src={activeAgent.imageSrc} size={40} cover />
-        <span class="gsv-chat-min-copy">
-          <strong class="gsv-prose-heading">{activeAgent.name}</strong>
-          <small class="gsv-label">
-            <span class="gsv-chat-min-dot"><StatusDot tone={effectiveStatus} size={7} /></span>
-            {activeAgent.activity}
-            <i />
-          </small>
-        </span>
-      </button>
+      <>
+        <ChatWorkSessionAnnouncement workSession={workSession} />
+        <button
+          ref={minimizedChat.launcherRef}
+          type="button"
+          class={`gsv-chat-min${minimizedChat.dragging ? " is-dragging" : ""}`}
+          style={minimizedChat.style}
+          aria-keyshortcuts="ArrowUp ArrowDown ArrowLeft ArrowRight"
+          aria-label={workSession
+            ? workSession.personalName?.trim()
+              ? `Open work session ${workSession.title}; ${workSession.personalName.trim()} remains your personal intelligence; use arrow keys to move`
+              : `Open work session ${workSession.title}; this account has no personal intelligence; use arrow keys to move`
+            : `Open chat with ${activeAgent.name}; use arrow keys to move`}
+          title={workSession ? `Open work session: ${workSession.title}` : "Open chat; drag or use arrow keys to move"}
+          onClick={minimizedChat.onClick}
+          onKeyDown={minimizedChat.onKeyDown}
+          onLostPointerCapture={minimizedChat.onLostPointerCapture}
+          onPointerCancel={minimizedChat.onPointerCancel}
+          onPointerDown={minimizedChat.onPointerDown}
+          onPointerMove={minimizedChat.onPointerMove}
+          onPointerUp={minimizedChat.onPointerUp}
+        >
+          <AgentImage src={activeAgent.imageSrc} size={40} cover />
+          <span class="gsv-chat-min-copy">
+            <strong class="gsv-prose-heading">{activeAgent.name}</strong>
+            <small class="gsv-label">
+              <span class="gsv-chat-min-dot"><StatusDot tone={effectiveStatus} size={7} /></span>
+              {workSession ? `WORK SESSION · ${workSession.title}` : activeAgent.activity}
+              <i />
+            </small>
+          </span>
+        </button>
+      </>
     );
   }
 
   return (
-    <aside
-      ref={asideRef}
-      class={`gsv-chat${dragging ? " is-dragging" : ""}`}
-      aria-label="Chat"
-      style={{ width: `${width}px` }}
-      onClickCapture={closePopoverFromOutsideClick}
-    >
+    <>
+      <ChatWorkSessionAnnouncement workSession={workSession} />
+      <aside
+        ref={asideRef}
+        class={`gsv-chat${dragging ? " is-dragging" : ""}`}
+        aria-label={workSession ? `Work session: ${workSession.title}` : "Chat"}
+        style={{ width: `${width}px` }}
+        onClickCapture={closePopoverFromOutsideClick}
+      >
       <div class="gsv-chat-resize" onMouseDown={onResizeStart} title="Resize chat" />
       {contextConfirmOpen ? (
         <div class="gsv-chat-modal-layer" onClick={() => setContextConfirmOpen(false)}>
@@ -996,7 +1056,7 @@ export function ChatDock({
             >
               <Counter
                 label="KEEP MESSAGES"
-                description={`Choose how many recent messages stay live. Current task has ${compactMessageTotal}.`}
+                description={`Choose how many recent messages stay live. Current work has ${compactMessageTotal}.`}
                 min={1}
                 max={compactKeepMax}
                 step={1}
@@ -1018,11 +1078,11 @@ export function ChatDock({
         contextPercent={contextPercent}
         contextTitle={contextTitle}
         effectiveStatus={effectiveStatus}
-        hasActiveProcess={hasActiveProcess}
         mobileLayout={mobileLayout}
         modelLabel={currentModelLabel}
         openPopover={openPopover}
         reasoningLabel={currentReasoningLabel}
+        showStartAction={emptyState.showStartAction}
         spawnPending={spawnProcess.isPending}
         speakReplies={replySpeech.speakReplies}
         speechStatus={replySpeech.speechStatus}
@@ -1034,6 +1094,14 @@ export function ChatDock({
         onToggleOpen={onToggleOpen}
         onTogglePopover={togglePopover}
       />
+
+      {workSession ? (
+        <ChatWorkSessionBanner
+          personalName={workSession.personalName}
+          title={workSession.title}
+          onBack={backToPersonal}
+        />
+      ) : null}
 
       <div class="gsv-chat-main" ref={mainRef}>
 
@@ -1067,11 +1135,11 @@ export function ChatDock({
         onApplyModelProfile={applyProcessAiProfile}
         onOpenModels={() => {
           setOpenPopover(null);
-          (onOpenModels ?? onOpenCrew)();
+          onOpenModels?.();
         }}
         onOpenTasks={() => {
           setOpenPopover(null);
-          (onOpenTasks ?? onOpenCrew)();
+          onOpenTasks?.();
         }}
         onOpenTaskProcess={openTaskProcess}
         onStartNewTask={prepareNewTask}
@@ -1085,8 +1153,6 @@ export function ChatDock({
           canStartNewTask={canStartNewTask}
           onOpenTaskProcess={openTaskProcess}
           onStartNewTask={prepareNewTask}
-          onSelectAgent={onSelectAgent}
-          onOpenCrew={onOpenCrew}
           onClose={returnToChat}
         />
       ) : null}
@@ -1121,7 +1187,7 @@ export function ChatDock({
 
       {bodyState !== "chat" ? null : <ChatTranscript
         activeRunId={runtime.activeRunId}
-        action={!hasActiveProcess ? (
+        action={emptyState.showStartAction ? (
           <button
             type="button"
             class="gsv-chat-empty-start"
@@ -1129,11 +1195,11 @@ export function ChatDock({
             onClick={startProcess}
           >
             <Icon name="plus" size={13} />
-            <span>{spawnProcess.isPending ? "STARTING" : "START PROCESS"}</span>
+            <span>{spawnProcess.isPending ? "STARTING" : "NEW WORK"}</span>
           </button>
         ) : undefined}
-        emptyTitle={emptyTitle}
-        emptyDescription={emptyDescription}
+        emptyTitle={emptyState.title}
+        emptyDescription={emptyState.description}
         errorMessage={transcriptError}
         feedback={feedback.entries}
         hasOlderMessages={chatRuntime.hasOlderHistory}
@@ -1141,7 +1207,9 @@ export function ChatDock({
         mobile={mobileLayout}
         loadingOlderMessages={chatRuntime.loadingOlderHistory}
         onLoadOlder={chatRuntime.loadOlderHistory}
-        onBranch={branchFromMessage}
+        onBranch={canStartNewTask && hasActiveProcess && !forkProcess.isPending
+          ? branchFromMessage
+          : undefined}
         onOpenReasoning={openReasoning}
         processId={activeProcessId}
         state={transcriptState}
@@ -1159,7 +1227,7 @@ export function ChatDock({
       <MessageInput
         attachments={draftAttachments}
         busy={sendMessage.isPending || abortProcess.isPending || spawnProcess.isPending}
-        canSend={hasActiveProcess || canStartProcess}
+        canSend={hasActiveProcess}
         cost={historyCost}
         disabled={inputDisabled}
         focusKey={newTaskFocusKey}
@@ -1170,7 +1238,9 @@ export function ChatDock({
         onSend={handleSendMessage}
         onStop={abortActiveRun}
         onVoiceClick={handleVoiceClick}
-        placeholder={`Message ${activeAgent.name}...`}
+        placeholder={workSession
+          ? `Message work: ${workSession.title}...`
+          : `Message ${activeAgent.name}...`}
         running={canAbortRun}
         user={userLabel}
         conversationMode={ambientTranscription.liveActive}
@@ -1212,17 +1282,18 @@ export function ChatDock({
               disabled={!canStartNewTask}
               onClick={prepareNewTask}
             >
-              start a new task
+              start new work
             </button>
             {" "}to continue.
           </>
         ) : (
-          "Wait for context compression to continue this task."
+          "Wait for context compression to continue this work."
         )}
       </div>
       </div>}
 
-      </div>
-    </aside>
+        </div>
+      </aside>
+    </>
   );
 }

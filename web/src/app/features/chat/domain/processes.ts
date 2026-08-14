@@ -28,6 +28,7 @@ export type ChatProcessSummary = {
   pid: string;
   uid: number;
   username: string;
+  personal: boolean;
   interactive: boolean;
   parentPid: string | null;
   state: string;
@@ -215,12 +216,13 @@ export function normalizeRunState(input: {
 }
 
 export function normalizeProcessSummary(process: ProcListEntry): ChatProcessSummary {
-  const title = process.label?.trim() || "New task";
+  const title = process.label?.trim() || "New work";
 
   return {
     pid: process.pid,
     uid: process.uid,
     username: process.username,
+    personal: process.personal,
     interactive: process.interactive,
     parentPid: process.parentPid,
     state: process.state,
