@@ -40,6 +40,12 @@ the ID with its display name but never exposes the ID through general status, lo
 Desktop control protocol. Discovery during model preparation or an active transcription returns the
 existing `busy` error; an audio-backend enumeration failure returns `microphone_unavailable`.
 
+On Linux the helper prefers CPAL's PulseAudio protocol host, which also works through PipeWire's
+PulseAudio compatibility service. It publishes logical capture sources and omits output-monitor sources;
+Desktop owns the separate `SYSTEM DEFAULT` choice. If that service is unavailable, the conservative
+ALSA fallback publishes one conversion-capable physical selector per PCM and omits ALSA's duplicate
+direct, card-default, front, processing-plugin, and sound-server aliases.
+
 Discovery runs on one owned worker so commands and shutdown remain responsive if the OS audio API
 is slow. `{"type":"cancel","request_id":1}` immediately returns a correlated `cancelled` event and
 suppresses any late discovery result. A new discovery or transcription remains `busy` until that

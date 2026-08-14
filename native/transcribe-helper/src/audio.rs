@@ -18,6 +18,7 @@ const MAX_DEVICE_ID_BYTES: usize = 512;
 const _: () = {
     assert!(MAX_INPUT_DEVICES <= 32);
     assert!(MAX_DEVICE_NAME_BYTES <= 256);
+    assert!(MAX_DEVICE_ID_BYTES <= 512);
 };
 
 #[derive(Clone, Debug, Serialize, PartialEq, Eq)]
@@ -176,11 +177,9 @@ pub fn list_input_devices() -> Result<Vec<InputDeviceInfo>, String> {
         .default_input_device()
         .and_then(|device| device.id().ok())
         .map(|id| id.to_string());
-    let devices = host
-        .input_devices()
-        .map_err(|error| format!("microphones are unavailable: {error}"))?;
+    let devices = product_input_devices(&host)?;
     Ok(normalize_input_devices(
-        devices.filter_map(|device| {
+        devices.into_iter().filter_map(|device| {
             let id = bounded_device_id(&device.id().ok()?.to_string())?;
             let description = device.description().ok()?;
             let name = bounded_device_name(description.name())?;
@@ -190,13 +189,85 @@ pub fn list_input_devices() -> Result<Vec<InputDeviceInfo>, String> {
     ))
 }
 
+fn product_input_devices(host: &cpal::Host) -> Result<Vec<cpal::Device>, String> {
+    Ok(host
+        .devices()
+        .map_err(|error| format!("microphones are unavailable: {error}"))?
+        .filter(|device| {
+            device
+                .id()
+                .is_ok_and(|id| product_input_candidate(device.supports_input(), &id))
+        })
+        .collect())
+}
+
+fn product_input_candidate(supports_input: bool, id: &cpal::DeviceId) -> bool {
+    supports_input && product_input_selector(id)
+}
+
+#[cfg(target_os = "linux")]
+fn product_input_selector(id: &cpal::DeviceId) -> bool {
+    if id.host() == cpal::HostId::PulseAudio {
+        return pulse_source_selector(id.id());
+    }
+    if id.host() == cpal::HostId::Alsa {
+        return alsa_physical_capture_selector(id.id());
+    }
+    true
+}
+
+#[cfg(target_os = "linux")]
+fn pulse_source_selector(id: &str) -> bool {
+    id != "@DEFAULT_SOURCE@" && !id.ends_with(".monitor")
+}
+
+#[cfg(target_os = "linux")]
+fn system_default_input_selector(id: &cpal::DeviceId) -> bool {
+    if id.host() == cpal::HostId::PulseAudio {
+        return pulse_source_selector(id.id());
+    }
+    // CPAL's ALSA default is an opaque capture route rather than a physical-device selector.
+    // Keep it for SYSTEM DEFAULT and let opening its input configuration prove availability.
+    true
+}
+
+#[cfg(not(target_os = "linux"))]
+fn system_default_input_selector(_id: &cpal::DeviceId) -> bool {
+    true
+}
+
+#[cfg(not(target_os = "linux"))]
+fn product_input_selector(_id: &cpal::DeviceId) -> bool {
+    true
+}
+
+#[cfg(target_os = "linux")]
+fn alsa_physical_capture_selector(id: &str) -> bool {
+    let Some(selector) = id.strip_prefix("plughw:CARD=") else {
+        return false;
+    };
+    let Some((card, device)) = selector.split_once(",DEV=") else {
+        return false;
+    };
+    !card.is_empty()
+        && !device.is_empty()
+        && card.bytes().all(|byte| byte.is_ascii_digit())
+        && device.bytes().all(|byte| byte.is_ascii_digit())
+}
+
 fn normalize_input_devices<I>(devices: I, default_id: Option<&str>) -> Vec<InputDeviceInfo>
 where
     I: IntoIterator<Item = (String, String)>,
 {
     let default_id = default_id.and_then(bounded_device_id);
     let mut unique = BTreeMap::<String, InputDeviceInfo>::new();
-    for (id, name) in devices {
+    for (raw_id, raw_name) in devices {
+        let Some(id) = bounded_device_id(&raw_id) else {
+            continue;
+        };
+        let Some(name) = bounded_device_name(&raw_name) else {
+            continue;
+        };
         let is_default = default_id.as_deref() == Some(id.as_str());
         unique.entry(id.clone()).or_insert(InputDeviceInfo {
             id,
@@ -206,8 +277,8 @@ where
         if unique.len() > MAX_INPUT_DEVICES {
             let remove = unique
                 .iter()
-                .rev()
-                .find_map(|(id, device)| (!device.is_default).then(|| id.clone()));
+                .max_by(|(_, left), (_, right)| compare_input_devices(left, right))
+                .map(|(id, _)| id.clone());
             if let Some(remove) = remove {
                 unique.remove(&remove);
             }
@@ -215,14 +286,16 @@ where
     }
 
     let mut devices = unique.into_values().collect::<Vec<_>>();
-    devices.sort_by(|left, right| {
-        right
-            .is_default
-            .cmp(&left.is_default)
-            .then_with(|| left.name.cmp(&right.name))
-            .then_with(|| left.id.cmp(&right.id))
-    });
+    devices.sort_by(compare_input_devices);
     devices
+}
+
+fn compare_input_devices(left: &InputDeviceInfo, right: &InputDeviceInfo) -> std::cmp::Ordering {
+    right
+        .is_default
+        .cmp(&left.is_default)
+        .then_with(|| left.name.cmp(&right.name))
+        .then_with(|| left.id.cmp(&right.id))
 }
 
 fn bounded_device_name(name: &str) -> Option<String> {
@@ -241,6 +314,16 @@ fn bounded_device_id(id: &str) -> Option<String> {
 
 fn saved_device_name_matches(current: &str, saved: &str) -> bool {
     bounded_device_name(current).as_deref() == Some(saved)
+}
+
+fn saved_device_matches(
+    current_id: &str,
+    current_name: &str,
+    saved_id: &str,
+    saved_name: &str,
+) -> bool {
+    bounded_device_id(current_id).as_deref() == Some(saved_id)
+        && saved_device_name_matches(current_name, saved_name)
 }
 
 impl AudioCapture {
@@ -357,19 +440,32 @@ fn select_input_devices(
         let preferred_name = preferred_name
             .and_then(bounded_device_name)
             .ok_or_else(|| "configured microphone name is invalid".to_string())?;
-        let id = bounded_device_id(preferred_id)
-            .and_then(|id| cpal::DeviceId::from_str(&id).ok())
+        let preferred_id = bounded_device_id(preferred_id)
             .ok_or_else(|| "configured microphone identifier is invalid".to_string())?;
+        let id = cpal::DeviceId::from_str(&preferred_id)
+            .map_err(|_| "configured microphone identifier is invalid".to_string())?;
+        if !product_input_selector(&id) {
+            return Err("configured microphone is unavailable".to_string());
+        }
         let device = host
             .device_by_id(&id)
-            .filter(|device| device.supports_input())
+            .filter(|device| {
+                device.id().is_ok_and(|current_id| {
+                    product_input_candidate(device.supports_input(), &current_id)
+                })
+            })
+            .ok_or_else(|| "configured microphone is unavailable".to_string())?;
+        let current_id = device
+            .id()
+            .ok()
+            .map(|id| id.to_string())
             .ok_or_else(|| "configured microphone is unavailable".to_string())?;
         let current_name = device
             .description()
             .ok()
             .map(|description| description.name().to_string())
             .ok_or_else(|| "configured microphone is unavailable".to_string())?;
-        if !saved_device_name_matches(&current_name, &preferred_name) {
+        if !saved_device_matches(&current_id, &current_name, &preferred_id, &preferred_name) {
             return Err("configured microphone is unavailable".to_string());
         }
         return Ok(vec![device]);
@@ -377,12 +473,16 @@ fn select_input_devices(
     let Some(preferred_name) = preferred_name else {
         return host
             .default_input_device()
+            .filter(|device| {
+                device
+                    .id()
+                    .is_ok_and(|id| system_default_input_selector(&id))
+            })
             .map(|device| vec![device])
             .ok_or_else(|| "no microphone is available".to_string());
     };
-    let devices = host
-        .input_devices()
-        .map_err(|error| format!("microphones are unavailable: {error}"))?
+    let devices = product_input_devices(host)?
+        .into_iter()
         .filter_map(|device| {
             let name = device.description().ok()?.name().to_string();
             Some((device, name))
@@ -453,17 +553,11 @@ fn select_legacy_device_name_indices(preferred: &str, names: &[&str]) -> Option<
             name != preferred && name.contains(&preferred)
         })
         .collect::<Vec<_>>();
-    let partial_name = partial.first().map(|(_, name)| name.to_lowercase());
-    let one_partial_name = partial_name.as_ref().is_some_and(|first| {
-        partial
-            .iter()
-            .all(|(_, name)| name.to_lowercase() == *first)
-    });
-
-    if !exact.is_empty() {
+    if exact.len() == 1 {
         return Some(exact);
     }
-    one_partial_name.then(|| partial.into_iter().map(|(index, _)| index).collect())
+    (exact.is_empty() && partial.len() == 1)
+        .then(|| partial.into_iter().map(|(index, _)| index).collect())
 }
 
 fn samples_for_duration(sample_rate: u32, duration: Duration) -> usize {
@@ -636,10 +730,10 @@ mod tests {
     }
 
     #[test]
-    fn duplicate_exact_device_aliases_select_the_first() {
+    fn duplicate_exact_device_names_are_ambiguous() {
         assert_eq!(
             select_device_name_index("Microphone", &["Microphone", "Microphone"]),
-            Some(0)
+            None
         );
     }
 
@@ -688,8 +782,68 @@ mod tests {
         );
     }
 
+    #[cfg(target_os = "linux")]
     #[test]
-    fn device_listing_deduplicates_names_and_places_the_default_first() {
+    fn linux_product_filter_excludes_outputs_monitors_and_backend_defaults() {
+        let source = cpal::DeviceId::from_str("pulseaudio:source-a").expect("valid source ID");
+        let monitor =
+            cpal::DeviceId::from_str("pulseaudio:sink-a.monitor").expect("valid monitor ID");
+        let default =
+            cpal::DeviceId::from_str("pulseaudio:@DEFAULT_SOURCE@").expect("valid default ID");
+
+        assert!(product_input_candidate(true, &source));
+        assert!(!product_input_candidate(false, &source));
+        assert!(!product_input_candidate(true, &monitor));
+        assert!(!product_input_candidate(true, &default));
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn system_default_rejects_pulse_monitors_but_allows_opaque_alsa_capture() {
+        let source = cpal::DeviceId::from_str("pulseaudio:source-a").expect("valid source ID");
+        let monitor =
+            cpal::DeviceId::from_str("pulseaudio:sink-a.monitor").expect("valid monitor ID");
+        let placeholder =
+            cpal::DeviceId::from_str("pulseaudio:@DEFAULT_SOURCE@").expect("valid default ID");
+        let alsa_default = cpal::DeviceId::from_str("alsa:default").expect("valid ALSA default ID");
+
+        assert!(system_default_input_selector(&source));
+        assert!(!system_default_input_selector(&monitor));
+        assert!(!system_default_input_selector(&placeholder));
+        assert!(system_default_input_selector(&alsa_default));
+
+        let listed = normalize_input_devices(
+            [(source.to_string(), "Microphone".to_string())],
+            Some(&monitor.to_string()),
+        );
+        assert_eq!(listed.len(), 1);
+        assert!(!listed[0].is_default);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn alsa_product_filter_collapses_four_pcm_aliases_to_one_conversion_selector() {
+        let candidates = [
+            "alsa:sysdefault:CARD=CardA",
+            "alsa:front:CARD=CardA,DEV=0",
+            "alsa:hw:CARD=0,DEV=0",
+            "alsa:plughw:CARD=0,DEV=0",
+        ];
+        let listed = normalize_input_devices(
+            candidates.into_iter().filter_map(|value| {
+                let id = cpal::DeviceId::from_str(value).ok()?;
+                product_input_candidate(true, &id)
+                    .then(|| (id.to_string(), "Logical microphone".to_string()))
+            }),
+            None,
+        );
+
+        assert_eq!(listed.len(), 1);
+        assert_eq!(listed[0].id, "alsa:plughw:CARD=0,DEV=0");
+    }
+
+    #[test]
+    fn device_listing_deduplicates_ids_and_places_the_default_first() {
         let devices = [
             ("alsa:z", "Zulu"),
             ("alsa:a", "Alpha"),
@@ -722,16 +876,44 @@ mod tests {
     #[test]
     fn device_listing_keeps_distinct_ids_when_display_names_match() {
         let devices = [
-            ("alsa:mic-a".to_string(), "USB microphone".to_string()),
-            ("alsa:mic-b".to_string(), "USB microphone".to_string()),
+            (
+                "alsa:plughw:CARD=0,DEV=0".to_string(),
+                "USB microphone".to_string(),
+            ),
+            (
+                "alsa:plughw:CARD=1,DEV=0".to_string(),
+                "USB microphone".to_string(),
+            ),
         ];
 
-        let listed = normalize_input_devices(devices, Some("alsa:mic-b"));
+        let listed = normalize_input_devices(devices, Some("alsa:plughw:CARD=1,DEV=0"));
 
         assert_eq!(listed.len(), 2);
-        assert_eq!(listed[0].id, "alsa:mic-b");
-        assert_eq!(listed[1].id, "alsa:mic-a");
+        assert_eq!(listed[0].id, "alsa:plughw:CARD=1,DEV=0");
+        assert_eq!(listed[1].id, "alsa:plughw:CARD=0,DEV=0");
         assert!(listed[0].is_default);
+    }
+
+    #[test]
+    fn saved_selector_reopen_requires_the_exact_id_and_name() {
+        assert!(saved_device_matches(
+            "pulseaudio:source-a",
+            "Studio microphone",
+            "pulseaudio:source-a",
+            "Studio microphone",
+        ));
+        assert!(!saved_device_matches(
+            "pulseaudio:source-b",
+            "Studio microphone",
+            "pulseaudio:source-a",
+            "Studio microphone",
+        ));
+        assert!(!saved_device_matches(
+            "pulseaudio:source-a",
+            "Other microphone",
+            "pulseaudio:source-a",
+            "Studio microphone",
+        ));
     }
 
     #[test]
