@@ -59,22 +59,6 @@ For active commitments, unresolved questions, blockers, or follow-ups that must 
 Preserve user-written standing context and keep the total standing context small.
 `;
 
-// Recognize the generated Personal wiki skill from the short-lived dedicated
-// Master Control account model without preserving that terminology in new homes.
-export const LEGACY_MASTER_CONTROL_MEMORY_SKILL = memorySkill
-  .replace(
-    "The personal intelligence's account-local commitments file",
-    "Master Control's private commitments file",
-  )
-  .replace(
-    "In a direct user interaction, the personal intelligence should delegate this investigative memory work",
-    "Master Control should delegate this investigative memory work",
-  )
-  .replace(
-    "Open commitments remain with the personal intelligence",
-    "Open commitments remain with Master Control",
-  );
-
 export const BUILTIN_SKILL_FILES = [
   {
     path: "browser-target/SKILL.md",
@@ -91,7 +75,7 @@ export const BUILTIN_SKILL_FILES = [
   {
     path: "memory/SKILL.md",
     content: memorySkill,
-    previousContents: [LEGACY_MEMORY_SKILL, LEGACY_MASTER_CONTROL_MEMORY_SKILL],
+    previousContents: [LEGACY_MEMORY_SKILL],
   },
   {
     path: "process-orchestration/SKILL.md",

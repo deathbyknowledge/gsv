@@ -114,7 +114,6 @@ describe("seedBuiltinSkillsToHome", () => {
 
   it.each([
     ["per-agent", LEGACY_MEMORY_SKILL],
-    ["Master Control", LEGACY_MASTER_CONTROL_MEMORY_SKILL],
   ])("upgrades the untouched %s memory skill", async (_version, legacySkill) => {
     const files = new Map<string, RipgitPathResult>([
       ["skills.d", { kind: "tree", entries: [] }],

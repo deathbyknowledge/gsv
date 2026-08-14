@@ -1,6 +1,6 @@
 ---
 name: memory
-description: Retrieve and maintain the user's shared personal memory. Use when personal history, preferences, people, projects, decisions, routines, places, or prior events may affect the current work, or when the user asks GSV to remember something.
+description: Retrieve and maintain the memory. Use when you need to remember something. personal history, preferences, people, projects, decisions, routines, places, or prior events or when the user asks to remember something.
 ---
 
 # Manage Personal Memory
@@ -24,11 +24,11 @@ Search narrowly before opening broad pages:
 wiki search <query> --prefix personal
 ```
 
-Use `wiki info personal` when the page location is unknown. Once a relevant page is known, use normal filesystem tools to read its Markdown under the path reported by `wiki info`. The Personal wiki is provisioned by GSV; if it is missing, report that runtime problem instead of creating a private substitute.
+Use `wiki info personal` when the page location is unknown. Once a relevant page is known, use normal filesystem tools to read its Markdown under the path reported by `wiki info`.
 
 ## Decide When to Write
 
-Write immediately when the user explicitly says to remember an unambiguous fact or corrects an existing fact. Also write a concrete, stable fact or preference that the user states explicitly when it will materially improve future help.
+Write immediately when the user explicitly says to remember an unambiguous fact or corrects an existing fact. Also write a concrete, stable fact or preference that the user states explicitly when it will improve future help.
 
 Search and merge before writing when the fact may already exist, refers to an ambiguous person or project, supersedes older information, or belongs on more than one existing page. In a direct user interaction, the personal intelligence should delegate this investigative memory work; a worker already assigned the work may perform it directly.
 
@@ -37,8 +37,6 @@ Append a journal entry for a meaningful event or outcome whose chronology may ma
 ```bash
 pages/journal/YYYY/MM/YYYY-MM-DD.md
 ```
-
-Do not write raw transcripts, routine tool activity, unsupported inferences, inferred personality traits, secrets, credentials, tokens, payment details, or transient request parameters. Preserve enough provenance to distinguish what the user said from what an agent inferred.
 
 ## Organize the Wiki
 
@@ -58,6 +56,6 @@ Use `man wiki` for exact wiki syntax and general wiki workflows.
 
 ## Maintain Standing Memory
 
-Edit the owner's `context.d/10-personal.md` only for explicit, stable facts or preferences that should be present in almost every interaction. Use the path shown on the `<user>` context root. Keep the file small, preserve its purpose statement, and replace corrected facts.
+Edit the owner's `context.d/10-personal.md` only for explicit, stable facts or preferences that should be present in almost every interaction. Keep the file small, preserve its purpose statement, and replace corrected facts.
 
-Detailed history, evidence, project notes, people notes, and facts that matter only sometimes belong in the Personal wiki. Open commitments remain with the personal intelligence until the user-facing loop closes.
+Open commitments remain with the personal intelligence until the user-facing loop closes.
