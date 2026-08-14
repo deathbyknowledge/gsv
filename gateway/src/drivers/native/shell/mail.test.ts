@@ -2,10 +2,13 @@ import type {
   MailSendArgs,
   MailSendResult,
   MailStatusResult,
+  ProcessIdentity,
 } from "@humansandmachines/gsv/protocol";
+import { env } from "cloudflare:test";
 import type { CommandContext } from "just-bash";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { GsvFs } from "../../../fs/gsv-fs";
+import { createAccountHomeBackend } from "../../../fs/backends/account-home";
+import { GsvFs } from "../../../fs/gsv-fs";
 import type { KernelContext } from "../../../kernel/context";
 import { MailboxStore, type RecordMailMessageInput } from "../../../kernel/mailbox-store";
 import { runWithRealKernelSql } from "../../../test-support/real-kernel-sql";
@@ -30,53 +33,136 @@ describe("mail shell command", () => {
 
   it("lists and reads only the calling human's indexed mail", async () => {
     await runWithRealKernelSql(async (sql) => {
+      const hankMessageId = `mail:${"a".repeat(64)}`;
+      const samMessageId = `mail:${"b".repeat(64)}`;
+      const hankRawPath = `/home/hank/.gsv/mail/inbox/${hankMessageId}/raw.eml`;
+      const hankTextPath = `/home/hank/.gsv/mail/inbox/${hankMessageId}/message.txt`;
       const mailboxes = new MailboxStore(sql);
       mailboxes.ensureMailbox("mailbox:1000:primary", 1000, "hank@gsv.space");
       mailboxes.ensureMailbox("mailbox:1001:primary", 1001, "sam@gsv.space");
-      mailboxes.recordMessage(messageInput());
       mailboxes.recordMessage(messageInput({
-        messageId: "mail:bbbbbbbb",
+        messageId: hankMessageId,
+        rawPath: hankRawPath,
+        textPath: hankTextPath,
+      }));
+      mailboxes.recordMessage(messageInput({
+        messageId: samMessageId,
         mailboxId: "mailbox:1001:primary",
         intakeId: "intake-sam",
         digest: `sha256:${"b".repeat(64)}`,
-        rawPath: "/home/sam/.gsv/mail/inbox/mail:bbbbbbbb/raw.eml",
-        textPath: "/home/sam/.gsv/mail/inbox/mail:bbbbbbbb/message.txt",
+        rawPath: `/home/sam/.gsv/mail/inbox/${samMessageId}/raw.eml`,
+        textPath: `/home/sam/.gsv/mail/inbox/${samMessageId}/message.txt`,
       }));
-      const fs = {
-        readFile: async (path: string) => `contents:${path}`,
-      } as GsvFs;
+      const ownerOnlyMetadata = {
+        uid: "1000",
+        gid: "1000",
+        mode: "600",
+      };
+      await Promise.all([
+        env.STORAGE.put(hankRawPath.slice(1), "raw contents", {
+          customMetadata: ownerOnlyMetadata,
+        }),
+        env.STORAGE.put(hankTextPath.slice(1), "text contents", {
+          customMetadata: ownerOnlyMetadata,
+        }),
+      ]);
+      const humans = [
+        {
+          username: "hank",
+          uid: 1000,
+          gid: 1000,
+          home: "/home/hank",
+        },
+        {
+          username: "sam",
+          uid: 1001,
+          gid: 1001,
+          home: "/home/sam",
+        },
+      ];
+      const personalAgent: ProcessIdentity = {
+        uid: 2000,
+        gid: 2000,
+        gids: [2000, 100],
+        username: "hank-agent",
+        home: "/home/hank-agent",
+        cwd: "/home/hank-agent",
+      };
+      const auth = {
+        getPasswdEntries: () => humans,
+        getPasswdByUid: (uid: number) => (
+          humans.find((entry) => entry.uid === uid) ?? null
+        ),
+        getPasswdByUsername: (username: string) => (
+          humans.find((entry) => entry.username === username) ?? null
+        ),
+        getPersonalAgentUid: (uid: number) => uid === 1000 ? personalAgent.uid : null,
+        isPersonalAgentUid: (uid: number) => uid === personalAgent.uid,
+        getGroupByGid: (gid: number) => {
+          const entry = humans.find((candidate) => candidate.gid === gid);
+          return entry
+            ? { name: entry.username, gid, members: [] }
+            : null;
+        },
+        resolveGids: (_username: string, gid: number) => [gid, 100],
+      };
+      const accountHomes = createAccountHomeBackend(
+        env.STORAGE,
+        { fetch: async () => new Response("not found", { status: 404 }) },
+        personalAgent,
+        {
+          auth: auth as never,
+          ownerUid: 1000,
+          isRoot: false,
+        },
+      );
+      const fs = new GsvFs(
+        env.STORAGE,
+        personalAgent,
+        undefined,
+        undefined,
+        null,
+        accountHomes,
+      );
+      const readFile = vi.spyOn(fs, "readFile");
       const ctx = {
+        env: { STORAGE: env.STORAGE },
         identity: {
           role: "user",
-          process: {
-            uid: 1000,
-            gid: 1000,
-            gids: [1000, 100],
-            username: "hank",
-            home: "/home/hank",
-            cwd: "/home/hank",
-          },
+          process: personalAgent,
           capabilities: [],
         },
+        processId: "proc:hank-agent",
+        auth,
         mailboxes,
-        procs: { getOwnerUid: () => null },
+        procs: { getOwnerUid: () => 1000 },
       } as unknown as KernelContext;
       const command = buildMailCommand(fs, ctx);
 
       const listed = await command.execute(["list"]);
       expect(listed.exitCode).toBe(0);
-      expect(listed.stdout).toContain("mail:aaaaaaaa");
-      expect(listed.stdout).not.toContain("mail:bbbbbbbb");
+      expect(listed.stdout).toContain(hankMessageId);
+      expect(listed.stdout).not.toContain(samMessageId);
 
       const shown = await command.execute(["show", "mail:aaaa"]);
+      expect(shown.stderr).toBe("");
       expect(shown).toMatchObject({
         exitCode: 0,
-        stdout: "contents:/home/hank/.gsv/mail/inbox/mail:aaaaaaaa/message.txt",
+        stdout: "text contents",
       });
+      const raw = await command.execute(["show", hankMessageId, "--raw"]);
+      expect(raw).toMatchObject({ exitCode: 0, stdout: "raw contents" });
+      expect(readFile).toHaveBeenNthCalledWith(1, hankTextPath);
+      expect(readFile).toHaveBeenNthCalledWith(2, hankRawPath);
 
       const foreign = await command.execute(["show", "mail:bbbb"]);
       expect(foreign.exitCode).toBe(1);
       expect(foreign.stderr).toContain("message not found");
+
+      const mistyped = await command.execute(["show", `ail:${"a".repeat(64)}`]);
+      expect(mistyped.exitCode).toBe(1);
+      expect(mistyped.stderr).toContain("message not found");
+      expect(readFile).toHaveBeenCalledTimes(2);
     });
   });
 

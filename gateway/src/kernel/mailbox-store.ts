@@ -545,11 +545,13 @@ export class MailboxStore {
       `SELECT mail_messages.*
          FROM mail_messages
          JOIN mailboxes USING (mailbox_id)
-        WHERE mailboxes.owner_uid = ? AND mail_messages.message_id LIKE ? ESCAPE '\\'
+        WHERE mailboxes.owner_uid = ?
+          AND substr(mail_messages.message_id, 1, length(?)) = ?
         ORDER BY mail_messages.received_at DESC
         LIMIT 2`,
       ownerUid,
-      `${escapeLike(messageIdOrPrefix)}%`,
+      messageIdOrPrefix,
+      messageIdOrPrefix,
     ).toArray();
     if (matches.length > 1) {
       throw new Error("Mail message id prefix is ambiguous");
@@ -584,16 +586,15 @@ export class MailboxStore {
     const normalizedQuery = query?.trim().toLowerCase() ?? "";
     const filter = normalizedQuery
       ? `AND (
-          LOWER(COALESCE(mail_messages.subject, '')) LIKE ? ESCAPE '\\'
-          OR LOWER(COALESCE(mail_messages.display_from, '')) LIKE ? ESCAPE '\\'
-          OR LOWER(mail_messages.envelope_from) LIKE ? ESCAPE '\\'
-          OR LOWER(COALESCE(mail_messages.summary, '')) LIKE ? ESCAPE '\\'
+          instr(LOWER(COALESCE(mail_messages.subject, '')), ?) > 0
+          OR instr(LOWER(COALESCE(mail_messages.display_from, '')), ?) > 0
+          OR instr(LOWER(mail_messages.envelope_from), ?) > 0
+          OR instr(LOWER(COALESCE(mail_messages.summary, '')), ?) > 0
         )`
       : "";
     const args: unknown[] = [ownerUid];
     if (normalizedQuery) {
-      const pattern = `%${escapeLike(normalizedQuery)}%`;
-      args.push(pattern, pattern, pattern, pattern);
+      args.push(normalizedQuery, normalizedQuery, normalizedQuery, normalizedQuery);
     }
     const count = this.sql.exec<{ count: number }>(
       `SELECT COUNT(*) AS count
@@ -851,10 +852,6 @@ function parseAttachments(value: string): MailAttachmentRecord[] {
     throw new Error("Stored mail attachments are invalid");
   }
   return parsed as MailAttachmentRecord[];
-}
-
-function escapeLike(value: string): string {
-  return value.replace(/[\\%_]/g, (character) => `\\${character}`);
 }
 
 function normalizePageNumber(

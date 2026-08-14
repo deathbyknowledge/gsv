@@ -73,6 +73,20 @@ describe("MailboxStore", () => {
     });
   });
 
+  it("resolves long message id prefixes without SQLite LIKE patterns", async () => {
+    await runWithRealKernelSql((sql) => {
+      const store = new MailboxStore(sql);
+      const messageId = `mail:${"a".repeat(64)}`;
+      store.ensureMailbox("mailbox:1000:primary", 1000, "hank@gsv.space");
+      store.recordMessage(messageInput({ messageId }));
+
+      expect(store.getMessage(1000, messageId.slice(0, -4))).toMatchObject({
+        messageId,
+      });
+      expect(store.getMessage(1000, `ail:${"a".repeat(64)}`)).toBeNull();
+    });
+  });
+
   it("deduplicates the same intake and the same exact message digest", async () => {
     await runWithRealKernelSql((sql) => {
       const store = new MailboxStore(sql);
@@ -150,13 +164,17 @@ describe("MailboxStore", () => {
         digest: `sha256:${"b".repeat(64)}`,
         envelopeFrom: "billing@example.net",
         displayFrom: "Example Billing",
-        subject: "Your receipt",
+        subject: `Your ${"x".repeat(64)} receipt`,
         receivedAt: 3_000,
         rawPath: "/home/hank/.gsv/mail/inbox/mail_bbbbbbbb/raw.eml",
         textPath: "/home/hank/.gsv/mail/inbox/mail_bbbbbbbb/message.txt",
       }));
 
       expect(store.search(1000, "billing")).toMatchObject({
+        count: 1,
+        messages: [{ messageId: "mail_bbbbbbbb" }],
+      });
+      expect(store.search(1000, "x".repeat(64))).toMatchObject({
         count: 1,
         messages: [{ messageId: "mail_bbbbbbbb" }],
       });
