@@ -11,10 +11,11 @@ use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
 use gsv_vision_control::{
-    read_frame, write_frame, DesktopCommand, GestureIntent, HelperEvent, LifecycleState, SessionId,
-    EVENT_FD, EVENT_FD_MARKER_ENV, PROTOCOL_VERSION, SESSION_HIGH_ENV, SESSION_LOW_ENV,
+    read_frame, write_frame, ControlStatus, DesktopCommand, GestureIntent, HelperEvent,
+    LifecycleState, SessionId, EVENT_FD, EVENT_FD_MARKER_ENV, PROTOCOL_VERSION, SESSION_HIGH_ENV,
+    SESSION_LOW_ENV,
 };
-use tokio::sync::mpsc::{self as tokio_mpsc, Receiver as TokioReceiver};
+use tokio::sync::{mpsc as tokio_mpsc, watch};
 use uuid::Uuid;
 
 #[cfg(unix)]
@@ -95,12 +96,106 @@ impl VisionContext {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum VisionEvent {
     Lifecycle(LifecycleState),
+    Status {
+        sequence: u64,
+        received_at: Instant,
+        status: ControlStatus,
+    },
     Intent {
         sequence: u64,
         received_at: Instant,
         voice_request_id: u64,
         intent: GestureIntent,
     },
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct VisionStatusEvent {
+    sequence: u64,
+    received_at: Instant,
+    status: ControlStatus,
+}
+
+impl VisionStatusEvent {
+    const fn into_event(self) -> VisionEvent {
+        VisionEvent::Status {
+            sequence: self.sequence,
+            received_at: self.received_at,
+            status: self.status,
+        }
+    }
+}
+
+/// Merges a reliable FIFO lifecycle/intent lane with one replace-latest status
+/// cell. The lanes alternate when both remain busy so continuous status updates
+/// cannot starve reliable actions. A terminal lifecycle clears the status cell
+/// before entering the reliable lane.
+pub(crate) struct VisionEventReceiver {
+    reliable: tokio_mpsc::Receiver<VisionEvent>,
+    status: watch::Receiver<Option<VisionStatusEvent>>,
+    reliable_closed: bool,
+    status_closed: bool,
+    prefer_reliable: bool,
+}
+
+impl VisionEventReceiver {
+    pub(crate) async fn recv(&mut self) -> Option<VisionEvent> {
+        loop {
+            if self.prefer_reliable {
+                tokio::select! {
+                    biased;
+                    event = self.reliable.recv(), if !self.reliable_closed => {
+                        match event {
+                            Some(event) => {
+                                self.prefer_reliable = false;
+                                return Some(event);
+                            }
+                            None => self.reliable_closed = true,
+                        }
+                    }
+                    changed = self.status.changed(), if !self.status_closed => {
+                        match changed {
+                            Ok(()) => {
+                                let latest = *self.status.borrow_and_update();
+                                if let Some(status) = latest {
+                                    return Some(status.into_event());
+                                }
+                            }
+                            Err(_) => self.status_closed = true,
+                        }
+                    }
+                    else => return None,
+                }
+            } else {
+                tokio::select! {
+                    biased;
+                    changed = self.status.changed(), if !self.status_closed => {
+                        match changed {
+                            Ok(()) => {
+                                let latest = *self.status.borrow_and_update();
+                                if let Some(status) = latest {
+                                    self.prefer_reliable = true;
+                                    return Some(status.into_event());
+                                }
+                            }
+                            Err(_) => self.status_closed = true,
+                        }
+                    }
+                    event = self.reliable.recv(), if !self.reliable_closed => {
+                        match event {
+                            Some(event) => return Some(event),
+                            None => self.reliable_closed = true,
+                        }
+                    }
+                    else => return None,
+                }
+            }
+        }
+    }
+
+    fn close(&mut self) {
+        self.reliable.close();
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -121,11 +216,18 @@ impl VisionContextSender {
         }
         self.state.set(context)
     }
+
+    #[cfg(test)]
+    pub(crate) fn for_test() -> Self {
+        Self {
+            state: Arc::new(ContextState::new()),
+        }
+    }
 }
 
 pub(crate) struct VisionHandle {
     pub(crate) context: VisionContextSender,
-    pub(crate) events: TokioReceiver<VisionEvent>,
+    pub(crate) events: VisionEventReceiver,
     shutdown: Arc<AtomicBool>,
     supervisor: Option<JoinHandle<()>>,
 }
@@ -459,7 +561,8 @@ fn start_supervisor(
     } = helper;
     let context_state = Arc::new(ContextState::new());
     let shutdown = Arc::new(AtomicBool::new(false));
-    let (event_sender, events) = tokio_mpsc::channel(EVENT_CAPACITY);
+    let (event_sender, reliable_events) = tokio_mpsc::channel(EVENT_CAPACITY);
+    let (status_sender, status_events) = watch::channel(None);
     let supervisor_context = Arc::clone(&context_state);
     let supervisor_shutdown = Arc::clone(&shutdown);
     let supervisor = std::thread::Builder::new()
@@ -472,6 +575,7 @@ fn start_supervisor(
                 supervisor_context,
                 supervisor_shutdown,
                 event_sender,
+                status_sender,
             );
         })
         .map_err(|_| VisionDebugError::StartFailed)?;
@@ -491,7 +595,13 @@ fn start_supervisor(
         context: VisionContextSender {
             state: context_state,
         },
-        events,
+        events: VisionEventReceiver {
+            reliable: reliable_events,
+            status: status_events,
+            reliable_closed: false,
+            status_closed: false,
+            prefer_reliable: false,
+        },
         shutdown,
         supervisor: Some(supervisor),
     })
@@ -528,6 +638,7 @@ fn supervise(
     context: Arc<ContextState>,
     shutdown: Arc<AtomicBool>,
     events: tokio_mpsc::Sender<VisionEvent>,
+    statuses: watch::Sender<Option<VisionStatusEvent>>,
 ) {
     let mut last_sequence = 0;
     let mut terminal_reported = false;
@@ -549,14 +660,19 @@ fn supervise(
                             event,
                             VisionEvent::Lifecycle(state) if state != LifecycleState::Ready
                         );
-                        if events.blocking_send(event).is_err() || terminal_reported {
+                        if send_vision_event(&events, &statuses, event).is_err()
+                            || terminal_reported
+                        {
                             break;
                         }
                     }
                     Ok(None) => {}
                     Err(()) => {
-                        let _ = events
-                            .blocking_send(VisionEvent::Lifecycle(LifecycleState::ProtocolError));
+                        let _ = send_vision_event(
+                            &events,
+                            &statuses,
+                            VisionEvent::Lifecycle(LifecycleState::ProtocolError),
+                        );
                         terminal_reported = true;
                         break;
                     }
@@ -564,7 +680,11 @@ fn supervise(
             }
             Ok(WireRead::Eof) | Err(mpsc::RecvTimeoutError::Disconnected) => break,
             Ok(WireRead::Invalid) => {
-                let _ = events.blocking_send(VisionEvent::Lifecycle(LifecycleState::ProtocolError));
+                let _ = send_vision_event(
+                    &events,
+                    &statuses,
+                    VisionEvent::Lifecycle(LifecycleState::ProtocolError),
+                );
                 terminal_reported = true;
                 break;
             }
@@ -578,10 +698,43 @@ fn supervise(
 
     context.close();
     if !shutdown.load(Ordering::Acquire) && !terminal_reported {
-        let _ = events.blocking_send(VisionEvent::Lifecycle(LifecycleState::Interrupted));
+        let _ = send_vision_event(
+            &events,
+            &statuses,
+            VisionEvent::Lifecycle(LifecycleState::Interrupted),
+        );
     }
     terminate_child(&mut child);
     let _ = reap_in_background(child);
+}
+
+fn send_vision_event(
+    events: &tokio_mpsc::Sender<VisionEvent>,
+    statuses: &watch::Sender<Option<VisionStatusEvent>>,
+    event: VisionEvent,
+) -> Result<(), ()> {
+    if let VisionEvent::Status {
+        sequence,
+        received_at,
+        status,
+    } = event
+    {
+        statuses.send_replace(Some(VisionStatusEvent {
+            sequence,
+            received_at,
+            status,
+        }));
+        return Ok(());
+    }
+    if matches!(
+        event,
+        VisionEvent::Lifecycle(state) if state != LifecycleState::Ready
+    ) {
+        // A terminal lifecycle is authoritative over any explanatory snapshot
+        // that the stalled UI has not consumed yet.
+        statuses.send_replace(None);
+    }
+    events.blocking_send(event).map_err(|_| ())
 }
 
 fn translate_event(
@@ -598,6 +751,11 @@ fn translate_event(
             sequence,
             ..
         }
+        | HelperEvent::Status {
+            session_id,
+            sequence,
+            ..
+        }
         | HelperEvent::Intent {
             session_id,
             sequence,
@@ -610,6 +768,26 @@ fn translate_event(
     *last_sequence = sequence;
     match event {
         HelperEvent::Lifecycle { state, .. } => Ok(Some(VisionEvent::Lifecycle(state))),
+        HelperEvent::Status {
+            status: ControlStatus::Disabled,
+            ..
+        } if context.voice_request_id.is_none() => Ok(Some(VisionEvent::Status {
+            sequence,
+            received_at,
+            status: ControlStatus::Disabled,
+        })),
+        HelperEvent::Status {
+            status:
+                status @ ControlStatus::Active {
+                    voice_request_id, ..
+                },
+            ..
+        } if context.voice_request_id == Some(voice_request_id) => Ok(Some(VisionEvent::Status {
+            sequence,
+            received_at,
+            status,
+        })),
+        HelperEvent::Status { .. } => Ok(None),
         HelperEvent::Intent {
             voice_request_id,
             intent,
@@ -987,6 +1165,231 @@ mod tests {
                 VisionContext::disabled(),
             ),
             Ok(None)
+        );
+    }
+
+    #[test]
+    fn semantic_status_is_session_sequence_and_context_fenced() {
+        let received_at = Instant::now();
+        let status = |session_id, sequence, status| HelperEvent::Status {
+            session_id,
+            sequence,
+            status,
+        };
+        let active_status = ControlStatus::Active {
+            voice_request_id: 21,
+            state: gsv_vision_control::GestureState::NeedsReady,
+        };
+        let mut sequence = 0;
+
+        assert_eq!(
+            translate_event(
+                status(SessionId::new(9, 9), 1, active_status),
+                received_at,
+                SESSION,
+                &mut sequence,
+                VisionContext::listening(21, false),
+            ),
+            Ok(None)
+        );
+        assert_eq!(sequence, 0);
+        assert_eq!(
+            translate_event(
+                status(SESSION, 1, active_status),
+                received_at,
+                SESSION,
+                &mut sequence,
+                VisionContext::listening(20, false),
+            ),
+            Ok(None)
+        );
+        assert_eq!(sequence, 1);
+        assert_eq!(
+            translate_event(
+                status(SESSION, 2, active_status),
+                received_at,
+                SESSION,
+                &mut sequence,
+                VisionContext::listening(21, false),
+            ),
+            Ok(Some(VisionEvent::Status {
+                sequence: 2,
+                received_at,
+                status: active_status,
+            }))
+        );
+        assert_eq!(
+            translate_event(
+                status(SESSION, 3, ControlStatus::Disabled),
+                received_at,
+                SESSION,
+                &mut sequence,
+                VisionContext::listening(21, false),
+            ),
+            Ok(None)
+        );
+        assert_eq!(
+            translate_event(
+                status(SESSION, 4, ControlStatus::Disabled),
+                received_at,
+                SESSION,
+                &mut sequence,
+                VisionContext::disabled(),
+            ),
+            Ok(Some(VisionEvent::Status {
+                sequence: 4,
+                received_at,
+                status: ControlStatus::Disabled,
+            }))
+        );
+    }
+
+    #[test]
+    fn stalled_ui_receives_the_latest_fresh_status_and_every_reliable_event() {
+        let (events, reliable) = tokio_mpsc::channel(EVENT_CAPACITY);
+        let (statuses, status) = watch::channel(None);
+        let mut receiver = VisionEventReceiver {
+            reliable,
+            status,
+            reliable_closed: false,
+            status_closed: false,
+            prefer_reliable: false,
+        };
+        let stale = Instant::now()
+            .checked_sub(Duration::from_secs(2))
+            .expect("test instant supports subtraction");
+
+        send_vision_event(
+            &events,
+            &statuses,
+            VisionEvent::Lifecycle(LifecycleState::Ready),
+        )
+        .expect("reliable lifecycle queues");
+        for (sequence, state) in [
+            (2, gsv_vision_control::GestureState::NeedsReady),
+            (3, gsv_vision_control::GestureState::Ready),
+            (4, gsv_vision_control::GestureState::NeedsReady),
+        ] {
+            send_vision_event(
+                &events,
+                &statuses,
+                VisionEvent::Status {
+                    sequence,
+                    received_at: stale,
+                    status: ControlStatus::Active {
+                        voice_request_id: 31,
+                        state,
+                    },
+                },
+            )
+            .expect("obsolete status coalesces");
+        }
+        send_vision_event(
+            &events,
+            &statuses,
+            VisionEvent::Intent {
+                sequence: 5,
+                received_at: Instant::now(),
+                voice_request_id: 31,
+                intent: GestureIntent::Hold,
+            },
+        )
+        .expect("reliable intent queues");
+        let final_received_at = Instant::now();
+        let final_status = ControlStatus::Active {
+            voice_request_id: 31,
+            state: gsv_vision_control::GestureState::Holding,
+        };
+        send_vision_event(
+            &events,
+            &statuses,
+            VisionEvent::Status {
+                sequence: 6,
+                received_at: final_received_at,
+                status: final_status,
+            },
+        )
+        .expect("final status replaces obsolete status");
+
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .build()
+            .expect("test runtime");
+        runtime.block_on(async {
+            assert_eq!(
+                receiver.recv().await,
+                Some(VisionEvent::Status {
+                    sequence: 6,
+                    received_at: final_received_at,
+                    status: final_status,
+                })
+            );
+            send_vision_event(
+                &events,
+                &statuses,
+                VisionEvent::Status {
+                    sequence: 7,
+                    received_at: Instant::now(),
+                    status: final_status,
+                },
+            )
+            .expect("continuous status remains nonblocking");
+            assert_eq!(
+                receiver.recv().await,
+                Some(VisionEvent::Lifecycle(LifecycleState::Ready))
+            );
+            assert!(matches!(
+                receiver.recv().await,
+                Some(VisionEvent::Status { sequence: 7, .. })
+            ));
+            assert!(matches!(
+                receiver.recv().await,
+                Some(VisionEvent::Intent {
+                    sequence: 5,
+                    voice_request_id: 31,
+                    intent: GestureIntent::Hold,
+                    ..
+                })
+            ));
+        });
+    }
+
+    #[test]
+    fn terminal_lifecycle_discards_an_unseen_active_status() {
+        let (events, reliable) = tokio_mpsc::channel(EVENT_CAPACITY);
+        let (statuses, status) = watch::channel(None);
+        let mut receiver = VisionEventReceiver {
+            reliable,
+            status,
+            reliable_closed: false,
+            status_closed: false,
+            prefer_reliable: false,
+        };
+        send_vision_event(
+            &events,
+            &statuses,
+            VisionEvent::Status {
+                sequence: 2,
+                received_at: Instant::now(),
+                status: ControlStatus::Active {
+                    voice_request_id: 31,
+                    state: gsv_vision_control::GestureState::Ready,
+                },
+            },
+        )
+        .expect("active status queues");
+        send_vision_event(
+            &events,
+            &statuses,
+            VisionEvent::Lifecycle(LifecycleState::CameraStopped),
+        )
+        .expect("terminal lifecycle queues");
+
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .build()
+            .expect("test runtime");
+        assert_eq!(
+            runtime.block_on(receiver.recv()),
+            Some(VisionEvent::Lifecycle(LifecycleState::CameraStopped))
         );
     }
 

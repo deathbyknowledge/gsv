@@ -1,6 +1,7 @@
 use std::time::Duration;
 
 use font8x8::{UnicodeFonts, BASIC_FONTS};
+use gsv_vision_control::{ControlStatus, GestureState};
 
 use crate::observation::{HandObservation, Handedness, Landmark, Observation};
 
@@ -54,11 +55,18 @@ pub struct PerfText {
     pub capture_errors: u64,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ControlOverlay {
+    pub status: ControlStatus,
+    pub app_held: bool,
+}
+
 pub fn draw_overlay(
     pixels: &mut [u32],
     width: usize,
     height: usize,
     observation: Option<&Observation>,
+    control: ControlOverlay,
     perf: &PerfText,
     mirror: bool,
 ) {
@@ -82,7 +90,7 @@ pub fn draw_overlay(
         }
     }
 
-    draw_perf(pixels, width, height, perf);
+    draw_perf(pixels, width, height, control, perf);
 }
 
 fn draw_hand(
@@ -182,8 +190,14 @@ fn draw_pair(
     );
 }
 
-fn draw_perf(pixels: &mut [u32], width: usize, height: usize, perf: &PerfText) {
-    let status = if perf.camera_running {
+fn draw_perf(
+    pixels: &mut [u32],
+    width: usize,
+    height: usize,
+    control: ControlOverlay,
+    perf: &PerfText,
+) {
+    let camera_status = if perf.camera_running {
         "CAMERA RUNNING"
     } else {
         "CAMERA STOPPED"
@@ -214,26 +228,84 @@ fn draw_perf(pixels: &mut [u32], width: usize, height: usize, perf: &PerfText) {
         perf.slot_replacements,
         perf.capture_errors,
     );
+    let (control_status, control_color) = control_status_text(control.status, control.app_held);
 
-    let panel_width = [status.len(), rates.len(), timings.len(), sequences.len()]
-        .into_iter()
-        .max()
-        .unwrap_or_default()
-        .saturating_mul(9)
-        .saturating_add(8)
-        .min(width);
+    let panel_width = [
+        camera_status.len(),
+        rates.len(),
+        timings.len(),
+        sequences.len(),
+        control_status.len(),
+    ]
+    .into_iter()
+    .max()
+    .unwrap_or_default()
+    .saturating_mul(9)
+    .saturating_add(8)
+    .min(width);
     fill_rect(
         pixels,
         width,
         height,
         (0, 0),
-        (panel_width, 43),
+        (panel_width, 53),
         PANEL_COLOR,
     );
-    draw_text(pixels, width, height, 4, 3, status, status_color);
+    draw_text(pixels, width, height, 4, 3, camera_status, status_color);
     draw_text(pixels, width, height, 4, 13, &rates, TEXT_COLOR);
     draw_text(pixels, width, height, 4, 23, &timings, MUTED_TEXT_COLOR);
     draw_text(pixels, width, height, 4, 33, &sequences, MUTED_TEXT_COLOR);
+    draw_text(pixels, width, height, 4, 43, control_status, control_color);
+}
+
+fn control_status_text(status: ControlStatus, app_held: bool) -> (&'static str, u32) {
+    match (status, app_held) {
+        (
+            ControlStatus::Active {
+                state: GestureState::Holding,
+                ..
+            },
+            false,
+        ) => (
+            "GESTURES HOLD REQUESTED - SHOW TWO OPEN PALMS TO SYNC",
+            WARNING_COLOR,
+        ),
+        (
+            ControlStatus::Active {
+                state: GestureState::NeedsReady | GestureState::Ready,
+                ..
+            },
+            true,
+        ) => ("GESTURES APP HOLDING - RELEASE REQUESTED", WARNING_COLOR),
+        (ControlStatus::Disabled, _) => ("GESTURES DISABLED - START VOICE INPUT", WARNING_COLOR),
+        (
+            ControlStatus::Active {
+                state: GestureState::NeedsReady,
+                ..
+            },
+            false,
+        ) => ("GESTURES NEED READY - SHOW TWO OPEN PALMS", WARNING_COLOR),
+        (
+            ControlStatus::Active {
+                state: GestureState::Ready,
+                ..
+            },
+            false,
+        ) => (
+            "GESTURES READY - PALM+FIST HOLD / PALM+THUMB SEND",
+            PAIR_COLOR,
+        ),
+        (
+            ControlStatus::Active {
+                state: GestureState::Holding,
+                ..
+            },
+            true,
+        ) => (
+            "GESTURES HOLDING - SHOW TWO OPEN PALMS TO RELEASE",
+            RIGHT_COLOR,
+        ),
+    }
 }
 
 fn duration_text(duration: Option<Duration>) -> String {
@@ -573,8 +645,86 @@ mod tests {
         };
         let mut pixels = vec![0; 101 * 101];
 
-        draw_overlay(&mut pixels, 101, 101, Some(&observation), &perf, false);
+        draw_overlay(
+            &mut pixels,
+            101,
+            101,
+            Some(&observation),
+            ControlOverlay {
+                status: ControlStatus::Active {
+                    voice_request_id: 8,
+                    state: GestureState::Ready,
+                },
+                app_held: false,
+            },
+            &perf,
+            false,
+        );
 
         assert_eq!(pixels[60 * 101 + 50], PAIR_COLOR);
+    }
+
+    #[test]
+    fn semantic_overlay_is_fixed_and_does_not_expose_request_identity() {
+        let statuses = [
+            (ControlStatus::Disabled, false, "GESTURES DISABLED"),
+            (
+                ControlStatus::Active {
+                    voice_request_id: 7,
+                    state: GestureState::NeedsReady,
+                },
+                false,
+                "GESTURES NEED READY",
+            ),
+            (
+                ControlStatus::Active {
+                    voice_request_id: 8,
+                    state: GestureState::Ready,
+                },
+                false,
+                "GESTURES READY",
+            ),
+            (
+                ControlStatus::Active {
+                    voice_request_id: 9,
+                    state: GestureState::Holding,
+                },
+                true,
+                "GESTURES HOLDING",
+            ),
+        ];
+
+        for (status, held, expected_prefix) in statuses {
+            let (text, _) = control_status_text(status, held);
+            assert!(text.starts_with(expected_prefix));
+            assert!(!text.contains('7'));
+            assert!(!text.contains('8'));
+            assert!(!text.contains('9'));
+        }
+    }
+
+    #[test]
+    fn overlay_never_claims_a_helper_only_hold_is_authoritative() {
+        let locally_holding = ControlStatus::Active {
+            voice_request_id: 17,
+            state: GestureState::Holding,
+        };
+        assert_eq!(
+            control_status_text(locally_holding, false).0,
+            "GESTURES HOLD REQUESTED - SHOW TWO OPEN PALMS TO SYNC"
+        );
+        assert_eq!(
+            control_status_text(locally_holding, true).0,
+            "GESTURES HOLDING - SHOW TWO OPEN PALMS TO RELEASE"
+        );
+
+        let locally_released = ControlStatus::Active {
+            voice_request_id: 17,
+            state: GestureState::Ready,
+        };
+        assert_eq!(
+            control_status_text(locally_released, true).0,
+            "GESTURES APP HOLDING - RELEASE REQUESTED"
+        );
     }
 }

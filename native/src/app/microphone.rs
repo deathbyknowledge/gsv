@@ -1028,12 +1028,23 @@ impl GsvApp {
                 } else if phase == VoicePhase::Finishing {
                     self.disable_vision_for_voice(request_id);
                 }
-                if self
+                let voice = self
                     .voice_draft
                     .as_ref()
-                    .is_some_and(|voice| voice.stopping)
-                {
-                    self.voice_notice = Some("FINISHING VOICE INPUT".to_string());
+                    .filter(|voice| voice.request_id == request_id);
+                if voice.is_some_and(|voice| voice.stopping) {
+                    self.voice_notice = Some(
+                        if voice.is_some_and(|voice| {
+                            voice.terminal_intent == VoiceTerminalIntent::SendAfterFinal
+                        }) {
+                            "FINISHING VOICE INPUT · SENDING"
+                        } else {
+                            "FINISHING VOICE INPUT"
+                        }
+                        .to_string(),
+                    );
+                } else if phase == VoicePhase::Listening {
+                    self.voice_notice = Some(self.listening_voice_notice(request_id).to_string());
                 } else {
                     self.voice_notice = Some(voice_phase_notice(phase, progress));
                 }
@@ -1058,21 +1069,19 @@ impl GsvApp {
                 let transcript = format!("{committed}{tentative}");
                 let composition = compose_voice_text(&voice.before, &transcript, &voice.after);
                 let stopping = voice.stopping;
-                let held = voice.gesture_held;
+                let send_after_final = voice.terminal_intent == VoiceTerminalIntent::SendAfterFinal;
                 voice.rendered.clone_from(&composition.value);
                 self.reveal_voice_draft_if_needed(&composition.value, window, cx);
                 self.interaction.on_input(composition.value.clone());
                 self.set_input_value_at(composition.value, composition.cursor, window, cx);
                 self.voice_notice = Some(if stopping {
-                    "FINISHING VOICE INPUT".to_string()
-                } else if held {
-                    if self.vision_lifecycle == Some(gsv_vision_control::LifecycleState::Ready) {
-                        "LISTENING · SEND HELD · SHOW TWO OPEN PALMS".to_string()
+                    if send_after_final {
+                        "FINISHING VOICE INPUT · SENDING".to_string()
                     } else {
-                        "LISTENING · SEND HELD · GESTURES UNAVAILABLE".to_string()
+                        "FINISHING VOICE INPUT".to_string()
                     }
                 } else {
-                    voice_phase_notice(VoicePhase::Listening, None)
+                    self.listening_voice_notice(request_id).to_string()
                 });
             }
             VoiceEvent::Final { request_id, text } if self.voice_request_is(request_id) => {

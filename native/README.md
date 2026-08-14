@@ -92,11 +92,13 @@ Rust `gsv-vision` helper, the compiled native library, and the verified local
 model. During active dictation, hold two open palms steadily to arm the gesture
 grammar. Open palm + closed fist latches SEND HOLD; two open palms explicitly
 release it and re-arm; open palm + thumbs-up finalizes and sends through the
-normal conversation transaction. Missing tracking never releases HOLD. Press
-`Escape` or close the diagnostic window to stop debug mode without closing
-Desktop. See `native/vision-helper/README.md` for thresholds, artifacts, and
-the override contract. Gesture controls remain experimental and are not
-packaged in a release yet.
+normal conversation transaction. Desktop and the diagnostic overlay show
+whether controls are starting, waiting for two palms, ready, or holding.
+Missing tracking never releases HOLD. Press `Escape` or close the diagnostic
+window to stop debug mode without closing Desktop. See
+`native/vision-helper/README.md` for thresholds, artifacts, and the override
+contract. Gesture controls remain experimental and are not packaged in a
+release yet.
 
 ## Interaction grammar
 

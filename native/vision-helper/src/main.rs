@@ -20,6 +20,7 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use crossbeam_channel::{bounded, Receiver, Sender, TryRecvError, TrySendError};
+use gsv_vision_control::ControlStatus;
 use sha2::{Digest, Sha256};
 
 use crate::camera::{CameraConfig, CameraStream, FrameReader};
@@ -35,6 +36,7 @@ const PARENT_STDIN_WATCHDOG: &str = "GSV_VISION_PARENT_STDIN";
 const DEBUG_WINDOW_MARKER: &str = "GSV_VISION_DEBUG_WINDOW";
 const FIRST_FRAME_TIMEOUT: Duration = Duration::from_secs(5);
 const INFERENCE_POLL: Duration = Duration::from_millis(100);
+const CONTROL_STATUS_HEARTBEAT: Duration = Duration::from_millis(500);
 const MAX_CAMERA_INDEX: u32 = 63;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -80,6 +82,8 @@ struct AssetPaths {
 struct AnnotatedFrame {
     frame: Arc<FrameView>,
     observation: Observation,
+    control_status: ControlStatus,
+    app_held: bool,
 }
 
 fn main() -> ExitCode {
@@ -214,12 +218,17 @@ fn run_window(
         if stats.failed {
             return Err(VisionError::CameraStopped);
         }
-        let (frame, observation) = match annotated.as_ref() {
-            Some(annotated) => (&*annotated.frame, Some(&annotated.observation)),
-            None => (&*raw_frame, None),
+        let (frame, observation, control_status, app_held) = match annotated.as_ref() {
+            Some(annotated) => (
+                &*annotated.frame,
+                Some(&annotated.observation),
+                annotated.control_status,
+                annotated.app_held,
+            ),
+            None => (&*raw_frame, None, ControlStatus::Disabled, false),
         };
         window
-            .render(frame, observation, &stats)
+            .render(frame, observation, control_status, app_held, &stats)
             .map_err(|_| VisionError::WindowUnavailable)?;
     }
     Ok(())
@@ -246,6 +255,7 @@ fn inference_worker(
     let mut gesture_control = GestureControl::default();
     let mut control_revision = 0;
     let mut control_voice_request_id = None;
+    let mut published_control_status = None;
     while !stop.load(Ordering::Acquire) {
         let Some(delivery) = reader.wait_latest(last_sequence, INFERENCE_POLL) else {
             let stats = reader.stats();
@@ -277,9 +287,9 @@ fn inference_worker(
             }
             ready_published = true;
         }
-        if let Some(control_link) = &control_link {
+        let (control_status, app_held) = if let Some(control_link) = &control_link {
             let context = control_link.context();
-            if let Some(voice_request_id) = sync_control_context(
+            let status = if let Some(voice_request_id) = sync_control_context(
                 &mut gesture_control,
                 &mut control_revision,
                 &mut control_voice_request_id,
@@ -304,11 +314,30 @@ fn inference_worker(
                         return;
                     }
                 }
+                control_status(&gesture_control, Some(voice_request_id))
+            } else {
+                control_status(&gesture_control, None)
+            };
+            (status, context.held)
+        } else {
+            (ControlStatus::Disabled, false)
+        };
+        let publish_at = Instant::now();
+        if control_status_publish_due(published_control_status, control_status, publish_at) {
+            if let Some(control_link) = &control_link {
+                // Explanatory snapshots are replace-latest and never wait for
+                // the event writer. A repeated snapshot only lets a resumed UI
+                // recover presentation; it is neither an action nor liveness.
+                // Intent edges above retain their reliable bounded path.
+                let _ = control_link.publish_status(control_status);
             }
+            published_control_status = Some((control_status, publish_at));
         }
         let annotated = AnnotatedFrame {
             frame: delivery.frame,
             observation,
+            control_status,
+            app_held,
         };
         if !publish_latest(&output, &replacement_receiver, annotated) {
             return;
@@ -336,6 +365,27 @@ fn sync_control_context(
         *current_voice_request_id = context.voice_request_id;
     }
     context.voice_request_id
+}
+
+fn control_status(control: &GestureControl, voice_request_id: Option<u64>) -> ControlStatus {
+    voice_request_id.map_or(ControlStatus::Disabled, |voice_request_id| {
+        ControlStatus::Active {
+            voice_request_id,
+            state: control.state(),
+        }
+    })
+}
+
+fn control_status_publish_due(
+    previous: Option<(ControlStatus, Instant)>,
+    current: ControlStatus,
+    now: Instant,
+) -> bool {
+    previous.is_none_or(|(previous, published_at)| {
+        previous != current
+            || matches!(current, ControlStatus::Active { .. })
+                && now.saturating_duration_since(published_at) >= CONTROL_STATUS_HEARTBEAT
+    })
 }
 
 fn observe_control(
@@ -648,5 +698,68 @@ mod tests {
             None
         );
         assert_eq!(control.state(), crate::control::ControlState::NeedsReady);
+    }
+
+    #[test]
+    fn semantic_status_is_complete_and_request_scoped() {
+        let mut control = GestureControl::default();
+        assert_eq!(control_status(&control, None), ControlStatus::Disabled);
+        assert_eq!(
+            control_status(&control, Some(12)),
+            ControlStatus::Active {
+                voice_request_id: 12,
+                state: gsv_vision_control::GestureState::NeedsReady,
+            }
+        );
+
+        control.reset(true);
+        assert_eq!(
+            control_status(&control, Some(12)),
+            ControlStatus::Active {
+                voice_request_id: 12,
+                state: gsv_vision_control::GestureState::Holding,
+            }
+        );
+    }
+
+    #[test]
+    fn unchanged_status_heartbeats_after_the_ui_freshness_margin() {
+        let started_at = Instant::now();
+        let status = ControlStatus::Active {
+            voice_request_id: 12,
+            state: gsv_vision_control::GestureState::Ready,
+        };
+        let previous = Some((status, started_at));
+
+        assert!(!control_status_publish_due(
+            previous,
+            status,
+            started_at + CONTROL_STATUS_HEARTBEAT - Duration::from_millis(1),
+        ));
+        assert!(control_status_publish_due(
+            previous,
+            status,
+            started_at + CONTROL_STATUS_HEARTBEAT,
+        ));
+        assert!(control_status_publish_due(
+            previous,
+            ControlStatus::Active {
+                voice_request_id: 12,
+                state: gsv_vision_control::GestureState::Holding,
+            },
+            started_at + Duration::from_millis(1),
+        ));
+
+        let disabled = Some((ControlStatus::Disabled, started_at));
+        assert!(!control_status_publish_due(
+            disabled,
+            ControlStatus::Disabled,
+            started_at + CONTROL_STATUS_HEARTBEAT + Duration::from_secs(5),
+        ));
+        assert!(control_status_publish_due(
+            previous,
+            ControlStatus::Disabled,
+            started_at + Duration::from_millis(1),
+        ));
     }
 }

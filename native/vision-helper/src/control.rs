@@ -6,6 +6,8 @@
 
 use std::time::{Duration, Instant};
 
+pub use gsv_vision_control::GestureState as ControlState;
+
 const ENTER_SCORE: f32 = 0.80;
 const CONTINUE_SCORE: f32 = 0.65;
 const MIN_SUPPORT_PERCENT: u16 = 80;
@@ -28,16 +30,6 @@ pub enum ControlIntent {
     EngageAutoSendHold,
     ReleaseAutoSendHold,
     Send,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum ControlState {
-    /// Both open palms must be shown before another command is accepted.
-    NeedsReady,
-    /// A command may be formed while one open palm remains visible.
-    Ready,
-    /// Auto-send remains held until two open palms are deliberately observed.
-    Holding,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -99,7 +91,6 @@ impl GestureControl {
     }
 
     #[must_use]
-    #[cfg(test)]
     pub const fn state(&self) -> ControlState {
         self.state
     }

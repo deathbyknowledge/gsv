@@ -2,11 +2,12 @@ use std::error::Error;
 use std::fmt::{self, Display, Formatter};
 use std::time::{Duration, Instant};
 
+use gsv_vision_control::ControlStatus;
 use minifb::{Key, ScaleMode, Window, WindowOptions};
 
 use crate::camera::CameraStats;
 use crate::observation::{FrameView, Observation};
-use crate::overlay::{draw_overlay, PerfText};
+use crate::overlay::{draw_overlay, ControlOverlay, PerfText};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct DebugWindowConfig {
@@ -110,6 +111,8 @@ impl DebugWindow {
         &mut self,
         frame: &FrameView,
         observation: Option<&Observation>,
+        control_status: ControlStatus,
+        app_held: bool,
         camera_stats: &CameraStats,
     ) -> Result<(), DebugWindowError> {
         let width = usize::try_from(frame.width).map_err(|_| DebugWindowError::InvalidFrame)?;
@@ -160,6 +163,10 @@ impl DebugWindow {
             width,
             height,
             aligned_observation,
+            ControlOverlay {
+                status: control_status,
+                app_held,
+            },
             &perf,
             self.mirror,
         );

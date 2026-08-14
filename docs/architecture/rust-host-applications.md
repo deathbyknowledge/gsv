@@ -69,10 +69,12 @@ experimental `gsv-vision` helper owns camera capture, MediaPipe inference, and
 temporal gesture recognition; camera frames and landmarks never enter GPUI or
 the gateway. `GSV_GESTURES=1` starts it headlessly, while the exact
 `GSV_GESTURE_DEBUG=1` opt-in adds its local diagnostic window. A private,
-bounded parent-child protocol carries only typed semantic intents. Desktop
-grants an action lease for one active voice request, and the helper echoes that
-request and its random supervisor session on every intent so stale work cannot
-act on later dictation. Desktop remains the owner of HOLD, RELEASE, finalizing
+bounded parent-child protocol carries reliable typed semantic intents and
+replace-latest, request-scoped control status for presentation. Desktop grants
+an action lease for one active voice request. Every intent and active status
+snapshot echoes that request; every helper event echoes the random supervisor
+session, so stale work cannot act on or describe later dictation. Status never
+invokes an action. Desktop remains the owner of HOLD, RELEASE, finalizing
 transcription, and conversation submission. Its runtime is Rust plus a pinned
 native MediaPipe library and model—Python and Bazel are build tools, not
 Desktop runtime dependencies. `gsv-vision` is not part of the release

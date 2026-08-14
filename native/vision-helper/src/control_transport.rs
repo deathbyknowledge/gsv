@@ -10,24 +10,33 @@ use std::io::{self, Write};
 #[cfg(unix)]
 use std::os::fd::FromRawFd as _;
 use std::process;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
 
-use crossbeam_channel::{bounded, Sender};
+use crossbeam_channel::{bounded, Receiver, Sender, TryRecvError, TrySendError};
 use gsv_vision_control::{
-    read_frame, write_frame, DesktopCommand, GestureIntent, HelperEvent, LifecycleState, SessionId,
-    EVENT_FD, EVENT_FD_MARKER_ENV, PROTOCOL_VERSION, SESSION_HIGH_ENV, SESSION_LOW_ENV,
+    read_frame, write_frame, ControlStatus, DesktopCommand, GestureIntent, HelperEvent,
+    LifecycleState, SessionId, EVENT_FD, EVENT_FD_MARKER_ENV, PROTOCOL_VERSION, SESSION_HIGH_ENV,
+    SESSION_LOW_ENV,
 };
 
 const ENABLED_MARKER: &str = "1";
 const EVENT_QUEUE_CAPACITY: usize = 4;
+const STATUS_QUEUE_CAPACITY: usize = 1;
 const TERMINAL_ENQUEUE_TIMEOUT: Duration = Duration::from_millis(100);
 const TERMINAL_WRITE_TIMEOUT: Duration = Duration::from_millis(500);
 
+enum EventPayload {
+    Lifecycle(LifecycleState),
+    Intent {
+        voice_request_id: u64,
+        intent: GestureIntent,
+    },
+}
+
 struct QueuedEvent {
-    event: HelperEvent,
+    payload: EventPayload,
     completion: Option<Sender<bool>>,
 }
 
@@ -48,10 +57,10 @@ impl ControlContext {
 
 #[derive(Clone)]
 pub struct HelperControl {
-    session_id: SessionId,
     context: Arc<Mutex<ControlContext>>,
     events: Sender<QueuedEvent>,
-    next_sequence: Arc<AtomicU64>,
+    statuses: Sender<ControlStatus>,
+    status_replacements: Receiver<ControlStatus>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -90,9 +99,18 @@ impl HelperControl {
         .map_err(|_| ControlTransportError::EventChannelUnavailable)?;
 
         let (events, event_receiver) = bounded(EVENT_QUEUE_CAPACITY);
+        let (statuses, status_receiver) = bounded(STATUS_QUEUE_CAPACITY);
+        let status_replacements = status_receiver.clone();
         thread::Builder::new()
             .name("gsv-vision-events".to_string())
-            .spawn(move || write_events(&mut event_output, event_receiver))
+            .spawn(move || {
+                write_events(
+                    &mut event_output,
+                    session_id,
+                    event_receiver,
+                    status_receiver,
+                );
+            })
             .map_err(|_| ControlTransportError::WorkerUnavailable)?;
 
         let context = Arc::new(Mutex::new(ControlContext::DISABLED));
@@ -103,10 +121,10 @@ impl HelperControl {
             .map_err(|_| ControlTransportError::WorkerUnavailable)?;
 
         Ok(Some(Self {
-            session_id,
             context,
             events,
-            next_sequence: Arc::new(AtomicU64::new(1)),
+            statuses,
+            status_replacements,
         }))
     }
 
@@ -117,27 +135,18 @@ impl HelperControl {
     }
 
     pub fn publish_lifecycle(&self, state: LifecycleState) -> bool {
-        self.publish(HelperEvent::Lifecycle {
-            session_id: self.session_id,
-            sequence: self.take_sequence(),
-            state,
-        })
+        self.publish(EventPayload::Lifecycle(state))
     }
 
     /// Publishes a terminal state and waits for only the complete frame write.
     /// Parent loss and pipe backpressure remain bounded so shutdown cannot hang.
     pub fn publish_terminal_lifecycle(&self, state: LifecycleState) -> bool {
-        let event = HelperEvent::Lifecycle {
-            session_id: self.session_id,
-            sequence: self.take_sequence(),
-            state,
-        };
         let (completion, completed) = bounded(1);
         if self
             .events
             .send_timeout(
                 QueuedEvent {
-                    event,
+                    payload: EventPayload::Lifecycle(state),
                     completion: Some(completion),
                 },
                 TERMINAL_ENQUEUE_TIMEOUT,
@@ -152,41 +161,149 @@ impl HelperControl {
     }
 
     pub fn publish_intent(&self, voice_request_id: u64, intent: GestureIntent) -> bool {
-        self.publish(HelperEvent::Intent {
-            session_id: self.session_id,
-            sequence: self.take_sequence(),
+        self.publish(EventPayload::Intent {
             voice_request_id,
             intent,
         })
     }
 
-    fn publish(&self, event: HelperEvent) -> bool {
+    /// Replaces an obsolete semantic snapshot without ever waiting for the
+    /// event writer. Status is explanatory only; reliable lifecycle and intent
+    /// events use a separate, prioritized queue.
+    pub fn publish_status(&self, status: ControlStatus) -> bool {
+        match self.statuses.try_send(status) {
+            Ok(()) => true,
+            Err(TrySendError::Full(status)) => {
+                let _ = self.status_replacements.try_recv();
+                self.statuses.try_send(status).is_ok()
+            }
+            Err(TrySendError::Disconnected(_)) => false,
+        }
+    }
+
+    fn publish(&self, payload: EventPayload) -> bool {
         // Gesture edges are rare and must not be silently replaced. If the
         // Desktop stops draining, bounded backpressure pauses inference in
         // this isolated helper rather than growing memory or losing SEND.
         self.events
             .send(QueuedEvent {
-                event,
+                payload,
                 completion: None,
             })
             .is_ok()
     }
+}
 
-    fn take_sequence(&self) -> u64 {
-        self.next_sequence.fetch_add(1, Ordering::Relaxed)
+fn write_events(
+    output: &mut impl Write,
+    session_id: SessionId,
+    events: Receiver<QueuedEvent>,
+    statuses: Receiver<ControlStatus>,
+) {
+    let mut next_sequence = 1_u64;
+    loop {
+        // A ready reliable event always wins over an explanatory snapshot.
+        match events.try_recv() {
+            Ok(event) => {
+                if !write_reliable(output, session_id, &mut next_sequence, event) {
+                    return;
+                }
+                continue;
+            }
+            Err(TryRecvError::Disconnected) => {
+                for status in statuses {
+                    if !write_status(output, session_id, &mut next_sequence, status) {
+                        return;
+                    }
+                }
+                return;
+            }
+            Err(TryRecvError::Empty) => {}
+        }
+
+        crossbeam_channel::select_biased! {
+            recv(events) -> event => match event {
+                Ok(event) => {
+                    if !write_reliable(output, session_id, &mut next_sequence, event) {
+                        return;
+                    }
+                }
+                Err(_) => {
+                    for status in statuses {
+                        if !write_status(output, session_id, &mut next_sequence, status) {
+                            return;
+                        }
+                    }
+                    return;
+                }
+            },
+            recv(statuses) -> status => match status {
+                Ok(status) => {
+                    if !write_status(output, session_id, &mut next_sequence, status) {
+                        return;
+                    }
+                }
+                Err(_) => {
+                    for event in events {
+                        if !write_reliable(output, session_id, &mut next_sequence, event) {
+                            return;
+                        }
+                    }
+                    return;
+                }
+            },
+        }
     }
 }
 
-fn write_events(output: &mut impl Write, events: crossbeam_channel::Receiver<QueuedEvent>) {
-    for queued in events {
-        let written = write_frame(output, &queued.event).is_ok();
-        if let Some(completion) = queued.completion {
-            let _ = completion.send(written);
-        }
-        if !written {
-            return;
-        }
+fn write_reliable(
+    output: &mut impl Write,
+    session_id: SessionId,
+    next_sequence: &mut u64,
+    queued: QueuedEvent,
+) -> bool {
+    let sequence = take_sequence(next_sequence);
+    let event = match queued.payload {
+        EventPayload::Lifecycle(state) => HelperEvent::Lifecycle {
+            session_id,
+            sequence,
+            state,
+        },
+        EventPayload::Intent {
+            voice_request_id,
+            intent,
+        } => HelperEvent::Intent {
+            session_id,
+            sequence,
+            voice_request_id,
+            intent,
+        },
+    };
+    let written = write_frame(output, &event).is_ok();
+    if let Some(completion) = queued.completion {
+        let _ = completion.send(written);
     }
+    written
+}
+
+fn write_status(
+    output: &mut impl Write,
+    session_id: SessionId,
+    next_sequence: &mut u64,
+    status: ControlStatus,
+) -> bool {
+    let event = HelperEvent::Status {
+        session_id,
+        sequence: take_sequence(next_sequence),
+        status,
+    };
+    write_frame(output, &event).is_ok()
+}
+
+fn take_sequence(next_sequence: &mut u64) -> u64 {
+    let sequence = *next_sequence;
+    *next_sequence = next_sequence.wrapping_add(1).max(1);
+    sequence
 }
 
 fn parse_session_half(name: &str) -> Result<u64, ControlTransportError> {
@@ -291,13 +408,17 @@ mod tests {
         .expect("hello writes");
 
         let (events, event_receiver) = bounded(EVENT_QUEUE_CAPACITY);
+        let (statuses, status_receiver) = bounded(STATUS_QUEUE_CAPACITY);
+        let status_replacements = status_receiver.clone();
         let mut event_output = output.clone();
-        let writer = thread::spawn(move || write_events(&mut event_output, event_receiver));
+        let writer = thread::spawn(move || {
+            write_events(&mut event_output, SESSION, event_receiver, status_receiver);
+        });
         let control = HelperControl {
-            session_id: SESSION,
             context: Arc::new(Mutex::new(ControlContext::DISABLED)),
             events,
-            next_sequence: Arc::new(AtomicU64::new(1)),
+            statuses,
+            status_replacements,
         };
 
         assert!(control.publish_terminal_lifecycle(LifecycleState::AssetsUnavailable));
@@ -347,5 +468,72 @@ mod tests {
         let wrong = DesktopCommand::set_context(SessionId::new(8, 9), None, false)
             .expect("disabled context");
         assert!(!apply_context_command(SESSION, &context, wrong));
+    }
+
+    #[test]
+    fn semantic_status_is_nonblocking_and_latest_wins() {
+        let (events, _event_receiver) = bounded(EVENT_QUEUE_CAPACITY);
+        let (statuses, status_receiver) = bounded(STATUS_QUEUE_CAPACITY);
+        let control = HelperControl {
+            context: Arc::new(Mutex::new(ControlContext::DISABLED)),
+            events,
+            statuses,
+            status_replacements: status_receiver.clone(),
+        };
+
+        assert!(control.publish_status(ControlStatus::Disabled));
+        assert!(control.publish_status(ControlStatus::Active {
+            voice_request_id: 41,
+            state: gsv_vision_control::GestureState::Holding,
+        }));
+        assert_eq!(
+            status_receiver.try_recv(),
+            Ok(ControlStatus::Active {
+                voice_request_id: 41,
+                state: gsv_vision_control::GestureState::Holding,
+            })
+        );
+    }
+
+    #[test]
+    fn reliable_intent_precedes_a_queued_status_and_sets_wire_sequence() {
+        let output = SharedOutput::default();
+        let (events, event_receiver) = bounded(EVENT_QUEUE_CAPACITY);
+        let (statuses, status_receiver) = bounded(STATUS_QUEUE_CAPACITY);
+        let control = HelperControl {
+            context: Arc::new(Mutex::new(ControlContext::DISABLED)),
+            events,
+            statuses,
+            status_replacements: status_receiver.clone(),
+        };
+        assert!(control.publish_status(ControlStatus::Disabled));
+        assert!(control.publish_intent(91, GestureIntent::Send));
+
+        let mut event_output = output.clone();
+        let writer = thread::spawn(move || {
+            write_events(&mut event_output, SESSION, event_receiver, status_receiver);
+        });
+        drop(control);
+        writer.join().expect("writer exits");
+
+        let bytes = output.0.lock().expect("output lock").clone();
+        let mut input = Cursor::new(bytes);
+        assert_eq!(
+            read_frame::<HelperEvent>(&mut input).expect("intent reads"),
+            Some(HelperEvent::Intent {
+                session_id: SESSION,
+                sequence: 1,
+                voice_request_id: 91,
+                intent: GestureIntent::Send,
+            })
+        );
+        assert_eq!(
+            read_frame::<HelperEvent>(&mut input).expect("status reads"),
+            Some(HelperEvent::Status {
+                session_id: SESSION,
+                sequence: 2,
+                status: ControlStatus::Disabled,
+            })
+        );
     }
 }

@@ -29,6 +29,7 @@ use crate::transcription::{coalesce_for_ui, VoiceCommand};
 use crate::typography::TypeLayout;
 use gsv_config::MicrophonePreference;
 use gsv_desktop_control::{DesktopStatus, GatewayState, OperationError, ProcessId, WindowState};
+use gsv_vision_control::GestureState;
 
 mod gesture;
 mod login;
@@ -136,6 +137,12 @@ struct RichPresentation {
 struct PendingRichFallback {
     moment_id: String,
     content: PreparedContent,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct VoiceGestureStatus {
+    request_id: u64,
+    state: GestureState,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -267,6 +274,8 @@ pub struct GsvApp {
     vision_context: Option<crate::vision_debug::VisionContextSender>,
     vision_voice_request_id: Option<u64>,
     vision_lifecycle: Option<gsv_vision_control::LifecycleState>,
+    vision_gesture_status: Option<VoiceGestureStatus>,
+    vision_status_sequence: u64,
     _input_subscription: Subscription,
     _login_subscription: Option<Subscription>,
     _event_task: Task<()>,
@@ -817,6 +826,8 @@ impl GsvApp {
             vision_context,
             vision_voice_request_id: None,
             vision_lifecycle: None,
+            vision_gesture_status: None,
+            vision_status_sequence: 0,
             _input_subscription: input_subscription,
             _login_subscription: login_subscription,
             _event_task: event_task,

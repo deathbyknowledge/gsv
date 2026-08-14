@@ -5,8 +5,9 @@ process that owns the camera, MediaPipe Gesture Recognizer, temporal gesture
 policy, and optional diagnostic window. Camera pixels never enter GPUI, the
 gateway, logs, files, or GSV application IPC. They are handed only to local
 MediaPipe inference and, in debug mode, the OS display system. A bounded private
-pipe carries only `hold`, `release_hold`, and `send` intents scoped to the exact
-active voice request and random helper session.
+pipe carries reliable `hold`, `release_hold`, and `send` intents plus
+replace-latest semantic control status. Active events are scoped to the exact
+voice request, and every event is scoped to the random helper session.
 
 The runtime does not require Python. It consists of this Rust executable, a
 source-built native MediaPipe library, and the verified 8.0 MiB Gesture
@@ -38,9 +39,11 @@ camera or inference call is stuck below Rust.
 The debug window mirrors presentation, but inference always receives the
 original camera frame. It draws up to two 21-point hand skeletons, handedness,
 canned gesture labels and confidence, a simple two-hand relationship, and
-capture/inference/render timing. Capture and inference each retain only their
-latest value, so a slow machine drops stale frames rather than accumulating a
-private video queue.
+capture/inference/render timing. It also shows the semantic controller state:
+DISABLED, NEEDS READY, READY, or HOLDING. The same request-scoped state is sent
+to Desktop as replace-latest presentation feedback; it cannot invoke an action.
+Capture and inference each retain only their latest value, so a slow machine
+drops stale frames rather than accumulating a private video queue.
 
 ## Gesture grammar
 

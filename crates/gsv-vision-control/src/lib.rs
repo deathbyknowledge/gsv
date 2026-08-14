@@ -1,8 +1,8 @@
 //! Bounded local protocol between GSV Desktop and its vision helper.
 //!
-//! This boundary carries semantic gesture intents only. Camera frames,
-//! landmarks, model labels, diagnostics, paths, and user content do not belong
-//! in this protocol.
+//! This boundary carries reliable semantic gesture intents and replace-latest,
+//! request-scoped semantic control status. Camera frames, landmarks, model
+//! labels, diagnostics, paths, and user content do not belong in this protocol.
 
 use std::fmt::{self, Display, Formatter};
 use std::io::{self, Read, Write};
@@ -46,6 +46,65 @@ pub enum GestureIntent {
     Hold,
     ReleaseHold,
     Send,
+}
+
+/// Stable semantic state of the helper-owned temporal gesture controller.
+///
+/// This deliberately exposes neither model labels nor per-frame evidence. The
+/// state is sufficient for Desktop to explain the currently accepted gesture
+/// vocabulary without moving camera-derived data across the process boundary.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum GestureState {
+    /// The user must deliberately show two open palms before commands arm.
+    NeedsReady,
+    /// Hold or send may be formed while one open palm remains visible.
+    Ready,
+    /// Auto-send remains held until two open palms are deliberately observed.
+    Holding,
+}
+
+/// Complete, request-fenced snapshot of semantic gesture control.
+///
+/// A disabled snapshot cannot accidentally carry a request ID. Conversely, an
+/// active snapshot always identifies the one voice request whose actions the
+/// helper is allowed to emit.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[serde(tag = "mode", rename_all = "snake_case")]
+pub enum ControlStatus {
+    Disabled,
+    Active {
+        voice_request_id: u64,
+        state: GestureState,
+    },
+}
+
+#[derive(Deserialize)]
+#[serde(tag = "mode", rename_all = "snake_case", deny_unknown_fields)]
+enum WireControlStatus {
+    Disabled {},
+    Active {
+        voice_request_id: u64,
+        state: GestureState,
+    },
+}
+
+impl<'de> Deserialize<'de> for ControlStatus {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        Ok(match WireControlStatus::deserialize(deserializer)? {
+            WireControlStatus::Disabled {} => Self::Disabled,
+            WireControlStatus::Active {
+                voice_request_id,
+                state,
+            } => Self::Active {
+                voice_request_id,
+                state,
+            },
+        })
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -136,6 +195,11 @@ pub enum HelperEvent {
         session_id: SessionId,
         sequence: u64,
         state: LifecycleState,
+    },
+    Status {
+        session_id: SessionId,
+        sequence: u64,
+        status: ControlStatus,
     },
     Intent {
         session_id: SessionId,
@@ -254,6 +318,11 @@ mod tests {
 
     const SESSION: SessionId = SessionId::new(7, 11);
 
+    #[test]
+    fn unshipped_protocol_remains_v1() {
+        assert_eq!(PROTOCOL_VERSION, 1);
+    }
+
     fn encoded<T: Serialize>(value: &T) -> Vec<u8> {
         let mut bytes = Vec::new();
         write_frame(&mut bytes, value).expect("frame serializes");
@@ -290,9 +359,17 @@ mod tests {
                 sequence: 1,
                 state: LifecycleState::Ready,
             },
-            HelperEvent::Intent {
+            HelperEvent::Status {
                 session_id: SESSION,
                 sequence: 2,
+                status: ControlStatus::Active {
+                    voice_request_id: 19,
+                    state: GestureState::NeedsReady,
+                },
+            },
+            HelperEvent::Intent {
+                session_id: SESSION,
+                sequence: 3,
                 voice_request_id: 19,
                 intent: GestureIntent::Send,
             },
@@ -364,6 +441,43 @@ mod tests {
             "intent": { "type": "send", "draft": "private" }
         });
         assert!(serde_json::from_value::<HelperEvent>(unexpected).is_err());
+    }
+
+    #[test]
+    fn control_status_shape_enforces_request_ownership() {
+        let disabled = serde_json::to_value(ControlStatus::Disabled).expect("status serializes");
+        assert_eq!(disabled, json!({ "mode": "disabled" }));
+
+        let active = ControlStatus::Active {
+            voice_request_id: 22,
+            state: GestureState::Holding,
+        };
+        let encoded = serde_json::to_value(active).expect("status serializes");
+        assert_eq!(
+            encoded,
+            json!({
+                "mode": "active",
+                "voice_request_id": 22,
+                "state": "holding"
+            })
+        );
+
+        assert!(serde_json::from_value::<ControlStatus>(json!({
+            "mode": "disabled",
+            "voice_request_id": 22
+        }))
+        .is_err());
+        assert!(serde_json::from_value::<ControlStatus>(json!({
+            "mode": "active",
+            "state": "ready"
+        }))
+        .is_err());
+        assert!(serde_json::from_value::<ControlStatus>(json!({
+            "mode": "active",
+            "voice_request_id": 22,
+            "state": "candidate"
+        }))
+        .is_err());
     }
 
     #[test]
