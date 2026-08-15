@@ -209,7 +209,11 @@ impl GsvApp {
         let held = self.dictation_is_gesture_held();
 
         if self.vision_context.is_none() {
-            return VOICE_GESTURES_DISABLED;
+            return if self.vision_lifecycle.is_some() {
+                VOICE_GESTURES_UNAVAILABLE
+            } else {
+                VOICE_GESTURES_DISABLED
+            };
         }
         if self.vision_lifecycle != Some(LifecycleState::Ready) {
             return if held {
@@ -346,6 +350,74 @@ mod tests {
     fn protocol_intents_are_explicit_not_toggles() {
         assert_ne!(GestureIntent::Hold, GestureIntent::ReleaseHold);
         assert_ne!(GestureIntent::Send, GestureIntent::Hold);
+    }
+
+    #[gpui::test]
+    fn opted_in_vision_startup_failure_is_visible_while_listening(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            gpui_component::init(cx);
+            crate::app::bind_keys(cx);
+            crate::register_fonts(cx);
+            crate::configure_theme(cx);
+        });
+        let (command_tx, _command_rx) = tokio::sync::mpsc::unbounded_channel();
+        let (_event_tx, event_rx) = tokio::sync::mpsc::unbounded_channel();
+        let client = crate::client::ClientHandle {
+            commands: command_tx,
+            events: event_rx,
+            login: None,
+        };
+        let app = Rc::new(RefCell::new(None));
+        let app_for_window = app.clone();
+        let window = cx.update(|cx| {
+            cx.open_window(WindowOptions::default(), move |window, cx| {
+                let view = cx.new(|cx| {
+                    GsvApp::new_with_vision(
+                        window,
+                        cx,
+                        client,
+                        true,
+                        false,
+                        true,
+                        crate::app::VisionStartup::Unavailable,
+                    )
+                });
+                *app_for_window.borrow_mut() = Some(view.clone());
+                cx.new(|cx| Root::new(view, window, cx))
+            })
+            .expect("the GPUI surface should open")
+        });
+        let app = app.borrow().clone().expect("app entity should be retained");
+        let window_handle: gpui::AnyWindowHandle = window.into();
+        window_handle
+            .update(cx, |_, window, cx| {
+                app.update(cx, |app, cx| {
+                    assert!(app.vision_context.is_none());
+                    assert_eq!(app.vision_lifecycle, Some(LifecycleState::Interrupted));
+                    app.voice_draft = Some(VoiceDraft::new(
+                        73,
+                        String::new(),
+                        String::new(),
+                        String::new(),
+                    ));
+
+                    app.handle_voice_event(
+                        crate::transcription::VoiceEvent::State {
+                            request_id: 73,
+                            phase: crate::transcription::VoicePhase::Listening,
+                            progress: None,
+                        },
+                        window,
+                        cx,
+                    );
+
+                    assert_eq!(
+                        app.voice_notice.as_deref(),
+                        Some(VOICE_GESTURES_UNAVAILABLE)
+                    );
+                });
+            })
+            .expect("window remains open");
     }
 
     #[gpui::test]

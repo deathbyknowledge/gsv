@@ -29,7 +29,7 @@ use crate::transcription::{coalesce_for_ui, VoiceCommand};
 use crate::typography::TypeLayout;
 use gsv_config::MicrophonePreference;
 use gsv_desktop_control::{DesktopStatus, GatewayState, OperationError, ProcessId, WindowState};
-use gsv_vision_control::{GestureProgress, GestureState};
+use gsv_vision_control::{GestureProgress, GestureState, LifecycleState};
 
 mod gesture;
 mod login;
@@ -146,6 +146,12 @@ struct VoiceGestureStatus {
     received_at: Instant,
     state: GestureState,
     progress: Option<GestureProgress>,
+}
+
+pub(crate) enum VisionStartup {
+    Disabled,
+    Unavailable,
+    Started(crate::vision_debug::VisionHandle),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -551,7 +557,7 @@ impl GsvApp {
             demo,
             sound_enabled,
             reduced_motion,
-            None,
+            VisionStartup::Disabled,
         )
     }
 
@@ -562,8 +568,13 @@ impl GsvApp {
         demo: bool,
         sound_enabled: bool,
         reduced_motion: bool,
-        vision: Option<crate::vision_debug::VisionHandle>,
+        vision_startup: VisionStartup,
     ) -> Self {
+        let (vision, initial_vision_lifecycle) = match vision_startup {
+            VisionStartup::Disabled => (None, None),
+            VisionStartup::Unavailable => (None, Some(LifecycleState::Interrupted)),
+            VisionStartup::Started(vision) => (Some(vision), None),
+        };
         let ClientHandle {
             commands,
             mut events,
@@ -829,7 +840,7 @@ impl GsvApp {
             next_voice_request_id: 1,
             vision_context,
             vision_voice_request_id: None,
-            vision_lifecycle: None,
+            vision_lifecycle: initial_vision_lifecycle,
             vision_gesture_status: None,
             vision_gesture_expiry_task: None,
             vision_status_sequence: 0,

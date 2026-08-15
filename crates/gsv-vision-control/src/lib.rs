@@ -14,6 +14,9 @@ pub const PROTOCOL_VERSION: u16 = 1;
 pub const MAX_FRAME_BYTES: usize = 4 * 1024;
 pub const EVENT_FD: i32 = 3;
 pub const EVENT_FD_MARKER_ENV: &str = "GSV_VISION_EVENT_FD";
+/// Exact private launch contract. Rotate this on an incompatible unshipped
+/// helper/Desktop cutover so a stale sibling fails before semantic traffic.
+pub const EVENT_CHANNEL_CONTRACT_MARKER: &str = "gsv-vision-control-v1";
 pub const SESSION_HIGH_ENV: &str = "GSV_VISION_SESSION_HIGH";
 pub const SESSION_LOW_ENV: &str = "GSV_VISION_SESSION_LOW";
 
@@ -418,6 +421,7 @@ mod tests {
     #[test]
     fn unshipped_protocol_remains_v1() {
         assert_eq!(PROTOCOL_VERSION, 1);
+        assert_ne!(EVENT_CHANNEL_CONTRACT_MARKER, "1");
     }
 
     fn encoded<T: Serialize>(value: &T) -> Vec<u8> {

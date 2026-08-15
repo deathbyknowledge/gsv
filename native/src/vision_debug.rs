@@ -12,8 +12,8 @@ use std::time::{Duration, Instant};
 
 use gsv_vision_control::{
     read_frame, write_frame, ControlStatus, DesktopCommand, GestureIntent, HelperEvent,
-    LifecycleState, SessionId, EVENT_FD, EVENT_FD_MARKER_ENV, PROTOCOL_VERSION, SESSION_HIGH_ENV,
-    SESSION_LOW_ENV,
+    LifecycleState, SessionId, EVENT_CHANNEL_CONTRACT_MARKER, EVENT_FD, EVENT_FD_MARKER_ENV,
+    PROTOCOL_VERSION, SESSION_HIGH_ENV, SESSION_LOW_ENV,
 };
 use tokio::sync::{mpsc as tokio_mpsc, watch};
 use uuid::Uuid;
@@ -399,7 +399,7 @@ fn start_supported(mode: LaunchMode) -> Result<VisionHandle, VisionDebugError> {
 fn configure_protocol_environment(command: &mut Command, session_id: SessionId, mode: LaunchMode) {
     command
         .env(PARENT_STDIN_WATCHDOG, ENABLED_MARKER)
-        .env(EVENT_FD_MARKER_ENV, ENABLED_MARKER)
+        .env(EVENT_FD_MARKER_ENV, EVENT_CHANNEL_CONTRACT_MARKER)
         .env(SESSION_HIGH_ENV, session_id.high().to_string())
         .env(SESSION_LOW_ENV, session_id.low().to_string());
     if mode == LaunchMode::Debug {
@@ -944,6 +944,7 @@ mod tests {
         assert_eq!(launch_mode(Some(OsStr::new("true")), None), None);
         assert_eq!(launch_mode(None, Some(OsStr::new("0"))), None);
         assert_eq!(ENABLED_MARKER, "1");
+        assert_ne!(EVENT_CHANNEL_CONTRACT_MARKER, ENABLED_MARKER);
     }
 
     #[test]
@@ -955,7 +956,8 @@ mod tests {
             .map(|(key, value)| (key.to_owned(), value.map(OsStr::to_owned)))
             .collect::<Vec<_>>();
         assert!(headless_environment.iter().any(|(key, value)| {
-            key == EVENT_FD_MARKER_ENV && value.as_deref() == Some(OsStr::new("1"))
+            key == EVENT_FD_MARKER_ENV
+                && value.as_deref() == Some(OsStr::new(EVENT_CHANNEL_CONTRACT_MARKER))
         }));
         assert!(!headless_environment
             .iter()

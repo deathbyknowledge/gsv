@@ -23,7 +23,7 @@ use gpui::{
 };
 use gpui_component::{Root, Theme, ThemeMode};
 
-use crate::app::GsvApp;
+use crate::app::{GsvApp, VisionStartup};
 
 fn main() {
     if !graphical_session_available() {
@@ -46,11 +46,12 @@ fn main() {
             return;
         }
     };
-    let vision = match vision_debug::start_from_env() {
-        Ok(helper) => helper,
+    let vision_startup = match vision_debug::start_from_env() {
+        Ok(Some(helper)) => VisionStartup::Started(helper),
+        Ok(None) => VisionStartup::Disabled,
         Err(error) => {
             eprintln!("GSV gesture controls are unavailable: {error}");
-            None
+            VisionStartup::Unavailable
         }
     };
 
@@ -82,7 +83,7 @@ fn main() {
                         demo,
                         sound_enabled,
                         reduced_motion,
-                        vision,
+                        vision_startup,
                     )
                 });
                 cx.new(|cx| Root::new(view, window, cx))

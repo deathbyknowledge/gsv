@@ -17,11 +17,10 @@ use std::time::Duration;
 use crossbeam_channel::{bounded, Receiver, Sender, TryRecvError, TrySendError};
 use gsv_vision_control::{
     read_frame, write_frame, ControlStatus, DesktopCommand, GestureIntent, HelperEvent,
-    LifecycleState, SessionId, EVENT_FD, EVENT_FD_MARKER_ENV, PROTOCOL_VERSION, SESSION_HIGH_ENV,
-    SESSION_LOW_ENV,
+    LifecycleState, SessionId, EVENT_CHANNEL_CONTRACT_MARKER, EVENT_FD, EVENT_FD_MARKER_ENV,
+    PROTOCOL_VERSION, SESSION_HIGH_ENV, SESSION_LOW_ENV,
 };
 
-const ENABLED_MARKER: &str = "1";
 const EVENT_QUEUE_CAPACITY: usize = 4;
 const STATUS_QUEUE_CAPACITY: usize = 1;
 const TERMINAL_ENQUEUE_TIMEOUT: Duration = Duration::from_millis(100);
@@ -76,12 +75,8 @@ impl HelperControl {
     /// channel and return `None`.
     pub fn start_from_environment() -> Result<Option<Self>, ControlTransportError> {
         let marker = env::var(EVENT_FD_MARKER_ENV).ok();
-        if marker.as_deref() != Some(ENABLED_MARKER) {
-            return if marker.is_none() {
-                Ok(None)
-            } else {
-                Err(ControlTransportError::InvalidEnvironment)
-            };
+        if !event_channel_enabled(marker.as_deref())? {
+            return Ok(None);
         }
 
         let session_id = SessionId::new(
@@ -191,6 +186,14 @@ impl HelperControl {
                 completion: None,
             })
             .is_ok()
+    }
+}
+
+fn event_channel_enabled(marker: Option<&str>) -> Result<bool, ControlTransportError> {
+    match marker {
+        None => Ok(false),
+        Some(EVENT_CHANNEL_CONTRACT_MARKER) => Ok(true),
+        Some(_) => Err(ControlTransportError::InvalidEnvironment),
     }
 }
 
@@ -376,6 +379,19 @@ mod tests {
     use super::*;
 
     const SESSION: SessionId = SessionId::new(3, 5);
+
+    #[test]
+    fn event_channel_requires_the_current_exact_contract_marker() {
+        assert_eq!(event_channel_enabled(None), Ok(false));
+        assert_eq!(
+            event_channel_enabled(Some("1")),
+            Err(ControlTransportError::InvalidEnvironment)
+        );
+        assert_eq!(
+            event_channel_enabled(Some(EVENT_CHANNEL_CONTRACT_MARKER)),
+            Ok(true)
+        );
+    }
 
     #[derive(Clone, Default)]
     struct SharedOutput(Arc<Mutex<Vec<u8>>>);
