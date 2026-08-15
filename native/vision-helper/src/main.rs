@@ -20,12 +20,14 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use crossbeam_channel::{bounded, Receiver, Sender, TryRecvError, TrySendError};
-use gsv_vision_control::{ControlStatus, GestureCandidate, GestureContext, GestureProgress};
+use gsv_vision_control::{
+    ControlStatus, GestureCandidate, GestureContext, GestureProgress, ScrollState,
+};
 use sha2::{Digest, Sha256};
 
 use crate::camera::{CameraConfig, CameraStream, FrameReader};
 use crate::control::{
-    ControlDiagnostic, ControlHand, ControlIntent, ControlSample, GestureControl,
+    ControlDiagnostic, ControlHand, ControlIntent, ControlSample, GestureControl, ScrollControl,
 };
 use crate::control_transport::{ControlContext, HelperControl};
 use crate::debug_window::{DebugWindow, DebugWindowConfig};
@@ -40,6 +42,7 @@ const DEBUG_WINDOW_MARKER: &str = "GSV_VISION_DEBUG_WINDOW";
 const FIRST_FRAME_TIMEOUT: Duration = Duration::from_secs(5);
 const INFERENCE_POLL: Duration = Duration::from_millis(100);
 const CONTROL_STATUS_HEARTBEAT: Duration = Duration::from_millis(500);
+const SCROLL_STATE_HEARTBEAT: Duration = Duration::from_millis(250);
 const ANNOTATED_PRESENTATION_FRESHNESS: Duration = Duration::from_secs(1);
 const MAX_CAMERA_INDEX: u32 = 63;
 
@@ -318,8 +321,10 @@ fn inference_worker(
     let mut first_capture = None;
     let mut last_timestamp = None;
     let mut gesture_control = GestureControl::default();
+    let mut scroll_control = ScrollControl::default();
     let mut control_revision = 0;
     let mut published_control_status = None;
+    let mut published_scroll_state = None;
     while !stop.load(Ordering::Acquire) {
         let Some(delivery) = reader.wait_latest(last_sequence, INFERENCE_POLL) else {
             let stats = reader.stats();
@@ -366,15 +371,31 @@ fn inference_worker(
                             revision,
                             gesture,
                         );
-                        if let Some(intent) = observe_control(
+                        let (intent, scroll_transition) = observe_controls(
                             &mut gesture_control,
+                            &mut scroll_control,
                             &observation,
                             delivery.frame.captured_at,
-                        ) {
+                        );
+                        if let Some(intent) = intent {
                             if !control_link.publish_intent(intent) {
                                 let _ = failure.try_send(VisionError::ProtocolUnavailable);
                                 return;
                             }
+                        }
+                        let scroll_state = scroll_control.state();
+                        let scroll_publish_at = Instant::now();
+                        if scroll_state_publish_due(
+                            published_scroll_state,
+                            scroll_transition,
+                            scroll_state,
+                            scroll_publish_at,
+                        ) {
+                            if !control_link.publish_scroll(scroll_state) {
+                                let _ = failure.try_send(VisionError::ProtocolUnavailable);
+                                return;
+                            }
+                            published_scroll_state = Some((scroll_state, scroll_publish_at));
                         }
                         (
                             Some(revision),
@@ -489,39 +510,74 @@ fn control_status_publish_due(
     })
 }
 
-fn observe_control(
-    control: &mut GestureControl,
+fn scroll_state_publish_due(
+    previous: Option<(ScrollState, Instant)>,
+    transition: Option<ScrollState>,
+    current: ScrollState,
+    now: Instant,
+) -> bool {
+    transition.is_some()
+        || matches!(current, ScrollState::Held { .. })
+            && previous.is_none_or(|(previous, published_at)| {
+                previous != current
+                    || now.saturating_duration_since(published_at) >= SCROLL_STATE_HEARTBEAT
+            })
+}
+
+fn observe_controls(
+    gesture: &mut GestureControl,
+    scroll: &mut ScrollControl,
     observation: &Observation,
     captured_at: Instant,
-) -> Option<ControlIntent> {
+) -> (Option<ControlIntent>, Option<ScrollState>) {
+    fn observe(
+        gesture: &mut GestureControl,
+        scroll: &mut ScrollControl,
+        sample: ControlSample<'_>,
+    ) -> (Option<ControlIntent>, Option<ScrollState>) {
+        (gesture.observe(sample), scroll.observe(sample))
+    }
+
     match observation.hands.as_slice() {
         [first, second] => {
             let hands = [
                 ControlHand::new(&first.gesture, first.gesture_score),
                 ControlHand::new(&second.gesture, second.gesture_score),
             ];
-            control.observe(ControlSample {
-                frame_sequence: observation.frame_sequence,
-                captured_at,
-                observed_at: observation.observed_at,
-                hands: &hands,
-            })
+            observe(
+                gesture,
+                scroll,
+                ControlSample {
+                    frame_sequence: observation.frame_sequence,
+                    captured_at,
+                    observed_at: observation.observed_at,
+                    hands: &hands,
+                },
+            )
         }
         [hand] => {
             let hands = [ControlHand::new(&hand.gesture, hand.gesture_score)];
-            control.observe(ControlSample {
+            observe(
+                gesture,
+                scroll,
+                ControlSample {
+                    frame_sequence: observation.frame_sequence,
+                    captured_at,
+                    observed_at: observation.observed_at,
+                    hands: &hands,
+                },
+            )
+        }
+        _ => observe(
+            gesture,
+            scroll,
+            ControlSample {
                 frame_sequence: observation.frame_sequence,
                 captured_at,
                 observed_at: observation.observed_at,
-                hands: &hands,
-            })
-        }
-        _ => control.observe(ControlSample {
-            frame_sequence: observation.frame_sequence,
-            captured_at,
-            observed_at: observation.observed_at,
-            hands: &[],
-        }),
+                hands: &[],
+            },
+        ),
     }
 }
 
@@ -1012,10 +1068,11 @@ mod tests {
             inference_time: Duration::from_millis(20),
         };
         let mut control = GestureControl::new(GestureContext::Standby);
+        let mut scroll = ScrollControl::new();
 
         assert_eq!(
-            observe_control(&mut control, &observation, captured_at),
-            None
+            observe_controls(&mut control, &mut scroll, &observation, captured_at),
+            (None, None)
         );
         assert_eq!(
             control.diagnostic(),
@@ -1067,6 +1124,40 @@ mod tests {
             3,
             ControlStatus::Standby { progress: None },
             started_at + Duration::from_millis(1),
+        ));
+    }
+
+    #[test]
+    fn held_scroll_state_heartbeats_without_creating_a_new_instance() {
+        let started_at = Instant::now();
+        let held = ScrollState::Held {
+            instance_id: 9,
+            direction: gsv_vision_control::ScrollDirection::Down,
+        };
+        let previous = Some((held, started_at));
+        assert!(!scroll_state_publish_due(
+            previous,
+            None,
+            held,
+            started_at + SCROLL_STATE_HEARTBEAT - Duration::from_millis(1),
+        ));
+        assert!(scroll_state_publish_due(
+            previous,
+            None,
+            held,
+            started_at + SCROLL_STATE_HEARTBEAT,
+        ));
+        assert!(scroll_state_publish_due(
+            previous,
+            Some(ScrollState::Idle),
+            ScrollState::Idle,
+            started_at,
+        ));
+        assert!(!scroll_state_publish_due(
+            Some((ScrollState::Idle, started_at)),
+            None,
+            ScrollState::Idle,
+            started_at + Duration::from_secs(1),
         ));
     }
 }

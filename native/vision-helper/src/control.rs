@@ -7,7 +7,9 @@
 use std::time::{Duration, Instant};
 
 use gsv_vision_control::VoiceRequestGestureIntent;
-pub use gsv_vision_control::{GestureContext as ControlState, GestureIntent as ControlIntent};
+pub use gsv_vision_control::{
+    GestureContext as ControlState, GestureIntent as ControlIntent, ScrollDirection, ScrollState,
+};
 
 const START_ENTER_SCORE: f32 = 0.50;
 const ACTION_ENTER_SCORE: f32 = 0.50;
@@ -23,6 +25,9 @@ const MAX_FRAME_AGE: Duration = Duration::from_millis(250);
 const MAX_SAMPLE_GAP: Duration = Duration::from_millis(250);
 const MAX_EVIDENCE_GAP: Duration = Duration::from_millis(180);
 const MIN_INTENT_SPACING: Duration = Duration::from_millis(750);
+const SCROLL_DWELL: Duration = Duration::from_millis(250);
+const SCROLL_MIN_MATCHES: u16 = 4;
+const SCROLL_TRACKING_GRACE: Duration = Duration::from_millis(180);
 
 /// Fixed local-only vocabulary for explaining the temporal controller in the
 /// diagnostic window. Its observation-derived counts, percentages, and
@@ -110,6 +115,181 @@ pub struct ControlSample<'a> {
     pub captured_at: Instant,
     pub observed_at: Instant,
     pub hands: &'a [ControlHand<'a>],
+}
+
+/// Independent held-scroll recognizer.
+///
+/// Scroll state is absolute and low-risk: tracking loss stops motion, while a
+/// positively observed different pose is required before the same direction
+/// can become a new gesture instance. This prevents a reacquired held pose
+/// from crossing a document boundary as though the user had released it.
+pub struct ScrollControl {
+    state: ScrollState,
+    candidate: Option<ScrollCandidate>,
+    release_latch: Option<ScrollDirection>,
+    last_match_at: Option<Instant>,
+    last_frame_sequence: Option<u64>,
+    last_captured_at: Option<Instant>,
+    next_instance_id: u64,
+}
+
+impl Default for ScrollControl {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl ScrollControl {
+    #[must_use]
+    pub const fn new() -> Self {
+        Self {
+            state: ScrollState::Idle,
+            candidate: None,
+            release_latch: None,
+            last_match_at: None,
+            last_frame_sequence: None,
+            last_captured_at: None,
+            next_instance_id: 1,
+        }
+    }
+
+    #[must_use]
+    pub const fn state(&self) -> ScrollState {
+        self.state
+    }
+
+    /// Returns only state transitions; the inference owner supplies bounded
+    /// held-state heartbeats without changing the gesture instance.
+    pub fn observe(&mut self, sample: ControlSample<'_>) -> Option<ScrollState> {
+        if sample.frame_sequence == 0
+            || self
+                .last_frame_sequence
+                .is_some_and(|previous| sample.frame_sequence <= previous)
+            || self
+                .last_captured_at
+                .is_some_and(|previous| sample.captured_at <= previous)
+        {
+            return self.stop();
+        }
+
+        let gap = self
+            .last_captured_at
+            .and_then(|previous| sample.captured_at.checked_duration_since(previous));
+        self.last_frame_sequence = Some(sample.frame_sequence);
+        self.last_captured_at = Some(sample.captured_at);
+        let Some(age) = sample
+            .observed_at
+            .checked_duration_since(sample.captured_at)
+        else {
+            return self.stop();
+        };
+        if age > MAX_FRAME_AGE || gap.is_some_and(|gap| gap > MAX_SAMPLE_GAP) {
+            return self.stop();
+        }
+
+        let now = sample.captured_at;
+        let reading = classify_scroll(sample.hands);
+        if self
+            .release_latch
+            .is_some_and(|latched| reading.positively_releases(latched))
+        {
+            self.release_latch = None;
+        }
+
+        if let ScrollState::Held { direction, .. } = self.state {
+            match reading {
+                ScrollReading::Gesture {
+                    direction: observed,
+                    quality,
+                } if observed == direction && quality >= ACTION_ENTER_SCORE => {
+                    self.last_match_at = Some(now);
+                    return None;
+                }
+                ScrollReading::KnownOther => return self.stop_and_seed(now, reading),
+                ScrollReading::Gesture {
+                    direction: observed,
+                    quality,
+                } if observed != direction && quality >= ACTION_ENTER_SCORE => {
+                    return self.stop_and_seed(now, reading);
+                }
+                ScrollReading::Unknown | ScrollReading::Gesture { .. } => {
+                    if self.last_match_at.is_some_and(|last_match| {
+                        now.saturating_duration_since(last_match) <= SCROLL_TRACKING_GRACE
+                    }) {
+                        return None;
+                    }
+                    return self.stop();
+                }
+            }
+        }
+
+        self.advance_scroll_candidate(now, reading)
+    }
+
+    fn stop_and_seed(&mut self, now: Instant, reading: ScrollReading) -> Option<ScrollState> {
+        let transition = self.stop();
+        if let ScrollReading::Gesture { direction, quality } = reading {
+            if quality >= ACTION_ENTER_SCORE && self.release_latch != Some(direction) {
+                self.candidate = Some(ScrollCandidate::new(direction, now));
+            }
+        }
+        transition
+    }
+
+    fn advance_scroll_candidate(
+        &mut self,
+        now: Instant,
+        reading: ScrollReading,
+    ) -> Option<ScrollState> {
+        let ScrollReading::Gesture { direction, quality } = reading else {
+            self.candidate = None;
+            return None;
+        };
+        if quality < ACTION_ENTER_SCORE || self.release_latch == Some(direction) {
+            self.candidate = None;
+            return None;
+        }
+
+        match self.candidate.as_mut() {
+            Some(candidate)
+                if candidate.direction == direction
+                    && now.saturating_duration_since(candidate.last_match_at)
+                        <= MAX_EVIDENCE_GAP =>
+            {
+                candidate.record_match(now);
+            }
+            Some(candidate) => *candidate = ScrollCandidate::new(direction, now),
+            None => self.candidate = Some(ScrollCandidate::new(direction, now)),
+        }
+        if !self
+            .candidate
+            .as_ref()
+            .is_some_and(|candidate| candidate.is_stable(now))
+        {
+            return None;
+        }
+
+        self.candidate = None;
+        let instance_id = self.next_instance_id;
+        self.next_instance_id = self.next_instance_id.wrapping_add(1).max(1);
+        self.state = ScrollState::Held {
+            instance_id,
+            direction,
+        };
+        self.release_latch = Some(direction);
+        self.last_match_at = Some(now);
+        Some(self.state)
+    }
+
+    fn stop(&mut self) -> Option<ScrollState> {
+        self.candidate = None;
+        self.last_match_at = None;
+        if self.state == ScrollState::Idle {
+            return None;
+        }
+        self.state = ScrollState::Idle;
+        Some(ScrollState::Idle)
+    }
 }
 
 /// Deterministic, allocation-free recognition of the supported two-hand
@@ -542,6 +722,57 @@ struct ChordReading {
 }
 
 #[derive(Clone, Copy, Debug)]
+enum ScrollReading {
+    Gesture {
+        direction: ScrollDirection,
+        quality: f32,
+    },
+    KnownOther,
+    Unknown,
+}
+
+impl ScrollReading {
+    fn positively_releases(self, latched: ScrollDirection) -> bool {
+        match self {
+            Self::KnownOther => true,
+            Self::Gesture { direction, quality } => {
+                direction != latched && quality >= ACTION_ENTER_SCORE
+            }
+            Self::Unknown => false,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+struct ScrollCandidate {
+    direction: ScrollDirection,
+    started_at: Instant,
+    last_match_at: Instant,
+    matches: u16,
+}
+
+impl ScrollCandidate {
+    fn new(direction: ScrollDirection, now: Instant) -> Self {
+        Self {
+            direction,
+            started_at: now,
+            last_match_at: now,
+            matches: 1,
+        }
+    }
+
+    fn record_match(&mut self, now: Instant) {
+        self.last_match_at = now;
+        self.matches = self.matches.saturating_add(1);
+    }
+
+    fn is_stable(&self, now: Instant) -> bool {
+        now.saturating_duration_since(self.started_at) >= SCROLL_DWELL
+            && self.matches >= SCROLL_MIN_MATCHES
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
 struct Candidate {
     chord: Chord,
     started_at: Instant,
@@ -640,6 +871,32 @@ fn classify_chord(hands: &[ControlHand<'_>]) -> Result<ChordReading, Classificat
         chord,
         quality: first.score.min(second.score),
     })
+}
+
+fn classify_scroll(hands: &[ControlHand<'_>]) -> ScrollReading {
+    let [first, second] = hands else {
+        return ScrollReading::Unknown;
+    };
+    if !valid_score(first.score) || !valid_score(second.score) {
+        return ScrollReading::Unknown;
+    }
+    let (Some(first_pose), Some(second_pose)) =
+        (parse_pose(first.gesture), parse_pose(second.gesture))
+    else {
+        return ScrollReading::Unknown;
+    };
+    let quality = first.score.min(second.score);
+    let direction = match (first_pose, second_pose) {
+        (Pose::ClosedFist, Pose::PointingUp) | (Pose::PointingUp, Pose::ClosedFist) => {
+            ScrollDirection::Up
+        }
+        (Pose::ClosedFist, Pose::ThumbDown) | (Pose::ThumbDown, Pose::ClosedFist) => {
+            ScrollDirection::Down
+        }
+        _ if quality >= ACTION_ENTER_SCORE => return ScrollReading::KnownOther,
+        _ => return ScrollReading::Unknown,
+    };
+    ScrollReading::Gesture { direction, quality }
 }
 
 fn parse_pose(label: &str) -> Option<Pose> {
@@ -1288,5 +1545,106 @@ mod tests {
         assert!(control
             .progress(now)
             .is_some_and(|progress| progress.progress_permille < 1_000));
+    }
+
+    #[test]
+    fn scroll_chords_are_unordered_stable_and_use_fifty_percent_confidence() {
+        let start = Instant::now();
+        let mut control = ScrollControl::new();
+        let mut sequence = 0_u64;
+        let mut elapsed = Duration::ZERO;
+        let mut sample = |control: &mut ScrollControl, first: (&str, f32), second: (&str, f32)| {
+            sequence += 1;
+            elapsed += STEP;
+            let captured_at = start + elapsed;
+            let hands = [
+                ControlHand::new(first.0, first.1),
+                ControlHand::new(second.0, second.1),
+            ];
+            control.observe(ControlSample {
+                frame_sequence: sequence,
+                captured_at,
+                observed_at: captured_at + Duration::from_millis(20),
+                hands: &hands,
+            })
+        };
+
+        for _ in 0..8 {
+            assert_eq!(
+                sample(&mut control, ("Closed_Fist", 0.499), ("Pointing_Up", 0.9),),
+                None
+            );
+        }
+        for _ in 0..5 {
+            assert_eq!(
+                sample(&mut control, ("Pointing_Up", 0.5), ("Closed_Fist", 0.5),),
+                None
+            );
+        }
+        assert_eq!(
+            sample(&mut control, ("Pointing_Up", 0.5), ("Closed_Fist", 0.5),),
+            Some(ScrollState::Held {
+                instance_id: 1,
+                direction: ScrollDirection::Up,
+            })
+        );
+    }
+
+    #[test]
+    fn scroll_tracking_loss_stops_without_rearming_the_same_held_pose() {
+        let start = Instant::now();
+        let mut control = ScrollControl::new();
+        let mut sequence = 0_u64;
+        let mut elapsed = Duration::ZERO;
+        let mut observe = |control: &mut ScrollControl, hands: &[ControlHand<'_>]| {
+            sequence += 1;
+            elapsed += STEP;
+            let captured_at = start + elapsed;
+            control.observe(ControlSample {
+                frame_sequence: sequence,
+                captured_at,
+                observed_at: captured_at + Duration::from_millis(20),
+                hands,
+            })
+        };
+        let down = [
+            ControlHand::new("Closed_Fist", 0.9),
+            ControlHand::new("Thumb_Down", 0.9),
+        ];
+        for _ in 0..5 {
+            assert_eq!(observe(&mut control, &down), None);
+        }
+        assert_eq!(
+            observe(&mut control, &down),
+            Some(ScrollState::Held {
+                instance_id: 1,
+                direction: ScrollDirection::Down,
+            })
+        );
+        assert_eq!(observe(&mut control, &[]), None);
+        assert_eq!(observe(&mut control, &[]), None);
+        assert_eq!(observe(&mut control, &[]), None);
+        assert_eq!(observe(&mut control, &[]), Some(ScrollState::Idle));
+
+        for _ in 0..10 {
+            assert_eq!(observe(&mut control, &down), None);
+        }
+        assert_eq!(control.state(), ScrollState::Idle);
+
+        let released = [
+            ControlHand::new("Open_Palm", 0.9),
+            ControlHand::new("Open_Palm", 0.9),
+        ];
+        assert_eq!(observe(&mut control, &released), None);
+        for _ in 0..5 {
+            assert_eq!(observe(&mut control, &down), None);
+        }
+        assert_eq!(
+            observe(&mut control, &down),
+            Some(ScrollState::Held {
+                instance_id: 2,
+                direction: ScrollDirection::Down,
+            })
+        );
     }
 }

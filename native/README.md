@@ -98,7 +98,10 @@ utterance, including while the microphone is muted, then keeps the same
 microphone session listening for the next utterance; open palm + thumbs-down
 requests mute; and open palm + pointing-up requests unmute. To send the last
 utterance and finish, perform Send, let it complete, and then perform Stop. A
-closed fist and all other pairs are reserved and have no action. The active
+closed fist + pointing-up scrolls up and closed fist + thumbs-down scrolls down.
+Holding scrolls inside a long moment until its edge; crossing that edge requires
+releasing and beginning a fresh gesture, which moves exactly one moment. All
+other pairs are reserved and have no action. The active
 transcription itself is the gesture authority—there is no separate armed bit—and
 applied mute state survives an utterance send. The dictation shortcut remains
 the equivalent explicit Start/Stop control. Applied mute state changes only

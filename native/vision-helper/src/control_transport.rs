@@ -15,9 +15,11 @@ use std::thread;
 use std::time::Duration;
 
 use crossbeam_channel::{bounded, Receiver, Sender, TryRecvError, TrySendError};
+#[cfg(test)]
+use gsv_vision_control::ScrollDirection;
 use gsv_vision_control::{
     read_frame, write_frame, ControlStatus, DesktopCommand, GestureContext, GestureIntent,
-    HelperEvent, LifecycleState, SessionId, EVENT_CHANNEL_CONTRACT_MARKER, EVENT_FD,
+    HelperEvent, LifecycleState, ScrollState, SessionId, EVENT_CHANNEL_CONTRACT_MARKER, EVENT_FD,
     EVENT_FD_MARKER_ENV, PROTOCOL_VERSION, SESSION_HIGH_ENV, SESSION_LOW_ENV,
 };
 
@@ -29,6 +31,7 @@ const TERMINAL_WRITE_TIMEOUT: Duration = Duration::from_millis(500);
 enum EventPayload {
     Lifecycle(LifecycleState),
     Intent(GestureIntent),
+    Scroll(ScrollState),
 }
 
 struct QueuedEvent {
@@ -150,6 +153,10 @@ impl HelperControl {
         self.publish(EventPayload::Intent(intent))
     }
 
+    pub fn publish_scroll(&self, state: ScrollState) -> bool {
+        self.publish(EventPayload::Scroll(state))
+    }
+
     /// Replaces an obsolete semantic snapshot without ever waiting for the
     /// event writer. Status is explanatory only; reliable lifecycle and intent
     /// events use a separate, prioritized queue.
@@ -264,6 +271,11 @@ fn write_reliable(
             session_id,
             sequence,
             intent,
+        },
+        EventPayload::Scroll(state) => HelperEvent::Scroll {
+            session_id,
+            sequence,
+            state,
         },
     };
     let written = write_frame(output, &event).is_ok();
@@ -542,6 +554,10 @@ mod tests {
             voice_request_id: 91,
             action: VoiceRequestGestureIntent::Send,
         }));
+        assert!(control.publish_scroll(ScrollState::Held {
+            instance_id: 5,
+            direction: ScrollDirection::Down,
+        }));
 
         let mut event_output = output.clone();
         let writer = thread::spawn(move || {
@@ -572,10 +588,21 @@ mod tests {
             })
         );
         assert_eq!(
+            read_frame::<HelperEvent>(&mut input).expect("scroll reads"),
+            Some(HelperEvent::Scroll {
+                session_id: SESSION,
+                sequence: 3,
+                state: ScrollState::Held {
+                    instance_id: 5,
+                    direction: ScrollDirection::Down,
+                },
+            })
+        );
+        assert_eq!(
             read_frame::<HelperEvent>(&mut input).expect("status reads"),
             Some(HelperEvent::Status {
                 session_id: SESSION,
-                sequence: 3,
+                sequence: 4,
                 status: ControlStatus::Standby { progress: None },
             })
         );

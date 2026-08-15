@@ -5,13 +5,14 @@ process that owns the camera, MediaPipe Gesture Recognizer, temporal gesture
 policy, and optional diagnostic window. Camera pixels never enter GPUI, the
 gateway, logs, files, or GSV application IPC. They are handed only to local
 MediaPipe inference and, in debug mode, the OS display system. A bounded private
-pipe carries a reliable session-scoped `start transcription` intent and
-request-scoped `stop transcription`, `send`, `mute`, and `unmute` intents, plus
-replace-latest semantic control status with bounded candidate progress. Every
+pipe carries a reliable session-scoped `start transcription` intent,
+request-scoped `stop transcription`, `send`, `mute`, and `unmute` intents, and
+absolute held-scroll state, plus replace-latest semantic control status with
+bounded candidate progress. Every
 active action identifies the exact voice request, and every event is scoped to
-the random helper session. Reliable lifecycle and intent events share a strict
-monotonic sequence, while Desktop applies its bounded local freshness policy
-before acting on a received intent.
+the random helper session. Reliable lifecycle, intent, and held-scroll events
+share a strict monotonic sequence, while Desktop applies its bounded local
+freshness policy before acting on received control.
 
 The runtime does not require Python. It consists of this Rust executable, a
 source-built native MediaPipe library, and the verified 8.0 MiB Gesture
@@ -67,8 +68,14 @@ context; the helper has no separate persistent armed bit.
 - Show open palm + thumbs-up for 700 ms to send now.
 - Show open palm + thumbs-down for 450 ms to mute explicitly.
 - Show open palm + pointing-up for 700 ms to unmute explicitly.
+- Show closed fist + pointing-up for 250 ms, then hold to scroll up.
+- Show closed fist + thumbs-down for 250 ms, then hold to scroll down.
 
-Closed fist and all other canned combinations are reserved and unassigned.
+Scroll gestures work in either standby or active voice mode. On a long moment,
+holding scrolls only that moment and stops at its edge. A fresh gesture begun at
+an edge moves exactly one moment; the held gesture is then consumed until a
+different known pose is observed, so it cannot skip through multiple moments.
+All other canned combinations are reserved and unassigned.
 Every gesture enters and continues at 0.50 confidence. After emitting any
 intent, the helper blocks further commands until Desktop echoes a fresh
 absolute context; an unchanged echo also resolves a rejected or nonterminal
