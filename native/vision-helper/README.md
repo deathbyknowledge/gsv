@@ -61,15 +61,15 @@ order and anatomical handedness do not assign roles.
 - Hold open palm + thumbs-up for 700 ms to stop dictation, await its matching
   authoritative final transcript, and enter the normal Desktop send owner.
 
-Initial two-palm arming enters at 0.70 confidence. Hold, send, and explicit hold
-release enter at 0.80; continuation hysteresis is 0.65. Evidence also requires
-the gesture-specific dwell, match count, strong-sample count, consecutive and
-support thresholds, fresh frames, and bounded inference gaps. Progress is the
-minimum of those aggregate gates and remains below complete until the
-authoritative transition or intent. Missing hands, low confidence, stale
-frames, helper failure, or tracking loss never release HOLD. This batch does
-not infer speech silence or auto-send from transcript timing; that requires a
-separate audio-owner activity signal.
+Initial two-palm arming enters and continues at 0.50 confidence. Hold, send, and
+explicit hold release enter at 0.80 with continuation hysteresis at 0.65.
+Evidence also requires the gesture-specific dwell, match count, strong-sample
+count, consecutive and support thresholds, fresh frames, and bounded inference
+gaps. Progress is the minimum of those aggregate gates and remains below
+complete until the authoritative transition or intent. Missing hands, low
+confidence, stale frames, helper failure, or tracking loss never release HOLD.
+This batch does not infer speech silence or auto-send from transcript timing;
+that requires a separate audio-owner activity signal.
 
 ## Local overrides
 

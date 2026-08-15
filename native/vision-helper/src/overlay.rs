@@ -1212,10 +1212,10 @@ mod tests {
             (
                 ControlDiagnostic::LowConfidence {
                     chord: ControlChord::Ready,
-                    observed_percent: 69,
-                    required_percent: 70,
+                    observed_percent: 49,
+                    required_percent: 50,
                 },
-                "CONTROL READY 69% - NEED 70%",
+                "CONTROL READY 49% - NEED 50%",
             ),
             (
                 ControlDiagnostic::Stabilizing {

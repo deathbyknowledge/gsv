@@ -8,7 +8,7 @@ use std::time::{Duration, Instant};
 
 pub use gsv_vision_control::GestureState as ControlState;
 
-const READY_ENTER_SCORE: f32 = 0.70;
+const READY_ENTER_SCORE: f32 = 0.50;
 const ACTION_ENTER_SCORE: f32 = 0.80;
 const CONTINUE_SCORE: f32 = 0.65;
 const MIN_SUPPORT_PERCENT: u16 = 80;
@@ -236,12 +236,12 @@ impl GestureControl {
                 None
             }
         };
-        if reading.is_some_and(|reading| reading.quality >= CONTINUE_SCORE) {
+        if reading.is_some_and(|reading| reading.quality >= self.tracking_score(reading.chord)) {
             self.last_supported_at = Some(now);
         }
         if self.state == ControlState::Ready
             && reading.is_some_and(|reading| {
-                reading.chord == Chord::Ready && reading.quality >= CONTINUE_SCORE
+                reading.chord == Chord::Ready && reading.quality >= READY_ENTER_SCORE
             })
         {
             self.last_ready_pose_at = Some(now);
@@ -278,8 +278,23 @@ impl GestureControl {
             ))
         });
         if let Some(reading) = reading.filter(|reading| !self.accepted_target(reading.chord)) {
-            self.diagnostic = ControlDiagnostic::UnexpectedPose {
-                chord: reading.chord.into(),
+            self.diagnostic = if self.state == ControlState::Ready && reading.chord == Chord::Ready
+            {
+                if reading.quality >= READY_ENTER_SCORE {
+                    ControlDiagnostic::Accepted {
+                        chord: ControlChord::Ready,
+                    }
+                } else {
+                    ControlDiagnostic::LowConfidence {
+                        chord: ControlChord::Ready,
+                        observed_percent: score_percent(reading.quality),
+                        required_percent: score_percent(READY_ENTER_SCORE),
+                    }
+                }
+            } else {
+                ControlDiagnostic::UnexpectedPose {
+                    chord: reading.chord.into(),
+                }
             };
         }
 
@@ -295,7 +310,7 @@ impl GestureControl {
                     } else {
                         candidate.record_miss();
                     }
-                } else if quality >= CONTINUE_SCORE {
+                } else if quality >= entry_score.min(CONTINUE_SCORE) {
                     candidate.record_match(now, quality >= entry_score);
                 } else {
                     candidate.record_miss();
@@ -417,6 +432,14 @@ impl GestureControl {
             READY_ENTER_SCORE
         } else {
             ACTION_ENTER_SCORE
+        }
+    }
+
+    fn tracking_score(&self, chord: Chord) -> f32 {
+        if self.state != ControlState::Holding && chord == Chord::Ready {
+            READY_ENTER_SCORE
+        } else {
+            CONTINUE_SCORE
         }
     }
 
@@ -753,21 +776,32 @@ mod tests {
     fn initial_ready_pose_uses_a_lower_non_action_threshold() {
         let mut below = Harness::new(false);
         assert!(below
-            .drive(20, ("Open_Palm", 0.69), ("Open_Palm", 0.69))
+            .drive(20, ("Open_Palm", 0.49), ("Open_Palm", 0.49))
             .is_empty());
         assert_eq!(below.control.state(), ControlState::NeedsReady);
         assert_eq!(
             below.control.diagnostic(),
             ControlDiagnostic::LowConfidence {
                 chord: ControlChord::Ready,
-                observed_percent: 69,
-                required_percent: 70,
+                observed_percent: 49,
+                required_percent: 50,
             }
         );
 
         let mut boundary = Harness::new(false);
         assert!(boundary
-            .drive(8, ("Open_Palm", 0.70), ("Open_Palm", 0.70))
+            .drive(8, ("Open_Palm", 0.50), ("Open_Palm", 0.50))
+            .is_empty());
+        assert_eq!(boundary.control.state(), ControlState::Ready);
+        assert_eq!(
+            boundary.control.diagnostic(),
+            ControlDiagnostic::Accepted {
+                chord: ControlChord::Ready,
+            }
+        );
+
+        assert!(boundary
+            .drive(70, ("Open_Palm", 0.50), ("Open_Palm", 0.50))
             .is_empty());
         assert_eq!(boundary.control.state(), ControlState::Ready);
         assert_eq!(
@@ -803,27 +837,28 @@ mod tests {
     #[test]
     fn aggregate_complete_weak_sample_stays_pending_below_full() {
         let mut harness = Harness::new(false);
+        harness.ready();
         assert!(harness
-            .drive(7, ("Open_Palm", 0.9), ("Open_Palm", 0.9))
+            .drive(9, ("Open_Palm", 0.9), ("Closed_Fist", 0.9))
             .is_empty());
         assert_eq!(
-            harness.sample(("Open_Palm", 0.69), ("Open_Palm", 0.69)),
+            harness.sample(("Open_Palm", 0.70), ("Closed_Fist", 0.70)),
             None
         );
-        assert_eq!(harness.control.state(), ControlState::NeedsReady);
+        assert_eq!(harness.control.state(), ControlState::Ready);
         assert_eq!(
             harness.progress(),
             Some(ControlProgress {
-                chord: ControlChord::Ready,
+                chord: ControlChord::Hold,
                 progress_permille: 999,
             })
         );
 
         assert_eq!(
-            harness.sample(("Open_Palm", 0.70), ("Open_Palm", 0.70)),
-            None
+            harness.sample(("Open_Palm", 0.80), ("Closed_Fist", 0.80)),
+            Some(ControlIntent::EngageAutoSendHold)
         );
-        assert_eq!(harness.control.state(), ControlState::Ready);
+        assert_eq!(harness.control.state(), ControlState::Holding);
         assert_eq!(harness.progress(), None);
     }
 
