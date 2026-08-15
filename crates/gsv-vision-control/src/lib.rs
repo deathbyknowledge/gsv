@@ -2,7 +2,8 @@
 //!
 //! This boundary carries reliable semantic gesture intents and replace-latest,
 //! request-scoped semantic control status. Camera frames, landmarks, model
-//! labels, diagnostics, paths, and user content do not belong in this protocol.
+//! labels, raw scores, diagnostics, paths, and user content do not belong in
+//! this protocol.
 
 use std::fmt::{self, Display, Formatter};
 use std::io::{self, Read, Write};
@@ -50,9 +51,8 @@ pub enum GestureIntent {
 
 /// Stable semantic state of the helper-owned temporal gesture controller.
 ///
-/// This deliberately exposes neither model labels nor per-frame evidence. The
-/// state is sufficient for Desktop to explain the currently accepted gesture
-/// vocabulary without moving camera-derived data across the process boundary.
+/// This state itself exposes neither model labels nor per-frame evidence. An
+/// active status may separately carry bounded, quantized candidate progress.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum GestureState {
@@ -62,6 +62,92 @@ pub enum GestureState {
     Ready,
     /// Auto-send remains held until two open palms are deliberately observed.
     Holding,
+}
+
+/// The semantic candidate whose bounded temporal evidence is accumulating.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum GestureCandidate {
+    Arm,
+    Hold,
+    ReleaseHold,
+    Send,
+}
+
+pub const MAX_GESTURE_PROGRESS_PERMILLE: u16 = 1_000;
+
+/// Quantized, presentation-only progress through the helper's complete
+/// temporal evidence gate. This is not an intent and cannot invoke an action.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+pub struct GestureProgress {
+    candidate: GestureCandidate,
+    progress_permille: u16,
+}
+
+impl GestureProgress {
+    pub const fn new(
+        candidate: GestureCandidate,
+        progress_permille: u16,
+    ) -> Result<Self, InvalidGestureProgress> {
+        if progress_permille > MAX_GESTURE_PROGRESS_PERMILLE {
+            return Err(InvalidGestureProgress);
+        }
+        Ok(Self {
+            candidate,
+            progress_permille,
+        })
+    }
+
+    #[must_use]
+    pub const fn candidate(self) -> GestureCandidate {
+        self.candidate
+    }
+
+    #[must_use]
+    pub const fn progress_permille(self) -> u16 {
+        self.progress_permille
+    }
+
+    #[must_use]
+    pub const fn is_compatible_with(self, state: GestureState) -> bool {
+        matches!(
+            (state, self.candidate),
+            (GestureState::NeedsReady, GestureCandidate::Arm)
+                | (
+                    GestureState::Ready,
+                    GestureCandidate::Hold | GestureCandidate::Send
+                )
+                | (GestureState::Holding, GestureCandidate::ReleaseHold)
+        )
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct InvalidGestureProgress;
+
+impl Display for InvalidGestureProgress {
+    fn fmt(&self, formatter: &mut Formatter<'_>) -> fmt::Result {
+        formatter.write_str("gesture progress must be from 0 through 1000 permille")
+    }
+}
+
+impl std::error::Error for InvalidGestureProgress {}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct WireGestureProgress {
+    candidate: GestureCandidate,
+    progress_permille: u16,
+}
+
+impl<'de> Deserialize<'de> for GestureProgress {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let progress = WireGestureProgress::deserialize(deserializer)?;
+        Self::new(progress.candidate, progress.progress_permille).map_err(de::Error::custom)
+    }
 }
 
 /// Complete, request-fenced snapshot of semantic gesture control.
@@ -76,6 +162,7 @@ pub enum ControlStatus {
     Active {
         voice_request_id: u64,
         state: GestureState,
+        progress: Option<GestureProgress>,
     },
 }
 
@@ -86,6 +173,7 @@ enum WireControlStatus {
     Active {
         voice_request_id: u64,
         state: GestureState,
+        progress: Option<GestureProgress>,
     },
 }
 
@@ -99,10 +187,19 @@ impl<'de> Deserialize<'de> for ControlStatus {
             WireControlStatus::Active {
                 voice_request_id,
                 state,
-            } => Self::Active {
-                voice_request_id,
-                state,
-            },
+                progress,
+            } => {
+                if progress.is_some_and(|progress| !progress.is_compatible_with(state)) {
+                    return Err(de::Error::custom(
+                        "gesture candidate is incompatible with controller state",
+                    ));
+                }
+                Self::Active {
+                    voice_request_id,
+                    state,
+                    progress,
+                }
+            }
         })
     }
 }
@@ -365,6 +462,9 @@ mod tests {
                 status: ControlStatus::Active {
                     voice_request_id: 19,
                     state: GestureState::NeedsReady,
+                    progress: Some(
+                        GestureProgress::new(GestureCandidate::Arm, 420).expect("bounded progress"),
+                    ),
                 },
             },
             HelperEvent::Intent {
@@ -451,6 +551,9 @@ mod tests {
         let active = ControlStatus::Active {
             voice_request_id: 22,
             state: GestureState::Holding,
+            progress: Some(
+                GestureProgress::new(GestureCandidate::ReleaseHold, 742).expect("bounded progress"),
+            ),
         };
         let encoded = serde_json::to_value(active).expect("status serializes");
         assert_eq!(
@@ -458,8 +561,26 @@ mod tests {
             json!({
                 "mode": "active",
                 "voice_request_id": 22,
-                "state": "holding"
+                "state": "holding",
+                "progress": {
+                    "candidate": "release_hold",
+                    "progress_permille": 742
+                }
             })
+        );
+        assert_eq!(
+            serde_json::from_value::<ControlStatus>(json!({
+                "mode": "active",
+                "voice_request_id": 22,
+                "state": "ready",
+                "progress": null
+            }))
+            .expect("explicitly empty progress is valid"),
+            ControlStatus::Active {
+                voice_request_id: 22,
+                state: GestureState::Ready,
+                progress: None,
+            }
         );
 
         assert!(serde_json::from_value::<ControlStatus>(json!({
@@ -475,9 +596,95 @@ mod tests {
         assert!(serde_json::from_value::<ControlStatus>(json!({
             "mode": "active",
             "voice_request_id": 22,
-            "state": "candidate"
+            "state": "candidate",
+            "progress": null
         }))
         .is_err());
+    }
+
+    #[test]
+    fn gesture_progress_is_bounded_and_closed() {
+        for candidate in [
+            GestureCandidate::Arm,
+            GestureCandidate::Hold,
+            GestureCandidate::ReleaseHold,
+            GestureCandidate::Send,
+        ] {
+            let progress = GestureProgress::new(candidate, MAX_GESTURE_PROGRESS_PERMILLE)
+                .expect("upper bound is valid");
+            assert_eq!(progress.candidate(), candidate);
+            assert_eq!(progress.progress_permille(), MAX_GESTURE_PROGRESS_PERMILLE);
+            assert_eq!(
+                serde_json::from_value::<GestureProgress>(
+                    serde_json::to_value(progress).expect("progress serializes")
+                )
+                .expect("progress deserializes"),
+                progress
+            );
+        }
+
+        assert_eq!(
+            GestureProgress::new(GestureCandidate::Arm, MAX_GESTURE_PROGRESS_PERMILLE + 1),
+            Err(InvalidGestureProgress)
+        );
+        assert!(serde_json::from_value::<GestureProgress>(json!({
+            "candidate": "arm",
+            "progress_permille": 1001
+        }))
+        .is_err());
+        assert!(serde_json::from_value::<GestureProgress>(json!({
+            "candidate": "custom",
+            "progress_permille": 500
+        }))
+        .is_err());
+        assert!(serde_json::from_value::<GestureProgress>(json!({
+            "candidate": "send",
+            "progress_permille": 500,
+            "label": "private"
+        }))
+        .is_err());
+    }
+
+    #[test]
+    fn active_status_rejects_candidates_from_another_state() {
+        let valid = [
+            (GestureState::NeedsReady, GestureCandidate::Arm),
+            (GestureState::Ready, GestureCandidate::Hold),
+            (GestureState::Ready, GestureCandidate::Send),
+            (GestureState::Holding, GestureCandidate::ReleaseHold),
+        ];
+        for (state, candidate) in valid {
+            let progress = GestureProgress::new(candidate, 500).expect("bounded progress");
+            assert!(progress.is_compatible_with(state));
+        }
+
+        for (state, candidate) in [
+            (GestureState::NeedsReady, GestureCandidate::Send),
+            (GestureState::Ready, GestureCandidate::Arm),
+            (GestureState::Holding, GestureCandidate::Hold),
+        ] {
+            let progress = GestureProgress::new(candidate, 500).expect("bounded progress");
+            assert!(!progress.is_compatible_with(state));
+            assert!(serde_json::from_value::<ControlStatus>(json!({
+                "mode": "active",
+                "voice_request_id": 22,
+                "state": match state {
+                    GestureState::NeedsReady => "needs_ready",
+                    GestureState::Ready => "ready",
+                    GestureState::Holding => "holding",
+                },
+                "progress": {
+                    "candidate": match candidate {
+                        GestureCandidate::Arm => "arm",
+                        GestureCandidate::Hold => "hold",
+                        GestureCandidate::ReleaseHold => "release_hold",
+                        GestureCandidate::Send => "send",
+                    },
+                    "progress_permille": 500
+                }
+            }))
+            .is_err());
+        }
     }
 
     #[test]

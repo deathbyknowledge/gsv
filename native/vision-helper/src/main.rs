@@ -20,15 +20,18 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use crossbeam_channel::{bounded, Receiver, Sender, TryRecvError, TrySendError};
-use gsv_vision_control::ControlStatus;
+use gsv_vision_control::{ControlStatus, GestureCandidate, GestureProgress};
 use sha2::{Digest, Sha256};
 
 use crate::camera::{CameraConfig, CameraStream, FrameReader};
-use crate::control::{ControlHand, ControlIntent, ControlSample, GestureControl};
+use crate::control::{
+    ControlDiagnostic, ControlHand, ControlIntent, ControlSample, GestureControl,
+};
 use crate::control_transport::{ControlContext, HelperControl};
 use crate::debug_window::{DebugWindow, DebugWindowConfig};
 use crate::mediapipe::GestureRecognizer;
 use crate::observation::{FrameView, Observation};
+use crate::overlay::ControlPresentationDiagnostic;
 
 const MODEL_BYTES: u64 = 8_373_440;
 const MODEL_SHA256: &str = "97952348cf6a6a4915c2ea1496b4b37ebabc50cbbf80571435643c455f2b0482";
@@ -37,6 +40,7 @@ const DEBUG_WINDOW_MARKER: &str = "GSV_VISION_DEBUG_WINDOW";
 const FIRST_FRAME_TIMEOUT: Duration = Duration::from_secs(5);
 const INFERENCE_POLL: Duration = Duration::from_millis(100);
 const CONTROL_STATUS_HEARTBEAT: Duration = Duration::from_millis(500);
+const ANNOTATED_PRESENTATION_FRESHNESS: Duration = Duration::from_secs(1);
 const MAX_CAMERA_INDEX: u32 = 63;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -84,6 +88,13 @@ struct AnnotatedFrame {
     observation: Observation,
     control_status: ControlStatus,
     app_held: bool,
+    control_diagnostic: ControlDiagnostic,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct ControlPresentation {
+    status: ControlStatus,
+    diagnostic: ControlPresentationDiagnostic,
 }
 
 fn main() -> ExitCode {
@@ -218,20 +229,78 @@ fn run_window(
         if stats.failed {
             return Err(VisionError::CameraStopped);
         }
-        let (frame, observation, control_status, app_held) = match annotated.as_ref() {
-            Some(annotated) => (
-                &*annotated.frame,
-                Some(&annotated.observation),
-                annotated.control_status,
-                annotated.app_held,
-            ),
-            None => (&*raw_frame, None, ControlStatus::Disabled, false),
-        };
+        let presentation_at = Instant::now();
+        let (frame, observation, control_status, app_held, control_diagnostic) =
+            match annotated.as_ref() {
+                Some(annotated) => {
+                    let presentation = control_presentation(
+                        annotated.control_status,
+                        annotated.control_diagnostic,
+                        annotated.observation.observed_at,
+                        presentation_at,
+                    );
+                    (
+                        &*annotated.frame,
+                        Some(&annotated.observation),
+                        presentation.status,
+                        annotated.app_held,
+                        presentation.diagnostic,
+                    )
+                }
+                None => (
+                    &*raw_frame,
+                    None,
+                    ControlStatus::Disabled,
+                    false,
+                    ControlPresentationDiagnostic::Controller(ControlDiagnostic::AwaitingPose),
+                ),
+            };
         window
-            .render(frame, observation, control_status, app_held, &stats)
+            .render(
+                frame,
+                observation,
+                control_status,
+                app_held,
+                control_diagnostic,
+                &stats,
+            )
             .map_err(|_| VisionError::WindowUnavailable)?;
     }
     Ok(())
+}
+
+fn control_presentation(
+    status: ControlStatus,
+    diagnostic: ControlDiagnostic,
+    observed_at: Instant,
+    presentation_at: Instant,
+) -> ControlPresentation {
+    let stale = presentation_at
+        .checked_duration_since(observed_at)
+        .is_none_or(|age| age > ANNOTATED_PRESENTATION_FRESHNESS);
+    if !stale {
+        return ControlPresentation {
+            status,
+            diagnostic: ControlPresentationDiagnostic::Controller(diagnostic),
+        };
+    }
+
+    let status = match status {
+        ControlStatus::Disabled => ControlStatus::Disabled,
+        ControlStatus::Active {
+            voice_request_id,
+            state,
+            ..
+        } => ControlStatus::Active {
+            voice_request_id,
+            state,
+            progress: None,
+        },
+    };
+    ControlPresentation {
+        status,
+        diagnostic: ControlPresentationDiagnostic::AwaitingFreshObservation,
+    }
 }
 
 fn inference_worker(
@@ -287,41 +356,50 @@ fn inference_worker(
             }
             ready_published = true;
         }
-        let (control_status, app_held) = if let Some(control_link) = &control_link {
-            let context = control_link.context();
-            let status = if let Some(voice_request_id) = sync_control_context(
-                &mut gesture_control,
-                &mut control_revision,
-                &mut control_voice_request_id,
-                context,
-            ) {
-                if let Some(intent) = observe_control(
+        let (control_status, app_held, control_diagnostic) =
+            if let Some(control_link) = &control_link {
+                let context = control_link.context();
+                let status = if let Some(voice_request_id) = sync_control_context(
                     &mut gesture_control,
-                    &observation,
-                    delivery.frame.captured_at,
+                    &mut control_revision,
+                    &mut control_voice_request_id,
+                    context,
                 ) {
-                    let intent = match intent {
-                        ControlIntent::EngageAutoSendHold => {
-                            gsv_vision_control::GestureIntent::Hold
+                    if let Some(intent) = observe_control(
+                        &mut gesture_control,
+                        &observation,
+                        delivery.frame.captured_at,
+                    ) {
+                        let intent = match intent {
+                            ControlIntent::EngageAutoSendHold => {
+                                gsv_vision_control::GestureIntent::Hold
+                            }
+                            ControlIntent::ReleaseAutoSendHold => {
+                                gsv_vision_control::GestureIntent::ReleaseHold
+                            }
+                            ControlIntent::Send => gsv_vision_control::GestureIntent::Send,
+                        };
+                        if !control_link.publish_intent(voice_request_id, intent) {
+                            let _ = failure.try_send(VisionError::ProtocolUnavailable);
+                            return;
                         }
-                        ControlIntent::ReleaseAutoSendHold => {
-                            gsv_vision_control::GestureIntent::ReleaseHold
-                        }
-                        ControlIntent::Send => gsv_vision_control::GestureIntent::Send,
-                    };
-                    if !control_link.publish_intent(voice_request_id, intent) {
-                        let _ = failure.try_send(VisionError::ProtocolUnavailable);
-                        return;
                     }
-                }
-                control_status(&gesture_control, Some(voice_request_id))
+                    control_status(
+                        &gesture_control,
+                        Some(voice_request_id),
+                        delivery.frame.captured_at,
+                    )
+                } else {
+                    control_status(&gesture_control, None, delivery.frame.captured_at)
+                };
+                (status, context.held, gesture_control.diagnostic())
             } else {
-                control_status(&gesture_control, None)
+                (
+                    ControlStatus::Disabled,
+                    false,
+                    ControlDiagnostic::AwaitingPose,
+                )
             };
-            (status, context.held)
-        } else {
-            (ControlStatus::Disabled, false)
-        };
         let publish_at = Instant::now();
         if control_status_publish_due(published_control_status, control_status, publish_at) {
             if let Some(control_link) = &control_link {
@@ -338,6 +416,7 @@ fn inference_worker(
             observation,
             control_status,
             app_held,
+            control_diagnostic,
         };
         if !publish_latest(&output, &replacement_receiver, annotated) {
             return;
@@ -367,13 +446,45 @@ fn sync_control_context(
     context.voice_request_id
 }
 
-fn control_status(control: &GestureControl, voice_request_id: Option<u64>) -> ControlStatus {
+fn control_status(
+    control: &GestureControl,
+    voice_request_id: Option<u64>,
+    now: Instant,
+) -> ControlStatus {
     voice_request_id.map_or(ControlStatus::Disabled, |voice_request_id| {
         ControlStatus::Active {
             voice_request_id,
             state: control.state(),
+            progress: control_progress(control, now),
         }
     })
+}
+
+fn control_progress(control: &GestureControl, now: Instant) -> Option<GestureProgress> {
+    let progress = control.progress(now)?;
+    let candidate = gesture_candidate(control.state(), progress.chord)?;
+    GestureProgress::new(candidate, progress.progress_permille).ok()
+}
+
+fn gesture_candidate(
+    state: crate::control::ControlState,
+    chord: crate::control::ControlChord,
+) -> Option<GestureCandidate> {
+    match (state, chord) {
+        (crate::control::ControlState::NeedsReady, crate::control::ControlChord::Ready) => {
+            Some(GestureCandidate::Arm)
+        }
+        (crate::control::ControlState::Ready, crate::control::ControlChord::Hold) => {
+            Some(GestureCandidate::Hold)
+        }
+        (crate::control::ControlState::Ready, crate::control::ControlChord::Send) => {
+            Some(GestureCandidate::Send)
+        }
+        (crate::control::ControlState::Holding, crate::control::ControlChord::Ready) => {
+            Some(GestureCandidate::ReleaseHold)
+        }
+        _ => None,
+    }
 }
 
 fn control_status_publish_due(
@@ -399,6 +510,15 @@ fn observe_control(
                 ControlHand::new(&first.gesture, first.gesture_score),
                 ControlHand::new(&second.gesture, second.gesture_score),
             ];
+            control.observe(ControlSample {
+                frame_sequence: observation.frame_sequence,
+                captured_at,
+                observed_at: observation.observed_at,
+                hands: &hands,
+            })
+        }
+        [hand] => {
+            let hands = [ControlHand::new(&hand.gesture, hand.gesture_score)];
             control.observe(ControlSample {
                 frame_sequence: observation.frame_sequence,
                 captured_at,
@@ -703,22 +823,159 @@ mod tests {
     #[test]
     fn semantic_status_is_complete_and_request_scoped() {
         let mut control = GestureControl::default();
-        assert_eq!(control_status(&control, None), ControlStatus::Disabled);
+        let now = Instant::now();
+        assert_eq!(control_status(&control, None, now), ControlStatus::Disabled);
         assert_eq!(
-            control_status(&control, Some(12)),
+            control_status(&control, Some(12), now),
             ControlStatus::Active {
                 voice_request_id: 12,
                 state: gsv_vision_control::GestureState::NeedsReady,
+                progress: None,
             }
         );
 
         control.reset(true);
         assert_eq!(
-            control_status(&control, Some(12)),
+            control_status(&control, Some(12), now),
             ControlStatus::Active {
                 voice_request_id: 12,
                 state: gsv_vision_control::GestureState::Holding,
+                progress: None,
             }
+        );
+    }
+
+    #[test]
+    fn controller_chords_map_to_state_compatible_progress_candidates() {
+        use crate::control::{ControlChord, ControlState};
+
+        assert_eq!(
+            gesture_candidate(ControlState::NeedsReady, ControlChord::Ready),
+            Some(GestureCandidate::Arm)
+        );
+        assert_eq!(
+            gesture_candidate(ControlState::Ready, ControlChord::Hold),
+            Some(GestureCandidate::Hold)
+        );
+        assert_eq!(
+            gesture_candidate(ControlState::Ready, ControlChord::Send),
+            Some(GestureCandidate::Send)
+        );
+        assert_eq!(
+            gesture_candidate(ControlState::Holding, ControlChord::Ready),
+            Some(GestureCandidate::ReleaseHold)
+        );
+        assert_eq!(
+            gesture_candidate(ControlState::NeedsReady, ControlChord::Send),
+            None
+        );
+        assert_eq!(
+            gesture_candidate(ControlState::Holding, ControlChord::Hold),
+            None
+        );
+    }
+
+    #[test]
+    fn active_status_carries_the_controller_candidate_progress() {
+        let now = Instant::now();
+        let mut control = GestureControl::default();
+        let hands = [
+            ControlHand::new("Open_Palm", 0.9),
+            ControlHand::new("Open_Palm", 0.9),
+        ];
+        assert_eq!(
+            control.observe(ControlSample {
+                frame_sequence: 1,
+                captured_at: now,
+                observed_at: now + Duration::from_millis(20),
+                hands: &hands,
+            }),
+            None
+        );
+
+        assert_eq!(
+            control_status(&control, Some(12), now),
+            ControlStatus::Active {
+                voice_request_id: 12,
+                state: gsv_vision_control::GestureState::NeedsReady,
+                progress: Some(
+                    GestureProgress::new(GestureCandidate::Arm, 0).expect("bounded progress")
+                ),
+            }
+        );
+    }
+
+    #[test]
+    fn annotated_control_presentation_expires_progress_without_changing_state() {
+        let observed_at = Instant::now();
+        let progress = GestureProgress::new(GestureCandidate::Send, 640).expect("bounded progress");
+        let status = ControlStatus::Active {
+            voice_request_id: 77,
+            state: gsv_vision_control::GestureState::Ready,
+            progress: Some(progress),
+        };
+        let diagnostic = ControlDiagnostic::Stabilizing {
+            chord: crate::control::ControlChord::Send,
+            confidence_percent: 88,
+            progress_percent: 64,
+        };
+
+        assert_eq!(
+            control_presentation(
+                status,
+                diagnostic,
+                observed_at,
+                observed_at + ANNOTATED_PRESENTATION_FRESHNESS,
+            ),
+            ControlPresentation {
+                status,
+                diagnostic: ControlPresentationDiagnostic::Controller(diagnostic),
+            }
+        );
+        assert_eq!(
+            control_presentation(
+                status,
+                diagnostic,
+                observed_at,
+                observed_at + ANNOTATED_PRESENTATION_FRESHNESS + Duration::from_millis(1),
+            ),
+            ControlPresentation {
+                status: ControlStatus::Active {
+                    voice_request_id: 77,
+                    state: gsv_vision_control::GestureState::Ready,
+                    progress: None,
+                },
+                diagnostic: ControlPresentationDiagnostic::AwaitingFreshObservation,
+            }
+        );
+    }
+
+    #[test]
+    fn one_visible_hand_reaches_the_controller_diagnostic() {
+        use crate::observation::{HandObservation, Handedness, Landmark};
+
+        let captured_at = Instant::now();
+        let observation = Observation {
+            frame_sequence: 1,
+            observed_at: captured_at + Duration::from_millis(20),
+            hands: vec![HandObservation {
+                handedness: Handedness::Left,
+                handedness_score: 0.95,
+                gesture: "Open_Palm".to_string(),
+                gesture_score: 0.95,
+                landmarks: [Landmark::default(); 21],
+            }],
+            inference_time: Duration::from_millis(20),
+        };
+        let mut control = GestureControl::default();
+
+        assert_eq!(
+            observe_control(&mut control, &observation, captured_at),
+            None
+        );
+        assert_eq!(
+            control.diagnostic(),
+            ControlDiagnostic::NeedTwoHands { detected: 1 }
         );
     }
 
@@ -728,6 +985,7 @@ mod tests {
         let status = ControlStatus::Active {
             voice_request_id: 12,
             state: gsv_vision_control::GestureState::Ready,
+            progress: None,
         };
         let previous = Some((status, started_at));
 
@@ -746,6 +1004,7 @@ mod tests {
             ControlStatus::Active {
                 voice_request_id: 12,
                 state: gsv_vision_control::GestureState::Holding,
+                progress: None,
             },
             started_at + Duration::from_millis(1),
         ));

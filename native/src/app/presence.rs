@@ -3,8 +3,8 @@ use std::time::Duration;
 
 use gpui::prelude::FluentBuilder as _;
 use gpui::{
-    div, px, relative, Animation, AnimationExt as _, AnyElement, Context, InteractiveElement as _,
-    IntoElement, ParentElement as _, Render, Styled, Window,
+    canvas, div, point, px, relative, Animation, AnimationExt as _, AnyElement, Context,
+    InteractiveElement as _, IntoElement, ParentElement as _, PathBuilder, Render, Styled, Window,
 };
 
 use crate::theme;
@@ -17,6 +17,8 @@ const MAX_PRESENCE_LINES: usize = MAX_VISIBLE_ACTIVITY_LINES + 1;
 const MAX_PRESENCE_LABEL_CHARS: usize = 96;
 const PRESENCE_TEXT_SIZE: f32 = 16.5;
 const INDICATOR_WIDTH: f32 = 18.0;
+const DWELL_DISK_SIZE: f32 = 13.0;
+const DWELL_ARC_SEGMENTS: usize = 48;
 
 #[cfg(target_os = "macos")]
 const STOP_HINT: &str = "⌘ . TO STOP";
@@ -31,6 +33,9 @@ pub(super) enum PresenceMotion {
     Read,
     Mutate,
     Execute,
+    /// Exact normalized dwell progress supplied by the operation that owns
+    /// acceptance. The presence lane only paints it; it never advances time.
+    Dwell(u16),
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -76,8 +81,8 @@ impl PresenceLane {
 
     /// Replaces the bounded presentation state and notifies only when something visible changed.
     ///
-    /// Status and motion changes advance the animation epoch. A stop-hint-only change deliberately
-    /// keeps the epoch stable, so it cannot restart otherwise steady activity indicators.
+    /// Status and indicator-kind changes advance the animation epoch. Exact dwell samples and
+    /// stop-hint-only changes keep it stable, so neither restarts unrelated activity indicators.
     pub(super) fn set_state(
         &mut self,
         lines: Vec<PresenceLine>,
@@ -99,9 +104,11 @@ impl PresenceLane {
         reduced_motion: bool,
     ) -> bool {
         let lines = normalize_lines(lines);
-        let restart_animation =
-            self.state.lines != lines || self.state.reduced_motion != reduced_motion;
-        let changed = restart_animation || self.state.show_stop_hint != show_stop_hint;
+        let restart_animation = self.state.reduced_motion != reduced_motion
+            || !same_animation_identity(&self.state.lines, &lines);
+        let changed = self.state.lines != lines
+            || self.state.reduced_motion != reduced_motion
+            || self.state.show_stop_hint != show_stop_hint;
         if !changed {
             return false;
         }
@@ -134,6 +141,19 @@ impl PresenceLane {
             .child(line.label.clone())
             .into_any_element()
     }
+}
+
+fn same_animation_identity(previous: &[PresenceLine], next: &[PresenceLine]) -> bool {
+    previous.len() == next.len()
+        && previous.iter().zip(next).all(|(previous, next)| {
+            previous.label == next.label
+                && match (previous.motion, next.motion) {
+                    // A new normalized sample repaints the disk but must not
+                    // restart unrelated bounded presence animations.
+                    (PresenceMotion::Dwell(_), PresenceMotion::Dwell(_)) => true,
+                    (previous, next) => previous == next,
+                }
+        })
 }
 
 impl Render for PresenceLane {
@@ -231,6 +251,7 @@ fn render_indicator(
         PresenceMotion::Execute => {
             render_execute_indicator(line_index, animation_epoch, reduced_motion)
         }
+        PresenceMotion::Dwell(progress_permille) => render_dwell_indicator(progress_permille),
     };
 
     div()
@@ -240,6 +261,52 @@ fn render_indicator(
         .h(px(16.0))
         .flex_shrink_0()
         .child(indicator)
+        .into_any_element()
+}
+
+fn render_dwell_indicator(progress_permille: u16) -> AnyElement {
+    let progress = f32::from(progress_permille.min(1_000)) / 1_000.0;
+    let fill = theme::color(theme::LIVE);
+
+    div()
+        .absolute()
+        .left(px((INDICATOR_WIDTH - DWELL_DISK_SIZE) / 2.0))
+        .top(px((16.0 - DWELL_DISK_SIZE) / 2.0))
+        .size(px(DWELL_DISK_SIZE))
+        .rounded_full()
+        .bg(theme::color(theme::TEXT_FAINT).opacity(0.28))
+        .child(
+            canvas(
+                move |_, _, _| {},
+                move |bounds, _, window, _| {
+                    if progress <= 0.0 {
+                        return;
+                    }
+
+                    let center = point(
+                        bounds.origin.x + bounds.size.width / 2.0,
+                        bounds.origin.y + bounds.size.height / 2.0,
+                    );
+                    let radius = DWELL_DISK_SIZE / 2.0;
+                    let start_angle = -TAU / 4.0;
+                    let sweep = TAU * progress;
+                    let mut builder = PathBuilder::fill();
+                    builder.move_to(center);
+                    for step in 0..=DWELL_ARC_SEGMENTS {
+                        let angle = start_angle + sweep * (step as f32 / DWELL_ARC_SEGMENTS as f32);
+                        builder.line_to(point(
+                            center.x + px(angle.cos() * radius),
+                            center.y + px(angle.sin() * radius),
+                        ));
+                    }
+                    builder.close();
+                    if let Ok(path) = builder.build() {
+                        window.paint_path(path, fill);
+                    }
+                },
+            )
+            .size_full(),
+        )
         .into_any_element()
 }
 
@@ -550,6 +617,30 @@ mod tests {
 
         assert!(lane.replace_state(vec![line("Searching…", PresenceMotion::Search)], true, true,));
         assert_eq!(lane.animation_epoch, 2);
+    }
+
+    #[test]
+    fn dwell_samples_repaint_without_restarting_presence_animations() {
+        let mut lane = PresenceLane::new(
+            vec![line("Preparing to send", PresenceMotion::Dwell(125))],
+            false,
+            false,
+        );
+
+        assert!(lane.replace_state(
+            vec![line("Preparing to send", PresenceMotion::Dwell(725))],
+            false,
+            false,
+        ));
+        assert_eq!(lane.animation_epoch, 0);
+        assert_eq!(lane.state.lines[0].motion, PresenceMotion::Dwell(725));
+
+        assert!(lane.replace_state(
+            vec![line("Gestures ready", PresenceMotion::Breathe)],
+            false,
+            false,
+        ));
+        assert_eq!(lane.animation_epoch, 1);
     }
 
     #[test]

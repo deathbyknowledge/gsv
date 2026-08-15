@@ -6,8 +6,9 @@ policy, and optional diagnostic window. Camera pixels never enter GPUI, the
 gateway, logs, files, or GSV application IPC. They are handed only to local
 MediaPipe inference and, in debug mode, the OS display system. A bounded private
 pipe carries reliable `hold`, `release_hold`, and `send` intents plus
-replace-latest semantic control status. Active events are scoped to the exact
-voice request, and every event is scoped to the random helper session.
+replace-latest semantic control status with bounded candidate progress. Active
+events are scoped to the exact voice request, and every event is scoped to the
+random helper session.
 
 The runtime does not require Python. It consists of this Rust executable, a
 source-built native MediaPipe library, and the verified 8.0 MiB Gesture
@@ -40,10 +41,13 @@ The debug window mirrors presentation, but inference always receives the
 original camera frame. It draws up to two 21-point hand skeletons, handedness,
 canned gesture labels and confidence, a simple two-hand relationship, and
 capture/inference/render timing. It also shows the semantic controller state:
-DISABLED, NEEDS READY, READY, or HOLDING. The same request-scoped state is sent
-to Desktop as replace-latest presentation feedback; it cannot invoke an action.
-Capture and inference each retain only their latest value, so a slow machine
-drops stale frames rather than accumulating a private video queue.
+DISABLED, NEEDS READY, READY, or HOLDING, the exact fixed-vocabulary rejection,
+and clockwise progress through the complete temporal evidence gate. The same
+request-scoped state and quantized progress are sent to Desktop as
+replace-latest presentation feedback; they cannot invoke an action. Raw labels,
+scores, landmarks, and diagnostics remain inside the helper. Capture and
+inference each retain only their latest value, so a slow machine drops stale
+frames rather than accumulating a private video queue.
 
 ## Gesture grammar
 
@@ -57,11 +61,15 @@ order and anatomical handedness do not assign roles.
 - Hold open palm + thumbs-up for 700 ms to stop dictation, await its matching
   authoritative final transcript, and enter the normal Desktop send owner.
 
-Entry confidence is 0.80 with continuation hysteresis at 0.65. Evidence also
-requires consecutive/support thresholds, fresh frames, and bounded inference
-gaps. Missing hands, low confidence, stale frames, helper failure, or tracking
-loss never release HOLD. This batch does not infer speech silence or auto-send
-from transcript timing; that requires a separate audio-owner activity signal.
+Initial two-palm arming enters at 0.70 confidence. Hold, send, and explicit hold
+release enter at 0.80; continuation hysteresis is 0.65. Evidence also requires
+the gesture-specific dwell, match count, strong-sample count, consecutive and
+support thresholds, fresh frames, and bounded inference gaps. Progress is the
+minimum of those aggregate gates and remains below complete until the
+authoritative transition or intent. Missing hands, low confidence, stale
+frames, helper failure, or tracking loss never release HOLD. This batch does
+not infer speech silence or auto-send from transcript timing; that requires a
+separate audio-owner activity signal.
 
 ## Local overrides
 

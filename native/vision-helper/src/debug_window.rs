@@ -7,7 +7,7 @@ use minifb::{Key, ScaleMode, Window, WindowOptions};
 
 use crate::camera::CameraStats;
 use crate::observation::{FrameView, Observation};
-use crate::overlay::{draw_overlay, ControlOverlay, PerfText};
+use crate::overlay::{draw_overlay, ControlOverlay, ControlPresentationDiagnostic, PerfText};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct DebugWindowConfig {
@@ -113,6 +113,7 @@ impl DebugWindow {
         observation: Option<&Observation>,
         control_status: ControlStatus,
         app_held: bool,
+        control_diagnostic: ControlPresentationDiagnostic,
         camera_stats: &CameraStats,
     ) -> Result<(), DebugWindowError> {
         let width = usize::try_from(frame.width).map_err(|_| DebugWindowError::InvalidFrame)?;
@@ -166,6 +167,7 @@ impl DebugWindow {
             ControlOverlay {
                 status: control_status,
                 app_held,
+                diagnostic: control_diagnostic,
             },
             &perf,
             self.mirror,

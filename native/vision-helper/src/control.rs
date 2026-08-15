@@ -8,7 +8,8 @@ use std::time::{Duration, Instant};
 
 pub use gsv_vision_control::GestureState as ControlState;
 
-const ENTER_SCORE: f32 = 0.80;
+const READY_ENTER_SCORE: f32 = 0.70;
+const ACTION_ENTER_SCORE: f32 = 0.80;
 const CONTINUE_SCORE: f32 = 0.65;
 const MIN_SUPPORT_PERCENT: u16 = 80;
 const MIN_STRONG_SAMPLES: u16 = 3;
@@ -30,6 +31,62 @@ pub enum ControlIntent {
     EngageAutoSendHold,
     ReleaseAutoSendHold,
     Send,
+}
+
+/// Fixed local-only vocabulary for explaining the temporal controller in the
+/// diagnostic window. Its observation-derived counts, percentages, and
+/// timings are bounded and quantized; labels, landmarks, and request IDs are
+/// omitted, and the value never crosses GSV IPC or logs.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ControlChord {
+    Ready,
+    Hold,
+    Send,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ControlProgress {
+    pub chord: ControlChord,
+    pub progress_permille: u16,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ControlDiagnostic {
+    AwaitingPose,
+    NeedTwoHands {
+        detected: u8,
+    },
+    UnsupportedPose,
+    UnexpectedPose {
+        chord: ControlChord,
+    },
+    InvalidScore,
+    InvalidOrder,
+    FrameTooOld {
+        age_ms: u16,
+    },
+    SampleGap {
+        gap_ms: u16,
+    },
+    EvidenceGap {
+        gap_ms: u16,
+    },
+    LowConfidence {
+        chord: ControlChord,
+        observed_percent: u8,
+        required_percent: u8,
+    },
+    Stabilizing {
+        chord: ControlChord,
+        confidence_percent: u8,
+        progress_percent: u8,
+    },
+    Cooldown {
+        remaining_ms: u16,
+    },
+    Accepted {
+        chord: ControlChord,
+    },
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -57,6 +114,7 @@ pub struct ControlSample<'a> {
 /// control vocabulary.
 pub struct GestureControl {
     state: ControlState,
+    diagnostic: ControlDiagnostic,
     candidate: Option<Candidate>,
     last_frame_sequence: Option<u64>,
     last_captured_at: Option<Instant>,
@@ -81,6 +139,7 @@ impl GestureControl {
             } else {
                 ControlState::NeedsReady
             },
+            diagnostic: ControlDiagnostic::AwaitingPose,
             candidate: None,
             last_frame_sequence: None,
             last_captured_at: None,
@@ -93,6 +152,26 @@ impl GestureControl {
     #[must_use]
     pub const fn state(&self) -> ControlState {
         self.state
+    }
+
+    #[must_use]
+    pub const fn diagnostic(&self) -> ControlDiagnostic {
+        self.diagnostic
+    }
+
+    /// Returns the complete aggregate evidence for the current candidate.
+    /// Pending evidence is capped below completion; the authoritative state
+    /// transition or intent is the only completion edge.
+    #[must_use]
+    pub fn progress(&self, now: Instant) -> Option<ControlProgress> {
+        let candidate = self.candidate.as_ref()?;
+        if now.saturating_duration_since(candidate.last_match_at) > MAX_EVIDENCE_GAP {
+            return None;
+        }
+        Some(ControlProgress {
+            chord: candidate.chord.into(),
+            progress_permille: candidate.progress_permille(now).min(999),
+        })
     }
 
     /// Re-synchronizes at an explicit voice-session boundary. This never emits
@@ -115,6 +194,7 @@ impl GestureControl {
     /// required, but their array order and anatomical handedness are ignored.
     pub fn observe(&mut self, sample: ControlSample<'_>) -> Option<ControlIntent> {
         if !self.accept_order(&sample) {
+            self.diagnostic = ControlDiagnostic::InvalidOrder;
             self.fence_tracking();
             return None;
         }
@@ -125,18 +205,37 @@ impl GestureControl {
         self.last_frame_sequence = Some(sample.frame_sequence);
         self.last_captured_at = Some(sample.captured_at);
 
-        if gap.is_some_and(|gap| gap > MAX_SAMPLE_GAP)
-            || sample
-                .observed_at
-                .checked_duration_since(sample.captured_at)
-                .is_none_or(|age| age > MAX_FRAME_AGE)
-        {
+        let Some(age) = sample
+            .observed_at
+            .checked_duration_since(sample.captured_at)
+        else {
+            self.diagnostic = ControlDiagnostic::InvalidOrder;
+            self.fence_tracking();
+            return None;
+        };
+        if age > MAX_FRAME_AGE {
+            self.diagnostic = ControlDiagnostic::FrameTooOld {
+                age_ms: bounded_millis(age),
+            };
+            self.fence_tracking();
+            return None;
+        }
+        if let Some(gap) = gap.filter(|gap| *gap > MAX_SAMPLE_GAP) {
+            self.diagnostic = ControlDiagnostic::SampleGap {
+                gap_ms: bounded_millis(gap),
+            };
             self.fence_tracking();
             return None;
         }
 
         let now = sample.captured_at;
-        let reading = classify_chord(sample.hands);
+        let reading = match classify_chord(sample.hands) {
+            Ok(reading) => Some(reading),
+            Err(failure) => {
+                self.diagnostic = failure.diagnostic();
+                None
+            }
+        };
         if reading.is_some_and(|reading| reading.quality >= CONTINUE_SCORE) {
             self.last_supported_at = Some(now);
         }
@@ -172,29 +271,41 @@ impl GestureControl {
         reading: Option<ChordReading>,
     ) -> Option<ControlIntent> {
         let target = reading.and_then(|reading| {
-            self.accepted_target(reading.chord)
-                .then_some((reading.chord, reading.quality))
+            self.accepted_target(reading.chord).then_some((
+                reading.chord,
+                reading.quality,
+                self.entry_score(reading.chord),
+            ))
         });
+        if let Some(reading) = reading.filter(|reading| !self.accepted_target(reading.chord)) {
+            self.diagnostic = ControlDiagnostic::UnexpectedPose {
+                chord: reading.chord.into(),
+            };
+        }
+
+        let mut evidence_gap = None;
 
         match (self.candidate.as_mut(), target) {
-            (Some(candidate), Some((chord, quality))) if candidate.chord == chord => {
-                if now.saturating_duration_since(candidate.last_match_at) > MAX_EVIDENCE_GAP {
-                    if quality >= ENTER_SCORE {
+            (Some(candidate), Some((chord, quality, entry_score))) if candidate.chord == chord => {
+                let gap = now.saturating_duration_since(candidate.last_match_at);
+                if gap > MAX_EVIDENCE_GAP {
+                    evidence_gap = Some(gap);
+                    if quality >= entry_score {
                         *candidate = Candidate::new(chord, now);
                     } else {
                         candidate.record_miss();
                     }
                 } else if quality >= CONTINUE_SCORE {
-                    candidate.record_match(now, quality >= ENTER_SCORE);
+                    candidate.record_match(now, quality >= entry_score);
                 } else {
                     candidate.record_miss();
                 }
             }
-            (Some(candidate), Some((chord, quality))) if quality >= ENTER_SCORE => {
+            (Some(candidate), Some((chord, quality, entry_score))) if quality >= entry_score => {
                 *candidate = Candidate::new(chord, now);
             }
             (Some(candidate), _) => candidate.record_miss(),
-            (None, Some((chord, quality))) if quality >= ENTER_SCORE => {
+            (None, Some((chord, quality, entry_score))) if quality >= entry_score => {
                 self.candidate = Some(Candidate::new(chord, now));
             }
             (None, _) => {}
@@ -203,13 +314,41 @@ impl GestureControl {
         if self.candidate.as_ref().is_some_and(|candidate| {
             now.saturating_duration_since(candidate.last_match_at) > MAX_EVIDENCE_GAP
         }) {
+            if let Some(gap) = evidence_gap {
+                self.diagnostic = ControlDiagnostic::EvidenceGap {
+                    gap_ms: bounded_millis(gap),
+                };
+            }
             self.candidate = None;
             return None;
         }
 
+        if let Some((chord, quality, entry_score)) = target {
+            self.diagnostic = if let Some(gap) = evidence_gap {
+                ControlDiagnostic::EvidenceGap {
+                    gap_ms: bounded_millis(gap),
+                }
+            } else if quality < entry_score {
+                ControlDiagnostic::LowConfidence {
+                    chord: chord.into(),
+                    observed_percent: score_percent(quality),
+                    required_percent: score_percent(entry_score),
+                }
+            } else {
+                ControlDiagnostic::Stabilizing {
+                    chord: chord.into(),
+                    confidence_percent: score_percent(quality),
+                    progress_percent: self.progress(now).map_or(0, |progress| {
+                        u8::try_from(progress.progress_permille / 10).unwrap_or(100)
+                    }),
+                }
+            };
+        }
+
         let ready = self.candidate.as_ref().is_some_and(|candidate| {
-            let current_is_strong = target
-                .is_some_and(|(chord, quality)| chord == candidate.chord && quality >= ENTER_SCORE);
+            let current_is_strong = target.is_some_and(|(chord, quality, entry_score)| {
+                chord == candidate.chord && quality >= entry_score
+            });
             current_is_strong && candidate.is_stable(now)
         });
         if !ready {
@@ -223,9 +362,18 @@ impl GestureControl {
                 | (ControlState::Holding, Chord::Ready)
         );
         if produces_intent && !self.cooldown_complete(now) {
+            let remaining = self.last_intent_at.map_or(Duration::ZERO, |previous| {
+                MIN_INTENT_SPACING.saturating_sub(now.saturating_duration_since(previous))
+            });
+            self.diagnostic = ControlDiagnostic::Cooldown {
+                remaining_ms: bounded_millis(remaining),
+            };
             return None;
         }
         self.candidate = None;
+        self.diagnostic = ControlDiagnostic::Accepted {
+            chord: chord.into(),
+        };
         match (self.state, chord) {
             (ControlState::NeedsReady, Chord::Ready) => {
                 self.state = ControlState::Ready;
@@ -261,6 +409,14 @@ impl GestureControl {
             ControlState::NeedsReady => chord == Chord::Ready,
             ControlState::Ready => matches!(chord, Chord::Hold | Chord::Send),
             ControlState::Holding => chord == Chord::Ready,
+        }
+    }
+
+    fn entry_score(&self, chord: Chord) -> f32 {
+        if self.state == ControlState::NeedsReady && chord == Chord::Ready {
+            READY_ENTER_SCORE
+        } else {
+            ACTION_ENTER_SCORE
         }
     }
 
@@ -308,6 +464,16 @@ enum Chord {
     Ready,
     Hold,
     Send,
+}
+
+impl From<Chord> for ControlChord {
+    fn from(chord: Chord) -> Self {
+        match chord {
+            Chord::Ready => Self::Ready,
+            Chord::Hold => Self::Hold,
+            Chord::Send => Self::Send,
+        }
+    }
 }
 
 impl Chord {
@@ -379,24 +545,61 @@ impl Candidate {
             && u32::from(self.matches) * 100
                 >= u32::from(self.samples) * u32::from(MIN_SUPPORT_PERCENT)
     }
+
+    fn progress_permille(&self, now: Instant) -> u16 {
+        let dwell = duration_progress_permille(
+            now.saturating_duration_since(self.started_at),
+            self.chord.dwell(),
+        );
+        let matches = count_progress_permille(self.matches, self.chord.minimum_matches());
+        let strong = count_progress_permille(self.strong_matches, MIN_STRONG_SAMPLES);
+        let consecutive = count_progress_permille(self.consecutive_matches, 2);
+        let required_support = u32::from(self.samples)
+            .saturating_mul(u32::from(MIN_SUPPORT_PERCENT))
+            .div_ceil(100);
+        let support = count_progress_permille(
+            self.matches,
+            u16::try_from(required_support).unwrap_or(u16::MAX),
+        );
+        dwell.min(matches).min(strong).min(consecutive).min(support)
+    }
 }
 
-fn classify_chord(hands: &[ControlHand<'_>]) -> Option<ChordReading> {
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ClassificationFailure {
+    HandCount(usize),
+    InvalidScore,
+    UnsupportedPose,
+}
+
+impl ClassificationFailure {
+    fn diagnostic(self) -> ControlDiagnostic {
+        match self {
+            Self::HandCount(detected) => ControlDiagnostic::NeedTwoHands {
+                detected: u8::try_from(detected).unwrap_or(u8::MAX),
+            },
+            Self::InvalidScore => ControlDiagnostic::InvalidScore,
+            Self::UnsupportedPose => ControlDiagnostic::UnsupportedPose,
+        }
+    }
+}
+
+fn classify_chord(hands: &[ControlHand<'_>]) -> Result<ChordReading, ClassificationFailure> {
     let [first, second] = hands else {
-        return None;
+        return Err(ClassificationFailure::HandCount(hands.len()));
     };
     if !valid_score(first.score) || !valid_score(second.score) {
-        return None;
+        return Err(ClassificationFailure::InvalidScore);
     }
-    let first_pose = parse_pose(first.gesture)?;
-    let second_pose = parse_pose(second.gesture)?;
+    let first_pose = parse_pose(first.gesture).ok_or(ClassificationFailure::UnsupportedPose)?;
+    let second_pose = parse_pose(second.gesture).ok_or(ClassificationFailure::UnsupportedPose)?;
     let chord = match (first_pose, second_pose) {
         (Pose::OpenPalm, Pose::OpenPalm) => Chord::Ready,
         (Pose::OpenPalm, Pose::ClosedFist) | (Pose::ClosedFist, Pose::OpenPalm) => Chord::Hold,
         (Pose::OpenPalm, Pose::ThumbUp) | (Pose::ThumbUp, Pose::OpenPalm) => Chord::Send,
-        _ => return None,
+        _ => return Err(ClassificationFailure::UnsupportedPose),
     };
-    Some(ChordReading {
+    Ok(ChordReading {
         chord,
         quality: first.score.min(second.score),
     })
@@ -413,6 +616,38 @@ fn parse_pose(label: &str) -> Option<Pose> {
 
 fn valid_score(score: f32) -> bool {
     score.is_finite() && (0.0..=1.0).contains(&score)
+}
+
+fn bounded_millis(duration: Duration) -> u16 {
+    u16::try_from(duration.as_millis()).unwrap_or(u16::MAX)
+}
+
+fn score_percent(score: f32) -> u8 {
+    (score.clamp(0.0, 1.0) * 100.0).floor() as u8
+}
+
+fn count_progress_permille(current: u16, required: u16) -> u16 {
+    if required == 0 {
+        return 1_000;
+    }
+    u16::try_from(u32::from(current).saturating_mul(1_000) / u32::from(required))
+        .unwrap_or(u16::MAX)
+        .min(1_000)
+}
+
+fn duration_progress_permille(current: Duration, required: Duration) -> u16 {
+    if required.is_zero() {
+        return 1_000;
+    }
+    u16::try_from(
+        current
+            .as_millis()
+            .saturating_mul(1_000)
+            .checked_div(required.as_millis())
+            .unwrap_or_default(),
+    )
+    .unwrap_or(u16::MAX)
+    .min(1_000)
 }
 
 #[cfg(test)]
@@ -492,6 +727,10 @@ mod tests {
                 .is_empty());
             assert_eq!(self.control.state(), ControlState::Ready);
         }
+
+        fn progress(&self) -> Option<ControlProgress> {
+            self.control.progress(self.start + self.elapsed)
+        }
     }
 
     #[test]
@@ -508,6 +747,158 @@ mod tests {
             None
         );
         assert_eq!(harness.control.state(), ControlState::Ready);
+    }
+
+    #[test]
+    fn initial_ready_pose_uses_a_lower_non_action_threshold() {
+        let mut below = Harness::new(false);
+        assert!(below
+            .drive(20, ("Open_Palm", 0.69), ("Open_Palm", 0.69))
+            .is_empty());
+        assert_eq!(below.control.state(), ControlState::NeedsReady);
+        assert_eq!(
+            below.control.diagnostic(),
+            ControlDiagnostic::LowConfidence {
+                chord: ControlChord::Ready,
+                observed_percent: 69,
+                required_percent: 70,
+            }
+        );
+
+        let mut boundary = Harness::new(false);
+        assert!(boundary
+            .drive(8, ("Open_Palm", 0.70), ("Open_Palm", 0.70))
+            .is_empty());
+        assert_eq!(boundary.control.state(), ControlState::Ready);
+        assert_eq!(
+            boundary.control.diagnostic(),
+            ControlDiagnostic::Accepted {
+                chord: ControlChord::Ready,
+            }
+        );
+    }
+
+    #[test]
+    fn progress_uses_the_complete_candidate_evidence_gate() {
+        let mut harness = Harness::new(false);
+        assert_eq!(harness.sample(("Open_Palm", 0.9), ("Open_Palm", 0.9)), None);
+        assert_eq!(
+            harness.progress(),
+            Some(ControlProgress {
+                chord: ControlChord::Ready,
+                progress_permille: 0,
+            })
+        );
+
+        assert_eq!(harness.sample(("Open_Palm", 0.9), ("Open_Palm", 0.9)), None);
+        assert_eq!(
+            harness.progress(),
+            Some(ControlProgress {
+                chord: ControlChord::Ready,
+                progress_permille: 142,
+            })
+        );
+    }
+
+    #[test]
+    fn aggregate_complete_weak_sample_stays_pending_below_full() {
+        let mut harness = Harness::new(false);
+        assert!(harness
+            .drive(7, ("Open_Palm", 0.9), ("Open_Palm", 0.9))
+            .is_empty());
+        assert_eq!(
+            harness.sample(("Open_Palm", 0.69), ("Open_Palm", 0.69)),
+            None
+        );
+        assert_eq!(harness.control.state(), ControlState::NeedsReady);
+        assert_eq!(
+            harness.progress(),
+            Some(ControlProgress {
+                chord: ControlChord::Ready,
+                progress_permille: 999,
+            })
+        );
+
+        assert_eq!(
+            harness.sample(("Open_Palm", 0.70), ("Open_Palm", 0.70)),
+            None
+        );
+        assert_eq!(harness.control.state(), ControlState::Ready);
+        assert_eq!(harness.progress(), None);
+    }
+
+    #[test]
+    fn lower_ready_threshold_does_not_weaken_commands_or_release() {
+        for command in ["Closed_Fist", "Thumb_Up"] {
+            let mut harness = Harness::new(false);
+            harness.ready();
+            assert!(harness
+                .drive(20, ("Open_Palm", 0.70), (command, 0.70))
+                .is_empty());
+            assert_eq!(harness.control.state(), ControlState::Ready);
+            assert_eq!(
+                harness.control.diagnostic(),
+                ControlDiagnostic::LowConfidence {
+                    chord: if command == "Closed_Fist" {
+                        ControlChord::Hold
+                    } else {
+                        ControlChord::Send
+                    },
+                    observed_percent: 70,
+                    required_percent: 80,
+                }
+            );
+        }
+
+        let mut held = Harness::new(true);
+        assert!(held
+            .drive(20, ("Open_Palm", 0.70), ("Open_Palm", 0.70))
+            .is_empty());
+        assert_eq!(held.control.state(), ControlState::Holding);
+        assert_eq!(
+            held.control.diagnostic(),
+            ControlDiagnostic::LowConfidence {
+                chord: ControlChord::Ready,
+                observed_percent: 70,
+                required_percent: 80,
+            }
+        );
+    }
+
+    #[test]
+    fn diagnostics_do_not_round_subthreshold_action_confidence_up() {
+        let mut harness = Harness::new(false);
+        harness.ready();
+        assert_eq!(
+            harness.sample(("Open_Palm", 0.795), ("Closed_Fist", 0.795)),
+            None
+        );
+        assert_eq!(
+            harness.control.diagnostic(),
+            ControlDiagnostic::LowConfidence {
+                chord: ControlChord::Hold,
+                observed_percent: 79,
+                required_percent: 80,
+            }
+        );
+    }
+
+    #[test]
+    fn diagnostic_identifies_an_evidence_cadence_gap() {
+        let mut harness = Harness::new(false);
+        assert_eq!(harness.sample(("Open_Palm", 0.9), ("Open_Palm", 0.9)), None);
+        assert_eq!(
+            harness.sample_after(
+                Duration::from_millis(181),
+                ("Open_Palm", 0.9),
+                ("Open_Palm", 0.9),
+            ),
+            None
+        );
+        assert_eq!(
+            harness.control.diagnostic(),
+            ControlDiagnostic::EvidenceGap { gap_ms: 181 }
+        );
     }
 
     #[test]

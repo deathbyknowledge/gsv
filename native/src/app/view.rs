@@ -410,6 +410,7 @@ fn presence_lines(
     uncertain: bool,
     approval: bool,
     voice_notice: Option<&str>,
+    voice_dwell_progress: Option<u16>,
 ) -> Vec<PresenceLine> {
     if approval {
         return legacy_activity
@@ -439,7 +440,9 @@ fn presence_lines(
             .collect()
     };
     if let Some(notice) = voice_notice {
-        let motion = if notice.contains("LISTENING") {
+        let motion = if let Some(progress_permille) = voice_dwell_progress {
+            PresenceMotion::Dwell(progress_permille.min(1_000))
+        } else if notice.contains("LISTENING") {
             PresenceMotion::Breathe
         } else if notice.contains("DOWNLOADING")
             || notice.contains("VERIFYING")
@@ -1187,12 +1190,16 @@ impl GsvApp {
         };
         self.cancel_stale_media_preparations();
         release_assets(released, cx);
+        let voice_dwell_progress = self
+            .visible_voice_gesture_progress()
+            .map(|progress| progress.progress_permille());
         let activity = presence_lines(
             &live_activity_entries,
             self.conversation.activity.as_deref(),
             !draft_visible && state == MomentState::Uncertain,
             self.interaction.is_approval(),
             self.voice_notice.as_deref(),
+            voice_dwell_progress,
         );
         let show_stop_hint = self.conversation.active_run_id.is_some() && !activity.is_empty();
         // GPUI animation frames dirty ancestor views. Keep the distinctive indicator shape but
@@ -2490,17 +2497,33 @@ mod tests {
             category: ActivityCategory::RunningCommands,
             count: 2,
         }];
-        assert!(presence_lines(&live, Some("THINKING"), true, true, Some("LISTENING")).is_empty());
+        assert!(presence_lines(
+            &live,
+            Some("THINKING"),
+            true,
+            true,
+            Some("LISTENING"),
+            Some(500),
+        )
+        .is_empty());
         assert_eq!(
-            presence_lines(&live, Some("THINKING"), true, false, None)[0].label,
+            presence_lines(&live, Some("THINKING"), true, false, None, None)[0].label,
             "Running 2 commands…"
         );
         assert_eq!(
-            presence_lines(&live, Some("APPLYING"), false, true, None)[0].label,
+            presence_lines(&live, Some("APPLYING"), false, true, None, None)[0].label,
             "Applying…"
         );
         assert_eq!(
-            presence_lines(&live, Some("NOT APPLIED · TRY AGAIN"), false, true, None,)[0].label,
+            presence_lines(
+                &live,
+                Some("NOT APPLIED · TRY AGAIN"),
+                false,
+                true,
+                None,
+                None,
+            )[0]
+            .label,
             "Not applied. Try again."
         );
     }
@@ -2511,7 +2534,7 @@ mod tests {
             category: ActivityCategory::RunningCode,
             count: 1,
         }];
-        let lines = presence_lines(&live, None, false, false, Some("LISTENING"));
+        let lines = presence_lines(&live, None, false, false, Some("LISTENING"), None);
 
         assert_eq!(lines[0].label, "LISTENING");
         assert_eq!(lines[0].motion, PresenceMotion::Breathe);
@@ -2523,10 +2546,22 @@ mod tests {
             false,
             false,
             Some("DOWNLOADING VOICE INPUT · 42%"),
+            None,
         );
         assert_eq!(downloading[0].motion, PresenceMotion::Search);
-        let finishing = presence_lines(&[], None, false, false, Some("FINISHING VOICE INPUT"));
+        let finishing =
+            presence_lines(&[], None, false, false, Some("FINISHING VOICE INPUT"), None);
         assert_eq!(finishing[0].motion, PresenceMotion::Mutate);
+
+        let gesture_dwell = presence_lines(
+            &[],
+            None,
+            false,
+            false,
+            Some("LISTENING · PREPARING TO SEND"),
+            Some(725),
+        );
+        assert_eq!(gesture_dwell[0].motion, PresenceMotion::Dwell(725));
     }
 
     #[test]

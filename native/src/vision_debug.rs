@@ -1179,6 +1179,7 @@ mod tests {
         let active_status = ControlStatus::Active {
             voice_request_id: 21,
             state: gsv_vision_control::GestureState::NeedsReady,
+            progress: None,
         };
         let mut sequence = 0;
 
@@ -1279,6 +1280,7 @@ mod tests {
                     status: ControlStatus::Active {
                         voice_request_id: 31,
                         state,
+                        progress: None,
                     },
                 },
             )
@@ -1299,6 +1301,7 @@ mod tests {
         let final_status = ControlStatus::Active {
             voice_request_id: 31,
             state: gsv_vision_control::GestureState::Holding,
+            progress: None,
         };
         send_vision_event(
             &events,
@@ -1373,6 +1376,7 @@ mod tests {
                 status: ControlStatus::Active {
                     voice_request_id: 31,
                     state: gsv_vision_control::GestureState::Ready,
+                    progress: None,
                 },
             },
         )

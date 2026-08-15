@@ -485,12 +485,14 @@ mod tests {
         assert!(control.publish_status(ControlStatus::Active {
             voice_request_id: 41,
             state: gsv_vision_control::GestureState::Holding,
+            progress: None,
         }));
         assert_eq!(
             status_receiver.try_recv(),
             Ok(ControlStatus::Active {
                 voice_request_id: 41,
                 state: gsv_vision_control::GestureState::Holding,
+                progress: None,
             })
         );
     }

@@ -1,8 +1,9 @@
 use std::time::Duration;
 
 use font8x8::{UnicodeFonts, BASIC_FONTS};
-use gsv_vision_control::{ControlStatus, GestureState};
+use gsv_vision_control::{ControlStatus, GestureCandidate, GestureProgress, GestureState};
 
+use crate::control::{ControlChord, ControlDiagnostic};
 use crate::observation::{HandObservation, Handedness, Landmark, Observation};
 
 pub const HAND_CONNECTIONS: [(usize, usize); 21] = [
@@ -38,6 +39,9 @@ const TEXT_COLOR: u32 = 0xF4_F7_FB;
 const MUTED_TEXT_COLOR: u32 = 0xAF_B8_C6;
 const PANEL_COLOR: u32 = 0x10_13_18;
 const WARNING_COLOR: u32 = 0xFF_B4_54;
+const PROGRESS_TRACK_COLOR: u32 = 0x3E_47_55;
+const PROGRESS_RADIUS: isize = 24;
+const PROGRESS_MARGIN: usize = 12;
 
 #[derive(Clone, Debug)]
 pub struct PerfText {
@@ -59,6 +63,13 @@ pub struct PerfText {
 pub struct ControlOverlay {
     pub status: ControlStatus,
     pub app_held: bool,
+    pub diagnostic: ControlPresentationDiagnostic,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ControlPresentationDiagnostic {
+    Controller(ControlDiagnostic),
+    AwaitingFreshObservation,
 }
 
 pub fn draw_overlay(
@@ -91,6 +102,7 @@ pub fn draw_overlay(
     }
 
     draw_perf(pixels, width, height, control, perf);
+    draw_gesture_progress(pixels, width, height, status_progress(control.status));
 }
 
 fn draw_hand(
@@ -120,13 +132,7 @@ fn draw_hand(
     let Some((label_x, label_y)) = label_anchor(&points, width, height) else {
         return;
     };
-    let label = format!(
-        "{} {:.0}%  {} {:.0}%",
-        handedness_name(hand.handedness),
-        percent(hand.handedness_score),
-        display_gesture(&hand.gesture),
-        percent(hand.gesture_score),
-    );
+    let label = hand_label(hand);
     draw_text_box(
         pixels,
         width,
@@ -136,6 +142,16 @@ fn draw_hand(
         color,
         PANEL_COLOR,
     );
+}
+
+fn hand_label(hand: &HandObservation) -> String {
+    format!(
+        "{} {:.1}%  {} {:.1}%",
+        handedness_name(hand.handedness),
+        percent(hand.handedness_score),
+        display_gesture(&hand.gesture),
+        percent(hand.gesture_score),
+    )
 }
 
 fn draw_pair(
@@ -229,6 +245,8 @@ fn draw_perf(
         perf.capture_errors,
     );
     let (control_status, control_color) = control_status_text(control.status, control.app_held);
+    let (control_diagnostic, diagnostic_color) =
+        control_diagnostic_text(control.status, control.diagnostic);
 
     let panel_width = [
         camera_status.len(),
@@ -236,6 +254,7 @@ fn draw_perf(
         timings.len(),
         sequences.len(),
         control_status.len(),
+        control_diagnostic.len(),
     ]
     .into_iter()
     .max()
@@ -248,7 +267,7 @@ fn draw_perf(
         width,
         height,
         (0, 0),
-        (panel_width, 53),
+        (panel_width, 63),
         PANEL_COLOR,
     );
     draw_text(pixels, width, height, 4, 3, camera_status, status_color);
@@ -256,6 +275,15 @@ fn draw_perf(
     draw_text(pixels, width, height, 4, 23, &timings, MUTED_TEXT_COLOR);
     draw_text(pixels, width, height, 4, 33, &sequences, MUTED_TEXT_COLOR);
     draw_text(pixels, width, height, 4, 43, control_status, control_color);
+    draw_text(
+        pixels,
+        width,
+        height,
+        4,
+        53,
+        &control_diagnostic,
+        diagnostic_color,
+    );
 }
 
 fn control_status_text(status: ControlStatus, app_held: bool) -> (&'static str, u32) {
@@ -306,6 +334,178 @@ fn control_status_text(status: ControlStatus, app_held: bool) -> (&'static str, 
             RIGHT_COLOR,
         ),
     }
+}
+
+fn control_diagnostic_text(
+    status: ControlStatus,
+    diagnostic: ControlPresentationDiagnostic,
+) -> (String, u32) {
+    if status == ControlStatus::Disabled {
+        return ("CONTROL INACTIVE".to_string(), MUTED_TEXT_COLOR);
+    }
+
+    let ControlPresentationDiagnostic::Controller(diagnostic) = diagnostic else {
+        return (
+            "CONTROL WAITING FOR FRESH OBSERVATION".to_string(),
+            WARNING_COLOR,
+        );
+    };
+    match diagnostic {
+        ControlDiagnostic::AwaitingPose => {
+            ("CONTROL WAITING FOR POSE".to_string(), MUTED_TEXT_COLOR)
+        }
+        ControlDiagnostic::NeedTwoHands { detected } => (
+            format!("CONTROL NEEDS 2 HANDS - DETECTED {}", detected.min(2)),
+            WARNING_COLOR,
+        ),
+        ControlDiagnostic::UnsupportedPose => (
+            "CONTROL UNSUPPORTED TWO-HAND POSE".to_string(),
+            WARNING_COLOR,
+        ),
+        ControlDiagnostic::UnexpectedPose { chord } => (
+            format!("CONTROL {} NOT VALID IN THIS STATE", chord_text(chord)),
+            WARNING_COLOR,
+        ),
+        ControlDiagnostic::InvalidScore => {
+            ("CONTROL INVALID CONFIDENCE".to_string(), WARNING_COLOR)
+        }
+        ControlDiagnostic::InvalidOrder => {
+            ("CONTROL FRAME ORDER REJECTED".to_string(), WARNING_COLOR)
+        }
+        ControlDiagnostic::FrameTooOld { age_ms } => {
+            (format!("CONTROL FRAME TOO OLD {age_ms}MS"), WARNING_COLOR)
+        }
+        ControlDiagnostic::SampleGap { gap_ms } => (
+            format!("CONTROL SAMPLE GAP {gap_ms}MS - RESTARTING"),
+            WARNING_COLOR,
+        ),
+        ControlDiagnostic::EvidenceGap { gap_ms } => (
+            format!("CONTROL EVIDENCE GAP {gap_ms}MS - RESTARTING"),
+            WARNING_COLOR,
+        ),
+        ControlDiagnostic::LowConfidence {
+            chord,
+            observed_percent,
+            required_percent,
+        } => (
+            format!(
+                "CONTROL {} {}% - NEED {}%",
+                chord_text(chord),
+                observed_percent.min(100),
+                required_percent.min(100),
+            ),
+            WARNING_COLOR,
+        ),
+        ControlDiagnostic::Stabilizing {
+            chord,
+            confidence_percent,
+            progress_percent,
+        } => (
+            format!(
+                "CONTROL {} {}% - EVIDENCE {}%",
+                chord_text(chord),
+                confidence_percent.min(100),
+                progress_percent.min(100),
+            ),
+            PAIR_COLOR,
+        ),
+        ControlDiagnostic::Cooldown { remaining_ms } => {
+            (format!("CONTROL COOLDOWN {remaining_ms}MS"), WARNING_COLOR)
+        }
+        ControlDiagnostic::Accepted { chord } => (
+            format!("CONTROL {} ACCEPTED", chord_text(chord)),
+            PAIR_COLOR,
+        ),
+    }
+}
+
+fn chord_text(chord: ControlChord) -> &'static str {
+    match chord {
+        ControlChord::Ready => "READY",
+        ControlChord::Hold => "HOLD",
+        ControlChord::Send => "SEND",
+    }
+}
+
+fn status_progress(status: ControlStatus) -> Option<GestureProgress> {
+    match status {
+        ControlStatus::Disabled => None,
+        ControlStatus::Active { progress, .. } => progress,
+    }
+}
+
+fn draw_gesture_progress(
+    pixels: &mut [u32],
+    width: usize,
+    height: usize,
+    progress: Option<GestureProgress>,
+) {
+    let Some(progress) = progress else {
+        return;
+    };
+    let Ok(radius) = usize::try_from(PROGRESS_RADIUS) else {
+        return;
+    };
+    let diameter = radius.saturating_mul(2).saturating_add(1);
+    let indicator_height = diameter.saturating_add(14);
+    if width < diameter.saturating_add(PROGRESS_MARGIN.saturating_mul(2))
+        || height < indicator_height.saturating_add(PROGRESS_MARGIN)
+    {
+        return;
+    }
+
+    let (_, color) = candidate_style(progress.candidate());
+    let center = (
+        width.saturating_sub(PROGRESS_MARGIN).saturating_sub(radius),
+        PROGRESS_MARGIN.saturating_add(radius),
+    );
+    draw_clockwise_disk(
+        pixels,
+        width,
+        height,
+        ClockwiseDisk {
+            center,
+            radius: PROGRESS_RADIUS,
+            progress_permille: progress.progress_permille(),
+            progress_color: color,
+            track_color: PROGRESS_TRACK_COLOR,
+        },
+    );
+
+    let label = progress_label(progress);
+    let label_width = text_width(&label).saturating_add(4).min(width);
+    let label_x = width
+        .saturating_sub(PROGRESS_MARGIN)
+        .saturating_sub(label_width);
+    let label_y = center
+        .1
+        .saturating_add(radius)
+        .saturating_add(4)
+        .min(height.saturating_sub(10));
+    draw_text_box(
+        pixels,
+        width,
+        height,
+        (label_x, label_y),
+        &label,
+        color,
+        PANEL_COLOR,
+    );
+}
+
+fn candidate_style(candidate: GestureCandidate) -> (&'static str, u32) {
+    match candidate {
+        GestureCandidate::Arm => ("ARM", PAIR_COLOR),
+        GestureCandidate::Hold => ("HOLD", RIGHT_COLOR),
+        GestureCandidate::ReleaseHold => ("RELEASE", LEFT_COLOR),
+        GestureCandidate::Send => ("SEND", WARNING_COLOR),
+    }
+}
+
+fn progress_label(progress: GestureProgress) -> String {
+    let (candidate, _) = candidate_style(progress.candidate());
+    let permille = progress.progress_permille();
+    format!("EVIDENCE {candidate} {}.{}%", permille / 10, permille % 10,)
 }
 
 fn duration_text(duration: Option<Duration>) -> String {
@@ -525,6 +725,62 @@ fn draw_disc(
     }
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct ClockwiseDisk {
+    center: (usize, usize),
+    radius: isize,
+    progress_permille: u16,
+    progress_color: u32,
+    track_color: u32,
+}
+
+fn draw_clockwise_disk(pixels: &mut [u32], width: usize, height: usize, disk: ClockwiseDisk) {
+    if disk.radius <= 0 {
+        return;
+    }
+    let radius_squared = disk.radius.saturating_mul(disk.radius);
+    let progress_permille = disk.progress_permille.min(1_000);
+
+    for dy in -disk.radius..=disk.radius {
+        for dx in -disk.radius..=disk.radius {
+            let distance_squared = dx.saturating_mul(dx).saturating_add(dy.saturating_mul(dy));
+            if distance_squared > radius_squared {
+                continue;
+            }
+            let active = progress_permille == 1_000
+                || progress_permille > 0
+                    && ((dx == 0 && dy == 0)
+                        || clockwise_position_permille(dx, dy) < progress_permille);
+            let Some(x) = disk.center.0.checked_add_signed(dx) else {
+                continue;
+            };
+            let Some(y) = disk.center.1.checked_add_signed(dy) else {
+                continue;
+            };
+            put_pixel(
+                pixels,
+                width,
+                height,
+                x,
+                y,
+                if active {
+                    disk.progress_color
+                } else {
+                    disk.track_color
+                },
+            );
+        }
+    }
+}
+
+fn clockwise_position_permille(dx: isize, dy: isize) -> u16 {
+    let mut angle = (dx as f64).atan2(-(dy as f64));
+    if angle < 0.0 {
+        angle += std::f64::consts::TAU;
+    }
+    ((angle / std::f64::consts::TAU * 1_000.0).floor() as u16).min(999)
+}
+
 fn draw_line(
     pixels: &mut [u32],
     width: usize,
@@ -611,13 +867,169 @@ mod tests {
     }
 
     #[test]
+    fn clockwise_disk_starts_at_twelve_and_advances_rightward() {
+        const SIZE: usize = 25;
+        const CENTER: usize = 12;
+        const RADIUS: usize = 8;
+        const ACTIVE: u32 = 7;
+        const TRACK: u32 = 3;
+        let pixel = |pixels: &[u32], x, y| pixels[y * SIZE + x];
+
+        let mut quarter = vec![0; SIZE * SIZE];
+        draw_clockwise_disk(
+            &mut quarter,
+            SIZE,
+            SIZE,
+            ClockwiseDisk {
+                center: (CENTER, CENTER),
+                radius: RADIUS as isize,
+                progress_permille: 250,
+                progress_color: ACTIVE,
+                track_color: TRACK,
+            },
+        );
+        assert_eq!(pixel(&quarter, CENTER, CENTER - RADIUS), ACTIVE);
+        assert_eq!(pixel(&quarter, CENTER + RADIUS, CENTER), TRACK);
+        assert_eq!(pixel(&quarter, CENTER, CENTER + RADIUS), TRACK);
+        assert_eq!(pixel(&quarter, CENTER - RADIUS, CENTER), TRACK);
+        assert_eq!(pixel(&quarter, CENTER, CENTER), ACTIVE);
+
+        let mut three_quarters = vec![0; SIZE * SIZE];
+        draw_clockwise_disk(
+            &mut three_quarters,
+            SIZE,
+            SIZE,
+            ClockwiseDisk {
+                center: (CENTER, CENTER),
+                radius: RADIUS as isize,
+                progress_permille: 750,
+                progress_color: ACTIVE,
+                track_color: TRACK,
+            },
+        );
+        assert_eq!(pixel(&three_quarters, CENTER, CENTER - RADIUS), ACTIVE);
+        assert_eq!(pixel(&three_quarters, CENTER + RADIUS, CENTER), ACTIVE);
+        assert_eq!(pixel(&three_quarters, CENTER, CENTER + RADIUS), ACTIVE);
+        assert_eq!(pixel(&three_quarters, CENTER - RADIUS, CENTER), TRACK);
+    }
+
+    #[test]
+    fn clockwise_disk_has_exact_empty_and_complete_states() {
+        const SIZE: usize = 25;
+        let mut empty = vec![0; SIZE * SIZE];
+        draw_clockwise_disk(
+            &mut empty,
+            SIZE,
+            SIZE,
+            ClockwiseDisk {
+                center: (12, 12),
+                radius: 8,
+                progress_permille: 0,
+                progress_color: 7,
+                track_color: 3,
+            },
+        );
+        assert!(!empty.contains(&7));
+        assert!(empty.contains(&3));
+
+        let mut complete = vec![0; SIZE * SIZE];
+        draw_clockwise_disk(
+            &mut complete,
+            SIZE,
+            SIZE,
+            ClockwiseDisk {
+                center: (12, 12),
+                radius: 8,
+                progress_permille: 1_000,
+                progress_color: 7,
+                track_color: 3,
+            },
+        );
+        assert!(complete.contains(&7));
+        assert!(!complete.contains(&3));
+    }
+
+    #[test]
+    fn progress_indicator_disappears_with_the_candidate() {
+        const WIDTH: usize = 200;
+        const HEIGHT: usize = 100;
+        let mut pixels = vec![0; WIDTH * HEIGHT];
+
+        draw_gesture_progress(&mut pixels, WIDTH, HEIGHT, None);
+
+        assert!(pixels.iter().all(|pixel| *pixel == 0));
+    }
+
+    #[test]
+    fn progress_indicator_uses_normalized_status_progress_clockwise() {
+        const WIDTH: usize = 200;
+        const HEIGHT: usize = 100;
+        let center = (
+            WIDTH - PROGRESS_MARGIN - PROGRESS_RADIUS as usize,
+            PROGRESS_MARGIN + PROGRESS_RADIUS as usize,
+        );
+        let mut pixels = vec![0; WIDTH * HEIGHT];
+        let progress = GestureProgress::new(GestureCandidate::Arm, 250).expect("bounded progress");
+
+        draw_gesture_progress(&mut pixels, WIDTH, HEIGHT, Some(progress));
+
+        let radius = PROGRESS_RADIUS as usize;
+        assert_eq!(pixels[(center.1 - radius) * WIDTH + center.0], PAIR_COLOR);
+        assert_eq!(
+            pixels[center.1 * WIDTH + center.0 + radius],
+            PROGRESS_TRACK_COLOR
+        );
+    }
+
+    #[test]
+    fn progress_candidate_labels_and_colors_are_closed() {
+        let cases = [
+            (GestureCandidate::Arm, "ARM", PAIR_COLOR),
+            (GestureCandidate::Hold, "HOLD", RIGHT_COLOR),
+            (GestureCandidate::ReleaseHold, "RELEASE", LEFT_COLOR),
+            (GestureCandidate::Send, "SEND", WARNING_COLOR),
+        ];
+
+        for (candidate, expected_label, expected_color) in cases {
+            assert_eq!(candidate_style(candidate), (expected_label, expected_color));
+            let progress = GestureProgress::new(candidate, 427).expect("bounded progress");
+            assert_eq!(
+                progress_label(progress),
+                format!("EVIDENCE {expected_label} 42.7%")
+            );
+        }
+    }
+
+    #[test]
+    fn progress_indicator_reads_only_the_bounded_status_snapshot() {
+        let progress = GestureProgress::new(GestureCandidate::Send, 640).expect("bounded progress");
+        assert_eq!(status_progress(ControlStatus::Disabled), None);
+        assert_eq!(
+            status_progress(ControlStatus::Active {
+                voice_request_id: 99,
+                state: GestureState::Ready,
+                progress: None,
+            }),
+            None
+        );
+        assert_eq!(
+            status_progress(ControlStatus::Active {
+                voice_request_id: 99,
+                state: GestureState::Ready,
+                progress: Some(progress),
+            }),
+            Some(progress)
+        );
+    }
+
+    #[test]
     fn two_hands_draw_a_pair_relationship_between_palms() {
         let hand = |handedness, x, gesture: &str| HandObservation {
             handedness,
             handedness_score: 0.9,
             gesture: gesture.to_string(),
             gesture_score: 0.8,
-            landmarks: [Landmark { x, y: 0.6, z: 0.0 }; 21],
+            landmarks: [Landmark { x, y: 0.7, z: 0.0 }; 21],
         };
         let observed_at = Instant::now();
         let observation = Observation {
@@ -654,14 +1066,22 @@ mod tests {
                 status: ControlStatus::Active {
                     voice_request_id: 8,
                     state: GestureState::Ready,
+                    progress: None,
                 },
                 app_held: false,
+                diagnostic: ControlPresentationDiagnostic::Controller(
+                    ControlDiagnostic::Stabilizing {
+                        chord: ControlChord::Hold,
+                        confidence_percent: 82,
+                        progress_percent: 40,
+                    },
+                ),
             },
             &perf,
             false,
         );
 
-        assert_eq!(pixels[60 * 101 + 50], PAIR_COLOR);
+        assert_eq!(pixels[70 * 101 + 50], PAIR_COLOR);
     }
 
     #[test]
@@ -672,6 +1092,7 @@ mod tests {
                 ControlStatus::Active {
                     voice_request_id: 7,
                     state: GestureState::NeedsReady,
+                    progress: None,
                 },
                 false,
                 "GESTURES NEED READY",
@@ -680,6 +1101,7 @@ mod tests {
                 ControlStatus::Active {
                     voice_request_id: 8,
                     state: GestureState::Ready,
+                    progress: None,
                 },
                 false,
                 "GESTURES READY",
@@ -688,6 +1110,7 @@ mod tests {
                 ControlStatus::Active {
                     voice_request_id: 9,
                     state: GestureState::Holding,
+                    progress: None,
                 },
                 true,
                 "GESTURES HOLDING",
@@ -708,6 +1131,7 @@ mod tests {
         let locally_holding = ControlStatus::Active {
             voice_request_id: 17,
             state: GestureState::Holding,
+            progress: None,
         };
         assert_eq!(
             control_status_text(locally_holding, false).0,
@@ -721,10 +1145,134 @@ mod tests {
         let locally_released = ControlStatus::Active {
             voice_request_id: 17,
             state: GestureState::Ready,
+            progress: None,
         };
         assert_eq!(
             control_status_text(locally_released, true).0,
             "GESTURES APP HOLDING - RELEASE REQUESTED"
+        );
+    }
+
+    #[test]
+    fn hand_label_keeps_confidence_boundary_visible() {
+        let hand = HandObservation {
+            handedness: Handedness::Left,
+            handedness_score: 0.912,
+            gesture: "Open_Palm".to_string(),
+            gesture_score: 0.795,
+            landmarks: [Landmark::default(); 21],
+        };
+
+        assert_eq!(hand_label(&hand), "L 91.2%  Open_Palm 79.5%");
+    }
+
+    #[test]
+    fn controller_diagnostics_use_fixed_local_vocabulary() {
+        let active = ControlStatus::Active {
+            voice_request_id: 987_654_321,
+            state: GestureState::NeedsReady,
+            progress: None,
+        };
+        let cases = [
+            (ControlDiagnostic::AwaitingPose, "CONTROL WAITING FOR POSE"),
+            (
+                ControlDiagnostic::NeedTwoHands { detected: 1 },
+                "CONTROL NEEDS 2 HANDS - DETECTED 1",
+            ),
+            (
+                ControlDiagnostic::UnsupportedPose,
+                "CONTROL UNSUPPORTED TWO-HAND POSE",
+            ),
+            (
+                ControlDiagnostic::UnexpectedPose {
+                    chord: ControlChord::Hold,
+                },
+                "CONTROL HOLD NOT VALID IN THIS STATE",
+            ),
+            (
+                ControlDiagnostic::InvalidScore,
+                "CONTROL INVALID CONFIDENCE",
+            ),
+            (
+                ControlDiagnostic::InvalidOrder,
+                "CONTROL FRAME ORDER REJECTED",
+            ),
+            (
+                ControlDiagnostic::FrameTooOld { age_ms: 251 },
+                "CONTROL FRAME TOO OLD 251MS",
+            ),
+            (
+                ControlDiagnostic::SampleGap { gap_ms: 251 },
+                "CONTROL SAMPLE GAP 251MS - RESTARTING",
+            ),
+            (
+                ControlDiagnostic::EvidenceGap { gap_ms: 181 },
+                "CONTROL EVIDENCE GAP 181MS - RESTARTING",
+            ),
+            (
+                ControlDiagnostic::LowConfidence {
+                    chord: ControlChord::Ready,
+                    observed_percent: 69,
+                    required_percent: 70,
+                },
+                "CONTROL READY 69% - NEED 70%",
+            ),
+            (
+                ControlDiagnostic::Stabilizing {
+                    chord: ControlChord::Send,
+                    confidence_percent: 84,
+                    progress_percent: 57,
+                },
+                "CONTROL SEND 84% - EVIDENCE 57%",
+            ),
+            (
+                ControlDiagnostic::Cooldown { remaining_ms: 412 },
+                "CONTROL COOLDOWN 412MS",
+            ),
+            (
+                ControlDiagnostic::Accepted {
+                    chord: ControlChord::Ready,
+                },
+                "CONTROL READY ACCEPTED",
+            ),
+        ];
+
+        for (diagnostic, expected) in cases {
+            let (text, _) = control_diagnostic_text(
+                active,
+                ControlPresentationDiagnostic::Controller(diagnostic),
+            );
+            assert_eq!(text, expected);
+            assert!(!text.contains("987654321"));
+        }
+
+        assert_eq!(
+            control_diagnostic_text(
+                ControlStatus::Disabled,
+                ControlPresentationDiagnostic::Controller(ControlDiagnostic::InvalidScore),
+            )
+            .0,
+            "CONTROL INACTIVE"
+        );
+        assert_eq!(
+            control_diagnostic_text(
+                active,
+                ControlPresentationDiagnostic::Controller(ControlDiagnostic::LowConfidence {
+                    chord: ControlChord::Ready,
+                    observed_percent: u8::MAX,
+                    required_percent: u8::MAX,
+                }),
+            )
+            .0,
+            "CONTROL READY 100% - NEED 100%"
+        );
+        assert_eq!(
+            control_diagnostic_text(
+                active,
+                ControlPresentationDiagnostic::AwaitingFreshObservation,
+            )
+            .0,
+            "CONTROL WAITING FOR FRESH OBSERVATION"
         );
     }
 }
