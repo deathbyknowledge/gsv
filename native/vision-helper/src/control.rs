@@ -19,6 +19,7 @@ const SEND_DWELL: Duration = Duration::from_millis(700);
 const MAX_FRAME_AGE: Duration = Duration::from_millis(250);
 const MAX_SAMPLE_GAP: Duration = Duration::from_millis(250);
 const MAX_EVIDENCE_GAP: Duration = Duration::from_millis(180);
+const READY_TRANSITION_GRACE: Duration = Duration::from_secs(1);
 const READY_COMMAND_WINDOW: Duration = Duration::from_secs(3);
 const MIN_INTENT_SPACING: Duration = Duration::from_millis(750);
 
@@ -236,6 +237,8 @@ impl GestureControl {
                 None
             }
         };
+
+        self.expire_ready(now);
         if reading.is_some_and(|reading| reading.quality >= self.tracking_score(reading.chord)) {
             self.last_supported_at = Some(now);
         }
@@ -247,7 +250,6 @@ impl GestureControl {
             self.last_ready_pose_at = Some(now);
         }
 
-        self.expire_ready(now);
         self.advance_candidate(now, reading)
     }
 
@@ -299,6 +301,7 @@ impl GestureControl {
         }
 
         let mut evidence_gap = None;
+        let mut discard_candidate = false;
 
         match (self.candidate.as_mut(), target) {
             (Some(candidate), Some((chord, quality, entry_score))) if candidate.chord == chord => {
@@ -319,11 +322,15 @@ impl GestureControl {
             (Some(candidate), Some((chord, quality, entry_score))) if quality >= entry_score => {
                 *candidate = Candidate::new(chord, now);
             }
-            (Some(candidate), _) => candidate.record_miss(),
+            (Some(_), _) => discard_candidate = true,
             (None, Some((chord, quality, entry_score))) if quality >= entry_score => {
                 self.candidate = Some(Candidate::new(chord, now));
             }
             (None, _) => {}
+        }
+
+        if discard_candidate {
+            self.candidate = None;
         }
 
         if self.candidate.as_ref().is_some_and(|candidate| {
@@ -454,11 +461,12 @@ impl GestureControl {
         }
         let tracking_expired = self
             .last_supported_at
-            .is_none_or(|last| now.saturating_duration_since(last) > MAX_SAMPLE_GAP);
+            .is_none_or(|last| now.saturating_duration_since(last) > READY_TRANSITION_GRACE);
         let command_window_expired = self
             .last_ready_pose_at
             .is_none_or(|last| now.saturating_duration_since(last) > READY_COMMAND_WINDOW);
         if tracking_expired || command_window_expired {
+            self.candidate = None;
             self.state = ControlState::NeedsReady;
             self.last_ready_pose_at = None;
             self.last_supported_at = None;
@@ -722,8 +730,12 @@ mod tests {
         }
 
         fn empty(&mut self) -> Option<ControlIntent> {
+            self.empty_after(STEP)
+        }
+
+        fn empty_after(&mut self, step: Duration) -> Option<ControlIntent> {
             self.sequence += 1;
-            self.elapsed += STEP;
+            self.elapsed += step;
             let captured_at = self.start + self.elapsed;
             self.control.observe(ControlSample {
                 frame_sequence: self.sequence,
@@ -731,6 +743,10 @@ mod tests {
                 observed_at: captured_at + Duration::from_millis(20),
                 hands: &[],
             })
+        }
+
+        fn drive_empty(&mut self, count: usize) -> Vec<ControlIntent> {
+            (0..count).filter_map(|_| self.empty()).collect()
         }
 
         fn drive(
@@ -969,6 +985,33 @@ mod tests {
     }
 
     #[test]
+    fn ready_pose_at_command_window_plus_one_millisecond_must_rearm() {
+        let mut harness = Harness::new(false);
+        harness.ready();
+
+        assert!(harness
+            .drive(60, ("Open_Palm", 0.7), ("Closed_Fist", 0.7))
+            .is_empty());
+        assert_eq!(harness.control.state(), ControlState::Ready);
+        assert_eq!(
+            harness.sample_after(
+                Duration::from_millis(1),
+                ("Open_Palm", 0.9),
+                ("Open_Palm", 0.9),
+            ),
+            None
+        );
+        assert_eq!(harness.control.state(), ControlState::NeedsReady);
+        assert_eq!(
+            harness.progress(),
+            Some(ControlProgress {
+                chord: ControlChord::Ready,
+                progress_permille: 0,
+            })
+        );
+    }
+
+    #[test]
     fn hold_survives_tracking_loss_and_needs_visible_release() {
         let mut harness = Harness::new(false);
         harness.ready();
@@ -1004,14 +1047,158 @@ mod tests {
     }
 
     #[test]
+    fn ready_transition_grace_allows_each_command_after_tracking_loss() {
+        for (command, samples, intent, terminal_state) in [
+            (
+                "Closed_Fist",
+                10,
+                ControlIntent::EngageAutoSendHold,
+                ControlState::Holding,
+            ),
+            (
+                "Thumb_Up",
+                15,
+                ControlIntent::Send,
+                ControlState::NeedsReady,
+            ),
+        ] {
+            let mut harness = Harness::new(false);
+            harness.ready();
+
+            assert!(harness.drive_empty(18).is_empty());
+            assert_eq!(harness.control.state(), ControlState::Ready);
+            assert_eq!(harness.progress(), None);
+
+            assert_eq!(
+                harness.drive(samples, ("Open_Palm", 0.9), (command, 0.9)),
+                [intent]
+            );
+            assert_eq!(harness.control.state(), terminal_state);
+        }
+    }
+
+    #[test]
+    fn command_at_transition_grace_plus_one_millisecond_requires_rearming() {
+        for command in ["Closed_Fist", "Thumb_Up"] {
+            let mut harness = Harness::new(false);
+            harness.ready();
+
+            assert!(harness.drive_empty(20).is_empty());
+            assert_eq!(harness.control.state(), ControlState::Ready);
+            assert_eq!(
+                harness.sample_after(Duration::from_millis(1), ("Open_Palm", 0.9), (command, 0.9),),
+                None
+            );
+            assert_eq!(harness.control.state(), ControlState::NeedsReady);
+            assert_eq!(harness.progress(), None);
+        }
+    }
+
+    #[test]
+    fn ready_expiry_discards_pending_candidate() {
+        let mut harness = Harness::new(false);
+        harness.ready();
+        assert!(harness
+            .drive(3, ("Open_Palm", 0.9), ("Closed_Fist", 0.9))
+            .is_empty());
+        assert!(harness.progress().is_some());
+
+        let expired_at =
+            harness.start + harness.elapsed + READY_TRANSITION_GRACE + Duration::from_millis(1);
+        harness.control.last_ready_pose_at = Some(expired_at);
+        harness.control.expire_ready(expired_at);
+
+        assert_eq!(harness.control.state(), ControlState::NeedsReady);
+        assert_eq!(harness.control.progress(expired_at), None);
+    }
+
+    #[test]
+    fn partial_command_evidence_is_discarded_during_transition_grace() {
+        for (command, fresh_samples_before_intent, intent) in [
+            ("Closed_Fist", 9, ControlIntent::EngageAutoSendHold),
+            ("Thumb_Up", 14, ControlIntent::Send),
+        ] {
+            let mut harness = Harness::new(false);
+            harness.ready();
+            assert!(harness
+                .drive(3, ("Open_Palm", 0.9), (command, 0.9))
+                .is_empty());
+            assert!(harness.progress().is_some());
+
+            assert_eq!(harness.empty(), None);
+            assert_eq!(harness.control.state(), ControlState::Ready);
+            assert_eq!(harness.progress(), None);
+
+            assert!(harness
+                .drive(
+                    fresh_samples_before_intent,
+                    ("Open_Palm", 0.9),
+                    (command, 0.9),
+                )
+                .is_empty());
+            assert_eq!(harness.control.state(), ControlState::Ready);
+            assert_eq!(
+                harness.sample(("Open_Palm", 0.9), (command, 0.9)),
+                Some(intent)
+            );
+        }
+    }
+
+    #[test]
+    fn unsupported_pose_is_an_immediate_candidate_boundary() {
+        let mut harness = Harness::new(false);
+        harness.ready();
+        assert!(harness
+            .drive(3, ("Open_Palm", 0.9), ("Closed_Fist", 0.9))
+            .is_empty());
+        assert!(harness.progress().is_some());
+
+        assert_eq!(harness.sample(("Victory", 1.0), ("Victory", 1.0)), None);
+        assert_eq!(harness.control.state(), ControlState::Ready);
+        assert_eq!(harness.progress(), None);
+
+        assert!(harness
+            .drive(9, ("Open_Palm", 0.9), ("Closed_Fist", 0.9))
+            .is_empty());
+        assert_eq!(
+            harness.sample(("Open_Palm", 0.9), ("Closed_Fist", 0.9)),
+            Some(ControlIntent::EngageAutoSendHold)
+        );
+    }
+
+    #[test]
+    fn different_chord_cannot_bridge_old_candidate_evidence() {
+        let mut harness = Harness::new(false);
+        harness.ready();
+        assert!(harness
+            .drive(3, ("Open_Palm", 0.9), ("Closed_Fist", 0.9))
+            .is_empty());
+        assert!(harness.progress().is_some());
+
+        assert_eq!(harness.sample(("Open_Palm", 0.7), ("Thumb_Up", 0.7)), None);
+        assert_eq!(harness.control.state(), ControlState::Ready);
+        assert_eq!(harness.progress(), None);
+
+        assert!(harness
+            .drive(9, ("Open_Palm", 0.9), ("Closed_Fist", 0.9))
+            .is_empty());
+        assert_eq!(
+            harness.sample(("Open_Palm", 0.9), ("Closed_Fist", 0.9)),
+            Some(ControlIntent::EngageAutoSendHold)
+        );
+    }
+
+    #[test]
     fn one_noisy_frame_does_not_arm_hold_or_send() {
         for command in ["Closed_Fist", "Thumb_Up"] {
             let mut harness = Harness::new(false);
             harness.ready();
             assert_eq!(harness.sample(("Open_Palm", 1.0), (command, 1.0)), None);
-            assert!(harness
-                .drive(8, ("Victory", 1.0), ("Victory", 1.0))
-                .is_empty());
+            assert!(harness.drive_empty(8).is_empty());
+            assert_eq!(harness.control.state(), ControlState::Ready);
+            assert_eq!(harness.progress(), None);
+
+            assert!(harness.drive_empty(13).is_empty());
             assert_eq!(harness.control.state(), ControlState::NeedsReady);
         }
     }
@@ -1024,7 +1211,7 @@ mod tests {
             .drive(5, ("Open_Palm", 0.9), ("Closed_Fist", 0.9))
             .is_empty());
         assert_eq!(
-            harness.sample(("Open_Palm", 0.7), ("Closed_Fist", 0.7)),
+            harness.sample(("Open_Palm", 0.6), ("Closed_Fist", 0.6)),
             None
         );
         assert!(harness
@@ -1059,6 +1246,51 @@ mod tests {
             .drive(2, ("Open_Palm", 0.9), ("Open_Palm", 0.9))
             .is_empty());
         assert_eq!(harness.control.state(), ControlState::Ready);
+    }
+
+    #[test]
+    fn transition_grace_does_not_weaken_transport_freshness_fences() {
+        let mut capture_gap = Harness::new(false);
+        capture_gap.ready();
+        assert_eq!(
+            capture_gap.sample_after(
+                Duration::from_millis(251),
+                ("Open_Palm", 0.9),
+                ("Closed_Fist", 0.9),
+            ),
+            None
+        );
+        assert_eq!(capture_gap.control.state(), ControlState::NeedsReady);
+        assert_eq!(
+            capture_gap.control.diagnostic(),
+            ControlDiagnostic::SampleGap { gap_ms: 251 }
+        );
+        assert_eq!(capture_gap.progress(), None);
+
+        let mut stale_frame = Harness::new(false);
+        stale_frame.ready();
+        stale_frame.sequence += 1;
+        stale_frame.elapsed += STEP;
+        let captured_at = stale_frame.start + stale_frame.elapsed;
+        let hands = [
+            ControlHand::new("Open_Palm", 0.9),
+            ControlHand::new("Closed_Fist", 0.9),
+        ];
+        assert_eq!(
+            stale_frame.control.observe(ControlSample {
+                frame_sequence: stale_frame.sequence,
+                captured_at,
+                observed_at: captured_at + Duration::from_millis(251),
+                hands: &hands,
+            }),
+            None
+        );
+        assert_eq!(stale_frame.control.state(), ControlState::NeedsReady);
+        assert_eq!(
+            stale_frame.control.diagnostic(),
+            ControlDiagnostic::FrameTooOld { age_ms: 251 }
+        );
+        assert_eq!(stale_frame.progress(), None);
     }
 
     #[test]

@@ -63,6 +63,11 @@ order and anatomical handedness do not assign roles.
 
 Initial two-palm arming enters and continues at 0.50 confidence. Hold, send, and
 explicit hold release enter at 0.80 with continuation hysteresis at 0.65.
+After READY, fresh but unrecognized transition frames have a one-second grace
+while the user forms the command pose. They never count toward command
+evidence: hold or send still starts from a complete fresh dwell, and the
+three-second READY window remains absolute. A stale frame or real capture gap
+still fails closed immediately.
 Evidence also requires the gesture-specific dwell, match count, strong-sample
 count, consecutive and support thresholds, fresh frames, and bounded inference
 gaps. Progress is the minimum of those aggregate gates and remains below
