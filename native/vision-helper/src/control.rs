@@ -9,8 +9,8 @@ use std::time::{Duration, Instant};
 pub use gsv_vision_control::GestureState as ControlState;
 
 const ARM_ENTER_SCORE: f32 = 0.50;
-const ACTION_ENTER_SCORE: f32 = 0.80;
-const CONTINUE_SCORE: f32 = 0.65;
+const ACTION_ENTER_SCORE: f32 = 0.50;
+const CONTINUE_SCORE: f32 = 0.50;
 const MIN_SUPPORT_PERCENT: u16 = 80;
 const MIN_STRONG_SAMPLES: u16 = 3;
 const ARM_DWELL: Duration = Duration::from_millis(350);
@@ -845,23 +845,44 @@ mod tests {
             [ControlIntent::Arm]
         );
 
-        for (state, second, chord) in [
-            (ARMED, "Victory", ControlChord::Disarm),
-            (ARMED, "Thumb_Up", ControlChord::Send),
-            (ARMED, "Thumb_Down", ControlChord::Mute),
-            (ARMED_MUTED, "Pointing_Up", ControlChord::Unmute),
+        for (state, second, chord, expected) in [
+            (
+                ARMED,
+                "Victory",
+                ControlChord::Disarm,
+                ControlIntent::Disarm,
+            ),
+            (ARMED, "Thumb_Up", ControlChord::Send, ControlIntent::Send),
+            (ARMED, "Thumb_Down", ControlChord::Mute, ControlIntent::Mute),
+            (
+                ARMED_MUTED,
+                "Pointing_Up",
+                ControlChord::Unmute,
+                ControlIntent::Unmute,
+            ),
         ] {
-            let mut harness = Harness::new(state);
-            assert!(harness
-                .drive(20, ("Open_Palm", 0.799), (second, 0.799))
+            let mut below = Harness::new(state);
+            assert!(below
+                .drive(20, ("Open_Palm", 0.499), (second, 0.499))
                 .is_empty());
             assert_eq!(
-                harness.control.diagnostic(),
+                below.control.diagnostic(),
                 ControlDiagnostic::LowConfidence {
                     chord,
-                    observed_percent: 79,
-                    required_percent: 80,
+                    observed_percent: 49,
+                    required_percent: 50,
                 }
+            );
+
+            let mut boundary = Harness::new(state);
+            let samples = match expected {
+                ControlIntent::Arm | ControlIntent::Disarm => 8,
+                ControlIntent::Mute => 10,
+                ControlIntent::Send | ControlIntent::Unmute => 15,
+            };
+            assert_eq!(
+                boundary.drive(samples, ("Open_Palm", 0.50), (second, 0.50)),
+                [expected]
             );
         }
     }
@@ -1020,13 +1041,13 @@ mod tests {
     }
 
     #[test]
-    fn same_chord_continuation_hysteresis_survives_a_weak_frame() {
+    fn same_chord_continuation_accepts_the_fifty_percent_boundary() {
         let mut harness = Harness::new(ARMED);
         assert!(harness
             .drive(5, ("Open_Palm", 0.9), ("Thumb_Down", 0.9))
             .is_empty());
         assert_eq!(
-            harness.sample(("Open_Palm", 0.65), ("Thumb_Down", 0.65)),
+            harness.sample(("Open_Palm", 0.50), ("Thumb_Down", 0.50)),
             None
         );
         assert!(harness.progress().is_some());

@@ -61,9 +61,8 @@ order and anatomical handedness do not assign roles.
 - Show open palm + pointing-up for 700 ms to unmute explicitly.
 
 Closed fist and all other canned combinations are reserved and unassigned.
-Arming enters and continues at 0.50 confidence. Every other action enters at
-0.80 with continuation hysteresis at 0.65. Armed and muted are absolute,
-Desktop-owned modes rather than helper-local toggles: after emitting any
+Every gesture enters and continues at 0.50 confidence. Armed and muted are
+absolute, Desktop-owned modes rather than helper-local toggles: after emitting any
 intent, the helper blocks further commands until Desktop echoes the resulting
 armed/muted context. A rejected request is also reconciled by that absolute
 echo.
