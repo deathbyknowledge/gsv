@@ -112,7 +112,6 @@ impl DebugWindow {
         frame: &FrameView,
         observation: Option<&Observation>,
         control_status: ControlStatus,
-        app_held: bool,
         control_diagnostic: ControlPresentationDiagnostic,
         camera_stats: &CameraStats,
     ) -> Result<(), DebugWindowError> {
@@ -166,7 +165,6 @@ impl DebugWindow {
             aligned_observation,
             ControlOverlay {
                 status: control_status,
-                app_held,
                 diagnostic: control_diagnostic,
             },
             &perf,

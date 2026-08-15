@@ -42,14 +42,16 @@ struct QueuedEvent {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct ControlContext {
     pub voice_request_id: Option<u64>,
-    pub held: bool,
+    pub armed: bool,
+    pub muted: bool,
     pub revision: u64,
 }
 
 impl ControlContext {
     const DISABLED: Self = Self {
         voice_request_id: None,
-        held: false,
+        armed: false,
+        muted: false,
         revision: 0,
     };
 }
@@ -356,7 +358,8 @@ fn apply_context_command(
     let DesktopCommand::SetContext {
         session_id,
         voice_request_id,
-        held,
+        armed,
+        muted,
     } = command;
     if session_id != expected_session {
         return false;
@@ -364,11 +367,12 @@ fn apply_context_command(
     let Ok(mut context) = context.lock() else {
         return false;
     };
-    if context.voice_request_id != voice_request_id || context.held != held {
-        context.voice_request_id = voice_request_id;
-        context.held = held;
-        context.revision = context.revision.wrapping_add(1).max(1);
-    }
+    context.voice_request_id = voice_request_id;
+    context.armed = armed;
+    context.muted = muted;
+    // Every complete context frame is an authority acknowledgement, including
+    // an unchanged echo after SEND or a rejected mode request.
+    context.revision = context.revision.wrapping_add(1).max(1);
     true
 }
 
@@ -385,6 +389,10 @@ mod tests {
         assert_eq!(event_channel_enabled(None), Ok(false));
         assert_eq!(
             event_channel_enabled(Some("1")),
+            Err(ControlTransportError::InvalidEnvironment)
+        );
+        assert_eq!(
+            event_channel_enabled(Some("gsv-vision-control-v1")),
             Err(ControlTransportError::InvalidEnvironment)
         );
         assert_eq!(
@@ -462,28 +470,32 @@ mod tests {
     }
 
     #[test]
-    fn context_is_session_fenced_and_revisioned_only_on_change() {
+    fn every_session_fenced_context_frame_is_an_authority_acknowledgement() {
         let context = Mutex::new(ControlContext::DISABLED);
-        let listening = DesktopCommand::set_context(SESSION, Some(17), false).expect("context");
+        let listening =
+            DesktopCommand::set_context(SESSION, Some(17), false, false).expect("context");
         assert!(apply_context_command(SESSION, &context, listening));
         assert_eq!(
             *context.lock().expect("context"),
             ControlContext {
                 voice_request_id: Some(17),
-                held: false,
+                armed: false,
+                muted: false,
                 revision: 1,
             }
         );
         assert!(apply_context_command(SESSION, &context, listening));
-        assert_eq!(context.lock().expect("context").revision, 1);
-
-        let held = DesktopCommand::set_context(SESSION, Some(17), true).expect("held context");
-        assert!(apply_context_command(SESSION, &context, held));
         assert_eq!(context.lock().expect("context").revision, 2);
 
-        let wrong = DesktopCommand::set_context(SessionId::new(8, 9), None, false)
+        let armed_muted =
+            DesktopCommand::set_context(SESSION, Some(17), true, true).expect("active context");
+        assert!(apply_context_command(SESSION, &context, armed_muted));
+        assert_eq!(context.lock().expect("context").revision, 3);
+
+        let wrong = DesktopCommand::set_context(SessionId::new(8, 9), None, false, false)
             .expect("disabled context");
         assert!(!apply_context_command(SESSION, &context, wrong));
+        assert_eq!(context.lock().expect("context").revision, 3);
     }
 
     #[test]
@@ -500,14 +512,14 @@ mod tests {
         assert!(control.publish_status(ControlStatus::Disabled));
         assert!(control.publish_status(ControlStatus::Active {
             voice_request_id: 41,
-            state: gsv_vision_control::GestureState::Holding,
+            state: gsv_vision_control::GestureState::new(true, true),
             progress: None,
         }));
         assert_eq!(
             status_receiver.try_recv(),
             Ok(ControlStatus::Active {
                 voice_request_id: 41,
-                state: gsv_vision_control::GestureState::Holding,
+                state: gsv_vision_control::GestureState::new(true, true),
                 progress: None,
             })
         );

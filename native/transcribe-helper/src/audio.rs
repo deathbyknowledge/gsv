@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 use std::str::FromStr as _;
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use cpal::traits::{DeviceTrait as _, HostTrait as _, StreamTrait as _};
@@ -20,6 +20,7 @@ const SILENT_INPUT_DURATION: Duration = Duration::from_secs(2);
 const MAX_INPUT_DEVICES: usize = 32;
 const MAX_DEVICE_NAME_BYTES: usize = 256;
 const MAX_DEVICE_ID_BYTES: usize = 512;
+const MUTED_STATE_BIT: u64 = 1;
 
 const _: () = {
     assert!(MAX_INPUT_DEVICES <= 32);
@@ -54,12 +55,222 @@ pub enum AudioPacket {
 
 pub struct BufferedSamples {
     samples: Vec<f32>,
+    capture_state: u64,
     _reservation: SampleReservation,
 }
 
 impl BufferedSamples {
     pub fn as_slice(&self) -> &[f32] {
         &self.samples
+    }
+
+    pub fn capture_state(&self) -> u64 {
+        self.capture_state
+    }
+}
+
+/// Atomic callback gate for one active capture request. Every state change
+/// advances the generation; queued packets retain the generation observed by
+/// their callback so work that raced with mute can be rejected downstream.
+pub struct CaptureGate {
+    state: AtomicU64,
+}
+
+impl CaptureGate {
+    pub fn new() -> Self {
+        Self {
+            state: AtomicU64::new(0),
+        }
+    }
+
+    fn accepting_state(&self) -> Option<u64> {
+        let state = self.state.load(Ordering::Acquire);
+        (state & MUTED_STATE_BIT == 0).then_some(state)
+    }
+
+    pub fn accepts(&self, state: u64) -> bool {
+        state & MUTED_STATE_BIT == 0 && self.state.load(Ordering::Acquire) == state
+    }
+
+    fn ensure_muted(&self) -> MuteTransition {
+        let mut current = self.state.load(Ordering::Acquire);
+        loop {
+            if current & MUTED_STATE_BIT != 0 {
+                return MuteTransition {
+                    state: current,
+                    changed: false,
+                };
+            }
+            let next = next_capture_state(current, true);
+            match self.state.compare_exchange_weak(
+                current,
+                next,
+                Ordering::AcqRel,
+                Ordering::Acquire,
+            ) {
+                Ok(_) => {
+                    return MuteTransition {
+                        state: next,
+                        changed: true,
+                    };
+                }
+                Err(actual) => current = actual,
+            }
+        }
+    }
+
+    fn invalidate(&self) {
+        let mut current = self.state.load(Ordering::Acquire);
+        loop {
+            let next = next_capture_state(current, true);
+            match self.state.compare_exchange_weak(
+                current,
+                next,
+                Ordering::AcqRel,
+                Ordering::Acquire,
+            ) {
+                Ok(_) => return,
+                Err(actual) => current = actual,
+            }
+        }
+    }
+
+    fn apply(&self, request: MuteRequest, muted: bool) -> MuteOutcome {
+        if muted {
+            let current = self.state.load(Ordering::Acquire);
+            if current == request.expected_state && current & MUTED_STATE_BIT != 0 {
+                return MuteOutcome {
+                    muted: true,
+                    changed: request.changed,
+                };
+            }
+            let transition = self.ensure_muted();
+            return MuteOutcome {
+                muted: true,
+                changed: transition.changed,
+            };
+        }
+
+        let expected = request.expected_state;
+        if expected & MUTED_STATE_BIT == 0 {
+            return MuteOutcome {
+                muted: self.state.load(Ordering::Acquire) & MUTED_STATE_BIT != 0,
+                changed: false,
+            };
+        }
+        let next = next_capture_state(expected, false);
+        match self
+            .state
+            .compare_exchange(expected, next, Ordering::AcqRel, Ordering::Acquire)
+        {
+            Ok(_) => MuteOutcome {
+                muted: false,
+                changed: request.changed,
+            },
+            Err(actual) => MuteOutcome {
+                muted: actual & MUTED_STATE_BIT != 0,
+                changed: false,
+            },
+        }
+    }
+}
+
+struct MuteTransition {
+    state: u64,
+    changed: bool,
+}
+
+fn next_capture_state(current: u64, muted: bool) -> u64 {
+    let generation = (current & !MUTED_STATE_BIT).wrapping_add(2);
+    generation | u64::from(muted)
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct MuteRequest {
+    expected_state: u64,
+    changed: bool,
+}
+
+impl MuteRequest {
+    pub fn changes_state(self) -> bool {
+        self.changed
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct MuteOutcome {
+    pub muted: bool,
+    pub changed: bool,
+}
+
+#[derive(Clone, Default)]
+pub struct CaptureControl {
+    active: Arc<Mutex<Option<ActiveCapture>>>,
+}
+
+struct ActiveCapture {
+    request_id: u64,
+    gate: Arc<CaptureGate>,
+}
+
+impl CaptureControl {
+    pub fn activate(&self, request_id: u64, gate: Arc<CaptureGate>) -> CaptureRegistration {
+        let mut active = self
+            .active
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        *active = Some(ActiveCapture {
+            request_id,
+            gate: Arc::clone(&gate),
+        });
+        CaptureRegistration {
+            control: self.clone(),
+            request_id,
+            gate,
+        }
+    }
+
+    pub fn request_mute(&self, request_id: u64, muted: bool) -> Option<MuteRequest> {
+        let active = self
+            .active
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        let active = active
+            .as_ref()
+            .filter(|active| active.request_id == request_id)?;
+        let (expected_state, changed) = if muted {
+            let transition = active.gate.ensure_muted();
+            (transition.state, transition.changed)
+        } else {
+            let expected_state = active.gate.state.load(Ordering::Acquire);
+            (expected_state, expected_state & MUTED_STATE_BIT != 0)
+        };
+        Some(MuteRequest {
+            expected_state,
+            changed,
+        })
+    }
+}
+
+pub struct CaptureRegistration {
+    control: CaptureControl,
+    request_id: u64,
+    gate: Arc<CaptureGate>,
+}
+
+impl Drop for CaptureRegistration {
+    fn drop(&mut self) {
+        self.gate.invalidate();
+        let mut active = self
+            .control
+            .active
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        if active.as_ref().is_some_and(|active| {
+            active.request_id == self.request_id && Arc::ptr_eq(&active.gate, &self.gate)
+        }) {
+            *active = None;
+        }
     }
 }
 
@@ -80,27 +291,50 @@ struct CaptureWriter {
     buffered_samples: Arc<AtomicUsize>,
     max_buffered_samples: usize,
     terminal: Arc<AtomicBool>,
+    gate: Arc<CaptureGate>,
     silence: SilenceDetector,
 }
 
 impl CaptureWriter {
-    fn push(&mut self, samples: Vec<f32>) {
+    fn accepting_state(&self) -> Option<u64> {
+        (!self.terminal.load(Ordering::Acquire))
+            .then(|| self.gate.accepting_state())
+            .flatten()
+    }
+
+    fn push(&mut self, capture_state: u64, samples: Vec<f32>) {
         if samples.is_empty() || self.terminal.load(Ordering::Acquire) {
             return;
         }
-        if self.silence.observe(&samples) {
+        if !self.gate.accepts(capture_state) {
+            return;
+        }
+        let silent = self.silence.observe(capture_state, &samples);
+        if !self.gate.accepts(capture_state) {
+            return;
+        }
+        if silent {
             self.fail(AudioError::Silent);
             return;
         }
 
-        let Some(reservation) = self.reserve(samples.len()) else {
-            self.fail(AudioError::Overflow);
-            return;
+        let reservation = match self.reserve(samples.len()) {
+            Some(reservation) => reservation,
+            None => {
+                if self.gate.accepts(capture_state) {
+                    self.fail(AudioError::Overflow);
+                }
+                return;
+            }
         };
+        if !self.gate.accepts(capture_state) {
+            return;
+        }
         if self
             .packets
             .send(AudioPacket::Samples(BufferedSamples {
                 samples,
+                capture_state,
                 _reservation: reservation,
             }))
             .is_err()
@@ -144,6 +378,7 @@ struct SilenceDetector {
     zero_samples: usize,
     threshold_samples: usize,
     armed: bool,
+    capture_state: Option<u64>,
 }
 
 impl SilenceDetector {
@@ -152,10 +387,18 @@ impl SilenceDetector {
             zero_samples: 0,
             threshold_samples: samples_for_duration(sample_rate, SILENT_INPUT_DURATION),
             armed: true,
+            capture_state: None,
         }
     }
 
-    fn observe(&mut self, samples: &[f32]) -> bool {
+    fn observe(&mut self, capture_state: u64, samples: &[f32]) -> bool {
+        if self.capture_state != Some(capture_state) {
+            self.capture_state = Some(capture_state);
+            // Exact-zero startup diagnosis cannot bridge a muted interval. Keep
+            // the permanently-disarmed state after any real signal, but restart
+            // a still-pending zero window for each capture generation.
+            self.zero_samples = 0;
+        }
         if !self.armed {
             return false;
         }
@@ -175,6 +418,7 @@ pub struct AudioCapture {
     _stream: Stream,
     pub packets: Receiver<AudioPacket>,
     pub sample_rate: u32,
+    gate: Arc<CaptureGate>,
 }
 
 pub fn list_input_devices() -> Result<Vec<InputDeviceInfo>, String> {
@@ -337,12 +581,13 @@ impl AudioCapture {
         preferred_name: Option<&str>,
         preferred_id: Option<&str>,
         match_policy: InputDeviceMatchPolicy,
+        gate: Arc<CaptureGate>,
     ) -> Result<Self, String> {
         let host = cpal::default_host();
         let devices = select_input_devices(&host, preferred_name, preferred_id, match_policy)?;
         let mut last_error = None;
         for device in devices {
-            match Self::open_device(device) {
+            match Self::open_device(device, Arc::clone(&gate)) {
                 Ok(capture) => return Ok(capture),
                 Err(error) => last_error = Some(error),
             }
@@ -350,7 +595,7 @@ impl AudioCapture {
         Err(last_error.unwrap_or_else(|| "configured microphone is unavailable".to_string()))
     }
 
-    fn open_device(device: cpal::Device) -> Result<Self, String> {
+    fn open_device(device: cpal::Device, gate: Arc<CaptureGate>) -> Result<Self, String> {
         let supported = device
             .default_input_config()
             .map_err(|error| format!("microphone is unavailable: {error}"))?;
@@ -368,6 +613,7 @@ impl AudioCapture {
             buffered_samples: Arc::new(AtomicUsize::new(0)),
             max_buffered_samples,
             terminal: Arc::clone(&terminal),
+            gate: Arc::clone(&gate),
             silence: SilenceDetector::new(sample_rate),
         };
         let errors = CaptureErrorWriter {
@@ -417,7 +663,20 @@ impl AudioCapture {
             _stream: stream,
             packets,
             sample_rate,
+            gate,
         })
+    }
+
+    pub fn set_muted(&self, request: MuteRequest, muted: bool) -> MuteOutcome {
+        self.gate.apply(request, muted)
+    }
+
+    pub fn is_muted(&self) -> bool {
+        self.gate.state.load(Ordering::Acquire) & MUTED_STATE_BIT != 0
+    }
+
+    pub fn accepts(&self, capture_state: u64) -> bool {
+        self.gate.accepts(capture_state)
     }
 }
 
@@ -628,6 +887,9 @@ where
     device.build_input_stream(
         *config,
         move |data: &[T], _| {
+            let Some(capture_state) = writer.accepting_state() else {
+                return;
+            };
             let mut mono = Vec::with_capacity(data.len().div_ceil(channels.max(1)));
             for frame in data.chunks(channels.max(1)) {
                 let total = frame
@@ -635,7 +897,7 @@ where
                     .fold(0.0_f32, |sum, sample| sum + f32::from_sample(*sample));
                 mono.push(total / frame.len().max(1) as f32);
             }
-            writer.push(mono);
+            writer.push(capture_state, mono);
         },
         error_callback,
         None,
@@ -680,6 +942,12 @@ impl Resampler {
             self.input_index = self.input_index.saturating_add(1);
         }
     }
+
+    pub fn reset(&mut self) {
+        self.next_position = 0.0;
+        self.input_index = 0;
+        self.previous = None;
+    }
 }
 
 #[cfg(test)]
@@ -689,22 +957,31 @@ mod tests {
     fn test_writer(
         capacity: usize,
         silence_after: usize,
-    ) -> (CaptureWriter, Receiver<AudioPacket>) {
+    ) -> (CaptureWriter, Receiver<AudioPacket>, Arc<CaptureGate>) {
         let (packets, receiver) = crossbeam_channel::unbounded();
+        let gate = Arc::new(CaptureGate::new());
         (
             CaptureWriter {
                 packets,
                 buffered_samples: Arc::new(AtomicUsize::new(0)),
                 max_buffered_samples: capacity,
                 terminal: Arc::new(AtomicBool::new(false)),
+                gate: Arc::clone(&gate),
                 silence: SilenceDetector {
                     zero_samples: 0,
                     threshold_samples: silence_after,
                     armed: true,
+                    capture_state: None,
                 },
             },
             receiver,
+            gate,
         )
+    }
+
+    fn push_samples(writer: &mut CaptureWriter, samples: Vec<f32>) {
+        let capture_state = writer.gate.accepting_state().expect("capture gate is open");
+        writer.push(capture_state, samples);
     }
 
     fn receive_samples(receiver: &Receiver<AudioPacket>) -> Vec<f32> {
@@ -719,10 +996,10 @@ mod tests {
 
     #[test]
     fn capture_buffer_preserves_callback_order() {
-        let (mut writer, receiver) = test_writer(6, usize::MAX);
-        writer.push(vec![1.0, 2.0]);
-        writer.push(vec![3.0]);
-        writer.push(vec![4.0, 5.0, 6.0]);
+        let (mut writer, receiver, _gate) = test_writer(6, usize::MAX);
+        push_samples(&mut writer, vec![1.0, 2.0]);
+        push_samples(&mut writer, vec![3.0]);
+        push_samples(&mut writer, vec![4.0, 5.0, 6.0]);
 
         let mut actual = Vec::new();
         for _ in 0..3 {
@@ -780,10 +1057,10 @@ mod tests {
 
     #[test]
     fn capture_overflow_terminates_instead_of_skipping_a_middle_chunk() {
-        let (mut writer, receiver) = test_writer(4, usize::MAX);
-        writer.push(vec![1.0, 2.0, 3.0]);
-        writer.push(vec![4.0, 5.0]);
-        writer.push(vec![6.0]);
+        let (mut writer, receiver, _gate) = test_writer(4, usize::MAX);
+        push_samples(&mut writer, vec![1.0, 2.0, 3.0]);
+        push_samples(&mut writer, vec![4.0, 5.0]);
+        push_samples(&mut writer, vec![6.0]);
 
         assert_eq!(receive_samples(&receiver), vec![1.0, 2.0, 3.0]);
         assert!(matches!(
@@ -794,15 +1071,92 @@ mod tests {
     }
 
     #[test]
+    fn mute_gate_rejects_callbacks_and_packets_from_the_old_generation() {
+        let (mut writer, receiver, gate) = test_writer(8, usize::MAX);
+        let control = CaptureControl::default();
+        let _registration = control.activate(7, Arc::clone(&gate));
+        let old_state = writer.accepting_state().expect("capture starts open");
+        writer.push(old_state, vec![1.0, 2.0]);
+
+        let request = control.request_mute(7, true).expect("active request");
+        assert!(writer.accepting_state().is_none());
+        writer.push(old_state, vec![3.0, 4.0]);
+        assert_eq!(
+            gate.apply(request, true),
+            MuteOutcome {
+                muted: true,
+                changed: true,
+            }
+        );
+
+        assert_eq!(receive_samples(&receiver), vec![1.0, 2.0]);
+        assert!(receiver.try_recv().is_err());
+    }
+
+    #[test]
+    fn rapid_mute_unmute_mute_acknowledges_each_fifo_state() {
+        let gate = Arc::new(CaptureGate::new());
+        let control = CaptureControl::default();
+        let _registration = control.activate(11, Arc::clone(&gate));
+
+        let mute = control.request_mute(11, true).expect("mute request");
+        assert_eq!(
+            gate.apply(mute, true),
+            MuteOutcome {
+                muted: true,
+                changed: true,
+            }
+        );
+        let unmute = control.request_mute(11, false).expect("unmute request");
+        assert_eq!(
+            gate.apply(unmute, false),
+            MuteOutcome {
+                muted: false,
+                changed: true,
+            }
+        );
+        let mute_again = control.request_mute(11, true).expect("second mute request");
+        assert_eq!(
+            gate.apply(mute_again, true),
+            MuteOutcome {
+                muted: true,
+                changed: true,
+            }
+        );
+
+        let state = gate.state.load(Ordering::Acquire);
+        let duplicate = control.request_mute(11, true).expect("duplicate mute");
+        assert_eq!(
+            gate.apply(duplicate, true),
+            MuteOutcome {
+                muted: true,
+                changed: false,
+            }
+        );
+        assert_eq!(gate.state.load(Ordering::Acquire), state);
+    }
+
+    #[test]
+    fn stale_mute_request_never_changes_the_active_capture() {
+        let gate = Arc::new(CaptureGate::new());
+        let control = CaptureControl::default();
+        let _registration = control.activate(3, Arc::clone(&gate));
+
+        assert!(control.request_mute(4, true).is_none());
+        assert!(gate.accepting_state().is_some());
+    }
+
+    #[test]
     fn silence_detector_requires_sustained_exact_zero_input_at_startup() {
         let mut detector = SilenceDetector {
             zero_samples: 0,
             threshold_samples: 5,
             armed: true,
+            capture_state: None,
         };
-        assert!(!detector.observe(&[0.0, 0.0, 0.0]));
-        assert!(!detector.observe(&[0.0]));
-        assert!(detector.observe(&[0.0]));
+        assert!(!detector.observe(0, &[0.0, 0.0, 0.0]));
+        assert!(!detector.observe(0, &[0.0]));
+        assert!(detector.observe(0, &[0.0]));
     }
 
     #[test]
@@ -811,9 +1165,23 @@ mod tests {
             zero_samples: 0,
             threshold_samples: 5,
             armed: true,
+            capture_state: None,
         };
-        assert!(!detector.observe(&[0.0, 0.0, f32::EPSILON]));
-        assert!(!detector.observe(&[0.0; 20]));
+        assert!(!detector.observe(0, &[0.0, 0.0, f32::EPSILON]));
+        assert!(!detector.observe(2, &[0.0; 20]));
+    }
+
+    #[test]
+    fn startup_silence_window_restarts_after_a_capture_generation_change() {
+        let mut detector = SilenceDetector {
+            zero_samples: 0,
+            threshold_samples: 5,
+            armed: true,
+            capture_state: None,
+        };
+        assert!(!detector.observe(0, &[0.0; 4]));
+        assert!(!detector.observe(2, &[0.0]));
+        assert!(detector.observe(2, &[0.0; 4]));
     }
 
     #[test]
@@ -1083,5 +1451,18 @@ mod tests {
         resampler.push(&[0.0, 1.0, 0.0], &mut output);
         assert!((5..=6).contains(&output.len()));
         assert!(output.iter().all(|sample| sample.is_finite()));
+    }
+
+    #[test]
+    fn resampler_reset_does_not_bridge_audio_across_capture_generations() {
+        let mut resampler = Resampler::new(48_000).expect("valid rate");
+        let mut output = Vec::new();
+        resampler.push(&[1.0, 1.0], &mut output);
+
+        resampler.reset();
+        output.clear();
+        resampler.push(&[0.0], &mut output);
+
+        assert_eq!(output, vec![0.0]);
     }
 }

@@ -4,9 +4,12 @@
 model download and verification, and streaming inference in a separate process. The GPUI process
 only exchanges bounded newline-delimited JSON commands and text snapshots with it; if the helper
 stalls, crashes, or exhausts its own resources, the app kills it and remains usable for typing.
-At startup the helper emits `{"type":"hello","protocol_version":2}` before accepting commands.
-Desktop requires that exact version and terminates a missing or mismatched helper, so an older
-helper cannot silently reinterpret a newer microphone-selection or lifecycle command.
+At startup the helper emits
+`{"type":"hello","protocol_version":2,"contract":"gsv-voice-v2-streaming-mute"}` before
+accepting commands. Desktop requires that exact version, contract marker, and field set and
+terminates a missing or mismatched helper, so a stale sibling cannot silently reinterpret a newer
+microphone-selection, mute, or lifecycle command. The private contract marker is rotated for an
+incompatible unshipped cutover without changing the numeric v2 protocol.
 
 Build it separately from the UI:
 
@@ -60,6 +63,22 @@ public-name matching remains only for migration from a legacy saved name; it is 
 case-sensitive, and must identify exactly one device. Omitting `exact_device` retains the legacy
 case-insensitive unique-substring behavior
 for temporary development overrides only.
+
+An active request accepts idempotent, request-scoped streaming mute commands such as
+`{"type":"set_muted","request_id":2,"muted":true}`. The helper publishes an initial
+`mute_state` at revision zero and a monotonically increasing, authoritative
+`{"type":"mute_state","request_id":2,"revision":1,"muted":true}` acknowledgement for every
+accepted command. A different or inactive request receives `not_active` and cannot change the
+capture gate. Stop, Cancel, and Shutdown remain available while muted.
+
+Muting keeps the selected microphone device and CPAL stream open. An atomic request-generation
+gate rejects newly captured frames before mono conversion and queueing, and the inference loop
+drops queued packets from an invalidated generation, clears its pending audio, and resets its
+resampler and pending exact-zero startup check. Unmuting drains and resets again, opens a fresh
+capture generation, and never replays audio captured or queued before the transition. A native
+inference feed that was already entered may finish before the `mute_state` acknowledgement; that
+acknowledgement is the applied boundary, after which no packet from an older generation can enter a
+later feed. No VAD, silence countdown, or automatic send behavior is part of this protocol.
 
 The helper defaults to CPU, limits a transcription session to ten minutes and 64 KiB of text, uses
 at most four worker threads, lowers its Unix scheduling priority, bounds microphone and IPC queues,

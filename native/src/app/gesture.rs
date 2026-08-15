@@ -15,14 +15,17 @@ const MAX_GESTURE_STATUS_AGE: Duration = Duration::from_secs(1);
 const VOICE_GESTURES_DISABLED: &str = "LISTENING · SPEAK NOW · PRESS AGAIN TO FINISH";
 const VOICE_GESTURES_STARTING: &str = "LISTENING · GESTURES STARTING";
 const VOICE_GESTURES_UNAVAILABLE: &str = "LISTENING · GESTURES UNAVAILABLE · PRESS AGAIN TO FINISH";
-const VOICE_GESTURES_NEED_READY: &str = "LISTENING · SHOW TWO OPEN PALMS";
-const VOICE_GESTURES_READY: &str = "LISTENING · GESTURES READY";
-const VOICE_GESTURES_HELD: &str = "LISTENING · SEND HELD · SHOW TWO OPEN PALMS";
-const VOICE_GESTURES_HELD_UNAVAILABLE: &str = "LISTENING · SEND HELD · GESTURES UNAVAILABLE";
+const VOICE_GESTURES_DISARMED: &str = "LISTENING · SHOW TWO OPEN PALMS";
+const VOICE_GESTURES_ARMED: &str = "LISTENING · GESTURES ARMED";
+const VOICE_GESTURES_MUTED_ARMED: &str = "LISTENING · MICROPHONE MUTED · GESTURES ARMED";
+const VOICE_GESTURES_MUTED_NEED_READY: &str = "LISTENING · MICROPHONE MUTED · SHOW TWO OPEN PALMS";
+const VOICE_GESTURES_MUTED_UNAVAILABLE: &str =
+    "LISTENING · MICROPHONE MUTED · GESTURES UNAVAILABLE";
 const VOICE_GESTURE_ARMING: &str = "LISTENING · ARMING GESTURES";
-const VOICE_GESTURE_HOLDING: &str = "LISTENING · REQUESTING SEND HOLD";
-const VOICE_GESTURE_RELEASING: &str = "LISTENING · PREPARING TO RELEASE SEND HOLD";
+const VOICE_GESTURE_DISARMING: &str = "LISTENING · DISARMING GESTURES";
 const VOICE_GESTURE_SENDING: &str = "LISTENING · PREPARING TO SEND";
+const VOICE_GESTURE_MUTING: &str = "LISTENING · MUTING MICROPHONE";
+const VOICE_GESTURE_UNMUTING: &str = "LISTENING · UNMUTING MICROPHONE";
 
 impl GsvApp {
     /// Gives the helper a request-scoped action lease only after transcription
@@ -58,13 +61,13 @@ impl GsvApp {
         match event {
             VisionEvent::Lifecycle(state) => {
                 self.vision_lifecycle = Some(state);
-                if state == LifecycleState::Ready {
-                    self.sync_vision_context();
-                } else {
+                if state != LifecycleState::Ready {
+                    // A helper lifecycle failure revokes arming, but cannot
+                    // synthesize an unrelated microphone unmute.
+                    self.gesture_disarm_dictation(cx);
                     self.clear_voice_gesture_status();
                 }
-                // Failure never synthesizes a hold release. Presentation is
-                // recomputed from the app-owned hold and helper availability.
+                self.sync_vision_context();
                 self.refresh_listening_voice_notice();
                 cx.notify();
             }
@@ -126,130 +129,138 @@ impl GsvApp {
                 cx.notify();
             }
             VisionEvent::Intent {
-                sequence,
+                sequence: _,
                 received_at,
                 voice_request_id,
                 intent,
             } => {
-                if Instant::now().saturating_duration_since(received_at) > MAX_GESTURE_INTENT_AGE
-                    || self.vision_voice_request_id != Some(voice_request_id)
+                if self.vision_voice_request_id != Some(voice_request_id)
                     || self.active_voice_request_id() != Some(voice_request_id)
                 {
                     return;
                 }
-                let changed = match intent {
-                    GestureIntent::Hold => {
-                        let changed = self.gesture_hold_dictation(cx);
-                        if changed {
-                            self.set_voice_gesture_status(
-                                VoiceGestureStatus {
-                                    request_id: voice_request_id,
-                                    sequence,
-                                    received_at,
-                                    state: GestureState::Holding,
-                                    progress: None,
-                                },
-                                cx,
-                            );
-                            self.refresh_listening_voice_notice();
+
+                let eligible = Instant::now().saturating_duration_since(received_at)
+                    <= MAX_GESTURE_INTENT_AGE
+                    && self.vision_lifecycle == Some(LifecycleState::Ready)
+                    && self.voice_request_accepts_gestures(voice_request_id);
+                if eligible {
+                    match intent {
+                        GestureIntent::Arm => {
+                            self.gesture_arm_dictation(cx);
                         }
-                        changed
-                    }
-                    GestureIntent::ReleaseHold => {
-                        let changed = self.gesture_release_dictation_hold(cx);
-                        if changed {
-                            self.set_voice_gesture_status(
-                                VoiceGestureStatus {
-                                    request_id: voice_request_id,
-                                    sequence,
-                                    received_at,
-                                    state: GestureState::Ready,
-                                    progress: None,
-                                },
-                                cx,
-                            );
-                            self.refresh_listening_voice_notice();
+                        GestureIntent::Disarm => {
+                            self.gesture_disarm_dictation(cx);
                         }
-                        changed
-                    }
-                    GestureIntent::Send => {
-                        let changed = self.gesture_send_dictation_now(cx);
-                        if changed {
-                            self.voice_notice = Some("FINISHING VOICE INPUT · SENDING".to_string());
-                            self.vision_voice_request_id = None;
+                        GestureIntent::Send => {
+                            if self.gesture_send_dictation_now(cx) {
+                                self.voice_notice =
+                                    Some("FINISHING VOICE INPUT · SENDING".to_string());
+                            }
                         }
-                        changed
+                        GestureIntent::Mute => {
+                            self.gesture_set_dictation_muted(true, cx);
+                        }
+                        GestureIntent::Unmute => {
+                            self.gesture_set_dictation_muted(false, cx);
+                        }
                     }
-                };
-                if changed {
-                    self.sync_vision_context();
-                    cx.notify();
                 }
+
+                // A reliable intent supersedes its older explanatory status.
+                // Rejected and idempotent intents need an explicit absolute
+                // context replay so the helper can leave AwaitingAuthority.
+                // An accepted mute transition is the one exception: replaying
+                // the old bit would reject it before transcription acks.
+                self.clear_voice_gesture_status();
+                if self.dictation_pending_mute().is_none() {
+                    self.reassert_vision_context();
+                }
+                self.refresh_listening_voice_notice();
+                cx.notify();
             }
         }
     }
 
-    fn sync_vision_context(&self) {
+    pub(super) fn sync_vision_context(&self) {
         let Some(sender) = &self.vision_context else {
             return;
         };
-        let context = self
-            .vision_voice_request_id
+        let _ = sender.set_context(self.current_vision_context());
+    }
+
+    fn reassert_vision_context(&self) {
+        let Some(sender) = &self.vision_context else {
+            return;
+        };
+        let _ = sender.reassert_context(self.current_vision_context());
+    }
+
+    fn current_vision_context(&self) -> VisionContext {
+        self.vision_voice_request_id
             .filter(|request_id| self.active_voice_request_id() == Some(*request_id))
             .map_or_else(VisionContext::disabled, |request_id| {
-                VisionContext::listening(request_id, self.dictation_is_gesture_held())
-            });
-        let _ = sender.set_context(context);
+                VisionContext::listening(
+                    request_id,
+                    self.dictation_gestures_are_armed(),
+                    self.dictation_is_muted(),
+                )
+            })
     }
 
     pub(super) fn listening_voice_notice(&self, request_id: u64) -> &'static str {
-        let status = self.fresh_voice_gesture_status(request_id);
-        let state = status.map(|status| status.state);
+        if let Some(pending_mute) = self.dictation_pending_mute() {
+            return if pending_mute {
+                VOICE_GESTURE_MUTING
+            } else {
+                VOICE_GESTURE_UNMUTING
+            };
+        }
+
         let progress = self.voice_gesture_progress(request_id);
-        let held = self.dictation_is_gesture_held();
+        let armed = self.dictation_gestures_are_armed();
+        let muted = self.dictation_is_muted();
 
         if self.vision_context.is_none() {
-            return if self.vision_lifecycle.is_some() {
+            return if muted {
+                VOICE_GESTURES_MUTED_UNAVAILABLE
+            } else if self.vision_lifecycle.is_some() {
                 VOICE_GESTURES_UNAVAILABLE
             } else {
                 VOICE_GESTURES_DISABLED
             };
         }
         if self.vision_lifecycle != Some(LifecycleState::Ready) {
-            return if held {
-                VOICE_GESTURES_HELD_UNAVAILABLE
+            return if muted {
+                VOICE_GESTURES_MUTED_UNAVAILABLE
             } else if self.vision_lifecycle.is_none() {
                 VOICE_GESTURES_STARTING
             } else {
                 VOICE_GESTURES_UNAVAILABLE
             };
         }
-        if held {
-            if progress
-                .is_some_and(|progress| progress.candidate() == GestureCandidate::ReleaseHold)
-            {
-                return VOICE_GESTURE_RELEASING;
-            }
-            return VOICE_GESTURES_HELD;
+        if !self.dictation_mute_state_is_authoritative() {
+            return VOICE_GESTURES_STARTING;
         }
         if let Some(progress) = progress {
             return match progress.candidate() {
                 GestureCandidate::Arm => VOICE_GESTURE_ARMING,
-                GestureCandidate::Hold => VOICE_GESTURE_HOLDING,
+                GestureCandidate::Disarm => VOICE_GESTURE_DISARMING,
                 GestureCandidate::Send => VOICE_GESTURE_SENDING,
-                // A release candidate cannot describe the app-owned state
-                // until Desktop has accepted the reliable Hold intent.
-                GestureCandidate::ReleaseHold => VOICE_GESTURES_NEED_READY,
+                GestureCandidate::Mute => VOICE_GESTURE_MUTING,
+                GestureCandidate::Unmute => VOICE_GESTURE_UNMUTING,
             };
         }
-        match state {
-            Some(GestureState::NeedsReady) => VOICE_GESTURES_NEED_READY,
-            Some(GestureState::Ready) => VOICE_GESTURES_READY,
-            // Status never synthesizes the app-owned hold. The helper will
-            // reconcile after the explicit ready pose; until then, guide the
-            // user toward that safe synchronization edge.
-            Some(GestureState::Holding) => VOICE_GESTURES_NEED_READY,
-            None => VOICE_GESTURES_STARTING,
+        if muted {
+            if armed {
+                VOICE_GESTURES_MUTED_ARMED
+            } else {
+                VOICE_GESTURES_MUTED_NEED_READY
+            }
+        } else if armed {
+            VOICE_GESTURES_ARMED
+        } else {
+            VOICE_GESTURES_DISARMED
         }
     }
 
@@ -266,18 +277,19 @@ impl GsvApp {
             || self.vision_voice_request_id != Some(request_id)
             || self.active_voice_request_id() != Some(request_id)
             || !self.voice_request_accepts_gestures(request_id)
+            || self.dictation_pending_mute().is_some()
         {
             return None;
         }
         let progress = status.progress?;
-        if !progress.is_compatible_with(status.state) {
+        let app_state = GestureState::new(
+            self.dictation_gestures_are_armed(),
+            self.dictation_is_muted(),
+        );
+        if status.state != app_state || !progress.is_compatible_with(status.state) {
             return None;
         }
-        let state_matches_app_hold = match status.state {
-            GestureState::NeedsReady | GestureState::Ready => !self.dictation_is_gesture_held(),
-            GestureState::Holding => self.dictation_is_gesture_held(),
-        };
-        state_matches_app_hold.then_some(progress)
+        Some(progress)
     }
 
     fn fresh_voice_gesture_status(&self, request_id: u64) -> Option<VoiceGestureStatus> {
@@ -291,7 +303,7 @@ impl GsvApp {
     /// Stores one presentation snapshot and owns its expiry. The timer is
     /// replaced by every newer snapshot, while request, sequence, and receipt
     /// time fences prevent an older task from clearing newer presentation.
-    /// Expiry never changes the app-owned voice draft or gesture hold.
+    /// Expiry never changes the app-owned voice gesture or mute state.
     fn set_voice_gesture_status(&mut self, status: VoiceGestureStatus, cx: &mut Context<Self>) {
         let age = Instant::now().saturating_duration_since(status.received_at);
         let expires_in = MAX_GESTURE_STATUS_AGE.saturating_sub(age);
@@ -318,12 +330,12 @@ impl GsvApp {
         }));
     }
 
-    fn clear_voice_gesture_status(&mut self) {
+    pub(super) fn clear_voice_gesture_status(&mut self) {
         self.vision_gesture_status = None;
         self.vision_gesture_expiry_task = None;
     }
 
-    fn refresh_listening_voice_notice(&mut self) {
+    pub(super) fn refresh_listening_voice_notice(&mut self) {
         let Some(request_id) = self
             .vision_voice_request_id
             .filter(|request_id| self.voice_request_accepts_gestures(*request_id))
@@ -348,8 +360,9 @@ mod tests {
 
     #[test]
     fn protocol_intents_are_explicit_not_toggles() {
-        assert_ne!(GestureIntent::Hold, GestureIntent::ReleaseHold);
-        assert_ne!(GestureIntent::Send, GestureIntent::Hold);
+        assert_ne!(GestureIntent::Arm, GestureIntent::Disarm);
+        assert_ne!(GestureIntent::Mute, GestureIntent::Unmute);
+        assert_ne!(GestureIntent::Send, GestureIntent::Mute);
     }
 
     #[gpui::test]
@@ -466,25 +479,31 @@ mod tests {
                         window,
                         cx,
                     );
+                    app.handle_voice_event(
+                        crate::transcription::VoiceEvent::MuteState {
+                            request_id: 73,
+                            revision: 0,
+                            muted: false,
+                        },
+                        window,
+                        cx,
+                    );
                     assert_eq!(app.voice_notice.as_deref(), Some(VOICE_GESTURES_DISABLED));
 
                     app.vision_context = Some(crate::vision_debug::VisionContextSender::for_test());
                     app.handle_vision_event(VisionEvent::Lifecycle(LifecycleState::Ready), cx);
-                    assert_eq!(app.voice_notice.as_deref(), Some(VOICE_GESTURES_STARTING));
+                    assert_eq!(app.voice_notice.as_deref(), Some(VOICE_GESTURES_DISARMED));
 
                     app.handle_vision_event(
-                        VisionEvent::Status {
+                        VisionEvent::Intent {
                             sequence: 2,
                             received_at: Instant::now(),
-                            status: ControlStatus::Active {
-                                voice_request_id: 73,
-                                state: GestureState::Ready,
-                                progress: None,
-                            },
+                            voice_request_id: 73,
+                            intent: GestureIntent::Arm,
                         },
                         cx,
                     );
-                    assert_eq!(app.voice_notice.as_deref(), Some(VOICE_GESTURES_READY));
+                    assert_eq!(app.voice_notice.as_deref(), Some(VOICE_GESTURES_ARMED));
 
                     let send_progress = GestureProgress::new(GestureCandidate::Send, 625)
                         .expect("test progress is in range");
@@ -494,7 +513,7 @@ mod tests {
                             received_at: Instant::now(),
                             status: ControlStatus::Active {
                                 voice_request_id: 73,
-                                state: GestureState::Ready,
+                                state: GestureState::new(true, false),
                                 progress: Some(send_progress),
                             },
                         },
@@ -522,13 +541,13 @@ mod tests {
                             received_at: Instant::now(),
                             status: ControlStatus::Active {
                                 voice_request_id: 73,
-                                state: GestureState::Ready,
+                                state: GestureState::new(true, false),
                                 progress: None,
                             },
                         },
                         cx,
                     );
-                    assert_eq!(app.voice_notice.as_deref(), Some(VOICE_GESTURES_READY));
+                    assert_eq!(app.voice_notice.as_deref(), Some(VOICE_GESTURES_ARMED));
                     assert!(app.visible_voice_gesture_progress().is_none());
                 });
             })
@@ -537,12 +556,12 @@ mod tests {
 
         cx.update(|cx| {
             let app = app.read(cx);
-            assert_eq!(app.voice_notice.as_deref(), Some(VOICE_GESTURES_READY));
+            assert_eq!(app.voice_notice.as_deref(), Some(VOICE_GESTURES_ARMED));
             assert_eq!(app.input.read(cx).value().as_ref(), "hello world");
             assert!(app.vision_gesture_status.is_some_and(|status| {
                 status.request_id == 73
                     && status.sequence == 4
-                    && status.state == GestureState::Ready
+                    && status.state == GestureState::new(true, false)
                     && status.progress.is_none()
             }));
         });
@@ -597,13 +616,31 @@ mod tests {
                         window,
                         cx,
                     );
+                    app.handle_voice_event(
+                        crate::transcription::VoiceEvent::MuteState {
+                            request_id: 74,
+                            revision: 0,
+                            muted: false,
+                        },
+                        window,
+                        cx,
+                    );
+                    app.handle_vision_event(
+                        VisionEvent::Intent {
+                            sequence: 9,
+                            received_at: Instant::now(),
+                            voice_request_id: 74,
+                            intent: GestureIntent::Arm,
+                        },
+                        cx,
+                    );
                     app.handle_vision_event(
                         VisionEvent::Status {
                             sequence: 10,
                             received_at: Instant::now(),
                             status: ControlStatus::Active {
                                 voice_request_id: 74,
-                                state: GestureState::Ready,
+                                state: GestureState::new(true, false),
                                 progress: None,
                             },
                         },
@@ -619,17 +656,17 @@ mod tests {
                             received_at: stale,
                             status: ControlStatus::Active {
                                 voice_request_id: 75,
-                                state: GestureState::NeedsReady,
+                                state: GestureState::new(false, false),
                                 progress: None,
                             },
                         },
                         cx,
                     );
-                    assert_eq!(app.voice_notice.as_deref(), Some(VOICE_GESTURES_READY));
+                    assert_eq!(app.voice_notice.as_deref(), Some(VOICE_GESTURES_ARMED));
                     assert!(app.vision_gesture_status.is_some_and(|status| {
                         status.request_id == 74
                             && status.sequence == 10
-                            && status.state == GestureState::Ready
+                            && status.state == GestureState::new(true, false)
                             && status.progress.is_none()
                     }));
 
@@ -639,13 +676,13 @@ mod tests {
                             received_at: stale,
                             status: ControlStatus::Active {
                                 voice_request_id: 74,
-                                state: GestureState::NeedsReady,
+                                state: GestureState::new(false, false),
                                 progress: None,
                             },
                         },
                         cx,
                     );
-                    assert_eq!(app.voice_notice.as_deref(), Some(VOICE_GESTURES_STARTING));
+                    assert_eq!(app.voice_notice.as_deref(), Some(VOICE_GESTURES_ARMED));
                     assert!(app.vision_gesture_status.is_none());
                     assert_eq!(app.vision_status_sequence, 12);
 
@@ -655,7 +692,7 @@ mod tests {
                             received_at: Instant::now(),
                             status: ControlStatus::Active {
                                 voice_request_id: 74,
-                                state: GestureState::NeedsReady,
+                                state: GestureState::new(false, false),
                                 progress: Some(
                                     GestureProgress::new(GestureCandidate::Send, 500)
                                         .expect("test progress is in range"),
@@ -664,25 +701,26 @@ mod tests {
                         },
                         cx,
                     );
-                    assert_eq!(app.voice_notice.as_deref(), Some(VOICE_GESTURES_NEED_READY));
+                    assert_eq!(app.voice_notice.as_deref(), Some(VOICE_GESTURES_ARMED));
                     assert!(app.visible_voice_gesture_progress().is_none());
 
-                    // Helper state explains presentation but cannot latch the
-                    // app-owned action state.
+                    // Helper status is presentation-only and cannot mute the
+                    // app-owned voice request.
                     app.handle_vision_event(
                         VisionEvent::Status {
                             sequence: 14,
                             received_at: Instant::now(),
                             status: ControlStatus::Active {
                                 voice_request_id: 74,
-                                state: GestureState::Holding,
+                                state: GestureState::new(true, true),
                                 progress: None,
                             },
                         },
                         cx,
                     );
-                    assert!(!app.dictation_is_gesture_held());
-                    assert_eq!(app.voice_notice.as_deref(), Some(VOICE_GESTURES_NEED_READY));
+                    assert!(!app.dictation_is_muted());
+                    assert!(app.dictation_gestures_are_armed());
+                    assert_eq!(app.voice_notice.as_deref(), Some(VOICE_GESTURES_ARMED));
 
                     app.handle_voice_event(
                         crate::transcription::VoiceEvent::Cancelled { request_id: 74 },
@@ -699,9 +737,7 @@ mod tests {
     }
 
     #[gpui::test]
-    fn stale_intents_and_helper_loss_cannot_mutate_or_release_a_voice_request(
-        cx: &mut TestAppContext,
-    ) {
+    fn stale_intents_cannot_mutate_and_lifecycle_failure_disarms(cx: &mut TestAppContext) {
         cx.update(|cx| {
             gpui_component::init(cx);
             crate::app::bind_keys(cx);
@@ -728,7 +764,7 @@ mod tests {
         let app = app.borrow().clone().expect("app entity should be retained");
         let window_handle: gpui::AnyWindowHandle = window.into();
         window_handle
-            .update(cx, |_, _, cx| {
+            .update(cx, |_, window, cx| {
                 app.update(cx, |app, cx| {
                     let stale = Instant::now()
                         .checked_sub(MAX_GESTURE_INTENT_AGE + Duration::from_millis(1))
@@ -742,29 +778,66 @@ mod tests {
                     app.vision_context = Some(crate::vision_debug::VisionContextSender::for_test());
                     app.vision_lifecycle = Some(LifecycleState::Ready);
                     app.vision_voice_request_id = Some(72);
+                    app.handle_voice_event(
+                        crate::transcription::VoiceEvent::State {
+                            request_id: 72,
+                            phase: crate::transcription::VoicePhase::Listening,
+                            progress: None,
+                        },
+                        window,
+                        cx,
+                    );
+                    app.handle_voice_event(
+                        crate::transcription::VoiceEvent::MuteState {
+                            request_id: 72,
+                            revision: 0,
+                            muted: false,
+                        },
+                        window,
+                        cx,
+                    );
+                    let context_revision = app
+                        .vision_context
+                        .as_ref()
+                        .expect("test context")
+                        .revision_for_test();
 
                     app.handle_vision_event(
                         VisionEvent::Intent {
                             sequence: 1,
                             received_at: Instant::now(),
                             voice_request_id: 71,
-                            intent: GestureIntent::Hold,
+                            intent: GestureIntent::Arm,
                         },
                         cx,
                     );
-                    assert!(!app.dictation_is_gesture_held());
+                    assert!(!app.dictation_gestures_are_armed());
+                    assert_eq!(
+                        app.vision_context
+                            .as_ref()
+                            .expect("test context")
+                            .revision_for_test(),
+                        context_revision
+                    );
 
                     app.handle_vision_event(
                         VisionEvent::Intent {
                             sequence: 2,
                             received_at: stale,
                             voice_request_id: 72,
-                            intent: GestureIntent::Hold,
+                            intent: GestureIntent::Arm,
                         },
                         cx,
                     );
-                    assert!(!app.dictation_is_gesture_held());
+                    assert!(!app.dictation_gestures_are_armed());
                     assert!(app.voice_request_accepts_gestures(72));
+                    assert_ne!(
+                        app.vision_context
+                            .as_ref()
+                            .expect("test context")
+                            .revision_for_test(),
+                        context_revision
+                    );
 
                     app.handle_vision_event(
                         VisionEvent::Intent {
@@ -782,24 +855,25 @@ mod tests {
                             sequence: 4,
                             received_at: Instant::now(),
                             voice_request_id: 72,
-                            intent: GestureIntent::Hold,
+                            intent: GestureIntent::Arm,
                         },
                         cx,
                     );
-                    assert!(app.dictation_is_gesture_held());
+                    assert!(app.dictation_gestures_are_armed());
 
+                    // Replaying an explicit intent is idempotent.
                     app.handle_vision_event(
                         VisionEvent::Intent {
                             sequence: 5,
-                            received_at: stale,
+                            received_at: Instant::now(),
                             voice_request_id: 72,
-                            intent: GestureIntent::ReleaseHold,
+                            intent: GestureIntent::Arm,
                         },
                         cx,
                     );
-                    assert!(app.dictation_is_gesture_held());
+                    assert!(app.dictation_gestures_are_armed());
 
-                    let release_progress = GestureProgress::new(GestureCandidate::ReleaseHold, 500)
+                    let disarm_progress = GestureProgress::new(GestureCandidate::Disarm, 500)
                         .expect("test progress is in range");
                     app.handle_vision_event(
                         VisionEvent::Status {
@@ -807,25 +881,54 @@ mod tests {
                             received_at: Instant::now(),
                             status: ControlStatus::Active {
                                 voice_request_id: 72,
-                                state: GestureState::Holding,
-                                progress: Some(release_progress),
+                                state: GestureState::new(true, false),
+                                progress: Some(disarm_progress),
                             },
                         },
                         cx,
                     );
-                    assert!(app.dictation_is_gesture_held());
-                    assert_eq!(app.voice_notice.as_deref(), Some(VOICE_GESTURE_RELEASING));
-                    assert_eq!(app.visible_voice_gesture_progress(), Some(release_progress));
+                    assert_eq!(app.voice_notice.as_deref(), Some(VOICE_GESTURE_DISARMING));
+                    assert_eq!(app.visible_voice_gesture_progress(), Some(disarm_progress));
+
+                    app.handle_voice_event(
+                        crate::transcription::VoiceEvent::MuteState {
+                            request_id: 72,
+                            revision: 1,
+                            muted: true,
+                        },
+                        window,
+                        cx,
+                    );
+                    assert!(app.dictation_is_muted());
+                    assert!(app.dictation_gestures_are_armed());
+
+                    let unmute_progress = GestureProgress::new(GestureCandidate::Unmute, 500)
+                        .expect("test progress is in range");
+                    app.handle_vision_event(
+                        VisionEvent::Status {
+                            sequence: 7,
+                            received_at: Instant::now(),
+                            status: ControlStatus::Active {
+                                voice_request_id: 72,
+                                state: GestureState::new(true, true),
+                                progress: Some(unmute_progress),
+                            },
+                        },
+                        cx,
+                    );
+                    assert_eq!(app.visible_voice_gesture_progress(), Some(unmute_progress));
+                    assert_eq!(app.voice_notice.as_deref(), Some(VOICE_GESTURE_UNMUTING));
 
                     app.handle_vision_event(
                         VisionEvent::Lifecycle(LifecycleState::Interrupted),
                         cx,
                     );
-                    assert!(app.dictation_is_gesture_held());
+                    assert!(!app.dictation_gestures_are_armed());
+                    assert!(app.dictation_is_muted());
                     assert!(app.visible_voice_gesture_progress().is_none());
                     assert_eq!(
                         app.voice_notice.as_deref(),
-                        Some("LISTENING · SEND HELD · GESTURES UNAVAILABLE")
+                        Some(VOICE_GESTURES_MUTED_UNAVAILABLE)
                     );
                 });
             })
@@ -833,7 +936,7 @@ mod tests {
     }
 
     #[gpui::test]
-    fn gesture_progress_expires_without_releasing_the_app_owned_hold(cx: &mut TestAppContext) {
+    fn gesture_progress_expires_without_disarming_the_voice_request(cx: &mut TestAppContext) {
         cx.update(|cx| {
             gpui_component::init(cx);
             crate::app::bind_keys(cx);
@@ -859,11 +962,11 @@ mod tests {
         });
         let app = app.borrow().clone().expect("app entity should be retained");
         let window_handle: gpui::AnyWindowHandle = window.into();
-        let release_progress = GestureProgress::new(GestureCandidate::ReleaseHold, 500)
-            .expect("test progress is in range");
+        let disarm_progress =
+            GestureProgress::new(GestureCandidate::Disarm, 500).expect("test progress is in range");
 
         window_handle
-            .update(cx, |_, _, cx| {
+            .update(cx, |_, window, cx| {
                 app.update(cx, |app, cx| {
                     app.voice_draft = Some(VoiceDraft::new(
                         72,
@@ -874,12 +977,30 @@ mod tests {
                     app.vision_context = Some(crate::vision_debug::VisionContextSender::for_test());
                     app.vision_lifecycle = Some(LifecycleState::Ready);
                     app.vision_voice_request_id = Some(72);
+                    app.handle_voice_event(
+                        crate::transcription::VoiceEvent::State {
+                            request_id: 72,
+                            phase: crate::transcription::VoicePhase::Listening,
+                            progress: None,
+                        },
+                        window,
+                        cx,
+                    );
+                    app.handle_voice_event(
+                        crate::transcription::VoiceEvent::MuteState {
+                            request_id: 72,
+                            revision: 0,
+                            muted: false,
+                        },
+                        window,
+                        cx,
+                    );
                     app.handle_vision_event(
                         VisionEvent::Intent {
                             sequence: 1,
                             received_at: Instant::now(),
                             voice_request_id: 72,
-                            intent: GestureIntent::Hold,
+                            intent: GestureIntent::Arm,
                         },
                         cx,
                     );
@@ -889,17 +1010,16 @@ mod tests {
                             received_at: Instant::now(),
                             status: ControlStatus::Active {
                                 voice_request_id: 72,
-                                state: GestureState::Holding,
-                                progress: Some(release_progress),
+                                state: GestureState::new(true, false),
+                                progress: Some(disarm_progress),
                             },
                         },
                         cx,
                     );
 
-                    assert!(app.dictation_is_gesture_held());
-                    assert_eq!(app.visible_voice_gesture_progress(), Some(release_progress));
-                    assert_eq!(app.voice_notice.as_deref(), Some(VOICE_GESTURE_RELEASING));
-                    assert!(!VOICE_GESTURE_RELEASING.contains("RELEASING"));
+                    assert!(app.dictation_gestures_are_armed());
+                    assert_eq!(app.visible_voice_gesture_progress(), Some(disarm_progress));
+                    assert_eq!(app.voice_notice.as_deref(), Some(VOICE_GESTURE_DISARMING));
                 });
             })
             .expect("window remains open");
@@ -912,9 +1032,9 @@ mod tests {
             let app = app.read(cx);
             assert!(app.vision_gesture_status.is_none());
             assert!(app.visible_voice_gesture_progress().is_none());
-            assert!(app.dictation_is_gesture_held());
+            assert!(app.dictation_gestures_are_armed());
             assert!(app.voice_request_accepts_gestures(72));
-            assert_eq!(app.voice_notice.as_deref(), Some(VOICE_GESTURES_HELD));
+            assert_eq!(app.voice_notice.as_deref(), Some(VOICE_GESTURES_ARMED));
         });
     }
 
@@ -947,13 +1067,13 @@ mod tests {
         let window_handle: gpui::AnyWindowHandle = window.into();
         let send_progress =
             GestureProgress::new(GestureCandidate::Send, 300).expect("test progress is in range");
-        let hold_progress =
-            GestureProgress::new(GestureCandidate::Hold, 600).expect("test progress is in range");
+        let mute_progress =
+            GestureProgress::new(GestureCandidate::Mute, 600).expect("test progress is in range");
         let arm_progress =
             GestureProgress::new(GestureCandidate::Arm, 450).expect("test progress is in range");
 
         window_handle
-            .update(cx, |_, _, cx| {
+            .update(cx, |_, window, cx| {
                 app.update(cx, |app, cx| {
                     app.voice_draft = Some(VoiceDraft::new(
                         81,
@@ -964,13 +1084,40 @@ mod tests {
                     app.vision_context = Some(crate::vision_debug::VisionContextSender::for_test());
                     app.vision_lifecycle = Some(LifecycleState::Ready);
                     app.vision_voice_request_id = Some(81);
+                    app.handle_voice_event(
+                        crate::transcription::VoiceEvent::State {
+                            request_id: 81,
+                            phase: crate::transcription::VoicePhase::Listening,
+                            progress: None,
+                        },
+                        window,
+                        cx,
+                    );
+                    app.handle_voice_event(
+                        crate::transcription::VoiceEvent::MuteState {
+                            request_id: 81,
+                            revision: 0,
+                            muted: false,
+                        },
+                        window,
+                        cx,
+                    );
+                    app.handle_vision_event(
+                        VisionEvent::Intent {
+                            sequence: 1,
+                            received_at: Instant::now(),
+                            voice_request_id: 81,
+                            intent: GestureIntent::Arm,
+                        },
+                        cx,
+                    );
                     app.handle_vision_event(
                         VisionEvent::Status {
                             sequence: 10,
                             received_at: Instant::now(),
                             status: ControlStatus::Active {
                                 voice_request_id: 81,
-                                state: GestureState::Ready,
+                                state: GestureState::new(true, false),
                                 progress: Some(send_progress),
                             },
                         },
@@ -992,8 +1139,8 @@ mod tests {
                             received_at: Instant::now(),
                             status: ControlStatus::Active {
                                 voice_request_id: 81,
-                                state: GestureState::Ready,
-                                progress: Some(hold_progress),
+                                state: GestureState::new(true, false),
+                                progress: Some(mute_progress),
                             },
                         },
                         cx,
@@ -1006,7 +1153,8 @@ mod tests {
         cx.run_until_parked();
         cx.update(|cx| {
             let app = app.read(cx);
-            assert_eq!(app.visible_voice_gesture_progress(), Some(hold_progress));
+            assert_eq!(app.visible_voice_gesture_progress(), Some(mute_progress));
+            assert_eq!(app.voice_notice.as_deref(), Some(VOICE_GESTURE_MUTING));
             assert_eq!(
                 app.vision_gesture_status.map(|status| status.sequence),
                 Some(11)
@@ -1014,7 +1162,7 @@ mod tests {
         });
 
         window_handle
-            .update(cx, |_, _, cx| {
+            .update(cx, |_, window, cx| {
                 app.update(cx, |app, cx| {
                     app.voice_draft = Some(VoiceDraft::new(
                         82,
@@ -1022,14 +1170,31 @@ mod tests {
                         String::new(),
                         String::new(),
                     ));
-                    app.enable_vision_for_voice(82);
+                    app.handle_voice_event(
+                        crate::transcription::VoiceEvent::State {
+                            request_id: 82,
+                            phase: crate::transcription::VoicePhase::Listening,
+                            progress: None,
+                        },
+                        window,
+                        cx,
+                    );
+                    app.handle_voice_event(
+                        crate::transcription::VoiceEvent::MuteState {
+                            request_id: 82,
+                            revision: 0,
+                            muted: false,
+                        },
+                        window,
+                        cx,
+                    );
                     app.handle_vision_event(
                         VisionEvent::Status {
                             sequence: 12,
                             received_at: Instant::now(),
                             status: ControlStatus::Active {
                                 voice_request_id: 82,
-                                state: GestureState::NeedsReady,
+                                state: GestureState::new(false, false),
                                 progress: Some(arm_progress),
                             },
                         },
@@ -1056,7 +1221,7 @@ mod tests {
             let app = app.read(cx);
             assert!(app.vision_gesture_status.is_none());
             assert!(app.visible_voice_gesture_progress().is_none());
-            assert_eq!(app.voice_notice.as_deref(), Some(VOICE_GESTURES_STARTING));
+            assert_eq!(app.voice_notice.as_deref(), Some(VOICE_GESTURES_DISARMED));
         });
     }
 }

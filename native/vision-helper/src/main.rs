@@ -87,7 +87,6 @@ struct AnnotatedFrame {
     frame: Arc<FrameView>,
     observation: Observation,
     control_status: ControlStatus,
-    app_held: bool,
     control_diagnostic: ControlDiagnostic,
 }
 
@@ -230,37 +229,33 @@ fn run_window(
             return Err(VisionError::CameraStopped);
         }
         let presentation_at = Instant::now();
-        let (frame, observation, control_status, app_held, control_diagnostic) =
-            match annotated.as_ref() {
-                Some(annotated) => {
-                    let presentation = control_presentation(
-                        annotated.control_status,
-                        annotated.control_diagnostic,
-                        annotated.observation.observed_at,
-                        presentation_at,
-                    );
-                    (
-                        &*annotated.frame,
-                        Some(&annotated.observation),
-                        presentation.status,
-                        annotated.app_held,
-                        presentation.diagnostic,
-                    )
-                }
-                None => (
-                    &*raw_frame,
-                    None,
-                    ControlStatus::Disabled,
-                    false,
-                    ControlPresentationDiagnostic::Controller(ControlDiagnostic::AwaitingPose),
-                ),
-            };
+        let (frame, observation, control_status, control_diagnostic) = match annotated.as_ref() {
+            Some(annotated) => {
+                let presentation = control_presentation(
+                    annotated.control_status,
+                    annotated.control_diagnostic,
+                    annotated.observation.observed_at,
+                    presentation_at,
+                );
+                (
+                    &*annotated.frame,
+                    Some(&annotated.observation),
+                    presentation.status,
+                    presentation.diagnostic,
+                )
+            }
+            None => (
+                &*raw_frame,
+                None,
+                ControlStatus::Disabled,
+                ControlPresentationDiagnostic::Controller(ControlDiagnostic::AwaitingPose),
+            ),
+        };
         window
             .render(
                 frame,
                 observation,
                 control_status,
-                app_held,
                 control_diagnostic,
                 &stats,
             )
@@ -356,50 +351,43 @@ fn inference_worker(
             }
             ready_published = true;
         }
-        let (control_status, app_held, control_diagnostic) =
-            if let Some(control_link) = &control_link {
-                let context = control_link.context();
-                let status = if let Some(voice_request_id) = sync_control_context(
+        let (control_status, control_diagnostic) = if let Some(control_link) = &control_link {
+            let context = control_link.context();
+            let status = if let Some(voice_request_id) = sync_control_context(
+                &mut gesture_control,
+                &mut control_revision,
+                &mut control_voice_request_id,
+                context,
+            ) {
+                if let Some(intent) = observe_control(
                     &mut gesture_control,
-                    &mut control_revision,
-                    &mut control_voice_request_id,
-                    context,
+                    &observation,
+                    delivery.frame.captured_at,
                 ) {
-                    if let Some(intent) = observe_control(
-                        &mut gesture_control,
-                        &observation,
-                        delivery.frame.captured_at,
-                    ) {
-                        let intent = match intent {
-                            ControlIntent::EngageAutoSendHold => {
-                                gsv_vision_control::GestureIntent::Hold
-                            }
-                            ControlIntent::ReleaseAutoSendHold => {
-                                gsv_vision_control::GestureIntent::ReleaseHold
-                            }
-                            ControlIntent::Send => gsv_vision_control::GestureIntent::Send,
-                        };
-                        if !control_link.publish_intent(voice_request_id, intent) {
-                            let _ = failure.try_send(VisionError::ProtocolUnavailable);
-                            return;
-                        }
+                    let intent = match intent {
+                        ControlIntent::Arm => gsv_vision_control::GestureIntent::Arm,
+                        ControlIntent::Disarm => gsv_vision_control::GestureIntent::Disarm,
+                        ControlIntent::Send => gsv_vision_control::GestureIntent::Send,
+                        ControlIntent::Mute => gsv_vision_control::GestureIntent::Mute,
+                        ControlIntent::Unmute => gsv_vision_control::GestureIntent::Unmute,
+                    };
+                    if !control_link.publish_intent(voice_request_id, intent) {
+                        let _ = failure.try_send(VisionError::ProtocolUnavailable);
+                        return;
                     }
-                    control_status(
-                        &gesture_control,
-                        Some(voice_request_id),
-                        delivery.frame.captured_at,
-                    )
-                } else {
-                    control_status(&gesture_control, None, delivery.frame.captured_at)
-                };
-                (status, context.held, gesture_control.diagnostic())
-            } else {
-                (
-                    ControlStatus::Disabled,
-                    false,
-                    ControlDiagnostic::AwaitingPose,
+                }
+                control_status(
+                    &gesture_control,
+                    Some(voice_request_id),
+                    delivery.frame.captured_at,
                 )
+            } else {
+                control_status(&gesture_control, None, delivery.frame.captured_at)
             };
+            (status, gesture_control.diagnostic())
+        } else {
+            (ControlStatus::Disabled, ControlDiagnostic::AwaitingPose)
+        };
         let publish_at = Instant::now();
         if control_status_publish_due(published_control_status, control_status, publish_at) {
             if let Some(control_link) = &control_link {
@@ -415,7 +403,6 @@ fn inference_worker(
             frame: delivery.frame,
             observation,
             control_status,
-            app_held,
             control_diagnostic,
         };
         if !publish_latest(&output, &replacement_receiver, annotated) {
@@ -435,10 +422,11 @@ fn sync_control_context(
     context: ControlContext,
 ) -> Option<u64> {
     if context.revision != *current_revision {
+        let state = crate::control::ControlState::new(context.armed, context.muted);
         if *current_voice_request_id == context.voice_request_id {
-            control.synchronize_hold(context.held);
+            control.synchronize_state(state);
         } else {
-            control.reset(context.held);
+            control.reset(state);
         }
         *current_revision = context.revision;
         *current_voice_request_id = context.voice_request_id;
@@ -470,21 +458,17 @@ fn gesture_candidate(
     state: crate::control::ControlState,
     chord: crate::control::ControlChord,
 ) -> Option<GestureCandidate> {
-    match (state, chord) {
-        (crate::control::ControlState::NeedsReady, crate::control::ControlChord::Ready) => {
-            Some(GestureCandidate::Arm)
-        }
-        (crate::control::ControlState::Ready, crate::control::ControlChord::Hold) => {
-            Some(GestureCandidate::Hold)
-        }
-        (crate::control::ControlState::Ready, crate::control::ControlChord::Send) => {
-            Some(GestureCandidate::Send)
-        }
-        (crate::control::ControlState::Holding, crate::control::ControlChord::Ready) => {
-            Some(GestureCandidate::ReleaseHold)
-        }
-        _ => None,
-    }
+    let candidate = match chord {
+        crate::control::ControlChord::Arm => GestureCandidate::Arm,
+        crate::control::ControlChord::Disarm => GestureCandidate::Disarm,
+        crate::control::ControlChord::Send => GestureCandidate::Send,
+        crate::control::ControlChord::Mute => GestureCandidate::Mute,
+        crate::control::ControlChord::Unmute => GestureCandidate::Unmute,
+    };
+    GestureProgress::new(candidate, 0)
+        .expect("zero is bounded")
+        .is_compatible_with(state)
+        .then_some(candidate)
 }
 
 fn control_status_publish_due(
@@ -785,7 +769,7 @@ mod tests {
     }
 
     #[test]
-    fn context_revision_resets_in_flight_control_state_and_preserves_hold() {
+    fn context_revision_applies_absolute_state_and_request_boundaries() {
         let mut control = GestureControl::default();
         let mut revision = 0;
         let mut request_id = None;
@@ -796,13 +780,17 @@ mod tests {
                 &mut request_id,
                 ControlContext {
                     voice_request_id: Some(9),
-                    held: true,
+                    armed: true,
+                    muted: true,
                     revision: 1,
                 },
             ),
             Some(9)
         );
-        assert_eq!(control.state(), crate::control::ControlState::Holding);
+        assert_eq!(
+            control.state(),
+            crate::control::ControlState::new(true, true)
+        );
 
         assert_eq!(
             sync_control_context(
@@ -811,13 +799,17 @@ mod tests {
                 &mut request_id,
                 ControlContext {
                     voice_request_id: None,
-                    held: false,
+                    armed: false,
+                    muted: false,
                     revision: 2,
                 },
             ),
             None
         );
-        assert_eq!(control.state(), crate::control::ControlState::NeedsReady);
+        assert_eq!(
+            control.state(),
+            crate::control::ControlState::new(false, false)
+        );
     }
 
     #[test]
@@ -829,50 +821,58 @@ mod tests {
             control_status(&control, Some(12), now),
             ControlStatus::Active {
                 voice_request_id: 12,
-                state: gsv_vision_control::GestureState::NeedsReady,
+                state: gsv_vision_control::GestureState::new(false, false),
                 progress: None,
             }
         );
 
-        control.reset(true);
+        control.reset(crate::control::ControlState::new(true, true));
         assert_eq!(
             control_status(&control, Some(12), now),
             ControlStatus::Active {
                 voice_request_id: 12,
-                state: gsv_vision_control::GestureState::Holding,
+                state: gsv_vision_control::GestureState::new(true, true),
                 progress: None,
             }
         );
     }
 
     #[test]
-    fn controller_chords_map_to_state_compatible_progress_candidates() {
+    fn controller_chords_map_only_to_state_compatible_progress_candidates() {
         use crate::control::{ControlChord, ControlState};
 
-        assert_eq!(
-            gesture_candidate(ControlState::NeedsReady, ControlChord::Ready),
-            Some(GestureCandidate::Arm)
-        );
-        assert_eq!(
-            gesture_candidate(ControlState::Ready, ControlChord::Hold),
-            Some(GestureCandidate::Hold)
-        );
-        assert_eq!(
-            gesture_candidate(ControlState::Ready, ControlChord::Send),
-            Some(GestureCandidate::Send)
-        );
-        assert_eq!(
-            gesture_candidate(ControlState::Holding, ControlChord::Ready),
-            Some(GestureCandidate::ReleaseHold)
-        );
-        assert_eq!(
-            gesture_candidate(ControlState::NeedsReady, ControlChord::Send),
-            None
-        );
-        assert_eq!(
-            gesture_candidate(ControlState::Holding, ControlChord::Hold),
-            None
-        );
+        let cases = [
+            (
+                ControlState::new(false, false),
+                ControlChord::Arm,
+                Some(GestureCandidate::Arm),
+            ),
+            (
+                ControlState::new(true, false),
+                ControlChord::Disarm,
+                Some(GestureCandidate::Disarm),
+            ),
+            (
+                ControlState::new(true, false),
+                ControlChord::Send,
+                Some(GestureCandidate::Send),
+            ),
+            (
+                ControlState::new(true, false),
+                ControlChord::Mute,
+                Some(GestureCandidate::Mute),
+            ),
+            (
+                ControlState::new(true, true),
+                ControlChord::Unmute,
+                Some(GestureCandidate::Unmute),
+            ),
+            (ControlState::new(false, false), ControlChord::Send, None),
+            (ControlState::new(true, true), ControlChord::Mute, None),
+        ];
+        for (state, chord, expected) in cases {
+            assert_eq!(gesture_candidate(state, chord), expected);
+        }
     }
 
     #[test]
@@ -897,7 +897,7 @@ mod tests {
             control_status(&control, Some(12), now),
             ControlStatus::Active {
                 voice_request_id: 12,
-                state: gsv_vision_control::GestureState::NeedsReady,
+                state: gsv_vision_control::GestureState::new(false, false),
                 progress: Some(
                     GestureProgress::new(GestureCandidate::Arm, 0).expect("bounded progress")
                 ),
@@ -909,9 +909,10 @@ mod tests {
     fn annotated_control_presentation_expires_progress_without_changing_state() {
         let observed_at = Instant::now();
         let progress = GestureProgress::new(GestureCandidate::Send, 640).expect("bounded progress");
+        let state = gsv_vision_control::GestureState::new(true, false);
         let status = ControlStatus::Active {
             voice_request_id: 77,
-            state: gsv_vision_control::GestureState::Ready,
+            state,
             progress: Some(progress),
         };
         let diagnostic = ControlDiagnostic::Stabilizing {
@@ -942,7 +943,7 @@ mod tests {
             ControlPresentation {
                 status: ControlStatus::Active {
                     voice_request_id: 77,
-                    state: gsv_vision_control::GestureState::Ready,
+                    state,
                     progress: None,
                 },
                 diagnostic: ControlPresentationDiagnostic::AwaitingFreshObservation,
@@ -982,28 +983,28 @@ mod tests {
     #[test]
     fn unchanged_status_heartbeats_after_the_ui_freshness_margin() {
         let started_at = Instant::now();
-        let status = ControlStatus::Active {
+        let disarmed = ControlStatus::Active {
             voice_request_id: 12,
-            state: gsv_vision_control::GestureState::Ready,
+            state: gsv_vision_control::GestureState::new(false, false),
             progress: None,
         };
-        let previous = Some((status, started_at));
+        let previous = Some((disarmed, started_at));
 
         assert!(!control_status_publish_due(
             previous,
-            status,
+            disarmed,
             started_at + CONTROL_STATUS_HEARTBEAT - Duration::from_millis(1),
         ));
         assert!(control_status_publish_due(
             previous,
-            status,
+            disarmed,
             started_at + CONTROL_STATUS_HEARTBEAT,
         ));
         assert!(control_status_publish_due(
             previous,
             ControlStatus::Active {
                 voice_request_id: 12,
-                state: gsv_vision_control::GestureState::Holding,
+                state: gsv_vision_control::GestureState::new(true, true),
                 progress: None,
             },
             started_at + Duration::from_millis(1),

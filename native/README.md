@@ -89,16 +89,20 @@ GSV_GESTURE_DEBUG=1 cargo run --manifest-path native/Cargo.toml
 The MediaPipe build uses Bazel and its hermetic Python toolchain, but neither
 Python nor Bazel is a runtime dependency. The running proof consists of the
 Rust `gsv-vision` helper, the compiled native library, and the verified local
-model. During active dictation, hold two open palms steadily to arm the gesture
-grammar. Open palm + closed fist latches SEND HOLD; two open palms explicitly
-release it and re-arm; open palm + thumbs-up finalizes and sends through the
-normal conversation transaction. Desktop and the diagnostic overlay show
-whether controls are starting, waiting for two palms, ready, or holding. As a
-supported pose accumulates evidence, both surfaces show the same filled
-clockwise disk; it is presentation only and never triggers an action. The
-diagnostic window also explains confidence and tracking rejections. Missing
-tracking never releases HOLD. Press `Escape` or close the diagnostic window to
-stop debug mode without closing Desktop. See
+model. During active dictation, two open palms explicitly arm the persistent
+gesture mode. Open palm + victory explicitly disarms it; open palm + thumbs-up
+finalizes and sends the already captured draft, including while the microphone
+is muted; open palm + thumbs-down requests mute; and open palm + pointing-up
+requests unmute. A closed fist and all other pairs are reserved and have no
+action. Applied mute state changes only after the transcription helper
+acknowledges that its input gate is applied or reopened. The device and stream
+stay open; while muted, new samples are discarded before queueing or inference.
+Desktop and the diagnostic overlay show whether controls are starting,
+disarmed, armed, muting, muted, or unmuting. As a supported pose accumulates
+evidence, both surfaces show the same filled clockwise disk; it is presentation
+only and never triggers an action. Tracking loss does not disarm the persistent
+mode. Press `Escape` or close the diagnostic window to stop debug mode without
+closing Desktop. See
 `native/vision-helper/README.md` for thresholds, artifacts, and the override
 contract. Gesture controls remain experimental and are not packaged in a
 release yet.

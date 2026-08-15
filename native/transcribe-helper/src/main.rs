@@ -8,12 +8,12 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use audio::{
-    list_input_devices, AudioCapture, AudioError, AudioPacket, InputDeviceInfo,
-    InputDeviceMatchPolicy, Resampler,
+    list_input_devices, AudioCapture, AudioError, AudioPacket, CaptureControl, CaptureGate,
+    InputDeviceInfo, InputDeviceMatchPolicy, Resampler,
 };
 use crossbeam_channel::{Receiver, TryRecvError};
 use model::{Engine, LoadError};
-use protocol::{emit, Command, ErrorCode, Event, Phase};
+use protocol::{emit, Command, ErrorCode, Event, Phase, ReceivedCommand};
 use transcribe_cpp::{ParakeetStreamOptions, RunOptions, Stream, StreamExtension, StreamOptions};
 
 const FEED_SAMPLES: usize = 1_280;
@@ -72,8 +72,10 @@ fn main() {
     lower_process_priority();
     emit(&Event::Hello {
         protocol_version: protocol::VOICE_PROTOCOL_VERSION,
+        contract: protocol::VOICE_PROTOCOL_CONTRACT,
     });
-    let commands = protocol::read_commands();
+    let capture_control = CaptureControl::default();
+    let commands = protocol::read_commands(capture_control.clone());
     let mut engine: Option<Engine> = None;
     let mut preparation: Option<Preparation> = None;
     let mut discovery: Option<DeviceDiscovery> = None;
@@ -94,7 +96,7 @@ fn main() {
                         let Some(loaded) = engine.as_mut() else {
                             continue;
                         };
-                        if run_and_report(&request, loaded, &commands) {
+                        if run_and_report(&request, loaded, &commands, &capture_control) {
                             break;
                         }
                         engine_last_used = Instant::now();
@@ -121,11 +123,11 @@ fn main() {
             continue;
         }
 
-        let command = if preparation.is_some() {
+        let received = if preparation.is_some() {
             match commands.recv_timeout(PREPARATION_POLL) {
                 Ok(command) => command,
                 Err(crossbeam_channel::RecvTimeoutError::Timeout) => continue,
-                Err(crossbeam_channel::RecvTimeoutError::Disconnected) => Command::Shutdown,
+                Err(crossbeam_channel::RecvTimeoutError::Disconnected) => shutdown_command(),
             }
         } else if discovery.is_some() {
             let timeout = if engine.is_some() {
@@ -146,7 +148,7 @@ fn main() {
                     }
                     continue;
                 }
-                Err(crossbeam_channel::RecvTimeoutError::Disconnected) => Command::Shutdown,
+                Err(crossbeam_channel::RecvTimeoutError::Disconnected) => shutdown_command(),
             }
         } else if engine.is_some() {
             let remaining = ENGINE_IDLE_TIMEOUT.saturating_sub(engine_last_used.elapsed());
@@ -156,15 +158,20 @@ fn main() {
                     engine = None;
                     continue;
                 }
-                Err(crossbeam_channel::RecvTimeoutError::Disconnected) => Command::Shutdown,
+                Err(crossbeam_channel::RecvTimeoutError::Disconnected) => shutdown_command(),
             }
         } else {
             match commands.recv() {
                 Ok(command) => command,
-                Err(_) => Command::Shutdown,
+                Err(_) => shutdown_command(),
             }
         };
 
+        let ReceivedCommand {
+            command,
+            completion: _completion,
+            ..
+        } = received;
         match command {
             Command::Start {
                 request_id,
@@ -206,7 +213,7 @@ fn main() {
                         }
                     }
                 } else if let Some(loaded) = engine.as_mut() {
-                    if run_and_report(&request, loaded, &commands) {
+                    if run_and_report(&request, loaded, &commands, &capture_control) {
                         break;
                     }
                     engine_last_used = Instant::now();
@@ -237,6 +244,12 @@ fn main() {
                     });
                 }
             }
+            Command::SetMuted { request_id, .. } => {
+                emit(&Event::Error {
+                    request_id: Some(request_id),
+                    code: ErrorCode::NotActive,
+                });
+            }
             Command::ListDevices { request_id } => {
                 if preparation.is_some() {
                     emit(&Event::Error {
@@ -259,6 +272,14 @@ fn main() {
                 break;
             }
         }
+    }
+}
+
+fn shutdown_command() -> ReceivedCommand {
+    ReceivedCommand {
+        command: Command::Shutdown,
+        mute_request: None,
+        completion: protocol::CommandCompletion::default(),
     }
 }
 
@@ -423,18 +444,11 @@ fn poll_preparation(preparation: &mut Option<Preparation>) -> Option<Preparation
 fn run_and_report(
     request: &StartRequest,
     engine: &mut Engine,
-    commands: &Receiver<Command>,
+    commands: &Receiver<ReceivedCommand>,
+    capture_control: &CaptureControl,
 ) -> bool {
     engine.cancel.reset();
-    match run_stream(
-        request.request_id,
-        &request.locale,
-        request.device.as_deref(),
-        request.device_id.as_deref(),
-        request.device_match,
-        engine,
-        commands,
-    ) {
+    match run_stream(request, engine, commands, capture_control) {
         Ok(StreamOutcome::Continue) => false,
         Ok(StreamOutcome::Shutdown) => true,
         Err(code) => {
@@ -448,20 +462,25 @@ fn run_and_report(
 }
 
 fn run_stream(
-    request_id: u64,
-    locale: &str,
-    device: Option<&str>,
-    device_id: Option<&str>,
-    device_match: InputDeviceMatchPolicy,
+    request: &StartRequest,
     engine: &mut Engine,
-    commands: &Receiver<Command>,
+    commands: &Receiver<ReceivedCommand>,
+    capture_control: &CaptureControl,
 ) -> Result<StreamOutcome, ErrorCode> {
-    let capture = AudioCapture::open(device, device_id, device_match)
-        .map_err(|_| ErrorCode::MicrophoneUnavailable)?;
+    let request_id = request.request_id;
+    let capture_gate = Arc::new(CaptureGate::new());
+    let _capture_registration = capture_control.activate(request_id, Arc::clone(&capture_gate));
+    let capture = AudioCapture::open(
+        request.device.as_deref(),
+        request.device_id.as_deref(),
+        request.device_match,
+        capture_gate,
+    )
+    .map_err(|_| ErrorCode::MicrophoneUnavailable)?;
     let mut resampler =
         Resampler::new(capture.sample_rate).map_err(|_| ErrorCode::MicrophoneUnavailable)?;
     let run_options = RunOptions {
-        language: normalize_locale(locale),
+        language: normalize_locale(&request.locale),
         ..RunOptions::default()
     };
     let stream_options = StreamOptions {
@@ -479,44 +498,93 @@ fn run_stream(
         phase: Phase::Listening,
         progress: None,
     });
+    let mut mute_revision = 0_u64;
+    emit(&Event::MuteState {
+        request_id,
+        revision: mute_revision,
+        muted: capture.is_muted(),
+    });
 
     let mut pending = VecDeque::<f32>::with_capacity(FEED_SAMPLES * 2);
     let mut converted = Vec::with_capacity(FEED_SAMPLES * 2);
     let session_started = Instant::now();
     loop {
-        crossbeam_channel::select! {
+        crossbeam_channel::select_biased! {
             recv(commands) -> command => {
                 match command {
-                    Ok(Command::Stop { request_id: stopped }) if stopped == request_id => {
+                    Ok(ReceivedCommand { command: Command::Stop { request_id: stopped }, .. }) if stopped == request_id => {
                         emit(&Event::State {
                             request_id,
                             phase: Phase::Finishing,
                             progress: None,
                         });
+                        if capture.is_muted() {
+                            pending.clear();
+                        }
                         let final_text = finish_stream(&mut stream, &mut pending)?;
                         emit(&Event::Final { request_id, text: &final_text });
                         return Ok(StreamOutcome::Continue);
                     }
-                    Ok(Command::Cancel { request_id: cancelled }) if cancelled == request_id => {
+                    Ok(ReceivedCommand { command: Command::Cancel { request_id: cancelled }, .. }) if cancelled == request_id => {
                         stream.reset();
                         emit(&Event::Cancelled { request_id });
                         return Ok(StreamOutcome::Continue);
                     }
-                    Ok(Command::Shutdown) | Err(_) => {
+                    Ok(ReceivedCommand { command: Command::Shutdown, .. }) | Err(_) => {
                         stream.reset();
                         return Ok(StreamOutcome::Shutdown);
                     }
-                    Ok(Command::Start { request_id: other, .. }) => emit(&Event::Error {
+                    Ok(ReceivedCommand {
+                        command: Command::SetMuted { request_id: muted_request, muted },
+                        mute_request: Some(mute_request),
+                        completion: _completion,
+                    })
+                        if muted_request == request_id => {
+                            let capture_error = if mute_request.changes_state() {
+                                pending.clear();
+                                converted.clear();
+                                resampler.reset();
+                                drain_capture_packets(&capture)
+                            } else {
+                                None
+                            };
+                            // For unmute, reset and drain while the old muted
+                            // generation is still closed; applying the command
+                            // then opens a fresh generation with no replay.
+                            let outcome = capture.set_muted(mute_request, muted);
+                            mute_revision = mute_revision.saturating_add(1);
+                            emit(&Event::MuteState {
+                                request_id,
+                                revision: mute_revision,
+                                muted: outcome.muted,
+                            });
+                            if let Some(error) = capture_error {
+                                stream.reset();
+                                return Err(audio_error_code(error));
+                            }
+                        }
+                    Ok(ReceivedCommand { command: Command::Start { request_id: other, .. }, .. }) => emit(&Event::Error {
                         request_id: Some(other),
                         code: ErrorCode::Busy,
                     }),
-                    Ok(Command::ListDevices { request_id: other }) => {
+                    Ok(ReceivedCommand { command: Command::ListDevices { request_id: other }, .. }) => {
                         emit(&Event::Error {
                             request_id: Some(other),
                             code: ErrorCode::Busy,
                         });
                     }
-                    Ok(Command::Stop { request_id: other }) | Ok(Command::Cancel { request_id: other }) => {
+                    Ok(ReceivedCommand { command: Command::Stop { request_id: other }, .. })
+                    | Ok(ReceivedCommand { command: Command::Cancel { request_id: other }, .. }) => {
+                        emit(&Event::Error {
+                            request_id: Some(other),
+                            code: ErrorCode::NotActive,
+                        });
+                    }
+                    Ok(ReceivedCommand {
+                        command: Command::SetMuted { request_id: other, .. },
+                        completion: _completion,
+                        ..
+                    }) => {
                         emit(&Event::Error {
                             request_id: Some(other),
                             code: ErrorCode::NotActive,
@@ -527,11 +595,37 @@ fn run_stream(
             recv(capture.packets) -> packet => {
                 match packet {
                     Ok(AudioPacket::Samples(samples)) => {
+                        if !capture.accepts(samples.capture_state()) {
+                            continue;
+                        }
                         converted.clear();
                         resampler.push(samples.as_slice(), &mut converted);
+                        if !capture.accepts(samples.capture_state()) {
+                            converted.clear();
+                            pending.clear();
+                            resampler.reset();
+                            continue;
+                        }
                         pending.extend(converted.iter().copied());
                         while pending.len() >= FEED_SAMPLES {
+                            if !capture.accepts(samples.capture_state()) {
+                                pending.clear();
+                                converted.clear();
+                                resampler.reset();
+                                break;
+                            }
                             let frame = pending.drain(..FEED_SAMPLES).collect::<Vec<_>>();
+                            if !capture.accepts(samples.capture_state()) {
+                                pending.clear();
+                                converted.clear();
+                                resampler.reset();
+                                break;
+                            }
+                            // stream.feed is synchronous. A feed already entered
+                            // here may finish after the callback gate closes, but
+                            // command-biased selection processes SetMuted and
+                            // publishes its applied acknowledgement before any
+                            // later capture generation can be fed.
                             let update = stream.feed(&frame).map_err(|_| ErrorCode::EngineFailed)?;
                             let changed = update.committed_changed || update.tentative_changed;
                             if changed || session_started.elapsed() >= MAX_SESSION_DURATION {
@@ -540,6 +634,10 @@ fn run_stream(
                                     || session_started.elapsed() >= MAX_SESSION_DURATION
                                 {
                                     drop(text);
+                                    if !capture.accepts(samples.capture_state()) {
+                                        pending.clear();
+                                        resampler.reset();
+                                    }
                                     let final_text = finish_stream(&mut stream, &mut pending)?;
                                     emit(&Event::Final { request_id, text: &final_text });
                                     return Ok(StreamOutcome::Continue);
@@ -553,6 +651,9 @@ fn run_stream(
                                     committed: &text.committed,
                                     tentative: &text.tentative,
                                 });
+                            }
+                            if !commands.is_empty() {
+                                break;
                             }
                         }
                     }
@@ -571,6 +672,24 @@ fn run_stream(
                 }
             }
         }
+    }
+}
+
+fn drain_capture_packets(capture: &AudioCapture) -> Option<AudioError> {
+    let mut error = None;
+    while let Ok(packet) = capture.packets.try_recv() {
+        if let AudioPacket::Error(capture_error) = packet {
+            error.get_or_insert(capture_error);
+        }
+    }
+    error
+}
+
+fn audio_error_code(error: AudioError) -> ErrorCode {
+    match error {
+        AudioError::Unavailable => ErrorCode::MicrophoneUnavailable,
+        AudioError::Silent => ErrorCode::MicrophoneSilent,
+        AudioError::Overflow => ErrorCode::AudioOverflow,
     }
 }
 

@@ -75,8 +75,9 @@ progress for presentation. Desktop grants an action lease for one active voice
 request. Every intent and active status snapshot echoes that request; every
 helper event echoes the random supervisor session, so stale work cannot act on
 or describe later dictation. Status and progress never invoke an action.
-Desktop remains the owner of HOLD, RELEASE, finalizing
-transcription, and conversation submission. Its runtime is Rust plus a pinned
+Desktop remains the owner of persistent gesture arming, acknowledged
+microphone mute state, finalizing transcription, and conversation submission.
+Its runtime is Rust plus a pinned
 native MediaPipe library and model—Python and Bazel are build tools, not
 Desktop runtime dependencies. `gsv-vision` is not part of the release
 distribution until permissions, packaging, additional platforms, and the

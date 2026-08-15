@@ -1,37 +1,39 @@
 //! Pure temporal policy for two-hand voice controls.
 //!
 //! This module consumes only bounded MediaPipe label/score observations. It
-//! owns no camera, window, IPC, or application action. In particular, missing
-//! tracking is never interpreted as the release of an active hold.
+//! owns no camera, window, IPC, or application action. Missing tracking clears
+//! temporal evidence but never changes Desktop-owned armed or muted state.
 
 use std::time::{Duration, Instant};
 
 pub use gsv_vision_control::GestureState as ControlState;
 
-const READY_ENTER_SCORE: f32 = 0.50;
+const ARM_ENTER_SCORE: f32 = 0.50;
 const ACTION_ENTER_SCORE: f32 = 0.80;
 const CONTINUE_SCORE: f32 = 0.65;
 const MIN_SUPPORT_PERCENT: u16 = 80;
 const MIN_STRONG_SAMPLES: u16 = 3;
-const READY_DWELL: Duration = Duration::from_millis(350);
-const HOLD_DWELL: Duration = Duration::from_millis(450);
+const ARM_DWELL: Duration = Duration::from_millis(350);
+const DISARM_DWELL: Duration = Duration::from_millis(350);
 const SEND_DWELL: Duration = Duration::from_millis(700);
+const MUTE_DWELL: Duration = Duration::from_millis(450);
+const UNMUTE_DWELL: Duration = Duration::from_millis(700);
 const MAX_FRAME_AGE: Duration = Duration::from_millis(250);
 const MAX_SAMPLE_GAP: Duration = Duration::from_millis(250);
 const MAX_EVIDENCE_GAP: Duration = Duration::from_millis(180);
-const READY_TRANSITION_GRACE: Duration = Duration::from_secs(1);
-const READY_COMMAND_WINDOW: Duration = Duration::from_secs(3);
 const MIN_INTENT_SPACING: Duration = Duration::from_millis(750);
 
 /// A semantic request sent to the voice-session owner.
 ///
-/// Hold changes are explicit rather than toggles. `Send` is a one-shot edge;
-/// any transport must attach an identity and deduplicate it across retries.
+/// Every state change is explicit rather than a toggle. `Send` is a one-shot
+/// edge; transport attaches request/session identity and deduplicates retries.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ControlIntent {
-    EngageAutoSendHold,
-    ReleaseAutoSendHold,
+    Arm,
+    Disarm,
     Send,
+    Mute,
+    Unmute,
 }
 
 /// Fixed local-only vocabulary for explaining the temporal controller in the
@@ -40,9 +42,11 @@ pub enum ControlIntent {
 /// omitted, and the value never crosses GSV IPC or logs.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ControlChord {
-    Ready,
-    Hold,
+    Arm,
+    Disarm,
     Send,
+    Mute,
+    Unmute,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -59,6 +63,12 @@ pub enum ControlDiagnostic {
     },
     UnsupportedPose,
     UnexpectedPose {
+        chord: ControlChord,
+    },
+    AlreadySatisfied {
+        chord: ControlChord,
+    },
+    AwaitingAuthority {
         chord: ControlChord,
     },
     InvalidScore,
@@ -115,37 +125,31 @@ pub struct ControlSample<'a> {
 /// control vocabulary.
 pub struct GestureControl {
     state: ControlState,
+    pending: Option<ControlIntent>,
     diagnostic: ControlDiagnostic,
     candidate: Option<Candidate>,
     last_frame_sequence: Option<u64>,
     last_captured_at: Option<Instant>,
-    last_ready_pose_at: Option<Instant>,
-    last_supported_at: Option<Instant>,
     last_intent_at: Option<Instant>,
 }
 
 impl Default for GestureControl {
     fn default() -> Self {
-        Self::new(false)
+        Self::new(ControlState::new(false, false))
     }
 }
 
 impl GestureControl {
-    /// Creates a controller synchronized with the voice owner's current hold.
+    /// Creates a controller synchronized with Desktop's absolute state echo.
     #[must_use]
-    pub const fn new(auto_send_held: bool) -> Self {
+    pub const fn new(state: ControlState) -> Self {
         Self {
-            state: if auto_send_held {
-                ControlState::Holding
-            } else {
-                ControlState::NeedsReady
-            },
+            state,
+            pending: None,
             diagnostic: ControlDiagnostic::AwaitingPose,
             candidate: None,
             last_frame_sequence: None,
             last_captured_at: None,
-            last_ready_pose_at: None,
-            last_supported_at: None,
             last_intent_at: None,
         }
     }
@@ -153,6 +157,12 @@ impl GestureControl {
     #[must_use]
     pub const fn state(&self) -> ControlState {
         self.state
+    }
+
+    #[cfg(test)]
+    #[must_use]
+    pub const fn pending_intent(&self) -> Option<ControlIntent> {
+        self.pending
     }
 
     #[must_use]
@@ -175,18 +185,18 @@ impl GestureControl {
         })
     }
 
-    /// Re-synchronizes at an explicit voice-session boundary. This never emits
-    /// a release; the voice-session owner remains authoritative for its state.
-    pub fn reset(&mut self, auto_send_held: bool) {
-        *self = Self::new(auto_send_held);
+    /// Re-synchronizes at an explicit voice-session boundary.
+    pub fn reset(&mut self, state: ControlState) {
+        *self = Self::new(state);
     }
 
-    /// Reconciles an app-owned hold echo without discarding a locally reached
-    /// READY state. A real mismatch still resets to the app's authority.
-    pub fn synchronize_hold(&mut self, auto_send_held: bool) {
-        if (self.state == ControlState::Holding) != auto_send_held {
-            self.reset(auto_send_held);
-        }
+    /// Commits or rejects one pending request using Desktop's absolute echo.
+    /// Any context revision fences evidence accumulated under the old state.
+    pub fn synchronize_state(&mut self, state: ControlState) {
+        self.state = state;
+        self.pending = None;
+        self.candidate = None;
+        self.diagnostic = ControlDiagnostic::AwaitingPose;
     }
 
     /// Consumes one inference result and returns at most one semantic edge.
@@ -238,16 +248,12 @@ impl GestureControl {
             }
         };
 
-        self.expire_ready(now);
-        if reading.is_some_and(|reading| reading.quality >= self.tracking_score(reading.chord)) {
-            self.last_supported_at = Some(now);
-        }
-        if self.state == ControlState::Ready
-            && reading.is_some_and(|reading| {
-                reading.chord == Chord::Ready && reading.quality >= READY_ENTER_SCORE
-            })
-        {
-            self.last_ready_pose_at = Some(now);
+        if let Some(intent) = self.pending {
+            self.candidate = None;
+            self.diagnostic = ControlDiagnostic::AwaitingAuthority {
+                chord: intent.into(),
+            };
+            return None;
         }
 
         self.advance_candidate(now, reading)
@@ -280,18 +286,9 @@ impl GestureControl {
             ))
         });
         if let Some(reading) = reading.filter(|reading| !self.accepted_target(reading.chord)) {
-            self.diagnostic = if self.state == ControlState::Ready && reading.chord == Chord::Ready
-            {
-                if reading.quality >= READY_ENTER_SCORE {
-                    ControlDiagnostic::Accepted {
-                        chord: ControlChord::Ready,
-                    }
-                } else {
-                    ControlDiagnostic::LowConfidence {
-                        chord: ControlChord::Ready,
-                        observed_percent: score_percent(reading.quality),
-                        required_percent: score_percent(READY_ENTER_SCORE),
-                    }
+            self.diagnostic = if self.target_is_satisfied(reading.chord) {
+                ControlDiagnostic::AlreadySatisfied {
+                    chord: reading.chord.into(),
                 }
             } else {
                 ControlDiagnostic::UnexpectedPose {
@@ -367,23 +364,18 @@ impl GestureControl {
             };
         }
 
-        let ready = self.candidate.as_ref().is_some_and(|candidate| {
+        let stable = self.candidate.as_ref().is_some_and(|candidate| {
             let current_is_strong = target.is_some_and(|(chord, quality, entry_score)| {
                 chord == candidate.chord && quality >= entry_score
             });
             current_is_strong && candidate.is_stable(now)
         });
-        if !ready {
+        if !stable {
             return None;
         }
 
         let chord = self.candidate.as_ref().map(|candidate| candidate.chord)?;
-        let produces_intent = matches!(
-            (self.state, chord),
-            (ControlState::Ready, Chord::Hold | Chord::Send)
-                | (ControlState::Holding, Chord::Ready)
-        );
-        if produces_intent && !self.cooldown_complete(now) {
+        if !self.cooldown_complete(now) {
             let remaining = self.last_intent_at.map_or(Duration::ZERO, |previous| {
                 MIN_INTENT_SPACING.saturating_sub(now.saturating_duration_since(previous))
             });
@@ -396,57 +388,36 @@ impl GestureControl {
         self.diagnostic = ControlDiagnostic::Accepted {
             chord: chord.into(),
         };
-        match (self.state, chord) {
-            (ControlState::NeedsReady, Chord::Ready) => {
-                self.state = ControlState::Ready;
-                self.last_ready_pose_at = Some(now);
-                self.last_supported_at = Some(now);
-                None
-            }
-            (ControlState::Ready, Chord::Hold) => {
-                self.state = ControlState::Holding;
-                self.last_intent_at = Some(now);
-                Some(ControlIntent::EngageAutoSendHold)
-            }
-            (ControlState::Ready, Chord::Send) => {
-                self.state = ControlState::NeedsReady;
-                self.last_ready_pose_at = None;
-                self.last_supported_at = None;
-                self.last_intent_at = Some(now);
-                Some(ControlIntent::Send)
-            }
-            (ControlState::Holding, Chord::Ready) => {
-                self.state = ControlState::Ready;
-                self.last_ready_pose_at = Some(now);
-                self.last_supported_at = Some(now);
-                self.last_intent_at = Some(now);
-                Some(ControlIntent::ReleaseAutoSendHold)
-            }
-            _ => None,
-        }
+        let intent = ControlIntent::from(chord);
+        self.pending = Some(intent);
+        self.last_intent_at = Some(now);
+        Some(intent)
     }
 
     fn accepted_target(&self, chord: Chord) -> bool {
-        match self.state {
-            ControlState::NeedsReady => chord == Chord::Ready,
-            ControlState::Ready => matches!(chord, Chord::Hold | Chord::Send),
-            ControlState::Holding => chord == Chord::Ready,
+        match chord {
+            Chord::Arm => !self.state.armed(),
+            Chord::Disarm | Chord::Send => self.state.armed(),
+            Chord::Mute => self.state.armed() && !self.state.muted(),
+            Chord::Unmute => self.state.armed() && self.state.muted(),
         }
     }
 
-    fn entry_score(&self, chord: Chord) -> f32 {
-        if self.state == ControlState::NeedsReady && chord == Chord::Ready {
-            READY_ENTER_SCORE
+    fn target_is_satisfied(&self, chord: Chord) -> bool {
+        match chord {
+            Chord::Arm => self.state.armed(),
+            Chord::Disarm => !self.state.armed(),
+            Chord::Mute => self.state.muted(),
+            Chord::Unmute => !self.state.muted(),
+            Chord::Send => false,
+        }
+    }
+
+    const fn entry_score(&self, chord: Chord) -> f32 {
+        if matches!(chord, Chord::Arm) {
+            ARM_ENTER_SCORE
         } else {
             ACTION_ENTER_SCORE
-        }
-    }
-
-    fn tracking_score(&self, chord: Chord) -> f32 {
-        if self.state != ControlState::Holding && chord == Chord::Ready {
-            READY_ENTER_SCORE
-        } else {
-            CONTINUE_SCORE
         }
     }
 
@@ -455,54 +426,61 @@ impl GestureControl {
             .is_none_or(|previous| now.saturating_duration_since(previous) >= MIN_INTENT_SPACING)
     }
 
-    fn expire_ready(&mut self, now: Instant) {
-        if self.state != ControlState::Ready {
-            return;
-        }
-        let tracking_expired = self
-            .last_supported_at
-            .is_none_or(|last| now.saturating_duration_since(last) > READY_TRANSITION_GRACE);
-        let command_window_expired = self
-            .last_ready_pose_at
-            .is_none_or(|last| now.saturating_duration_since(last) > READY_COMMAND_WINDOW);
-        if tracking_expired || command_window_expired {
-            self.candidate = None;
-            self.state = ControlState::NeedsReady;
-            self.last_ready_pose_at = None;
-            self.last_supported_at = None;
-        }
-    }
-
     fn fence_tracking(&mut self) {
         self.candidate = None;
-        if self.state == ControlState::Ready {
-            self.state = ControlState::NeedsReady;
-            self.last_ready_pose_at = None;
-            self.last_supported_at = None;
-        }
     }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum Pose {
     OpenPalm,
-    ClosedFist,
+    PointingUp,
+    ThumbDown,
     ThumbUp,
+    Victory,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum Chord {
-    Ready,
-    Hold,
+    Arm,
+    Disarm,
     Send,
+    Mute,
+    Unmute,
 }
 
 impl From<Chord> for ControlChord {
     fn from(chord: Chord) -> Self {
         match chord {
-            Chord::Ready => Self::Ready,
-            Chord::Hold => Self::Hold,
+            Chord::Arm => Self::Arm,
+            Chord::Disarm => Self::Disarm,
             Chord::Send => Self::Send,
+            Chord::Mute => Self::Mute,
+            Chord::Unmute => Self::Unmute,
+        }
+    }
+}
+
+impl From<Chord> for ControlIntent {
+    fn from(chord: Chord) -> Self {
+        match chord {
+            Chord::Arm => Self::Arm,
+            Chord::Disarm => Self::Disarm,
+            Chord::Send => Self::Send,
+            Chord::Mute => Self::Mute,
+            Chord::Unmute => Self::Unmute,
+        }
+    }
+}
+
+impl From<ControlIntent> for ControlChord {
+    fn from(intent: ControlIntent) -> Self {
+        match intent {
+            ControlIntent::Arm => Self::Arm,
+            ControlIntent::Disarm => Self::Disarm,
+            ControlIntent::Send => Self::Send,
+            ControlIntent::Mute => Self::Mute,
+            ControlIntent::Unmute => Self::Unmute,
         }
     }
 }
@@ -510,17 +488,19 @@ impl From<Chord> for ControlChord {
 impl Chord {
     const fn dwell(self) -> Duration {
         match self {
-            Self::Ready => READY_DWELL,
-            Self::Hold => HOLD_DWELL,
+            Self::Arm => ARM_DWELL,
+            Self::Disarm => DISARM_DWELL,
             Self::Send => SEND_DWELL,
+            Self::Mute => MUTE_DWELL,
+            Self::Unmute => UNMUTE_DWELL,
         }
     }
 
     const fn minimum_matches(self) -> u16 {
         match self {
-            Self::Ready => 4,
-            Self::Hold => 5,
-            Self::Send => 7,
+            Self::Arm | Self::Disarm => 4,
+            Self::Mute => 5,
+            Self::Send | Self::Unmute => 7,
         }
     }
 }
@@ -625,9 +605,11 @@ fn classify_chord(hands: &[ControlHand<'_>]) -> Result<ChordReading, Classificat
     let first_pose = parse_pose(first.gesture).ok_or(ClassificationFailure::UnsupportedPose)?;
     let second_pose = parse_pose(second.gesture).ok_or(ClassificationFailure::UnsupportedPose)?;
     let chord = match (first_pose, second_pose) {
-        (Pose::OpenPalm, Pose::OpenPalm) => Chord::Ready,
-        (Pose::OpenPalm, Pose::ClosedFist) | (Pose::ClosedFist, Pose::OpenPalm) => Chord::Hold,
+        (Pose::OpenPalm, Pose::OpenPalm) => Chord::Arm,
+        (Pose::OpenPalm, Pose::Victory) | (Pose::Victory, Pose::OpenPalm) => Chord::Disarm,
         (Pose::OpenPalm, Pose::ThumbUp) | (Pose::ThumbUp, Pose::OpenPalm) => Chord::Send,
+        (Pose::OpenPalm, Pose::ThumbDown) | (Pose::ThumbDown, Pose::OpenPalm) => Chord::Mute,
+        (Pose::OpenPalm, Pose::PointingUp) | (Pose::PointingUp, Pose::OpenPalm) => Chord::Unmute,
         _ => return Err(ClassificationFailure::UnsupportedPose),
     };
     Ok(ChordReading {
@@ -639,8 +621,10 @@ fn classify_chord(hands: &[ControlHand<'_>]) -> Result<ChordReading, Classificat
 fn parse_pose(label: &str) -> Option<Pose> {
     match label {
         "Open_Palm" => Some(Pose::OpenPalm),
-        "Closed_Fist" => Some(Pose::ClosedFist),
+        "Pointing_Up" => Some(Pose::PointingUp),
+        "Thumb_Down" => Some(Pose::ThumbDown),
         "Thumb_Up" => Some(Pose::ThumbUp),
+        "Victory" => Some(Pose::Victory),
         _ => None,
     }
 }
@@ -686,6 +670,9 @@ mod tests {
     use super::*;
 
     const STEP: Duration = Duration::from_millis(50);
+    const DISARMED: ControlState = ControlState::new(false, false);
+    const ARMED: ControlState = ControlState::new(true, false);
+    const ARMED_MUTED: ControlState = ControlState::new(true, true);
 
     struct Harness {
         control: GestureControl,
@@ -695,9 +682,9 @@ mod tests {
     }
 
     impl Harness {
-        fn new(held: bool) -> Self {
+        fn new(state: ControlState) -> Self {
             Self {
-                control: GestureControl::new(held),
+                control: GestureControl::new(state),
                 start: Instant::now(),
                 sequence: 0,
                 elapsed: Duration::ZERO,
@@ -745,8 +732,20 @@ mod tests {
             })
         }
 
-        fn drive_empty(&mut self, count: usize) -> Vec<ControlIntent> {
-            (0..count).filter_map(|_| self.empty()).collect()
+        fn stale(&mut self, first: (&str, f32), second: (&str, f32)) -> Option<ControlIntent> {
+            self.sequence += 1;
+            self.elapsed += STEP;
+            let captured_at = self.start + self.elapsed;
+            let hands = [
+                ControlHand::new(first.0, first.1),
+                ControlHand::new(second.0, second.1),
+            ];
+            self.control.observe(ControlSample {
+                frame_sequence: self.sequence,
+                captured_at,
+                observed_at: captured_at + MAX_FRAME_AGE + Duration::from_millis(1),
+                hands: &hands,
+            })
         }
 
         fn drive(
@@ -760,11 +759,10 @@ mod tests {
                 .collect()
         }
 
-        fn ready(&mut self) {
-            assert!(self
-                .drive(8, ("Open_Palm", 0.9), ("Open_Palm", 0.9))
-                .is_empty());
-            assert_eq!(self.control.state(), ControlState::Ready);
+        fn drive_empty(&mut self, count: usize) {
+            for _ in 0..count {
+                assert_eq!(self.empty(), None);
+            }
         }
 
         fn progress(&self) -> Option<ControlProgress> {
@@ -773,176 +771,283 @@ mod tests {
     }
 
     #[test]
-    fn send_requires_ready_and_more_than_one_frame() {
-        let mut harness = Harness::new(false);
-        assert!(harness
-            .drive(20, ("Open_Palm", 0.95), ("Thumb_Up", 0.95))
-            .is_empty());
-        assert_eq!(harness.control.state(), ControlState::NeedsReady);
+    fn exact_unordered_canned_grammar_is_closed() {
+        let cases = [
+            (("Open_Palm", "Open_Palm"), Chord::Arm),
+            (("Open_Palm", "Victory"), Chord::Disarm),
+            (("Open_Palm", "Thumb_Up"), Chord::Send),
+            (("Open_Palm", "Thumb_Down"), Chord::Mute),
+            (("Open_Palm", "Pointing_Up"), Chord::Unmute),
+        ];
+        for ((first, second), expected) in cases {
+            for (first, second) in [(first, second), (second, first)] {
+                let hands = [ControlHand::new(first, 0.9), ControlHand::new(second, 0.8)];
+                let reading = classify_chord(&hands).expect("supported chord");
+                assert_eq!(reading.chord, expected);
+                assert_eq!(reading.quality, 0.8);
+            }
+        }
 
-        harness.ready();
-        assert_eq!(
-            harness.sample(("Open_Palm", 0.95), ("Thumb_Up", 0.95)),
-            None
-        );
-        assert_eq!(harness.control.state(), ControlState::Ready);
+        for (first, second) in [
+            ("Open_Palm", "Closed_Fist"),
+            ("Open_Palm", "ILoveYou"),
+            ("Victory", "Victory"),
+            ("open_palm", "Open_Palm"),
+        ] {
+            let hands = [ControlHand::new(first, 1.0), ControlHand::new(second, 1.0)];
+            assert!(matches!(
+                classify_chord(&hands),
+                Err(ClassificationFailure::UnsupportedPose)
+            ));
+        }
     }
 
     #[test]
-    fn initial_ready_pose_uses_a_lower_non_action_threshold() {
-        let mut below = Harness::new(false);
-        assert!(below
+    fn confidence_and_dwell_matrix_is_exact() {
+        let cases = [
+            (DISARMED, ("Open_Palm", "Open_Palm"), 8, ControlIntent::Arm),
+            (ARMED, ("Open_Palm", "Victory"), 8, ControlIntent::Disarm),
+            (ARMED, ("Open_Palm", "Thumb_Down"), 10, ControlIntent::Mute),
+            (ARMED, ("Open_Palm", "Thumb_Up"), 15, ControlIntent::Send),
+            (
+                ARMED_MUTED,
+                ("Open_Palm", "Pointing_Up"),
+                15,
+                ControlIntent::Unmute,
+            ),
+        ];
+
+        for (state, (first, second), samples, expected) in cases {
+            let mut harness = Harness::new(state);
+            assert!(harness
+                .drive(samples - 1, (first, 0.9), (second, 0.9))
+                .is_empty());
+            assert_eq!(harness.sample((first, 0.9), (second, 0.9)), Some(expected));
+            assert_eq!(harness.control.state(), state);
+            assert_eq!(harness.control.pending_intent(), Some(expected));
+        }
+
+        let mut arm = Harness::new(DISARMED);
+        assert!(arm
             .drive(20, ("Open_Palm", 0.49), ("Open_Palm", 0.49))
             .is_empty());
-        assert_eq!(below.control.state(), ControlState::NeedsReady);
         assert_eq!(
-            below.control.diagnostic(),
+            arm.control.diagnostic(),
             ControlDiagnostic::LowConfidence {
-                chord: ControlChord::Ready,
+                chord: ControlChord::Arm,
                 observed_percent: 49,
                 required_percent: 50,
             }
         );
-
-        let mut boundary = Harness::new(false);
-        assert!(boundary
-            .drive(8, ("Open_Palm", 0.50), ("Open_Palm", 0.50))
-            .is_empty());
-        assert_eq!(boundary.control.state(), ControlState::Ready);
+        let mut arm_boundary = Harness::new(DISARMED);
         assert_eq!(
-            boundary.control.diagnostic(),
-            ControlDiagnostic::Accepted {
-                chord: ControlChord::Ready,
-            }
+            arm_boundary.drive(8, ("Open_Palm", 0.50), ("Open_Palm", 0.50)),
+            [ControlIntent::Arm]
         );
 
-        assert!(boundary
-            .drive(70, ("Open_Palm", 0.50), ("Open_Palm", 0.50))
-            .is_empty());
-        assert_eq!(boundary.control.state(), ControlState::Ready);
-        assert_eq!(
-            boundary.control.diagnostic(),
-            ControlDiagnostic::Accepted {
-                chord: ControlChord::Ready,
-            }
-        );
-    }
-
-    #[test]
-    fn progress_uses_the_complete_candidate_evidence_gate() {
-        let mut harness = Harness::new(false);
-        assert_eq!(harness.sample(("Open_Palm", 0.9), ("Open_Palm", 0.9)), None);
-        assert_eq!(
-            harness.progress(),
-            Some(ControlProgress {
-                chord: ControlChord::Ready,
-                progress_permille: 0,
-            })
-        );
-
-        assert_eq!(harness.sample(("Open_Palm", 0.9), ("Open_Palm", 0.9)), None);
-        assert_eq!(
-            harness.progress(),
-            Some(ControlProgress {
-                chord: ControlChord::Ready,
-                progress_permille: 142,
-            })
-        );
-    }
-
-    #[test]
-    fn aggregate_complete_weak_sample_stays_pending_below_full() {
-        let mut harness = Harness::new(false);
-        harness.ready();
-        assert!(harness
-            .drive(9, ("Open_Palm", 0.9), ("Closed_Fist", 0.9))
-            .is_empty());
-        assert_eq!(
-            harness.sample(("Open_Palm", 0.70), ("Closed_Fist", 0.70)),
-            None
-        );
-        assert_eq!(harness.control.state(), ControlState::Ready);
-        assert_eq!(
-            harness.progress(),
-            Some(ControlProgress {
-                chord: ControlChord::Hold,
-                progress_permille: 999,
-            })
-        );
-
-        assert_eq!(
-            harness.sample(("Open_Palm", 0.80), ("Closed_Fist", 0.80)),
-            Some(ControlIntent::EngageAutoSendHold)
-        );
-        assert_eq!(harness.control.state(), ControlState::Holding);
-        assert_eq!(harness.progress(), None);
-    }
-
-    #[test]
-    fn lower_ready_threshold_does_not_weaken_commands_or_release() {
-        for command in ["Closed_Fist", "Thumb_Up"] {
-            let mut harness = Harness::new(false);
-            harness.ready();
+        for (state, second, chord) in [
+            (ARMED, "Victory", ControlChord::Disarm),
+            (ARMED, "Thumb_Up", ControlChord::Send),
+            (ARMED, "Thumb_Down", ControlChord::Mute),
+            (ARMED_MUTED, "Pointing_Up", ControlChord::Unmute),
+        ] {
+            let mut harness = Harness::new(state);
             assert!(harness
-                .drive(20, ("Open_Palm", 0.70), (command, 0.70))
+                .drive(20, ("Open_Palm", 0.799), (second, 0.799))
                 .is_empty());
-            assert_eq!(harness.control.state(), ControlState::Ready);
             assert_eq!(
                 harness.control.diagnostic(),
                 ControlDiagnostic::LowConfidence {
-                    chord: if command == "Closed_Fist" {
-                        ControlChord::Hold
-                    } else {
-                        ControlChord::Send
-                    },
-                    observed_percent: 70,
+                    chord,
+                    observed_percent: 79,
                     required_percent: 80,
                 }
             );
         }
+    }
 
-        let mut held = Harness::new(true);
-        assert!(held
-            .drive(20, ("Open_Palm", 0.70), ("Open_Palm", 0.70))
-            .is_empty());
-        assert_eq!(held.control.state(), ControlState::Holding);
+    #[test]
+    fn intent_waits_for_absolute_authority_echo_and_blocks_every_chord() {
+        let mut harness = Harness::new(DISARMED);
         assert_eq!(
-            held.control.diagnostic(),
-            ControlDiagnostic::LowConfidence {
-                chord: ControlChord::Ready,
-                observed_percent: 70,
-                required_percent: 80,
-            }
+            harness.drive(8, ("Open_Palm", 0.9), ("Open_Palm", 0.9)),
+            [ControlIntent::Arm]
+        );
+        assert_eq!(harness.control.state(), DISARMED);
+
+        for second in ["Victory", "Thumb_Up", "Thumb_Down", "Pointing_Up"] {
+            assert!(harness
+                .drive(20, ("Open_Palm", 1.0), (second, 1.0))
+                .is_empty());
+            assert_eq!(
+                harness.control.diagnostic(),
+                ControlDiagnostic::AwaitingAuthority {
+                    chord: ControlChord::Arm,
+                }
+            );
+            assert_eq!(harness.progress(), None);
+        }
+
+        harness.control.synchronize_state(ARMED);
+        assert_eq!(harness.control.state(), ARMED);
+        assert_eq!(harness.control.pending_intent(), None);
+        assert_eq!(
+            harness.control.diagnostic(),
+            ControlDiagnostic::AwaitingPose
         );
     }
 
     #[test]
-    fn diagnostics_do_not_round_subthreshold_action_confidence_up() {
-        let mut harness = Harness::new(false);
-        harness.ready();
+    fn authoritative_rejection_clears_pending_and_old_evidence() {
+        let mut harness = Harness::new(DISARMED);
         assert_eq!(
-            harness.sample(("Open_Palm", 0.795), ("Closed_Fist", 0.795)),
+            harness.drive(8, ("Open_Palm", 0.9), ("Open_Palm", 0.9)),
+            [ControlIntent::Arm]
+        );
+        harness.control.synchronize_state(DISARMED);
+        assert_eq!(harness.control.pending_intent(), None);
+        assert_eq!(harness.progress(), None);
+
+        harness.drive_empty(8);
+        assert!(harness
+            .drive(7, ("Open_Palm", 0.9), ("Open_Palm", 0.9))
+            .is_empty());
+        assert_eq!(
+            harness.sample(("Open_Palm", 0.9), ("Open_Palm", 0.9)),
+            Some(ControlIntent::Arm)
+        );
+    }
+
+    #[test]
+    fn tracking_loss_clears_only_candidate_and_never_persistent_state() {
+        for state in [ARMED, ARMED_MUTED] {
+            let mut harness = Harness::new(state);
+            assert!(harness
+                .drive(5, ("Open_Palm", 0.9), ("Thumb_Up", 0.9))
+                .is_empty());
+            assert!(harness.progress().is_some());
+
+            harness.drive_empty(100);
+            assert_eq!(harness.control.state(), state);
+            assert_eq!(harness.progress(), None);
+
+            assert_eq!(harness.empty_after(Duration::from_millis(251)), None);
+            assert_eq!(harness.control.state(), state);
+            assert_eq!(
+                harness.control.diagnostic(),
+                ControlDiagnostic::SampleGap { gap_ms: 251 }
+            );
+
+            assert_eq!(harness.stale(("Open_Palm", 0.9), ("Thumb_Up", 0.9)), None);
+            assert_eq!(harness.control.state(), state);
+            assert_eq!(
+                harness.control.diagnostic(),
+                ControlDiagnostic::FrameTooOld { age_ms: 251 }
+            );
+        }
+    }
+
+    #[test]
+    fn one_missing_frame_requires_complete_fresh_dwell() {
+        let mut harness = Harness::new(ARMED);
+        assert!(harness
+            .drive(5, ("Open_Palm", 0.9), ("Thumb_Down", 0.9))
+            .is_empty());
+        assert!(harness.progress().is_some());
+
+        assert_eq!(harness.empty(), None);
+        assert_eq!(harness.progress(), None);
+
+        assert!(harness
+            .drive(9, ("Open_Palm", 0.9), ("Thumb_Down", 0.9))
+            .is_empty());
+        assert_eq!(
+            harness.sample(("Open_Palm", 0.9), ("Thumb_Down", 0.9)),
+            Some(ControlIntent::Mute)
+        );
+    }
+
+    #[test]
+    fn unrecognized_frame_requires_complete_fresh_dwell() {
+        let mut harness = Harness::new(ARMED);
+        assert!(harness
+            .drive(6, ("Open_Palm", 0.9), ("Victory", 0.9))
+            .is_empty());
+        assert!(harness.progress().is_some());
+
+        assert_eq!(
+            harness.sample(("Open_Palm", 1.0), ("Closed_Fist", 1.0)),
             None
         );
         assert_eq!(
             harness.control.diagnostic(),
-            ControlDiagnostic::LowConfidence {
-                chord: ControlChord::Hold,
-                observed_percent: 79,
-                required_percent: 80,
-            }
+            ControlDiagnostic::UnsupportedPose
+        );
+        assert_eq!(harness.progress(), None);
+
+        assert!(harness
+            .drive(7, ("Open_Palm", 0.9), ("Victory", 0.9))
+            .is_empty());
+        assert_eq!(
+            harness.sample(("Open_Palm", 0.9), ("Victory", 0.9)),
+            Some(ControlIntent::Disarm)
         );
     }
 
     #[test]
-    fn diagnostic_identifies_an_evidence_cadence_gap() {
-        let mut harness = Harness::new(false);
-        assert_eq!(harness.sample(("Open_Palm", 0.9), ("Open_Palm", 0.9)), None);
+    fn different_chord_cannot_bridge_old_evidence() {
+        let mut harness = Harness::new(ARMED);
+        assert!(harness
+            .drive(5, ("Open_Palm", 0.9), ("Thumb_Down", 0.9))
+            .is_empty());
+
+        assert_eq!(harness.sample(("Open_Palm", 0.9), ("Thumb_Up", 0.9)), None);
+        assert_eq!(
+            harness.progress(),
+            Some(ControlProgress {
+                chord: ControlChord::Send,
+                progress_permille: 0,
+            })
+        );
+
+        assert!(harness
+            .drive(9, ("Open_Palm", 0.9), ("Thumb_Down", 0.9))
+            .is_empty());
+        assert_eq!(
+            harness.sample(("Open_Palm", 0.9), ("Thumb_Down", 0.9)),
+            Some(ControlIntent::Mute)
+        );
+    }
+
+    #[test]
+    fn same_chord_continuation_hysteresis_survives_a_weak_frame() {
+        let mut harness = Harness::new(ARMED);
+        assert!(harness
+            .drive(5, ("Open_Palm", 0.9), ("Thumb_Down", 0.9))
+            .is_empty());
+        assert_eq!(
+            harness.sample(("Open_Palm", 0.65), ("Thumb_Down", 0.65)),
+            None
+        );
+        assert!(harness.progress().is_some());
+        assert!(harness
+            .drive(3, ("Open_Palm", 0.9), ("Thumb_Down", 0.9))
+            .is_empty());
+        assert_eq!(
+            harness.sample(("Open_Palm", 0.9), ("Thumb_Down", 0.9)),
+            Some(ControlIntent::Mute)
+        );
+    }
+
+    #[test]
+    fn evidence_gap_restarts_candidate_without_weakening_capture_fence() {
+        let mut harness = Harness::new(ARMED);
+        assert_eq!(harness.sample(("Open_Palm", 0.9), ("Victory", 0.9)), None);
         assert_eq!(
             harness.sample_after(
                 Duration::from_millis(181),
                 ("Open_Palm", 0.9),
-                ("Open_Palm", 0.9),
+                ("Victory", 0.9),
             ),
             None
         );
@@ -950,406 +1055,127 @@ mod tests {
             harness.control.diagnostic(),
             ControlDiagnostic::EvidenceGap { gap_ms: 181 }
         );
-    }
-
-    #[test]
-    fn stable_send_emits_once_and_disarms() {
-        let mut harness = Harness::new(false);
-        harness.ready();
-        let intents = harness.drive(16, ("Thumb_Up", 0.9), ("Open_Palm", 0.9));
-        assert_eq!(intents, [ControlIntent::Send]);
-        assert_eq!(harness.control.state(), ControlState::NeedsReady);
         assert!(harness
-            .drive(20, ("Thumb_Up", 0.9), ("Open_Palm", 0.9))
-            .is_empty());
-    }
-
-    #[test]
-    fn changing_candidates_cannot_extend_the_ready_window() {
-        let mut harness = Harness::new(false);
-        harness.ready();
-
-        for index in 0..70 {
-            let command = if index % 2 == 0 {
-                "Closed_Fist"
-            } else {
-                "Thumb_Up"
-            };
-            assert_eq!(harness.sample(("Open_Palm", 0.95), (command, 0.95)), None);
-        }
-
-        assert_eq!(harness.control.state(), ControlState::NeedsReady);
-        assert!(harness
-            .drive(20, ("Open_Palm", 0.95), ("Thumb_Up", 0.95))
-            .is_empty());
-    }
-
-    #[test]
-    fn ready_pose_at_command_window_plus_one_millisecond_must_rearm() {
-        let mut harness = Harness::new(false);
-        harness.ready();
-
-        assert!(harness
-            .drive(60, ("Open_Palm", 0.7), ("Closed_Fist", 0.7))
-            .is_empty());
-        assert_eq!(harness.control.state(), ControlState::Ready);
-        assert_eq!(
-            harness.sample_after(
-                Duration::from_millis(1),
-                ("Open_Palm", 0.9),
-                ("Open_Palm", 0.9),
-            ),
-            None
-        );
-        assert_eq!(harness.control.state(), ControlState::NeedsReady);
-        assert_eq!(
-            harness.progress(),
-            Some(ControlProgress {
-                chord: ControlChord::Ready,
-                progress_permille: 0,
-            })
-        );
-    }
-
-    #[test]
-    fn hold_survives_tracking_loss_and_needs_visible_release() {
-        let mut harness = Harness::new(false);
-        harness.ready();
-        assert_eq!(
-            harness.drive(10, ("Open_Palm", 0.9), ("Closed_Fist", 0.9)),
-            [ControlIntent::EngageAutoSendHold]
-        );
-        assert_eq!(harness.control.state(), ControlState::Holding);
-
-        for _ in 0..30 {
-            assert_eq!(harness.empty(), None);
-        }
-        assert_eq!(harness.control.state(), ControlState::Holding);
-        assert!(harness
-            .drive(20, ("Open_Palm", 0.4), ("Open_Palm", 0.4))
-            .is_empty());
-        assert_eq!(harness.control.state(), ControlState::Holding);
-
-        assert_eq!(
-            harness.drive(16, ("Open_Palm", 0.9), ("Open_Palm", 0.9)),
-            [ControlIntent::ReleaseAutoSendHold]
-        );
-        assert_eq!(harness.control.state(), ControlState::Ready);
-    }
-
-    #[test]
-    fn send_is_unavailable_while_hold_is_active() {
-        let mut harness = Harness::new(true);
-        assert!(harness
-            .drive(30, ("Open_Palm", 0.99), ("Thumb_Up", 0.99))
-            .is_empty());
-        assert_eq!(harness.control.state(), ControlState::Holding);
-    }
-
-    #[test]
-    fn ready_transition_grace_allows_each_command_after_tracking_loss() {
-        for (command, samples, intent, terminal_state) in [
-            (
-                "Closed_Fist",
-                10,
-                ControlIntent::EngageAutoSendHold,
-                ControlState::Holding,
-            ),
-            (
-                "Thumb_Up",
-                15,
-                ControlIntent::Send,
-                ControlState::NeedsReady,
-            ),
-        ] {
-            let mut harness = Harness::new(false);
-            harness.ready();
-
-            assert!(harness.drive_empty(18).is_empty());
-            assert_eq!(harness.control.state(), ControlState::Ready);
-            assert_eq!(harness.progress(), None);
-
-            assert_eq!(
-                harness.drive(samples, ("Open_Palm", 0.9), (command, 0.9)),
-                [intent]
-            );
-            assert_eq!(harness.control.state(), terminal_state);
-        }
-    }
-
-    #[test]
-    fn command_at_transition_grace_plus_one_millisecond_requires_rearming() {
-        for command in ["Closed_Fist", "Thumb_Up"] {
-            let mut harness = Harness::new(false);
-            harness.ready();
-
-            assert!(harness.drive_empty(20).is_empty());
-            assert_eq!(harness.control.state(), ControlState::Ready);
-            assert_eq!(
-                harness.sample_after(Duration::from_millis(1), ("Open_Palm", 0.9), (command, 0.9),),
-                None
-            );
-            assert_eq!(harness.control.state(), ControlState::NeedsReady);
-            assert_eq!(harness.progress(), None);
-        }
-    }
-
-    #[test]
-    fn ready_expiry_discards_pending_candidate() {
-        let mut harness = Harness::new(false);
-        harness.ready();
-        assert!(harness
-            .drive(3, ("Open_Palm", 0.9), ("Closed_Fist", 0.9))
-            .is_empty());
-        assert!(harness.progress().is_some());
-
-        let expired_at =
-            harness.start + harness.elapsed + READY_TRANSITION_GRACE + Duration::from_millis(1);
-        harness.control.last_ready_pose_at = Some(expired_at);
-        harness.control.expire_ready(expired_at);
-
-        assert_eq!(harness.control.state(), ControlState::NeedsReady);
-        assert_eq!(harness.control.progress(expired_at), None);
-    }
-
-    #[test]
-    fn partial_command_evidence_is_discarded_during_transition_grace() {
-        for (command, fresh_samples_before_intent, intent) in [
-            ("Closed_Fist", 9, ControlIntent::EngageAutoSendHold),
-            ("Thumb_Up", 14, ControlIntent::Send),
-        ] {
-            let mut harness = Harness::new(false);
-            harness.ready();
-            assert!(harness
-                .drive(3, ("Open_Palm", 0.9), (command, 0.9))
-                .is_empty());
-            assert!(harness.progress().is_some());
-
-            assert_eq!(harness.empty(), None);
-            assert_eq!(harness.control.state(), ControlState::Ready);
-            assert_eq!(harness.progress(), None);
-
-            assert!(harness
-                .drive(
-                    fresh_samples_before_intent,
-                    ("Open_Palm", 0.9),
-                    (command, 0.9),
-                )
-                .is_empty());
-            assert_eq!(harness.control.state(), ControlState::Ready);
-            assert_eq!(
-                harness.sample(("Open_Palm", 0.9), (command, 0.9)),
-                Some(intent)
-            );
-        }
-    }
-
-    #[test]
-    fn unsupported_pose_is_an_immediate_candidate_boundary() {
-        let mut harness = Harness::new(false);
-        harness.ready();
-        assert!(harness
-            .drive(3, ("Open_Palm", 0.9), ("Closed_Fist", 0.9))
-            .is_empty());
-        assert!(harness.progress().is_some());
-
-        assert_eq!(harness.sample(("Victory", 1.0), ("Victory", 1.0)), None);
-        assert_eq!(harness.control.state(), ControlState::Ready);
-        assert_eq!(harness.progress(), None);
-
-        assert!(harness
-            .drive(9, ("Open_Palm", 0.9), ("Closed_Fist", 0.9))
+            .drive(6, ("Open_Palm", 0.9), ("Victory", 0.9))
             .is_empty());
         assert_eq!(
-            harness.sample(("Open_Palm", 0.9), ("Closed_Fist", 0.9)),
-            Some(ControlIntent::EngageAutoSendHold)
+            harness.sample(("Open_Palm", 0.9), ("Victory", 0.9)),
+            Some(ControlIntent::Disarm)
         );
-    }
 
-    #[test]
-    fn different_chord_cannot_bridge_old_candidate_evidence() {
-        let mut harness = Harness::new(false);
-        harness.ready();
-        assert!(harness
-            .drive(3, ("Open_Palm", 0.9), ("Closed_Fist", 0.9))
+        let mut capture_gap = Harness::new(ARMED);
+        assert!(capture_gap
+            .drive(5, ("Open_Palm", 0.9), ("Thumb_Down", 0.9))
             .is_empty());
-        assert!(harness.progress().is_some());
-
-        assert_eq!(harness.sample(("Open_Palm", 0.7), ("Thumb_Up", 0.7)), None);
-        assert_eq!(harness.control.state(), ControlState::Ready);
-        assert_eq!(harness.progress(), None);
-
-        assert!(harness
-            .drive(9, ("Open_Palm", 0.9), ("Closed_Fist", 0.9))
-            .is_empty());
-        assert_eq!(
-            harness.sample(("Open_Palm", 0.9), ("Closed_Fist", 0.9)),
-            Some(ControlIntent::EngageAutoSendHold)
-        );
-    }
-
-    #[test]
-    fn one_noisy_frame_does_not_arm_hold_or_send() {
-        for command in ["Closed_Fist", "Thumb_Up"] {
-            let mut harness = Harness::new(false);
-            harness.ready();
-            assert_eq!(harness.sample(("Open_Palm", 1.0), (command, 1.0)), None);
-            assert!(harness.drive_empty(8).is_empty());
-            assert_eq!(harness.control.state(), ControlState::Ready);
-            assert_eq!(harness.progress(), None);
-
-            assert!(harness.drive_empty(13).is_empty());
-            assert_eq!(harness.control.state(), ControlState::NeedsReady);
-        }
-    }
-
-    #[test]
-    fn a_short_weak_dip_is_tolerated_but_cannot_finish_evidence() {
-        let mut harness = Harness::new(false);
-        harness.ready();
-        assert!(harness
-            .drive(5, ("Open_Palm", 0.9), ("Closed_Fist", 0.9))
-            .is_empty());
-        assert_eq!(
-            harness.sample(("Open_Palm", 0.6), ("Closed_Fist", 0.6)),
-            None
-        );
-        assert!(harness
-            .drive(2, ("Open_Palm", 0.9), ("Closed_Fist", 0.9))
-            .is_empty());
-        assert_eq!(
-            harness.drive(2, ("Open_Palm", 0.9), ("Closed_Fist", 0.9)),
-            [ControlIntent::EngageAutoSendHold]
-        );
-    }
-
-    #[test]
-    fn a_capture_gap_resets_evidence() {
-        let mut harness = Harness::new(false);
-        assert!(harness
-            .drive(6, ("Open_Palm", 0.9), ("Open_Palm", 0.9))
-            .is_empty());
-        assert_eq!(
-            harness.sample_after(
-                Duration::from_millis(300),
-                ("Open_Palm", 0.9),
-                ("Open_Palm", 0.9),
-            ),
-            None
-        );
-        assert_eq!(harness.control.state(), ControlState::NeedsReady);
-        assert!(harness
-            .drive(6, ("Open_Palm", 0.9), ("Open_Palm", 0.9))
-            .is_empty());
-        assert_eq!(harness.control.state(), ControlState::NeedsReady);
-        assert!(harness
-            .drive(2, ("Open_Palm", 0.9), ("Open_Palm", 0.9))
-            .is_empty());
-        assert_eq!(harness.control.state(), ControlState::Ready);
-    }
-
-    #[test]
-    fn transition_grace_does_not_weaken_transport_freshness_fences() {
-        let mut capture_gap = Harness::new(false);
-        capture_gap.ready();
         assert_eq!(
             capture_gap.sample_after(
                 Duration::from_millis(251),
                 ("Open_Palm", 0.9),
-                ("Closed_Fist", 0.9),
+                ("Thumb_Down", 0.9),
             ),
             None
         );
-        assert_eq!(capture_gap.control.state(), ControlState::NeedsReady);
+        assert_eq!(capture_gap.control.state(), ARMED);
+        assert_eq!(capture_gap.progress(), None);
         assert_eq!(
             capture_gap.control.diagnostic(),
             ControlDiagnostic::SampleGap { gap_ms: 251 }
         );
-        assert_eq!(capture_gap.progress(), None);
-
-        let mut stale_frame = Harness::new(false);
-        stale_frame.ready();
-        stale_frame.sequence += 1;
-        stale_frame.elapsed += STEP;
-        let captured_at = stale_frame.start + stale_frame.elapsed;
-        let hands = [
-            ControlHand::new("Open_Palm", 0.9),
-            ControlHand::new("Closed_Fist", 0.9),
-        ];
-        assert_eq!(
-            stale_frame.control.observe(ControlSample {
-                frame_sequence: stale_frame.sequence,
-                captured_at,
-                observed_at: captured_at + Duration::from_millis(251),
-                hands: &hands,
-            }),
-            None
-        );
-        assert_eq!(stale_frame.control.state(), ControlState::NeedsReady);
-        assert_eq!(
-            stale_frame.control.diagnostic(),
-            ControlDiagnostic::FrameTooOld { age_ms: 251 }
-        );
-        assert_eq!(stale_frame.progress(), None);
     }
 
     #[test]
-    fn stale_observations_fail_closed_without_releasing_hold() {
-        let mut harness = Harness::new(true);
-        harness.sequence += 1;
-        harness.elapsed += STEP;
-        let captured_at = harness.start + harness.elapsed;
-        let hands = [
-            ControlHand::new("Open_Palm", 1.0),
-            ControlHand::new("Open_Palm", 1.0),
-        ];
-        assert_eq!(
-            harness.control.observe(ControlSample {
-                frame_sequence: harness.sequence,
-                captured_at,
-                observed_at: captured_at + Duration::from_millis(251),
-                hands: &hands,
-            }),
-            None
-        );
-        assert_eq!(harness.control.state(), ControlState::Holding);
-    }
+    fn idempotent_state_commands_are_not_candidates() {
+        for (state, second, expected_chord) in [
+            (ARMED, "Open_Palm", ControlChord::Arm),
+            (DISARMED, "Victory", ControlChord::Disarm),
+            (ARMED_MUTED, "Thumb_Down", ControlChord::Mute),
+            (ARMED, "Pointing_Up", ControlChord::Unmute),
+        ] {
+            let mut harness = Harness::new(state);
+            assert!(harness
+                .drive(20, ("Open_Palm", 1.0), (second, 1.0))
+                .is_empty());
+            assert_eq!(harness.progress(), None);
+            assert_eq!(
+                harness.control.diagnostic(),
+                ControlDiagnostic::AlreadySatisfied {
+                    chord: expected_chord,
+                }
+            );
+        }
 
-    #[test]
-    fn labels_are_exact_and_hand_order_is_irrelevant() {
-        let mut harness = Harness::new(false);
-        assert!(harness
-            .drive(20, ("open_palm", 1.0), ("Open_Palm", 1.0))
+        let mut disarmed_send = Harness::new(DISARMED);
+        assert!(disarmed_send
+            .drive(20, ("Open_Palm", 1.0), ("Thumb_Up", 1.0))
             .is_empty());
-        assert_eq!(harness.control.state(), ControlState::NeedsReady);
-
-        harness.ready();
         assert_eq!(
-            harness.drive(10, ("Closed_Fist", 0.9), ("Open_Palm", 0.9)),
-            [ControlIntent::EngageAutoSendHold]
+            disarmed_send.control.diagnostic(),
+            ControlDiagnostic::UnexpectedPose {
+                chord: ControlChord::Send,
+            }
         );
     }
 
     #[test]
-    fn reset_synchronizes_hold_without_synthesizing_an_intent() {
-        let mut control = GestureControl::default();
-        control.reset(true);
-        assert_eq!(control.state(), ControlState::Holding);
-        control.reset(false);
-        assert_eq!(control.state(), ControlState::NeedsReady);
+    fn hand_count_scores_and_order_fail_closed_without_state_mutation() {
+        let now = Instant::now();
+        let mut control = GestureControl::new(ARMED_MUTED);
+        let one = [ControlHand::new("Open_Palm", 1.0)];
+        assert_eq!(
+            control.observe(ControlSample {
+                frame_sequence: 1,
+                captured_at: now,
+                observed_at: now + Duration::from_millis(20),
+                hands: &one,
+            }),
+            None
+        );
+        assert_eq!(
+            control.diagnostic(),
+            ControlDiagnostic::NeedTwoHands { detected: 1 }
+        );
+
+        let invalid = [
+            ControlHand::new("Open_Palm", f32::NAN),
+            ControlHand::new("Pointing_Up", 1.0),
+        ];
+        assert_eq!(
+            control.observe(ControlSample {
+                frame_sequence: 2,
+                captured_at: now + STEP,
+                observed_at: now + STEP + Duration::from_millis(20),
+                hands: &invalid,
+            }),
+            None
+        );
+        assert_eq!(control.diagnostic(), ControlDiagnostic::InvalidScore);
+
+        assert_eq!(
+            control.observe(ControlSample {
+                frame_sequence: 2,
+                captured_at: now + STEP,
+                observed_at: now + STEP + Duration::from_millis(20),
+                hands: &invalid,
+            }),
+            None
+        );
+        assert_eq!(control.diagnostic(), ControlDiagnostic::InvalidOrder);
+        assert_eq!(control.state(), ARMED_MUTED);
     }
 
     #[test]
-    fn matching_release_echo_preserves_the_locally_rearmed_state() {
-        let mut harness = Harness::new(true);
+    fn reset_is_an_absolute_request_boundary_without_synthetic_intent() {
+        let mut harness = Harness::new(ARMED);
+        assert!(harness
+            .drive(5, ("Open_Palm", 0.9), ("Thumb_Up", 0.9))
+            .is_empty());
+        harness.control.reset(ARMED_MUTED);
+        assert_eq!(harness.control.state(), ARMED_MUTED);
+        assert_eq!(harness.control.pending_intent(), None);
+        assert_eq!(harness.progress(), None);
         assert_eq!(
-            harness.drive(8, ("Open_Palm", 0.9), ("Open_Palm", 0.9)),
-            [ControlIntent::ReleaseAutoSendHold]
+            harness.control.diagnostic(),
+            ControlDiagnostic::AwaitingPose
         );
-        assert_eq!(harness.control.state(), ControlState::Ready);
-
-        harness.control.synchronize_hold(false);
-
-        assert_eq!(harness.control.state(), ControlState::Ready);
     }
 }

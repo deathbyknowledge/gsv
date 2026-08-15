@@ -16,7 +16,7 @@ pub const EVENT_FD: i32 = 3;
 pub const EVENT_FD_MARKER_ENV: &str = "GSV_VISION_EVENT_FD";
 /// Exact private launch contract. Rotate this on an incompatible unshipped
 /// helper/Desktop cutover so a stale sibling fails before semantic traffic.
-pub const EVENT_CHANNEL_CONTRACT_MARKER: &str = "gsv-vision-control-v1";
+pub const EVENT_CHANNEL_CONTRACT_MARKER: &str = "gsv-vision-control-v1-explicit-modes";
 pub const SESSION_HIGH_ENV: &str = "GSV_VISION_SESSION_HIGH";
 pub const SESSION_LOW_ENV: &str = "GSV_VISION_SESSION_LOW";
 
@@ -47,24 +47,39 @@ impl SessionId {
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum GestureIntent {
-    Hold,
-    ReleaseHold,
+    Arm,
+    Disarm,
     Send,
+    Mute,
+    Unmute,
 }
 
-/// Stable semantic state of the helper-owned temporal gesture controller.
+/// Absolute Desktop-owned semantic state echoed to the gesture controller.
 ///
 /// This state itself exposes neither model labels nor per-frame evidence. An
 /// active status may separately carry bounded, quantized candidate progress.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum GestureState {
-    /// The user must deliberately show two open palms before commands arm.
-    NeedsReady,
-    /// Hold or send may be formed while one open palm remains visible.
-    Ready,
-    /// Auto-send remains held until two open palms are deliberately observed.
-    Holding,
+#[serde(deny_unknown_fields)]
+pub struct GestureState {
+    armed: bool,
+    muted: bool,
+}
+
+impl GestureState {
+    #[must_use]
+    pub const fn new(armed: bool, muted: bool) -> Self {
+        Self { armed, muted }
+    }
+
+    #[must_use]
+    pub const fn armed(self) -> bool {
+        self.armed
+    }
+
+    #[must_use]
+    pub const fn muted(self) -> bool {
+        self.muted
+    }
 }
 
 /// The semantic candidate whose bounded temporal evidence is accumulating.
@@ -72,9 +87,10 @@ pub enum GestureState {
 #[serde(rename_all = "snake_case")]
 pub enum GestureCandidate {
     Arm,
-    Hold,
-    ReleaseHold,
+    Disarm,
     Send,
+    Mute,
+    Unmute,
 }
 
 pub const MAX_GESTURE_PROGRESS_PERMILLE: u16 = 1_000;
@@ -113,15 +129,13 @@ impl GestureProgress {
 
     #[must_use]
     pub const fn is_compatible_with(self, state: GestureState) -> bool {
-        matches!(
-            (state, self.candidate),
-            (GestureState::NeedsReady, GestureCandidate::Arm)
-                | (
-                    GestureState::Ready,
-                    GestureCandidate::Hold | GestureCandidate::Send
-                )
-                | (GestureState::Holding, GestureCandidate::ReleaseHold)
-        )
+        match self.candidate {
+            GestureCandidate::Arm => !state.armed,
+            GestureCandidate::Disarm => state.armed,
+            GestureCandidate::Send => state.armed,
+            GestureCandidate::Mute => state.armed && !state.muted,
+            GestureCandidate::Unmute => state.armed && state.muted,
+        }
     }
 }
 
@@ -228,7 +242,8 @@ pub enum DesktopCommand {
     SetContext {
         session_id: SessionId,
         voice_request_id: Option<u64>,
-        held: bool,
+        armed: bool,
+        muted: bool,
     },
 }
 
@@ -236,15 +251,17 @@ impl DesktopCommand {
     pub fn set_context(
         session_id: SessionId,
         voice_request_id: Option<u64>,
-        held: bool,
+        armed: bool,
+        muted: bool,
     ) -> Result<Self, InvalidContext> {
-        if voice_request_id.is_none() && held {
+        if voice_request_id.is_none() && (armed || muted) {
             return Err(InvalidContext);
         }
         Ok(Self::SetContext {
             session_id,
             voice_request_id,
-            held,
+            armed,
+            muted,
         })
     }
 }
@@ -254,7 +271,7 @@ pub struct InvalidContext;
 
 impl Display for InvalidContext {
     fn fmt(&self, formatter: &mut Formatter<'_>) -> fmt::Result {
-        formatter.write_str("a disabled vision context cannot be held")
+        formatter.write_str("a disabled vision context cannot carry active state")
     }
 }
 
@@ -266,7 +283,8 @@ enum WireDesktopCommand {
     SetContext {
         session_id: SessionId,
         voice_request_id: Option<u64>,
-        held: bool,
+        armed: bool,
+        muted: bool,
     },
 }
 
@@ -278,9 +296,10 @@ impl<'de> Deserialize<'de> for DesktopCommand {
         let WireDesktopCommand::SetContext {
             session_id,
             voice_request_id,
-            held,
+            armed,
+            muted,
         } = WireDesktopCommand::deserialize(deserializer)?;
-        Self::set_context(session_id, voice_request_id, held).map_err(de::Error::custom)
+        Self::set_context(session_id, voice_request_id, armed, muted).map_err(de::Error::custom)
     }
 }
 
@@ -417,11 +436,15 @@ mod tests {
     use super::*;
 
     const SESSION: SessionId = SessionId::new(7, 11);
+    const DISARMED: GestureState = GestureState::new(false, false);
+    const ARMED: GestureState = GestureState::new(true, false);
+    const MUTED: GestureState = GestureState::new(true, true);
 
     #[test]
     fn unshipped_protocol_remains_v1() {
         assert_eq!(PROTOCOL_VERSION, 1);
         assert_ne!(EVENT_CHANNEL_CONTRACT_MARKER, "1");
+        assert_ne!(EVENT_CHANNEL_CONTRACT_MARKER, "gsv-vision-control-v1");
     }
 
     fn encoded<T: Serialize>(value: &T) -> Vec<u8> {
@@ -465,7 +488,7 @@ mod tests {
                 sequence: 2,
                 status: ControlStatus::Active {
                     voice_request_id: 19,
-                    state: GestureState::NeedsReady,
+                    state: DISARMED,
                     progress: Some(
                         GestureProgress::new(GestureCandidate::Arm, 420).expect("bounded progress"),
                     ),
@@ -487,7 +510,8 @@ mod tests {
             );
         }
 
-        let command = DesktopCommand::set_context(SESSION, None, false).expect("valid context");
+        let command =
+            DesktopCommand::set_context(SESSION, None, false, false).expect("valid context");
         let mut bytes = Cursor::new(encoded(&command));
         assert_eq!(
             read_frame(&mut bytes).expect("command reads"),
@@ -519,11 +543,11 @@ mod tests {
             session_id: SESSION,
             sequence: 4,
             voice_request_id: 22,
-            intent: GestureIntent::Hold,
+            intent: GestureIntent::Mute,
         })
         .expect("event serializes");
         assert_eq!(event["type"], "intent");
-        assert_eq!(event["intent"], "hold");
+        assert_eq!(event["intent"], "mute");
         for private in [
             "frame",
             "pixels",
@@ -548,15 +572,50 @@ mod tests {
     }
 
     #[test]
+    fn intent_vocabulary_is_explicit_and_legacy_hold_edges_are_rejected() {
+        for (intent, label) in [
+            (GestureIntent::Arm, "arm"),
+            (GestureIntent::Disarm, "disarm"),
+            (GestureIntent::Send, "send"),
+            (GestureIntent::Mute, "mute"),
+            (GestureIntent::Unmute, "unmute"),
+        ] {
+            let event = HelperEvent::Intent {
+                session_id: SESSION,
+                sequence: 4,
+                voice_request_id: 22,
+                intent,
+            };
+            let encoded = serde_json::to_value(event).expect("intent serializes");
+            assert_eq!(encoded["intent"], label);
+            assert_eq!(
+                serde_json::from_value::<HelperEvent>(encoded).expect("intent deserializes"),
+                event
+            );
+        }
+
+        for legacy in ["hold", "release_hold"] {
+            assert!(serde_json::from_value::<HelperEvent>(json!({
+                "type": "intent",
+                "session_id": { "high": 7, "low": 11 },
+                "sequence": 4,
+                "voice_request_id": 22,
+                "intent": legacy
+            }))
+            .is_err());
+        }
+    }
+
+    #[test]
     fn control_status_shape_enforces_request_ownership() {
         let disabled = serde_json::to_value(ControlStatus::Disabled).expect("status serializes");
         assert_eq!(disabled, json!({ "mode": "disabled" }));
 
         let active = ControlStatus::Active {
             voice_request_id: 22,
-            state: GestureState::Holding,
+            state: MUTED,
             progress: Some(
-                GestureProgress::new(GestureCandidate::ReleaseHold, 742).expect("bounded progress"),
+                GestureProgress::new(GestureCandidate::Unmute, 742).expect("bounded progress"),
             ),
         };
         let encoded = serde_json::to_value(active).expect("status serializes");
@@ -565,9 +624,12 @@ mod tests {
             json!({
                 "mode": "active",
                 "voice_request_id": 22,
-                "state": "holding",
+                "state": {
+                    "armed": true,
+                    "muted": true
+                },
                 "progress": {
-                    "candidate": "release_hold",
+                    "candidate": "unmute",
                     "progress_permille": 742
                 }
             })
@@ -576,13 +638,16 @@ mod tests {
             serde_json::from_value::<ControlStatus>(json!({
                 "mode": "active",
                 "voice_request_id": 22,
-                "state": "ready",
+                "state": {
+                    "armed": true,
+                    "muted": true
+                },
                 "progress": null
             }))
             .expect("explicitly empty progress is valid"),
             ControlStatus::Active {
                 voice_request_id: 22,
-                state: GestureState::Ready,
+                state: MUTED,
                 progress: None,
             }
         );
@@ -600,7 +665,11 @@ mod tests {
         assert!(serde_json::from_value::<ControlStatus>(json!({
             "mode": "active",
             "voice_request_id": 22,
-            "state": "candidate",
+                "state": {
+                    "armed": true,
+                    "muted": false,
+                "candidate": true
+            },
             "progress": null
         }))
         .is_err());
@@ -610,9 +679,10 @@ mod tests {
     fn gesture_progress_is_bounded_and_closed() {
         for candidate in [
             GestureCandidate::Arm,
-            GestureCandidate::Hold,
-            GestureCandidate::ReleaseHold,
+            GestureCandidate::Disarm,
             GestureCandidate::Send,
+            GestureCandidate::Mute,
+            GestureCandidate::Unmute,
         ] {
             let progress = GestureProgress::new(candidate, MAX_GESTURE_PROGRESS_PERMILLE)
                 .expect("upper bound is valid");
@@ -652,10 +722,11 @@ mod tests {
     #[test]
     fn active_status_rejects_candidates_from_another_state() {
         let valid = [
-            (GestureState::NeedsReady, GestureCandidate::Arm),
-            (GestureState::Ready, GestureCandidate::Hold),
-            (GestureState::Ready, GestureCandidate::Send),
-            (GestureState::Holding, GestureCandidate::ReleaseHold),
+            (DISARMED, GestureCandidate::Arm),
+            (ARMED, GestureCandidate::Disarm),
+            (ARMED, GestureCandidate::Send),
+            (ARMED, GestureCandidate::Mute),
+            (MUTED, GestureCandidate::Unmute),
         ];
         for (state, candidate) in valid {
             let progress = GestureProgress::new(candidate, 500).expect("bounded progress");
@@ -663,26 +734,27 @@ mod tests {
         }
 
         for (state, candidate) in [
-            (GestureState::NeedsReady, GestureCandidate::Send),
-            (GestureState::Ready, GestureCandidate::Arm),
-            (GestureState::Holding, GestureCandidate::Hold),
+            (DISARMED, GestureCandidate::Send),
+            (ARMED, GestureCandidate::Arm),
+            (MUTED, GestureCandidate::Mute),
+            (ARMED, GestureCandidate::Unmute),
         ] {
             let progress = GestureProgress::new(candidate, 500).expect("bounded progress");
             assert!(!progress.is_compatible_with(state));
             assert!(serde_json::from_value::<ControlStatus>(json!({
                 "mode": "active",
                 "voice_request_id": 22,
-                "state": match state {
-                    GestureState::NeedsReady => "needs_ready",
-                    GestureState::Ready => "ready",
-                    GestureState::Holding => "holding",
+                "state": {
+                    "armed": state.armed(),
+                    "muted": state.muted(),
                 },
                 "progress": {
                     "candidate": match candidate {
                         GestureCandidate::Arm => "arm",
-                        GestureCandidate::Hold => "hold",
-                        GestureCandidate::ReleaseHold => "release_hold",
+                        GestureCandidate::Disarm => "disarm",
                         GestureCandidate::Send => "send",
+                        GestureCandidate::Mute => "mute",
+                        GestureCandidate::Unmute => "unmute",
                     },
                     "progress_permille": 500
                 }
@@ -740,18 +812,22 @@ mod tests {
     }
 
     #[test]
-    fn disabled_context_cannot_claim_an_existing_hold() {
-        assert_eq!(
-            DesktopCommand::set_context(SESSION, None, true),
-            Err(InvalidContext)
-        );
+    fn disabled_context_cannot_claim_active_state() {
+        for (armed, muted) in [(true, false), (false, true)] {
+            assert_eq!(
+                DesktopCommand::set_context(SESSION, None, armed, muted),
+                Err(InvalidContext)
+            );
+        }
         assert!(serde_json::from_value::<DesktopCommand>(json!({
             "type": "set_context",
             "session_id": { "high": 7, "low": 11 },
             "voice_request_id": null,
+            "armed": false,
+            "muted": false,
             "held": true
         }))
         .is_err());
-        assert!(DesktopCommand::set_context(SESSION, Some(9), true).is_ok());
+        assert!(DesktopCommand::set_context(SESSION, Some(9), true, true).is_ok());
     }
 }

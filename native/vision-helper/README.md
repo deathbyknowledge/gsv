@@ -5,7 +5,7 @@ process that owns the camera, MediaPipe Gesture Recognizer, temporal gesture
 policy, and optional diagnostic window. Camera pixels never enter GPUI, the
 gateway, logs, files, or GSV application IPC. They are handed only to local
 MediaPipe inference and, in debug mode, the OS display system. A bounded private
-pipe carries reliable `hold`, `release_hold`, and `send` intents plus
+pipe carries reliable `arm`, `disarm`, `send`, `mute`, and `unmute` intents plus
 replace-latest semantic control status with bounded candidate progress. Active
 events are scoped to the exact voice request, and every event is scoped to the
 random helper session.
@@ -41,7 +41,7 @@ The debug window mirrors presentation, but inference always receives the
 original camera frame. It draws up to two 21-point hand skeletons, handedness,
 canned gesture labels and confidence, a simple two-hand relationship, and
 capture/inference/render timing. It also shows the semantic controller state:
-DISABLED, NEEDS READY, READY, or HOLDING, the exact fixed-vocabulary rejection,
+DISABLED, DISARMED, ARMED, or ARMED + MUTED, the fixed-vocabulary rejection,
 and clockwise progress through the complete temporal evidence gate. The same
 request-scoped state and quantized progress are sent to Desktop as
 replace-latest presentation feedback; they cannot invoke an action. Raw labels,
@@ -54,27 +54,28 @@ frames rather than accumulating a private video queue.
 Controls are enabled only while one request is authoritatively listening. Hand
 order and anatomical handedness do not assign roles.
 
-- Hold two open palms for 350 ms to enter READY. Every command must be re-armed.
-- Hold open palm + closed fist for 450 ms to latch SEND HOLD. The microphone
-  keeps transcribing, but gesture send is unavailable.
-- Hold two open palms for 350 ms to explicitly release HOLD and return to READY.
-- Hold open palm + thumbs-up for 700 ms to stop dictation, await its matching
-  authoritative final transcript, and enter the normal Desktop send owner.
+- Show two open palms for 350 ms to arm persistently.
+- Show open palm + Victory for 350 ms to disarm explicitly.
+- Show open palm + thumbs-up for 700 ms to send now.
+- Show open palm + thumbs-down for 450 ms to mute explicitly.
+- Show open palm + pointing-up for 700 ms to unmute explicitly.
 
-Initial two-palm arming enters and continues at 0.50 confidence. Hold, send, and
-explicit hold release enter at 0.80 with continuation hysteresis at 0.65.
-After READY, fresh but unrecognized transition frames have a one-second grace
-while the user forms the command pose. They never count toward command
-evidence: hold or send still starts from a complete fresh dwell, and the
-three-second READY window remains absolute. A stale frame or real capture gap
-still fails closed immediately.
+Closed fist and all other canned combinations are reserved and unassigned.
+Arming enters and continues at 0.50 confidence. Every other action enters at
+0.80 with continuation hysteresis at 0.65. Armed and muted are absolute,
+Desktop-owned modes rather than helper-local toggles: after emitting any
+intent, the helper blocks further commands until Desktop echoes the resulting
+armed/muted context. A rejected request is also reconciled by that absolute
+echo.
+
 Evidence also requires the gesture-specific dwell, match count, strong-sample
 count, consecutive and support thresholds, fresh frames, and bounded inference
 gaps. Progress is the minimum of those aggregate gates and remains below
-complete until the authoritative transition or intent. Missing hands, low
-confidence, stale frames, helper failure, or tracking loss never release HOLD.
-This batch does not infer speech silence or auto-send from transcript timing;
-that requires a separate audio-owner activity signal.
+complete until an intent is emitted. Missing or unrecognized classifications,
+stale frames, real capture gaps, and tracking loss clear only in-flight
+evidence; they never disarm or change mute state. Fresh evidence must satisfy a
+complete dwell after any such loss. This grammar does not infer speech silence
+or implement auto-send.
 
 ## Local overrides
 

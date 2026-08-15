@@ -1,7 +1,7 @@
 use std::time::Duration;
 
 use font8x8::{UnicodeFonts, BASIC_FONTS};
-use gsv_vision_control::{ControlStatus, GestureCandidate, GestureProgress, GestureState};
+use gsv_vision_control::{ControlStatus, GestureCandidate, GestureProgress};
 
 use crate::control::{ControlChord, ControlDiagnostic};
 use crate::observation::{HandObservation, Handedness, Landmark, Observation};
@@ -62,7 +62,6 @@ pub struct PerfText {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct ControlOverlay {
     pub status: ControlStatus,
-    pub app_held: bool,
     pub diagnostic: ControlPresentationDiagnostic,
 }
 
@@ -244,7 +243,7 @@ fn draw_perf(
         perf.slot_replacements,
         perf.capture_errors,
     );
-    let (control_status, control_color) = control_status_text(control.status, control.app_held);
+    let (control_status, control_color) = control_status_text(control.status);
     let (control_diagnostic, diagnostic_color) =
         control_diagnostic_text(control.status, control.diagnostic);
 
@@ -286,51 +285,19 @@ fn draw_perf(
     );
 }
 
-fn control_status_text(status: ControlStatus, app_held: bool) -> (&'static str, u32) {
-    match (status, app_held) {
-        (
-            ControlStatus::Active {
-                state: GestureState::Holding,
-                ..
-            },
-            false,
-        ) => (
-            "GESTURES HOLD REQUESTED - SHOW TWO OPEN PALMS TO SYNC",
-            WARNING_COLOR,
-        ),
-        (
-            ControlStatus::Active {
-                state: GestureState::NeedsReady | GestureState::Ready,
-                ..
-            },
-            true,
-        ) => ("GESTURES APP HOLDING - RELEASE REQUESTED", WARNING_COLOR),
-        (ControlStatus::Disabled, _) => ("GESTURES DISABLED - START VOICE INPUT", WARNING_COLOR),
-        (
-            ControlStatus::Active {
-                state: GestureState::NeedsReady,
-                ..
-            },
-            false,
-        ) => ("GESTURES NEED READY - SHOW TWO OPEN PALMS", WARNING_COLOR),
-        (
-            ControlStatus::Active {
-                state: GestureState::Ready,
-                ..
-            },
-            false,
-        ) => (
-            "GESTURES READY - PALM+FIST HOLD / PALM+THUMB SEND",
+fn control_status_text(status: ControlStatus) -> (&'static str, u32) {
+    let ControlStatus::Active { state, .. } = status else {
+        return ("GESTURES DISABLED - START VOICE INPUT", WARNING_COLOR);
+    };
+    match (state.armed(), state.muted()) {
+        (false, false) => ("GESTURES DISARMED - SHOW TWO OPEN PALMS", WARNING_COLOR),
+        (false, true) => ("GESTURES DISARMED - APP MUTED", WARNING_COLOR),
+        (true, false) => (
+            "GESTURES ARMED - VICTORY DISARM / THUMB UP SEND / DOWN MUTE",
             PAIR_COLOR,
         ),
-        (
-            ControlStatus::Active {
-                state: GestureState::Holding,
-                ..
-            },
-            true,
-        ) => (
-            "GESTURES HOLDING - SHOW TWO OPEN PALMS TO RELEASE",
+        (true, true) => (
+            "GESTURES ARMED + MUTED - POINTING UP UNMUTE / VICTORY DISARM",
             RIGHT_COLOR,
         ),
     }
@@ -364,6 +331,14 @@ fn control_diagnostic_text(
         ),
         ControlDiagnostic::UnexpectedPose { chord } => (
             format!("CONTROL {} NOT VALID IN THIS STATE", chord_text(chord)),
+            WARNING_COLOR,
+        ),
+        ControlDiagnostic::AlreadySatisfied { chord } => (
+            format!("CONTROL {} ALREADY SATISFIED", chord_text(chord)),
+            MUTED_TEXT_COLOR,
+        ),
+        ControlDiagnostic::AwaitingAuthority { chord } => (
+            format!("CONTROL {} WAITING FOR APP", chord_text(chord)),
             WARNING_COLOR,
         ),
         ControlDiagnostic::InvalidScore => {
@@ -421,9 +396,11 @@ fn control_diagnostic_text(
 
 fn chord_text(chord: ControlChord) -> &'static str {
     match chord {
-        ControlChord::Ready => "READY",
-        ControlChord::Hold => "HOLD",
+        ControlChord::Arm => "ARM",
+        ControlChord::Disarm => "DISARM",
         ControlChord::Send => "SEND",
+        ControlChord::Mute => "MUTE",
+        ControlChord::Unmute => "UNMUTE",
     }
 }
 
@@ -496,9 +473,10 @@ fn draw_gesture_progress(
 fn candidate_style(candidate: GestureCandidate) -> (&'static str, u32) {
     match candidate {
         GestureCandidate::Arm => ("ARM", PAIR_COLOR),
-        GestureCandidate::Hold => ("HOLD", RIGHT_COLOR),
-        GestureCandidate::ReleaseHold => ("RELEASE", LEFT_COLOR),
+        GestureCandidate::Disarm => ("DISARM", LEFT_COLOR),
         GestureCandidate::Send => ("SEND", WARNING_COLOR),
+        GestureCandidate::Mute => ("MUTE", RIGHT_COLOR),
+        GestureCandidate::Unmute => ("UNMUTE", PAIR_COLOR),
     }
 }
 
@@ -820,6 +798,8 @@ fn draw_line(
 mod tests {
     use std::time::Instant;
 
+    use gsv_vision_control::GestureState;
+
     use super::*;
     use crate::observation::HandObservation;
 
@@ -985,9 +965,10 @@ mod tests {
     fn progress_candidate_labels_and_colors_are_closed() {
         let cases = [
             (GestureCandidate::Arm, "ARM", PAIR_COLOR),
-            (GestureCandidate::Hold, "HOLD", RIGHT_COLOR),
-            (GestureCandidate::ReleaseHold, "RELEASE", LEFT_COLOR),
+            (GestureCandidate::Disarm, "DISARM", LEFT_COLOR),
             (GestureCandidate::Send, "SEND", WARNING_COLOR),
+            (GestureCandidate::Mute, "MUTE", RIGHT_COLOR),
+            (GestureCandidate::Unmute, "UNMUTE", PAIR_COLOR),
         ];
 
         for (candidate, expected_label, expected_color) in cases {
@@ -1003,11 +984,12 @@ mod tests {
     #[test]
     fn progress_indicator_reads_only_the_bounded_status_snapshot() {
         let progress = GestureProgress::new(GestureCandidate::Send, 640).expect("bounded progress");
+        let armed = GestureState::new(true, false);
         assert_eq!(status_progress(ControlStatus::Disabled), None);
         assert_eq!(
             status_progress(ControlStatus::Active {
                 voice_request_id: 99,
-                state: GestureState::Ready,
+                state: armed,
                 progress: None,
             }),
             None
@@ -1015,7 +997,7 @@ mod tests {
         assert_eq!(
             status_progress(ControlStatus::Active {
                 voice_request_id: 99,
-                state: GestureState::Ready,
+                state: armed,
                 progress: Some(progress),
             }),
             Some(progress)
@@ -1036,7 +1018,7 @@ mod tests {
             frame_sequence: 4,
             observed_at,
             hands: vec![
-                hand(Handedness::Left, 0.25, "Closed_Fist"),
+                hand(Handedness::Left, 0.25, "Thumb_Down"),
                 hand(Handedness::Right, 0.75, "Open_Palm"),
             ],
             inference_time: Duration::from_millis(12),
@@ -1065,13 +1047,12 @@ mod tests {
             ControlOverlay {
                 status: ControlStatus::Active {
                     voice_request_id: 8,
-                    state: GestureState::Ready,
+                    state: GestureState::new(true, false),
                     progress: None,
                 },
-                app_held: false,
                 diagnostic: ControlPresentationDiagnostic::Controller(
                     ControlDiagnostic::Stabilizing {
-                        chord: ControlChord::Hold,
+                        chord: ControlChord::Mute,
                         confidence_percent: 82,
                         progress_percent: 40,
                     },
@@ -1085,72 +1066,44 @@ mod tests {
     }
 
     #[test]
-    fn semantic_overlay_is_fixed_and_does_not_expose_request_identity() {
+    fn semantic_overlay_uses_persistent_armed_vocabulary_without_request_identity() {
         let statuses = [
-            (ControlStatus::Disabled, false, "GESTURES DISABLED"),
+            (ControlStatus::Disabled, "GESTURES DISABLED"),
             (
                 ControlStatus::Active {
                     voice_request_id: 7,
-                    state: GestureState::NeedsReady,
+                    state: GestureState::new(false, false),
                     progress: None,
                 },
-                false,
-                "GESTURES NEED READY",
+                "GESTURES DISARMED",
             ),
             (
                 ControlStatus::Active {
                     voice_request_id: 8,
-                    state: GestureState::Ready,
+                    state: GestureState::new(true, false),
                     progress: None,
                 },
-                false,
-                "GESTURES READY",
+                "GESTURES ARMED",
             ),
             (
                 ControlStatus::Active {
                     voice_request_id: 9,
-                    state: GestureState::Holding,
+                    state: GestureState::new(true, true),
                     progress: None,
                 },
-                true,
-                "GESTURES HOLDING",
+                "GESTURES ARMED + MUTED",
             ),
         ];
 
-        for (status, held, expected_prefix) in statuses {
-            let (text, _) = control_status_text(status, held);
+        for (status, expected_prefix) in statuses {
+            let (text, _) = control_status_text(status);
             assert!(text.starts_with(expected_prefix));
             assert!(!text.contains('7'));
             assert!(!text.contains('8'));
             assert!(!text.contains('9'));
+            assert!(!text.contains("READY"));
+            assert!(!text.contains("HOLD"));
         }
-    }
-
-    #[test]
-    fn overlay_never_claims_a_helper_only_hold_is_authoritative() {
-        let locally_holding = ControlStatus::Active {
-            voice_request_id: 17,
-            state: GestureState::Holding,
-            progress: None,
-        };
-        assert_eq!(
-            control_status_text(locally_holding, false).0,
-            "GESTURES HOLD REQUESTED - SHOW TWO OPEN PALMS TO SYNC"
-        );
-        assert_eq!(
-            control_status_text(locally_holding, true).0,
-            "GESTURES HOLDING - SHOW TWO OPEN PALMS TO RELEASE"
-        );
-
-        let locally_released = ControlStatus::Active {
-            voice_request_id: 17,
-            state: GestureState::Ready,
-            progress: None,
-        };
-        assert_eq!(
-            control_status_text(locally_released, true).0,
-            "GESTURES APP HOLDING - RELEASE REQUESTED"
-        );
     }
 
     #[test]
@@ -1170,7 +1123,7 @@ mod tests {
     fn controller_diagnostics_use_fixed_local_vocabulary() {
         let active = ControlStatus::Active {
             voice_request_id: 987_654_321,
-            state: GestureState::NeedsReady,
+            state: GestureState::new(true, false),
             progress: None,
         };
         let cases = [
@@ -1185,9 +1138,21 @@ mod tests {
             ),
             (
                 ControlDiagnostic::UnexpectedPose {
-                    chord: ControlChord::Hold,
+                    chord: ControlChord::Mute,
                 },
-                "CONTROL HOLD NOT VALID IN THIS STATE",
+                "CONTROL MUTE NOT VALID IN THIS STATE",
+            ),
+            (
+                ControlDiagnostic::AlreadySatisfied {
+                    chord: ControlChord::Arm,
+                },
+                "CONTROL ARM ALREADY SATISFIED",
+            ),
+            (
+                ControlDiagnostic::AwaitingAuthority {
+                    chord: ControlChord::Disarm,
+                },
+                "CONTROL DISARM WAITING FOR APP",
             ),
             (
                 ControlDiagnostic::InvalidScore,
@@ -1211,11 +1176,11 @@ mod tests {
             ),
             (
                 ControlDiagnostic::LowConfidence {
-                    chord: ControlChord::Ready,
+                    chord: ControlChord::Arm,
                     observed_percent: 49,
                     required_percent: 50,
                 },
-                "CONTROL READY 49% - NEED 50%",
+                "CONTROL ARM 49% - NEED 50%",
             ),
             (
                 ControlDiagnostic::Stabilizing {
@@ -1231,9 +1196,9 @@ mod tests {
             ),
             (
                 ControlDiagnostic::Accepted {
-                    chord: ControlChord::Ready,
+                    chord: ControlChord::Unmute,
                 },
-                "CONTROL READY ACCEPTED",
+                "CONTROL UNMUTE ACCEPTED",
             ),
         ];
 
@@ -1258,13 +1223,13 @@ mod tests {
             control_diagnostic_text(
                 active,
                 ControlPresentationDiagnostic::Controller(ControlDiagnostic::LowConfidence {
-                    chord: ControlChord::Ready,
+                    chord: ControlChord::Arm,
                     observed_percent: u8::MAX,
                     required_percent: u8::MAX,
                 }),
             )
             .0,
-            "CONTROL READY 100% - NEED 100%"
+            "CONTROL ARM 100% - NEED 100%"
         );
         assert_eq!(
             control_diagnostic_text(

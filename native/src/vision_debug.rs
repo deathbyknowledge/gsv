@@ -2,6 +2,7 @@ use std::env;
 use std::ffi::{OsStr, OsString};
 use std::fmt;
 use std::fs::File;
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -74,21 +75,24 @@ impl fmt::Display for VisionDebugError {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct VisionContext {
     pub(crate) voice_request_id: Option<u64>,
-    pub(crate) held: bool,
+    pub(crate) armed: bool,
+    pub(crate) muted: bool,
 }
 
 impl VisionContext {
     pub(crate) const fn disabled() -> Self {
         Self {
             voice_request_id: None,
-            held: false,
+            armed: false,
+            muted: false,
         }
     }
 
-    pub(crate) const fn listening(voice_request_id: u64, held: bool) -> Self {
+    pub(crate) const fn listening(voice_request_id: u64, armed: bool, muted: bool) -> Self {
         Self {
             voice_request_id: Some(voice_request_id),
-            held,
+            armed,
+            muted,
         }
     }
 }
@@ -211,10 +215,20 @@ pub(crate) struct VisionContextSender {
 
 impl VisionContextSender {
     pub(crate) fn set_context(&self, context: VisionContext) -> Result<(), VisionContextError> {
-        if context.voice_request_id.is_none() && context.held {
-            return Err(VisionContextError::Invalid);
-        }
+        validate_context(context)?;
         self.state.set(context)
+    }
+
+    /// Re-emits the current absolute state as an authority acknowledgement.
+    /// This is intentionally distinct from ordinary replace-if-changed
+    /// synchronization: a rejected or idempotent reliable intent still needs
+    /// one new context frame so the helper can leave its pending state.
+    pub(crate) fn reassert_context(
+        &self,
+        context: VisionContext,
+    ) -> Result<(), VisionContextError> {
+        validate_context(context)?;
+        self.state.reassert(context)
     }
 
     #[cfg(test)]
@@ -222,6 +236,19 @@ impl VisionContextSender {
         Self {
             state: Arc::new(ContextState::new()),
         }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn revision_for_test(&self) -> u64 {
+        self.state.lock().snapshot.revision
+    }
+}
+
+fn validate_context(context: VisionContext) -> Result<(), VisionContextError> {
+    if context.voice_request_id.is_none() && (context.armed || context.muted) {
+        Err(VisionContextError::Invalid)
+    } else {
+        Ok(())
     }
 }
 
@@ -265,6 +292,17 @@ struct ContextState {
     changed: Condvar,
 }
 
+struct SupervisorSignals {
+    shutdown_requested: Arc<AtomicBool>,
+    command_failed: Arc<AtomicBool>,
+}
+
+impl SupervisorSignals {
+    fn should_report_interrupted(&self, terminal_reported: bool) -> bool {
+        !self.shutdown_requested.load(Ordering::Acquire) && !terminal_reported
+    }
+}
+
 impl ContextState {
     fn new() -> Self {
         Self {
@@ -293,6 +331,17 @@ impl ContextState {
         }
         if inner.snapshot.context == context {
             return Ok(());
+        }
+        inner.snapshot.revision = inner.snapshot.revision.wrapping_add(1).max(1);
+        inner.snapshot.context = context;
+        self.changed.notify_one();
+        Ok(())
+    }
+
+    fn reassert(&self, context: VisionContext) -> Result<(), VisionContextError> {
+        let mut inner = self.lock();
+        if inner.closed {
+            return Err(VisionContextError::Closed);
         }
         inner.snapshot.revision = inner.snapshot.revision.wrapping_add(1).max(1);
         inner.snapshot.context = context;
@@ -561,10 +610,14 @@ fn start_supervisor(
     } = helper;
     let context_state = Arc::new(ContextState::new());
     let shutdown = Arc::new(AtomicBool::new(false));
+    let command_failed = Arc::new(AtomicBool::new(false));
     let (event_sender, reliable_events) = tokio_mpsc::channel(EVENT_CAPACITY);
     let (status_sender, status_events) = watch::channel(None);
     let supervisor_context = Arc::clone(&context_state);
-    let supervisor_shutdown = Arc::clone(&shutdown);
+    let supervisor_signals = SupervisorSignals {
+        shutdown_requested: Arc::clone(&shutdown),
+        command_failed: Arc::clone(&command_failed),
+    };
     let supervisor = std::thread::Builder::new()
         .name("gsv-vision-supervisor".to_string())
         .spawn(move || {
@@ -573,17 +626,17 @@ fn start_supervisor(
                 wire_events,
                 session_id,
                 supervisor_context,
-                supervisor_shutdown,
+                supervisor_signals,
                 event_sender,
                 status_sender,
             );
         })
         .map_err(|_| VisionDebugError::StartFailed)?;
     let writer_context = Arc::clone(&context_state);
-    let writer_shutdown = Arc::clone(&shutdown);
+    let writer_command_failed = Arc::clone(&command_failed);
     if std::thread::Builder::new()
         .name("gsv-vision-commands".to_string())
-        .spawn(move || command_writer(stdin, session_id, writer_context, writer_shutdown))
+        .spawn(move || command_writer(stdin, session_id, writer_context, writer_command_failed))
         .is_err()
     {
         context_state.close();
@@ -608,23 +661,27 @@ fn start_supervisor(
 }
 
 fn command_writer(
-    mut stdin: ChildStdin,
+    mut stdin: impl Write,
     session_id: SessionId,
     context: Arc<ContextState>,
-    shutdown: Arc<AtomicBool>,
+    command_failed: Arc<AtomicBool>,
 ) {
     let mut revision = 0;
     while let Some(snapshot) = context.wait_after(revision) {
         let command = match DesktopCommand::set_context(
             session_id,
             snapshot.context.voice_request_id,
-            snapshot.context.held,
+            snapshot.context.armed,
+            snapshot.context.muted,
         ) {
             Ok(command) => command,
-            Err(_) => break,
+            Err(_) => {
+                command_failed.store(true, Ordering::Release);
+                break;
+            }
         };
         if write_frame(&mut stdin, &command).is_err() {
-            shutdown.store(true, Ordering::Release);
+            command_failed.store(true, Ordering::Release);
             break;
         }
         revision = snapshot.revision;
@@ -636,14 +693,17 @@ fn supervise(
     wire_events: StdReceiver<WireRead>,
     session_id: SessionId,
     context: Arc<ContextState>,
-    shutdown: Arc<AtomicBool>,
+    signals: SupervisorSignals,
     events: tokio_mpsc::Sender<VisionEvent>,
     statuses: watch::Sender<Option<VisionStatusEvent>>,
 ) {
     let mut last_sequence = 0;
     let mut terminal_reported = false;
     loop {
-        if shutdown.load(Ordering::Acquire) {
+        if signals.shutdown_requested.load(Ordering::Acquire) {
+            break;
+        }
+        if signals.command_failed.load(Ordering::Acquire) {
             break;
         }
         match wire_events.recv_timeout(SUPERVISOR_POLL) {
@@ -697,7 +757,7 @@ fn supervise(
     }
 
     context.close();
-    if !shutdown.load(Ordering::Acquire) && !terminal_reported {
+    if signals.should_report_interrupted(terminal_reported) {
         let _ = send_vision_event(
             &events,
             &statuses,
@@ -919,6 +979,21 @@ mod tests {
 
     const SESSION: SessionId = SessionId::new(3, 5);
 
+    struct FailingWriter;
+
+    impl Write for FailingWriter {
+        fn write(&mut self, _buffer: &[u8]) -> std::io::Result<usize> {
+            Err(std::io::Error::new(
+                std::io::ErrorKind::BrokenPipe,
+                "test command pipe closed",
+            ))
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
     #[test]
     fn gesture_debug_requires_exact_opt_in() {
         assert!(debug_enabled(Some(OsStr::new("1"))));
@@ -1086,10 +1161,45 @@ mod tests {
             .set_context(VisionContext::disabled())
             .expect("identical context remains valid");
         assert_eq!(state.lock().snapshot.revision, initial.revision);
+        for context in [
+            VisionContext {
+                voice_request_id: None,
+                armed: true,
+                muted: false,
+            },
+            VisionContext {
+                voice_request_id: None,
+                armed: false,
+                muted: true,
+            },
+        ] {
+            assert_eq!(
+                sender.set_context(context),
+                Err(VisionContextError::Invalid)
+            );
+        }
+        assert_eq!(state.lock().snapshot.revision, initial.revision);
 
         sender
-            .set_context(VisionContext::listening(8, true))
-            .expect("enable context");
+            .set_context(VisionContext::listening(8, true, false))
+            .expect("arm context");
+        let armed_revision = state.lock().snapshot.revision;
+        sender
+            .set_context(VisionContext::listening(8, true, false))
+            .expect("identical armed context remains valid");
+        assert_eq!(state.lock().snapshot.revision, armed_revision);
+        sender
+            .reassert_context(VisionContext::listening(8, true, false))
+            .expect("identical authority can be replayed");
+        let reasserted_revision = state.lock().snapshot.revision;
+        assert_ne!(reasserted_revision, armed_revision);
+        sender
+            .set_context(VisionContext::listening(8, true, true))
+            .expect("mute context");
+        assert_ne!(state.lock().snapshot.revision, reasserted_revision);
+        sender
+            .set_context(VisionContext::listening(8, false, true))
+            .expect("disarming does not unmute context");
         sender
             .set_context(VisionContext::disabled())
             .expect("disable context");
@@ -1101,8 +1211,27 @@ mod tests {
     }
 
     #[test]
+    fn command_write_failure_is_not_mistaken_for_requested_shutdown() {
+        let context = Arc::new(ContextState::new());
+        let signals = SupervisorSignals {
+            shutdown_requested: Arc::new(AtomicBool::new(false)),
+            command_failed: Arc::new(AtomicBool::new(false)),
+        };
+
+        command_writer(
+            FailingWriter,
+            SESSION,
+            context,
+            Arc::clone(&signals.command_failed),
+        );
+
+        assert!(signals.command_failed.load(Ordering::Acquire));
+        assert!(signals.should_report_interrupted(false));
+    }
+
+    #[test]
     fn stale_session_sequence_and_voice_context_are_fenced() {
-        let active = VisionContext::listening(21, false);
+        let active = VisionContext::listening(21, true, false);
         let received_at = Instant::now();
         let intent = |session_id, sequence, voice_request_id| HelperEvent::Intent {
             session_id,
@@ -1180,7 +1309,7 @@ mod tests {
         };
         let active_status = ControlStatus::Active {
             voice_request_id: 21,
-            state: gsv_vision_control::GestureState::NeedsReady,
+            state: gsv_vision_control::GestureState::new(false, false),
             progress: None,
         };
         let mut sequence = 0;
@@ -1191,7 +1320,7 @@ mod tests {
                 received_at,
                 SESSION,
                 &mut sequence,
-                VisionContext::listening(21, false),
+                VisionContext::listening(21, false, false),
             ),
             Ok(None)
         );
@@ -1202,7 +1331,7 @@ mod tests {
                 received_at,
                 SESSION,
                 &mut sequence,
-                VisionContext::listening(20, false),
+                VisionContext::listening(20, false, false),
             ),
             Ok(None)
         );
@@ -1213,7 +1342,7 @@ mod tests {
                 received_at,
                 SESSION,
                 &mut sequence,
-                VisionContext::listening(21, false),
+                VisionContext::listening(21, false, false),
             ),
             Ok(Some(VisionEvent::Status {
                 sequence: 2,
@@ -1227,7 +1356,7 @@ mod tests {
                 received_at,
                 SESSION,
                 &mut sequence,
-                VisionContext::listening(21, false),
+                VisionContext::listening(21, false, false),
             ),
             Ok(None)
         );
@@ -1269,9 +1398,9 @@ mod tests {
         )
         .expect("reliable lifecycle queues");
         for (sequence, state) in [
-            (2, gsv_vision_control::GestureState::NeedsReady),
-            (3, gsv_vision_control::GestureState::Ready),
-            (4, gsv_vision_control::GestureState::NeedsReady),
+            (2, gsv_vision_control::GestureState::new(false, false)),
+            (3, gsv_vision_control::GestureState::new(true, false)),
+            (4, gsv_vision_control::GestureState::new(false, false)),
         ] {
             send_vision_event(
                 &events,
@@ -1295,14 +1424,14 @@ mod tests {
                 sequence: 5,
                 received_at: Instant::now(),
                 voice_request_id: 31,
-                intent: GestureIntent::Hold,
+                intent: GestureIntent::Mute,
             },
         )
         .expect("reliable intent queues");
         let final_received_at = Instant::now();
         let final_status = ControlStatus::Active {
             voice_request_id: 31,
-            state: gsv_vision_control::GestureState::Holding,
+            state: gsv_vision_control::GestureState::new(true, true),
             progress: None,
         };
         send_vision_event(
@@ -1351,7 +1480,7 @@ mod tests {
                 Some(VisionEvent::Intent {
                     sequence: 5,
                     voice_request_id: 31,
-                    intent: GestureIntent::Hold,
+                    intent: GestureIntent::Mute,
                     ..
                 })
             ));
@@ -1377,7 +1506,7 @@ mod tests {
                 received_at: Instant::now(),
                 status: ControlStatus::Active {
                     voice_request_id: 31,
-                    state: gsv_vision_control::GestureState::Ready,
+                    state: gsv_vision_control::GestureState::new(true, false),
                     progress: None,
                 },
             },

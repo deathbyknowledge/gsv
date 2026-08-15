@@ -27,6 +27,13 @@ enum VoiceTerminalIntent {
     SendAfterFinal,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum MuteStateApplication {
+    Ignored,
+    Applied,
+    Contradicted,
+}
+
 #[derive(Debug)]
 pub(super) struct VoiceDraft {
     request_id: u64,
@@ -34,8 +41,12 @@ pub(super) struct VoiceDraft {
     after: String,
     pub(super) rendered: String,
     revision: i32,
+    listening: bool,
     stopping: bool,
-    gesture_held: bool,
+    gesture_armed: bool,
+    muted: bool,
+    pending_mute: Option<bool>,
+    mute_revision: Option<u64>,
     terminal_intent: VoiceTerminalIntent,
 }
 
@@ -47,37 +58,77 @@ impl VoiceDraft {
             after,
             rendered,
             revision: -1,
+            listening: false,
             stopping: false,
-            gesture_held: false,
+            gesture_armed: false,
+            muted: false,
+            pending_mute: None,
+            mute_revision: None,
             terminal_intent: VoiceTerminalIntent::KeepDraft,
         }
     }
 
-    fn hold_for_gesture(&mut self) -> bool {
-        if self.stopping || self.gesture_held {
+    fn arm_gestures(&mut self) -> bool {
+        if self.stopping || self.gesture_armed {
             return false;
         }
-        self.gesture_held = true;
+        self.gesture_armed = true;
         true
     }
 
-    fn release_gesture_hold(&mut self) -> bool {
-        if self.stopping || !self.gesture_held {
+    fn disarm_gestures(&mut self) -> bool {
+        if !self.gesture_armed {
             return false;
         }
-        self.gesture_held = false;
+        self.gesture_armed = false;
         true
     }
 
     fn request_gesture_send(&mut self) -> bool {
         if self.stopping
-            || self.gesture_held
+            || !self.gesture_armed
             || self.terminal_intent == VoiceTerminalIntent::SendAfterFinal
         {
             return false;
         }
         self.terminal_intent = VoiceTerminalIntent::SendAfterFinal;
         true
+    }
+
+    fn can_request_mute(&self, muted: bool) -> bool {
+        !self.stopping
+            && self.gesture_armed
+            && self.mute_revision.is_some()
+            && self.pending_mute.is_none()
+            && self.muted != muted
+    }
+
+    fn note_mute_requested(&mut self, muted: bool) {
+        debug_assert!(self.can_request_mute(muted));
+        self.pending_mute = Some(muted);
+    }
+
+    fn apply_mute_state(&mut self, revision: u64, muted: bool) -> MuteStateApplication {
+        if self
+            .mute_revision
+            .is_some_and(|applied_revision| revision <= applied_revision)
+        {
+            return if self.pending_mute.take().is_some() {
+                MuteStateApplication::Contradicted
+            } else {
+                MuteStateApplication::Ignored
+            };
+        }
+        self.mute_revision = Some(revision);
+        self.muted = muted;
+        if let Some(pending_mute) = self.pending_mute.take() {
+            return if pending_mute == muted {
+                MuteStateApplication::Applied
+            } else {
+                MuteStateApplication::Contradicted
+            };
+        }
+        MuteStateApplication::Applied
     }
 }
 
@@ -881,36 +932,87 @@ impl GsvApp {
         cx.notify();
     }
 
-    /// Latches gesture hold for the active dictation request. Hold suppresses
-    /// gesture-driven sending but deliberately leaves microphone capture and
-    /// transcript updates running.
-    pub(super) fn gesture_hold_dictation(&mut self, cx: &mut Context<Self>) -> bool {
+    /// Arms semantic gesture actions for the active dictation request.
+    pub(super) fn gesture_arm_dictation(&mut self, cx: &mut Context<Self>) -> bool {
         let changed = self
             .voice_draft
             .as_mut()
-            .is_some_and(VoiceDraft::hold_for_gesture);
+            .is_some_and(VoiceDraft::arm_gestures);
         if changed {
             cx.notify();
         }
         changed
     }
 
-    /// Releases gesture hold only after an explicit resume gesture. Tracking
-    /// loss must not call this method.
-    pub(super) fn gesture_release_dictation_hold(&mut self, cx: &mut Context<Self>) -> bool {
+    /// Disarms gesture actions without changing the independently applied
+    /// microphone mute state.
+    pub(super) fn gesture_disarm_dictation(&mut self, cx: &mut Context<Self>) -> bool {
         let changed = self
             .voice_draft
             .as_mut()
-            .is_some_and(VoiceDraft::release_gesture_hold);
+            .is_some_and(VoiceDraft::disarm_gestures);
         if changed {
             cx.notify();
         }
         changed
+    }
+
+    /// Requests a helper-owned microphone mute transition. The Desktop state
+    /// remains at the last acknowledged value until a matching MuteState event
+    /// proves that the input gate is applied or reopened. The device and
+    /// capture stream deliberately remain open while samples are gated before
+    /// queueing and inference.
+    pub(super) fn gesture_set_dictation_muted(
+        &mut self,
+        muted: bool,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let Some(request_id) = self
+            .voice_draft
+            .as_ref()
+            .filter(|voice| voice.can_request_mute(muted))
+            .map(|voice| voice.request_id)
+        else {
+            return false;
+        };
+        if self
+            .voice_commands
+            .send(VoiceCommand::SetMuted { request_id, muted })
+            .is_err()
+        {
+            // A closed command owner cannot acknowledge capture state. End
+            // the action lease and release the voice session while leaving
+            // the latest rendered words visible for ordinary typing.
+            self.disable_vision_for_voice(request_id);
+            self.voice_draft = None;
+            self.voice_notice = Some("VOICE INPUT UNAVAILABLE · KEEP TYPING".to_string());
+            cx.notify();
+            return false;
+        }
+        if let Some(voice) = self
+            .voice_draft
+            .as_mut()
+            .filter(|voice| voice.request_id == request_id)
+        {
+            voice.note_mute_requested(muted);
+        }
+        self.voice_notice = Some(
+            if muted {
+                "LISTENING · MUTING MICROPHONE"
+            } else {
+                "LISTENING · UNMUTING MICROPHONE"
+            }
+            .to_string(),
+        );
+        cx.notify();
+        true
     }
 
     /// Finalizes the active request and records that its matching authoritative
-    /// final transcript may be sent. The final event still rechecks the active
-    /// conversation before entering the normal submission owner.
+    /// final transcript may be sent. Sending remains valid while capture is
+    /// muted because it sends only the draft already captured before Stop. The
+    /// final event still rechecks the active conversation before entering the
+    /// normal submission owner.
     pub(super) fn gesture_send_dictation_now(&mut self, cx: &mut Context<Self>) -> bool {
         let Some(request_id) = self.voice_draft.as_ref().map(|voice| voice.request_id) else {
             return false;
@@ -930,10 +1032,26 @@ impl GsvApp {
         })
     }
 
-    pub(super) fn dictation_is_gesture_held(&self) -> bool {
+    pub(super) fn dictation_gestures_are_armed(&self) -> bool {
         self.voice_draft
             .as_ref()
-            .is_some_and(|voice| voice.gesture_held)
+            .is_some_and(|voice| voice.gesture_armed)
+    }
+
+    pub(super) fn dictation_is_muted(&self) -> bool {
+        self.voice_draft.as_ref().is_some_and(|voice| voice.muted)
+    }
+
+    pub(super) fn dictation_pending_mute(&self) -> Option<bool> {
+        self.voice_draft
+            .as_ref()
+            .and_then(|voice| voice.pending_mute)
+    }
+
+    pub(super) fn dictation_mute_state_is_authoritative(&self) -> bool {
+        self.voice_draft
+            .as_ref()
+            .is_some_and(|voice| voice.mute_revision.is_some())
     }
 
     pub(super) fn active_voice_request_id(&self) -> Option<u64> {
@@ -941,9 +1059,13 @@ impl GsvApp {
     }
 
     pub(super) fn voice_request_accepts_gestures(&self, request_id: u64) -> bool {
-        self.voice_draft
-            .as_ref()
-            .is_some_and(|voice| voice.request_id == request_id && !voice.stopping)
+        self.voice_draft.as_ref().is_some_and(|voice| {
+            voice.request_id == request_id
+                && voice.listening
+                && !voice.stopping
+                && voice.mute_revision.is_some()
+                && voice.pending_mute.is_none()
+        })
     }
 
     pub(super) fn finish_dictation(&mut self, cx: &mut Context<Self>) {
@@ -960,6 +1082,7 @@ impl GsvApp {
             Ok(()) => {
                 if let Some(voice) = self.voice_draft.as_mut() {
                     voice.stopping = true;
+                    voice.gesture_armed = false;
                 }
                 self.disable_vision_for_voice(request_id);
                 self.voice_notice = Some("FINISHING VOICE INPUT".to_string());
@@ -1018,14 +1141,52 @@ impl GsvApp {
             _ => {}
         }
         match event {
+            VoiceEvent::MuteState {
+                request_id,
+                revision,
+                muted,
+            } if self.voice_request_is(request_id) => {
+                let application = self
+                    .voice_draft
+                    .as_mut()
+                    .filter(|voice| voice.request_id == request_id)
+                    .map_or(MuteStateApplication::Ignored, |voice| {
+                        voice.apply_mute_state(revision, muted)
+                    });
+                match application {
+                    MuteStateApplication::Ignored => {}
+                    MuteStateApplication::Applied => {
+                        self.clear_voice_gesture_status();
+                        self.enable_vision_for_voice(request_id);
+                        self.sync_vision_context();
+                        self.refresh_listening_voice_notice();
+                        cx.notify();
+                    }
+                    MuteStateApplication::Contradicted => {
+                        self.disable_vision_for_voice(request_id);
+                        self.voice_draft = None;
+                        let _ = self
+                            .voice_commands
+                            .send(VoiceCommand::Cancel { request_id });
+                        self.voice_notice = Some("VOICE INPUT STOPPED · KEEP TYPING".to_string());
+                        cx.notify();
+                    }
+                }
+            }
             VoiceEvent::State {
                 request_id,
                 phase,
                 progress,
             } if self.voice_request_is(request_id) => {
                 if phase == VoicePhase::Listening {
+                    if let Some(voice) = self.voice_draft.as_mut() {
+                        voice.listening = true;
+                    }
                     self.enable_vision_for_voice(request_id);
                 } else if phase == VoicePhase::Finishing {
+                    if let Some(voice) = self.voice_draft.as_mut() {
+                        voice.listening = false;
+                    }
                     self.disable_vision_for_voice(request_id);
                 }
                 let voice = self
@@ -1058,6 +1219,9 @@ impl GsvApp {
                 // Listening snapshots are intentionally coalescible under UI
                 // backpressure. A matching partial is equally authoritative
                 // evidence that this request owns the live microphone.
+                if let Some(voice) = self.voice_draft.as_mut() {
+                    voice.listening = true;
+                }
                 self.enable_vision_for_voice(request_id);
                 let Some(voice) = self.voice_draft.as_mut() else {
                     return;
@@ -1400,15 +1564,16 @@ mod tests {
     }
 
     #[test]
-    fn gesture_hold_is_latched_until_an_explicit_release() {
+    fn gesture_arm_is_explicit_and_send_allows_an_applied_mute() {
         let mut voice = VoiceDraft::new(7, String::new(), String::new(), String::new());
 
-        assert!(voice.hold_for_gesture());
-        assert!(!voice.hold_for_gesture());
         assert!(!voice.request_gesture_send());
-
-        assert!(voice.release_gesture_hold());
-        assert!(!voice.release_gesture_hold());
+        assert!(voice.arm_gestures());
+        assert!(!voice.arm_gestures());
+        assert_eq!(
+            voice.apply_mute_state(0, true),
+            MuteStateApplication::Applied
+        );
         assert!(voice.request_gesture_send());
         assert!(!voice.request_gesture_send());
         assert_eq!(voice.terminal_intent, VoiceTerminalIntent::SendAfterFinal);
@@ -1417,14 +1582,53 @@ mod tests {
     #[test]
     fn stopping_voice_rejects_gesture_state_changes() {
         let mut voice = VoiceDraft::new(7, String::new(), String::new(), String::new());
-        voice.gesture_held = true;
+        assert!(voice.arm_gestures());
         voice.stopping = true;
 
-        assert!(!voice.hold_for_gesture());
-        assert!(!voice.release_gesture_hold());
+        assert!(!voice.arm_gestures());
         assert!(!voice.request_gesture_send());
-        assert!(voice.gesture_held);
+        assert!(!voice.can_request_mute(true));
+        assert!(voice.disarm_gestures());
+        assert!(!voice.gesture_armed);
         assert_eq!(voice.terminal_intent, VoiceTerminalIntent::KeepDraft);
+    }
+
+    #[test]
+    fn mute_state_changes_only_on_new_ack_and_disarm_does_not_unmute() {
+        let mut voice = VoiceDraft::new(7, String::new(), String::new(), String::new());
+        assert!(voice.arm_gestures());
+        assert_eq!(
+            voice.apply_mute_state(0, false),
+            MuteStateApplication::Applied
+        );
+        assert!(voice.can_request_mute(true));
+        voice.note_mute_requested(true);
+        assert_eq!(voice.pending_mute, Some(true));
+        assert!(!voice.muted);
+
+        assert_eq!(
+            voice.apply_mute_state(1, true),
+            MuteStateApplication::Applied
+        );
+        assert_eq!(voice.pending_mute, None);
+        assert!(voice.muted);
+        assert_eq!(
+            voice.apply_mute_state(1, false),
+            MuteStateApplication::Ignored
+        );
+        assert!(voice.muted);
+
+        assert!(voice.can_request_mute(false));
+        voice.note_mute_requested(false);
+        assert_eq!(
+            voice.apply_mute_state(2, true),
+            MuteStateApplication::Contradicted
+        );
+        assert_eq!(voice.pending_mute, None);
+
+        assert!(voice.disarm_gestures());
+        assert!(!voice.gesture_armed);
+        assert!(voice.muted);
     }
 
     #[test]
@@ -1537,17 +1741,234 @@ mod tests {
                 app.update(cx, |app, cx| {
                     app.voice_commands =
                         crate::transcription::VoiceCommandSender::closed_for_test();
-                    app.voice_draft = Some(VoiceDraft::new(
-                        40,
-                        String::new(),
-                        String::new(),
-                        String::new(),
-                    ));
+                    let mut voice =
+                        VoiceDraft::new(40, String::new(), String::new(), String::new());
+                    assert!(voice.arm_gestures());
+                    app.voice_draft = Some(voice);
                     assert!(!app.gesture_send_dictation_now(cx));
                     assert!(app.voice_draft.is_none());
                     assert_eq!(
                         app.voice_notice.as_deref(),
                         Some("VOICE INPUT UNAVAILABLE · KEEP TYPING")
+                    );
+                });
+            })
+            .expect("window remains open");
+    }
+
+    #[gpui::test]
+    fn disconnected_mute_commands_end_the_voice_lease_without_changing_input(
+        cx: &mut TestAppContext,
+    ) {
+        cx.update(|cx| {
+            gpui_component::init(cx);
+            bind_keys(cx);
+            crate::register_fonts(cx);
+            crate::configure_theme(cx);
+        });
+
+        let (command_tx, _command_rx) = tokio::sync::mpsc::unbounded_channel();
+        let (_event_tx, event_rx) = tokio::sync::mpsc::unbounded_channel();
+        let client = crate::client::ClientHandle {
+            commands: command_tx,
+            events: event_rx,
+            login: None,
+        };
+        let app = Rc::new(RefCell::new(None));
+        let app_for_window = app.clone();
+        let window = cx.update(|cx| {
+            cx.open_window(WindowOptions::default(), move |window, cx| {
+                let view = cx.new(|cx| GsvApp::new(window, cx, client, true, false, true));
+                *app_for_window.borrow_mut() = Some(view.clone());
+                cx.new(|cx| Root::new(view, window, cx))
+            })
+            .expect("the GPUI surface should open")
+        });
+
+        let app = app.borrow().clone().expect("app entity should be retained");
+        let window_handle: gpui::AnyWindowHandle = window.into();
+        window_handle
+            .update(cx, |_, _, cx| {
+                app.update(cx, |app, cx| {
+                    app.voice_commands =
+                        crate::transcription::VoiceCommandSender::closed_for_test();
+                    app.vision_context = Some(crate::vision_debug::VisionContextSender::for_test());
+                    app.vision_lifecycle = Some(gsv_vision_control::LifecycleState::Ready);
+
+                    for (request_id, requested_muted, applied_muted) in
+                        [(50, true, false), (51, false, true)]
+                    {
+                        let mut voice = VoiceDraft::new(
+                            request_id,
+                            String::new(),
+                            String::new(),
+                            String::new(),
+                        );
+                        assert!(voice.arm_gestures());
+                        assert_eq!(
+                            voice.apply_mute_state(0, applied_muted),
+                            MuteStateApplication::Applied
+                        );
+                        app.voice_draft = Some(voice);
+                        app.vision_voice_request_id = Some(request_id);
+
+                        assert!(!app.gesture_set_dictation_muted(requested_muted, cx));
+                        assert!(app.voice_draft.is_none());
+                        assert!(app.vision_voice_request_id.is_none());
+                        assert_eq!(app.input.read(cx).value().as_ref(), "");
+                        assert_eq!(
+                            app.voice_notice.as_deref(),
+                            Some("VOICE INPUT UNAVAILABLE · KEEP TYPING")
+                        );
+                    }
+                });
+            })
+            .expect("window remains open");
+    }
+
+    #[gpui::test]
+    fn mute_commands_change_applied_state_only_after_matching_helper_ack(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            gpui_component::init(cx);
+            bind_keys(cx);
+            crate::register_fonts(cx);
+            crate::configure_theme(cx);
+        });
+
+        let (command_tx, _command_rx) = tokio::sync::mpsc::unbounded_channel();
+        let (_event_tx, event_rx) = tokio::sync::mpsc::unbounded_channel();
+        let client = crate::client::ClientHandle {
+            commands: command_tx,
+            events: event_rx,
+            login: None,
+        };
+        let app = Rc::new(RefCell::new(None));
+        let app_for_window = app.clone();
+        let window = cx.update(|cx| {
+            cx.open_window(WindowOptions::default(), move |window, cx| {
+                let view = cx.new(|cx| GsvApp::new(window, cx, client, true, false, true));
+                *app_for_window.borrow_mut() = Some(view.clone());
+                cx.new(|cx| Root::new(view, window, cx))
+            })
+            .expect("the GPUI surface should open")
+        });
+
+        let app = app.borrow().clone().expect("app entity should be retained");
+        let window_handle: gpui::AnyWindowHandle = window.into();
+        window_handle
+            .update(cx, |_, window, cx| {
+                app.update(cx, |app, cx| {
+                    let (commands, command_rx) =
+                        crate::transcription::VoiceCommandSender::channel_for_test();
+                    app.voice_commands = commands;
+                    app.vision_context = Some(crate::vision_debug::VisionContextSender::for_test());
+                    app.vision_lifecycle = Some(gsv_vision_control::LifecycleState::Ready);
+                    app.vision_voice_request_id = Some(60);
+                    let mut voice =
+                        VoiceDraft::new(60, String::new(), String::new(), String::new());
+                    voice.listening = true;
+                    assert_eq!(
+                        voice.apply_mute_state(0, false),
+                        MuteStateApplication::Applied
+                    );
+                    assert!(voice.arm_gestures());
+                    app.voice_draft = Some(voice);
+
+                    assert!(app.gesture_set_dictation_muted(true, cx));
+                    assert_eq!(
+                        command_rx.try_recv(),
+                        Ok(VoiceCommand::SetMuted {
+                            request_id: 60,
+                            muted: true,
+                        })
+                    );
+                    assert!(!app.dictation_is_muted());
+                    assert_eq!(app.dictation_pending_mute(), Some(true));
+                    assert_eq!(
+                        app.voice_notice.as_deref(),
+                        Some("LISTENING · MUTING MICROPHONE")
+                    );
+
+                    app.handle_voice_event(
+                        VoiceEvent::MuteState {
+                            request_id: 60,
+                            revision: 1,
+                            muted: true,
+                        },
+                        window,
+                        cx,
+                    );
+                    assert!(app.dictation_is_muted());
+                    assert_eq!(app.dictation_pending_mute(), None);
+                    assert_eq!(
+                        app.voice_notice.as_deref(),
+                        Some("LISTENING · MICROPHONE MUTED · GESTURES ARMED")
+                    );
+
+                    assert!(app.gesture_set_dictation_muted(false, cx));
+                    assert_eq!(
+                        command_rx.try_recv(),
+                        Ok(VoiceCommand::SetMuted {
+                            request_id: 60,
+                            muted: false,
+                        })
+                    );
+                    assert!(app.dictation_is_muted());
+                    assert_eq!(app.dictation_pending_mute(), Some(false));
+
+                    app.handle_voice_event(
+                        VoiceEvent::MuteState {
+                            request_id: 60,
+                            revision: 2,
+                            muted: false,
+                        },
+                        window,
+                        cx,
+                    );
+                    assert!(!app.dictation_is_muted());
+                    assert_eq!(app.dictation_pending_mute(), None);
+                    assert_eq!(
+                        app.voice_notice.as_deref(),
+                        Some("LISTENING · GESTURES ARMED")
+                    );
+
+                    app.handle_voice_event(
+                        VoiceEvent::MuteState {
+                            request_id: 60,
+                            revision: 1,
+                            muted: true,
+                        },
+                        window,
+                        cx,
+                    );
+                    assert!(!app.dictation_is_muted());
+
+                    assert!(app.gesture_set_dictation_muted(true, cx));
+                    assert_eq!(
+                        command_rx.try_recv(),
+                        Ok(VoiceCommand::SetMuted {
+                            request_id: 60,
+                            muted: true,
+                        })
+                    );
+                    app.handle_voice_event(
+                        VoiceEvent::MuteState {
+                            request_id: 60,
+                            revision: 3,
+                            muted: false,
+                        },
+                        window,
+                        cx,
+                    );
+                    assert!(app.voice_draft.is_none());
+                    assert!(app.vision_voice_request_id.is_none());
+                    assert_eq!(
+                        command_rx.try_recv(),
+                        Ok(VoiceCommand::Cancel { request_id: 60 })
+                    );
+                    assert_eq!(
+                        app.voice_notice.as_deref(),
+                        Some("VOICE INPUT STOPPED · KEEP TYPING")
                     );
                 });
             })
@@ -1598,6 +2019,7 @@ mod tests {
                         "draft partial".to_string(),
                     );
                     voice.revision = 1;
+                    assert!(voice.arm_gestures());
                     assert!(voice.request_gesture_send());
                     voice.stopping = true;
                     app.voice_draft = Some(voice);

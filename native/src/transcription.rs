@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::{HashSet, VecDeque};
 use std::io::{BufRead, BufReader, Write as _};
 use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, Command, Stdio};
@@ -8,11 +8,13 @@ use std::time::{Duration, Instant};
 use serde_json::{json, Value};
 
 const EVENT_CAPACITY: usize = 16;
+const RELIABLE_EVENT_CAPACITY: usize = 16;
 const HELPER_EVENT_MAX_BYTES: usize = 128 * 1024;
 pub const MAX_DEVICE_COUNT: usize = 32;
 pub const MAX_DEVICE_NAME_BYTES: usize = 256;
 pub const MAX_DEVICE_ID_BYTES: usize = 512;
 const VOICE_PROTOCOL_VERSION: u64 = 2;
+const VOICE_PROTOCOL_CONTRACT: &str = "gsv-voice-v2-streaming-mute";
 const HELPER_HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(2);
 const DEVICE_LIST_TIMEOUT: Duration = Duration::from_secs(5);
 const STOP_TIMEOUT: Duration = Duration::from_secs(30);
@@ -32,6 +34,10 @@ pub enum VoiceCommand {
     },
     Cancel {
         request_id: u64,
+    },
+    SetMuted {
+        request_id: u64,
+        muted: bool,
     },
     ListDevices {
         request_id: u64,
@@ -84,6 +90,11 @@ pub enum VoiceEvent {
         committed: String,
         tentative: String,
     },
+    MuteState {
+        request_id: u64,
+        revision: u64,
+        muted: bool,
+    },
     Final {
         request_id: u64,
         text: String,
@@ -119,6 +130,12 @@ impl VoiceCommandSender {
         let (sender, receiver) = mpsc::channel();
         drop(receiver);
         Self(sender)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn channel_for_test() -> (Self, Receiver<VoiceCommand>) {
+        let (sender, receiver) = mpsc::channel();
+        (Self(sender), receiver)
     }
 }
 
@@ -170,7 +187,10 @@ impl VoiceSupervisorState {
                 self.device_request = Some(*request_id);
                 self.device_deadline = Some((*request_id, now + DEVICE_LIST_TIMEOUT));
             }
-            VoiceCommand::Stop { .. } | VoiceCommand::Cancel { .. } | VoiceCommand::Shutdown => {}
+            VoiceCommand::Stop { .. }
+            | VoiceCommand::Cancel { .. }
+            | VoiceCommand::SetMuted { .. }
+            | VoiceCommand::Shutdown => {}
         }
     }
 
@@ -203,9 +223,10 @@ impl VoiceSupervisorState {
                 self.active_request.is_some() || self.device_request.is_some()
             }
             VoiceCommand::Start { .. } => self.device_request.is_some(),
-            VoiceCommand::Stop { .. } | VoiceCommand::Cancel { .. } | VoiceCommand::Shutdown => {
-                false
-            }
+            VoiceCommand::Stop { .. }
+            | VoiceCommand::Cancel { .. }
+            | VoiceCommand::SetMuted { .. }
+            | VoiceCommand::Shutdown => false,
         }
     }
 }
@@ -228,9 +249,10 @@ pub fn start() -> VoiceHandle {
 fn supervise(commands: Receiver<VoiceCommand>, events: tokio::sync::mpsc::Sender<VoiceEvent>) {
     let mut process: Option<HelperProcess> = None;
     let mut state = VoiceSupervisorState::default();
-    let mut pending_update = None;
+    let mut pending_update = PendingVoiceEvents::default();
 
     loop {
+        recover_delivery_overflow(&mut process, &mut state, &mut pending_update);
         flush_pending_update(&events, &mut pending_update);
         if let Some(helper) = process.as_mut() {
             while let Ok(mut event) = helper.events.try_recv() {
@@ -419,7 +441,7 @@ fn supervise(commands: Receiver<VoiceCommand>, events: tokio::sync::mpsc::Sender
                         VoiceEvent::Cancelled { request_id },
                     );
                 }
-                VoiceCommand::Stop { request_id } => {
+                VoiceCommand::Stop { request_id } | VoiceCommand::SetMuted { request_id, .. } => {
                     publish(
                         &events,
                         &mut pending_update,
@@ -477,45 +499,133 @@ fn supervise(commands: Receiver<VoiceCommand>, events: tokio::sync::mpsc::Sender
 
 fn publish(
     events: &tokio::sync::mpsc::Sender<VoiceEvent>,
-    pending_update: &mut Option<VoiceEvent>,
+    pending: &mut PendingVoiceEvents,
     event: VoiceEvent,
 ) {
+    if pending.overflowed {
+        return;
+    }
     if matches!(event, VoiceEvent::State { .. } | VoiceEvent::Partial { .. }) {
+        if pending.snapshot.is_some() || !pending.reliable.is_empty() {
+            pending.snapshot = Some(event);
+            return;
+        }
         match events.try_send(event) {
             Ok(()) => {}
             Err(tokio::sync::mpsc::error::TrySendError::Full(event)) => {
                 // State and partial events are complete snapshots. Keep only the newest while
                 // the UI is busy, so progress can never block the supervisor from forwarding a
                 // terminal command to the helper.
-                *pending_update = Some(event);
+                pending.snapshot = Some(event);
             }
-            Err(tokio::sync::mpsc::error::TrySendError::Closed(_)) => {}
+            Err(tokio::sync::mpsc::error::TrySendError::Closed(_)) => {
+                pending.snapshot = None;
+            }
         }
     } else {
-        // Terminal delivery owns session cleanup but must not make the command supervisor wait on
-        // a stalled GPUI receiver. The bounded queue normally has room because snapshots coalesce;
-        // on saturation, replace the pending update with this terminal and retry next loop.
+        // Mute acknowledgements and terminal events are authoritative and may
+        // never replace one another. Queue them in helper order without blocking
+        // the supervisor; coalescible snapshots use their own latest-value lane.
+        if matches!(
+            event,
+            VoiceEvent::Final { .. }
+                | VoiceEvent::Cancelled { .. }
+                | VoiceEvent::Devices { .. }
+                | VoiceEvent::Error { .. }
+        ) {
+            pending.snapshot = None;
+        }
+        if !pending.reliable.is_empty() {
+            pending.push_reliable(event);
+            return;
+        }
         match events.try_send(event) {
-            Ok(()) => {
-                *pending_update = None;
-            }
+            Ok(()) => {}
             Err(tokio::sync::mpsc::error::TrySendError::Full(event)) => {
-                *pending_update = Some(event);
+                pending.push_reliable(event);
             }
-            Err(tokio::sync::mpsc::error::TrySendError::Closed(_)) => {}
+            Err(tokio::sync::mpsc::error::TrySendError::Closed(_)) => {
+                pending.reliable.clear();
+                pending.snapshot = None;
+            }
         }
     }
 }
 
+#[derive(Default)]
+struct PendingVoiceEvents {
+    reliable: VecDeque<VoiceEvent>,
+    snapshot: Option<VoiceEvent>,
+    overflowed: bool,
+    overflow_request: Option<u64>,
+}
+
+impl PendingVoiceEvents {
+    fn push_reliable(&mut self, event: VoiceEvent) {
+        if self.reliable.len() >= RELIABLE_EVENT_CAPACITY {
+            self.overflow_request = event_request_id(&event)
+                .or_else(|| self.reliable.back().and_then(event_request_id));
+            self.reliable.clear();
+            self.snapshot = None;
+            self.overflowed = true;
+        } else {
+            self.reliable.push_back(event);
+        }
+    }
+
+    fn take_overflowed(&mut self) -> bool {
+        std::mem::take(&mut self.overflowed)
+    }
+}
+
+fn recover_delivery_overflow(
+    process: &mut Option<HelperProcess>,
+    state: &mut VoiceSupervisorState,
+    pending: &mut PendingVoiceEvents,
+) {
+    if !pending.take_overflowed() {
+        return;
+    }
+    if let Some(helper) = process.take() {
+        terminate_helper_and_reap(helper);
+    }
+    let request_id = pending
+        .overflow_request
+        .take()
+        .or(state.active_request)
+        .or(state.device_request);
+    *state = VoiceSupervisorState::default();
+    // Overflow discarded the ambiguous backlog. Replace it with exactly one
+    // bounded failure so the UI can fail the affected request closed.
+    pending.reliable.push_back(VoiceEvent::Error {
+        request_id,
+        code: VoiceErrorCode::Interrupted,
+    });
+}
+
 fn flush_pending_update(
     events: &tokio::sync::mpsc::Sender<VoiceEvent>,
-    pending_update: &mut Option<VoiceEvent>,
+    pending: &mut PendingVoiceEvents,
 ) {
-    let Some(update) = pending_update.take() else {
+    while let Some(event) = pending.reliable.pop_front() {
+        match events.try_send(event) {
+            Ok(()) => {}
+            Err(tokio::sync::mpsc::error::TrySendError::Full(event)) => {
+                pending.reliable.push_front(event);
+                return;
+            }
+            Err(tokio::sync::mpsc::error::TrySendError::Closed(_)) => {
+                pending.reliable.clear();
+                pending.snapshot = None;
+                return;
+            }
+        }
+    }
+    let Some(snapshot) = pending.snapshot.take() else {
         return;
     };
-    if let Err(tokio::sync::mpsc::error::TrySendError::Full(update)) = events.try_send(update) {
-        *pending_update = Some(update);
+    if let Err(tokio::sync::mpsc::error::TrySendError::Full(snapshot)) = events.try_send(snapshot) {
+        pending.snapshot = Some(snapshot);
     }
 }
 
@@ -747,6 +857,7 @@ fn command_request_id(command: &VoiceCommand) -> Option<u64> {
         VoiceCommand::Start { request_id, .. }
         | VoiceCommand::Stop { request_id }
         | VoiceCommand::Cancel { request_id }
+        | VoiceCommand::SetMuted { request_id, .. }
         | VoiceCommand::ListDevices { request_id } => Some(*request_id),
         VoiceCommand::Shutdown => None,
     }
@@ -763,6 +874,7 @@ fn event_request_id(event: &VoiceEvent) -> Option<u64> {
     match event {
         VoiceEvent::State { request_id, .. }
         | VoiceEvent::Partial { request_id, .. }
+        | VoiceEvent::MuteState { request_id, .. }
         | VoiceEvent::Final { request_id, .. }
         | VoiceEvent::Cancelled { request_id }
         | VoiceEvent::Devices { request_id, .. } => Some(*request_id),
@@ -795,6 +907,9 @@ fn command_json(command: &VoiceCommand) -> Value {
         VoiceCommand::Cancel { request_id } => {
             json!({ "type": "cancel", "request_id": request_id })
         }
+        VoiceCommand::SetMuted { request_id, muted } => {
+            json!({ "type": "set_muted", "request_id": request_id, "muted": muted })
+        }
         VoiceCommand::ListDevices { request_id } => {
             json!({ "type": "list_devices", "request_id": request_id })
         }
@@ -821,6 +936,11 @@ fn parse_event(line: &str) -> Option<VoiceEvent> {
             committed: value.get("committed")?.as_str()?.to_string(),
             tentative: value.get("tentative")?.as_str()?.to_string(),
         }),
+        "mute_state" => Some(VoiceEvent::MuteState {
+            request_id: request_id()?,
+            revision: value.get("revision")?.as_u64()?,
+            muted: value.get("muted")?.as_bool()?,
+        }),
         "final" => Some(VoiceEvent::Final {
             request_id: request_id()?,
             text: value.get("text")?.as_str()?.to_string(),
@@ -844,9 +964,10 @@ fn valid_protocol_hello(line: &str) -> bool {
     let Ok(Value::Object(value)) = serde_json::from_str::<Value>(line) else {
         return false;
     };
-    value.len() == 2
+    value.len() == 3
         && value.get("type").and_then(Value::as_str) == Some("hello")
         && value.get("protocol_version").and_then(Value::as_u64) == Some(VOICE_PROTOCOL_VERSION)
+        && value.get("contract").and_then(Value::as_str) == Some(VOICE_PROTOCOL_CONTRACT)
 }
 
 fn parse_devices(value: &Value) -> Option<Vec<VoiceDevice>> {
@@ -988,6 +1109,15 @@ mod tests {
             .and_then(Value::as_bool),
             Some(false)
         );
+
+        let mute = command_json(&VoiceCommand::SetMuted {
+            request_id: 2,
+            muted: true,
+        });
+        assert_eq!(mute["type"], "set_muted");
+        assert_eq!(mute["request_id"], 2);
+        assert_eq!(mute["muted"], true);
+        assert_eq!(mute.as_object().map(|value| value.len()), Some(3));
     }
 
     #[test]
@@ -1001,6 +1131,10 @@ mod tests {
         }));
         assert!(!command_starts_helper(&VoiceCommand::Stop {
             request_id: 7
+        }));
+        assert!(!command_starts_helper(&VoiceCommand::SetMuted {
+            request_id: 7,
+            muted: true,
         }));
         assert!(command_starts_helper(&VoiceCommand::Start {
             request_id: 8,
@@ -1024,7 +1158,7 @@ mod tests {
                 progress: None,
             })
             .expect("the test channel should accept its first event");
-        let mut pending = None;
+        let mut pending = PendingVoiceEvents::default();
         publish(
             &events,
             &mut pending,
@@ -1046,7 +1180,7 @@ mod tests {
             },
         );
         assert!(matches!(
-            pending,
+            pending.snapshot.as_ref(),
             Some(VoiceEvent::Partial { revision: 2, .. })
         ));
 
@@ -1059,7 +1193,7 @@ mod tests {
             })
         ));
         flush_pending_update(&events, &mut pending);
-        assert!(pending.is_none());
+        assert!(pending.snapshot.is_none());
         assert!(matches!(
             received.try_recv(),
             Ok(VoiceEvent::Partial { revision: 2, .. })
@@ -1076,7 +1210,7 @@ mod tests {
                 progress: Some(0.1),
             })
             .expect("the test channel should accept its first event");
-        let mut pending = None;
+        let mut pending = PendingVoiceEvents::default();
         publish(
             &events,
             &mut pending,
@@ -1096,7 +1230,7 @@ mod tests {
             },
         );
         assert!(matches!(
-            pending,
+            pending.snapshot.as_ref(),
             Some(VoiceEvent::State {
                 phase: VoicePhase::Verifying,
                 ..
@@ -1105,7 +1239,7 @@ mod tests {
 
         let _ = received.try_recv().expect("queued state");
         flush_pending_update(&events, &mut pending);
-        assert!(pending.is_none());
+        assert!(pending.snapshot.is_none());
         assert!(matches!(
             received.try_recv(),
             Ok(VoiceEvent::State {
@@ -1114,6 +1248,142 @@ mod tests {
                 ..
             })
         ));
+    }
+
+    #[test]
+    fn reliable_backpressure_is_ordered_bounded_and_fails_closed_on_overflow() {
+        let (events, _received) = tokio::sync::mpsc::channel(1);
+        events
+            .try_send(VoiceEvent::State {
+                request_id: 7,
+                phase: VoicePhase::Listening,
+                progress: None,
+            })
+            .expect("fill UI channel");
+        let mut pending = PendingVoiceEvents::default();
+        for revision in 0..2 {
+            publish(
+                &events,
+                &mut pending,
+                VoiceEvent::Partial {
+                    request_id: 7,
+                    revision,
+                    committed: revision.to_string(),
+                    tentative: String::new(),
+                },
+            );
+        }
+        for revision in 0..RELIABLE_EVENT_CAPACITY as u64 {
+            publish(
+                &events,
+                &mut pending,
+                VoiceEvent::MuteState {
+                    request_id: 7,
+                    revision,
+                    muted: revision % 2 == 0,
+                },
+            );
+        }
+        assert!(matches!(
+            pending.snapshot.as_ref(),
+            Some(VoiceEvent::Partial { revision: 1, .. })
+        ));
+        assert_eq!(pending.reliable.len(), RELIABLE_EVENT_CAPACITY);
+        assert!(pending
+            .reliable
+            .iter()
+            .enumerate()
+            .all(|(index, event)| matches!(
+                event,
+                VoiceEvent::MuteState { revision, .. } if *revision == index as u64
+            )));
+
+        publish(
+            &events,
+            &mut pending,
+            VoiceEvent::Final {
+                request_id: 7,
+                text: "terminal".to_string(),
+            },
+        );
+        assert!(pending.overflowed);
+        assert!(pending.reliable.is_empty());
+        assert!(pending.snapshot.is_none());
+
+        let mut process = None;
+        // A terminal event may already have cleared supervisor state before its
+        // delivery overflows, so the bounded lane retains only its public ID.
+        let mut state = VoiceSupervisorState::default();
+        recover_delivery_overflow(&mut process, &mut state, &mut pending);
+        assert_eq!(state.active_request, None);
+        assert!(!pending.overflowed);
+        assert_eq!(
+            pending.reliable.pop_front(),
+            Some(VoiceEvent::Error {
+                request_id: Some(7),
+                code: VoiceErrorCode::Interrupted,
+            })
+        );
+        assert!(pending.reliable.is_empty());
+    }
+
+    #[test]
+    fn mute_ack_and_terminal_keep_order_and_supersede_a_stale_snapshot() {
+        let (events, mut received) = tokio::sync::mpsc::channel(1);
+        events
+            .try_send(VoiceEvent::State {
+                request_id: 3,
+                phase: VoicePhase::Listening,
+                progress: None,
+            })
+            .expect("fill UI channel");
+        let mut pending = PendingVoiceEvents::default();
+        publish(
+            &events,
+            &mut pending,
+            VoiceEvent::Partial {
+                request_id: 3,
+                revision: 1,
+                committed: "stale".to_string(),
+                tentative: String::new(),
+            },
+        );
+        publish(
+            &events,
+            &mut pending,
+            VoiceEvent::MuteState {
+                request_id: 3,
+                revision: 1,
+                muted: true,
+            },
+        );
+        publish(
+            &events,
+            &mut pending,
+            VoiceEvent::Final {
+                request_id: 3,
+                text: "final".to_string(),
+            },
+        );
+        assert!(pending.snapshot.is_none());
+        assert_eq!(pending.reliable.len(), 2);
+
+        let _ = received.try_recv().expect("initial state");
+        flush_pending_update(&events, &mut pending);
+        assert!(matches!(
+            received.try_recv(),
+            Ok(VoiceEvent::MuteState {
+                request_id: 3,
+                revision: 1,
+                muted: true,
+            })
+        ));
+        flush_pending_update(&events, &mut pending);
+        assert!(matches!(
+            received.try_recv(),
+            Ok(VoiceEvent::Final { request_id: 3, text }) if text == "final"
+        ));
+        assert!(pending.reliable.is_empty());
     }
 
     #[test]
@@ -1175,22 +1445,40 @@ mod tests {
             r#"{"type":"error","request_id":4,"code":"model_invalid","message":"/private/model"}"#
         )
         .is_some());
+        assert_eq!(
+            parse_event(r#"{"type":"mute_state","request_id":4,"revision":8,"muted":true}"#),
+            Some(VoiceEvent::MuteState {
+                request_id: 4,
+                revision: 8,
+                muted: true,
+            })
+        );
+        assert!(
+            parse_event(r#"{"type":"mute_state","request_id":4,"revision":-1,"muted":true}"#)
+                .is_none()
+        );
     }
 
     #[test]
     fn helper_handshake_requires_exact_protocol_v2_hello() {
         assert!(valid_protocol_hello(
+            r#"{"type":"hello","protocol_version":2,"contract":"gsv-voice-v2-streaming-mute"}"#
+        ));
+        assert!(!valid_protocol_hello(
             r#"{"type":"hello","protocol_version":2}"#
         ));
         assert!(!valid_protocol_hello(
-            r#"{"type":"hello","protocol_version":1}"#
+            r#"{"type":"hello","protocol_version":1,"contract":"gsv-voice-v2-streaming-mute"}"#
+        ));
+        assert!(!valid_protocol_hello(
+            r#"{"type":"hello","protocol_version":2,"contract":"stale"}"#
         ));
         assert!(!valid_protocol_hello(
             r#"{"type":"state","request_id":1,"phase":"loading"}"#
         ));
         assert!(!valid_protocol_hello(""));
         assert!(!valid_protocol_hello(
-            r#"{"type":"hello","protocol_version":2,"unexpected":true}"#
+            r#"{"type":"hello","protocol_version":2,"contract":"gsv-voice-v2-streaming-mute","unexpected":true}"#
         ));
     }
 
