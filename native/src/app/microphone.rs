@@ -22,12 +22,6 @@ use super::{
 const MICROPHONE_SAVE_TIMEOUT: Duration = Duration::from_secs(2);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum VoiceTerminalIntent {
-    KeepDraft,
-    SendAfterFinal,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum MuteStateApplication {
     Ignored,
     Applied,
@@ -37,6 +31,8 @@ enum MuteStateApplication {
 #[derive(Debug)]
 pub(super) struct VoiceDraft {
     request_id: u64,
+    segment_id: u64,
+    pending_segment_commit: Option<u64>,
     before: String,
     after: String,
     pub(super) rendered: String,
@@ -47,13 +43,14 @@ pub(super) struct VoiceDraft {
     muted: bool,
     pending_mute: Option<bool>,
     mute_revision: Option<u64>,
-    terminal_intent: VoiceTerminalIntent,
 }
 
 impl VoiceDraft {
     pub(super) fn new(request_id: u64, before: String, after: String, rendered: String) -> Self {
         Self {
             request_id,
+            segment_id: 0,
+            pending_segment_commit: None,
             before,
             after,
             rendered,
@@ -64,7 +61,6 @@ impl VoiceDraft {
             muted: false,
             pending_mute: None,
             mute_revision: None,
-            terminal_intent: VoiceTerminalIntent::KeepDraft,
         }
     }
 
@@ -84,15 +80,32 @@ impl VoiceDraft {
         true
     }
 
-    fn request_gesture_send(&mut self) -> bool {
-        if self.stopping
-            || !self.gesture_armed
-            || self.terminal_intent == VoiceTerminalIntent::SendAfterFinal
-        {
-            return false;
-        }
-        self.terminal_intent = VoiceTerminalIntent::SendAfterFinal;
-        true
+    fn can_request_segment_commit(&self) -> bool {
+        !self.stopping && self.gesture_armed && self.pending_segment_commit.is_none()
+    }
+
+    fn note_segment_commit_requested(&mut self) {
+        debug_assert!(self.can_request_segment_commit());
+        self.pending_segment_commit = Some(self.segment_id);
+    }
+
+    fn accepts_segment(&self, segment_id: u64) -> bool {
+        self.segment_id == segment_id
+    }
+
+    fn awaits_segment_final(&self, segment_id: u64) -> bool {
+        self.pending_segment_commit == Some(segment_id) && self.accepts_segment(segment_id)
+    }
+
+    fn begin_next_segment(&mut self, value: String, cursor: usize) {
+        debug_assert!(cursor <= value.len());
+        debug_assert!(value.is_char_boundary(cursor));
+        self.segment_id = self.segment_id.wrapping_add(1);
+        self.pending_segment_commit = None;
+        self.before = value[..cursor].to_string();
+        self.after = value[cursor..].to_string();
+        self.rendered = value;
+        self.revision = -1;
     }
 
     fn can_request_mute(&self, muted: bool) -> bool {
@@ -1008,28 +1021,46 @@ impl GsvApp {
         true
     }
 
-    /// Finalizes the active request and records that its matching authoritative
-    /// final transcript may be sent. Sending remains valid while capture is
-    /// muted because it sends only the draft already captured before Stop. The
-    /// final event still rechecks the active conversation before entering the
-    /// normal submission owner.
+    /// Commits the current ASR segment without releasing the microphone, voice
+    /// request, gesture lease, or applied mute state. The helper owns the exact
+    /// audio boundary and returns one authoritative, segment-fenced result.
     pub(super) fn gesture_send_dictation_now(&mut self, cx: &mut Context<Self>) -> bool {
-        let Some(request_id) = self.voice_draft.as_ref().map(|voice| voice.request_id) else {
+        let Some((request_id, segment_id)) = self
+            .voice_draft
+            .as_ref()
+            .filter(|voice| {
+                voice.can_request_segment_commit()
+                    && self.voice_final_conversation_is_safe(voice, cx)
+                    && self.voice_final_send_is_safe()
+            })
+            .map(|voice| (voice.request_id, voice.segment_id))
+        else {
             return false;
         };
-        if !self
-            .voice_draft
-            .as_mut()
-            .is_some_and(VoiceDraft::request_gesture_send)
+        if self
+            .voice_commands
+            .send(VoiceCommand::CommitSegment {
+                request_id,
+                segment_id,
+            })
+            .is_err()
         {
+            self.disable_vision_for_voice(request_id);
+            self.voice_draft = None;
+            self.voice_notice = Some("VOICE INPUT UNAVAILABLE · KEEP TYPING".to_string());
+            cx.notify();
             return false;
         }
-        self.finish_dictation(cx);
-        self.voice_draft.as_ref().is_some_and(|voice| {
-            voice.request_id == request_id
-                && voice.stopping
-                && voice.terminal_intent == VoiceTerminalIntent::SendAfterFinal
-        })
+        if let Some(voice) = self
+            .voice_draft
+            .as_mut()
+            .filter(|voice| voice.request_id == request_id && voice.segment_id == segment_id)
+        {
+            voice.note_segment_commit_requested();
+        }
+        self.voice_notice = Some("LISTENING · PREPARING TO SEND".to_string());
+        cx.notify();
+        true
     }
 
     pub(super) fn dictation_gestures_are_armed(&self) -> bool {
@@ -1046,6 +1077,12 @@ impl GsvApp {
         self.voice_draft
             .as_ref()
             .and_then(|voice| voice.pending_mute)
+    }
+
+    pub(super) fn dictation_segment_commit_is_pending(&self) -> bool {
+        self.voice_draft
+            .as_ref()
+            .is_some_and(|voice| voice.pending_segment_commit.is_some())
     }
 
     pub(super) fn dictation_mute_state_is_authoritative(&self) -> bool {
@@ -1065,6 +1102,7 @@ impl GsvApp {
                 && !voice.stopping
                 && voice.mute_revision.is_some()
                 && voice.pending_mute.is_none()
+                && voice.pending_segment_commit.is_none()
         })
     }
 
@@ -1194,16 +1232,7 @@ impl GsvApp {
                     .as_ref()
                     .filter(|voice| voice.request_id == request_id);
                 if voice.is_some_and(|voice| voice.stopping) {
-                    self.voice_notice = Some(
-                        if voice.is_some_and(|voice| {
-                            voice.terminal_intent == VoiceTerminalIntent::SendAfterFinal
-                        }) {
-                            "FINISHING VOICE INPUT · SENDING"
-                        } else {
-                            "FINISHING VOICE INPUT"
-                        }
-                        .to_string(),
-                    );
+                    self.voice_notice = Some("FINISHING VOICE INPUT".to_string());
                 } else if phase == VoicePhase::Listening {
                     self.voice_notice = Some(self.listening_voice_notice(request_id).to_string());
                 } else {
@@ -1212,10 +1241,22 @@ impl GsvApp {
             }
             VoiceEvent::Partial {
                 request_id,
+                segment_id,
                 revision,
                 committed,
                 tentative,
             } if self.voice_request_is(request_id) => {
+                let conflicts_with_visible_draft = self.voice_draft.as_ref().is_some_and(|voice| {
+                    voice.accepts_segment(segment_id)
+                        && self.input.read(cx).value().as_ref() != voice.rendered
+                });
+                if conflicts_with_visible_draft {
+                    // An asynchronous failure may have restored the segment
+                    // that was just sent. Never let a later programmatic
+                    // partial overwrite that recovery.
+                    self.fail_continuous_dictation(request_id, cx);
+                    return;
+                }
                 // Listening snapshots are intentionally coalescible under UI
                 // backpressure. A matching partial is equally authoritative
                 // evidence that this request owns the live microphone.
@@ -1226,27 +1267,94 @@ impl GsvApp {
                 let Some(voice) = self.voice_draft.as_mut() else {
                     return;
                 };
-                if revision <= voice.revision {
+                if !voice.accepts_segment(segment_id) || revision <= voice.revision {
                     return;
                 }
                 voice.revision = revision;
                 let transcript = format!("{committed}{tentative}");
                 let composition = compose_voice_text(&voice.before, &transcript, &voice.after);
                 let stopping = voice.stopping;
-                let send_after_final = voice.terminal_intent == VoiceTerminalIntent::SendAfterFinal;
+                let sending = voice.pending_segment_commit.is_some();
                 voice.rendered.clone_from(&composition.value);
                 self.reveal_voice_draft_if_needed(&composition.value, window, cx);
                 self.interaction.on_input(composition.value.clone());
                 self.set_input_value_at(composition.value, composition.cursor, window, cx);
                 self.voice_notice = Some(if stopping {
-                    if send_after_final {
-                        "FINISHING VOICE INPUT · SENDING".to_string()
-                    } else {
-                        "FINISHING VOICE INPUT".to_string()
-                    }
+                    "FINISHING VOICE INPUT".to_string()
+                } else if sending {
+                    "LISTENING · PREPARING TO SEND".to_string()
                 } else {
                     self.listening_voice_notice(request_id).to_string()
                 });
+            }
+            VoiceEvent::SegmentFinal {
+                request_id,
+                segment_id,
+                text,
+            } if self.voice_request_is(request_id) => {
+                let safe = self
+                    .voice_draft
+                    .as_ref()
+                    .filter(|voice| voice.awaits_segment_final(segment_id))
+                    .is_some_and(|voice| {
+                        self.voice_final_conversation_is_safe(voice, cx)
+                            && self.voice_final_send_is_safe()
+                    });
+                if !safe {
+                    let matching = self
+                        .voice_draft
+                        .as_ref()
+                        .is_some_and(|voice| voice.awaits_segment_final(segment_id));
+                    if matching {
+                        self.fail_continuous_dictation(request_id, cx);
+                    }
+                    return;
+                }
+
+                let Some(voice) = self
+                    .voice_draft
+                    .as_ref()
+                    .filter(|voice| voice.awaits_segment_final(segment_id))
+                else {
+                    return;
+                };
+                let composition = compose_voice_text(&voice.before, &text, &voice.after);
+                self.reveal_voice_draft_if_needed(&composition.value, window, cx);
+                self.interaction.on_input(composition.value.clone());
+                self.set_input_value_at(composition.value.clone(), composition.cursor, window, cx);
+
+                let should_submit =
+                    !composition.value.trim().is_empty() || !self.draft_attachments.is_empty();
+                if should_submit {
+                    self.submit_conversation(composition.value, window, cx);
+                    if !self.interaction.is_submitting() {
+                        // The ordinary submission owner restored the exact
+                        // authoritative segment after a synchronous failure.
+                        // Preserve it and fence future voice output.
+                        self.fail_continuous_dictation(request_id, cx);
+                        return;
+                    }
+                }
+
+                // Submission success clears the input, while a synchronous
+                // delivery failure restores it. Rebase from that authoritative
+                // post-submit value so the next segment preserves either case.
+                let value = self.input.read(cx).value().to_string();
+                let cursor = self.input.read(cx).cursor().min(value.len());
+                let cursor = value.floor_char_boundary(cursor);
+                if let Some(voice) = self.voice_draft.as_mut().filter(|voice| {
+                    voice.request_id == request_id && voice.awaits_segment_final(segment_id)
+                }) {
+                    voice.begin_next_segment(value, cursor);
+                }
+                self.clear_voice_gesture_status();
+                self.enable_vision_for_voice(request_id);
+                // SegmentFinal is the helper-owned completion edge for Send.
+                // Armed/muted/request are intentionally unchanged, so force
+                // an authority frame instead of replace-if-changed sync.
+                self.reassert_vision_context();
+                self.voice_notice = Some(self.listening_voice_notice(request_id).to_string());
+                cx.notify();
             }
             VoiceEvent::Final { request_id, text } if self.voice_request_is(request_id) => {
                 self.disable_vision_for_voice(request_id);
@@ -1267,11 +1375,6 @@ impl GsvApp {
                 self.interaction.on_input(composition.value.clone());
                 self.set_input_value_at(composition.value.clone(), composition.cursor, window, cx);
                 self.voice_notice = None;
-                if voice.terminal_intent == VoiceTerminalIntent::SendAfterFinal
-                    && self.voice_final_send_is_safe()
-                {
-                    self.submit_conversation(composition.value, window, cx);
-                }
             }
             VoiceEvent::Cancelled { request_id } if self.voice_request_is(request_id) => {
                 self.disable_vision_for_voice(request_id);
@@ -1312,6 +1415,32 @@ impl GsvApp {
         self.voice_draft
             .as_ref()
             .is_some_and(|voice| voice.request_id == request_id)
+    }
+
+    fn fail_continuous_dictation(&mut self, request_id: u64, cx: &mut Context<Self>) {
+        if !self.voice_request_is(request_id) {
+            return;
+        }
+        self.disable_vision_for_voice(request_id);
+        self.voice_draft = None;
+        let _ = self
+            .voice_commands
+            .send(VoiceCommand::Cancel { request_id });
+        self.voice_notice = Some("VOICE INPUT STOPPED · KEEP TYPING".to_string());
+        cx.notify();
+    }
+
+    /// Fences a continuing voice request when ordinary submission recovery
+    /// restores an older segment into the input. If a newer dictated draft is
+    /// already present, the interaction owner preserves it and the values
+    /// still match, so dictation can continue.
+    pub(super) fn reconcile_dictation_after_submission_failure(&mut self, cx: &mut Context<Self>) {
+        let Some(request_id) = self.voice_draft.as_ref().and_then(|voice| {
+            (self.input.read(cx).value().as_ref() != voice.rendered).then_some(voice.request_id)
+        }) else {
+            return;
+        };
+        self.fail_continuous_dictation(request_id, cx);
     }
 
     fn voice_final_conversation_is_safe(&self, voice: &VoiceDraft, cx: &Context<Self>) -> bool {
@@ -1567,16 +1696,22 @@ mod tests {
     fn gesture_arm_is_explicit_and_send_allows_an_applied_mute() {
         let mut voice = VoiceDraft::new(7, String::new(), String::new(), String::new());
 
-        assert!(!voice.request_gesture_send());
+        assert!(!voice.can_request_segment_commit());
         assert!(voice.arm_gestures());
         assert!(!voice.arm_gestures());
         assert_eq!(
             voice.apply_mute_state(0, true),
             MuteStateApplication::Applied
         );
-        assert!(voice.request_gesture_send());
-        assert!(!voice.request_gesture_send());
-        assert_eq!(voice.terminal_intent, VoiceTerminalIntent::SendAfterFinal);
+        assert!(voice.can_request_segment_commit());
+        voice.note_segment_commit_requested();
+        assert!(!voice.can_request_segment_commit());
+        assert!(voice.awaits_segment_final(0));
+        voice.begin_next_segment(String::new(), 0);
+        assert_eq!(voice.segment_id, 1);
+        assert!(voice.can_request_segment_commit());
+        assert!(voice.gesture_armed);
+        assert!(voice.muted);
     }
 
     #[test]
@@ -1586,11 +1721,10 @@ mod tests {
         voice.stopping = true;
 
         assert!(!voice.arm_gestures());
-        assert!(!voice.request_gesture_send());
+        assert!(!voice.can_request_segment_commit());
         assert!(!voice.can_request_mute(true));
         assert!(voice.disarm_gestures());
         assert!(!voice.gesture_armed);
-        assert_eq!(voice.terminal_intent, VoiceTerminalIntent::KeepDraft);
     }
 
     #[test]
@@ -1708,7 +1842,7 @@ mod tests {
     }
 
     #[gpui::test]
-    fn failed_gesture_stop_keeps_the_real_voice_error(cx: &mut TestAppContext) {
+    fn failed_segment_commit_keeps_the_real_voice_error(cx: &mut TestAppContext) {
         cx.update(|cx| {
             gpui_component::init(cx);
             bind_keys(cx);
@@ -1734,6 +1868,9 @@ mod tests {
             .expect("the GPUI surface should open")
         });
 
+        cx.run_until_parked();
+        cx.simulate_input(window.into(), "draft partial");
+        cx.run_until_parked();
         let app = app.borrow().clone().expect("app entity should be retained");
         let window_handle: gpui::AnyWindowHandle = window.into();
         window_handle
@@ -1741,9 +1878,18 @@ mod tests {
                 app.update(cx, |app, cx| {
                     app.voice_commands =
                         crate::transcription::VoiceCommandSender::closed_for_test();
-                    let mut voice =
-                        VoiceDraft::new(40, String::new(), String::new(), String::new());
+                    let mut voice = VoiceDraft::new(
+                        40,
+                        String::new(),
+                        String::new(),
+                        "draft partial".to_string(),
+                    );
+                    voice.listening = true;
                     assert!(voice.arm_gestures());
+                    assert_eq!(
+                        voice.apply_mute_state(0, false),
+                        MuteStateApplication::Applied
+                    );
                     app.voice_draft = Some(voice);
                     assert!(!app.gesture_send_dictation_now(cx));
                     assert!(app.voice_draft.is_none());
@@ -1888,6 +2034,11 @@ mod tests {
                         app.voice_notice.as_deref(),
                         Some("LISTENING · MUTING MICROPHONE")
                     );
+                    let muted_context_revision = app
+                        .vision_context
+                        .as_ref()
+                        .expect("test context")
+                        .revision_for_test();
 
                     app.handle_voice_event(
                         VoiceEvent::MuteState {
@@ -1904,8 +2055,23 @@ mod tests {
                         app.voice_notice.as_deref(),
                         Some("LISTENING · MICROPHONE MUTED · GESTURES ARMED")
                     );
+                    assert!(
+                        app.vision_context
+                            .as_ref()
+                            .expect("test context")
+                            .revision_for_test()
+                            > muted_context_revision
+                    );
 
-                    assert!(app.gesture_set_dictation_muted(false, cx));
+                    app.handle_vision_event(
+                        crate::vision_debug::VisionEvent::Intent {
+                            sequence: 1,
+                            received_at: Instant::now(),
+                            voice_request_id: 60,
+                            intent: gsv_vision_control::GestureIntent::Unmute,
+                        },
+                        cx,
+                    );
                     assert_eq!(
                         command_rx.try_recv(),
                         Ok(VoiceCommand::SetMuted {
@@ -1976,9 +2142,7 @@ mod tests {
     }
 
     #[gpui::test]
-    fn matching_final_with_send_intent_uses_the_conversation_submission_owner(
-        cx: &mut TestAppContext,
-    ) {
+    fn matching_segment_final_submits_and_keeps_the_voice_lease(cx: &mut TestAppContext) {
         cx.update(|cx| {
             gpui_component::init(cx);
             bind_keys(cx);
@@ -2009,9 +2173,15 @@ mod tests {
         cx.run_until_parked();
         let app = app.borrow().clone().expect("app entity should be retained");
         let window_handle: gpui::AnyWindowHandle = window.into();
+        let (voice_commands, voice_command_rx) =
+            crate::transcription::VoiceCommandSender::channel_for_test();
         window_handle
-            .update(cx, |_, window, cx| {
+            .update(cx, |_, _window, cx| {
                 app.update(cx, |app, cx| {
+                    app.voice_commands = voice_commands;
+                    app.vision_context = Some(crate::vision_debug::VisionContextSender::for_test());
+                    app.vision_lifecycle = Some(gsv_vision_control::LifecycleState::Ready);
+                    app.vision_voice_request_id = Some(41);
                     let mut voice = VoiceDraft::new(
                         41,
                         String::new(),
@@ -2019,17 +2189,114 @@ mod tests {
                         "draft partial".to_string(),
                     );
                     voice.revision = 1;
+                    voice.listening = true;
                     assert!(voice.arm_gestures());
-                    assert!(voice.request_gesture_send());
-                    voice.stopping = true;
+                    assert_eq!(
+                        voice.apply_mute_state(0, false),
+                        MuteStateApplication::Applied
+                    );
                     app.voice_draft = Some(voice);
+                    app.sync_vision_context();
+                    let context_revision = app
+                        .vision_context
+                        .as_ref()
+                        .expect("test context")
+                        .revision_for_test();
+                    app.handle_vision_event(
+                        crate::vision_debug::VisionEvent::Intent {
+                            sequence: 1,
+                            received_at: Instant::now(),
+                            voice_request_id: 41,
+                            intent: gsv_vision_control::GestureIntent::Send,
+                        },
+                        cx,
+                    );
+                    assert!(app.dictation_segment_commit_is_pending());
+                    assert!(!app.voice_request_accepts_gestures(41));
+                    assert_eq!(
+                        app.vision_context
+                            .as_ref()
+                            .expect("test context")
+                            .revision_for_test(),
+                        context_revision,
+                        "Send waits for SegmentFinal before acknowledging vision authority"
+                    );
+                    app.handle_vision_event(
+                        crate::vision_debug::VisionEvent::Intent {
+                            sequence: 2,
+                            received_at: Instant::now(),
+                            voice_request_id: 41,
+                            intent: gsv_vision_control::GestureIntent::Send,
+                        },
+                        cx,
+                    );
+                    assert!(app.dictation_segment_commit_is_pending());
+                });
+            })
+            .expect("window remains open");
+
+        assert_eq!(
+            voice_command_rx.try_recv(),
+            Ok(VoiceCommand::CommitSegment {
+                request_id: 41,
+                segment_id: 0,
+            })
+        );
+        assert!(voice_command_rx.try_recv().is_err());
+
+        window_handle
+            .update(cx, |_, window, cx| {
+                app.update(cx, |app, cx| {
+                    let context_revision = app
+                        .vision_context
+                        .as_ref()
+                        .expect("test context")
+                        .revision_for_test();
                     app.handle_voice_event(
-                        VoiceEvent::Final {
+                        VoiceEvent::Partial {
                             request_id: 41,
+                            segment_id: 1,
+                            revision: 99,
+                            committed: "future segment".to_string(),
+                            tentative: String::new(),
+                        },
+                        window,
+                        cx,
+                    );
+                    app.handle_voice_event(
+                        VoiceEvent::SegmentFinal {
+                            request_id: 41,
+                            segment_id: 1,
+                            text: "wrong segment".to_string(),
+                        },
+                        window,
+                        cx,
+                    );
+                    assert!(app.dictation_segment_commit_is_pending());
+                    assert_eq!(app.input.read(cx).value().as_ref(), "draft partial");
+                    assert_eq!(
+                        app.vision_context
+                            .as_ref()
+                            .expect("test context")
+                            .revision_for_test(),
+                        context_revision
+                    );
+                    app.handle_voice_event(
+                        VoiceEvent::SegmentFinal {
+                            request_id: 41,
+                            segment_id: 0,
                             text: "authoritative final".to_string(),
                         },
                         window,
                         cx,
+                    );
+                    assert!(
+                        app.vision_context
+                            .as_ref()
+                            .expect("test context")
+                            .revision_for_test()
+                            > context_revision,
+                        "matching SegmentFinal force-acknowledges unchanged vision state"
                     );
                 });
             })
@@ -2042,9 +2309,48 @@ mod tests {
         assert!(command_rx.try_recv().is_err());
         cx.update(|cx| {
             let app = app.read(cx);
-            assert!(app.voice_draft.is_none());
+            let voice = app
+                .voice_draft
+                .as_ref()
+                .expect("voice lease remains active");
+            assert_eq!(voice.request_id, 41);
+            assert_eq!(voice.segment_id, 1);
+            assert_eq!(voice.pending_segment_commit, None);
+            assert_eq!(voice.revision, -1);
+            assert!(voice.listening);
+            assert!(voice.gesture_armed);
+            assert!(!voice.muted);
+            assert!(!voice.stopping);
             assert!(app.interaction.is_submitting());
             assert!(app.input.read(cx).value().is_empty());
+        });
+
+        window_handle
+            .update(cx, |_, window, cx| {
+                app.update(cx, |app, cx| {
+                    app.handle_voice_event(
+                        VoiceEvent::Partial {
+                            request_id: 41,
+                            segment_id: 1,
+                            revision: 1,
+                            committed: "next thought".to_string(),
+                            tentative: String::new(),
+                        },
+                        window,
+                        cx,
+                    );
+                });
+            })
+            .expect("window remains open");
+        cx.update(|cx| {
+            let app = app.read(cx);
+            assert_eq!(app.input.read(cx).value().as_ref(), "next thought");
+            assert_eq!(
+                app.voice_draft
+                    .as_ref()
+                    .map(|voice| voice.rendered.as_str()),
+                Some("next thought")
+            );
         });
     }
 
@@ -2090,7 +2396,6 @@ mod tests {
                         "draft stays here".to_string(),
                     );
                     voice.revision = 1;
-                    voice.terminal_intent = VoiceTerminalIntent::SendAfterFinal;
                     voice.stopping = true;
                     app.voice_draft = Some(voice);
                     app.handle_voice_event(
@@ -2122,7 +2427,6 @@ mod tests {
                         "draft stays here".to_string(),
                     );
                     voice.revision = 2;
-                    voice.terminal_intent = VoiceTerminalIntent::SendAfterFinal;
                     voice.stopping = true;
                     app.voice_draft = Some(voice);
                     app.conversation.mode = SurfaceMode::Terminal;
@@ -2147,7 +2451,120 @@ mod tests {
     }
 
     #[gpui::test]
-    fn failed_gesture_submission_restores_the_authoritative_final(cx: &mut TestAppContext) {
+    fn asynchronous_segment_failure_restores_text_and_fences_continuing_voice(
+        cx: &mut TestAppContext,
+    ) {
+        cx.update(|cx| {
+            gpui_component::init(cx);
+            bind_keys(cx);
+            crate::register_fonts(cx);
+            crate::configure_theme(cx);
+        });
+
+        let (command_tx, mut command_rx) = tokio::sync::mpsc::unbounded_channel();
+        let (_event_tx, event_rx) = tokio::sync::mpsc::unbounded_channel();
+        let client = crate::client::ClientHandle {
+            commands: command_tx,
+            events: event_rx,
+            login: None,
+        };
+        let app = Rc::new(RefCell::new(None));
+        let app_for_window = app.clone();
+        let window = cx.update(|cx| {
+            cx.open_window(WindowOptions::default(), move |window, cx| {
+                let view = cx.new(|cx| GsvApp::new(window, cx, client, true, false, true));
+                *app_for_window.borrow_mut() = Some(view.clone());
+                cx.new(|cx| Root::new(view, window, cx))
+            })
+            .expect("the GPUI surface should open")
+        });
+
+        cx.run_until_parked();
+        cx.simulate_input(window.into(), "draft partial");
+        cx.run_until_parked();
+        let app = app.borrow().clone().expect("app entity should be retained");
+        let window_handle: gpui::AnyWindowHandle = window.into();
+        let (voice_commands, voice_command_rx) =
+            crate::transcription::VoiceCommandSender::channel_for_test();
+        window_handle
+            .update(cx, |_, window, cx| {
+                app.update(cx, |app, cx| {
+                    app.voice_commands = voice_commands;
+                    let mut voice = VoiceDraft::new(
+                        45,
+                        String::new(),
+                        String::new(),
+                        "draft partial".to_string(),
+                    );
+                    voice.revision = 1;
+                    voice.listening = true;
+                    assert!(voice.arm_gestures());
+                    assert_eq!(
+                        voice.apply_mute_state(0, false),
+                        MuteStateApplication::Applied
+                    );
+                    voice.note_segment_commit_requested();
+                    app.voice_draft = Some(voice);
+                    app.handle_voice_event(
+                        VoiceEvent::SegmentFinal {
+                            request_id: 45,
+                            segment_id: 0,
+                            text: "authoritative final".to_string(),
+                        },
+                        window,
+                        cx,
+                    );
+                });
+            })
+            .expect("window remains open");
+
+        let submission_id = 1;
+        assert!(matches!(
+            command_rx.try_recv(),
+            Ok(ClientCommand::Send {
+                submission_id: 1,
+                ..
+            })
+        ));
+        cx.update(|cx| {
+            let app = app.read(cx);
+            assert!(app.voice_draft.is_some());
+            assert!(app.interaction.is_submitting());
+            assert!(app.input.read(cx).value().is_empty());
+        });
+
+        window_handle
+            .update(cx, |_, window, cx| {
+                app.update(cx, |app, cx| {
+                    app.handle_submission_failure(
+                        submission_id,
+                        "delivery failed".to_string(),
+                        window,
+                        cx,
+                    );
+                });
+            })
+            .expect("window remains open");
+
+        cx.update(|cx| {
+            let app = app.read(cx);
+            assert_eq!(app.input.read(cx).value().as_ref(), "authoritative final");
+            assert!(app.voice_draft.is_none());
+            assert_eq!(
+                app.voice_notice.as_deref(),
+                Some("VOICE INPUT STOPPED · KEEP TYPING")
+            );
+        });
+        assert_eq!(
+            voice_command_rx.try_recv(),
+            Ok(VoiceCommand::Cancel { request_id: 45 })
+        );
+    }
+
+    #[gpui::test]
+    fn failed_segment_submission_restores_text_and_fences_continuing_voice(
+        cx: &mut TestAppContext,
+    ) {
         cx.update(|cx| {
             gpui_component::init(cx);
             bind_keys(cx);
@@ -2179,9 +2596,12 @@ mod tests {
         cx.run_until_parked();
         let app = app.borrow().clone().expect("app entity should be retained");
         let window_handle: gpui::AnyWindowHandle = window.into();
+        let (voice_commands, voice_command_rx) =
+            crate::transcription::VoiceCommandSender::channel_for_test();
         window_handle
             .update(cx, |_, window, cx| {
                 app.update(cx, |app, cx| {
+                    app.voice_commands = voice_commands;
                     let mut voice = VoiceDraft::new(
                         44,
                         String::new(),
@@ -2189,12 +2609,18 @@ mod tests {
                         "draft partial".to_string(),
                     );
                     voice.revision = 1;
-                    voice.terminal_intent = VoiceTerminalIntent::SendAfterFinal;
-                    voice.stopping = true;
+                    voice.listening = true;
+                    assert!(voice.arm_gestures());
+                    assert_eq!(
+                        voice.apply_mute_state(0, false),
+                        MuteStateApplication::Applied
+                    );
+                    voice.note_segment_commit_requested();
                     app.voice_draft = Some(voice);
                     app.handle_voice_event(
-                        VoiceEvent::Final {
+                        VoiceEvent::SegmentFinal {
                             request_id: 44,
+                            segment_id: 0,
                             text: "authoritative final".to_string(),
                         },
                         window,
@@ -2209,7 +2635,12 @@ mod tests {
             assert_eq!(app.input.read(cx).value().as_ref(), "authoritative final");
             assert_eq!(app.interaction.visible_draft(), Some("authoritative final"));
             assert!(!app.interaction.is_submitting());
+            assert!(app.voice_draft.is_none());
         });
+        assert_eq!(
+            voice_command_rx.try_recv(),
+            Ok(VoiceCommand::Cancel { request_id: 44 })
+        );
     }
 
     #[gpui::test]

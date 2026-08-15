@@ -91,10 +91,13 @@ Python nor Bazel is a runtime dependency. The running proof consists of the
 Rust `gsv-vision` helper, the compiled native library, and the verified local
 model. During active dictation, two open palms explicitly arm the persistent
 gesture mode. Open palm + victory explicitly disarms it; open palm + thumbs-up
-finalizes and sends the already captured draft, including while the microphone
-is muted; open palm + thumbs-down requests mute; and open palm + pointing-up
-requests unmute. A closed fist and all other pairs are reserved and have no
-action. Applied mute state changes only after the transcription helper
+commits and sends the current utterance, including while the microphone is
+muted, then keeps the same microphone session listening for the next utterance;
+open palm + thumbs-down requests mute; and open palm + pointing-up requests
+unmute. A closed fist and all other pairs are reserved and have no action.
+Arming and applied mute state survive an utterance send. The dictation shortcut
+still explicitly finishes the overall voice session. Applied mute state changes
+only after the transcription helper
 acknowledges that its input gate is applied or reopened. The device and stream
 stay open; while muted, new samples are discarded before queueing or inference.
 Desktop and the diagnostic overlay show whether controls are starting,

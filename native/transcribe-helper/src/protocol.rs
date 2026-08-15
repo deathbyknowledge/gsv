@@ -2,12 +2,12 @@ use std::io::{self, BufRead, Write};
 
 use serde::{Deserialize, Serialize};
 
-use crate::audio::{CaptureControl, InputDeviceInfo, MuteRequest};
+use crate::audio::{CaptureControl, InputDeviceInfo, MuteRequest, SegmentBoundaryRequest};
 
 pub const VOICE_PROTOCOL_VERSION: u16 = 2;
 /// Exact private helper/Desktop contract. Rotate this when an incompatible
 /// unshipped command or event shape changes so a stale sibling fails closed.
-pub const VOICE_PROTOCOL_CONTRACT: &str = "gsv-voice-v2-streaming-mute";
+pub const VOICE_PROTOCOL_CONTRACT: &str = "gsv-voice-v2-continuous-segments";
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
 #[serde(tag = "type", rename_all = "snake_case")]
@@ -25,6 +25,10 @@ pub enum Command {
     },
     Stop {
         request_id: u64,
+    },
+    CommitSegment {
+        request_id: u64,
+        segment_id: u64,
     },
     Cancel {
         request_id: u64,
@@ -79,6 +83,7 @@ pub enum Event<'a> {
     },
     Partial {
         request_id: u64,
+        segment_id: u64,
         revision: i32,
         committed: &'a str,
         tentative: &'a str,
@@ -90,6 +95,11 @@ pub enum Event<'a> {
     },
     Final {
         request_id: u64,
+        text: &'a str,
+    },
+    SegmentFinal {
+        request_id: u64,
+        segment_id: u64,
         text: &'a str,
     },
     Cancelled {
@@ -112,6 +122,7 @@ fn default_locale() -> String {
 pub struct ReceivedCommand {
     pub command: Command,
     pub mute_request: Option<MuteRequest>,
+    pub segment_boundary: Option<SegmentBoundaryRequest>,
     pub completion: CommandCompletion,
 }
 
@@ -164,11 +175,23 @@ fn read_command_lines(
             Command::SetMuted { request_id, muted } => control.request_mute(*request_id, *muted),
             _ => None,
         };
-        // Serialize SetMuted ingress with its applied acknowledgement. The
-        // privacy gate above closes immediately for mute, while waiting here
-        // prevents a later SetMuted from changing the generation before the
-        // active loop has acknowledged this command's effective state.
-        let (completion, applied) = if matches!(command, Command::SetMuted { .. }) {
+        let segment_boundary = match &command {
+            Command::CommitSegment { request_id, .. } => {
+                control.request_segment_boundary(*request_id)
+            }
+            _ => None,
+        };
+        // Serialize state-changing capture ingress until the active loop owns
+        // its boundary. Mute closes immediately for privacy. CommitSegment
+        // temporarily closes on a fresh generation so next-segment samples
+        // cannot race into the old model stream. Its completion is released as
+        // soon as the active loop restores the prior mute state, before model
+        // finalization, so a following mute can still close promptly.
+        let serialized = matches!(
+            command,
+            Command::SetMuted { .. } | Command::CommitSegment { .. }
+        );
+        let (completion, applied) = if serialized {
             let (completion, applied) = crossbeam_channel::bounded(1);
             (CommandCompletion::new(completion), Some(applied))
         } else {
@@ -179,6 +202,7 @@ fn read_command_lines(
             .send(ReceivedCommand {
                 command,
                 mute_request,
+                segment_boundary,
                 completion,
             })
             .is_ok();
@@ -203,6 +227,9 @@ pub fn emit(event: &Event<'_>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Arc;
+
+    use crate::audio::CaptureGate;
 
     #[test]
     fn startup_handshake_has_the_exact_v2_contract() {
@@ -330,6 +357,90 @@ mod tests {
         assert_eq!(event.as_object().map(|value| value.len()), Some(4));
         assert!(event.get("audio").is_none());
         assert!(event.get("diagnostics").is_none());
+    }
+
+    #[test]
+    fn segment_commands_and_finals_are_request_scoped_and_bounded() {
+        let command: Command =
+            serde_json::from_str(r#"{"type":"commit_segment","request_id":9,"segment_id":3}"#)
+                .expect("valid command");
+        assert_eq!(
+            command,
+            Command::CommitSegment {
+                request_id: 9,
+                segment_id: 3,
+            }
+        );
+
+        let event = serde_json::to_value(Event::SegmentFinal {
+            request_id: 9,
+            segment_id: 3,
+            text: "bounded transcript",
+        })
+        .expect("serializable event");
+        assert_eq!(event["type"], "segment_final");
+        assert_eq!(event["request_id"], 9);
+        assert_eq!(event["segment_id"], 3);
+        assert_eq!(event["text"], "bounded transcript");
+        assert_eq!(event.as_object().map(|value| value.len()), Some(4));
+        assert!(event.get("audio").is_none());
+        assert!(event.get("diagnostics").is_none());
+    }
+
+    #[test]
+    fn segment_boundary_completion_serializes_following_capture_control() {
+        let input = std::io::Cursor::new(
+            concat!(
+                "{\"type\":\"commit_segment\",\"request_id\":9,\"segment_id\":0}\n",
+                "{\"type\":\"set_muted\",\"request_id\":9,\"muted\":true}\n",
+                "{\"type\":\"shutdown\"}\n",
+            )
+            .as_bytes(),
+        );
+        let control = CaptureControl::default();
+        let _registration = control.activate(9, Arc::new(CaptureGate::new()));
+        let (sender, commands) = crossbeam_channel::bounded(4);
+        let worker_control = control.clone();
+        let worker =
+            std::thread::spawn(move || read_command_lines(input, &sender, &worker_control));
+
+        let segment = commands
+            .recv_timeout(std::time::Duration::from_secs(1))
+            .expect("segment command");
+        assert!(matches!(
+            segment.command,
+            Command::CommitSegment {
+                request_id: 9,
+                segment_id: 0,
+            }
+        ));
+        assert!(segment.segment_boundary.is_some());
+        assert!(matches!(
+            commands.try_recv(),
+            Err(crossbeam_channel::TryRecvError::Empty)
+        ));
+
+        drop(segment);
+        assert!(matches!(
+            commands
+                .recv_timeout(std::time::Duration::from_secs(1))
+                .expect("reader released for mute")
+                .command,
+            Command::SetMuted {
+                request_id: 9,
+                muted: true,
+            }
+        ));
+        assert!(matches!(
+            commands
+                .recv_timeout(std::time::Duration::from_secs(1))
+                .expect("subsequent shutdown"),
+            ReceivedCommand {
+                command: Command::Shutdown,
+                ..
+            }
+        ));
+        worker.join().expect("reader worker");
     }
 
     #[test]

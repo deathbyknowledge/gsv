@@ -1654,6 +1654,7 @@ impl GsvApp {
                 self.conversation.fail_user(&moment_id);
             }
         }
+        self.reconcile_dictation_after_submission_failure(cx);
         self.conversation.show_error(message);
     }
 

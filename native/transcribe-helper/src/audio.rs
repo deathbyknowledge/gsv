@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 use std::str::FromStr as _;
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use cpal::traits::{DeviceTrait as _, HostTrait as _, StreamTrait as _};
 #[cfg(any(target_os = "linux", test))]
@@ -21,6 +21,7 @@ const MAX_INPUT_DEVICES: usize = 32;
 const MAX_DEVICE_NAME_BYTES: usize = 256;
 const MAX_DEVICE_ID_BYTES: usize = 512;
 const MUTED_STATE_BIT: u64 = 1;
+const CALLBACK_QUIESCE_TIMEOUT: Duration = Duration::from_secs(1);
 
 const _: () = {
     assert!(MAX_INPUT_DEVICES <= 32);
@@ -74,12 +75,47 @@ impl BufferedSamples {
 /// their callback so work that raced with mute can be rejected downstream.
 pub struct CaptureGate {
     state: AtomicU64,
+    in_flight_callbacks: AtomicUsize,
 }
 
 impl CaptureGate {
     pub fn new() -> Self {
         Self {
             state: AtomicU64::new(0),
+            in_flight_callbacks: AtomicUsize::new(0),
+        }
+    }
+
+    fn admit_callback(&self, capture_state: u64) -> Option<CallbackLease<'_>> {
+        if capture_state & MUTED_STATE_BIT != 0 {
+            return None;
+        }
+        // Admission and capture closure form a two-atomic handshake. SeqCst is
+        // intentional: either this state recheck observes the closed
+        // generation, or the closer's callback-count check observes this
+        // lease. AcqRel on independent atomics permits both sides to miss on
+        // weakly ordered hosts.
+        self.in_flight_callbacks.fetch_add(1, Ordering::SeqCst);
+        if self.state.load(Ordering::SeqCst) == capture_state {
+            Some(CallbackLease {
+                in_flight_callbacks: &self.in_flight_callbacks,
+            })
+        } else {
+            self.in_flight_callbacks.fetch_sub(1, Ordering::SeqCst);
+            None
+        }
+    }
+
+    fn wait_for_callback_quiescence(&self, timeout: Duration) -> bool {
+        let deadline = Instant::now() + timeout;
+        loop {
+            if self.in_flight_callbacks.load(Ordering::SeqCst) == 0 {
+                return true;
+            }
+            if Instant::now() >= deadline {
+                return false;
+            }
+            std::thread::yield_now();
         }
     }
 
@@ -105,8 +141,8 @@ impl CaptureGate {
             match self.state.compare_exchange_weak(
                 current,
                 next,
-                Ordering::AcqRel,
-                Ordering::Acquire,
+                Ordering::SeqCst,
+                Ordering::SeqCst,
             ) {
                 Ok(_) => {
                     return MuteTransition {
@@ -133,6 +169,45 @@ impl CaptureGate {
                 Err(actual) => current = actual,
             }
         }
+    }
+
+    fn close_for_segment_boundary(&self) -> SegmentBoundaryRequest {
+        let mut current = self.state.load(Ordering::Acquire);
+        loop {
+            let next = next_capture_state(current, true);
+            match self.state.compare_exchange_weak(
+                current,
+                next,
+                Ordering::SeqCst,
+                Ordering::SeqCst,
+            ) {
+                Ok(_) => {
+                    return SegmentBoundaryRequest {
+                        previous_state: current,
+                        expected_state: next,
+                        muted: current & MUTED_STATE_BIT != 0,
+                    };
+                }
+                Err(actual) => current = actual,
+            }
+        }
+    }
+
+    fn apply_segment_boundary(&self, request: SegmentBoundaryRequest) -> Option<bool> {
+        if request.muted {
+            return (self.state.load(Ordering::Acquire) == request.expected_state).then_some(true);
+        }
+
+        let next = next_capture_state(request.expected_state, false);
+        self.state
+            .compare_exchange(
+                request.expected_state,
+                next,
+                Ordering::AcqRel,
+                Ordering::Acquire,
+            )
+            .ok()
+            .map(|_| false)
     }
 
     fn apply(&self, request: MuteRequest, muted: bool) -> MuteOutcome {
@@ -175,6 +250,16 @@ impl CaptureGate {
     }
 }
 
+struct CallbackLease<'a> {
+    in_flight_callbacks: &'a AtomicUsize,
+}
+
+impl Drop for CallbackLease<'_> {
+    fn drop(&mut self) {
+        self.in_flight_callbacks.fetch_sub(1, Ordering::SeqCst);
+    }
+}
+
 struct MuteTransition {
     state: u64,
     changed: bool,
@@ -189,6 +274,23 @@ fn next_capture_state(current: u64, muted: bool) -> u64 {
 pub struct MuteRequest {
     expected_state: u64,
     changed: bool,
+}
+
+/// A request-scoped cut between two model streams. Command ingress closes the
+/// callback gate on a fresh generation so samples from the next segment cannot
+/// race into the old model stream. The active loop restores the previously
+/// acknowledged mute state when it owns the boundary.
+#[derive(Clone, Copy, Debug)]
+pub struct SegmentBoundaryRequest {
+    previous_state: u64,
+    expected_state: u64,
+    muted: bool,
+}
+
+impl SegmentBoundaryRequest {
+    pub fn accepts_previous(self, capture_state: u64) -> bool {
+        self.previous_state & MUTED_STATE_BIT == 0 && self.previous_state == capture_state
+    }
 }
 
 impl MuteRequest {
@@ -250,6 +352,17 @@ impl CaptureControl {
             changed,
         })
     }
+
+    pub fn request_segment_boundary(&self, request_id: u64) -> Option<SegmentBoundaryRequest> {
+        let active = self
+            .active
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        let active = active
+            .as_ref()
+            .filter(|active| active.request_id == request_id)?;
+        Some(active.gate.close_for_segment_boundary())
+    }
 }
 
 pub struct CaptureRegistration {
@@ -306,9 +419,9 @@ impl CaptureWriter {
         if samples.is_empty() || self.terminal.load(Ordering::Acquire) {
             return;
         }
-        if !self.gate.accepts(capture_state) {
+        let Some(_callback_lease) = self.gate.admit_callback(capture_state) else {
             return;
-        }
+        };
         let silent = self.silence.observe(capture_state, &samples);
         if !self.gate.accepts(capture_state) {
             return;
@@ -593,6 +706,15 @@ impl AudioCapture {
             }
         }
         Err(last_error.unwrap_or_else(|| "configured microphone is unavailable".to_string()))
+    }
+
+    pub fn apply_segment_boundary(&self, request: SegmentBoundaryRequest) -> Option<bool> {
+        self.gate.apply_segment_boundary(request)
+    }
+
+    pub fn wait_for_callback_quiescence(&self) -> bool {
+        self.gate
+            .wait_for_callback_quiescence(CALLBACK_QUIESCE_TIMEOUT)
     }
 
     fn open_device(device: cpal::Device, gate: Arc<CaptureGate>) -> Result<Self, String> {
@@ -1091,6 +1213,115 @@ mod tests {
 
         assert_eq!(receive_samples(&receiver), vec![1.0, 2.0]);
         assert!(receiver.try_recv().is_err());
+    }
+
+    #[test]
+    fn segment_boundary_identifies_the_queued_tail_and_reopens_fresh() {
+        let (mut writer, receiver, gate) = test_writer(8, usize::MAX);
+        let control = CaptureControl::default();
+        let _registration = control.activate(7, Arc::clone(&gate));
+        let old_state = writer.accepting_state().expect("capture starts open");
+        writer.push(old_state, vec![1.0, 2.0]);
+
+        let boundary = control
+            .request_segment_boundary(7)
+            .expect("active request boundary");
+        assert!(writer.accepting_state().is_none());
+        let old_packet = receiver.recv().expect("queued old-generation tail");
+        assert!(matches!(&old_packet, AudioPacket::Samples(_)));
+        let AudioPacket::Samples(old_samples) = old_packet else {
+            return;
+        };
+        assert!(boundary.accepts_previous(old_samples.capture_state()));
+
+        assert_eq!(gate.apply_segment_boundary(boundary), Some(false));
+        let fresh_state = writer.accepting_state().expect("boundary reopens capture");
+        assert_ne!(fresh_state, old_state);
+        assert!(!boundary.accepts_previous(fresh_state));
+        writer.push(fresh_state, vec![3.0, 4.0]);
+        assert_eq!(receive_samples(&receiver), vec![3.0, 4.0]);
+    }
+
+    #[test]
+    fn segment_boundary_preserves_an_existing_mute() {
+        let gate = Arc::new(CaptureGate::new());
+        let control = CaptureControl::default();
+        let _registration = control.activate(11, Arc::clone(&gate));
+        let mute = control.request_mute(11, true).expect("mute request");
+        assert!(gate.apply(mute, true).muted);
+
+        let boundary = control
+            .request_segment_boundary(11)
+            .expect("muted request boundary");
+        assert_eq!(gate.apply_segment_boundary(boundary), Some(true));
+        assert!(gate.accepting_state().is_none());
+    }
+
+    #[test]
+    fn callback_lease_quiesces_a_closed_capture_boundary() {
+        let gate = Arc::new(CaptureGate::new());
+        let old_state = gate.accepting_state().expect("capture starts open");
+        let worker_gate = Arc::clone(&gate);
+        let (acquired, acquired_rx) = crossbeam_channel::bounded(1);
+        let (release, release_rx) = crossbeam_channel::bounded(1);
+        let worker = std::thread::spawn(move || {
+            let lease = worker_gate
+                .admit_callback(old_state)
+                .expect("old callback admitted");
+            acquired.send(()).expect("test owns acquisition receiver");
+            release_rx.recv().expect("test releases callback");
+            drop(lease);
+        });
+        acquired_rx.recv().expect("callback lease acquired");
+
+        let boundary = gate.close_for_segment_boundary();
+        assert!(!gate.wait_for_callback_quiescence(Duration::ZERO));
+        release.send(()).expect("release callback lease");
+        assert!(gate.wait_for_callback_quiescence(Duration::from_secs(1)));
+        assert_eq!(gate.apply_segment_boundary(boundary), Some(false));
+        worker.join().expect("callback worker");
+    }
+
+    #[test]
+    fn boundary_quiescence_observes_a_late_admitted_enqueue_before_drain() {
+        let (writer, receiver, gate) = test_writer(8, usize::MAX);
+        let old_state = gate.accepting_state().expect("capture starts open");
+        let lease = gate
+            .admit_callback(old_state)
+            .expect("callback admitted before boundary");
+        let boundary = gate.close_for_segment_boundary();
+        assert!(receiver.try_recv().is_err());
+
+        let reservation = writer.reserve(2).expect("bounded packet reservation");
+        writer
+            .packets
+            .send(AudioPacket::Samples(BufferedSamples {
+                samples: vec![1.0, 2.0],
+                capture_state: old_state,
+                _reservation: reservation,
+            }))
+            .expect("admitted callback enqueues its packet");
+        drop(lease);
+
+        assert!(gate.wait_for_callback_quiescence(Duration::from_secs(1)));
+        let packet = receiver.recv().expect("late old-generation packet");
+        let AudioPacket::Samples(samples) = packet else {
+            return;
+        };
+        assert!(boundary.accepts_previous(samples.capture_state()));
+        assert_eq!(samples.as_slice(), &[1.0, 2.0]);
+        assert_eq!(gate.apply_segment_boundary(boundary), Some(false));
+    }
+
+    #[test]
+    fn stale_segment_boundary_never_changes_the_active_capture() {
+        let gate = Arc::new(CaptureGate::new());
+        let control = CaptureControl::default();
+        let _registration = control.activate(3, Arc::clone(&gate));
+        let state = gate.accepting_state();
+
+        assert!(control.request_segment_boundary(4).is_none());
+        assert_eq!(gate.accepting_state(), state);
     }
 
     #[test]

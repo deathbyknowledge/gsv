@@ -14,10 +14,12 @@ pub const MAX_DEVICE_COUNT: usize = 32;
 pub const MAX_DEVICE_NAME_BYTES: usize = 256;
 pub const MAX_DEVICE_ID_BYTES: usize = 512;
 const VOICE_PROTOCOL_VERSION: u64 = 2;
-const VOICE_PROTOCOL_CONTRACT: &str = "gsv-voice-v2-streaming-mute";
+const VOICE_PROTOCOL_CONTRACT: &str = "gsv-voice-v2-continuous-segments";
 const HELPER_HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(2);
 const DEVICE_LIST_TIMEOUT: Duration = Duration::from_secs(5);
 const STOP_TIMEOUT: Duration = Duration::from_secs(30);
+const SEGMENT_COMMIT_TIMEOUT: Duration = Duration::from_secs(30);
+const MUTE_ACK_TIMEOUT: Duration = Duration::from_secs(5);
 const SHUTDOWN_GRACE: Duration = Duration::from_secs(1);
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -31,6 +33,10 @@ pub enum VoiceCommand {
     },
     Stop {
         request_id: u64,
+    },
+    CommitSegment {
+        request_id: u64,
+        segment_id: u64,
     },
     Cancel {
         request_id: u64,
@@ -86,6 +92,7 @@ pub enum VoiceEvent {
     },
     Partial {
         request_id: u64,
+        segment_id: u64,
         revision: i32,
         committed: String,
         tentative: String,
@@ -97,6 +104,11 @@ pub enum VoiceEvent {
     },
     Final {
         request_id: u64,
+        text: String,
+    },
+    SegmentFinal {
+        request_id: u64,
+        segment_id: u64,
         text: String,
     },
     Cancelled {
@@ -145,7 +157,7 @@ pub(crate) fn coalesce_for_ui(events: impl IntoIterator<Item = VoiceEvent>) -> V
         let replace_last = matches!(event, VoiceEvent::Partial { .. })
             && coalesced.last().is_some_and(|previous| {
                 matches!(previous, VoiceEvent::Partial { .. })
-                    && event_request_id(previous) == event_request_id(&event)
+                    && partial_scope(previous) == partial_scope(&event)
             });
         if replace_last {
             if let Some(previous) = coalesced.last_mut() {
@@ -158,12 +170,41 @@ pub(crate) fn coalesce_for_ui(events: impl IntoIterator<Item = VoiceEvent>) -> V
     coalesced
 }
 
+fn partial_scope(event: &VoiceEvent) -> Option<(u64, u64)> {
+    match event {
+        VoiceEvent::Partial {
+            request_id,
+            segment_id,
+            ..
+        } => Some((*request_id, *segment_id)),
+        _ => None,
+    }
+}
+
 #[derive(Default)]
 struct VoiceSupervisorState {
     active_request: Option<u64>,
     device_request: Option<u64>,
     device_deadline: Option<(u64, Instant)>,
     terminal_deadline: Option<(u64, Instant)>,
+    segment_commit: Option<PendingSegmentCommit>,
+    mute_ack: Option<PendingMuteAck>,
+    mute_revision: Option<(u64, u64)>,
+}
+
+#[derive(Clone, Copy)]
+struct PendingSegmentCommit {
+    request_id: u64,
+    segment_id: u64,
+    deadline: Instant,
+}
+
+#[derive(Clone, Copy)]
+struct PendingMuteAck {
+    request_id: u64,
+    muted: bool,
+    after_revision: u64,
+    deadline: Instant,
 }
 
 impl VoiceSupervisorState {
@@ -176,18 +217,47 @@ impl VoiceSupervisorState {
                         .is_some_and(|(terminal_id, _)| self.active_request == Some(terminal_id))
                 {
                     self.active_request = Some(*request_id);
+                    self.segment_commit = None;
+                    self.mute_ack = None;
+                    self.mute_revision = None;
                 }
             }
             VoiceCommand::Stop { request_id } | VoiceCommand::Cancel { request_id }
                 if self.active_request == Some(*request_id) =>
             {
                 self.terminal_deadline = Some((*request_id, now + STOP_TIMEOUT));
+                self.segment_commit = None;
+                self.mute_ack = None;
+            }
+            VoiceCommand::CommitSegment {
+                request_id,
+                segment_id,
+            } if self.active_request == Some(*request_id) => {
+                self.segment_commit = Some(PendingSegmentCommit {
+                    request_id: *request_id,
+                    segment_id: *segment_id,
+                    deadline: now + SEGMENT_COMMIT_TIMEOUT,
+                });
+            }
+            VoiceCommand::SetMuted { request_id, muted }
+                if self.active_request == Some(*request_id) =>
+            {
+                self.mute_ack = Some(PendingMuteAck {
+                    request_id: *request_id,
+                    muted: *muted,
+                    after_revision: self
+                        .mute_revision
+                        .filter(|(revision_request, _)| revision_request == request_id)
+                        .map_or(0, |(_, revision)| revision),
+                    deadline: now + MUTE_ACK_TIMEOUT,
+                });
             }
             VoiceCommand::ListDevices { request_id } => {
                 self.device_request = Some(*request_id);
                 self.device_deadline = Some((*request_id, now + DEVICE_LIST_TIMEOUT));
             }
             VoiceCommand::Stop { .. }
+            | VoiceCommand::CommitSegment { .. }
             | VoiceCommand::Cancel { .. }
             | VoiceCommand::SetMuted { .. }
             | VoiceCommand::Shutdown => {}
@@ -210,11 +280,51 @@ impl VoiceSupervisorState {
         }
         if request_id.is_none_or(|request_id| self.active_request == Some(request_id)) {
             self.active_request = None;
+            self.segment_commit = None;
+            self.mute_ack = None;
+            self.mute_revision = None;
         }
         if request_id.is_none_or(|request_id| self.device_request == Some(request_id)) {
             self.device_request = None;
             self.device_deadline = None;
         }
+    }
+
+    fn segment_final_observed(&mut self, request_id: u64, segment_id: u64) {
+        if self.segment_commit.is_some_and(|pending| {
+            pending.request_id == request_id && pending.segment_id == segment_id
+        }) {
+            self.segment_commit = None;
+        }
+    }
+
+    fn mute_state_observed(&mut self, request_id: u64, revision: u64, muted: bool) {
+        if self.mute_ack.is_some_and(|pending| {
+            pending.request_id == request_id
+                && revision > pending.after_revision
+                && pending.muted == muted
+        }) {
+            self.mute_ack = None;
+        }
+        let replace_revision = self
+            .mute_revision
+            .is_none_or(|(seen_request, seen_revision)| {
+                seen_request != request_id || revision > seen_revision
+            });
+        if replace_revision {
+            self.mute_revision = Some((request_id, revision));
+        }
+    }
+
+    fn expired_control_request(&self, now: Instant) -> Option<u64> {
+        self.segment_commit
+            .filter(|pending| now >= pending.deadline)
+            .map(|pending| pending.request_id)
+            .or_else(|| {
+                self.mute_ack
+                    .filter(|pending| now >= pending.deadline)
+                    .map(|pending| pending.request_id)
+            })
     }
 
     fn conflicts(&self, command: &VoiceCommand) -> bool {
@@ -223,10 +333,11 @@ impl VoiceSupervisorState {
                 self.active_request.is_some() || self.device_request.is_some()
             }
             VoiceCommand::Start { .. } => self.device_request.is_some(),
-            VoiceCommand::Stop { .. }
-            | VoiceCommand::Cancel { .. }
-            | VoiceCommand::SetMuted { .. }
-            | VoiceCommand::Shutdown => false,
+            VoiceCommand::CommitSegment { .. } => self.segment_commit.is_some(),
+            VoiceCommand::SetMuted { .. } => self.mute_ack.is_some(),
+            VoiceCommand::Stop { .. } | VoiceCommand::Cancel { .. } | VoiceCommand::Shutdown => {
+                false
+            }
         }
     }
 }
@@ -267,6 +378,19 @@ fn supervise(commands: Receiver<VoiceCommand>, events: tokio::sync::mpsc::Sender
                     };
                 }
                 let request_id = event_request_id(&event);
+                match &event {
+                    VoiceEvent::SegmentFinal {
+                        request_id,
+                        segment_id,
+                        ..
+                    } => state.segment_final_observed(*request_id, *segment_id),
+                    VoiceEvent::MuteState {
+                        request_id,
+                        revision,
+                        muted,
+                    } => state.mute_state_observed(*request_id, *revision, *muted),
+                    _ => {}
+                }
                 let device_terminal = matches!(event, VoiceEvent::Devices { .. })
                     || matches!(event, VoiceEvent::Error { .. })
                         && request_id == state.device_request;
@@ -311,6 +435,9 @@ fn supervise(commands: Receiver<VoiceCommand>, events: tokio::sync::mpsc::Sender
                 state.device_deadline = None;
                 process = None;
                 state.terminal_deadline = None;
+                state.segment_commit = None;
+                state.mute_ack = None;
+                state.mute_revision = None;
             }
         }
 
@@ -358,6 +485,21 @@ fn supervise(commands: Receiver<VoiceCommand>, events: tokio::sync::mpsc::Sender
                 );
             }
             state.terminal_deadline = None;
+        }
+
+        if let Some(request_id) = state.expired_control_request(Instant::now()) {
+            if let Some(helper) = process.take() {
+                terminate_helper_and_reap(helper);
+            }
+            state = VoiceSupervisorState::default();
+            publish(
+                &events,
+                &mut pending_update,
+                VoiceEvent::Error {
+                    request_id: Some(request_id),
+                    code: VoiceErrorCode::Interrupted,
+                },
+            );
         }
 
         if state
@@ -441,7 +583,9 @@ fn supervise(commands: Receiver<VoiceCommand>, events: tokio::sync::mpsc::Sender
                         VoiceEvent::Cancelled { request_id },
                     );
                 }
-                VoiceCommand::Stop { request_id } | VoiceCommand::SetMuted { request_id, .. } => {
+                VoiceCommand::Stop { request_id }
+                | VoiceCommand::CommitSegment { request_id, .. }
+                | VoiceCommand::SetMuted { request_id, .. } => {
                     publish(
                         &events,
                         &mut pending_update,
@@ -491,6 +635,9 @@ fn supervise(commands: Receiver<VoiceCommand>, events: tokio::sync::mpsc::Sender
             state.device_request = None;
             state.device_deadline = None;
             state.terminal_deadline = None;
+            state.segment_commit = None;
+            state.mute_ack = None;
+            state.mute_revision = None;
             continue;
         }
         state.command_sent(&command, Instant::now());
@@ -523,12 +670,14 @@ fn publish(
             }
         }
     } else {
-        // Mute acknowledgements and terminal events are authoritative and may
-        // never replace one another. Queue them in helper order without blocking
-        // the supervisor; coalescible snapshots use their own latest-value lane.
+        // Mute acknowledgements, segment boundaries, and terminal events are
+        // authoritative and may never replace one another. Queue them in helper
+        // order without blocking the supervisor; coalescible snapshots use
+        // their own latest-value lane.
         if matches!(
             event,
-            VoiceEvent::Final { .. }
+            VoiceEvent::SegmentFinal { .. }
+                | VoiceEvent::Final { .. }
                 | VoiceEvent::Cancelled { .. }
                 | VoiceEvent::Devices { .. }
                 | VoiceEvent::Error { .. }
@@ -856,6 +1005,7 @@ fn command_request_id(command: &VoiceCommand) -> Option<u64> {
     match command {
         VoiceCommand::Start { request_id, .. }
         | VoiceCommand::Stop { request_id }
+        | VoiceCommand::CommitSegment { request_id, .. }
         | VoiceCommand::Cancel { request_id }
         | VoiceCommand::SetMuted { request_id, .. }
         | VoiceCommand::ListDevices { request_id } => Some(*request_id),
@@ -875,6 +1025,7 @@ fn event_request_id(event: &VoiceEvent) -> Option<u64> {
         VoiceEvent::State { request_id, .. }
         | VoiceEvent::Partial { request_id, .. }
         | VoiceEvent::MuteState { request_id, .. }
+        | VoiceEvent::SegmentFinal { request_id, .. }
         | VoiceEvent::Final { request_id, .. }
         | VoiceEvent::Cancelled { request_id }
         | VoiceEvent::Devices { request_id, .. } => Some(*request_id),
@@ -904,6 +1055,16 @@ fn command_json(command: &VoiceCommand) -> Value {
         VoiceCommand::Stop { request_id } => {
             json!({ "type": "stop", "request_id": request_id })
         }
+        VoiceCommand::CommitSegment {
+            request_id,
+            segment_id,
+        } => {
+            json!({
+                "type": "commit_segment",
+                "request_id": request_id,
+                "segment_id": segment_id,
+            })
+        }
         VoiceCommand::Cancel { request_id } => {
             json!({ "type": "cancel", "request_id": request_id })
         }
@@ -932,6 +1093,7 @@ fn parse_event(line: &str) -> Option<VoiceEvent> {
         }),
         "partial" => Some(VoiceEvent::Partial {
             request_id: request_id()?,
+            segment_id: value.get("segment_id")?.as_u64()?,
             revision: value.get("revision")?.as_i64()?.try_into().ok()?,
             committed: value.get("committed")?.as_str()?.to_string(),
             tentative: value.get("tentative")?.as_str()?.to_string(),
@@ -943,6 +1105,11 @@ fn parse_event(line: &str) -> Option<VoiceEvent> {
         }),
         "final" => Some(VoiceEvent::Final {
             request_id: request_id()?,
+            text: value.get("text")?.as_str()?.to_string(),
+        }),
+        "segment_final" => Some(VoiceEvent::SegmentFinal {
+            request_id: request_id()?,
+            segment_id: value.get("segment_id")?.as_u64()?,
             text: value.get("text")?.as_str()?.to_string(),
         }),
         "cancelled" => Some(VoiceEvent::Cancelled {
@@ -1052,12 +1219,13 @@ mod tests {
     #[test]
     fn event_parser_preserves_committed_and_tentative_text() {
         let event = parse_event(
-            r#"{"type":"partial","request_id":9,"revision":3,"committed":"hello ","tentative":"world"}"#,
+            r#"{"type":"partial","request_id":9,"segment_id":2,"revision":3,"committed":"hello ","tentative":"world"}"#,
         );
         assert_eq!(
             event,
             Some(VoiceEvent::Partial {
                 request_id: 9,
+                segment_id: 2,
                 revision: 3,
                 committed: "hello ".to_string(),
                 tentative: "world".to_string(),
@@ -1118,6 +1286,15 @@ mod tests {
         assert_eq!(mute["request_id"], 2);
         assert_eq!(mute["muted"], true);
         assert_eq!(mute.as_object().map(|value| value.len()), Some(3));
+
+        let commit = command_json(&VoiceCommand::CommitSegment {
+            request_id: 2,
+            segment_id: 7,
+        });
+        assert_eq!(commit["type"], "commit_segment");
+        assert_eq!(commit["request_id"], 2);
+        assert_eq!(commit["segment_id"], 7);
+        assert_eq!(commit.as_object().map(|value| value.len()), Some(3));
     }
 
     #[test]
@@ -1131,6 +1308,10 @@ mod tests {
         }));
         assert!(!command_starts_helper(&VoiceCommand::Stop {
             request_id: 7
+        }));
+        assert!(!command_starts_helper(&VoiceCommand::CommitSegment {
+            request_id: 7,
+            segment_id: 0,
         }));
         assert!(!command_starts_helper(&VoiceCommand::SetMuted {
             request_id: 7,
@@ -1164,6 +1345,7 @@ mod tests {
             &mut pending,
             VoiceEvent::Partial {
                 request_id: 1,
+                segment_id: 0,
                 revision: 1,
                 committed: "one".to_string(),
                 tentative: String::new(),
@@ -1174,6 +1356,7 @@ mod tests {
             &mut pending,
             VoiceEvent::Partial {
                 request_id: 1,
+                segment_id: 0,
                 revision: 2,
                 committed: "two".to_string(),
                 tentative: String::new(),
@@ -1267,6 +1450,7 @@ mod tests {
                 &mut pending,
                 VoiceEvent::Partial {
                     request_id: 7,
+                    segment_id: 0,
                     revision,
                     committed: revision.to_string(),
                     tentative: String::new(),
@@ -1343,6 +1527,7 @@ mod tests {
             &mut pending,
             VoiceEvent::Partial {
                 request_id: 3,
+                segment_id: 0,
                 revision: 1,
                 committed: "stale".to_string(),
                 tentative: String::new(),
@@ -1387,9 +1572,79 @@ mod tests {
     }
 
     #[test]
+    fn segment_final_is_a_reliable_nonterminal_snapshot_barrier() {
+        let (events, mut received) = tokio::sync::mpsc::channel(1);
+        events
+            .try_send(VoiceEvent::State {
+                request_id: 3,
+                phase: VoicePhase::Listening,
+                progress: None,
+            })
+            .expect("fill UI channel");
+        let mut pending = PendingVoiceEvents::default();
+        publish(
+            &events,
+            &mut pending,
+            VoiceEvent::Partial {
+                request_id: 3,
+                segment_id: 0,
+                revision: 4,
+                committed: "stale tail".to_string(),
+                tentative: String::new(),
+            },
+        );
+        publish(
+            &events,
+            &mut pending,
+            VoiceEvent::SegmentFinal {
+                request_id: 3,
+                segment_id: 0,
+                text: "authoritative".to_string(),
+            },
+        );
+        publish(
+            &events,
+            &mut pending,
+            VoiceEvent::Partial {
+                request_id: 3,
+                segment_id: 1,
+                revision: 1,
+                committed: "next".to_string(),
+                tentative: String::new(),
+            },
+        );
+
+        assert_eq!(pending.reliable.len(), 1);
+        assert!(matches!(
+            pending.snapshot.as_ref(),
+            Some(VoiceEvent::Partial { segment_id: 1, .. })
+        ));
+        let _ = received.try_recv().expect("initial state");
+        flush_pending_update(&events, &mut pending);
+        assert!(matches!(
+            received.try_recv(),
+            Ok(VoiceEvent::SegmentFinal {
+                request_id: 3,
+                segment_id: 0,
+                text,
+            }) if text == "authoritative"
+        ));
+        flush_pending_update(&events, &mut pending);
+        assert!(matches!(
+            received.try_recv(),
+            Ok(VoiceEvent::Partial {
+                request_id: 3,
+                segment_id: 1,
+                ..
+            })
+        ));
+    }
+
+    #[test]
     fn ui_batches_coalesce_only_consecutive_snapshots_for_the_same_request() {
         let partial = |request_id, revision, text: &str| VoiceEvent::Partial {
             request_id,
+            segment_id: 0,
             revision,
             committed: text.to_string(),
             tentative: String::new(),
@@ -1421,6 +1676,27 @@ mod tests {
         assert!(matches!(
             &events[3],
             VoiceEvent::Partial { request_id: 2, .. }
+        ));
+    }
+
+    #[test]
+    fn ui_batches_never_coalesce_across_segment_boundaries() {
+        let partial = |segment_id, text: &str| VoiceEvent::Partial {
+            request_id: 1,
+            segment_id,
+            revision: 1,
+            committed: text.to_string(),
+            tentative: String::new(),
+        };
+        let events = coalesce_for_ui([partial(0, "old"), partial(1, "new")]);
+        assert_eq!(events.len(), 2);
+        assert!(matches!(
+            events[0],
+            VoiceEvent::Partial { segment_id: 0, .. }
+        ));
+        assert!(matches!(
+            events[1],
+            VoiceEvent::Partial { segment_id: 1, .. }
         ));
     }
 
@@ -1457,18 +1733,26 @@ mod tests {
             parse_event(r#"{"type":"mute_state","request_id":4,"revision":-1,"muted":true}"#)
                 .is_none()
         );
+        assert_eq!(
+            parse_event(r#"{"type":"segment_final","request_id":4,"segment_id":3,"text":"hello"}"#),
+            Some(VoiceEvent::SegmentFinal {
+                request_id: 4,
+                segment_id: 3,
+                text: "hello".to_string(),
+            })
+        );
     }
 
     #[test]
     fn helper_handshake_requires_exact_protocol_v2_hello() {
         assert!(valid_protocol_hello(
-            r#"{"type":"hello","protocol_version":2,"contract":"gsv-voice-v2-streaming-mute"}"#
+            r#"{"type":"hello","protocol_version":2,"contract":"gsv-voice-v2-continuous-segments"}"#
         ));
         assert!(!valid_protocol_hello(
             r#"{"type":"hello","protocol_version":2}"#
         ));
         assert!(!valid_protocol_hello(
-            r#"{"type":"hello","protocol_version":1,"contract":"gsv-voice-v2-streaming-mute"}"#
+            r#"{"type":"hello","protocol_version":1,"contract":"gsv-voice-v2-continuous-segments"}"#
         ));
         assert!(!valid_protocol_hello(
             r#"{"type":"hello","protocol_version":2,"contract":"stale"}"#
@@ -1478,7 +1762,7 @@ mod tests {
         ));
         assert!(!valid_protocol_hello(""));
         assert!(!valid_protocol_hello(
-            r#"{"type":"hello","protocol_version":2,"contract":"gsv-voice-v2-streaming-mute","unexpected":true}"#
+            r#"{"type":"hello","protocol_version":2,"contract":"gsv-voice-v2-continuous-segments","unexpected":true}"#
         ));
     }
 
@@ -1649,5 +1933,100 @@ mod tests {
         state.terminal_observed(Some(2), true);
         assert_eq!(state.active_request, None);
         assert_eq!(state.device_request, None);
+    }
+
+    #[test]
+    fn segment_and_mute_acknowledgements_are_nonterminal_and_correlated() {
+        let now = Instant::now();
+        let mut state = VoiceSupervisorState::default();
+        state.command_sent(
+            &VoiceCommand::Start {
+                request_id: 7,
+                locale: "auto".to_string(),
+                device: None,
+                device_id: None,
+                exact_device: false,
+            },
+            now,
+        );
+        state.mute_state_observed(7, 0, false);
+        state.command_sent(
+            &VoiceCommand::CommitSegment {
+                request_id: 7,
+                segment_id: 0,
+            },
+            now,
+        );
+        assert!(state.conflicts(&VoiceCommand::CommitSegment {
+            request_id: 7,
+            segment_id: 1,
+        }));
+        state.segment_final_observed(7, 1);
+        assert!(state.segment_commit.is_some());
+        state.segment_final_observed(7, 0);
+        assert!(state.segment_commit.is_none());
+        assert_eq!(state.active_request, Some(7));
+
+        state.command_sent(
+            &VoiceCommand::SetMuted {
+                request_id: 7,
+                muted: true,
+            },
+            now,
+        );
+        assert!(state.conflicts(&VoiceCommand::SetMuted {
+            request_id: 7,
+            muted: false,
+        }));
+        state.mute_state_observed(7, 0, true);
+        assert!(state.mute_ack.is_some());
+        state.mute_state_observed(7, 1, false);
+        assert!(state.mute_ack.is_some());
+        state.mute_state_observed(7, 2, true);
+        assert!(state.mute_ack.is_none());
+        assert_eq!(state.active_request, Some(7));
+    }
+
+    #[test]
+    fn control_ack_deadlines_are_bounded_and_terminal_commands_supersede_them() {
+        let now = Instant::now();
+        let mut state = VoiceSupervisorState::default();
+        state.command_sent(
+            &VoiceCommand::Start {
+                request_id: 7,
+                locale: "auto".to_string(),
+                device: None,
+                device_id: None,
+                exact_device: false,
+            },
+            now,
+        );
+        state.command_sent(
+            &VoiceCommand::CommitSegment {
+                request_id: 7,
+                segment_id: 0,
+            },
+            now,
+        );
+        state.command_sent(
+            &VoiceCommand::SetMuted {
+                request_id: 7,
+                muted: true,
+            },
+            now,
+        );
+        assert_eq!(state.expired_control_request(now), None);
+        assert_eq!(
+            state.expired_control_request(now + MUTE_ACK_TIMEOUT),
+            Some(7)
+        );
+
+        state.command_sent(&VoiceCommand::Stop { request_id: 7 }, now);
+        assert!(state.segment_commit.is_none());
+        assert!(state.mute_ack.is_none());
+        assert_eq!(
+            state.expired_control_request(now + SEGMENT_COMMIT_TIMEOUT),
+            None
+        );
     }
 }

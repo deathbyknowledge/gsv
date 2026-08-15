@@ -155,7 +155,7 @@ impl GsvApp {
                         GestureIntent::Send => {
                             if self.gesture_send_dictation_now(cx) {
                                 self.voice_notice =
-                                    Some("FINISHING VOICE INPUT · SENDING".to_string());
+                                    Some("LISTENING · PREPARING TO SEND".to_string());
                             }
                         }
                         GestureIntent::Mute => {
@@ -173,7 +173,9 @@ impl GsvApp {
                 // An accepted mute transition is the one exception: replaying
                 // the old bit would reject it before transcription acks.
                 self.clear_voice_gesture_status();
-                if self.dictation_pending_mute().is_none() {
+                if self.dictation_pending_mute().is_none()
+                    && !self.dictation_segment_commit_is_pending()
+                {
                     self.reassert_vision_context();
                 }
                 self.refresh_listening_voice_notice();
@@ -189,7 +191,7 @@ impl GsvApp {
         let _ = sender.set_context(self.current_vision_context());
     }
 
-    fn reassert_vision_context(&self) {
+    pub(super) fn reassert_vision_context(&self) {
         let Some(sender) = &self.vision_context else {
             return;
         };
@@ -525,6 +527,7 @@ mod tests {
                     app.handle_voice_event(
                         crate::transcription::VoiceEvent::Partial {
                             request_id: 73,
+                            segment_id: 0,
                             revision: 1,
                             committed: "hello".to_string(),
                             tentative: " world".to_string(),

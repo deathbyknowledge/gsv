@@ -5,7 +5,7 @@ model download and verification, and streaming inference in a separate process. 
 only exchanges bounded newline-delimited JSON commands and text snapshots with it; if the helper
 stalls, crashes, or exhausts its own resources, the app kills it and remains usable for typing.
 At startup the helper emits
-`{"type":"hello","protocol_version":2,"contract":"gsv-voice-v2-streaming-mute"}` before
+`{"type":"hello","protocol_version":2,"contract":"gsv-voice-v2-continuous-segments"}` before
 accepting commands. Desktop requires that exact version, contract marker, and field set and
 terminates a missing or mismatched helper, so a stale sibling cannot silently reinterpret a newer
 microphone-selection, mute, or lifecycle command. The private contract marker is rotated for an
@@ -71,6 +71,15 @@ An active request accepts idempotent, request-scoped streaming mute commands suc
 accepted command. A different or inactive request receives `not_active` and cannot change the
 capture gate. Stop, Cancel, and Shutdown remain available while muted.
 
+An active request can finalize one utterance without releasing the microphone by sending
+`{"type":"commit_segment","request_id":2,"segment_id":0}`. The helper finalizes that model
+stream, begins segment 1 with the same capture request and acknowledged mute state, then publishes
+the reliable, nonterminal
+`{"type":"segment_final","request_id":2,"segment_id":0,"text":"..."}` boundary. Partial
+snapshots carry their segment ID because the model-local revision restarts for every fresh stream.
+Only `stop` produces the terminal `final` event and releases capture. Segment IDs must be exact and
+monotonic; a disagreement fails the active request closed rather than committing ambiguous audio.
+
 Muting keeps the selected microphone device and CPAL stream open. An atomic request-generation
 gate rejects newly captured frames before mono conversion and queueing, and the inference loop
 drops queued packets from an invalidated generation, clears its pending audio, and resets its
@@ -78,9 +87,14 @@ resampler and pending exact-zero startup check. Unmuting drains and resets again
 capture generation, and never replays audio captured or queued before the transition. A native
 inference feed that was already entered may finish before the `mute_state` acknowledgement; that
 acknowledgement is the applied boundary, after which no packet from an older generation can enter a
-later feed. No VAD, silence countdown, or automatic send behavior is part of this protocol.
+later feed. Segment commit uses the same generation fence: command ingress temporarily closes the
+callback gate, the active loop waits for admitted callbacks and feeds the bounded queued tail into
+the old model stream, then reopens the prior mute state on a fresh generation before finalization.
+Audio arriving after that boundary queues only for the next segment. No VAD, silence countdown, or
+automatic send behavior is part of this protocol.
 
-The helper defaults to CPU, limits a transcription session to ten minutes and 64 KiB of text, uses
+The helper defaults to CPU, limits the whole capture request to ten minutes and each segment to
+64 KiB of text, uses
 at most four worker threads, lowers its Unix scheduling priority, bounds microphone and IPC queues,
 and runs only one session at a time. It unloads the model after five idle minutes. On macOS, the
 acceleration override selects Metal. UI updates carry an append-only committed prefix and a

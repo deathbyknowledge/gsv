@@ -9,7 +9,7 @@ use std::time::{Duration, Instant};
 
 use audio::{
     list_input_devices, AudioCapture, AudioError, AudioPacket, CaptureControl, CaptureGate,
-    InputDeviceInfo, InputDeviceMatchPolicy, Resampler,
+    InputDeviceInfo, InputDeviceMatchPolicy, Resampler, SegmentBoundaryRequest,
 };
 use crossbeam_channel::{Receiver, TryRecvError};
 use model::{Engine, LoadError};
@@ -232,6 +232,12 @@ fn main() {
                     });
                 }
             }
+            Command::CommitSegment { request_id, .. } => {
+                emit(&Event::Error {
+                    request_id: Some(request_id),
+                    code: ErrorCode::NotActive,
+                });
+            }
             Command::Cancel { request_id } => {
                 let cancelled = cancel_device_discovery(&mut discovery, request_id)
                     || cancel_preparation(&mut preparation, request_id);
@@ -279,6 +285,7 @@ fn shutdown_command() -> ReceivedCommand {
     ReceivedCommand {
         command: Command::Shutdown,
         mute_request: None,
+        segment_boundary: None,
         completion: protocol::CommandCompletion::default(),
     }
 }
@@ -489,185 +496,303 @@ fn run_stream(
         })),
         ..StreamOptions::default()
     };
-    let mut stream = engine
-        .session
-        .stream(&run_options, &stream_options)
-        .map_err(|_| ErrorCode::EngineFailed)?;
-    emit(&Event::State {
-        request_id,
-        phase: Phase::Listening,
-        progress: None,
-    });
     let mut mute_revision = 0_u64;
-    emit(&Event::MuteState {
-        request_id,
-        revision: mute_revision,
-        muted: capture.is_muted(),
-    });
-
     let mut pending = VecDeque::<f32>::with_capacity(FEED_SAMPLES * 2);
     let mut converted = Vec::with_capacity(FEED_SAMPLES * 2);
+    let mut segment_id = 0_u64;
+    let mut pending_segment_final = None::<(u64, String)>;
+    let mut first_segment = true;
     let session_started = Instant::now();
-    loop {
-        crossbeam_channel::select_biased! {
-            recv(commands) -> command => {
-                match command {
-                    Ok(ReceivedCommand { command: Command::Stop { request_id: stopped }, .. }) if stopped == request_id => {
-                        emit(&Event::State {
-                            request_id,
-                            phase: Phase::Finishing,
-                            progress: None,
-                        });
-                        if capture.is_muted() {
-                            pending.clear();
-                        }
-                        let final_text = finish_stream(&mut stream, &mut pending)?;
-                        emit(&Event::Final { request_id, text: &final_text });
-                        return Ok(StreamOutcome::Continue);
-                    }
-                    Ok(ReceivedCommand { command: Command::Cancel { request_id: cancelled }, .. }) if cancelled == request_id => {
-                        stream.reset();
-                        emit(&Event::Cancelled { request_id });
-                        return Ok(StreamOutcome::Continue);
-                    }
-                    Ok(ReceivedCommand { command: Command::Shutdown, .. }) | Err(_) => {
-                        stream.reset();
-                        return Ok(StreamOutcome::Shutdown);
-                    }
-                    Ok(ReceivedCommand {
-                        command: Command::SetMuted { request_id: muted_request, muted },
-                        mute_request: Some(mute_request),
-                        completion: _completion,
-                    })
-                        if muted_request == request_id => {
-                            let capture_error = if mute_request.changes_state() {
-                                pending.clear();
-                                converted.clear();
-                                resampler.reset();
-                                drain_capture_packets(&capture)
-                            } else {
-                                None
-                            };
-                            // For unmute, reset and drain while the old muted
-                            // generation is still closed; applying the command
-                            // then opens a fresh generation with no replay.
-                            let outcome = capture.set_muted(mute_request, muted);
-                            mute_revision = mute_revision.saturating_add(1);
-                            emit(&Event::MuteState {
-                                request_id,
-                                revision: mute_revision,
-                                muted: outcome.muted,
-                            });
-                            if let Some(error) = capture_error {
-                                stream.reset();
-                                return Err(audio_error_code(error));
-                            }
-                        }
-                    Ok(ReceivedCommand { command: Command::Start { request_id: other, .. }, .. }) => emit(&Event::Error {
-                        request_id: Some(other),
-                        code: ErrorCode::Busy,
-                    }),
-                    Ok(ReceivedCommand { command: Command::ListDevices { request_id: other }, .. }) => {
-                        emit(&Event::Error {
-                            request_id: Some(other),
-                            code: ErrorCode::Busy,
-                        });
-                    }
-                    Ok(ReceivedCommand { command: Command::Stop { request_id: other }, .. })
-                    | Ok(ReceivedCommand { command: Command::Cancel { request_id: other }, .. }) => {
-                        emit(&Event::Error {
-                            request_id: Some(other),
-                            code: ErrorCode::NotActive,
-                        });
-                    }
-                    Ok(ReceivedCommand {
-                        command: Command::SetMuted { request_id: other, .. },
-                        completion: _completion,
-                        ..
-                    }) => {
-                        emit(&Event::Error {
-                            request_id: Some(other),
-                            code: ErrorCode::NotActive,
-                        });
-                    }
+    let session_deadline = session_started + MAX_SESSION_DURATION;
+
+    'segments: loop {
+        let mut stream = match engine.session.stream(&run_options, &stream_options) {
+            Ok(stream) => stream,
+            Err(_) => {
+                // Finalization made the previous segment authoritative even if
+                // opening its successor fails. Deliver that result before the
+                // request's terminal error so Desktop can still honor Send.
+                if let Some((completed_segment, text)) = pending_segment_final.take() {
+                    emit(&Event::SegmentFinal {
+                        request_id,
+                        segment_id: completed_segment,
+                        text: &text,
+                    });
                 }
+                return Err(ErrorCode::EngineFailed);
             }
-            recv(capture.packets) -> packet => {
-                match packet {
-                    Ok(AudioPacket::Samples(samples)) => {
-                        if !capture.accepts(samples.capture_state()) {
-                            continue;
+        };
+        if first_segment {
+            first_segment = false;
+            emit(&Event::State {
+                request_id,
+                phase: Phase::Listening,
+                progress: None,
+            });
+            emit(&Event::MuteState {
+                request_id,
+                revision: mute_revision,
+                muted: capture.is_muted(),
+            });
+        }
+        if let Some((completed_segment, text)) = pending_segment_final.take() {
+            emit(&Event::SegmentFinal {
+                request_id,
+                segment_id: completed_segment,
+                text: &text,
+            });
+        }
+
+        let session_timeout =
+            crossbeam_channel::after(session_deadline.saturating_duration_since(Instant::now()));
+        loop {
+            crossbeam_channel::select_biased! {
+                recv(commands) -> command => {
+                    match command {
+                        Ok(ReceivedCommand { command: Command::Stop { request_id: stopped }, .. }) if stopped == request_id => {
+                            emit(&Event::State {
+                                request_id,
+                                phase: Phase::Finishing,
+                                progress: None,
+                            });
+                            if capture.is_muted() {
+                                pending.clear();
+                            }
+                            let final_text = finish_stream(&mut stream, &mut pending)?;
+                            emit(&Event::Final { request_id, text: &final_text });
+                            return Ok(StreamOutcome::Continue);
                         }
-                        converted.clear();
-                        resampler.push(samples.as_slice(), &mut converted);
-                        if !capture.accepts(samples.capture_state()) {
+                        Ok(ReceivedCommand {
+                            command: Command::CommitSegment {
+                                request_id: committed_request,
+                                segment_id: committed_segment,
+                            },
+                            segment_boundary: Some(boundary),
+                            completion,
+                            ..
+                        }) if committed_request == request_id && committed_segment == segment_id => {
+                            if !capture.wait_for_callback_quiescence() {
+                                drop(completion);
+                                stream.reset();
+                                return Err(ErrorCode::Interrupted);
+                            }
+                            let tail_result = drain_segment_tail(
+                                &capture,
+                                boundary,
+                                &mut resampler,
+                                &mut converted,
+                                &mut pending,
+                                &mut stream,
+                            );
                             converted.clear();
-                            pending.clear();
                             resampler.reset();
-                            continue;
+                            let boundary_applied = capture.apply_segment_boundary(boundary).is_some();
+                            // A later SetMuted must be able to close the fresh
+                            // segment while synchronous model finalization is
+                            // still running. The reader cannot advance until
+                            // this boundary ownership acknowledgement drops.
+                            drop(completion);
+                            if !boundary_applied {
+                                stream.reset();
+                                return Err(ErrorCode::Interrupted);
+                            }
+                            tail_result?;
+
+                            let text = finish_stream(&mut stream, &mut pending)?;
+                            let Some(next_segment) = segment_id.checked_add(1) else {
+                                emit(&Event::SegmentFinal {
+                                    request_id,
+                                    segment_id,
+                                    text: &text,
+                                });
+                                return Err(ErrorCode::InvalidCommand);
+                            };
+                            pending_segment_final = Some((segment_id, text));
+                            segment_id = next_segment;
+                            continue 'segments;
                         }
-                        pending.extend(converted.iter().copied());
-                        while pending.len() >= FEED_SAMPLES {
-                            if !capture.accepts(samples.capture_state()) {
-                                pending.clear();
-                                converted.clear();
-                                resampler.reset();
-                                break;
+                        Ok(ReceivedCommand {
+                            command: Command::CommitSegment {
+                                request_id: committed_request,
+                                ..
+                            },
+                            segment_boundary,
+                            completion,
+                            ..
+                        }) if committed_request == request_id => {
+                            // A same-request segment mismatch means Desktop and
+                            // helper no longer agree on what audio would be
+                            // committed. Fail the request closed rather than
+                            // sending or replaying an ambiguous segment.
+                            if let Some(boundary) = segment_boundary {
+                                let _ = capture.apply_segment_boundary(boundary);
                             }
-                            let frame = pending.drain(..FEED_SAMPLES).collect::<Vec<_>>();
-                            if !capture.accepts(samples.capture_state()) {
-                                pending.clear();
-                                converted.clear();
-                                resampler.reset();
-                                break;
-                            }
-                            // stream.feed is synchronous. A feed already entered
-                            // here may finish after the callback gate closes, but
-                            // command-biased selection processes SetMuted and
-                            // publishes its applied acknowledgement before any
-                            // later capture generation can be fed.
-                            let update = stream.feed(&frame).map_err(|_| ErrorCode::EngineFailed)?;
-                            let changed = update.committed_changed || update.tentative_changed;
-                            if changed || session_started.elapsed() >= MAX_SESSION_DURATION {
-                                let text = stream.text();
-                                if transcript_at_limit(&text.committed, &text.tentative)
-                                    || session_started.elapsed() >= MAX_SESSION_DURATION
-                                {
-                                    drop(text);
-                                    if !capture.accepts(samples.capture_state()) {
-                                        pending.clear();
-                                        resampler.reset();
+                            drop(completion);
+                            stream.reset();
+                            return Err(ErrorCode::InvalidCommand);
+                        }
+                        Ok(ReceivedCommand { command: Command::Cancel { request_id: cancelled }, .. }) if cancelled == request_id => {
+                            stream.reset();
+                            emit(&Event::Cancelled { request_id });
+                            return Ok(StreamOutcome::Continue);
+                        }
+                        Ok(ReceivedCommand { command: Command::Shutdown, .. }) | Err(_) => {
+                            stream.reset();
+                            return Ok(StreamOutcome::Shutdown);
+                        }
+                        Ok(ReceivedCommand {
+                            command: Command::SetMuted { request_id: muted_request, muted },
+                            mute_request: Some(mute_request),
+                            completion: _completion,
+                            ..
+                        })
+                            if muted_request == request_id => {
+                                let capture_error = if mute_request.changes_state() {
+                                    if !capture.wait_for_callback_quiescence() {
+                                        stream.reset();
+                                        return Err(ErrorCode::Interrupted);
                                     }
-                                    let final_text = finish_stream(&mut stream, &mut pending)?;
-                                    emit(&Event::Final { request_id, text: &final_text });
-                                    return Ok(StreamOutcome::Continue);
+                                    pending.clear();
+                                    converted.clear();
+                                    resampler.reset();
+                                    drain_capture_packets(&capture)
+                                } else {
+                                    None
+                                };
+                                // For unmute, reset and drain while the old muted
+                                // generation is still closed; applying the command
+                                // then opens a fresh generation with no replay.
+                                let outcome = capture.set_muted(mute_request, muted);
+                                mute_revision = mute_revision.saturating_add(1);
+                                emit(&Event::MuteState {
+                                    request_id,
+                                    revision: mute_revision,
+                                    muted: outcome.muted,
+                                });
+                                if let Some(error) = capture_error {
+                                    stream.reset();
+                                    return Err(audio_error_code(error));
                                 }
                             }
-                            if changed {
-                                let text = stream.text();
-                                emit(&Event::Partial {
-                                    request_id,
-                                    revision: update.revision,
-                                    committed: &text.committed,
-                                    tentative: &text.tentative,
-                                });
-                            }
-                            if !commands.is_empty() {
-                                break;
-                            }
+                        Ok(ReceivedCommand { command: Command::Start { request_id: other, .. }, .. }) => emit(&Event::Error {
+                            request_id: Some(other),
+                            code: ErrorCode::Busy,
+                        }),
+                        Ok(ReceivedCommand { command: Command::ListDevices { request_id: other }, .. }) => {
+                            emit(&Event::Error {
+                                request_id: Some(other),
+                                code: ErrorCode::Busy,
+                            });
+                        }
+                        Ok(ReceivedCommand { command: Command::Stop { request_id: other }, .. })
+                        | Ok(ReceivedCommand { command: Command::Cancel { request_id: other }, .. })
+                        | Ok(ReceivedCommand {
+                            command: Command::CommitSegment { request_id: other, .. },
+                            ..
+                        }) => {
+                            emit(&Event::Error {
+                                request_id: Some(other),
+                                code: ErrorCode::NotActive,
+                            });
+                        }
+                        Ok(ReceivedCommand {
+                            command: Command::SetMuted { request_id: other, .. },
+                            completion: _completion,
+                            ..
+                        }) => {
+                            emit(&Event::Error {
+                                request_id: Some(other),
+                                code: ErrorCode::NotActive,
+                            });
                         }
                     }
-                    Ok(AudioPacket::Error(AudioError::Unavailable)) | Err(_) => {
-                        stream.reset();
-                        return Err(ErrorCode::MicrophoneUnavailable);
+                }
+                recv(session_timeout) -> _ => {
+                    if capture.is_muted() {
+                        pending.clear();
                     }
-                    Ok(AudioPacket::Error(AudioError::Silent)) => {
-                        stream.reset();
-                        return Err(ErrorCode::MicrophoneSilent);
-                    }
-                    Ok(AudioPacket::Error(AudioError::Overflow)) => {
-                        stream.reset();
-                        return Err(ErrorCode::AudioOverflow);
+                    let final_text = finish_stream(&mut stream, &mut pending)?;
+                    emit(&Event::Final { request_id, text: &final_text });
+                    return Ok(StreamOutcome::Continue);
+                }
+                recv(capture.packets) -> packet => {
+                    match packet {
+                        Ok(AudioPacket::Samples(samples)) => {
+                            if !capture.accepts(samples.capture_state()) {
+                                continue;
+                            }
+                            converted.clear();
+                            resampler.push(samples.as_slice(), &mut converted);
+                            if !capture.accepts(samples.capture_state()) {
+                                converted.clear();
+                                pending.clear();
+                                resampler.reset();
+                                continue;
+                            }
+                            pending.extend(converted.iter().copied());
+                            while pending.len() >= FEED_SAMPLES {
+                                if !capture.accepts(samples.capture_state()) {
+                                    pending.clear();
+                                    converted.clear();
+                                    resampler.reset();
+                                    break;
+                                }
+                                let frame = pending.drain(..FEED_SAMPLES).collect::<Vec<_>>();
+                                if !capture.accepts(samples.capture_state()) {
+                                    pending.clear();
+                                    converted.clear();
+                                    resampler.reset();
+                                    break;
+                                }
+                                // stream.feed is synchronous. A feed already entered
+                                // here may finish after the callback gate closes, but
+                                // command-biased selection processes SetMuted and
+                                // segment boundaries before any later capture
+                                // generation can be fed.
+                                let update = stream.feed(&frame).map_err(|_| ErrorCode::EngineFailed)?;
+                                let changed = update.committed_changed || update.tentative_changed;
+                                if changed || session_at_limit(session_started) {
+                                    let text = stream.text();
+                                    if transcript_at_limit(&text.committed, &text.tentative)
+                                        || session_at_limit(session_started)
+                                    {
+                                        drop(text);
+                                        if !capture.accepts(samples.capture_state()) {
+                                            pending.clear();
+                                            resampler.reset();
+                                        }
+                                        let final_text = finish_stream(&mut stream, &mut pending)?;
+                                        emit(&Event::Final { request_id, text: &final_text });
+                                        return Ok(StreamOutcome::Continue);
+                                    }
+                                }
+                                if changed {
+                                    let text = stream.text();
+                                    emit(&Event::Partial {
+                                        request_id,
+                                        segment_id,
+                                        revision: update.revision,
+                                        committed: &text.committed,
+                                        tentative: &text.tentative,
+                                    });
+                                }
+                                if !commands.is_empty() {
+                                    break;
+                                }
+                            }
+                        }
+                        Ok(AudioPacket::Error(AudioError::Unavailable)) | Err(_) => {
+                            stream.reset();
+                            return Err(ErrorCode::MicrophoneUnavailable);
+                        }
+                        Ok(AudioPacket::Error(AudioError::Silent)) => {
+                            stream.reset();
+                            return Err(ErrorCode::MicrophoneSilent);
+                        }
+                        Ok(AudioPacket::Error(AudioError::Overflow)) => {
+                            stream.reset();
+                            return Err(ErrorCode::AudioOverflow);
+                        }
                     }
                 }
             }
@@ -683,6 +808,32 @@ fn drain_capture_packets(capture: &AudioCapture) -> Option<AudioError> {
         }
     }
     error
+}
+
+fn drain_segment_tail(
+    capture: &AudioCapture,
+    boundary: SegmentBoundaryRequest,
+    resampler: &mut Resampler,
+    converted: &mut Vec<f32>,
+    pending: &mut VecDeque<f32>,
+    stream: &mut Stream<'_>,
+) -> Result<(), ErrorCode> {
+    while let Ok(packet) = capture.packets.try_recv() {
+        match packet {
+            AudioPacket::Samples(samples) if boundary.accepts_previous(samples.capture_state()) => {
+                converted.clear();
+                resampler.push(samples.as_slice(), converted);
+                pending.extend(converted.iter().copied());
+                while pending.len() >= FEED_SAMPLES {
+                    let frame = pending.drain(..FEED_SAMPLES).collect::<Vec<_>>();
+                    stream.feed(&frame).map_err(|_| ErrorCode::EngineFailed)?;
+                }
+            }
+            AudioPacket::Samples(_) => {}
+            AudioPacket::Error(error) => return Err(audio_error_code(error)),
+        }
+    }
+    Ok(())
 }
 
 fn audio_error_code(error: AudioError) -> ErrorCode {
@@ -709,6 +860,10 @@ fn finish_stream(
 
 fn transcript_at_limit(committed: &str, tentative: &str) -> bool {
     committed.len().saturating_add(tentative.len()) >= MAX_TRANSCRIPT_BYTES
+}
+
+fn session_at_limit(session_started: Instant) -> bool {
+    session_started.elapsed() >= MAX_SESSION_DURATION
 }
 
 fn bounded_transcript(text: &str) -> String {
@@ -795,6 +950,8 @@ mod tests {
             &"a".repeat(MAX_TRANSCRIPT_BYTES - 2),
             "b"
         ));
+        assert!(session_at_limit(Instant::now() - MAX_SESSION_DURATION));
+        assert!(!session_at_limit(Instant::now()));
     }
 
     #[test]

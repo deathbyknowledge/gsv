@@ -76,8 +76,13 @@ request. Every intent and active status snapshot echoes that request; every
 helper event echoes the random supervisor session, so stale work cannot act on
 or describe later dictation. Status and progress never invoke an action.
 Desktop remains the owner of persistent gesture arming, acknowledged
-microphone mute state, finalizing transcription, and conversation submission.
-Its runtime is Rust plus a pinned
+microphone mute state, ending the overall voice request, and conversation
+submission. Within an active request, `gsv-transcribe` owns authoritative
+utterance boundaries: it finalizes and replaces only the model stream while
+retaining microphone capture, request identity, and mute state. Desktop accepts
+the correlated utterance final, submits it through the ordinary conversation
+owner, and rebases the continuing voice draft; a gesture send never masquerades
+as a terminal transcription event. Its runtime is Rust plus a pinned
 native MediaPipe library and model—Python and Bazel are build tools, not
 Desktop runtime dependencies. `gsv-vision` is not part of the release
 distribution until permissions, packaging, additional platforms, and the
