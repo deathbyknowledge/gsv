@@ -16,9 +16,9 @@ use std::time::Duration;
 
 use crossbeam_channel::{bounded, Receiver, Sender, TryRecvError, TrySendError};
 use gsv_vision_control::{
-    read_frame, write_frame, ControlStatus, DesktopCommand, GestureIntent, HelperEvent,
-    LifecycleState, SessionId, EVENT_CHANNEL_CONTRACT_MARKER, EVENT_FD, EVENT_FD_MARKER_ENV,
-    PROTOCOL_VERSION, SESSION_HIGH_ENV, SESSION_LOW_ENV,
+    read_frame, write_frame, ControlStatus, DesktopCommand, GestureContext, GestureIntent,
+    HelperEvent, LifecycleState, SessionId, EVENT_CHANNEL_CONTRACT_MARKER, EVENT_FD,
+    EVENT_FD_MARKER_ENV, PROTOCOL_VERSION, SESSION_HIGH_ENV, SESSION_LOW_ENV,
 };
 
 const EVENT_QUEUE_CAPACITY: usize = 4;
@@ -28,10 +28,7 @@ const TERMINAL_WRITE_TIMEOUT: Duration = Duration::from_millis(500);
 
 enum EventPayload {
     Lifecycle(LifecycleState),
-    Intent {
-        voice_request_id: u64,
-        intent: GestureIntent,
-    },
+    Intent(GestureIntent),
 }
 
 struct QueuedEvent {
@@ -40,20 +37,12 @@ struct QueuedEvent {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct ControlContext {
-    pub voice_request_id: Option<u64>,
-    pub armed: bool,
-    pub muted: bool,
-    pub revision: u64,
-}
-
-impl ControlContext {
-    const DISABLED: Self = Self {
-        voice_request_id: None,
-        armed: false,
-        muted: false,
-        revision: 0,
-    };
+pub enum ControlContext {
+    Uninitialized,
+    Authoritative {
+        revision: u64,
+        gesture: GestureContext,
+    },
 }
 
 #[derive(Clone)]
@@ -110,7 +99,7 @@ impl HelperControl {
             })
             .map_err(|_| ControlTransportError::WorkerUnavailable)?;
 
-        let context = Arc::new(Mutex::new(ControlContext::DISABLED));
+        let context = Arc::new(Mutex::new(ControlContext::Uninitialized));
         let command_context = Arc::clone(&context);
         thread::Builder::new()
             .name("gsv-vision-parent-watchdog".to_string())
@@ -128,7 +117,7 @@ impl HelperControl {
     pub fn context(&self) -> ControlContext {
         self.context
             .lock()
-            .map_or(ControlContext::DISABLED, |context| *context)
+            .map_or(ControlContext::Uninitialized, |context| *context)
     }
 
     pub fn publish_lifecycle(&self, state: LifecycleState) -> bool {
@@ -157,11 +146,8 @@ impl HelperControl {
             .unwrap_or(false)
     }
 
-    pub fn publish_intent(&self, voice_request_id: u64, intent: GestureIntent) -> bool {
-        self.publish(EventPayload::Intent {
-            voice_request_id,
-            intent,
-        })
+    pub fn publish_intent(&self, intent: GestureIntent) -> bool {
+        self.publish(EventPayload::Intent(intent))
     }
 
     /// Replaces an obsolete semantic snapshot without ever waiting for the
@@ -274,13 +260,9 @@ fn write_reliable(
             sequence,
             state,
         },
-        EventPayload::Intent {
-            voice_request_id,
-            intent,
-        } => HelperEvent::Intent {
+        EventPayload::Intent(intent) => HelperEvent::Intent {
             session_id,
             sequence,
-            voice_request_id,
             intent,
         },
     };
@@ -357,9 +339,7 @@ fn apply_context_command(
 ) -> bool {
     let DesktopCommand::SetContext {
         session_id,
-        voice_request_id,
-        armed,
-        muted,
+        context: gesture,
     } = command;
     if session_id != expected_session {
         return false;
@@ -367,12 +347,11 @@ fn apply_context_command(
     let Ok(mut context) = context.lock() else {
         return false;
     };
-    context.voice_request_id = voice_request_id;
-    context.armed = armed;
-    context.muted = muted;
-    // Every complete context frame is an authority acknowledgement, including
-    // an unchanged echo after SEND or a rejected mode request.
-    context.revision = context.revision.wrapping_add(1).max(1);
+    let revision = match *context {
+        ControlContext::Uninitialized => 1,
+        ControlContext::Authoritative { revision, .. } => revision.wrapping_add(1).max(1),
+    };
+    *context = ControlContext::Authoritative { revision, gesture };
     true
 }
 
@@ -380,26 +359,11 @@ fn apply_context_command(
 mod tests {
     use std::io::Cursor;
 
+    use gsv_vision_control::VoiceRequestGestureIntent;
+
     use super::*;
 
     const SESSION: SessionId = SessionId::new(3, 5);
-
-    #[test]
-    fn event_channel_requires_the_current_exact_contract_marker() {
-        assert_eq!(event_channel_enabled(None), Ok(false));
-        assert_eq!(
-            event_channel_enabled(Some("1")),
-            Err(ControlTransportError::InvalidEnvironment)
-        );
-        assert_eq!(
-            event_channel_enabled(Some("gsv-vision-control-v1")),
-            Err(ControlTransportError::InvalidEnvironment)
-        );
-        assert_eq!(
-            event_channel_enabled(Some(EVENT_CHANNEL_CONTRACT_MARKER)),
-            Ok(true)
-        );
-    }
 
     #[derive(Clone, Default)]
     struct SharedOutput(Arc<Mutex<Vec<u8>>>);
@@ -416,6 +380,38 @@ mod tests {
         fn flush(&mut self) -> io::Result<()> {
             Ok(())
         }
+    }
+
+    fn test_control(
+        events: Sender<QueuedEvent>,
+        statuses: Sender<ControlStatus>,
+        status_replacements: Receiver<ControlStatus>,
+    ) -> HelperControl {
+        HelperControl {
+            context: Arc::new(Mutex::new(ControlContext::Uninitialized)),
+            events,
+            statuses,
+            status_replacements,
+        }
+    }
+
+    #[test]
+    fn event_channel_requires_the_rotated_exact_contract_marker() {
+        assert_eq!(event_channel_enabled(None), Ok(false));
+        for stale in [
+            "1",
+            "gsv-vision-control-v1",
+            "gsv-vision-control-v1-explicit-modes",
+        ] {
+            assert_eq!(
+                event_channel_enabled(Some(stale)),
+                Err(ControlTransportError::InvalidEnvironment)
+            );
+        }
+        assert_eq!(
+            event_channel_enabled(Some(EVENT_CHANNEL_CONTRACT_MARKER)),
+            Ok(true)
+        );
     }
 
     #[test]
@@ -438,12 +434,7 @@ mod tests {
         let writer = thread::spawn(move || {
             write_events(&mut event_output, SESSION, event_receiver, status_receiver);
         });
-        let control = HelperControl {
-            context: Arc::new(Mutex::new(ControlContext::DISABLED)),
-            events,
-            statuses,
-            status_replacements,
-        };
+        let control = test_control(events, statuses, status_replacements);
 
         assert!(control.publish_terminal_lifecycle(LifecycleState::AssetsUnavailable));
         drop(control);
@@ -456,7 +447,7 @@ mod tests {
             Ok(Some(HelperEvent::Hello { .. }))
         ));
         assert_eq!(
-            read_frame::<HelperEvent>(&mut input).expect("terminal frame reads"),
+            read_frame::<HelperEvent>(&mut input).expect("terminal reads"),
             Some(HelperEvent::Lifecycle {
                 session_id: SESSION,
                 sequence: 1,
@@ -470,74 +461,87 @@ mod tests {
     }
 
     #[test]
-    fn every_session_fenced_context_frame_is_an_authority_acknowledgement() {
-        let context = Mutex::new(ControlContext::DISABLED);
-        let listening =
-            DesktopCommand::set_context(SESSION, Some(17), false, false).expect("context");
-        assert!(apply_context_command(SESSION, &context, listening));
+    fn every_same_session_context_is_an_authority_echo() {
+        let context = Mutex::new(ControlContext::Uninitialized);
+        for (revision, gesture) in [
+            (1_u64, GestureContext::Standby),
+            (
+                2,
+                GestureContext::Active {
+                    voice_request_id: 17,
+                    muted: false,
+                },
+            ),
+            (
+                3,
+                GestureContext::Active {
+                    voice_request_id: 17,
+                    muted: false,
+                },
+            ),
+            (4, GestureContext::Disabled),
+        ] {
+            let command = DesktopCommand::set_context(SESSION, gesture);
+            assert!(apply_context_command(SESSION, &context, command));
+            assert_eq!(
+                *context.lock().expect("context"),
+                ControlContext::Authoritative { revision, gesture }
+            );
+        }
+    }
+
+    #[test]
+    fn a_stale_supervisor_session_cannot_change_context_or_ack_pending_work() {
+        let context = Mutex::new(ControlContext::Authoritative {
+            revision: 7,
+            gesture: GestureContext::Standby,
+        });
+        let command = DesktopCommand::set_context(
+            SessionId::new(8, 9),
+            GestureContext::Active {
+                voice_request_id: 99,
+                muted: true,
+            },
+        );
+
+        assert!(!apply_context_command(SESSION, &context, command));
         assert_eq!(
             *context.lock().expect("context"),
-            ControlContext {
-                voice_request_id: Some(17),
-                armed: false,
-                muted: false,
-                revision: 1,
+            ControlContext::Authoritative {
+                revision: 7,
+                gesture: GestureContext::Standby,
             }
         );
-        assert!(apply_context_command(SESSION, &context, listening));
-        assert_eq!(context.lock().expect("context").revision, 2);
-
-        let armed_muted =
-            DesktopCommand::set_context(SESSION, Some(17), true, true).expect("active context");
-        assert!(apply_context_command(SESSION, &context, armed_muted));
-        assert_eq!(context.lock().expect("context").revision, 3);
-
-        let wrong = DesktopCommand::set_context(SessionId::new(8, 9), None, false, false)
-            .expect("disabled context");
-        assert!(!apply_context_command(SESSION, &context, wrong));
-        assert_eq!(context.lock().expect("context").revision, 3);
     }
 
     #[test]
     fn semantic_status_is_nonblocking_and_latest_wins() {
         let (events, _event_receiver) = bounded(EVENT_QUEUE_CAPACITY);
         let (statuses, status_receiver) = bounded(STATUS_QUEUE_CAPACITY);
-        let control = HelperControl {
-            context: Arc::new(Mutex::new(ControlContext::DISABLED)),
-            events,
-            statuses,
-            status_replacements: status_receiver.clone(),
-        };
+        let control = test_control(events, statuses, status_receiver.clone());
 
-        assert!(control.publish_status(ControlStatus::Disabled));
-        assert!(control.publish_status(ControlStatus::Active {
+        assert!(control.publish_status(ControlStatus::Standby { progress: None }));
+        let latest = ControlStatus::Active {
             voice_request_id: 41,
-            state: gsv_vision_control::GestureState::new(true, true),
+            muted: true,
             progress: None,
-        }));
-        assert_eq!(
-            status_receiver.try_recv(),
-            Ok(ControlStatus::Active {
-                voice_request_id: 41,
-                state: gsv_vision_control::GestureState::new(true, true),
-                progress: None,
-            })
-        );
+        };
+        assert!(control.publish_status(latest));
+        assert_eq!(status_receiver.try_recv(), Ok(latest));
     }
 
     #[test]
-    fn reliable_intent_precedes_a_queued_status_and_sets_wire_sequence() {
+    fn reliable_intents_precede_status_and_share_monotonic_sequence() {
         let output = SharedOutput::default();
         let (events, event_receiver) = bounded(EVENT_QUEUE_CAPACITY);
         let (statuses, status_receiver) = bounded(STATUS_QUEUE_CAPACITY);
-        let control = HelperControl {
-            context: Arc::new(Mutex::new(ControlContext::DISABLED)),
-            events,
-            statuses,
-            status_replacements: status_receiver.clone(),
-        };
-        assert!(control.publish_status(ControlStatus::Disabled));
-        assert!(control.publish_intent(91, GestureIntent::Send));
+        let control = test_control(events, statuses, status_receiver.clone());
+        assert!(control.publish_status(ControlStatus::Standby { progress: None }));
+        assert!(control.publish_intent(GestureIntent::StartTranscription));
+        assert!(control.publish_intent(GestureIntent::VoiceRequest {
+            voice_request_id: 91,
+            action: VoiceRequestGestureIntent::Send,
+        }));
 
         let mut event_output = output.clone();
         let writer = thread::spawn(move || {
@@ -549,21 +553,39 @@ mod tests {
         let bytes = output.0.lock().expect("output lock").clone();
         let mut input = Cursor::new(bytes);
         assert_eq!(
-            read_frame::<HelperEvent>(&mut input).expect("intent reads"),
+            read_frame::<HelperEvent>(&mut input).expect("start reads"),
             Some(HelperEvent::Intent {
                 session_id: SESSION,
                 sequence: 1,
-                voice_request_id: 91,
-                intent: GestureIntent::Send,
+                intent: GestureIntent::StartTranscription,
+            })
+        );
+        assert_eq!(
+            read_frame::<HelperEvent>(&mut input).expect("send reads"),
+            Some(HelperEvent::Intent {
+                session_id: SESSION,
+                sequence: 2,
+                intent: GestureIntent::VoiceRequest {
+                    voice_request_id: 91,
+                    action: VoiceRequestGestureIntent::Send,
+                },
             })
         );
         assert_eq!(
             read_frame::<HelperEvent>(&mut input).expect("status reads"),
             Some(HelperEvent::Status {
                 session_id: SESSION,
-                sequence: 2,
-                status: ControlStatus::Disabled,
+                sequence: 3,
+                status: ControlStatus::Standby { progress: None },
             })
         );
+    }
+
+    #[test]
+    fn wire_sequence_never_uses_zero_after_wrap() {
+        let mut sequence = u64::MAX;
+        assert_eq!(take_sequence(&mut sequence), u64::MAX);
+        assert_eq!(sequence, 1);
+        assert_eq!(take_sequence(&mut sequence), 1);
     }
 }

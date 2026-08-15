@@ -1,8 +1,9 @@
 use std::time::{Duration, Instant};
 
-use gpui::Context;
+use gpui::{Context, Window};
 use gsv_vision_control::{
-    ControlStatus, GestureCandidate, GestureIntent, GestureProgress, GestureState, LifecycleState,
+    ControlStatus, GestureCandidate, GestureContext, GestureIntent, GestureProgress,
+    LifecycleState, VoiceRequestGestureIntent,
 };
 
 use crate::vision_debug::{VisionContext, VisionEvent};
@@ -12,26 +13,28 @@ use super::{GsvApp, VoiceGestureStatus};
 const MAX_GESTURE_INTENT_AGE: Duration = Duration::from_secs(1);
 const MAX_GESTURE_STATUS_AGE: Duration = Duration::from_secs(1);
 
+const GESTURES_STARTING: &str = "GESTURE TRANSCRIPTION · STARTING";
+const GESTURES_STANDBY: &str = "GESTURE TRANSCRIPTION · STANDBY";
+const GESTURES_HOLD_TO_START: &str = "GESTURE TRANSCRIPTION · HOLD TO START";
+const GESTURES_UNAVAILABLE: &str = "GESTURE TRANSCRIPTION · UNAVAILABLE";
 const VOICE_GESTURES_DISABLED: &str = "LISTENING · SPEAK NOW · PRESS AGAIN TO FINISH";
 const VOICE_GESTURES_STARTING: &str = "LISTENING · GESTURES STARTING";
 const VOICE_GESTURES_UNAVAILABLE: &str = "LISTENING · GESTURES UNAVAILABLE · PRESS AGAIN TO FINISH";
-const VOICE_GESTURES_DISARMED: &str = "LISTENING · SHOW TWO OPEN PALMS";
-const VOICE_GESTURES_ARMED: &str = "LISTENING · GESTURES ARMED";
-const VOICE_GESTURES_MUTED_ARMED: &str = "LISTENING · MICROPHONE MUTED · GESTURES ARMED";
-const VOICE_GESTURES_MUTED_NEED_READY: &str = "LISTENING · MICROPHONE MUTED · SHOW TWO OPEN PALMS";
-const VOICE_GESTURES_MUTED_UNAVAILABLE: &str =
-    "LISTENING · MICROPHONE MUTED · GESTURES UNAVAILABLE";
-const VOICE_GESTURE_ARMING: &str = "LISTENING · ARMING GESTURES";
-const VOICE_GESTURE_DISARMING: &str = "LISTENING · DISARMING GESTURES";
-const VOICE_GESTURE_SENDING: &str = "LISTENING · PREPARING TO SEND";
+const VOICE_GESTURES_ACTIVE: &str = "LISTENING · GESTURES ACTIVE";
+const VOICE_GESTURES_MUTED: &str = "LISTENING · MICROPHONE MUTED";
+const VOICE_GESTURE_STOP: &str = "LISTENING · HOLD TO FINISH";
+const VOICE_GESTURE_SEND: &str = "LISTENING · HOLD TO SEND";
+const VOICE_GESTURE_MUTE: &str = "LISTENING · HOLD TO MUTE";
+const VOICE_GESTURE_UNMUTE: &str = "LISTENING · HOLD TO UNMUTE";
 const VOICE_GESTURE_MUTING: &str = "LISTENING · MUTING MICROPHONE";
 const VOICE_GESTURE_UNMUTING: &str = "LISTENING · UNMUTING MICROPHONE";
 
 impl GsvApp {
-    /// Gives the helper a request-scoped action lease only after transcription
-    /// has authoritatively entered its listening phase.
-    pub(super) fn enable_vision_for_voice(&mut self, request_id: u64) {
-        if !self.voice_request_accepts_gestures(request_id) {
+    /// Claims one Desktop-owned voice request for eventual gesture actions.
+    /// A newly accepted transcription remains Disabled until Listening and
+    /// its initial MuteState have both become authoritative.
+    pub(super) fn begin_vision_for_voice(&mut self, request_id: u64) {
+        if self.vision_context.is_none() || self.active_voice_request_id() != Some(request_id) {
             return;
         }
         if self.vision_voice_request_id != Some(request_id) {
@@ -41,34 +44,79 @@ impl GsvApp {
         self.sync_vision_context();
     }
 
-    /// Invalidates the action lease before the voice request is cleared. A
-    /// queued event still carries the old request ID and is rejected below.
-    pub(super) fn disable_vision_for_voice(&mut self, request_id: u64) {
-        if self
-            .vision_gesture_status
-            .is_some_and(|status| status.request_id == request_id)
+    /// Recomputes the exact request lease after authoritative transcription
+    /// state changes. This promotes Disabled to Active only when every
+    /// request-scoped action precondition is known.
+    pub(super) fn enable_vision_for_voice(&mut self, request_id: u64) {
+        if self.vision_context.is_none()
+            || self.active_voice_request_id() != Some(request_id)
+            || self
+                .vision_lifecycle
+                .is_some_and(|state| state != LifecycleState::Ready)
         {
-            self.clear_voice_gesture_status();
-        }
-        if self.vision_voice_request_id != Some(request_id) {
             return;
         }
-        self.vision_voice_request_id = None;
+        if self.vision_voice_request_id != Some(request_id) {
+            self.vision_voice_request_id = Some(request_id);
+            self.clear_voice_gesture_status();
+        }
         self.sync_vision_context();
     }
 
-    pub(super) fn handle_vision_event(&mut self, event: VisionEvent, cx: &mut Context<Self>) {
+    /// Revokes the helper's request lease before a terminal transition. The
+    /// presence of a VoiceDraft keeps the context Disabled until the matching
+    /// Final, Cancelled, or Error event clears the request and restores
+    /// Standby.
+    pub(super) fn disable_vision_for_voice(&mut self, request_id: u64) {
+        if self.vision_gesture_status.is_some_and(|status| {
+            matches!(
+                status.context,
+                GestureContext::Active {
+                    voice_request_id,
+                    ..
+                } if voice_request_id == request_id
+            )
+        }) {
+            self.clear_voice_gesture_status();
+        }
+        if self.vision_voice_request_id == Some(request_id) {
+            self.vision_voice_request_id = None;
+        }
+        self.sync_vision_context();
+    }
+
+    pub(super) fn initialize_vision_context(&mut self) {
+        self.sync_vision_context();
+        self.refresh_idle_vision_notice();
+    }
+
+    pub(super) fn handle_vision_event(
+        &mut self,
+        event: VisionEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.handle_vision_event_with_window_state(event, window.is_window_active(), window, cx);
+    }
+
+    fn handle_vision_event_with_window_state(
+        &mut self,
+        event: VisionEvent,
+        window_is_active: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         match event {
             VisionEvent::Lifecycle(state) => {
                 self.vision_lifecycle = Some(state);
                 if state != LifecycleState::Ready {
-                    // A helper lifecycle failure revokes arming, but cannot
-                    // synthesize an unrelated microphone unmute.
-                    self.gesture_disarm_dictation(cx);
+                    if let Some(request_id) = self.vision_voice_request_id {
+                        self.disable_vision_for_voice(request_id);
+                    }
                     self.clear_voice_gesture_status();
                 }
                 self.sync_vision_context();
-                self.refresh_listening_voice_notice();
+                self.refresh_voice_gesture_notice();
                 cx.notify();
             }
             VisionEvent::Status {
@@ -80,105 +128,103 @@ impl GsvApp {
                     return;
                 }
                 self.vision_status_sequence = sequence;
+                let (context, progress) = status_context(status);
+                let current_context = self.current_vision_context();
                 if Instant::now().saturating_duration_since(received_at) > MAX_GESTURE_STATUS_AGE {
-                    if matches!(
-                        status,
-                        ControlStatus::Active {
-                            voice_request_id,
-                            ..
-                        } if self.vision_voice_request_id == Some(voice_request_id)
-                            && self.active_voice_request_id() == Some(voice_request_id)
-                            && self.voice_request_accepts_gestures(voice_request_id)
-                    ) {
-                        // A stale latest snapshot cannot replace current
-                        // presentation, but it proves any older claim is no
-                        // longer trustworthy. Keep the voice action state and
-                        // fall back to the bounded synchronization notice.
+                    if context == current_context {
                         self.clear_voice_gesture_status();
-                        self.refresh_listening_voice_notice();
+                        self.refresh_voice_gesture_notice();
                         cx.notify();
                     }
                     return;
                 }
-                match status {
-                    ControlStatus::Disabled => self.clear_voice_gesture_status(),
-                    ControlStatus::Active {
-                        voice_request_id,
-                        state,
-                        progress,
-                    } => {
-                        if self.vision_voice_request_id != Some(voice_request_id)
-                            || self.active_voice_request_id() != Some(voice_request_id)
-                            || !self.voice_request_accepts_gestures(voice_request_id)
-                        {
-                            return;
-                        }
-                        self.set_voice_gesture_status(
-                            VoiceGestureStatus {
-                                request_id: voice_request_id,
-                                sequence,
-                                received_at,
-                                state,
-                                progress,
-                            },
-                            cx,
-                        );
-                    }
+                if self.vision_lifecycle != Some(LifecycleState::Ready)
+                    || context != current_context
+                    || context == GestureContext::Disabled
+                {
+                    return;
                 }
-                self.refresh_listening_voice_notice();
+                self.set_voice_gesture_status(
+                    VoiceGestureStatus {
+                        sequence,
+                        received_at,
+                        context,
+                        progress,
+                    },
+                    cx,
+                );
+                self.refresh_voice_gesture_notice();
                 cx.notify();
             }
             VisionEvent::Intent {
                 sequence: _,
                 received_at,
-                voice_request_id,
                 intent,
             } => {
-                if self.vision_voice_request_id != Some(voice_request_id)
-                    || self.active_voice_request_id() != Some(voice_request_id)
-                {
-                    return;
-                }
+                let fresh =
+                    Instant::now().saturating_duration_since(received_at) <= MAX_GESTURE_INTENT_AGE;
+                let ready = self.vision_lifecycle == Some(LifecycleState::Ready);
 
-                let eligible = Instant::now().saturating_duration_since(received_at)
-                    <= MAX_GESTURE_INTENT_AGE
-                    && self.vision_lifecycle == Some(LifecycleState::Ready)
-                    && self.voice_request_accepts_gestures(voice_request_id);
-                if eligible {
-                    match intent {
-                        GestureIntent::Arm => {
-                            self.gesture_arm_dictation(cx);
+                match intent {
+                    GestureIntent::StartTranscription => {
+                        let eligible = fresh
+                            && ready
+                            && self.current_vision_context() == GestureContext::Standby
+                            && window_is_active
+                            && self.dictation_start_is_safe();
+                        if eligible {
+                            self.start_dictation(window, cx);
                         }
-                        GestureIntent::Disarm => {
-                            self.gesture_disarm_dictation(cx);
-                        }
-                        GestureIntent::Send => {
-                            if self.gesture_send_dictation_now(cx) {
-                                self.voice_notice =
-                                    Some("LISTENING · PREPARING TO SEND".to_string());
+                    }
+                    GestureIntent::VoiceRequest {
+                        voice_request_id,
+                        action,
+                    } => {
+                        let owns_request = self.vision_voice_request_id == Some(voice_request_id)
+                            && self.active_voice_request_id() == Some(voice_request_id);
+                        if fresh && ready && owns_request {
+                            match action {
+                                VoiceRequestGestureIntent::StopTranscription => {
+                                    if self.voice_request_can_stop(voice_request_id) {
+                                        self.disable_vision_for_voice(voice_request_id);
+                                        self.finish_dictation(cx);
+                                    }
+                                }
+                                VoiceRequestGestureIntent::Send
+                                    if self.voice_request_accepts_gestures(voice_request_id) =>
+                                {
+                                    self.gesture_send_dictation_now(cx);
+                                }
+                                VoiceRequestGestureIntent::Mute
+                                    if self.voice_request_accepts_gestures(voice_request_id) =>
+                                {
+                                    self.gesture_set_dictation_muted(true, cx);
+                                }
+                                VoiceRequestGestureIntent::Unmute
+                                    if self.voice_request_accepts_gestures(voice_request_id) =>
+                                {
+                                    self.gesture_set_dictation_muted(false, cx);
+                                }
+                                VoiceRequestGestureIntent::Send
+                                | VoiceRequestGestureIntent::Mute
+                                | VoiceRequestGestureIntent::Unmute => {}
                             }
-                        }
-                        GestureIntent::Mute => {
-                            self.gesture_set_dictation_muted(true, cx);
-                        }
-                        GestureIntent::Unmute => {
-                            self.gesture_set_dictation_muted(false, cx);
                         }
                     }
                 }
 
-                // A reliable intent supersedes its older explanatory status.
-                // Rejected and idempotent intents need an explicit absolute
-                // context replay so the helper can leave AwaitingAuthority.
-                // An accepted mute transition is the one exception: replaying
-                // the old bit would reject it before transcription acks.
+                // Reliable actions supersede explanatory status. Rejected and
+                // idempotent intents receive a fresh absolute authority echo.
+                // Accepted mute/send actions remain pending until their exact
+                // MuteState/SegmentFinal completion, so replaying the old
+                // state here would acknowledge them prematurely.
                 self.clear_voice_gesture_status();
                 if self.dictation_pending_mute().is_none()
                     && !self.dictation_segment_commit_is_pending()
                 {
                     self.reassert_vision_context();
                 }
-                self.refresh_listening_voice_notice();
+                self.refresh_voice_gesture_notice();
                 cx.notify();
             }
         }
@@ -199,15 +245,29 @@ impl GsvApp {
     }
 
     fn current_vision_context(&self) -> VisionContext {
-        self.vision_voice_request_id
+        if let Some(request_id) = self
+            .vision_voice_request_id
             .filter(|request_id| self.active_voice_request_id() == Some(*request_id))
-            .map_or_else(VisionContext::disabled, |request_id| {
-                VisionContext::listening(
-                    request_id,
-                    self.dictation_gestures_are_armed(),
-                    self.dictation_is_muted(),
-                )
-            })
+        {
+            return if self.voice_request_has_active_gesture_context(request_id) {
+                VisionContext::Active {
+                    voice_request_id: request_id,
+                    muted: self.dictation_is_muted(),
+                }
+            } else {
+                VisionContext::Disabled
+            };
+        }
+
+        if self.active_voice_request_id().is_some()
+            || self.microphone_chooser.is_some()
+            || self.pending_microphone_request.is_some()
+            || self.microphone_save_pending
+        {
+            VisionContext::Disabled
+        } else {
+            VisionContext::Standby
+        }
     }
 
     pub(super) fn listening_voice_notice(&self, request_id: u64) -> &'static str {
@@ -219,97 +279,76 @@ impl GsvApp {
             };
         }
 
-        let progress = self.voice_gesture_progress(request_id);
-        let armed = self.dictation_gestures_are_armed();
         let muted = self.dictation_is_muted();
-
         if self.vision_context.is_none() {
-            return if muted {
-                VOICE_GESTURES_MUTED_UNAVAILABLE
-            } else if self.vision_lifecycle.is_some() {
+            return if self.vision_lifecycle.is_some() {
                 VOICE_GESTURES_UNAVAILABLE
             } else {
                 VOICE_GESTURES_DISABLED
             };
         }
         if self.vision_lifecycle != Some(LifecycleState::Ready) {
-            return if muted {
-                VOICE_GESTURES_MUTED_UNAVAILABLE
-            } else if self.vision_lifecycle.is_none() {
+            return if self.vision_lifecycle.is_none() {
                 VOICE_GESTURES_STARTING
             } else {
                 VOICE_GESTURES_UNAVAILABLE
             };
         }
-        if !self.dictation_mute_state_is_authoritative() {
+        if !self.voice_request_accepts_gestures(request_id) {
             return VOICE_GESTURES_STARTING;
         }
-        if let Some(progress) = progress {
+        if let Some(progress) = self.voice_gesture_progress(GestureContext::Active {
+            voice_request_id: request_id,
+            muted,
+        }) {
             return match progress.candidate() {
-                GestureCandidate::Arm => VOICE_GESTURE_ARMING,
-                GestureCandidate::Disarm => VOICE_GESTURE_DISARMING,
-                GestureCandidate::Send => VOICE_GESTURE_SENDING,
-                GestureCandidate::Mute => VOICE_GESTURE_MUTING,
-                GestureCandidate::Unmute => VOICE_GESTURE_UNMUTING,
+                GestureCandidate::StopTranscription => VOICE_GESTURE_STOP,
+                GestureCandidate::Send => VOICE_GESTURE_SEND,
+                GestureCandidate::Mute => VOICE_GESTURE_MUTE,
+                GestureCandidate::Unmute => VOICE_GESTURE_UNMUTE,
+                GestureCandidate::StartTranscription => VOICE_GESTURES_ACTIVE,
             };
         }
         if muted {
-            if armed {
-                VOICE_GESTURES_MUTED_ARMED
-            } else {
-                VOICE_GESTURES_MUTED_NEED_READY
-            }
-        } else if armed {
-            VOICE_GESTURES_ARMED
+            VOICE_GESTURES_MUTED
         } else {
-            VOICE_GESTURES_DISARMED
+            VOICE_GESTURES_ACTIVE
         }
     }
 
-    /// Returns only fresh, request-fenced presentation progress. The helper
-    /// owns dwell timing; Desktop consumes the normalized value without
-    /// deriving acceptance or turning it into an action.
+    /// Returns only fresh presentation progress that matches Desktop's
+    /// current absolute context. Status can animate UI but never invokes an
+    /// action.
     pub(super) fn visible_voice_gesture_progress(&self) -> Option<GestureProgress> {
-        self.voice_gesture_progress(self.vision_voice_request_id?)
-    }
-
-    fn voice_gesture_progress(&self, request_id: u64) -> Option<GestureProgress> {
-        let status = self.fresh_voice_gesture_status(request_id)?;
+        let context = self.current_vision_context();
         if self.vision_lifecycle != Some(LifecycleState::Ready)
-            || self.vision_voice_request_id != Some(request_id)
-            || self.active_voice_request_id() != Some(request_id)
-            || !self.voice_request_accepts_gestures(request_id)
+            || context == GestureContext::Disabled
             || self.dictation_pending_mute().is_some()
+            || self.dictation_segment_commit_is_pending()
         {
             return None;
         }
-        let progress = status.progress?;
-        let app_state = GestureState::new(
-            self.dictation_gestures_are_armed(),
-            self.dictation_is_muted(),
-        );
-        if status.state != app_state || !progress.is_compatible_with(status.state) {
-            return None;
-        }
-        Some(progress)
+        self.voice_gesture_progress(context)
     }
 
-    fn fresh_voice_gesture_status(&self, request_id: u64) -> Option<VoiceGestureStatus> {
+    fn voice_gesture_progress(&self, context: GestureContext) -> Option<GestureProgress> {
+        let status = self.fresh_voice_gesture_status(context)?;
+        let progress = status.progress?;
+        progress.is_compatible_with(context).then_some(progress)
+    }
+
+    fn fresh_voice_gesture_status(&self, context: GestureContext) -> Option<VoiceGestureStatus> {
         self.vision_gesture_status.filter(|status| {
-            status.request_id == request_id
+            status.context == context
                 && Instant::now().saturating_duration_since(status.received_at)
                     < MAX_GESTURE_STATUS_AGE
         })
     }
 
-    /// Stores one presentation snapshot and owns its expiry. The timer is
-    /// replaced by every newer snapshot, while request, sequence, and receipt
-    /// time fences prevent an older task from clearing newer presentation.
-    /// Expiry never changes the app-owned voice gesture or mute state.
     fn set_voice_gesture_status(&mut self, status: VoiceGestureStatus, cx: &mut Context<Self>) {
         let age = Instant::now().saturating_duration_since(status.received_at);
         let expires_in = MAX_GESTURE_STATUS_AGE.saturating_sub(age);
-        let request_id = status.request_id;
+        let context = status.context;
         let sequence = status.sequence;
         let received_at = status.received_at;
         self.vision_gesture_status = Some(status);
@@ -319,13 +358,13 @@ impl GsvApp {
             timer.await;
             let _ = this.update(cx, |this, cx| {
                 let still_current = this.vision_gesture_status.is_some_and(|current| {
-                    current.request_id == request_id
+                    current.context == context
                         && current.sequence == sequence
                         && current.received_at == received_at
                 });
                 if still_current {
                     this.vision_gesture_status = None;
-                    this.refresh_listening_voice_notice();
+                    this.refresh_voice_gesture_notice();
                     cx.notify();
                 }
             });
@@ -338,13 +377,93 @@ impl GsvApp {
     }
 
     pub(super) fn refresh_listening_voice_notice(&mut self) {
-        let Some(request_id) = self
-            .vision_voice_request_id
-            .filter(|request_id| self.voice_request_accepts_gestures(*request_id))
-        else {
+        self.refresh_voice_gesture_notice();
+    }
+
+    pub(super) fn refresh_idle_vision_notice(&mut self) {
+        if self.active_voice_request_id().is_some()
+            || self.microphone_chooser.is_some()
+            || self.pending_microphone_request.is_some()
+            || self.microphone_save_pending
+        {
             return;
+        }
+        if self.voice_notice.as_deref().is_some_and(|notice| {
+            !matches!(
+                notice,
+                GESTURES_STARTING
+                    | GESTURES_STANDBY
+                    | GESTURES_HOLD_TO_START
+                    | GESTURES_UNAVAILABLE
+            )
+        }) {
+            // Voice/microphone owners keep their actionable result until an
+            // ordinary user operation replaces it. Presentation-only helper
+            // status must never erase an error or terminal outcome.
+            return;
+        }
+        self.voice_notice = if self.vision_context.is_none() {
+            self.vision_lifecycle
+                .is_some()
+                .then(|| GESTURES_UNAVAILABLE.to_string())
+        } else {
+            Some(
+                match self.vision_lifecycle {
+                    Some(LifecycleState::Ready) => {
+                        if self
+                            .voice_gesture_progress(GestureContext::Standby)
+                            .is_some_and(|progress| {
+                                progress.candidate() == GestureCandidate::StartTranscription
+                            })
+                        {
+                            GESTURES_HOLD_TO_START
+                        } else {
+                            GESTURES_STANDBY
+                        }
+                    }
+                    None => GESTURES_STARTING,
+                    Some(_) => GESTURES_UNAVAILABLE,
+                }
+                .to_string(),
+            )
         };
-        self.voice_notice = Some(self.listening_voice_notice(request_id).to_string());
+    }
+
+    fn refresh_voice_gesture_notice(&mut self) {
+        if let Some(request_id) = self.active_voice_request_id() {
+            if self.voice_request_is_stopping(request_id) {
+                return;
+            }
+            if self.voice_request_is_listening(request_id) {
+                self.voice_notice = Some(self.listening_voice_notice(request_id).to_string());
+            } else if self
+                .vision_lifecycle
+                .is_some_and(|state| state != LifecycleState::Ready)
+            {
+                self.voice_notice =
+                    Some("PREPARING VOICE INPUT · GESTURES UNAVAILABLE".to_string());
+            }
+            return;
+        }
+        self.refresh_idle_vision_notice();
+    }
+}
+
+fn status_context(status: ControlStatus) -> (GestureContext, Option<GestureProgress>) {
+    match status {
+        ControlStatus::Disabled => (GestureContext::Disabled, None),
+        ControlStatus::Standby { progress } => (GestureContext::Standby, progress),
+        ControlStatus::Active {
+            voice_request_id,
+            muted,
+            progress,
+        } => (
+            GestureContext::Active {
+                voice_request_id,
+                muted,
+            },
+            progress,
+        ),
     }
 }
 
@@ -353,226 +472,21 @@ mod tests {
     use std::cell::RefCell;
     use std::rc::Rc;
 
-    use gpui::{AppContext as _, TestAppContext, WindowOptions};
+    use gpui::{AppContext as _, Entity, TestAppContext, WindowOptions};
     use gpui_component::Root;
+    use gsv_config::MicrophonePreference;
 
-    use crate::app::microphone::VoiceDraft;
+    use crate::client::{ClientCommand, ClientHandle};
+    use crate::transcription::{VoiceCommand, VoiceEvent, VoicePhase};
 
     use super::*;
 
-    #[test]
-    fn protocol_intents_are_explicit_not_toggles() {
-        assert_ne!(GestureIntent::Arm, GestureIntent::Disarm);
-        assert_ne!(GestureIntent::Mute, GestureIntent::Unmute);
-        assert_ne!(GestureIntent::Send, GestureIntent::Mute);
-    }
-
-    #[gpui::test]
-    fn opted_in_vision_startup_failure_is_visible_while_listening(cx: &mut TestAppContext) {
-        cx.update(|cx| {
-            gpui_component::init(cx);
-            crate::app::bind_keys(cx);
-            crate::register_fonts(cx);
-            crate::configure_theme(cx);
-        });
-        let (command_tx, _command_rx) = tokio::sync::mpsc::unbounded_channel();
-        let (_event_tx, event_rx) = tokio::sync::mpsc::unbounded_channel();
-        let client = crate::client::ClientHandle {
-            commands: command_tx,
-            events: event_rx,
-            login: None,
-        };
-        let app = Rc::new(RefCell::new(None));
-        let app_for_window = app.clone();
-        let window = cx.update(|cx| {
-            cx.open_window(WindowOptions::default(), move |window, cx| {
-                let view = cx.new(|cx| {
-                    GsvApp::new_with_vision(
-                        window,
-                        cx,
-                        client,
-                        true,
-                        false,
-                        true,
-                        crate::app::VisionStartup::Unavailable,
-                    )
-                });
-                *app_for_window.borrow_mut() = Some(view.clone());
-                cx.new(|cx| Root::new(view, window, cx))
-            })
-            .expect("the GPUI surface should open")
-        });
-        let app = app.borrow().clone().expect("app entity should be retained");
-        let window_handle: gpui::AnyWindowHandle = window.into();
-        window_handle
-            .update(cx, |_, window, cx| {
-                app.update(cx, |app, cx| {
-                    assert!(app.vision_context.is_none());
-                    assert_eq!(app.vision_lifecycle, Some(LifecycleState::Interrupted));
-                    app.voice_draft = Some(VoiceDraft::new(
-                        73,
-                        String::new(),
-                        String::new(),
-                        String::new(),
-                    ));
-
-                    app.handle_voice_event(
-                        crate::transcription::VoiceEvent::State {
-                            request_id: 73,
-                            phase: crate::transcription::VoicePhase::Listening,
-                            progress: None,
-                        },
-                        window,
-                        cx,
-                    );
-
-                    assert_eq!(
-                        app.voice_notice.as_deref(),
-                        Some(VOICE_GESTURES_UNAVAILABLE)
-                    );
-                });
-            })
-            .expect("window remains open");
-    }
-
-    #[gpui::test]
-    fn gesture_feedback_survives_partial_transcript_updates(cx: &mut TestAppContext) {
-        cx.update(|cx| {
-            gpui_component::init(cx);
-            crate::app::bind_keys(cx);
-            crate::register_fonts(cx);
-            crate::configure_theme(cx);
-        });
-        let (command_tx, _command_rx) = tokio::sync::mpsc::unbounded_channel();
-        let (_event_tx, event_rx) = tokio::sync::mpsc::unbounded_channel();
-        let client = crate::client::ClientHandle {
-            commands: command_tx,
-            events: event_rx,
-            login: None,
-        };
-        let app = Rc::new(RefCell::new(None));
-        let app_for_window = app.clone();
-        let window = cx.update(|cx| {
-            cx.open_window(WindowOptions::default(), move |window, cx| {
-                let view = cx.new(|cx| GsvApp::new(window, cx, client, true, false, true));
-                *app_for_window.borrow_mut() = Some(view.clone());
-                cx.new(|cx| Root::new(view, window, cx))
-            })
-            .expect("the GPUI surface should open")
-        });
-        let app = app.borrow().clone().expect("app entity should be retained");
-        let window_handle: gpui::AnyWindowHandle = window.into();
-        window_handle
-            .update(cx, |_, window, cx| {
-                app.update(cx, |app, cx| {
-                    app.voice_draft = Some(VoiceDraft::new(
-                        73,
-                        String::new(),
-                        String::new(),
-                        String::new(),
-                    ));
-
-                    app.handle_voice_event(
-                        crate::transcription::VoiceEvent::State {
-                            request_id: 73,
-                            phase: crate::transcription::VoicePhase::Listening,
-                            progress: None,
-                        },
-                        window,
-                        cx,
-                    );
-                    app.handle_voice_event(
-                        crate::transcription::VoiceEvent::MuteState {
-                            request_id: 73,
-                            revision: 0,
-                            muted: false,
-                        },
-                        window,
-                        cx,
-                    );
-                    assert_eq!(app.voice_notice.as_deref(), Some(VOICE_GESTURES_DISABLED));
-
-                    app.vision_context = Some(crate::vision_debug::VisionContextSender::for_test());
-                    app.handle_vision_event(VisionEvent::Lifecycle(LifecycleState::Ready), cx);
-                    assert_eq!(app.voice_notice.as_deref(), Some(VOICE_GESTURES_DISARMED));
-
-                    app.handle_vision_event(
-                        VisionEvent::Intent {
-                            sequence: 2,
-                            received_at: Instant::now(),
-                            voice_request_id: 73,
-                            intent: GestureIntent::Arm,
-                        },
-                        cx,
-                    );
-                    assert_eq!(app.voice_notice.as_deref(), Some(VOICE_GESTURES_ARMED));
-
-                    let send_progress = GestureProgress::new(GestureCandidate::Send, 625)
-                        .expect("test progress is in range");
-                    app.handle_vision_event(
-                        VisionEvent::Status {
-                            sequence: 3,
-                            received_at: Instant::now(),
-                            status: ControlStatus::Active {
-                                voice_request_id: 73,
-                                state: GestureState::new(true, false),
-                                progress: Some(send_progress),
-                            },
-                        },
-                        cx,
-                    );
-                    assert_eq!(app.voice_notice.as_deref(), Some(VOICE_GESTURE_SENDING));
-                    assert_eq!(app.visible_voice_gesture_progress(), Some(send_progress));
-
-                    app.handle_voice_event(
-                        crate::transcription::VoiceEvent::Partial {
-                            request_id: 73,
-                            segment_id: 0,
-                            revision: 1,
-                            committed: "hello".to_string(),
-                            tentative: " world".to_string(),
-                        },
-                        window,
-                        cx,
-                    );
-                    assert_eq!(app.voice_notice.as_deref(), Some(VOICE_GESTURE_SENDING));
-                    assert_eq!(app.visible_voice_gesture_progress(), Some(send_progress));
-
-                    app.handle_vision_event(
-                        VisionEvent::Status {
-                            sequence: 4,
-                            received_at: Instant::now(),
-                            status: ControlStatus::Active {
-                                voice_request_id: 73,
-                                state: GestureState::new(true, false),
-                                progress: None,
-                            },
-                        },
-                        cx,
-                    );
-                    assert_eq!(app.voice_notice.as_deref(), Some(VOICE_GESTURES_ARMED));
-                    assert!(app.visible_voice_gesture_progress().is_none());
-                });
-            })
-            .expect("window remains open");
-        cx.run_until_parked();
-
-        cx.update(|cx| {
-            let app = app.read(cx);
-            assert_eq!(app.voice_notice.as_deref(), Some(VOICE_GESTURES_ARMED));
-            assert_eq!(app.input.read(cx).value().as_ref(), "hello world");
-            assert!(app.vision_gesture_status.is_some_and(|status| {
-                status.request_id == 73
-                    && status.sequence == 4
-                    && status.state == GestureState::new(true, false)
-                    && status.progress.is_none()
-            }));
-        });
-    }
-
-    #[gpui::test]
-    fn mismatched_status_is_ignored_and_stale_current_status_clears_feedback(
+    fn open_test_app(
         cx: &mut TestAppContext,
+    ) -> (
+        Entity<GsvApp>,
+        gpui::AnyWindowHandle,
+        tokio::sync::mpsc::UnboundedReceiver<ClientCommand>,
     ) {
         cx.update(|cx| {
             gpui_component::init(cx);
@@ -580,15 +494,15 @@ mod tests {
             crate::register_fonts(cx);
             crate::configure_theme(cx);
         });
-        let (command_tx, _command_rx) = tokio::sync::mpsc::unbounded_channel();
+        let (command_tx, command_rx) = tokio::sync::mpsc::unbounded_channel();
         let (_event_tx, event_rx) = tokio::sync::mpsc::unbounded_channel();
-        let client = crate::client::ClientHandle {
+        let client = ClientHandle {
             commands: command_tx,
             events: event_rx,
             login: None,
         };
         let app = Rc::new(RefCell::new(None));
-        let app_for_window = app.clone();
+        let app_for_window = Rc::clone(&app);
         let window = cx.update(|cx| {
             cx.open_window(WindowOptions::default(), move |window, cx| {
                 let view = cx.new(|cx| GsvApp::new(window, cx, client, true, false, true));
@@ -598,633 +512,494 @@ mod tests {
             .expect("the GPUI surface should open")
         });
         let app = app.borrow().clone().expect("app entity should be retained");
-        let window_handle: gpui::AnyWindowHandle = window.into();
-        window_handle
+        (app, window.into(), command_rx)
+    }
+
+    fn install_ready_vision(
+        app: &Entity<GsvApp>,
+        window: gpui::AnyWindowHandle,
+        cx: &mut TestAppContext,
+    ) -> (
+        crate::vision_debug::VisionContextSender,
+        std::sync::mpsc::Receiver<VoiceCommand>,
+    ) {
+        let context = crate::vision_debug::VisionContextSender::for_test();
+        let returned_context = context.clone();
+        let (voice_commands, voice_events) =
+            crate::transcription::VoiceCommandSender::channel_for_test();
+        window
+            .update(cx, |_, _, cx| {
+                app.update(cx, |app, _cx| {
+                    app.vision_context = Some(context);
+                    app.vision_lifecycle = Some(LifecycleState::Ready);
+                    app.microphone_preference = MicrophonePreference::SystemDefault;
+                    app.voice_commands = voice_commands;
+                    app.sync_vision_context();
+                });
+            })
+            .expect("window remains open");
+        (returned_context, voice_events)
+    }
+
+    fn start_and_activate(
+        app: &Entity<GsvApp>,
+        window: gpui::AnyWindowHandle,
+        cx: &mut TestAppContext,
+        request_id: u64,
+    ) {
+        window
             .update(cx, |_, window, cx| {
                 app.update(cx, |app, cx| {
-                    app.vision_context = Some(crate::vision_debug::VisionContextSender::for_test());
-                    app.vision_lifecycle = Some(LifecycleState::Ready);
-                    app.voice_draft = Some(VoiceDraft::new(
-                        74,
-                        String::new(),
-                        String::new(),
-                        String::new(),
-                    ));
                     app.handle_voice_event(
-                        crate::transcription::VoiceEvent::State {
-                            request_id: 74,
-                            phase: crate::transcription::VoicePhase::Listening,
+                        VoiceEvent::State {
+                            request_id,
+                            phase: VoicePhase::Listening,
                             progress: None,
                         },
                         window,
                         cx,
                     );
                     app.handle_voice_event(
-                        crate::transcription::VoiceEvent::MuteState {
-                            request_id: 74,
+                        VoiceEvent::MuteState {
+                            request_id,
                             revision: 0,
                             muted: false,
                         },
                         window,
                         cx,
                     );
-                    app.handle_vision_event(
+                });
+            })
+            .expect("window remains open");
+    }
+
+    #[gpui::test]
+    fn gesture_start_uses_the_desktop_owned_start_path(cx: &mut TestAppContext) {
+        let (app, window, _client_commands) = open_test_app(cx);
+        let (context, voice_events) = install_ready_vision(&app, window, cx);
+
+        window
+            .update(cx, |_, window, cx| {
+                app.update(cx, |app, cx| {
+                    assert_eq!(context.context_for_test(), GestureContext::Standby);
+                    app.handle_vision_event_with_window_state(
                         VisionEvent::Intent {
-                            sequence: 9,
+                            sequence: 1,
                             received_at: Instant::now(),
-                            voice_request_id: 74,
-                            intent: GestureIntent::Arm,
+                            intent: GestureIntent::StartTranscription,
                         },
+                        true,
+                        window,
                         cx,
                     );
+                });
+            })
+            .expect("window remains open");
+
+        assert!(matches!(
+            voice_events.try_recv(),
+            Ok(VoiceCommand::Start { request_id: 1, .. })
+        ));
+        assert_eq!(context.context_for_test(), GestureContext::Disabled);
+        start_and_activate(&app, window, cx, 1);
+        assert_eq!(
+            context.context_for_test(),
+            GestureContext::Active {
+                voice_request_id: 1,
+                muted: false,
+            }
+        );
+    }
+
+    #[gpui::test]
+    fn keyboard_start_immediately_echoes_owned_starting_context(cx: &mut TestAppContext) {
+        let (app, window, _client_commands) = open_test_app(cx);
+        let (context, voice_events) = install_ready_vision(&app, window, cx);
+
+        window
+            .update(cx, |_, window, cx| {
+                app.update(cx, |app, cx| {
+                    app.toggle_dictation_action(&crate::app::ToggleDictation, window, cx);
+                });
+            })
+            .expect("window remains open");
+
+        assert!(matches!(
+            voice_events.try_recv(),
+            Ok(VoiceCommand::Start { request_id: 1, .. })
+        ));
+        assert_eq!(context.context_for_test(), GestureContext::Disabled);
+    }
+
+    #[gpui::test]
+    fn stale_and_unsafe_start_intents_are_ignored_and_status_is_presentation_only(
+        cx: &mut TestAppContext,
+    ) {
+        let (app, window, _client_commands) = open_test_app(cx);
+        let (context, voice_events) = install_ready_vision(&app, window, cx);
+        let stale = Instant::now()
+            .checked_sub(MAX_GESTURE_INTENT_AGE + Duration::from_millis(1))
+            .expect("test instant supports a short subtraction");
+        let progress = GestureProgress::new(GestureCandidate::StartTranscription, 500)
+            .expect("bounded test progress");
+
+        window
+            .update(cx, |_, window, cx| {
+                app.update(cx, |app, cx| {
                     app.handle_vision_event(
                         VisionEvent::Status {
-                            sequence: 10,
+                            sequence: 1,
                             received_at: Instant::now(),
-                            status: ControlStatus::Active {
-                                voice_request_id: 74,
-                                state: GestureState::new(true, false),
-                                progress: None,
+                            status: ControlStatus::Standby {
+                                progress: Some(progress),
                             },
                         },
-                        cx,
-                    );
-
-                    let stale = Instant::now()
-                        .checked_sub(MAX_GESTURE_STATUS_AGE + Duration::from_millis(1))
-                        .expect("test instant supports a short subtraction");
-                    app.handle_vision_event(
-                        VisionEvent::Status {
-                            sequence: 11,
-                            received_at: stale,
-                            status: ControlStatus::Active {
-                                voice_request_id: 75,
-                                state: GestureState::new(false, false),
-                                progress: None,
-                            },
-                        },
-                        cx,
-                    );
-                    assert_eq!(app.voice_notice.as_deref(), Some(VOICE_GESTURES_ARMED));
-                    assert!(app.vision_gesture_status.is_some_and(|status| {
-                        status.request_id == 74
-                            && status.sequence == 10
-                            && status.state == GestureState::new(true, false)
-                            && status.progress.is_none()
-                    }));
-
-                    app.handle_vision_event(
-                        VisionEvent::Status {
-                            sequence: 12,
-                            received_at: stale,
-                            status: ControlStatus::Active {
-                                voice_request_id: 74,
-                                state: GestureState::new(false, false),
-                                progress: None,
-                            },
-                        },
-                        cx,
-                    );
-                    assert_eq!(app.voice_notice.as_deref(), Some(VOICE_GESTURES_ARMED));
-                    assert!(app.vision_gesture_status.is_none());
-                    assert_eq!(app.vision_status_sequence, 12);
-
-                    app.handle_vision_event(
-                        VisionEvent::Status {
-                            sequence: 13,
-                            received_at: Instant::now(),
-                            status: ControlStatus::Active {
-                                voice_request_id: 74,
-                                state: GestureState::new(false, false),
-                                progress: Some(
-                                    GestureProgress::new(GestureCandidate::Send, 500)
-                                        .expect("test progress is in range"),
-                                ),
-                            },
-                        },
-                        cx,
-                    );
-                    assert_eq!(app.voice_notice.as_deref(), Some(VOICE_GESTURES_ARMED));
-                    assert!(app.visible_voice_gesture_progress().is_none());
-
-                    // Helper status is presentation-only and cannot mute the
-                    // app-owned voice request.
-                    app.handle_vision_event(
-                        VisionEvent::Status {
-                            sequence: 14,
-                            received_at: Instant::now(),
-                            status: ControlStatus::Active {
-                                voice_request_id: 74,
-                                state: GestureState::new(true, true),
-                                progress: None,
-                            },
-                        },
-                        cx,
-                    );
-                    assert!(!app.dictation_is_muted());
-                    assert!(app.dictation_gestures_are_armed());
-                    assert_eq!(app.voice_notice.as_deref(), Some(VOICE_GESTURES_ARMED));
-
-                    app.handle_voice_event(
-                        crate::transcription::VoiceEvent::Cancelled { request_id: 74 },
                         window,
                         cx,
                     );
                     assert!(app.voice_draft.is_none());
-                    assert!(app.vision_voice_request_id.is_none());
-                    assert!(app.vision_gesture_status.is_none());
-                    assert!(app.voice_notice.is_none());
-                });
-            })
-            .expect("window remains open");
-    }
-
-    #[gpui::test]
-    fn stale_intents_cannot_mutate_and_lifecycle_failure_disarms(cx: &mut TestAppContext) {
-        cx.update(|cx| {
-            gpui_component::init(cx);
-            crate::app::bind_keys(cx);
-            crate::register_fonts(cx);
-            crate::configure_theme(cx);
-        });
-        let (command_tx, _command_rx) = tokio::sync::mpsc::unbounded_channel();
-        let (_event_tx, event_rx) = tokio::sync::mpsc::unbounded_channel();
-        let client = crate::client::ClientHandle {
-            commands: command_tx,
-            events: event_rx,
-            login: None,
-        };
-        let app = Rc::new(RefCell::new(None));
-        let app_for_window = app.clone();
-        let window = cx.update(|cx| {
-            cx.open_window(WindowOptions::default(), move |window, cx| {
-                let view = cx.new(|cx| GsvApp::new(window, cx, client, true, false, true));
-                *app_for_window.borrow_mut() = Some(view.clone());
-                cx.new(|cx| Root::new(view, window, cx))
-            })
-            .expect("the GPUI surface should open")
-        });
-        let app = app.borrow().clone().expect("app entity should be retained");
-        let window_handle: gpui::AnyWindowHandle = window.into();
-        window_handle
-            .update(cx, |_, window, cx| {
-                app.update(cx, |app, cx| {
-                    let stale = Instant::now()
-                        .checked_sub(MAX_GESTURE_INTENT_AGE + Duration::from_millis(1))
-                        .expect("test instant supports a short subtraction");
-                    app.voice_draft = Some(VoiceDraft::new(
-                        72,
-                        String::new(),
-                        String::new(),
-                        String::new(),
-                    ));
-                    app.vision_context = Some(crate::vision_debug::VisionContextSender::for_test());
-                    app.vision_lifecycle = Some(LifecycleState::Ready);
-                    app.vision_voice_request_id = Some(72);
-                    app.handle_voice_event(
-                        crate::transcription::VoiceEvent::State {
-                            request_id: 72,
-                            phase: crate::transcription::VoicePhase::Listening,
-                            progress: None,
-                        },
-                        window,
-                        cx,
-                    );
-                    app.handle_voice_event(
-                        crate::transcription::VoiceEvent::MuteState {
-                            request_id: 72,
-                            revision: 0,
-                            muted: false,
-                        },
-                        window,
-                        cx,
-                    );
-                    let context_revision = app
-                        .vision_context
-                        .as_ref()
-                        .expect("test context")
-                        .revision_for_test();
-
-                    app.handle_vision_event(
-                        VisionEvent::Intent {
-                            sequence: 1,
-                            received_at: Instant::now(),
-                            voice_request_id: 71,
-                            intent: GestureIntent::Arm,
-                        },
-                        cx,
-                    );
-                    assert!(!app.dictation_gestures_are_armed());
-                    assert_eq!(
-                        app.vision_context
-                            .as_ref()
-                            .expect("test context")
-                            .revision_for_test(),
-                        context_revision
-                    );
-
-                    app.handle_vision_event(
+                    app.handle_vision_event_with_window_state(
                         VisionEvent::Intent {
                             sequence: 2,
-                            received_at: stale,
-                            voice_request_id: 72,
-                            intent: GestureIntent::Arm,
+                            received_at: Instant::now(),
+                            intent: GestureIntent::StartTranscription,
                         },
+                        false,
+                        window,
                         cx,
                     );
-                    assert!(!app.dictation_gestures_are_armed());
-                    assert!(app.voice_request_accepts_gestures(72));
-                    assert_ne!(
-                        app.vision_context
-                            .as_ref()
-                            .expect("test context")
-                            .revision_for_test(),
-                        context_revision
-                    );
-
-                    app.handle_vision_event(
+                    app.handle_vision_event_with_window_state(
                         VisionEvent::Intent {
                             sequence: 3,
                             received_at: stale,
-                            voice_request_id: 72,
-                            intent: GestureIntent::Send,
+                            intent: GestureIntent::StartTranscription,
                         },
+                        true,
+                        window,
                         cx,
                     );
-                    assert!(app.voice_request_accepts_gestures(72));
-
-                    app.handle_vision_event(
+                    app.desktop_switch_pending = true;
+                    app.handle_vision_event_with_window_state(
                         VisionEvent::Intent {
                             sequence: 4,
                             received_at: Instant::now(),
-                            voice_request_id: 72,
-                            intent: GestureIntent::Arm,
+                            intent: GestureIntent::StartTranscription,
                         },
+                        true,
+                        window,
                         cx,
                     );
-                    assert!(app.dictation_gestures_are_armed());
+                    assert!(app.voice_draft.is_none());
+                });
+            })
+            .expect("window remains open");
 
-                    // Replaying an explicit intent is idempotent.
-                    app.handle_vision_event(
+        assert!(voice_events.try_recv().is_err());
+        assert_eq!(context.context_for_test(), GestureContext::Standby);
+    }
+
+    #[gpui::test]
+    fn stale_and_mismatched_active_intents_are_ignored(cx: &mut TestAppContext) {
+        let (app, window, _client_commands) = open_test_app(cx);
+        let (context, voice_events) = install_ready_vision(&app, window, cx);
+        window
+            .update(cx, |_, window, cx| {
+                app.update(cx, |app, cx| app.start_dictation(window, cx));
+            })
+            .expect("window remains open");
+        assert!(matches!(
+            voice_events.try_recv(),
+            Ok(VoiceCommand::Start { request_id: 1, .. })
+        ));
+        start_and_activate(&app, window, cx, 1);
+        let stale = Instant::now()
+            .checked_sub(MAX_GESTURE_INTENT_AGE + Duration::from_millis(1))
+            .expect("test instant supports a short subtraction");
+
+        window
+            .update(cx, |_, window, cx| {
+                app.update(cx, |app, cx| {
+                    app.handle_vision_event_with_window_state(
                         VisionEvent::Intent {
-                            sequence: 5,
-                            received_at: Instant::now(),
-                            voice_request_id: 72,
-                            intent: GestureIntent::Arm,
-                        },
-                        cx,
-                    );
-                    assert!(app.dictation_gestures_are_armed());
-
-                    let disarm_progress = GestureProgress::new(GestureCandidate::Disarm, 500)
-                        .expect("test progress is in range");
-                    app.handle_vision_event(
-                        VisionEvent::Status {
-                            sequence: 6,
-                            received_at: Instant::now(),
-                            status: ControlStatus::Active {
-                                voice_request_id: 72,
-                                state: GestureState::new(true, false),
-                                progress: Some(disarm_progress),
+                            sequence: 1,
+                            received_at: stale,
+                            intent: GestureIntent::VoiceRequest {
+                                voice_request_id: 1,
+                                action: VoiceRequestGestureIntent::StopTranscription,
                             },
                         },
+                        false,
+                        window,
                         cx,
                     );
-                    assert_eq!(app.voice_notice.as_deref(), Some(VOICE_GESTURE_DISARMING));
-                    assert_eq!(app.visible_voice_gesture_progress(), Some(disarm_progress));
+                    assert!(app.voice_request_can_stop(1));
+                    app.handle_vision_event_with_window_state(
+                        VisionEvent::Intent {
+                            sequence: 2,
+                            received_at: Instant::now(),
+                            intent: GestureIntent::VoiceRequest {
+                                voice_request_id: 2,
+                                action: VoiceRequestGestureIntent::Send,
+                            },
+                        },
+                        true,
+                        window,
+                        cx,
+                    );
+                    assert!(!app.dictation_segment_commit_is_pending());
 
+                    app.handle_vision_event_with_window_state(
+                        VisionEvent::Intent {
+                            sequence: 3,
+                            received_at: Instant::now(),
+                            intent: GestureIntent::VoiceRequest {
+                                voice_request_id: 2,
+                                action: VoiceRequestGestureIntent::Mute,
+                            },
+                        },
+                        true,
+                        window,
+                        cx,
+                    );
+                    assert_eq!(app.dictation_pending_mute(), None);
+                    assert!(app.voice_request_can_stop(1));
+                    assert!(!app.dictation_is_muted());
+                    assert!(!app.dictation_segment_commit_is_pending());
+                });
+            })
+            .expect("window remains open");
+
+        assert!(voice_events.try_recv().is_err());
+        assert_eq!(
+            context.context_for_test(),
+            GestureContext::Active {
+                voice_request_id: 1,
+                muted: false,
+            }
+        );
+    }
+
+    #[gpui::test]
+    fn stop_preserves_unsent_final_as_a_draft_and_restores_standby(cx: &mut TestAppContext) {
+        let (app, window, mut client_commands) = open_test_app(cx);
+        let (context, voice_events) = install_ready_vision(&app, window, cx);
+        window
+            .update(cx, |_, window, cx| {
+                app.update(cx, |app, cx| {
+                    app.start_dictation(window, cx);
+                });
+            })
+            .expect("window remains open");
+        assert!(matches!(
+            voice_events.try_recv(),
+            Ok(VoiceCommand::Start { request_id: 1, .. })
+        ));
+        start_and_activate(&app, window, cx, 1);
+
+        window
+            .update(cx, |_, window, cx| {
+                app.update(cx, |app, cx| {
                     app.handle_voice_event(
-                        crate::transcription::VoiceEvent::MuteState {
-                            request_id: 72,
+                        VoiceEvent::Partial {
+                            request_id: 1,
+                            segment_id: 0,
                             revision: 1,
-                            muted: true,
+                            committed: "unsent final words".to_string(),
+                            tentative: String::new(),
                         },
                         window,
                         cx,
                     );
-                    assert!(app.dictation_is_muted());
-                    assert!(app.dictation_gestures_are_armed());
-
-                    let unmute_progress = GestureProgress::new(GestureCandidate::Unmute, 500)
-                        .expect("test progress is in range");
-                    app.handle_vision_event(
-                        VisionEvent::Status {
-                            sequence: 7,
+                    app.handle_vision_event_with_window_state(
+                        VisionEvent::Intent {
+                            sequence: 1,
                             received_at: Instant::now(),
-                            status: ControlStatus::Active {
-                                voice_request_id: 72,
-                                state: GestureState::new(true, true),
-                                progress: Some(unmute_progress),
+                            intent: GestureIntent::VoiceRequest {
+                                voice_request_id: 1,
+                                action: VoiceRequestGestureIntent::StopTranscription,
                             },
                         },
+                        false,
+                        window,
                         cx,
-                    );
-                    assert_eq!(app.visible_voice_gesture_progress(), Some(unmute_progress));
-                    assert_eq!(app.voice_notice.as_deref(), Some(VOICE_GESTURE_UNMUTING));
-
-                    app.handle_vision_event(
-                        VisionEvent::Lifecycle(LifecycleState::Interrupted),
-                        cx,
-                    );
-                    assert!(!app.dictation_gestures_are_armed());
-                    assert!(app.dictation_is_muted());
-                    assert!(app.visible_voice_gesture_progress().is_none());
-                    assert_eq!(
-                        app.voice_notice.as_deref(),
-                        Some(VOICE_GESTURES_MUTED_UNAVAILABLE)
                     );
                 });
             })
             .expect("window remains open");
+        assert_eq!(
+            voice_events.try_recv(),
+            Ok(VoiceCommand::Stop { request_id: 1 })
+        );
+        assert_eq!(context.context_for_test(), GestureContext::Disabled);
+
+        window
+            .update(cx, |_, window, cx| {
+                app.update(cx, |app, cx| {
+                    app.handle_voice_event(
+                        VoiceEvent::Final {
+                            request_id: 1,
+                            text: "unsent final words".to_string(),
+                        },
+                        window,
+                        cx,
+                    );
+                    assert_eq!(app.input.read(cx).value().as_ref(), "unsent final words");
+                    assert!(app.voice_draft.is_none());
+                });
+            })
+            .expect("window remains open");
+        assert_eq!(context.context_for_test(), GestureContext::Standby);
+        assert!(client_commands.try_recv().is_err());
     }
 
     #[gpui::test]
-    fn gesture_progress_expires_without_disarming_the_voice_request(cx: &mut TestAppContext) {
-        cx.update(|cx| {
-            gpui_component::init(cx);
-            crate::app::bind_keys(cx);
-            crate::register_fonts(cx);
-            crate::configure_theme(cx);
-        });
-        let (command_tx, _command_rx) = tokio::sync::mpsc::unbounded_channel();
-        let (_event_tx, event_rx) = tokio::sync::mpsc::unbounded_channel();
-        let client = crate::client::ClientHandle {
-            commands: command_tx,
-            events: event_rx,
-            login: None,
-        };
-        let app = Rc::new(RefCell::new(None));
-        let app_for_window = app.clone();
-        let window = cx.update(|cx| {
-            cx.open_window(WindowOptions::default(), move |window, cx| {
-                let view = cx.new(|cx| GsvApp::new(window, cx, client, true, false, true));
-                *app_for_window.borrow_mut() = Some(view.clone());
-                cx.new(|cx| Root::new(view, window, cx))
-            })
-            .expect("the GPUI surface should open")
-        });
-        let app = app.borrow().clone().expect("app entity should be retained");
-        let window_handle: gpui::AnyWindowHandle = window.into();
-        let disarm_progress =
-            GestureProgress::new(GestureCandidate::Disarm, 500).expect("test progress is in range");
-
-        window_handle
+    fn lifecycle_loss_revokes_actions_without_ending_transcription(cx: &mut TestAppContext) {
+        let (app, window, _client_commands) = open_test_app(cx);
+        let (context, voice_events) = install_ready_vision(&app, window, cx);
+        window
             .update(cx, |_, window, cx| {
                 app.update(cx, |app, cx| {
-                    app.voice_draft = Some(VoiceDraft::new(
-                        72,
-                        String::new(),
-                        String::new(),
-                        String::new(),
-                    ));
-                    app.vision_context = Some(crate::vision_debug::VisionContextSender::for_test());
-                    app.vision_lifecycle = Some(LifecycleState::Ready);
-                    app.vision_voice_request_id = Some(72);
-                    app.handle_voice_event(
-                        crate::transcription::VoiceEvent::State {
-                            request_id: 72,
-                            phase: crate::transcription::VoicePhase::Listening,
-                            progress: None,
-                        },
-                        window,
-                        cx,
-                    );
-                    app.handle_voice_event(
-                        crate::transcription::VoiceEvent::MuteState {
-                            request_id: 72,
-                            revision: 0,
-                            muted: false,
-                        },
-                        window,
-                        cx,
-                    );
+                    app.start_dictation(window, cx);
+                });
+            })
+            .expect("window remains open");
+        let _ = voice_events.try_recv();
+        start_and_activate(&app, window, cx, 1);
+
+        window
+            .update(cx, |_, window, cx| {
+                app.update(cx, |app, cx| {
                     app.handle_vision_event(
+                        VisionEvent::Lifecycle(LifecycleState::Interrupted),
+                        window,
+                        cx,
+                    );
+                    assert!(app.voice_draft.is_some());
+                    assert!(app.vision_voice_request_id.is_none());
+                    app.handle_vision_event(
+                        VisionEvent::Intent {
+                            sequence: 2,
+                            received_at: Instant::now(),
+                            intent: GestureIntent::VoiceRequest {
+                                voice_request_id: 1,
+                                action: VoiceRequestGestureIntent::StopTranscription,
+                            },
+                        },
+                        window,
+                        cx,
+                    );
+                });
+            })
+            .expect("window remains open");
+        assert_eq!(context.context_for_test(), GestureContext::Disabled);
+        assert!(voice_events.try_recv().is_err());
+    }
+
+    #[gpui::test]
+    fn start_command_failure_reasserts_standby(cx: &mut TestAppContext) {
+        let (app, window, _client_commands) = open_test_app(cx);
+        let context = crate::vision_debug::VisionContextSender::for_test();
+        let returned_context = context.clone();
+        let (voice_commands, voice_events) =
+            crate::transcription::VoiceCommandSender::channel_for_test();
+        drop(voice_events);
+        window
+            .update(cx, |_, window, cx| {
+                app.update(cx, |app, cx| {
+                    app.vision_context = Some(context);
+                    app.vision_lifecycle = Some(LifecycleState::Ready);
+                    app.microphone_preference = MicrophonePreference::SystemDefault;
+                    app.voice_commands = voice_commands;
+                    app.sync_vision_context();
+                    let revision = returned_context.revision_for_test();
+                    app.handle_vision_event_with_window_state(
                         VisionEvent::Intent {
                             sequence: 1,
                             received_at: Instant::now(),
-                            voice_request_id: 72,
-                            intent: GestureIntent::Arm,
+                            intent: GestureIntent::StartTranscription,
                         },
+                        true,
+                        window,
                         cx,
+                    );
+                    assert!(app.voice_draft.is_none());
+                    assert!(returned_context.revision_for_test() > revision);
+                    assert_eq!(
+                        app.voice_notice.as_deref(),
+                        Some("VOICE INPUT UNAVAILABLE · KEEP TYPING")
                     );
                     app.handle_vision_event(
                         VisionEvent::Status {
                             sequence: 2,
                             received_at: Instant::now(),
-                            status: ControlStatus::Active {
-                                voice_request_id: 72,
-                                state: GestureState::new(true, false),
-                                progress: Some(disarm_progress),
-                            },
+                            status: ControlStatus::Standby { progress: None },
                         },
+                        window,
                         cx,
                     );
-
-                    assert!(app.dictation_gestures_are_armed());
-                    assert_eq!(app.visible_voice_gesture_progress(), Some(disarm_progress));
-                    assert_eq!(app.voice_notice.as_deref(), Some(VOICE_GESTURE_DISARMING));
+                    assert_eq!(
+                        app.voice_notice.as_deref(),
+                        Some("VOICE INPUT UNAVAILABLE · KEEP TYPING")
+                    );
                 });
             })
             .expect("window remains open");
-        cx.run_until_parked();
-
-        cx.executor()
-            .advance_clock(MAX_GESTURE_STATUS_AGE + Duration::from_millis(1));
-        cx.run_until_parked();
-        cx.update(|cx| {
-            let app = app.read(cx);
-            assert!(app.vision_gesture_status.is_none());
-            assert!(app.visible_voice_gesture_progress().is_none());
-            assert!(app.dictation_gestures_are_armed());
-            assert!(app.voice_request_accepts_gestures(72));
-            assert_eq!(app.voice_notice.as_deref(), Some(VOICE_GESTURES_ARMED));
-        });
+        assert_eq!(returned_context.context_for_test(), GestureContext::Standby);
     }
 
     #[gpui::test]
-    fn old_expiry_cannot_clear_a_superseding_status_or_voice_request(cx: &mut TestAppContext) {
-        cx.update(|cx| {
-            gpui_component::init(cx);
-            crate::app::bind_keys(cx);
-            crate::register_fonts(cx);
-            crate::configure_theme(cx);
-        });
-        let (command_tx, _command_rx) = tokio::sync::mpsc::unbounded_channel();
-        let (_event_tx, event_rx) = tokio::sync::mpsc::unbounded_channel();
-        let client = crate::client::ClientHandle {
-            commands: command_tx,
-            events: event_rx,
-            login: None,
-        };
-        let app = Rc::new(RefCell::new(None));
-        let app_for_window = app.clone();
-        let window = cx.update(|cx| {
-            cx.open_window(WindowOptions::default(), move |window, cx| {
-                let view = cx.new(|cx| GsvApp::new(window, cx, client, true, false, true));
-                *app_for_window.borrow_mut() = Some(view.clone());
-                cx.new(|cx| Root::new(view, window, cx))
-            })
-            .expect("the GPUI surface should open")
-        });
-        let app = app.borrow().clone().expect("app entity should be retained");
-        let window_handle: gpui::AnyWindowHandle = window.into();
-        let send_progress =
-            GestureProgress::new(GestureCandidate::Send, 300).expect("test progress is in range");
-        let mute_progress =
-            GestureProgress::new(GestureCandidate::Mute, 600).expect("test progress is in range");
-        let arm_progress =
-            GestureProgress::new(GestureCandidate::Arm, 450).expect("test progress is in range");
-
-        window_handle
+    fn standby_status_does_not_erase_a_no_speech_terminal_outcome(cx: &mut TestAppContext) {
+        let (app, window, _client_commands) = open_test_app(cx);
+        let (context, voice_events) = install_ready_vision(&app, window, cx);
+        window
             .update(cx, |_, window, cx| {
                 app.update(cx, |app, cx| {
-                    app.voice_draft = Some(VoiceDraft::new(
-                        81,
-                        String::new(),
-                        String::new(),
-                        String::new(),
-                    ));
-                    app.vision_context = Some(crate::vision_debug::VisionContextSender::for_test());
-                    app.vision_lifecycle = Some(LifecycleState::Ready);
-                    app.vision_voice_request_id = Some(81);
-                    app.handle_voice_event(
-                        crate::transcription::VoiceEvent::State {
-                            request_id: 81,
-                            phase: crate::transcription::VoicePhase::Listening,
-                            progress: None,
-                        },
-                        window,
-                        cx,
-                    );
-                    app.handle_voice_event(
-                        crate::transcription::VoiceEvent::MuteState {
-                            request_id: 81,
-                            revision: 0,
-                            muted: false,
-                        },
-                        window,
-                        cx,
-                    );
-                    app.handle_vision_event(
-                        VisionEvent::Intent {
-                            sequence: 1,
-                            received_at: Instant::now(),
-                            voice_request_id: 81,
-                            intent: GestureIntent::Arm,
-                        },
-                        cx,
-                    );
-                    app.handle_vision_event(
-                        VisionEvent::Status {
-                            sequence: 10,
-                            received_at: Instant::now(),
-                            status: ControlStatus::Active {
-                                voice_request_id: 81,
-                                state: GestureState::new(true, false),
-                                progress: Some(send_progress),
-                            },
-                        },
-                        cx,
-                    );
+                    app.start_dictation(window, cx);
                 });
             })
             .expect("window remains open");
-        cx.run_until_parked();
-        cx.executor().advance_clock(Duration::from_millis(400));
-        cx.run_until_parked();
+        assert!(matches!(
+            voice_events.try_recv(),
+            Ok(VoiceCommand::Start { request_id: 1, .. })
+        ));
+        start_and_activate(&app, window, cx, 1);
 
-        window_handle
-            .update(cx, |_, _, cx| {
-                app.update(cx, |app, cx| {
-                    app.handle_vision_event(
-                        VisionEvent::Status {
-                            sequence: 11,
-                            received_at: Instant::now(),
-                            status: ControlStatus::Active {
-                                voice_request_id: 81,
-                                state: GestureState::new(true, false),
-                                progress: Some(mute_progress),
-                            },
-                        },
-                        cx,
-                    );
-                });
-            })
-            .expect("window remains open");
-        cx.run_until_parked();
-        cx.executor().advance_clock(Duration::from_millis(700));
-        cx.run_until_parked();
-        cx.update(|cx| {
-            let app = app.read(cx);
-            assert_eq!(app.visible_voice_gesture_progress(), Some(mute_progress));
-            assert_eq!(app.voice_notice.as_deref(), Some(VOICE_GESTURE_MUTING));
-            assert_eq!(
-                app.vision_gesture_status.map(|status| status.sequence),
-                Some(11)
-            );
-        });
-
-        window_handle
+        window
             .update(cx, |_, window, cx| {
                 app.update(cx, |app, cx| {
-                    app.voice_draft = Some(VoiceDraft::new(
-                        82,
-                        String::new(),
-                        String::new(),
-                        String::new(),
-                    ));
+                    app.finish_dictation(cx);
                     app.handle_voice_event(
-                        crate::transcription::VoiceEvent::State {
-                            request_id: 82,
-                            phase: crate::transcription::VoicePhase::Listening,
-                            progress: None,
+                        VoiceEvent::Final {
+                            request_id: 1,
+                            text: String::new(),
                         },
                         window,
                         cx,
                     );
-                    app.handle_voice_event(
-                        crate::transcription::VoiceEvent::MuteState {
-                            request_id: 82,
-                            revision: 0,
-                            muted: false,
-                        },
-                        window,
-                        cx,
+                    assert_eq!(
+                        app.voice_notice.as_deref(),
+                        Some("NO SPEECH HEARD · CHECK INPUT")
                     );
                     app.handle_vision_event(
                         VisionEvent::Status {
-                            sequence: 12,
+                            sequence: 3,
                             received_at: Instant::now(),
-                            status: ControlStatus::Active {
-                                voice_request_id: 82,
-                                state: GestureState::new(false, false),
-                                progress: Some(arm_progress),
-                            },
+                            status: ControlStatus::Standby { progress: None },
                         },
+                        window,
                         cx,
+                    );
+                    assert_eq!(
+                        app.voice_notice.as_deref(),
+                        Some("NO SPEECH HEARD · CHECK INPUT")
                     );
                 });
             })
             .expect("window remains open");
-        cx.run_until_parked();
-        cx.executor().advance_clock(Duration::from_millis(400));
-        cx.run_until_parked();
-        cx.update(|cx| {
-            let app = app.read(cx);
-            assert_eq!(app.visible_voice_gesture_progress(), Some(arm_progress));
-            assert_eq!(
-                app.vision_gesture_status.map(|status| status.request_id),
-                Some(82)
-            );
-        });
-
-        cx.executor().advance_clock(Duration::from_millis(601));
-        cx.run_until_parked();
-        cx.update(|cx| {
-            let app = app.read(cx);
-            assert!(app.vision_gesture_status.is_none());
-            assert!(app.visible_voice_gesture_progress().is_none());
-            assert_eq!(app.voice_notice.as_deref(), Some(VOICE_GESTURES_DISARMED));
-        });
+        assert_eq!(
+            voice_events.try_recv(),
+            Ok(VoiceCommand::Stop { request_id: 1 })
+        );
+        assert_eq!(context.context_for_test(), GestureContext::Standby);
     }
 }

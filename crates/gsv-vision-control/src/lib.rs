@@ -1,7 +1,7 @@
 //! Bounded local protocol between GSV Desktop and its vision helper.
 //!
 //! This boundary carries reliable semantic gesture intents and replace-latest,
-//! request-scoped semantic control status. Camera frames, landmarks, model
+//! bounded semantic control status. Camera frames, landmarks, model
 //! labels, raw scores, diagnostics, paths, and user content do not belong in
 //! this protocol.
 
@@ -16,7 +16,7 @@ pub const EVENT_FD: i32 = 3;
 pub const EVENT_FD_MARKER_ENV: &str = "GSV_VISION_EVENT_FD";
 /// Exact private launch contract. Rotate this on an incompatible unshipped
 /// helper/Desktop cutover so a stale sibling fails before semantic traffic.
-pub const EVENT_CHANNEL_CONTRACT_MARKER: &str = "gsv-vision-control-v1-explicit-modes";
+pub const EVENT_CHANNEL_CONTRACT_MARKER: &str = "gsv-vision-control-v1-transcription-sessions";
 pub const SESSION_HIGH_ENV: &str = "GSV_VISION_SESSION_HIGH";
 pub const SESSION_LOW_ENV: &str = "GSV_VISION_SESSION_LOW";
 
@@ -44,41 +44,96 @@ impl SessionId {
     }
 }
 
+/// Absolute Desktop-owned gesture authority.
+///
+/// `Standby` is the only state in which the helper may request a new
+/// transcription. `Disabled` explicitly revokes that authority while Desktop
+/// is busy or otherwise unable to start. An active context is the complete
+/// gesture lease for one exact voice request; there is no separate armed bit.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[serde(tag = "mode", rename_all = "snake_case")]
+pub enum GestureContext {
+    Disabled,
+    Standby,
+    Active { voice_request_id: u64, muted: bool },
+}
+
+#[derive(Deserialize)]
+#[serde(tag = "mode", rename_all = "snake_case", deny_unknown_fields)]
+enum WireGestureContext {
+    Disabled {},
+    Standby {},
+    Active { voice_request_id: u64, muted: bool },
+}
+
+impl<'de> Deserialize<'de> for GestureContext {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        Ok(match WireGestureContext::deserialize(deserializer)? {
+            WireGestureContext::Disabled {} => Self::Disabled,
+            WireGestureContext::Standby {} => Self::Standby,
+            WireGestureContext::Active {
+                voice_request_id,
+                muted,
+            } => Self::Active {
+                voice_request_id,
+                muted,
+            },
+        })
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub enum GestureIntent {
-    Arm,
-    Disarm,
+pub enum VoiceRequestGestureIntent {
+    StopTranscription,
     Send,
     Mute,
     Unmute,
 }
 
-/// Absolute Desktop-owned semantic state echoed to the gesture controller.
+/// A reliable semantic edge from the helper.
 ///
-/// This state itself exposes neither model labels nor per-frame evidence. An
-/// active status may separately carry bounded, quantized candidate progress.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct GestureState {
-    armed: bool,
-    muted: bool,
+/// Starting is fenced by the random helper session on `HelperEvent`. Every
+/// action on an existing transcription structurally carries its exact request
+/// identity instead of relying on an optional sibling field.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[serde(tag = "scope", rename_all = "snake_case")]
+pub enum GestureIntent {
+    StartTranscription,
+    VoiceRequest {
+        voice_request_id: u64,
+        action: VoiceRequestGestureIntent,
+    },
 }
 
-impl GestureState {
-    #[must_use]
-    pub const fn new(armed: bool, muted: bool) -> Self {
-        Self { armed, muted }
-    }
+#[derive(Deserialize)]
+#[serde(tag = "scope", rename_all = "snake_case", deny_unknown_fields)]
+enum WireGestureIntent {
+    StartTranscription {},
+    VoiceRequest {
+        voice_request_id: u64,
+        action: VoiceRequestGestureIntent,
+    },
+}
 
-    #[must_use]
-    pub const fn armed(self) -> bool {
-        self.armed
-    }
-
-    #[must_use]
-    pub const fn muted(self) -> bool {
-        self.muted
+impl<'de> Deserialize<'de> for GestureIntent {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        Ok(match WireGestureIntent::deserialize(deserializer)? {
+            WireGestureIntent::StartTranscription {} => Self::StartTranscription,
+            WireGestureIntent::VoiceRequest {
+                voice_request_id,
+                action,
+            } => Self::VoiceRequest {
+                voice_request_id,
+                action,
+            },
+        })
     }
 }
 
@@ -86,8 +141,8 @@ impl GestureState {
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum GestureCandidate {
-    Arm,
-    Disarm,
+    StartTranscription,
+    StopTranscription,
     Send,
     Mute,
     Unmute,
@@ -128,14 +183,23 @@ impl GestureProgress {
     }
 
     #[must_use]
-    pub const fn is_compatible_with(self, state: GestureState) -> bool {
-        match self.candidate {
-            GestureCandidate::Arm => !state.armed,
-            GestureCandidate::Disarm => state.armed,
-            GestureCandidate::Send => state.armed,
-            GestureCandidate::Mute => state.armed && !state.muted,
-            GestureCandidate::Unmute => state.armed && state.muted,
-        }
+    pub const fn is_compatible_with(self, context: GestureContext) -> bool {
+        matches!(
+            (context, self.candidate),
+            (
+                GestureContext::Standby,
+                GestureCandidate::StartTranscription
+            ) | (
+                GestureContext::Active { .. },
+                GestureCandidate::StopTranscription | GestureCandidate::Send,
+            ) | (
+                GestureContext::Active { muted: false, .. },
+                GestureCandidate::Mute
+            ) | (
+                GestureContext::Active { muted: true, .. },
+                GestureCandidate::Unmute
+            )
+        )
     }
 }
 
@@ -167,18 +231,20 @@ impl<'de> Deserialize<'de> for GestureProgress {
     }
 }
 
-/// Complete, request-fenced snapshot of semantic gesture control.
+/// Complete, presentation-only snapshot of semantic gesture control.
 ///
-/// A disabled snapshot cannot accidentally carry a request ID. Conversely, an
-/// active snapshot always identifies the one voice request whose actions the
-/// helper is allowed to emit.
+/// The three authority modes stay wire-distinct, request identity is possible
+/// only in the active mode, and progress is bounded and state-compatible.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
 #[serde(tag = "mode", rename_all = "snake_case")]
 pub enum ControlStatus {
     Disabled,
+    Standby {
+        progress: Option<GestureProgress>,
+    },
     Active {
         voice_request_id: u64,
-        state: GestureState,
+        muted: bool,
         progress: Option<GestureProgress>,
     },
 }
@@ -187,9 +253,12 @@ pub enum ControlStatus {
 #[serde(tag = "mode", rename_all = "snake_case", deny_unknown_fields)]
 enum WireControlStatus {
     Disabled {},
+    Standby {
+        progress: Option<GestureProgress>,
+    },
     Active {
         voice_request_id: u64,
-        state: GestureState,
+        muted: bool,
         progress: Option<GestureProgress>,
     },
 }
@@ -201,19 +270,33 @@ impl<'de> Deserialize<'de> for ControlStatus {
     {
         Ok(match WireControlStatus::deserialize(deserializer)? {
             WireControlStatus::Disabled {} => Self::Disabled,
+            WireControlStatus::Standby { progress } => {
+                if progress
+                    .is_some_and(|progress| !progress.is_compatible_with(GestureContext::Standby))
+                {
+                    return Err(de::Error::custom(
+                        "gesture candidate is incompatible with controller context",
+                    ));
+                }
+                Self::Standby { progress }
+            }
             WireControlStatus::Active {
                 voice_request_id,
-                state,
+                muted,
                 progress,
             } => {
-                if progress.is_some_and(|progress| !progress.is_compatible_with(state)) {
+                let context = GestureContext::Active {
+                    voice_request_id,
+                    muted,
+                };
+                if progress.is_some_and(|progress| !progress.is_compatible_with(context)) {
                     return Err(de::Error::custom(
-                        "gesture candidate is incompatible with controller state",
+                        "gesture candidate is incompatible with controller context",
                     ));
                 }
                 Self::Active {
                     voice_request_id,
-                    state,
+                    muted,
                     progress,
                 }
             }
@@ -241,50 +324,26 @@ pub enum LifecycleState {
 pub enum DesktopCommand {
     SetContext {
         session_id: SessionId,
-        voice_request_id: Option<u64>,
-        armed: bool,
-        muted: bool,
+        context: GestureContext,
     },
 }
 
 impl DesktopCommand {
-    pub fn set_context(
-        session_id: SessionId,
-        voice_request_id: Option<u64>,
-        armed: bool,
-        muted: bool,
-    ) -> Result<Self, InvalidContext> {
-        if voice_request_id.is_none() && (armed || muted) {
-            return Err(InvalidContext);
-        }
-        Ok(Self::SetContext {
+    #[must_use]
+    pub const fn set_context(session_id: SessionId, context: GestureContext) -> Self {
+        Self::SetContext {
             session_id,
-            voice_request_id,
-            armed,
-            muted,
-        })
+            context,
+        }
     }
 }
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct InvalidContext;
-
-impl Display for InvalidContext {
-    fn fmt(&self, formatter: &mut Formatter<'_>) -> fmt::Result {
-        formatter.write_str("a disabled vision context cannot carry active state")
-    }
-}
-
-impl std::error::Error for InvalidContext {}
 
 #[derive(Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 enum WireDesktopCommand {
     SetContext {
         session_id: SessionId,
-        voice_request_id: Option<u64>,
-        armed: bool,
-        muted: bool,
+        context: GestureContext,
     },
 }
 
@@ -295,11 +354,9 @@ impl<'de> Deserialize<'de> for DesktopCommand {
     {
         let WireDesktopCommand::SetContext {
             session_id,
-            voice_request_id,
-            armed,
-            muted,
+            context,
         } = WireDesktopCommand::deserialize(deserializer)?;
-        Self::set_context(session_id, voice_request_id, armed, muted).map_err(de::Error::custom)
+        Ok(Self::set_context(session_id, context))
     }
 }
 
@@ -323,7 +380,6 @@ pub enum HelperEvent {
     Intent {
         session_id: SessionId,
         sequence: u64,
-        voice_request_id: u64,
         intent: GestureIntent,
     },
 }
@@ -436,21 +492,26 @@ mod tests {
     use super::*;
 
     const SESSION: SessionId = SessionId::new(7, 11);
-    const DISARMED: GestureState = GestureState::new(false, false);
-    const ARMED: GestureState = GestureState::new(true, false);
-    const MUTED: GestureState = GestureState::new(true, true);
-
-    #[test]
-    fn unshipped_protocol_remains_v1() {
-        assert_eq!(PROTOCOL_VERSION, 1);
-        assert_ne!(EVENT_CHANNEL_CONTRACT_MARKER, "1");
-        assert_ne!(EVENT_CHANNEL_CONTRACT_MARKER, "gsv-vision-control-v1");
-    }
+    const ACTIVE: GestureContext = GestureContext::Active {
+        voice_request_id: 22,
+        muted: false,
+    };
+    const MUTED: GestureContext = GestureContext::Active {
+        voice_request_id: 22,
+        muted: true,
+    };
 
     fn encoded<T: Serialize>(value: &T) -> Vec<u8> {
         let mut bytes = Vec::new();
         write_frame(&mut bytes, value).expect("frame serializes");
         bytes
+    }
+
+    fn active_intent(action: VoiceRequestGestureIntent) -> GestureIntent {
+        GestureIntent::VoiceRequest {
+            voice_request_id: 22,
+            action,
+        }
     }
 
     #[derive(Default)]
@@ -472,7 +533,41 @@ mod tests {
     }
 
     #[test]
-    fn commands_and_events_round_trip_with_strict_types() {
+    fn unshipped_hard_cutover_rotates_only_the_private_marker() {
+        assert_eq!(PROTOCOL_VERSION, 1);
+        assert_eq!(
+            EVENT_CHANNEL_CONTRACT_MARKER,
+            "gsv-vision-control-v1-transcription-sessions"
+        );
+        for stale in [
+            "1",
+            "gsv-vision-control-v1",
+            "gsv-vision-control-v1-explicit-modes",
+        ] {
+            assert_ne!(EVENT_CHANNEL_CONTRACT_MARKER, stale);
+        }
+    }
+
+    #[test]
+    fn strict_commands_and_events_round_trip() {
+        for context in [
+            GestureContext::Disabled,
+            GestureContext::Standby,
+            ACTIVE,
+            MUTED,
+        ] {
+            let command = DesktopCommand::set_context(SESSION, context);
+            let mut bytes = Cursor::new(encoded(&command));
+            assert_eq!(
+                read_frame(&mut bytes).expect("command reads"),
+                Some(command)
+            );
+            assert_eq!(
+                read_frame::<DesktopCommand>(&mut bytes).expect("clean EOF"),
+                None
+            );
+        }
+
         let values = [
             HelperEvent::Hello {
                 protocol_version: PROTOCOL_VERSION,
@@ -486,37 +581,306 @@ mod tests {
             HelperEvent::Status {
                 session_id: SESSION,
                 sequence: 2,
-                status: ControlStatus::Active {
-                    voice_request_id: 19,
-                    state: DISARMED,
+                status: ControlStatus::Standby {
                     progress: Some(
-                        GestureProgress::new(GestureCandidate::Arm, 420).expect("bounded progress"),
+                        GestureProgress::new(GestureCandidate::StartTranscription, 420)
+                            .expect("bounded progress"),
                     ),
+                },
+            },
+            HelperEvent::Status {
+                session_id: SESSION,
+                sequence: 3,
+                status: ControlStatus::Active {
+                    voice_request_id: 22,
+                    muted: false,
+                    progress: None,
                 },
             },
             HelperEvent::Intent {
                 session_id: SESSION,
-                sequence: 3,
-                voice_request_id: 19,
-                intent: GestureIntent::Send,
+                sequence: 4,
+                intent: GestureIntent::StartTranscription,
+            },
+            HelperEvent::Intent {
+                session_id: SESSION,
+                sequence: 5,
+                intent: active_intent(VoiceRequestGestureIntent::Send),
             },
         ];
         for expected in values {
             let mut bytes = Cursor::new(encoded(&expected));
             assert_eq!(read_frame(&mut bytes).expect("frame reads"), Some(expected));
+        }
+    }
+
+    #[test]
+    fn intent_scope_structurally_owns_request_identity() {
+        let start = serde_json::to_value(HelperEvent::Intent {
+            session_id: SESSION,
+            sequence: 1,
+            intent: GestureIntent::StartTranscription,
+        })
+        .expect("start serializes");
+        assert_eq!(
+            start,
+            json!({
+                "type": "intent",
+                "session_id": { "high": 7, "low": 11 },
+                "sequence": 1,
+                "intent": { "scope": "start_transcription" }
+            })
+        );
+        assert!(start.get("voice_request_id").is_none());
+        assert!(start["intent"].get("voice_request_id").is_none());
+
+        for (action, label) in [
+            (
+                VoiceRequestGestureIntent::StopTranscription,
+                "stop_transcription",
+            ),
+            (VoiceRequestGestureIntent::Send, "send"),
+            (VoiceRequestGestureIntent::Mute, "mute"),
+            (VoiceRequestGestureIntent::Unmute, "unmute"),
+        ] {
+            let event = HelperEvent::Intent {
+                session_id: SESSION,
+                sequence: 2,
+                intent: active_intent(action),
+            };
+            let wire = serde_json::to_value(event).expect("active intent serializes");
+            assert_eq!(wire["intent"]["scope"], "voice_request");
+            assert_eq!(wire["intent"]["voice_request_id"], 22);
+            assert_eq!(wire["intent"]["action"], label);
             assert_eq!(
-                read_frame::<HelperEvent>(&mut bytes).expect("EOF reads"),
-                None
+                serde_json::from_value::<HelperEvent>(wire).expect("intent reads"),
+                event
             );
         }
 
-        let command =
-            DesktopCommand::set_context(SESSION, None, false, false).expect("valid context");
-        let mut bytes = Cursor::new(encoded(&command));
+        for invalid in [
+            json!({
+                "type": "intent",
+                "session_id": { "high": 7, "low": 11 },
+                "sequence": 3,
+                "intent": {
+                    "scope": "start_transcription",
+                    "voice_request_id": 22
+                }
+            }),
+            json!({
+                "type": "intent",
+                "session_id": { "high": 7, "low": 11 },
+                "sequence": 3,
+                "intent": {
+                    "scope": "voice_request",
+                    "action": "send"
+                }
+            }),
+            json!({
+                "type": "intent",
+                "session_id": { "high": 7, "low": 11 },
+                "sequence": 3,
+                "voice_request_id": 22,
+                "intent": { "scope": "start_transcription" }
+            }),
+        ] {
+            assert!(serde_json::from_value::<HelperEvent>(invalid).is_err());
+        }
+    }
+
+    #[test]
+    fn context_and_status_modes_reject_invalid_combinations() {
         assert_eq!(
-            read_frame(&mut bytes).expect("command reads"),
-            Some(command)
+            serde_json::to_value(GestureContext::Disabled).expect("context serializes"),
+            json!({ "mode": "disabled" })
         );
+        assert_eq!(
+            serde_json::to_value(GestureContext::Standby).expect("context serializes"),
+            json!({ "mode": "standby" })
+        );
+        assert_eq!(
+            serde_json::to_value(ACTIVE).expect("context serializes"),
+            json!({
+                "mode": "active",
+                "voice_request_id": 22,
+                "muted": false
+            })
+        );
+
+        let standby = ControlStatus::Standby {
+            progress: Some(
+                GestureProgress::new(GestureCandidate::StartTranscription, 500)
+                    .expect("bounded progress"),
+            ),
+        };
+        assert_eq!(
+            serde_json::from_value::<ControlStatus>(
+                serde_json::to_value(standby).expect("status serializes")
+            )
+            .expect("status reads"),
+            standby
+        );
+        let active = ControlStatus::Active {
+            voice_request_id: 22,
+            muted: true,
+            progress: Some(
+                GestureProgress::new(GestureCandidate::Unmute, 500).expect("bounded progress"),
+            ),
+        };
+        assert_eq!(
+            serde_json::from_value::<ControlStatus>(
+                serde_json::to_value(active).expect("status serializes")
+            )
+            .expect("status reads"),
+            active
+        );
+
+        for invalid in [
+            json!({ "mode": "disabled", "voice_request_id": 22 }),
+            json!({ "mode": "standby", "muted": false, "progress": null }),
+            json!({ "mode": "active", "muted": false, "progress": null }),
+            json!({
+                "mode": "active",
+                "voice_request_id": 22,
+                "muted": false,
+                "armed": true,
+                "progress": null
+            }),
+        ] {
+            assert!(serde_json::from_value::<ControlStatus>(invalid).is_err());
+        }
+
+        assert!(serde_json::from_value::<DesktopCommand>(json!({
+            "type": "set_context",
+            "session_id": { "high": 7, "low": 11 },
+            "context": {
+                "mode": "standby",
+                "voice_request_id": 22
+            }
+        }))
+        .is_err());
+    }
+
+    #[test]
+    fn progress_is_bounded_closed_and_context_compatible() {
+        for candidate in [
+            GestureCandidate::StartTranscription,
+            GestureCandidate::StopTranscription,
+            GestureCandidate::Send,
+            GestureCandidate::Mute,
+            GestureCandidate::Unmute,
+        ] {
+            let progress = GestureProgress::new(candidate, MAX_GESTURE_PROGRESS_PERMILLE)
+                .expect("upper bound is valid");
+            assert_eq!(progress.candidate(), candidate);
+            assert_eq!(progress.progress_permille(), 1_000);
+            assert_eq!(
+                serde_json::from_value::<GestureProgress>(
+                    serde_json::to_value(progress).expect("progress serializes")
+                )
+                .expect("progress reads"),
+                progress
+            );
+        }
+        assert_eq!(
+            GestureProgress::new(
+                GestureCandidate::StartTranscription,
+                MAX_GESTURE_PROGRESS_PERMILLE + 1
+            ),
+            Err(InvalidGestureProgress)
+        );
+
+        let contexts = [
+            GestureContext::Disabled,
+            GestureContext::Standby,
+            ACTIVE,
+            MUTED,
+        ];
+        for context in contexts {
+            for candidate in [
+                GestureCandidate::StartTranscription,
+                GestureCandidate::StopTranscription,
+                GestureCandidate::Send,
+                GestureCandidate::Mute,
+                GestureCandidate::Unmute,
+            ] {
+                let expected = matches!(
+                    (context, candidate),
+                    (
+                        GestureContext::Standby,
+                        GestureCandidate::StartTranscription
+                    ) | (
+                        GestureContext::Active { .. },
+                        GestureCandidate::StopTranscription | GestureCandidate::Send,
+                    ) | (
+                        GestureContext::Active { muted: false, .. },
+                        GestureCandidate::Mute
+                    ) | (
+                        GestureContext::Active { muted: true, .. },
+                        GestureCandidate::Unmute
+                    )
+                );
+                let progress = GestureProgress::new(candidate, 500).expect("bounded");
+                assert_eq!(progress.is_compatible_with(context), expected);
+            }
+        }
+
+        assert!(serde_json::from_value::<ControlStatus>(json!({
+            "mode": "standby",
+            "progress": {
+                "candidate": "send",
+                "progress_permille": 500
+            }
+        }))
+        .is_err());
+        assert!(serde_json::from_value::<ControlStatus>(json!({
+            "mode": "active",
+            "voice_request_id": 22,
+            "muted": false,
+            "progress": {
+                "candidate": "start_transcription",
+                "progress_permille": 500
+            }
+        }))
+        .is_err());
+    }
+
+    #[test]
+    fn protocol_shape_cannot_carry_private_or_extensible_fields() {
+        let event = serde_json::to_value(HelperEvent::Intent {
+            session_id: SESSION,
+            sequence: 4,
+            intent: active_intent(VoiceRequestGestureIntent::Mute),
+        })
+        .expect("event serializes");
+        for private in [
+            "frame",
+            "pixels",
+            "landmarks",
+            "label",
+            "message",
+            "path",
+            "diagnostics",
+            "process_id",
+            "draft",
+        ] {
+            assert!(event.get(private).is_none());
+            assert!(event["intent"].get(private).is_none());
+        }
+
+        assert!(serde_json::from_value::<HelperEvent>(json!({
+            "type": "intent",
+            "session_id": { "high": 7, "low": 11 },
+            "sequence": 4,
+            "intent": {
+                "scope": "voice_request",
+                "voice_request_id": 22,
+                "action": "send",
+                "draft": "private"
+            }
+        }))
+        .is_err());
     }
 
     #[test]
@@ -535,232 +899,6 @@ mod tests {
             read_frame::<HelperEvent>(&mut Cursor::new(output.bytes)).expect("frame reads"),
             Some(event)
         );
-    }
-
-    #[test]
-    fn protocol_shape_cannot_carry_private_or_extensible_fields() {
-        let event = serde_json::to_value(HelperEvent::Intent {
-            session_id: SESSION,
-            sequence: 4,
-            voice_request_id: 22,
-            intent: GestureIntent::Mute,
-        })
-        .expect("event serializes");
-        assert_eq!(event["type"], "intent");
-        assert_eq!(event["intent"], "mute");
-        for private in [
-            "frame",
-            "pixels",
-            "landmarks",
-            "label",
-            "message",
-            "path",
-            "diagnostics",
-            "process_id",
-        ] {
-            assert!(event.get(private).is_none());
-        }
-
-        let unexpected = json!({
-            "type": "intent",
-            "session_id": { "high": 7, "low": 11 },
-            "sequence": 4,
-            "voice_request_id": 22,
-            "intent": { "type": "send", "draft": "private" }
-        });
-        assert!(serde_json::from_value::<HelperEvent>(unexpected).is_err());
-    }
-
-    #[test]
-    fn intent_vocabulary_is_explicit_and_legacy_hold_edges_are_rejected() {
-        for (intent, label) in [
-            (GestureIntent::Arm, "arm"),
-            (GestureIntent::Disarm, "disarm"),
-            (GestureIntent::Send, "send"),
-            (GestureIntent::Mute, "mute"),
-            (GestureIntent::Unmute, "unmute"),
-        ] {
-            let event = HelperEvent::Intent {
-                session_id: SESSION,
-                sequence: 4,
-                voice_request_id: 22,
-                intent,
-            };
-            let encoded = serde_json::to_value(event).expect("intent serializes");
-            assert_eq!(encoded["intent"], label);
-            assert_eq!(
-                serde_json::from_value::<HelperEvent>(encoded).expect("intent deserializes"),
-                event
-            );
-        }
-
-        for legacy in ["hold", "release_hold"] {
-            assert!(serde_json::from_value::<HelperEvent>(json!({
-                "type": "intent",
-                "session_id": { "high": 7, "low": 11 },
-                "sequence": 4,
-                "voice_request_id": 22,
-                "intent": legacy
-            }))
-            .is_err());
-        }
-    }
-
-    #[test]
-    fn control_status_shape_enforces_request_ownership() {
-        let disabled = serde_json::to_value(ControlStatus::Disabled).expect("status serializes");
-        assert_eq!(disabled, json!({ "mode": "disabled" }));
-
-        let active = ControlStatus::Active {
-            voice_request_id: 22,
-            state: MUTED,
-            progress: Some(
-                GestureProgress::new(GestureCandidate::Unmute, 742).expect("bounded progress"),
-            ),
-        };
-        let encoded = serde_json::to_value(active).expect("status serializes");
-        assert_eq!(
-            encoded,
-            json!({
-                "mode": "active",
-                "voice_request_id": 22,
-                "state": {
-                    "armed": true,
-                    "muted": true
-                },
-                "progress": {
-                    "candidate": "unmute",
-                    "progress_permille": 742
-                }
-            })
-        );
-        assert_eq!(
-            serde_json::from_value::<ControlStatus>(json!({
-                "mode": "active",
-                "voice_request_id": 22,
-                "state": {
-                    "armed": true,
-                    "muted": true
-                },
-                "progress": null
-            }))
-            .expect("explicitly empty progress is valid"),
-            ControlStatus::Active {
-                voice_request_id: 22,
-                state: MUTED,
-                progress: None,
-            }
-        );
-
-        assert!(serde_json::from_value::<ControlStatus>(json!({
-            "mode": "disabled",
-            "voice_request_id": 22
-        }))
-        .is_err());
-        assert!(serde_json::from_value::<ControlStatus>(json!({
-            "mode": "active",
-            "state": "ready"
-        }))
-        .is_err());
-        assert!(serde_json::from_value::<ControlStatus>(json!({
-            "mode": "active",
-            "voice_request_id": 22,
-                "state": {
-                    "armed": true,
-                    "muted": false,
-                "candidate": true
-            },
-            "progress": null
-        }))
-        .is_err());
-    }
-
-    #[test]
-    fn gesture_progress_is_bounded_and_closed() {
-        for candidate in [
-            GestureCandidate::Arm,
-            GestureCandidate::Disarm,
-            GestureCandidate::Send,
-            GestureCandidate::Mute,
-            GestureCandidate::Unmute,
-        ] {
-            let progress = GestureProgress::new(candidate, MAX_GESTURE_PROGRESS_PERMILLE)
-                .expect("upper bound is valid");
-            assert_eq!(progress.candidate(), candidate);
-            assert_eq!(progress.progress_permille(), MAX_GESTURE_PROGRESS_PERMILLE);
-            assert_eq!(
-                serde_json::from_value::<GestureProgress>(
-                    serde_json::to_value(progress).expect("progress serializes")
-                )
-                .expect("progress deserializes"),
-                progress
-            );
-        }
-
-        assert_eq!(
-            GestureProgress::new(GestureCandidate::Arm, MAX_GESTURE_PROGRESS_PERMILLE + 1),
-            Err(InvalidGestureProgress)
-        );
-        assert!(serde_json::from_value::<GestureProgress>(json!({
-            "candidate": "arm",
-            "progress_permille": 1001
-        }))
-        .is_err());
-        assert!(serde_json::from_value::<GestureProgress>(json!({
-            "candidate": "custom",
-            "progress_permille": 500
-        }))
-        .is_err());
-        assert!(serde_json::from_value::<GestureProgress>(json!({
-            "candidate": "send",
-            "progress_permille": 500,
-            "label": "private"
-        }))
-        .is_err());
-    }
-
-    #[test]
-    fn active_status_rejects_candidates_from_another_state() {
-        let valid = [
-            (DISARMED, GestureCandidate::Arm),
-            (ARMED, GestureCandidate::Disarm),
-            (ARMED, GestureCandidate::Send),
-            (ARMED, GestureCandidate::Mute),
-            (MUTED, GestureCandidate::Unmute),
-        ];
-        for (state, candidate) in valid {
-            let progress = GestureProgress::new(candidate, 500).expect("bounded progress");
-            assert!(progress.is_compatible_with(state));
-        }
-
-        for (state, candidate) in [
-            (DISARMED, GestureCandidate::Send),
-            (ARMED, GestureCandidate::Arm),
-            (MUTED, GestureCandidate::Mute),
-            (ARMED, GestureCandidate::Unmute),
-        ] {
-            let progress = GestureProgress::new(candidate, 500).expect("bounded progress");
-            assert!(!progress.is_compatible_with(state));
-            assert!(serde_json::from_value::<ControlStatus>(json!({
-                "mode": "active",
-                "voice_request_id": 22,
-                "state": {
-                    "armed": state.armed(),
-                    "muted": state.muted(),
-                },
-                "progress": {
-                    "candidate": match candidate {
-                        GestureCandidate::Arm => "arm",
-                        GestureCandidate::Disarm => "disarm",
-                        GestureCandidate::Send => "send",
-                        GestureCandidate::Mute => "mute",
-                        GestureCandidate::Unmute => "unmute",
-                    },
-                    "progress_permille": 500
-                }
-            }))
-            .is_err());
-        }
     }
 
     #[test]
@@ -789,45 +927,5 @@ mod tests {
             read_frame::<HelperEvent>(&mut Cursor::new(malformed)),
             Err(ProtocolError::MalformedFrame(_))
         ));
-    }
-
-    #[test]
-    fn unknown_top_level_fields_and_free_form_intents_are_rejected() {
-        let extra = json!({
-            "type": "hello",
-            "protocol_version": PROTOCOL_VERSION,
-            "session_id": { "high": 7, "low": 11 },
-            "message": "diagnostic"
-        });
-        assert!(serde_json::from_value::<HelperEvent>(extra).is_err());
-
-        let unknown = json!({
-            "type": "intent",
-            "session_id": { "high": 7, "low": 11 },
-            "sequence": 1,
-            "voice_request_id": 9,
-            "intent": { "type": "wave", "label": "custom" }
-        });
-        assert!(serde_json::from_value::<HelperEvent>(unknown).is_err());
-    }
-
-    #[test]
-    fn disabled_context_cannot_claim_active_state() {
-        for (armed, muted) in [(true, false), (false, true)] {
-            assert_eq!(
-                DesktopCommand::set_context(SESSION, None, armed, muted),
-                Err(InvalidContext)
-            );
-        }
-        assert!(serde_json::from_value::<DesktopCommand>(json!({
-            "type": "set_context",
-            "session_id": { "high": 7, "low": 11 },
-            "voice_request_id": null,
-            "armed": false,
-            "muted": false,
-            "held": true
-        }))
-        .is_err());
-        assert!(DesktopCommand::set_context(SESSION, Some(9), true, true).is_ok());
     }
 }

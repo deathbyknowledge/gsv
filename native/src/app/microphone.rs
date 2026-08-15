@@ -39,7 +39,6 @@ pub(super) struct VoiceDraft {
     revision: i32,
     listening: bool,
     stopping: bool,
-    gesture_armed: bool,
     muted: bool,
     pending_mute: Option<bool>,
     mute_revision: Option<u64>,
@@ -57,31 +56,14 @@ impl VoiceDraft {
             revision: -1,
             listening: false,
             stopping: false,
-            gesture_armed: false,
             muted: false,
             pending_mute: None,
             mute_revision: None,
         }
     }
 
-    fn arm_gestures(&mut self) -> bool {
-        if self.stopping || self.gesture_armed {
-            return false;
-        }
-        self.gesture_armed = true;
-        true
-    }
-
-    fn disarm_gestures(&mut self) -> bool {
-        if !self.gesture_armed {
-            return false;
-        }
-        self.gesture_armed = false;
-        true
-    }
-
     fn can_request_segment_commit(&self) -> bool {
-        !self.stopping && self.gesture_armed && self.pending_segment_commit.is_none()
+        !self.stopping && self.pending_segment_commit.is_none()
     }
 
     fn note_segment_commit_requested(&mut self) {
@@ -110,7 +92,6 @@ impl VoiceDraft {
 
     fn can_request_mute(&self, muted: bool) -> bool {
         !self.stopping
-            && self.gesture_armed
             && self.mute_revision.is_some()
             && self.pending_mute.is_none()
             && self.muted != muted
@@ -249,6 +230,7 @@ impl GsvApp {
             request_id,
             operation,
         });
+        self.sync_vision_context();
         if let Some(context) = cancellation {
             self.microphone_request_cancellation = Some(cx.spawn(async move |this, cx| {
                 context.cancelled().await;
@@ -262,6 +244,8 @@ impl GsvApp {
                         let _ = this
                             .voice_commands
                             .send(VoiceCommand::Cancel { request_id });
+                        this.sync_vision_context();
+                        this.refresh_idle_vision_notice();
                     }
                 });
             }));
@@ -309,6 +293,7 @@ impl GsvApp {
             return;
         };
         self.microphone_request_cancellation = None;
+        self.sync_vision_context();
         match pending.operation {
             MicrophoneDeviceOperation::Activation { legacy_name } => {
                 if let Some(legacy_name) = legacy_name {
@@ -428,6 +413,7 @@ impl GsvApp {
             return;
         };
         self.microphone_request_cancellation = None;
+        self.sync_vision_context();
         match pending.operation {
             MicrophoneDeviceOperation::Activation { .. } => {
                 self.show_microphone_chooser(
@@ -498,6 +484,7 @@ impl GsvApp {
             start_after_selection,
             notice,
         });
+        self.sync_vision_context();
         self.microphone_focus.focus(window);
         cx.notify();
     }
@@ -523,6 +510,7 @@ impl GsvApp {
             start_after_selection,
             notice,
         });
+        self.sync_vision_context();
         self.microphone_focus.focus(window);
         self.begin_microphone_enumeration(MicrophoneDeviceOperation::Chooser, window, cx);
         cx.notify();
@@ -543,6 +531,7 @@ impl GsvApp {
         let save_cancellation = Arc::new(AtomicBool::new(false));
         self.microphone_save_cancellation = Some(save_cancellation.clone());
         self.microphone_save_pending = true;
+        self.sync_vision_context();
         if let Some(chooser) = self.microphone_chooser.as_mut() {
             chooser.notice = Some("SAVING MICROPHONE".to_string());
         }
@@ -654,6 +643,8 @@ impl GsvApp {
                     }
                     Err(_) => this.report_microphone_save_failure(owner),
                 }
+                this.sync_vision_context();
+                this.refresh_idle_vision_notice();
                 cx.notify();
             });
         }));
@@ -810,6 +801,8 @@ impl GsvApp {
         }
         self.microphone_chooser = None;
         self.voice_notice = None;
+        self.sync_vision_context();
+        self.refresh_idle_vision_notice();
         self.input.focus_handle(cx).focus(window);
         cx.notify();
         true
@@ -821,23 +814,31 @@ impl GsvApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if self.microphone_chooser.is_some()
-            || self.pending_microphone_request.is_some()
-            || self.microphone_save_pending
-        {
-            return;
-        }
         if self.voice_draft.is_some() {
             self.finish_dictation(cx);
             return;
         }
-        if self.login.is_some()
-            || self.desktop_switch_pending
-            || self.conversation.mode != SurfaceMode::Conversation
-            || self.interaction.is_approval()
-            || self.interaction.is_submitting()
-        {
-            return;
+        self.start_dictation(window, cx);
+    }
+
+    pub(super) fn dictation_start_is_safe(&self) -> bool {
+        self.voice_draft.is_none()
+            && self.microphone_chooser.is_none()
+            && self.pending_microphone_request.is_none()
+            && !self.microphone_save_pending
+            && self.login.is_none()
+            && !self.desktop_switch_pending
+            && self.conversation.mode == SurfaceMode::Conversation
+            && !self.interaction.is_approval()
+            && !self.interaction.is_submitting()
+    }
+
+    /// Starts dictation through the same Desktop-owned microphone selection
+    /// path used by the keyboard action. The vision helper can request this
+    /// operation, but it never selects or opens a microphone itself.
+    pub(super) fn start_dictation(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {
+        if !self.dictation_start_is_safe() {
+            return false;
         }
 
         match environment_voice_device() {
@@ -851,7 +852,7 @@ impl GsvApp {
                     window,
                     cx,
                 );
-                return;
+                return true;
             }
             Err(()) => {
                 self.open_microphone_chooser(
@@ -862,7 +863,7 @@ impl GsvApp {
                     window,
                     cx,
                 );
-                return;
+                return true;
             }
             Ok(None) => {}
         }
@@ -874,6 +875,7 @@ impl GsvApp {
                     window,
                     cx,
                 );
+                true
             }
             MicrophonePreference::SystemDefault => {
                 self.begin_dictation(
@@ -882,10 +884,14 @@ impl GsvApp {
                     window,
                     cx,
                 );
+                true
             }
             MicrophonePreference::Device { id: Some(_), .. } => {
                 if let Some(selection) = preference_start(&self.microphone_preference) {
                     self.begin_dictation(selection, window, cx);
+                    true
+                } else {
+                    false
                 }
             }
             MicrophonePreference::Device { id: None, name } => {
@@ -897,6 +903,7 @@ impl GsvApp {
                     window,
                     cx,
                 );
+                true
             }
         }
     }
@@ -941,33 +948,14 @@ impl GsvApp {
         {
             self.voice_draft = None;
             self.voice_notice = Some("VOICE INPUT UNAVAILABLE · KEEP TYPING".to_string());
+            self.reassert_vision_context();
+        } else {
+            self.begin_vision_for_voice(request_id);
+            // The request exists, but it is not action-eligible until both
+            // Listening and the initial MuteState are authoritative.
+            self.reassert_vision_context();
         }
         cx.notify();
-    }
-
-    /// Arms semantic gesture actions for the active dictation request.
-    pub(super) fn gesture_arm_dictation(&mut self, cx: &mut Context<Self>) -> bool {
-        let changed = self
-            .voice_draft
-            .as_mut()
-            .is_some_and(VoiceDraft::arm_gestures);
-        if changed {
-            cx.notify();
-        }
-        changed
-    }
-
-    /// Disarms gesture actions without changing the independently applied
-    /// microphone mute state.
-    pub(super) fn gesture_disarm_dictation(&mut self, cx: &mut Context<Self>) -> bool {
-        let changed = self
-            .voice_draft
-            .as_mut()
-            .is_some_and(VoiceDraft::disarm_gestures);
-        if changed {
-            cx.notify();
-        }
-        changed
     }
 
     /// Requests a helper-owned microphone mute transition. The Desktop state
@@ -998,6 +986,7 @@ impl GsvApp {
             // the latest rendered words visible for ordinary typing.
             self.disable_vision_for_voice(request_id);
             self.voice_draft = None;
+            self.reassert_vision_context();
             self.voice_notice = Some("VOICE INPUT UNAVAILABLE · KEEP TYPING".to_string());
             cx.notify();
             return false;
@@ -1047,6 +1036,7 @@ impl GsvApp {
         {
             self.disable_vision_for_voice(request_id);
             self.voice_draft = None;
+            self.reassert_vision_context();
             self.voice_notice = Some("VOICE INPUT UNAVAILABLE · KEEP TYPING".to_string());
             cx.notify();
             return false;
@@ -1061,12 +1051,6 @@ impl GsvApp {
         self.voice_notice = Some("LISTENING · PREPARING TO SEND".to_string());
         cx.notify();
         true
-    }
-
-    pub(super) fn dictation_gestures_are_armed(&self) -> bool {
-        self.voice_draft
-            .as_ref()
-            .is_some_and(|voice| voice.gesture_armed)
     }
 
     pub(super) fn dictation_is_muted(&self) -> bool {
@@ -1085,24 +1069,43 @@ impl GsvApp {
             .is_some_and(|voice| voice.pending_segment_commit.is_some())
     }
 
-    pub(super) fn dictation_mute_state_is_authoritative(&self) -> bool {
-        self.voice_draft
-            .as_ref()
-            .is_some_and(|voice| voice.mute_revision.is_some())
-    }
-
     pub(super) fn active_voice_request_id(&self) -> Option<u64> {
         self.voice_draft.as_ref().map(|voice| voice.request_id)
     }
 
+    pub(super) fn voice_request_can_stop(&self, request_id: u64) -> bool {
+        self.voice_draft
+            .as_ref()
+            .is_some_and(|voice| voice.request_id == request_id && !voice.stopping)
+    }
+
+    pub(super) fn voice_request_is_listening(&self, request_id: u64) -> bool {
+        self.voice_draft
+            .as_ref()
+            .is_some_and(|voice| voice.request_id == request_id && voice.listening)
+    }
+
+    pub(super) fn voice_request_is_stopping(&self, request_id: u64) -> bool {
+        self.voice_draft
+            .as_ref()
+            .is_some_and(|voice| voice.request_id == request_id && voice.stopping)
+    }
+
     pub(super) fn voice_request_accepts_gestures(&self, request_id: u64) -> bool {
+        self.voice_request_has_active_gesture_context(request_id)
+            && self.voice_draft.as_ref().is_some_and(|voice| {
+                voice.request_id == request_id
+                    && voice.pending_mute.is_none()
+                    && voice.pending_segment_commit.is_none()
+            })
+    }
+
+    pub(super) fn voice_request_has_active_gesture_context(&self, request_id: u64) -> bool {
         self.voice_draft.as_ref().is_some_and(|voice| {
             voice.request_id == request_id
                 && voice.listening
                 && !voice.stopping
                 && voice.mute_revision.is_some()
-                && voice.pending_mute.is_none()
-                && voice.pending_segment_commit.is_none()
         })
     }
 
@@ -1116,21 +1119,23 @@ impl GsvApp {
             return;
         }
         let request_id = voice.request_id;
+        // Revoke the helper's request lease before asking the transcription
+        // owner to finish. A queued active intent cannot race the terminal
+        // path, and the request stays Disabled until its terminal event.
+        self.disable_vision_for_voice(request_id);
         match self.voice_commands.send(VoiceCommand::Stop { request_id }) {
             Ok(()) => {
                 if let Some(voice) = self.voice_draft.as_mut() {
                     voice.stopping = true;
-                    voice.gesture_armed = false;
                 }
-                self.disable_vision_for_voice(request_id);
                 self.voice_notice = Some("FINISHING VOICE INPUT".to_string());
             }
             Err(_) => {
                 // A failed terminal command means the supervisor cannot own
                 // this session anymore. Keep the latest visible words and
                 // release the UI state so typing is never held hostage.
-                self.disable_vision_for_voice(request_id);
                 self.voice_draft = None;
+                self.reassert_vision_context();
                 self.voice_notice = Some("VOICE INPUT UNAVAILABLE · KEEP TYPING".to_string());
             }
         }
@@ -1174,6 +1179,8 @@ impl GsvApp {
             {
                 self.pending_microphone_request = None;
                 self.microphone_request_cancellation = None;
+                self.sync_vision_context();
+                self.refresh_idle_vision_notice();
                 return;
             }
             _ => {}
@@ -1201,8 +1208,8 @@ impl GsvApp {
                         cx.notify();
                     }
                     MuteStateApplication::Contradicted => {
-                        self.disable_vision_for_voice(request_id);
                         self.voice_draft = None;
+                        self.disable_vision_for_voice(request_id);
                         let _ = self
                             .voice_commands
                             .send(VoiceCommand::Cancel { request_id });
@@ -1350,20 +1357,24 @@ impl GsvApp {
                 self.clear_voice_gesture_status();
                 self.enable_vision_for_voice(request_id);
                 // SegmentFinal is the helper-owned completion edge for Send.
-                // Armed/muted/request are intentionally unchanged, so force
-                // an authority frame instead of replace-if-changed sync.
+                // Request and mute context are intentionally unchanged, so
+                // force an authority frame instead of replace-if-changed sync.
                 self.reassert_vision_context();
                 self.voice_notice = Some(self.listening_voice_notice(request_id).to_string());
                 cx.notify();
             }
             VoiceEvent::Final { request_id, text } if self.voice_request_is(request_id) => {
-                self.disable_vision_for_voice(request_id);
                 let Some(voice) = self.voice_draft.take() else {
                     return;
                 };
+                self.disable_vision_for_voice(request_id);
                 if text.trim().is_empty() {
-                    self.voice_notice =
-                        (voice.revision < 0).then(|| "NO SPEECH HEARD · CHECK INPUT".to_string());
+                    if voice.revision < 0 {
+                        self.voice_notice = Some("NO SPEECH HEARD · CHECK INPUT".to_string());
+                    } else {
+                        self.voice_notice = None;
+                        self.refresh_idle_vision_notice();
+                    }
                     return;
                 }
                 if !self.voice_final_conversation_is_safe(&voice, cx) {
@@ -1375,19 +1386,24 @@ impl GsvApp {
                 self.interaction.on_input(composition.value.clone());
                 self.set_input_value_at(composition.value.clone(), composition.cursor, window, cx);
                 self.voice_notice = None;
+                self.refresh_idle_vision_notice();
             }
             VoiceEvent::Cancelled { request_id } if self.voice_request_is(request_id) => {
-                self.disable_vision_for_voice(request_id);
                 self.voice_draft = None;
+                self.disable_vision_for_voice(request_id);
                 self.voice_notice = None;
+                self.refresh_idle_vision_notice();
             }
             VoiceEvent::Error { request_id, code }
                 if request_id.is_none_or(|request_id| self.voice_request_is(request_id)) =>
             {
-                if let Some(request_id) = self.active_voice_request_id() {
-                    self.disable_vision_for_voice(request_id);
-                }
+                let active_request_id = self.active_voice_request_id();
                 self.voice_draft = None;
+                if let Some(request_id) = active_request_id {
+                    self.disable_vision_for_voice(request_id);
+                } else {
+                    self.sync_vision_context();
+                }
                 self.voice_notice = Some(voice_error_notice(code).to_string());
                 if matches!(
                     code,
@@ -1421,8 +1437,8 @@ impl GsvApp {
         if !self.voice_request_is(request_id) {
             return;
         }
-        self.disable_vision_for_voice(request_id);
         self.voice_draft = None;
+        self.disable_vision_for_voice(request_id);
         let _ = self
             .voice_commands
             .send(VoiceCommand::Cancel { request_id });
@@ -1489,6 +1505,9 @@ impl GsvApp {
         }
         self.voice_notice =
             command_failed.then(|| "VOICE INPUT UNAVAILABLE · KEEP TYPING".to_string());
+        if !command_failed {
+            self.refresh_idle_vision_notice();
+        }
     }
 }
 
@@ -1693,12 +1712,10 @@ mod tests {
     }
 
     #[test]
-    fn gesture_arm_is_explicit_and_send_allows_an_applied_mute() {
+    fn session_actions_need_no_redundant_arm_bit() {
         let mut voice = VoiceDraft::new(7, String::new(), String::new(), String::new());
 
-        assert!(!voice.can_request_segment_commit());
-        assert!(voice.arm_gestures());
-        assert!(!voice.arm_gestures());
+        assert!(voice.can_request_segment_commit());
         assert_eq!(
             voice.apply_mute_state(0, true),
             MuteStateApplication::Applied
@@ -1710,27 +1727,21 @@ mod tests {
         voice.begin_next_segment(String::new(), 0);
         assert_eq!(voice.segment_id, 1);
         assert!(voice.can_request_segment_commit());
-        assert!(voice.gesture_armed);
         assert!(voice.muted);
     }
 
     #[test]
-    fn stopping_voice_rejects_gesture_state_changes() {
+    fn stopping_voice_rejects_session_actions() {
         let mut voice = VoiceDraft::new(7, String::new(), String::new(), String::new());
-        assert!(voice.arm_gestures());
         voice.stopping = true;
 
-        assert!(!voice.arm_gestures());
         assert!(!voice.can_request_segment_commit());
         assert!(!voice.can_request_mute(true));
-        assert!(voice.disarm_gestures());
-        assert!(!voice.gesture_armed);
     }
 
     #[test]
-    fn mute_state_changes_only_on_new_ack_and_disarm_does_not_unmute() {
+    fn mute_state_changes_only_on_new_ack() {
         let mut voice = VoiceDraft::new(7, String::new(), String::new(), String::new());
-        assert!(voice.arm_gestures());
         assert_eq!(
             voice.apply_mute_state(0, false),
             MuteStateApplication::Applied
@@ -1760,8 +1771,6 @@ mod tests {
         );
         assert_eq!(voice.pending_mute, None);
 
-        assert!(voice.disarm_gestures());
-        assert!(!voice.gesture_armed);
         assert!(voice.muted);
     }
 
@@ -1885,7 +1894,6 @@ mod tests {
                         "draft partial".to_string(),
                     );
                     voice.listening = true;
-                    assert!(voice.arm_gestures());
                     assert_eq!(
                         voice.apply_mute_state(0, false),
                         MuteStateApplication::Applied
@@ -1950,7 +1958,6 @@ mod tests {
                             String::new(),
                             String::new(),
                         );
-                        assert!(voice.arm_gestures());
                         assert_eq!(
                             voice.apply_mute_state(0, applied_muted),
                             MuteStateApplication::Applied
@@ -2017,7 +2024,6 @@ mod tests {
                         voice.apply_mute_state(0, false),
                         MuteStateApplication::Applied
                     );
-                    assert!(voice.arm_gestures());
                     app.voice_draft = Some(voice);
 
                     assert!(app.gesture_set_dictation_muted(true, cx));
@@ -2053,7 +2059,7 @@ mod tests {
                     assert_eq!(app.dictation_pending_mute(), None);
                     assert_eq!(
                         app.voice_notice.as_deref(),
-                        Some("LISTENING · MICROPHONE MUTED · GESTURES ARMED")
+                        Some("LISTENING · MICROPHONE MUTED")
                     );
                     assert!(
                         app.vision_context
@@ -2067,9 +2073,12 @@ mod tests {
                         crate::vision_debug::VisionEvent::Intent {
                             sequence: 1,
                             received_at: Instant::now(),
-                            voice_request_id: 60,
-                            intent: gsv_vision_control::GestureIntent::Unmute,
+                            intent: gsv_vision_control::GestureIntent::VoiceRequest {
+                                voice_request_id: 60,
+                                action: gsv_vision_control::VoiceRequestGestureIntent::Unmute,
+                            },
                         },
+                        window,
                         cx,
                     );
                     assert_eq!(
@@ -2095,7 +2104,7 @@ mod tests {
                     assert_eq!(app.dictation_pending_mute(), None);
                     assert_eq!(
                         app.voice_notice.as_deref(),
-                        Some("LISTENING · GESTURES ARMED")
+                        Some("LISTENING · GESTURES ACTIVE")
                     );
 
                     app.handle_voice_event(
@@ -2176,7 +2185,7 @@ mod tests {
         let (voice_commands, voice_command_rx) =
             crate::transcription::VoiceCommandSender::channel_for_test();
         window_handle
-            .update(cx, |_, _window, cx| {
+            .update(cx, |_, window, cx| {
                 app.update(cx, |app, cx| {
                     app.voice_commands = voice_commands;
                     app.vision_context = Some(crate::vision_debug::VisionContextSender::for_test());
@@ -2190,7 +2199,6 @@ mod tests {
                     );
                     voice.revision = 1;
                     voice.listening = true;
-                    assert!(voice.arm_gestures());
                     assert_eq!(
                         voice.apply_mute_state(0, false),
                         MuteStateApplication::Applied
@@ -2206,9 +2214,12 @@ mod tests {
                         crate::vision_debug::VisionEvent::Intent {
                             sequence: 1,
                             received_at: Instant::now(),
-                            voice_request_id: 41,
-                            intent: gsv_vision_control::GestureIntent::Send,
+                            intent: gsv_vision_control::GestureIntent::VoiceRequest {
+                                voice_request_id: 41,
+                                action: gsv_vision_control::VoiceRequestGestureIntent::Send,
+                            },
                         },
+                        window,
                         cx,
                     );
                     assert!(app.dictation_segment_commit_is_pending());
@@ -2225,9 +2236,12 @@ mod tests {
                         crate::vision_debug::VisionEvent::Intent {
                             sequence: 2,
                             received_at: Instant::now(),
-                            voice_request_id: 41,
-                            intent: gsv_vision_control::GestureIntent::Send,
+                            intent: gsv_vision_control::GestureIntent::VoiceRequest {
+                                voice_request_id: 41,
+                                action: gsv_vision_control::VoiceRequestGestureIntent::Send,
+                            },
                         },
+                        window,
                         cx,
                     );
                     assert!(app.dictation_segment_commit_is_pending());
@@ -2318,7 +2332,6 @@ mod tests {
             assert_eq!(voice.pending_segment_commit, None);
             assert_eq!(voice.revision, -1);
             assert!(voice.listening);
-            assert!(voice.gesture_armed);
             assert!(!voice.muted);
             assert!(!voice.stopping);
             assert!(app.interaction.is_submitting());
@@ -2498,7 +2511,6 @@ mod tests {
                     );
                     voice.revision = 1;
                     voice.listening = true;
-                    assert!(voice.arm_gestures());
                     assert_eq!(
                         voice.apply_mute_state(0, false),
                         MuteStateApplication::Applied
@@ -2610,7 +2622,6 @@ mod tests {
                     );
                     voice.revision = 1;
                     voice.listening = true;
-                    assert!(voice.arm_gestures());
                     assert_eq!(
                         voice.apply_mute_state(0, false),
                         MuteStateApplication::Applied

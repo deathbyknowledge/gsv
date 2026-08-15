@@ -29,7 +29,7 @@ use crate::transcription::{coalesce_for_ui, VoiceCommand};
 use crate::typography::TypeLayout;
 use gsv_config::MicrophonePreference;
 use gsv_desktop_control::{DesktopStatus, GatewayState, OperationError, ProcessId, WindowState};
-use gsv_vision_control::{GestureProgress, GestureState, LifecycleState};
+use gsv_vision_control::{GestureContext, GestureProgress, LifecycleState};
 
 mod gesture;
 mod login;
@@ -141,10 +141,9 @@ struct PendingRichFallback {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct VoiceGestureStatus {
-    request_id: u64,
     sequence: u64,
     received_at: Instant,
-    state: GestureState,
+    context: GestureContext,
     progress: Option<GestureProgress>,
 }
 
@@ -746,8 +745,8 @@ impl GsvApp {
             cx.spawn_in(window, async move |this, cx| {
                 while let Some(event) = handle.events.recv().await {
                     if this
-                        .update_in(cx, |this, _window, cx| {
-                            this.handle_vision_event(event, cx);
+                        .update_in(cx, |this, window, cx| {
+                            this.handle_vision_event(event, window, cx);
                         })
                         .is_err()
                     {
@@ -757,7 +756,7 @@ impl GsvApp {
             })
         });
 
-        Self {
+        let mut app = Self {
             conversation: if demo {
                 Conversation::demo()
             } else {
@@ -854,7 +853,9 @@ impl GsvApp {
             _media_file_task: media_file_task,
             _voice_task: voice_task,
             _vision_task: vision_task,
-        }
+        };
+        app.initialize_vision_context();
+        app
     }
 
     fn begin_media_preparation(

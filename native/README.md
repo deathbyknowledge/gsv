@@ -89,23 +89,28 @@ GSV_GESTURE_DEBUG=1 cargo run --manifest-path native/Cargo.toml
 The MediaPipe build uses Bazel and its hermetic Python toolchain, but neither
 Python nor Bazel is a runtime dependency. The running proof consists of the
 Rust `gsv-vision` helper, the compiled native library, and the verified local
-model. During active dictation, two open palms explicitly arm the persistent
-gesture mode. Open palm + victory explicitly disarms it; open palm + thumbs-up
-commits and sends the current utterance, including while the microphone is
-muted, then keeps the same microphone session listening for the next utterance;
-open palm + thumbs-down requests mute; and open palm + pointing-up requests
-unmute. A closed fist and all other pairs are reserved and have no action.
-Arming and applied mute state survive an utterance send. The dictation shortcut
-still explicitly finishes the overall voice session. Applied mute state changes
-only after the transcription helper
-acknowledges that its input gate is applied or reopened. The device and stream
-stay open; while muted, new samples are discarded before queueing or inference.
-Desktop and the diagnostic overlay show whether controls are starting,
-disarmed, armed, muting, muted, or unmuting. As a supported pose accumulates
-evidence, both surfaces show the same filled clockwise disk; it is presentation
-only and never triggers an action. Tracking loss does not disarm the persistent
-mode. Press `Escape` or close the diagnostic window to stop debug mode without
-closing Desktop. See
+model. While Desktop is active and voice input is idle, two open palms request
+a new transcription through the same safety checks and microphone-selection
+path as the keyboard shortcut. During that transcription, open palm + victory
+requests that the overall voice session finish; any final unsent words remain
+as the visible draft. Open palm + thumbs-up commits and sends the current
+utterance, including while the microphone is muted, then keeps the same
+microphone session listening for the next utterance; open palm + thumbs-down
+requests mute; and open palm + pointing-up requests unmute. To send the last
+utterance and finish, perform Send, let it complete, and then perform Stop. A
+closed fist and all other pairs are reserved and have no action. The active
+transcription itself is the gesture authority—there is no separate armed bit—and
+applied mute state survives an utterance send. The dictation shortcut remains
+the equivalent explicit Start/Stop control. Applied mute state changes only
+after the transcription helper acknowledges that its input gate is applied or
+reopened. The device and stream stay open; while muted, new samples are
+discarded before queueing or inference.
+Desktop and the diagnostic overlay show whether controls are standing by,
+starting, listening, stopping, muting, muted, or unmuting. As a supported pose
+accumulates evidence, both surfaces show the same filled clockwise disk; it is
+presentation only and never triggers an action. Tracking loss never starts,
+stops, mutes, or unmutes a session. Press `Escape` or close the diagnostic
+window to stop debug mode without closing Desktop. See
 `native/vision-helper/README.md` for thresholds, artifacts, and the override
 contract. Gesture controls remain experimental and are not packaged in a
 release yet.

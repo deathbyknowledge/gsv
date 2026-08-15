@@ -20,7 +20,7 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use crossbeam_channel::{bounded, Receiver, Sender, TryRecvError, TrySendError};
-use gsv_vision_control::{ControlStatus, GestureCandidate, GestureProgress};
+use gsv_vision_control::{ControlStatus, GestureCandidate, GestureContext, GestureProgress};
 use sha2::{Digest, Sha256};
 
 use crate::camera::{CameraConfig, CameraStream, FrameReader};
@@ -282,13 +282,14 @@ fn control_presentation(
 
     let status = match status {
         ControlStatus::Disabled => ControlStatus::Disabled,
+        ControlStatus::Standby { .. } => ControlStatus::Standby { progress: None },
         ControlStatus::Active {
             voice_request_id,
-            state,
+            muted,
             ..
         } => ControlStatus::Active {
             voice_request_id,
-            state,
+            muted,
             progress: None,
         },
     };
@@ -318,7 +319,6 @@ fn inference_worker(
     let mut last_timestamp = None;
     let mut gesture_control = GestureControl::default();
     let mut control_revision = 0;
-    let mut control_voice_request_id = None;
     let mut published_control_status = None;
     while !stop.load(Ordering::Acquire) {
         let Some(delivery) = reader.wait_latest(last_sequence, INFERENCE_POLL) else {
@@ -351,53 +351,60 @@ fn inference_worker(
             }
             ready_published = true;
         }
-        let (control_status, control_diagnostic) = if let Some(control_link) = &control_link {
-            let context = control_link.context();
-            let status = if let Some(voice_request_id) = sync_control_context(
-                &mut gesture_control,
-                &mut control_revision,
-                &mut control_voice_request_id,
-                context,
-            ) {
-                if let Some(intent) = observe_control(
-                    &mut gesture_control,
-                    &observation,
-                    delivery.frame.captured_at,
-                ) {
-                    let intent = match intent {
-                        ControlIntent::Arm => gsv_vision_control::GestureIntent::Arm,
-                        ControlIntent::Disarm => gsv_vision_control::GestureIntent::Disarm,
-                        ControlIntent::Send => gsv_vision_control::GestureIntent::Send,
-                        ControlIntent::Mute => gsv_vision_control::GestureIntent::Mute,
-                        ControlIntent::Unmute => gsv_vision_control::GestureIntent::Unmute,
-                    };
-                    if !control_link.publish_intent(voice_request_id, intent) {
-                        let _ = failure.try_send(VisionError::ProtocolUnavailable);
-                        return;
+        let (context_revision, control_status, control_diagnostic) =
+            if let Some(control_link) = &control_link {
+                match control_link.context() {
+                    ControlContext::Uninitialized => (
+                        None,
+                        ControlStatus::Disabled,
+                        ControlDiagnostic::AwaitingPose,
+                    ),
+                    ControlContext::Authoritative { revision, gesture } => {
+                        sync_control_context(
+                            &mut gesture_control,
+                            &mut control_revision,
+                            revision,
+                            gesture,
+                        );
+                        if let Some(intent) = observe_control(
+                            &mut gesture_control,
+                            &observation,
+                            delivery.frame.captured_at,
+                        ) {
+                            if !control_link.publish_intent(intent) {
+                                let _ = failure.try_send(VisionError::ProtocolUnavailable);
+                                return;
+                            }
+                        }
+                        (
+                            Some(revision),
+                            control_status(&gesture_control, delivery.frame.captured_at),
+                            gesture_control.diagnostic(),
+                        )
                     }
                 }
-                control_status(
-                    &gesture_control,
-                    Some(voice_request_id),
-                    delivery.frame.captured_at,
-                )
             } else {
-                control_status(&gesture_control, None, delivery.frame.captured_at)
+                (
+                    None,
+                    ControlStatus::Disabled,
+                    ControlDiagnostic::AwaitingPose,
+                )
             };
-            (status, gesture_control.diagnostic())
-        } else {
-            (ControlStatus::Disabled, ControlDiagnostic::AwaitingPose)
-        };
         let publish_at = Instant::now();
-        if control_status_publish_due(published_control_status, control_status, publish_at) {
-            if let Some(control_link) = &control_link {
+        if let (Some(control_link), Some(context_revision)) = (&control_link, context_revision) {
+            if control_status_publish_due(
+                published_control_status,
+                context_revision,
+                control_status,
+                publish_at,
+            ) {
                 // Explanatory snapshots are replace-latest and never wait for
                 // the event writer. A repeated snapshot only lets a resumed UI
                 // recover presentation; it is neither an action nor liveness.
                 // Intent edges above retain their reliable bounded path.
                 let _ = control_link.publish_status(control_status);
+                published_control_status = Some((context_revision, control_status, publish_at));
             }
-            published_control_status = Some((control_status, publish_at));
         }
         let annotated = AnnotatedFrame {
             frame: delivery.frame,
@@ -418,34 +425,29 @@ fn first_frame_timed_out(last_sequence: u64, started_at: Instant, checked_at: In
 fn sync_control_context(
     control: &mut GestureControl,
     current_revision: &mut u64,
-    current_voice_request_id: &mut Option<u64>,
-    context: ControlContext,
-) -> Option<u64> {
-    if context.revision != *current_revision {
-        let state = crate::control::ControlState::new(context.armed, context.muted);
-        if *current_voice_request_id == context.voice_request_id {
-            control.synchronize_state(state);
-        } else {
-            control.reset(state);
-        }
-        *current_revision = context.revision;
-        *current_voice_request_id = context.voice_request_id;
+    revision: u64,
+    gesture: GestureContext,
+) {
+    if revision != *current_revision {
+        control.synchronize_state(gesture);
+        *current_revision = revision;
     }
-    context.voice_request_id
 }
 
-fn control_status(
-    control: &GestureControl,
-    voice_request_id: Option<u64>,
-    now: Instant,
-) -> ControlStatus {
-    voice_request_id.map_or(ControlStatus::Disabled, |voice_request_id| {
-        ControlStatus::Active {
+fn control_status(control: &GestureControl, now: Instant) -> ControlStatus {
+    let progress = control_progress(control, now);
+    match control.state() {
+        GestureContext::Disabled => ControlStatus::Disabled,
+        GestureContext::Standby => ControlStatus::Standby { progress },
+        GestureContext::Active {
             voice_request_id,
-            state: control.state(),
-            progress: control_progress(control, now),
-        }
-    })
+            muted,
+        } => ControlStatus::Active {
+            voice_request_id,
+            muted,
+            progress,
+        },
+    }
 }
 
 fn control_progress(control: &GestureControl, now: Instant) -> Option<GestureProgress> {
@@ -459,8 +461,8 @@ fn gesture_candidate(
     chord: crate::control::ControlChord,
 ) -> Option<GestureCandidate> {
     let candidate = match chord {
-        crate::control::ControlChord::Arm => GestureCandidate::Arm,
-        crate::control::ControlChord::Disarm => GestureCandidate::Disarm,
+        crate::control::ControlChord::StartTranscription => GestureCandidate::StartTranscription,
+        crate::control::ControlChord::StopTranscription => GestureCandidate::StopTranscription,
         crate::control::ControlChord::Send => GestureCandidate::Send,
         crate::control::ControlChord::Mute => GestureCandidate::Mute,
         crate::control::ControlChord::Unmute => GestureCandidate::Unmute,
@@ -472,14 +474,18 @@ fn gesture_candidate(
 }
 
 fn control_status_publish_due(
-    previous: Option<(ControlStatus, Instant)>,
+    previous: Option<(u64, ControlStatus, Instant)>,
+    context_revision: u64,
     current: ControlStatus,
     now: Instant,
 ) -> bool {
-    previous.is_none_or(|(previous, published_at)| {
-        previous != current
-            || matches!(current, ControlStatus::Active { .. })
-                && now.saturating_duration_since(published_at) >= CONTROL_STATUS_HEARTBEAT
+    previous.is_none_or(|(previous_revision, previous, published_at)| {
+        previous_revision != context_revision
+            || previous != current
+            || matches!(
+                current,
+                ControlStatus::Standby { .. } | ControlStatus::Active { .. }
+            ) && now.saturating_duration_since(published_at) >= CONTROL_STATUS_HEARTBEAT
     })
 }
 
@@ -691,6 +697,11 @@ mod tests {
 
     use super::*;
 
+    const ACTIVE: GestureContext = GestureContext::Active {
+        voice_request_id: 12,
+        muted: false,
+    };
+
     #[test]
     fn camera_index_is_bounded_and_exact() {
         assert_eq!(parse_camera_index(None), Ok(0));
@@ -769,106 +780,124 @@ mod tests {
     }
 
     #[test]
-    fn context_revision_applies_absolute_state_and_request_boundaries() {
+    fn context_revision_applies_strict_absolute_modes() {
         let mut control = GestureControl::default();
-        let mut revision = 0;
-        let mut request_id = None;
-        assert_eq!(
-            sync_control_context(
-                &mut control,
-                &mut revision,
-                &mut request_id,
-                ControlContext {
-                    voice_request_id: Some(9),
-                    armed: true,
-                    muted: true,
-                    revision: 1,
-                },
-            ),
-            Some(9)
-        );
-        assert_eq!(
-            control.state(),
-            crate::control::ControlState::new(true, true)
-        );
+        let mut current_revision = 0;
 
-        assert_eq!(
-            sync_control_context(
-                &mut control,
-                &mut revision,
-                &mut request_id,
-                ControlContext {
-                    voice_request_id: None,
-                    armed: false,
-                    muted: false,
-                    revision: 2,
-                },
-            ),
-            None
+        sync_control_context(
+            &mut control,
+            &mut current_revision,
+            1,
+            GestureContext::Standby,
+        );
+        assert_eq!(control.state(), GestureContext::Standby);
+        assert_eq!(current_revision, 1);
+
+        // An unchanged revision cannot smuggle in a different request.
+        sync_control_context(
+            &mut control,
+            &mut current_revision,
+            1,
+            GestureContext::Active {
+                voice_request_id: 99,
+                muted: true,
+            },
+        );
+        assert_eq!(control.state(), GestureContext::Standby);
+
+        sync_control_context(
+            &mut control,
+            &mut current_revision,
+            2,
+            GestureContext::Active {
+                voice_request_id: 9,
+                muted: true,
+            },
         );
         assert_eq!(
             control.state(),
-            crate::control::ControlState::new(false, false)
+            GestureContext::Active {
+                voice_request_id: 9,
+                muted: true,
+            }
         );
     }
 
     #[test]
-    fn semantic_status_is_complete_and_request_scoped() {
-        let mut control = GestureControl::default();
+    fn semantic_status_mirrors_all_three_authority_modes() {
         let now = Instant::now();
-        assert_eq!(control_status(&control, None, now), ControlStatus::Disabled);
+        let mut control = GestureControl::default();
+        assert_eq!(control_status(&control, now), ControlStatus::Disabled);
+
+        control.synchronize_state(GestureContext::Standby);
         assert_eq!(
-            control_status(&control, Some(12), now),
+            control_status(&control, now),
+            ControlStatus::Standby { progress: None }
+        );
+
+        control.synchronize_state(ACTIVE);
+        assert_eq!(
+            control_status(&control, now),
             ControlStatus::Active {
                 voice_request_id: 12,
-                state: gsv_vision_control::GestureState::new(false, false),
+                muted: false,
                 progress: None,
             }
         );
 
-        control.reset(crate::control::ControlState::new(true, true));
+        control.synchronize_state(GestureContext::Active {
+            voice_request_id: 12,
+            muted: true,
+        });
         assert_eq!(
-            control_status(&control, Some(12), now),
+            control_status(&control, now),
             ControlStatus::Active {
                 voice_request_id: 12,
-                state: gsv_vision_control::GestureState::new(true, true),
+                muted: true,
                 progress: None,
             }
         );
     }
 
     #[test]
-    fn controller_chords_map_only_to_state_compatible_progress_candidates() {
+    fn controller_chords_map_only_to_context_compatible_candidates() {
         use crate::control::{ControlChord, ControlState};
 
         let cases = [
             (
-                ControlState::new(false, false),
-                ControlChord::Arm,
-                Some(GestureCandidate::Arm),
+                ControlState::Standby,
+                ControlChord::StartTranscription,
+                Some(GestureCandidate::StartTranscription),
             ),
             (
-                ControlState::new(true, false),
-                ControlChord::Disarm,
-                Some(GestureCandidate::Disarm),
+                ACTIVE,
+                ControlChord::StopTranscription,
+                Some(GestureCandidate::StopTranscription),
             ),
+            (ACTIVE, ControlChord::Send, Some(GestureCandidate::Send)),
+            (ACTIVE, ControlChord::Mute, Some(GestureCandidate::Mute)),
             (
-                ControlState::new(true, false),
-                ControlChord::Send,
-                Some(GestureCandidate::Send),
-            ),
-            (
-                ControlState::new(true, false),
-                ControlChord::Mute,
-                Some(GestureCandidate::Mute),
-            ),
-            (
-                ControlState::new(true, true),
+                GestureContext::Active {
+                    voice_request_id: 12,
+                    muted: true,
+                },
                 ControlChord::Unmute,
                 Some(GestureCandidate::Unmute),
             ),
-            (ControlState::new(false, false), ControlChord::Send, None),
-            (ControlState::new(true, true), ControlChord::Mute, None),
+            (
+                GestureContext::Disabled,
+                ControlChord::StartTranscription,
+                None,
+            ),
+            (ControlState::Standby, ControlChord::Send, None),
+            (
+                GestureContext::Active {
+                    voice_request_id: 12,
+                    muted: true,
+                },
+                ControlChord::Mute,
+                None,
+            ),
         ];
         for (state, chord, expected) in cases {
             assert_eq!(gesture_candidate(state, chord), expected);
@@ -876,9 +905,9 @@ mod tests {
     }
 
     #[test]
-    fn active_status_carries_the_controller_candidate_progress() {
+    fn standby_status_carries_only_bounded_start_progress() {
         let now = Instant::now();
-        let mut control = GestureControl::default();
+        let mut control = GestureControl::new(GestureContext::Standby);
         let hands = [
             ControlHand::new("Open_Palm", 0.9),
             ControlHand::new("Open_Palm", 0.9),
@@ -894,25 +923,23 @@ mod tests {
         );
 
         assert_eq!(
-            control_status(&control, Some(12), now),
-            ControlStatus::Active {
-                voice_request_id: 12,
-                state: gsv_vision_control::GestureState::new(false, false),
+            control_status(&control, now),
+            ControlStatus::Standby {
                 progress: Some(
-                    GestureProgress::new(GestureCandidate::Arm, 0).expect("bounded progress")
+                    GestureProgress::new(GestureCandidate::StartTranscription, 0)
+                        .expect("bounded progress")
                 ),
             }
         );
     }
 
     #[test]
-    fn annotated_control_presentation_expires_progress_without_changing_state() {
+    fn annotated_presentation_expires_progress_without_changing_authority() {
         let observed_at = Instant::now();
-        let progress = GestureProgress::new(GestureCandidate::Send, 640).expect("bounded progress");
-        let state = gsv_vision_control::GestureState::new(true, false);
+        let progress = GestureProgress::new(GestureCandidate::Send, 640).expect("bounded");
         let status = ControlStatus::Active {
             voice_request_id: 77,
-            state,
+            muted: false,
             progress: Some(progress),
         };
         let diagnostic = ControlDiagnostic::Stabilizing {
@@ -943,11 +970,27 @@ mod tests {
             ControlPresentation {
                 status: ControlStatus::Active {
                     voice_request_id: 77,
-                    state,
+                    muted: false,
                     progress: None,
                 },
                 diagnostic: ControlPresentationDiagnostic::AwaitingFreshObservation,
             }
+        );
+
+        let standby = ControlStatus::Standby {
+            progress: Some(
+                GestureProgress::new(GestureCandidate::StartTranscription, 500).expect("bounded"),
+            ),
+        };
+        assert_eq!(
+            control_presentation(
+                standby,
+                diagnostic,
+                observed_at,
+                observed_at + ANNOTATED_PRESENTATION_FRESHNESS + Duration::from_millis(1),
+            )
+            .status,
+            ControlStatus::Standby { progress: None }
         );
     }
 
@@ -968,7 +1011,7 @@ mod tests {
             }],
             inference_time: Duration::from_millis(20),
         };
-        let mut control = GestureControl::default();
+        let mut control = GestureControl::new(GestureContext::Standby);
 
         assert_eq!(
             observe_control(&mut control, &observation, captured_at),
@@ -981,44 +1024,48 @@ mod tests {
     }
 
     #[test]
-    fn unchanged_status_heartbeats_after_the_ui_freshness_margin() {
+    fn actionable_statuses_heartbeat_but_disabled_does_not() {
         let started_at = Instant::now();
-        let disarmed = ControlStatus::Active {
-            voice_request_id: 12,
-            state: gsv_vision_control::GestureState::new(false, false),
-            progress: None,
-        };
-        let previous = Some((disarmed, started_at));
-
-        assert!(!control_status_publish_due(
-            previous,
-            disarmed,
-            started_at + CONTROL_STATUS_HEARTBEAT - Duration::from_millis(1),
-        ));
-        assert!(control_status_publish_due(
-            previous,
-            disarmed,
-            started_at + CONTROL_STATUS_HEARTBEAT,
-        ));
-        assert!(control_status_publish_due(
-            previous,
+        for status in [
+            ControlStatus::Standby { progress: None },
             ControlStatus::Active {
                 voice_request_id: 12,
-                state: gsv_vision_control::GestureState::new(true, true),
+                muted: false,
                 progress: None,
             },
-            started_at + Duration::from_millis(1),
-        ));
+        ] {
+            let previous = Some((1, status, started_at));
+            assert!(!control_status_publish_due(
+                previous,
+                1,
+                status,
+                started_at + CONTROL_STATUS_HEARTBEAT - Duration::from_millis(1),
+            ));
+            assert!(control_status_publish_due(
+                previous,
+                1,
+                status,
+                started_at + CONTROL_STATUS_HEARTBEAT,
+            ));
+            assert!(control_status_publish_due(
+                previous,
+                2,
+                status,
+                started_at + Duration::from_millis(1),
+            ));
+        }
 
-        let disabled = Some((ControlStatus::Disabled, started_at));
+        let disabled = Some((3, ControlStatus::Disabled, started_at));
         assert!(!control_status_publish_due(
             disabled,
+            3,
             ControlStatus::Disabled,
             started_at + CONTROL_STATUS_HEARTBEAT + Duration::from_secs(5),
         ));
         assert!(control_status_publish_due(
-            previous,
-            ControlStatus::Disabled,
+            disabled,
+            3,
+            ControlStatus::Standby { progress: None },
             started_at + Duration::from_millis(1),
         ));
     }

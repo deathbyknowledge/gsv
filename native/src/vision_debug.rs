@@ -12,9 +12,9 @@ use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
 use gsv_vision_control::{
-    read_frame, write_frame, ControlStatus, DesktopCommand, GestureIntent, HelperEvent,
-    LifecycleState, SessionId, EVENT_CHANNEL_CONTRACT_MARKER, EVENT_FD, EVENT_FD_MARKER_ENV,
-    PROTOCOL_VERSION, SESSION_HIGH_ENV, SESSION_LOW_ENV,
+    read_frame, write_frame, ControlStatus, DesktopCommand, GestureContext, GestureIntent,
+    HelperEvent, LifecycleState, SessionId, EVENT_CHANNEL_CONTRACT_MARKER, EVENT_FD,
+    EVENT_FD_MARKER_ENV, PROTOCOL_VERSION, SESSION_HIGH_ENV, SESSION_LOW_ENV,
 };
 use tokio::sync::{mpsc as tokio_mpsc, watch};
 use uuid::Uuid;
@@ -72,30 +72,7 @@ impl fmt::Display for VisionDebugError {
     }
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) struct VisionContext {
-    pub(crate) voice_request_id: Option<u64>,
-    pub(crate) armed: bool,
-    pub(crate) muted: bool,
-}
-
-impl VisionContext {
-    pub(crate) const fn disabled() -> Self {
-        Self {
-            voice_request_id: None,
-            armed: false,
-            muted: false,
-        }
-    }
-
-    pub(crate) const fn listening(voice_request_id: u64, armed: bool, muted: bool) -> Self {
-        Self {
-            voice_request_id: Some(voice_request_id),
-            armed,
-            muted,
-        }
-    }
-}
+pub(crate) type VisionContext = GestureContext;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum VisionEvent {
@@ -108,7 +85,6 @@ pub(crate) enum VisionEvent {
     Intent {
         sequence: u64,
         received_at: Instant,
-        voice_request_id: u64,
         intent: GestureIntent,
     },
 }
@@ -205,7 +181,6 @@ impl VisionEventReceiver {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum VisionContextError {
     Closed,
-    Invalid,
 }
 
 #[derive(Clone)]
@@ -215,7 +190,6 @@ pub(crate) struct VisionContextSender {
 
 impl VisionContextSender {
     pub(crate) fn set_context(&self, context: VisionContext) -> Result<(), VisionContextError> {
-        validate_context(context)?;
         self.state.set(context)
     }
 
@@ -227,7 +201,6 @@ impl VisionContextSender {
         &self,
         context: VisionContext,
     ) -> Result<(), VisionContextError> {
-        validate_context(context)?;
         self.state.reassert(context)
     }
 
@@ -242,13 +215,10 @@ impl VisionContextSender {
     pub(crate) fn revision_for_test(&self) -> u64 {
         self.state.lock().snapshot.revision
     }
-}
 
-fn validate_context(context: VisionContext) -> Result<(), VisionContextError> {
-    if context.voice_request_id.is_none() && (context.armed || context.muted) {
-        Err(VisionContextError::Invalid)
-    } else {
-        Ok(())
+    #[cfg(test)]
+    pub(crate) fn context_for_test(&self) -> VisionContext {
+        self.state.lock().snapshot.context
     }
 }
 
@@ -309,7 +279,7 @@ impl ContextState {
             inner: Mutex::new(ContextInner {
                 snapshot: ContextSnapshot {
                     revision: 1,
-                    context: VisionContext::disabled(),
+                    context: VisionContext::Disabled,
                 },
                 closed: false,
             }),
@@ -372,7 +342,7 @@ impl ContextState {
     fn close(&self) {
         let mut inner = self.lock();
         inner.snapshot.revision = inner.snapshot.revision.wrapping_add(1).max(1);
-        inner.snapshot.context = VisionContext::disabled();
+        inner.snapshot.context = VisionContext::Disabled;
         inner.closed = true;
         self.changed.notify_all();
     }
@@ -668,18 +638,7 @@ fn command_writer(
 ) {
     let mut revision = 0;
     while let Some(snapshot) = context.wait_after(revision) {
-        let command = match DesktopCommand::set_context(
-            session_id,
-            snapshot.context.voice_request_id,
-            snapshot.context.armed,
-            snapshot.context.muted,
-        ) {
-            Ok(command) => command,
-            Err(_) => {
-                command_failed.store(true, Ordering::Release);
-                break;
-            }
-        };
+        let command = DesktopCommand::set_context(session_id, snapshot.context);
         if write_frame(&mut stdin, &command).is_err() {
             command_failed.store(true, Ordering::Release);
             break;
@@ -831,33 +790,70 @@ fn translate_event(
         HelperEvent::Status {
             status: ControlStatus::Disabled,
             ..
-        } if context.voice_request_id.is_none() => Ok(Some(VisionEvent::Status {
+        } if context == VisionContext::Disabled => Ok(Some(VisionEvent::Status {
             sequence,
             received_at,
             status: ControlStatus::Disabled,
         })),
         HelperEvent::Status {
-            status:
-                status @ ControlStatus::Active {
-                    voice_request_id, ..
-                },
+            status: status @ ControlStatus::Standby { .. },
             ..
-        } if context.voice_request_id == Some(voice_request_id) => Ok(Some(VisionEvent::Status {
+        } if context == VisionContext::Standby => Ok(Some(VisionEvent::Status {
             sequence,
             received_at,
             status,
         })),
+        HelperEvent::Status {
+            status:
+                status @ ControlStatus::Active {
+                    voice_request_id,
+                    muted,
+                    ..
+                },
+            ..
+        } if matches!(
+            context,
+        VisionContext::Active {
+            voice_request_id: expected_request_id,
+            muted: expected_muted,
+        } if expected_request_id == voice_request_id && expected_muted == muted
+        ) =>
+        {
+            Ok(Some(VisionEvent::Status {
+                sequence,
+                received_at,
+                status,
+            }))
+        }
         HelperEvent::Status { .. } => Ok(None),
         HelperEvent::Intent {
-            voice_request_id,
-            intent,
+            intent: intent @ GestureIntent::StartTranscription,
             ..
-        } if context.voice_request_id == Some(voice_request_id) => Ok(Some(VisionEvent::Intent {
+        } if context == VisionContext::Standby => Ok(Some(VisionEvent::Intent {
             sequence,
             received_at,
-            voice_request_id,
             intent,
         })),
+        HelperEvent::Intent {
+            intent:
+                intent @ GestureIntent::VoiceRequest {
+                    voice_request_id, ..
+                },
+            ..
+        } if matches!(
+            context,
+            VisionContext::Active {
+                voice_request_id: expected_request_id,
+                ..
+            } if expected_request_id == voice_request_id
+        ) =>
+        {
+            Ok(Some(VisionEvent::Intent {
+                sequence,
+                received_at,
+                intent,
+            }))
+        }
         HelperEvent::Intent { .. } => Ok(None),
         HelperEvent::Hello { .. } => Err(()),
     }
@@ -1150,64 +1146,52 @@ mod tests {
     }
 
     #[test]
-    fn context_updates_are_absolute_bounded_and_disable_immediately() {
+    fn context_updates_are_absolute_and_reassertable() {
         let state = Arc::new(ContextState::new());
         let sender = VisionContextSender {
             state: Arc::clone(&state),
         };
         let initial = state.wait_after(0).expect("initial disabled context");
-        assert_eq!(initial.context, VisionContext::disabled());
+        assert_eq!(initial.context, VisionContext::Disabled);
         sender
-            .set_context(VisionContext::disabled())
+            .set_context(VisionContext::Disabled)
             .expect("identical context remains valid");
-        assert_eq!(state.lock().snapshot.revision, initial.revision);
-        for context in [
-            VisionContext {
-                voice_request_id: None,
-                armed: true,
-                muted: false,
-            },
-            VisionContext {
-                voice_request_id: None,
-                armed: false,
-                muted: true,
-            },
-        ] {
-            assert_eq!(
-                sender.set_context(context),
-                Err(VisionContextError::Invalid)
-            );
-        }
         assert_eq!(state.lock().snapshot.revision, initial.revision);
 
         sender
-            .set_context(VisionContext::listening(8, true, false))
-            .expect("arm context");
-        let armed_revision = state.lock().snapshot.revision;
+            .set_context(VisionContext::Standby)
+            .expect("standby context");
+        let standby_revision = state.lock().snapshot.revision;
         sender
-            .set_context(VisionContext::listening(8, true, false))
-            .expect("identical armed context remains valid");
-        assert_eq!(state.lock().snapshot.revision, armed_revision);
+            .set_context(VisionContext::Standby)
+            .expect("identical standby context remains valid");
+        assert_eq!(state.lock().snapshot.revision, standby_revision);
         sender
-            .reassert_context(VisionContext::listening(8, true, false))
+            .reassert_context(VisionContext::Standby)
             .expect("identical authority can be replayed");
         let reasserted_revision = state.lock().snapshot.revision;
-        assert_ne!(reasserted_revision, armed_revision);
+        assert_ne!(reasserted_revision, standby_revision);
         sender
-            .set_context(VisionContext::listening(8, true, true))
-            .expect("mute context");
+            .set_context(VisionContext::Active {
+                voice_request_id: 8,
+                muted: false,
+            })
+            .expect("active context");
         assert_ne!(state.lock().snapshot.revision, reasserted_revision);
         sender
-            .set_context(VisionContext::listening(8, false, true))
-            .expect("disarming does not unmute context");
+            .set_context(VisionContext::Active {
+                voice_request_id: 8,
+                muted: true,
+            })
+            .expect("muted context");
         sender
-            .set_context(VisionContext::disabled())
+            .set_context(VisionContext::Disabled)
             .expect("disable context");
-        assert_eq!(state.desired(), VisionContext::disabled());
+        assert_eq!(state.desired(), VisionContext::Disabled);
         let latest = state
             .wait_after(initial.revision)
             .expect("latest context update");
-        assert_eq!(latest.context, VisionContext::disabled());
+        assert_eq!(latest.context, VisionContext::Disabled);
     }
 
     #[test]
@@ -1231,40 +1215,71 @@ mod tests {
 
     #[test]
     fn stale_session_sequence_and_voice_context_are_fenced() {
-        let active = VisionContext::listening(21, true, false);
         let received_at = Instant::now();
-        let intent = |session_id, sequence, voice_request_id| HelperEvent::Intent {
+        let intent = |session_id, sequence, intent| HelperEvent::Intent {
             session_id,
             sequence,
-            voice_request_id,
-            intent: GestureIntent::Send,
+            intent,
         };
         let mut sequence = 0;
         assert_eq!(
             translate_event(
-                intent(SessionId::new(9, 9), 1, 21),
+                intent(SessionId::new(9, 9), 1, GestureIntent::StartTranscription,),
                 received_at,
                 SESSION,
                 &mut sequence,
-                active
+                VisionContext::Standby,
             ),
             Ok(None)
         );
         assert_eq!(sequence, 0);
         assert_eq!(
             translate_event(
-                intent(SESSION, 1, 20),
+                intent(SESSION, 1, GestureIntent::StartTranscription),
                 received_at,
                 SESSION,
                 &mut sequence,
-                active,
+                VisionContext::Disabled,
             ),
             Ok(None)
         );
         assert_eq!(sequence, 1);
         assert_eq!(
             translate_event(
-                intent(SESSION, 1, 21),
+                intent(SESSION, 1, GestureIntent::StartTranscription),
+                received_at,
+                SESSION,
+                &mut sequence,
+                VisionContext::Standby,
+            ),
+            Ok(None)
+        );
+        assert_eq!(
+            translate_event(
+                intent(SESSION, 2, GestureIntent::StartTranscription),
+                received_at,
+                SESSION,
+                &mut sequence,
+                VisionContext::Standby,
+            ),
+            Ok(Some(VisionEvent::Intent {
+                sequence: 2,
+                received_at,
+                intent: GestureIntent::StartTranscription,
+            }))
+        );
+
+        let send = |voice_request_id| GestureIntent::VoiceRequest {
+            voice_request_id,
+            action: gsv_vision_control::VoiceRequestGestureIntent::Send,
+        };
+        let active = VisionContext::Active {
+            voice_request_id: 21,
+            muted: false,
+        };
+        assert_eq!(
+            translate_event(
+                intent(SESSION, 3, send(20)),
                 received_at,
                 SESSION,
                 &mut sequence,
@@ -1274,28 +1289,17 @@ mod tests {
         );
         assert_eq!(
             translate_event(
-                intent(SESSION, 2, 21),
+                intent(SESSION, 4, send(21)),
                 received_at,
                 SESSION,
                 &mut sequence,
                 active,
             ),
             Ok(Some(VisionEvent::Intent {
-                sequence: 2,
+                sequence: 4,
                 received_at,
-                voice_request_id: 21,
-                intent: GestureIntent::Send,
+                intent: send(21),
             }))
-        );
-        assert_eq!(
-            translate_event(
-                intent(SESSION, 3, 21),
-                received_at,
-                SESSION,
-                &mut sequence,
-                VisionContext::disabled(),
-            ),
-            Ok(None)
         );
     }
 
@@ -1309,8 +1313,12 @@ mod tests {
         };
         let active_status = ControlStatus::Active {
             voice_request_id: 21,
-            state: gsv_vision_control::GestureState::new(false, false),
+            muted: false,
             progress: None,
+        };
+        let active_context = VisionContext::Active {
+            voice_request_id: 21,
+            muted: false,
         };
         let mut sequence = 0;
 
@@ -1320,7 +1328,7 @@ mod tests {
                 received_at,
                 SESSION,
                 &mut sequence,
-                VisionContext::listening(21, false, false),
+                active_context,
             ),
             Ok(None)
         );
@@ -1331,7 +1339,7 @@ mod tests {
                 received_at,
                 SESSION,
                 &mut sequence,
-                VisionContext::listening(20, false, false),
+                VisionContext::Standby,
             ),
             Ok(None)
         );
@@ -1342,7 +1350,7 @@ mod tests {
                 received_at,
                 SESSION,
                 &mut sequence,
-                VisionContext::listening(21, false, false),
+                active_context,
             ),
             Ok(Some(VisionEvent::Status {
                 sequence: 2,
@@ -1352,27 +1360,21 @@ mod tests {
         );
         assert_eq!(
             translate_event(
-                status(SESSION, 3, ControlStatus::Disabled),
+                status(
+                    SESSION,
+                    3,
+                    ControlStatus::Active {
+                        voice_request_id: 21,
+                        muted: true,
+                        progress: None,
+                    },
+                ),
                 received_at,
                 SESSION,
                 &mut sequence,
-                VisionContext::listening(21, false, false),
+                active_context,
             ),
             Ok(None)
-        );
-        assert_eq!(
-            translate_event(
-                status(SESSION, 4, ControlStatus::Disabled),
-                received_at,
-                SESSION,
-                &mut sequence,
-                VisionContext::disabled(),
-            ),
-            Ok(Some(VisionEvent::Status {
-                sequence: 4,
-                received_at,
-                status: ControlStatus::Disabled,
-            }))
         );
     }
 
@@ -1390,18 +1392,13 @@ mod tests {
         let stale = Instant::now()
             .checked_sub(Duration::from_secs(2))
             .expect("test instant supports subtraction");
-
         send_vision_event(
             &events,
             &statuses,
             VisionEvent::Lifecycle(LifecycleState::Ready),
         )
         .expect("reliable lifecycle queues");
-        for (sequence, state) in [
-            (2, gsv_vision_control::GestureState::new(false, false)),
-            (3, gsv_vision_control::GestureState::new(true, false)),
-            (4, gsv_vision_control::GestureState::new(false, false)),
-        ] {
+        for (sequence, muted) in [(2, false), (3, true), (4, false)] {
             send_vision_event(
                 &events,
                 &statuses,
@@ -1410,7 +1407,7 @@ mod tests {
                     received_at: stale,
                     status: ControlStatus::Active {
                         voice_request_id: 31,
-                        state,
+                        muted,
                         progress: None,
                     },
                 },
@@ -1423,15 +1420,17 @@ mod tests {
             VisionEvent::Intent {
                 sequence: 5,
                 received_at: Instant::now(),
-                voice_request_id: 31,
-                intent: GestureIntent::Mute,
+                intent: GestureIntent::VoiceRequest {
+                    voice_request_id: 31,
+                    action: gsv_vision_control::VoiceRequestGestureIntent::Mute,
+                },
             },
         )
         .expect("reliable intent queues");
         let final_received_at = Instant::now();
         let final_status = ControlStatus::Active {
             voice_request_id: 31,
-            state: gsv_vision_control::GestureState::new(true, true),
+            muted: true,
             progress: None,
         };
         send_vision_event(
@@ -1479,8 +1478,10 @@ mod tests {
                 receiver.recv().await,
                 Some(VisionEvent::Intent {
                     sequence: 5,
-                    voice_request_id: 31,
-                    intent: GestureIntent::Mute,
+                    intent: GestureIntent::VoiceRequest {
+                        voice_request_id: 31,
+                        action: gsv_vision_control::VoiceRequestGestureIntent::Mute,
+                    },
                     ..
                 })
             ));
@@ -1506,7 +1507,7 @@ mod tests {
                 received_at: Instant::now(),
                 status: ControlStatus::Active {
                     voice_request_id: 31,
-                    state: gsv_vision_control::GestureState::new(true, false),
+                    muted: false,
                     progress: None,
                 },
             },
@@ -1540,7 +1541,7 @@ mod tests {
                 Instant::now(),
                 SESSION,
                 &mut sequence,
-                VisionContext::disabled(),
+                VisionContext::Disabled,
             ),
             Err(())
         );
