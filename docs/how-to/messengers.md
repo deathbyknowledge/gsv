@@ -84,12 +84,34 @@ before adding continuously connected accounts.
 
 ## Telegram
 
+### Managed GSV
+
+1. In GSV, open **Messengers → Telegram** and use the link to open the official
+   GSV bot.
+2. Send the bot any private message. It replies with a short-lived pairing
+   code.
+3. Enter that code back in GSV. GSV shows the Telegram display name, handle,
+   and numeric identity that requested it.
+4. Confirm only if that is your Telegram identity. The code alone cannot choose
+   an installation or user; the signed-in GSV session supplies both.
+5. Send another message in Telegram. It reaches the same Personal intelligence
+   you use in GSV, without selecting a process.
+
+If the Telegram identity was linked to another GSV, requesting or inspecting a
+code does not interrupt it. The route moves only after confirmation succeeds.
+Use **Disconnect** on the linked identity to revoke it.
+
+### Standalone GSV
+
 1. In GSV, open **Messengers** and click **Connect messenger.**
-2. Open [@BotFather](https://t.me/botfather) in Telegram (on your laptop or your phone) and press **Start.**
-3. Send `/newbot`. Pick a display name (e.g. `ham`), then a username ending in `bot` (e.g. `ham_bot`).
-4. BotFather replies with a **token** that looks like `123456789:QWErtyUIOP`. Back in GSV, click **Next**, then **Next**, and paste the token.
-5. Open your new bot's profile — BotFather links it in that last message — and press **Start.** It returns an **access code**; paste that into GSV.
-6. Connected. Send `/help` in Telegram to see what it can do.
+2. Open [@BotFather](https://t.me/botfather) in Telegram and press **Start.**
+3. Send `/newbot`. Pick a display name, then a username ending in `bot`.
+4. Paste BotFather's token into the GSV connect flow.
+5. Open the new bot and press **Start**. Paste its one-time access code back
+   into GSV to link your Telegram identity.
+
+Managed GSV never asks for a BotFather token. That credential belongs only to
+the platform-owned Worker.
 
 Try it from your phone, away from your desk: *What's on my Mac's clipboard?*
 

@@ -1083,9 +1083,13 @@ Runtime behavior:
 
 | Syscall | Handler | Behavior |
 |---|---|---|
-| `adapter.list` | `handleAdapterList` | Lists configured adapter bindings and caller-visible account status, including which lifecycle, send, status, and activity methods each binding implements. |
+| `adapter.list` | `handleAdapterList` | Lists configured adapter bindings and caller-visible account status, including which lifecycle, send, status, activity, and managed-pairing methods each binding implements. |
 | `adapter.connect` | `handleAdapterConnect` | User-role only. Rejects foreign-owned accounts, serializes lifecycle operations per account, durably assigns new accounts to the caller's owning human, and calls `CHANNEL_<ADAPTER>.adapterConnect({ installationId }, accountId, config)`. Ownership survives failed provisioning so the owner can retry safely. |
 | `adapter.disconnect` | `handleAdapterDisconnect` | Owner-or-root only. Serializes with connect, calls adapter disconnect, upserts local status as disconnected and unauthenticated, then best-effort refreshes live status. |
+| `adapter.pair.info` | `handleAdapterPairInfo` | Direct signed-in human only. Returns public information for a platform-owned managed adapter, such as the official bot username. |
+| `adapter.pair.inspect` | `handleAdapterPairInspect` | Direct signed-in human only. Resolves a short-lived code to the external identity that requested it. It does not create or move a link. |
+| `adapter.pair.confirm` | `handleAdapterPairConfirm` | Direct signed-in human only. Binds the inspected external identity to the caller's current installation and local uid, activates a fresh route generation, writes the Kernel identity link, and finalizes retryable cleanup of any previous installation. Agent processes cannot invoke this flow. |
+| `adapter.pair.disconnect` | `handleAdapterPairDisconnect` | Direct signed-in human only. Generation-fences and disables the managed peer route before removing the matching Kernel identity link. Generic `sys.unlink` refuses managed links so the two sides cannot be orphaned. |
 | `adapter.inbound` | `handleAdapterInbound` | Service-role only. Requires a stable account-scoped ingress `deliveryId`, derived from the provider's complete event identity, and claims its durable receipt before link, command, HIL, route, media, or Process side effects. Actor and surface remain authorization metadata rather than receipt-key components, so alias normalization cannot bypass replay protection and equal provider stanza ids from different participants remain distinct. Completed replays return the persisted disposition; a concurrent live claim reports `replayed: "in_progress"`, while an abandoned or post-restart claim is fenced and reclaimed. Optional media bytes are cancelled before staging on any replay. New ingress resolves the exact identity link, issues link challenges for unlinked DMs, and drops unlinked non-DM messages. A linked non-DM message is admitted only when the adapter sets `wasMentioned: true`. Normal messages derive an opaque run id, record the actor/thread-scoped surface, store media idempotently, install the automatic reply route, and reconcile through kernel-only `proc.adapter.deliver`. Immediate replies and link challenges carry deterministic outbound `deliveryId` values and use the adapter's ordinary outbound ledger. Persistent first-party adapters retain the provider payload before this call, then replace it with any terminal response state before provider delivery; transport failures and `in_progress` retry through their existing account alarm. |
 | `adapter.state.update` | `handleAdapterStateUpdate` | Service-role only. Updates status without changing ownership and broadcasts a minimal `adapter.status` invalidation to root, the account owner, and linked users. |
 | `adapter.send` | `handleAdapterSend` | Accepts optional concatenated media bytes, validates the caller's identity link or exact observed surface route, allocates or validates a stable `deliveryId`, and forwards outbound text, media, reply id, and body to the adapter service. During a process run, an explicit send to the current automatic reply surface is rejected unless `also: true` acknowledges the additional message. Returns the delivery id, provider message id when available, and `sent`, `deduplicated`, or `ambiguous` delivery state. A failed result is retryable only when replaying the same delivery id is safe. |
@@ -1102,7 +1106,7 @@ ignored with payload-free diagnostics.
 type AdapterSyscalls = {
   "adapter.list": {
     args: Record<string, never>;
-    result: { adapters: Array<{ adapter: string; available: boolean; supportsConnect: boolean; supportsDisconnect: boolean; supportsSend: boolean; supportsStatus: boolean; supportsActivity: boolean; accounts: AdapterAccountStatus[] }> };
+    result: { adapters: Array<{ adapter: string; available: boolean; supportsConnect: boolean; supportsDisconnect: boolean; supportsSend: boolean; supportsStatus: boolean; supportsActivity: boolean; supportsPairing: boolean; accounts: AdapterAccountStatus[] }> };
   };
 
   "adapter.connect": {
@@ -1115,6 +1119,26 @@ type AdapterSyscalls = {
   "adapter.disconnect": {
     args: { adapter: string; accountId: string };
     result: { ok: true; adapter: string; accountId: string; message?: string } | OperationError;
+  };
+
+  "adapter.pair.info": {
+    args: { adapter: string };
+    result: { adapter: string; accountId: string; configured: boolean; botUsername?: string };
+  };
+
+  "adapter.pair.inspect": {
+    args: { adapter: string; code: string };
+    result: { adapter: string; accountId: string; actorId: string; surfaceId: string; actorName?: string; actorHandle?: string; expiresAt: number; linked: boolean };
+  };
+
+  "adapter.pair.confirm": {
+    args: { adapter: string; code: string };
+    result: { paired: true; adapter: string; accountId: string; actorId: string; surfaceId: string; uid: number };
+  };
+
+  "adapter.pair.disconnect": {
+    args: { adapter: string; accountId: string; actorId: string };
+    result: { disconnected: boolean; adapter: string; accountId: string; actorId: string };
   };
 
   "adapter.inbound": {

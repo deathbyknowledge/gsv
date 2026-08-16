@@ -16,10 +16,11 @@ unscoped argument lists and are interpreted as `singleton`. Managed adapter
 account objects use a collision-free internal name derived from
 `{installationId, accountId}`. `singleton` retains the historical unscoped
 account object name for standalone upgrades. Public webhook payloads and adapter
-frame arguments cannot choose this identity. Managed Telegram webhook routes
-use an opaque Durable Object ID, so Telegram accounts also persist the validated
-installation ID for callbacks reached through `idFromString()`. Legacy
-standalone webhook paths keep their existing account identifier.
+frame arguments cannot choose this identity. Standalone Telegram retains its
+historical per-installation account objects and webhook paths. The managed
+platform bot instead reaches a peer object chosen only from the authenticated
+Telegram private actor. That object owns the active installation, local uid,
+and route generation; public payloads cannot select any of them.
 
 Managed lifecycle routing uses two directory lookups with different trust
 inputs. Public HTTP resolves an accepted hostname, while durable adapter,

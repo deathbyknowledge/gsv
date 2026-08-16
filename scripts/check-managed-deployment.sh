@@ -56,16 +56,20 @@ npm run typecheck --workspace gsv-accounts --prefix "$ROOT_DIR"
 npm run typecheck --workspace gsv-inference --prefix "$ROOT_DIR"
 npm exec --workspace gateway -- tsc --noEmit
 npm run check --prefix "$ROOT_DIR/adapters/email" --workspaces=false
+npm run typecheck --prefix "$ROOT_DIR/adapters/telegram" --workspaces=false
+npm run test:managed --prefix "$ROOT_DIR/adapters/telegram" --workspaces=false
 
 generate_types "accounts" "wrangler.jsonc" "accounts" "ManagedAccountsEnv"
 generate_types "inference" "wrangler.jsonc" "inference" "ManagedInferenceEnv"
 generate_types "gateway" "wrangler.managed.jsonc" "gateway" "ManagedGatewayEnv"
 generate_types "adapters/email" "wrangler.jsonc" "email" "ManagedEmailEnv"
+generate_types "adapters/telegram" "wrangler.managed.jsonc" "telegram" "ManagedTelegramEnv"
 
 run_wrangler "accounts" "wrangler.jsonc" "accounts"
 run_wrangler "inference" "wrangler.jsonc" "inference"
 run_wrangler "ripgit" "wrangler.managed.jsonc" "ripgit"
 run_wrangler "gateway" "wrangler.managed.jsonc" "gateway"
 run_wrangler "adapters/email" "wrangler.jsonc" "email"
+run_wrangler "adapters/telegram" "wrangler.managed.jsonc" "telegram"
 
 echo "Managed production configs and Worker bundles are valid."

@@ -108,11 +108,14 @@ The Kernel supplies that context from its durable installation identity; it is
 not read from adapter message arguments or a public request. First-party
 adapters use it to derive the account Durable Object name. The object recovers
 the same immutable installation and account identity from its name instead of
-persisting a second, mutable copy alongside provider state. Telegram is the
-one exception: its managed webhook uses an opaque Durable Object ID, and
-Cloudflare does not expose `ctx.id.name` when an object is reached through
-`idFromString()`. The Telegram account therefore persists the validated
-installation ID alongside its provider state for that callback path.
+persisting a second, mutable copy alongside provider state. The managed
+platform Telegram bot is deliberately different from an installation-owned
+account. Its public webhook derives one peer Durable Object from the
+authenticated private Telegram identity. The peer owns an exclusive route
+containing the installation, local uid, and a fresh generation. Inbound records
+and queued replies retain that generation and recheck it immediately before
+crossing the Gateway or Telegram boundary, so delayed work cannot cross a
+relink.
 
 Managed account objects use a collision-free internal name derived from
 `installationId` and the installation-local `accountId`. The explicit
@@ -120,8 +123,8 @@ Managed account objects use a collision-free internal name derived from
 account name, so upgrading a standalone Telegram, Discord, WhatsApp, or test
 adapter reaches its existing Durable Object and provider session. Adapter
 alarms and retries recover the installation context from the named Durable
-Object before calling the Gateway; Telegram can also recover its validated
-stored identity. They do not depend on a browser hostname.
+Object before calling the Gateway. Managed Telegram recovers it from the peer's
+generation-fenced active route. They do not depend on a browser hostname.
 
 ## Inbound flow
 
