@@ -13,6 +13,8 @@ export type TestNodeProps = {
   onChange?: (value: string) => void;
   onClick?: () => void | Promise<void>;
   status?: string;
+  sub?: string;
+  text?: string;
   tone?: string;
   value?: string;
   variant?: string;
@@ -56,6 +58,7 @@ export function availableConsoleAdapter(
     supportsSend: true,
     supportsStatus: true,
     supportsActivity: true,
+    supportsPairing: false,
     accounts,
   };
 }

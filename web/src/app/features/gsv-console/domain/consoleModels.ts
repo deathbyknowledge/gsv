@@ -65,6 +65,7 @@ export type ConsoleAdapter = {
   supportsSend: boolean;
   supportsStatus: boolean;
   supportsActivity: boolean;
+  supportsPairing: boolean;
   accounts: ConsoleAdapterAccount[];
 };
 

@@ -284,6 +284,7 @@ function normalizeAdapterEntry(value: unknown, adapterFallback: string): Console
     supportsSend: record.supportsSend === true,
     supportsStatus: record.supportsStatus === true,
     supportsActivity: record.supportsActivity === true,
+    supportsPairing: record.supportsPairing === true,
     accounts,
   };
 }

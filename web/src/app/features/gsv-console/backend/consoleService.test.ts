@@ -208,6 +208,7 @@ describe("console agent service", () => {
         supportsSend: true,
         supportsStatus: false,
         supportsActivity: false,
+        supportsPairing: false,
         accounts: [],
       },
     ]);

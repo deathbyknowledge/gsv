@@ -182,6 +182,7 @@ export function statusForAdapter(adapter: ConsoleAdapterAccount): string {
 }
 
 export function canDisconnectAdapter(adapter: ConsoleAdapterAccount): boolean {
+  if (adapter.mode === "managed-shared") return false;
   return adapter.adapter === "whatsapp"
     ? adapter.connected || adapter.authenticated
     : adapter.connected;

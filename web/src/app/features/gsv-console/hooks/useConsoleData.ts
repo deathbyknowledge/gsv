@@ -5,12 +5,16 @@ import {
   addConsoleMcpServer,
   checkConsoleOpenAiCodexOAuth,
   connectConsoleAdapter,
+  confirmConsoleAdapterPairing,
   consumeIdentityLinkCode,
   createMachineNodeToken,
   createConsoleAgent,
   deleteConsoleMachine,
   disconnectConsoleAdapter,
+  disconnectConsoleAdapterPairing,
+  inspectConsoleAdapterPairing,
   loadConsoleAdapters,
+  loadConsoleAdapterPairingInfo,
   loadConsoleAgentContext,
   loadConsoleAccounts,
   loadConsoleAdapterAccounts,
@@ -35,6 +39,9 @@ import {
   type CheckConsoleOpenAiCodexOAuthResult,
   type ConnectConsoleAdapterInput,
   type ConnectConsoleAdapterResult,
+  type ConsoleAdapterPairingCandidate,
+  type ConsoleAdapterPairingInfo,
+  type ConsoleAdapterPairingResult,
   type ConsumeIdentityLinkCodeInput,
   type CreateMachineNodeTokenInput,
   type CreateConsoleAgentInput,
@@ -43,6 +50,7 @@ import {
   type DeleteConsoleMachineResult,
   type ConsoleAgentContextFile,
   type IdentityLinkMutationResult,
+  type InspectConsoleAdapterPairingInput,
   type IssuedMachineNodeToken,
   type LoadConsoleOverviewOptions,
   type PollConsoleOpenAiCodexOAuthInput,
@@ -360,6 +368,40 @@ export function useConnectConsoleAdapter() {
         queryClient.invalidateQueries({ queryKey: consoleOverviewQueryKey }),
       ]);
     },
+  });
+}
+
+export function useConsoleAdapterPairingInfo(adapter: string, enabled = true) {
+  const { client, connected } = useGateway();
+  return useQuery<ConsoleAdapterPairingInfo>({
+    queryKey: ["adapter-pairing", "info", adapter],
+    enabled: connected && enabled,
+    queryFn: () => loadConsoleAdapterPairingInfo(client, adapter),
+  });
+}
+
+export function useInspectConsoleAdapterPairing() {
+  const { client } = useGateway();
+  return useMutation<ConsoleAdapterPairingCandidate, Error, InspectConsoleAdapterPairingInput>({
+    mutationFn: (input) => inspectConsoleAdapterPairing(client, input),
+  });
+}
+
+export function useConfirmConsoleAdapterPairing() {
+  const { client } = useGateway();
+  const queryClient = useQueryClient();
+  return useMutation<ConsoleAdapterPairingResult, Error, InspectConsoleAdapterPairingInput>({
+    mutationFn: (input) => confirmConsoleAdapterPairing(client, input),
+    onSuccess: async () => invalidateConsoleIdentityState(queryClient),
+  });
+}
+
+export function useDisconnectConsoleAdapterPairing() {
+  const { client } = useGateway();
+  const queryClient = useQueryClient();
+  return useMutation<{ disconnected: boolean }, Error, RemoveIdentityLinkInput>({
+    mutationFn: (input) => disconnectConsoleAdapterPairing(client, input),
+    onSuccess: async () => invalidateConsoleIdentityState(queryClient),
   });
 }
 

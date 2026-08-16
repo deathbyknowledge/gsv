@@ -42,6 +42,7 @@ const adapterInventory: ConsoleAdapter = {
   supportsSend: true,
   supportsStatus: true,
   supportsActivity: true,
+  supportsPairing: false,
   accounts: [adapter],
 };
 

@@ -1,6 +1,9 @@
 import type { GSVClient } from "@humansandmachines/gsv/client";
 import type {
   AdapterConnectResult,
+  AdapterPairConfirmResult,
+  AdapterPairInfoResult,
+  AdapterPairInspectResult,
   AiTextGenerateConfig,
   SysOAuthDevicePollResult,
   SysOAuthDeviceStartResult,
@@ -207,6 +210,15 @@ export type ConnectConsoleAdapterInput = {
 };
 
 export type ConnectConsoleAdapterResult = AdapterConnectResult;
+
+export type InspectConsoleAdapterPairingInput = {
+  adapter: string;
+  code: string;
+};
+
+export type ConsoleAdapterPairingInfo = AdapterPairInfoResult;
+export type ConsoleAdapterPairingCandidate = AdapterPairInspectResult;
+export type ConsoleAdapterPairingResult = AdapterPairConfirmResult;
 
 export type AddConsoleMcpServerInput = {
   name: string;
@@ -653,6 +665,44 @@ export async function connectConsoleAdapter(
     throw new Error("Adapter returned an invalid connection response");
   }
   return result;
+}
+
+export async function loadConsoleAdapterPairingInfo(
+  client: Pick<GSVClient, "call">,
+  adapter: string,
+): Promise<ConsoleAdapterPairingInfo> {
+  return await client.call("adapter.pair.info", { adapter: adapter.trim() });
+}
+
+export async function inspectConsoleAdapterPairing(
+  client: Pick<GSVClient, "call">,
+  input: InspectConsoleAdapterPairingInput,
+): Promise<ConsoleAdapterPairingCandidate> {
+  return await client.call("adapter.pair.inspect", {
+    adapter: input.adapter.trim(),
+    code: input.code.trim(),
+  });
+}
+
+export async function confirmConsoleAdapterPairing(
+  client: Pick<GSVClient, "call">,
+  input: InspectConsoleAdapterPairingInput,
+): Promise<ConsoleAdapterPairingResult> {
+  return await client.call("adapter.pair.confirm", {
+    adapter: input.adapter.trim(),
+    code: input.code.trim(),
+  });
+}
+
+export async function disconnectConsoleAdapterPairing(
+  client: Pick<GSVClient, "call">,
+  input: RemoveIdentityLinkInput,
+): Promise<{ disconnected: boolean }> {
+  return await client.call("adapter.pair.disconnect", {
+    adapter: input.adapter.trim(),
+    accountId: input.accountId.trim(),
+    actorId: input.actorId.trim(),
+  });
 }
 
 export async function disconnectConsoleAdapter(

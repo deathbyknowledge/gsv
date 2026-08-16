@@ -13,12 +13,14 @@ import { useUnsavedGuard, useUnsavedGuardLeave } from "../../gsv-shell/unsaved/u
 import { BOTFATHER_URL, DISCORD_DEVELOPER_URL, MESSENGER_CAPABILITIES, adapterDocUrl } from "./messengerDocs";
 import { adapterDetailId, adapterName, deriveAccountId, iconForAdapterName } from "./messengerPresentation";
 import { WhatsAppOnboardingFlow } from "./WhatsAppOnboardingFlow";
+import { ManagedTelegramOnboardingFlow } from "./ManagedTelegramOnboardingFlow";
 
 type MessengerOnboardingFlowProps = {
   adapterId: string;
   existingAccountIds?: readonly string[];
   forceRelink?: boolean;
   initialAccountId?: string | null;
+  managedPairing?: boolean;
   onBack: () => void;
   onConnected: (detailId: string) => void;
 };
@@ -47,6 +49,7 @@ export function MessengerOnboardingFlow({
   existingAccountIds = [],
   forceRelink = false,
   initialAccountId = null,
+  managedPairing = false,
   onBack,
   onConnected,
 }: MessengerOnboardingFlowProps): JSX.Element {
@@ -56,6 +59,15 @@ export function MessengerOnboardingFlow({
         existingAccountIds={existingAccountIds}
         forceRelink={forceRelink}
         initialAccountId={initialAccountId}
+        onBack={onBack}
+        onConnected={onConnected}
+      />
+    );
+  }
+
+  if (adapterId === "telegram" && managedPairing) {
+    return (
+      <ManagedTelegramOnboardingFlow
         onBack={onBack}
         onConnected={onConnected}
       />

@@ -93,6 +93,7 @@ function placeholderAdapter(adapter: string): ConsoleAdapter {
     supportsSend: false,
     supportsStatus: false,
     supportsActivity: false,
+    supportsPairing: false,
     accounts: [],
   };
 }
@@ -149,7 +150,7 @@ export function MessengerCard({
   const visible = accounts.slice(0, MAX_CARD_ACCOUNTS);
   const extra = accounts.length - visible.length;
   const accountNoun = messengerAccountNoun(adapter.adapter, accounts.length);
-  const canConnect = adapter.available && adapter.supportsConnect;
+  const canConnect = adapter.available && (adapter.supportsConnect || adapter.supportsPairing);
 
   return (
     <article class="gsv-messenger-card">
@@ -285,7 +286,7 @@ function MessengerPlatformPage({
   const platform = adapterName(adapter.adapter).toUpperCase();
   const total = adapter.accounts.length;
   const accountNoun = messengerAccountNoun(adapter.adapter, total);
-  const canConnect = adapter.available && adapter.supportsConnect;
+  const canConnect = adapter.available && (adapter.supportsConnect || adapter.supportsPairing);
 
   return (
     <ConsoleDetailPage
@@ -411,7 +412,7 @@ export function MessengersPage({
       !target
       || target.accounts.length > 0
       || !target.available
-      || !target.supportsConnect
+      || (!target.supportsConnect && !target.supportsPairing)
     ) {
       return;
     }
@@ -446,7 +447,7 @@ export function MessengersPage({
   };
 
   const openCreate = (adapter: ConsoleAdapter) => {
-    if (!adapter.available || !adapter.supportsConnect) {
+    if (!adapter.available || (!adapter.supportsConnect && !adapter.supportsPairing)) {
       return;
     }
     setOnboarding({
@@ -527,6 +528,7 @@ export function MessengersPage({
                   ?.accounts.map((account) => account.accountId) ?? []}
                 forceRelink={explicitOnboarding.forceRelink}
                 initialAccountId={explicitOnboarding.accountId}
+                managedPairing={data.find((entry) => entry.adapter === explicitOnboarding.adapterId)?.supportsPairing}
                 onBack={closeOnboarding}
                 onConnected={completeOnboarding}
               />
@@ -544,6 +546,7 @@ export function MessengersPage({
                       key={onboardingSessionKey(onboarding)}
                       adapterId={platform}
                       existingAccountIds={[]}
+                      managedPairing={target.supportsPairing}
                       onBack={closeOnboarding}
                       onConnected={completeOnboarding}
                     />
@@ -551,7 +554,11 @@ export function MessengersPage({
                 }
                 // No accounts yet → straight to the connect flow; otherwise the
                 // dedicated full-list page for the platform.
-                if (target.accounts.length === 0 && target.available && target.supportsConnect) {
+                if (
+                  target.accounts.length === 0
+                  && target.available
+                  && (target.supportsConnect || target.supportsPairing)
+                ) {
                   return (
                     <MessengerOnboardingFlow
                       key={onboardingSessionKey({
@@ -562,6 +569,7 @@ export function MessengersPage({
                       })}
                       adapterId={platform}
                       existingAccountIds={[]}
+                      managedPairing={target.supportsPairing}
                       onBack={closeOnboarding}
                       onConnected={completeOnboarding}
                     />
