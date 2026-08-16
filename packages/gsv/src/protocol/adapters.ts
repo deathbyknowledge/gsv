@@ -328,6 +328,93 @@ export function isAdapterWorkerActivityResult(
     || (typeof result.error === "string" && result.error.trim().length > 0);
 }
 
+export const MANAGED_TELEGRAM_ACCOUNT_ID = "managed";
+
+export type AdapterPairingInfo = {
+  accountId: string;
+  configured: boolean;
+  botUsername?: string;
+};
+
+export type AdapterPairingCandidate = {
+  accountId: string;
+  actorId: string;
+  surfaceId: string;
+  actorName?: string;
+  actorHandle?: string;
+  expiresAt: number;
+  linked: boolean;
+};
+
+export type AdapterPairingRoute = {
+  installationId: string;
+  localUid: number;
+  generation: string;
+};
+
+export type AdapterPairingPrepareInput = {
+  code: string;
+  installationId: string;
+  localUid: number;
+  operationId: string;
+  canonicalOrigin: string;
+};
+
+export type AdapterPairingPreparation = {
+  candidate: AdapterPairingCandidate;
+  route: AdapterPairingRoute;
+  previousRoute?: AdapterPairingRoute;
+};
+
+export type AdapterPairingActivateInput = {
+  code: string;
+  operationId: string;
+  route: AdapterPairingRoute;
+  canonicalOrigin: string;
+};
+
+export type AdapterPairingFinalizeInput = AdapterPairingActivateInput;
+
+export type AdapterPairingDisconnectInput = {
+  operationId: string;
+  installationId: string;
+  actorId: string;
+  surfaceId: string;
+  localUid: number;
+  generation: string;
+};
+
+export type AdapterPairingDisconnectResult = {
+  disconnected: boolean;
+};
+
+/** Optional private RPC surface for platform-owned shared adapter accounts. */
+export interface AdapterPairingWorkerInterface {
+  adapterPairingInfo(
+    installation: AdapterInstallationContext,
+  ): Promise<AdapterPairingInfo>;
+  adapterPairingInspect(
+    installation: AdapterInstallationContext,
+    code: string,
+  ): Promise<AdapterPairingCandidate>;
+  adapterPairingPrepare(
+    installation: AdapterInstallationContext,
+    input: AdapterPairingPrepareInput,
+  ): Promise<AdapterPairingPreparation>;
+  adapterPairingActivate(
+    installation: AdapterInstallationContext,
+    input: AdapterPairingActivateInput,
+  ): Promise<AdapterPairingPreparation>;
+  adapterPairingFinalize(
+    installation: AdapterInstallationContext,
+    input: AdapterPairingFinalizeInput,
+  ): Promise<AdapterPairingPreparation>;
+  adapterPairingDisconnect(
+    installation: AdapterInstallationContext,
+    input: AdapterPairingDisconnectInput,
+  ): Promise<AdapterPairingDisconnectResult>;
+}
+
 /** Validate one live account status returned by an adapter worker. */
 export function isAdapterAccountStatus(value: unknown): value is AdapterAccountStatus {
   if (!value || typeof value !== "object" || Array.isArray(value)) {

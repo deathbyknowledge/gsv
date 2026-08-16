@@ -97,6 +97,10 @@ export function handleSysUnlink(
     return { removed: false };
   }
 
+  if (existing.metadata?.managed === true) {
+    throw new Error("Managed adapter identities must be disconnected through adapter pairing");
+  }
+
   if (identity.process.uid !== 0 && existing.uid !== identity.process.uid) {
     throw new Error("Permission denied");
   }

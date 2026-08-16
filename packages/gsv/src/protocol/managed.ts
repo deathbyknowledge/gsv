@@ -196,3 +196,22 @@ export interface InstallationOnboardingService {
     input: CompleteInstallationOnboardingInput,
   ): Promise<CompleteInstallationOnboardingResult>;
 }
+
+export type UnlinkManagedTelegramIdentityInput = {
+  installationId: string;
+  operationId: string;
+  actorId: string;
+  surfaceId: string;
+  expectedLocalUid: number;
+  expectedGeneration: string;
+};
+
+export type UnlinkManagedTelegramIdentityResult = {
+  removed: boolean;
+};
+
+export interface ManagedTelegramGatewayService {
+  unlinkManagedTelegramIdentity(
+    input: UnlinkManagedTelegramIdentityInput,
+  ): Promise<UnlinkManagedTelegramIdentityResult>;
+}

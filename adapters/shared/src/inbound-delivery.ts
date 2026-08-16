@@ -7,12 +7,13 @@ import type {
 import { isAdapterInboundResult } from "../../../packages/gsv/src/protocol/adapters.js";
 import { shouldReplaceAlarm } from "./alarm";
 
-type PendingInboundResponse = {
+export type PendingInboundResponse<ResponseContext = never> = {
   message: AdapterOutboundMessage;
   expiresAt?: number;
+  context?: ResponseContext;
 };
 
-type PendingInboundDelivery<Payload> =
+type PendingInboundDelivery<Payload, ResponseContext> =
   | {
       state: "provider";
       payload: Payload;
@@ -20,16 +21,21 @@ type PendingInboundDelivery<Payload> =
     }
   | {
       state: "responses";
-      responses: PendingInboundResponse[];
+      responses: PendingInboundResponse<ResponseContext>[];
       /** Number of provider-delivery rounds durably started. */
       attempt: number;
       createdAt: number;
+    }
+  | {
+      state: "completed";
+      createdAt: number;
+      expiresAt: number;
     };
 
-type InboundDeliveryDisposition = {
+export type InboundDeliveryDisposition<ResponseContext = never> = {
   terminal: boolean;
   error?: string;
-  responses?: PendingInboundResponse[];
+  responses?: PendingInboundResponse<ResponseContext>[];
 };
 
 type InboundDeliveryAttempt =
@@ -50,13 +56,18 @@ const MAX_RESPONSE_DELIVERY_ATTEMPTS = 10;
  * response retry therefore never re-enters the Kernel or renormalizes actor
  * identity. Scheduling uses the adapter Durable Object's existing alarm.
  */
-export class InboundDeliveryLedger<Payload> {
+export class InboundDeliveryLedger<Payload, ResponseContext = never> {
   private readonly active = new Set<string>();
   private resetGeneration = 0;
 
   constructor(
     private readonly storage: DurableObjectStorage,
     private readonly prefix: string,
+    private readonly options: {
+      completedRetentionMs?: number;
+      maxRecords?: number;
+      pendingOrder?: "created" | "key";
+    } = {},
   ) {
     if (!prefix) {
       throw new Error("Inbound delivery prefix is required");
@@ -73,12 +84,31 @@ export class InboundDeliveryLedger<Payload> {
     const key = this.recordKey(normalizedId);
     await this.storage.transaction(async (txn) => {
       const now = Date.now();
-      if (!await txn.get(key)) {
+      const records = this.options.maxRecords
+        ? await txn.list<PendingInboundDelivery<Payload, ResponseContext>>({ prefix: this.prefix })
+        : null;
+      if (records) {
+        const expired = [...records.entries()]
+          .filter(([, record]) => record.state === "completed" && record.expiresAt <= now)
+          .map(([recordKey]) => recordKey);
+        if (expired.length > 0) await txn.delete(expired);
+        if (
+          !records.has(key)
+          && records.size - expired.length >= (this.options.maxRecords ?? Infinity)
+        ) {
+          throw new Error("Inbound delivery ledger is at capacity");
+        }
+      }
+      const existing = await txn.get<PendingInboundDelivery<Payload, ResponseContext>>(key);
+      if (existing?.state === "completed" && existing.expiresAt <= now) {
+        await txn.delete(key);
+      }
+      if (!existing || (existing.state === "completed" && existing.expiresAt <= now)) {
         await txn.put(key, {
           state: "provider",
           payload,
           createdAt: now,
-        } satisfies PendingInboundDelivery<Payload>);
+        } satisfies PendingInboundDelivery<Payload, ResponseContext>);
       }
       const currentAlarm = await txn.getAlarm();
       if (shouldReplaceAlarm(currentAlarm, normalizedAlarmAt, now)) {
@@ -102,8 +132,17 @@ export class InboundDeliveryLedger<Payload> {
     const normalizedAlarmAt = requireAlarmTime(alarmAt);
     return await this.storage.transaction(async (txn) => {
       const now = Date.now();
-      const pending = await txn.list({ prefix: this.prefix, limit: 1 });
-      if (pending.size === 0) return false;
+      const records = await txn.list<PendingInboundDelivery<Payload, ResponseContext>>({
+        prefix: this.prefix,
+      });
+      const expired = [...records.entries()]
+        .filter(([, record]) => record.state === "completed" && record.expiresAt <= now)
+        .map(([key]) => key);
+      if (expired.length > 0) await txn.delete(expired);
+      const hasPending = [...records.entries()].some(
+        ([key, record]) => !expired.includes(key) && record.state !== "completed",
+      );
+      if (!hasPending) return false;
       const currentAlarm = await txn.getAlarm();
       if (shouldReplaceAlarm(currentAlarm, normalizedAlarmAt, now)) {
         await txn.setAlarm(normalizedAlarmAt);
@@ -125,8 +164,13 @@ export class InboundDeliveryLedger<Payload> {
 
   async attempt(
     deliveryId: string,
-    deliver: (payload: Payload) => Promise<InboundDeliveryDisposition>,
-    send?: (message: AdapterOutboundMessage) => Promise<AdapterSendResult>,
+    deliver: (
+      payload: Payload,
+    ) => Promise<InboundDeliveryDisposition<ResponseContext>>,
+    send?: (
+      message: AdapterOutboundMessage,
+      context: ResponseContext | undefined,
+    ) => Promise<AdapterSendResult>,
   ): Promise<InboundDeliveryAttempt> {
     const normalizedId = requireDeliveryId(deliveryId);
     if (this.active.has(normalizedId)) {
@@ -137,8 +181,15 @@ export class InboundDeliveryLedger<Payload> {
     const resetGeneration = this.resetGeneration;
     try {
       const key = this.recordKey(normalizedId);
-      const pending = await this.storage.get<PendingInboundDelivery<Payload>>(key);
+      const pending = await this.storage.get<
+        PendingInboundDelivery<Payload, ResponseContext>
+      >(key);
       if (!pending) {
+        return { state: "missing" };
+      }
+      if (pending.state === "completed") {
+        if (pending.expiresAt > Date.now()) return { state: "completed" };
+        await this.storage.delete(key);
         return { state: "missing" };
       }
 
@@ -146,7 +197,7 @@ export class InboundDeliveryLedger<Payload> {
         return await this.deliverResponses(key, pending, send, resetGeneration);
       }
 
-      let disposition: InboundDeliveryDisposition;
+      let disposition: InboundDeliveryDisposition<ResponseContext>;
       try {
         disposition = await deliver(pending.payload);
       } catch (error) {
@@ -164,10 +215,10 @@ export class InboundDeliveryLedger<Payload> {
       if (disposition.terminal) {
         const responses = disposition.responses ?? [];
         if (responses.length === 0) {
-          await this.storage.delete(key);
+          await this.completeRecord(key, pending.createdAt);
           return { state: "completed" };
         }
-        const responseState: PendingInboundDelivery<Payload> = {
+        const responseState: PendingInboundDelivery<Payload, ResponseContext> = {
           state: "responses",
           responses,
           attempt: 0,
@@ -186,15 +237,17 @@ export class InboundDeliveryLedger<Payload> {
 
   async pendingIds(limit = 100): Promise<string[]> {
     const normalizedLimit = Math.max(1, Math.min(100, Math.floor(limit)));
-    const records = await this.storage.list<PendingInboundDelivery<Payload>>({
+    const records = await this.storage.list<
+      PendingInboundDelivery<Payload, ResponseContext>
+    >({
       prefix: this.prefix,
-      limit: normalizedLimit,
     });
     return [...records.entries()]
-      .sort(([leftKey, left], [rightKey, right]) =>
-        left.createdAt - right.createdAt
-        || leftKey.localeCompare(rightKey)
-      )
+      .filter(([, record]) => record.state !== "completed")
+      .sort(([leftKey, left], [rightKey, right]) => this.options.pendingOrder === "key"
+        ? leftKey.localeCompare(rightKey)
+        : left.createdAt - right.createdAt || leftKey.localeCompare(rightKey))
+      .slice(0, normalizedLimit)
       .map(([key]) => key.slice(this.prefix.length));
   }
 
@@ -204,12 +257,18 @@ export class InboundDeliveryLedger<Payload> {
 
   private async deliverResponses(
     key: string,
-    pending: Extract<PendingInboundDelivery<Payload>, { state: "responses" }>,
-    send: ((message: AdapterOutboundMessage) => Promise<AdapterSendResult>) | undefined,
+    pending: Extract<
+      PendingInboundDelivery<Payload, ResponseContext>,
+      { state: "responses" }
+    >,
+    send: ((
+      message: AdapterOutboundMessage,
+      context: ResponseContext | undefined,
+    ) => Promise<AdapterSendResult>) | undefined,
     resetGeneration: number,
   ): Promise<InboundDeliveryAttempt> {
     if (resetGeneration !== this.resetGeneration) {
-      await this.storage.delete(key);
+      await this.completeRecord(key, pending.createdAt);
       return { state: "completed" };
     }
     if (!send) {
@@ -221,7 +280,7 @@ export class InboundDeliveryLedger<Payload> {
         event: "inbound_response_retries_exhausted",
         attempts: pending.attempt,
       }));
-      await this.storage.delete(key);
+      await this.completeRecord(key, pending.createdAt);
       return { state: "completed" };
     }
 
@@ -230,7 +289,7 @@ export class InboundDeliveryLedger<Payload> {
     const attempted = {
       ...pending,
       attempt: pending.attempt + 1,
-    } satisfies PendingInboundDelivery<Payload>;
+    } satisfies PendingInboundDelivery<Payload, ResponseContext>;
     await this.storage.put(key, attempted);
 
     let retryError: string | undefined;
@@ -246,7 +305,7 @@ export class InboundDeliveryLedger<Payload> {
 
       let delivery: AdapterSendResult;
       try {
-        delivery = await send(response.message);
+        delivery = await send(response.message, response.context);
       } catch (error) {
         retryError ??= toErrorMessage(error);
         continue;
@@ -263,7 +322,7 @@ export class InboundDeliveryLedger<Payload> {
     }
 
     if (resetGeneration !== this.resetGeneration) {
-      await this.storage.delete(key);
+      await this.completeRecord(key, pending.createdAt);
       return { state: "completed" };
     }
 
@@ -281,8 +340,21 @@ export class InboundDeliveryLedger<Payload> {
         attempts: attempted.attempt,
       }));
     }
-    await this.storage.delete(key);
+    await this.completeRecord(key, pending.createdAt);
     return { state: "completed" };
+  }
+
+  private async completeRecord(key: string, createdAt: number): Promise<void> {
+    const retentionMs = this.options.completedRetentionMs ?? 0;
+    if (retentionMs <= 0) {
+      await this.storage.delete(key);
+      return;
+    }
+    await this.storage.put(key, {
+      state: "completed",
+      createdAt,
+      expiresAt: Date.now() + retentionMs,
+    } satisfies PendingInboundDelivery<Payload, ResponseContext>);
   }
 }
 

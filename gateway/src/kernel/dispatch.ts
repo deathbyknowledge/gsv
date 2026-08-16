@@ -100,6 +100,10 @@ import {
   handleAdapterDisconnect,
   handleAdapterInbound,
   handleAdapterList,
+  handleAdapterPairConfirm,
+  handleAdapterPairDisconnect,
+  handleAdapterPairInfo,
+  handleAdapterPairInspect,
   handleAdapterSend,
   handleAdapterStateUpdate,
   handleAdapterStatus,
@@ -558,6 +562,18 @@ async function dispatchNative(
         break;
       case "adapter.list":
         data = handleAdapterList(frame.args, ctx);
+        break;
+      case "adapter.pair.info":
+        data = await handleAdapterPairInfo(frame.args, ctx);
+        break;
+      case "adapter.pair.inspect":
+        data = await handleAdapterPairInspect(frame.args, ctx);
+        break;
+      case "adapter.pair.confirm":
+        data = await handleAdapterPairConfirm(frame.args, ctx);
+        break;
+      case "adapter.pair.disconnect":
+        data = await handleAdapterPairDisconnect(frame.args, ctx);
         break;
 
       case "signal.watch":

@@ -6,6 +6,9 @@
   "scripts": {
     "dev": "wrangler dev",
     "deploy": "wrangler deploy --minify",
+    "deploy:managed": "wrangler deploy --config wrangler.managed.jsonc --minify",
+    "dry-run:managed": "wrangler deploy --config wrangler.managed.jsonc --dry-run --outdir /tmp/gsv-managed-telegram-dry-run",
+    "test:managed": "vitest run --config vitest.managed.config.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {

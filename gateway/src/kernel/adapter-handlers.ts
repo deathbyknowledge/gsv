@@ -5,6 +5,9 @@ import type {
   AdapterInstallationContext,
   AdapterMedia,
   AdapterOutboundMessage,
+  AdapterPairingCandidate,
+  AdapterPairingPreparation,
+  AdapterPairingWorkerInterface,
   AdapterSurface,
   AdapterWorkerInterface,
 } from "../adapter-interface";
@@ -20,6 +23,14 @@ import type {
   AdapterListArgs,
   AdapterListEntry,
   AdapterListResult,
+  AdapterPairConfirmArgs,
+  AdapterPairConfirmResult,
+  AdapterPairDisconnectArgs,
+  AdapterPairDisconnectResult,
+  AdapterPairInfoArgs,
+  AdapterPairInfoResult,
+  AdapterPairInspectArgs,
+  AdapterPairInspectResult,
   AdapterStateUpdateArgs,
   AdapterStateUpdateResult,
   AdapterSendArgs,
@@ -68,6 +79,7 @@ import {
   MAX_MESSAGE_MEDIA_TOTAL_BYTES,
 } from "../shared/message-media-limits";
 import { SINGLETON_INSTALLATION_ID } from "../installation/identity";
+import { isLocked } from "../auth/shadow";
 
 type LegacyStandaloneAdapterService = {
   adapterConnect(
@@ -93,6 +105,7 @@ type LegacyStandaloneAdapterService = {
 };
 type AdapterServiceBinding = Fetcher
   & Partial<AdapterWorkerInterface>
+  & Partial<AdapterPairingWorkerInterface>
   & Partial<LegacyStandaloneAdapterService>;
 type AdapterCommandResult = {
   handled: boolean;
@@ -337,6 +350,244 @@ function requireAdapterControlOwnerUid(ctx: KernelContext, syscall: string): num
     throw new Error(`${syscall} requires a user identity`);
   }
   return resolveCallerOwnerUid(ctx);
+}
+
+function requireInteractivePairingOwner(ctx: KernelContext, syscall: string): number {
+  const identity = ctx.identity;
+  if (
+    !identity
+    || identity.role !== "user"
+    || !ctx.connection
+    || ctx.processId
+  ) {
+    throw new Error(`${syscall} requires a direct signed-in user`);
+  }
+  const uid = identity.process.uid;
+  const user = ctx.auth.getPasswdByUid(uid);
+  const shadow = user ? ctx.auth.getShadowByUsername(user.username) : null;
+  if (
+    !user
+    || uid < 1000
+    || ctx.auth.isPersonalAgentUid(uid)
+    || !shadow
+    || isLocked(shadow)
+  ) {
+    throw new Error(`${syscall} requires an active human account`);
+  }
+  return uid;
+}
+
+export async function handleAdapterPairInfo(
+  args: AdapterPairInfoArgs,
+  ctx: KernelContext,
+): Promise<AdapterPairInfoResult> {
+  requireInteractivePairingOwner(ctx, "adapter.pair.info");
+  const adapter = normalizeAdapterName(args.adapter);
+  const service = requirePairingService(ctx, adapter);
+  const info = await service.adapterPairingInfo!(adapterInstallationContext(ctx));
+  if (
+    !info
+    || typeof info.accountId !== "string"
+    || !info.accountId.trim()
+    || typeof info.configured !== "boolean"
+    || (info.botUsername !== undefined && typeof info.botUsername !== "string")
+  ) {
+    throw new Error("Adapter returned invalid pairing information");
+  }
+  return {
+    adapter,
+    accountId: info.accountId,
+    configured: info.configured,
+    ...(info.botUsername ? { botUsername: info.botUsername } : {}),
+  };
+}
+
+export async function handleAdapterPairInspect(
+  args: AdapterPairInspectArgs,
+  ctx: KernelContext,
+): Promise<AdapterPairInspectResult> {
+  requireInteractivePairingOwner(ctx, "adapter.pair.inspect");
+  const adapter = normalizeAdapterName(args.adapter);
+  const code = normalizePairingCode(args.code);
+  const service = requirePairingService(ctx, adapter);
+  const candidate = requirePairingCandidate(await service.adapterPairingInspect!(
+    adapterInstallationContext(ctx),
+    code,
+  ));
+  return { adapter, ...candidate };
+}
+
+export async function handleAdapterPairConfirm(
+  args: AdapterPairConfirmArgs,
+  ctx: KernelContext,
+): Promise<AdapterPairConfirmResult> {
+  const uid = requireInteractivePairingOwner(ctx, "adapter.pair.confirm");
+  const adapter = normalizeAdapterName(args.adapter);
+  const code = normalizePairingCode(args.code);
+  const service = requirePairingService(ctx, adapter);
+  const canonicalOrigin = ctx.installationIdentity?.canonicalOrigin;
+  if (!canonicalOrigin || ctx.installationId === SINGLETON_INSTALLATION_ID) {
+    throw new Error("Managed adapter pairing is not available in this installation");
+  }
+  const operationId = await stableOpaqueId("adapter-pair", [
+    adapter,
+    ctx.installationId,
+    uid,
+    code,
+  ]);
+  const existingCandidate = requirePairingCandidate(await service.adapterPairingInspect!(
+    adapterInstallationContext(ctx),
+    code,
+  ).catch(async () => {
+    const prepared = await service.adapterPairingPrepare!(adapterInstallationContext(ctx), {
+      code,
+      installationId: ctx.installationId,
+      localUid: uid,
+      operationId,
+      canonicalOrigin,
+    });
+    return requirePairingPreparation(prepared, ctx.installationId, uid).candidate;
+  }));
+  const existingLink = ctx.adapters.identityLinks.get(
+    adapter,
+    existingCandidate.accountId,
+    existingCandidate.actorId,
+  );
+  if (existingLink && existingLink.uid !== uid) {
+    throw new Error("This Telegram identity is linked to another user in this GSV");
+  }
+
+  const prepared = requirePairingPreparation(await service.adapterPairingPrepare!(
+    adapterInstallationContext(ctx),
+    {
+      code,
+      installationId: ctx.installationId,
+      localUid: uid,
+      operationId,
+      canonicalOrigin,
+    },
+  ), ctx.installationId, uid);
+  if (
+    prepared.candidate.actorId !== existingCandidate.actorId
+    || prepared.candidate.surfaceId !== existingCandidate.surfaceId
+    || prepared.candidate.accountId !== existingCandidate.accountId
+  ) {
+    throw new Error("Adapter pairing changed during preparation");
+  }
+
+  ctx.adapters.identityLinks.link(
+    adapter,
+    prepared.candidate.accountId,
+    prepared.candidate.actorId,
+    uid,
+    uid,
+    {
+      managed: true,
+      surfaceKind: "dm",
+      surfaceId: prepared.candidate.surfaceId,
+      routeGeneration: prepared.route.generation,
+      operationId,
+    },
+  );
+  const activated = requirePairingPreparation(await service.adapterPairingActivate!(
+    adapterInstallationContext(ctx),
+    {
+      code,
+      operationId,
+      route: prepared.route,
+      canonicalOrigin,
+    },
+  ), ctx.installationId, uid);
+  if (
+    activated.candidate.actorId !== prepared.candidate.actorId
+    || activated.candidate.surfaceId !== prepared.candidate.surfaceId
+    || activated.route.generation !== prepared.route.generation
+  ) {
+    throw new Error("Adapter pairing changed during confirmation");
+  }
+  ctx.adapters.status.setOwner(adapter, activated.candidate.accountId, uid);
+  ctx.adapters.status.upsert(adapter, activated.candidate.accountId, {
+    accountId: activated.candidate.accountId,
+    connected: true,
+    authenticated: true,
+    mode: "managed-shared",
+    lastActivity: Date.now(),
+  });
+
+  await service.adapterPairingFinalize!(adapterInstallationContext(ctx), {
+    code,
+    operationId,
+    route: activated.route,
+    canonicalOrigin,
+  });
+  ctx.broadcastToUserUid(uid, "adapter.status", {
+    adapter,
+    accountId: activated.candidate.accountId,
+  });
+  return {
+    paired: true,
+    adapter,
+    accountId: activated.candidate.accountId,
+    actorId: activated.candidate.actorId,
+    surfaceId: activated.candidate.surfaceId,
+    uid,
+  };
+}
+
+export async function handleAdapterPairDisconnect(
+  args: AdapterPairDisconnectArgs,
+  ctx: KernelContext,
+): Promise<AdapterPairDisconnectResult> {
+  const uid = requireInteractivePairingOwner(ctx, "adapter.pair.disconnect");
+  const adapter = normalizeAdapterName(args.adapter);
+  const accountId = args.accountId.trim();
+  const actorId = args.actorId.trim();
+  if (!accountId || !actorId) throw new Error("Adapter pairing identity is required");
+  const link = ctx.adapters.identityLinks.get(adapter, accountId, actorId);
+  if (!link) return { disconnected: false, adapter, accountId, actorId };
+  if (link.uid !== uid) throw new Error("Permission denied");
+  const surfaceId = typeof link.metadata?.surfaceId === "string"
+    ? link.metadata.surfaceId
+    : "";
+  const generation = typeof link.metadata?.routeGeneration === "string"
+    ? link.metadata.routeGeneration
+    : "";
+  if (link.metadata?.managed !== true || !surfaceId || !generation) {
+    throw new Error("This identity is not managed by adapter pairing");
+  }
+  const service = requirePairingService(ctx, adapter);
+  const operationId = await stableOpaqueId("adapter-pair-disconnect", [
+    adapter,
+    ctx.installationId,
+    uid,
+    actorId,
+    generation,
+  ]);
+  const result = await service.adapterPairingDisconnect!(adapterInstallationContext(ctx), {
+    operationId,
+    installationId: ctx.installationId,
+    actorId,
+    surfaceId,
+    localUid: uid,
+    generation,
+  });
+  const current = ctx.adapters.identityLinks.get(adapter, accountId, actorId);
+  if (
+    current?.uid === uid
+    && current.metadata?.routeGeneration === generation
+  ) {
+    ctx.adapters.identityLinks.unlink(adapter, accountId, actorId);
+  }
+  const stillLinked = ctx.adapters.identityLinks.listByAccount(adapter, accountId).length > 0;
+  ctx.adapters.status.upsert(adapter, accountId, {
+    accountId,
+    connected: true,
+    authenticated: stillLinked,
+    mode: "managed-shared",
+    lastActivity: Date.now(),
+  });
+  ctx.broadcastToUserUid(uid, "adapter.status", { adapter, accountId });
+  return { disconnected: result.disconnected, adapter, accountId, actorId };
 }
 
 export async function handleAdapterSend(
@@ -637,7 +888,8 @@ export async function handleAdapterStatus(
           if (allowedAccountIds && !allowedAccountIds.has(status.accountId.trim())) {
             continue;
           }
-          ctx.adapters.status.upsert(adapter, status.accountId, status);
+          const localized = localizeAdapterStatus(ctx, adapter, status);
+          ctx.adapters.status.upsert(adapter, localized.accountId, localized);
         }
       } catch {
         // status syscall should still return last known state when live check fails
@@ -1623,6 +1875,12 @@ function adapterListEntry(adapter: string, service: AdapterServiceBinding | null
     supportsSend: typeof service?.adapterSend === "function",
     supportsStatus: typeof service?.adapterStatus === "function",
     supportsActivity: typeof service?.adapterSetActivity === "function",
+    supportsPairing: typeof service?.adapterPairingInfo === "function"
+      && typeof service.adapterPairingInspect === "function"
+      && typeof service.adapterPairingPrepare === "function"
+      && typeof service.adapterPairingActivate === "function"
+      && typeof service.adapterPairingFinalize === "function"
+      && typeof service.adapterPairingDisconnect === "function",
     accounts: [],
   };
 }
@@ -1690,13 +1948,29 @@ async function refreshAdapterStatus(
     }
     const accountStatuses = statuses.filter((status) => status.accountId === accountId);
     for (const status of accountStatuses) {
-      ctx.adapters.status.upsert(adapter, status.accountId, status);
+      const localized = localizeAdapterStatus(ctx, adapter, status);
+      ctx.adapters.status.upsert(adapter, localized.accountId, localized);
     }
     return accountStatuses[0] ?? null;
   } catch {
     logAdapterBoundaryFailure("error", "status_refresh_failed");
     return null;
   }
+}
+
+function localizeAdapterStatus(
+  ctx: KernelContext,
+  adapter: string,
+  status: AdapterAccountStatus,
+): AdapterAccountStatus {
+  if (status.mode !== "managed-shared") return status;
+  return {
+    ...status,
+    authenticated: ctx.adapters.identityLinks.listByAccount(
+      adapter,
+      status.accountId,
+    ).length > 0,
+  };
 }
 
 function adapterInstallationContext(
@@ -1758,6 +2032,96 @@ function callAdapterStatus(
   return ctx.installationId === SINGLETON_INSTALLATION_ID
     ? service.adapterStatus!(accountId)
     : service.adapterStatus!(adapterInstallationContext(ctx), accountId);
+}
+
+function requirePairingService(
+  ctx: KernelContext,
+  adapter: string,
+): AdapterServiceBinding & AdapterPairingWorkerInterface {
+  if (!adapter) throw new Error("adapter is required");
+  if (ctx.installationId === SINGLETON_INSTALLATION_ID) {
+    throw new Error("Managed adapter pairing is not available in standalone GSV");
+  }
+  const service = resolveAdapterService(ctx.env, adapter);
+  if (
+    !service
+    || typeof service.adapterPairingInfo !== "function"
+    || typeof service.adapterPairingInspect !== "function"
+    || typeof service.adapterPairingPrepare !== "function"
+    || typeof service.adapterPairingActivate !== "function"
+    || typeof service.adapterPairingFinalize !== "function"
+    || typeof service.adapterPairingDisconnect !== "function"
+  ) {
+    throw new Error(`Adapter does not support managed pairing: ${adapter}`);
+  }
+  return service as AdapterServiceBinding & AdapterPairingWorkerInterface;
+}
+
+function normalizePairingCode(value: string): string {
+  const normalized = typeof value === "string"
+    ? value.trim().toUpperCase().replace(/[\s-]+/g, "")
+    : "";
+  if (!/^[A-HJ-NP-Z2-9]{12}$/.test(normalized)) {
+    throw new Error("Pairing code is invalid");
+  }
+  return normalized;
+}
+
+function requirePairingCandidate(value: unknown): AdapterPairingCandidate {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error("Adapter returned an invalid pairing candidate");
+  }
+  const candidate = value as Partial<AdapterPairingCandidate>;
+  if (
+    typeof candidate.accountId !== "string"
+    || !candidate.accountId.trim()
+    || typeof candidate.actorId !== "string"
+    || !/^[1-9][0-9]{0,19}$/.test(candidate.actorId)
+    || typeof candidate.surfaceId !== "string"
+    || candidate.surfaceId !== candidate.actorId
+    || !Number.isFinite(candidate.expiresAt)
+    || typeof candidate.linked !== "boolean"
+    || (candidate.actorName !== undefined && typeof candidate.actorName !== "string")
+    || (candidate.actorHandle !== undefined && typeof candidate.actorHandle !== "string")
+  ) {
+    throw new Error("Adapter returned an invalid pairing candidate");
+  }
+  return candidate as AdapterPairingCandidate;
+}
+
+function requirePairingPreparation(
+  value: unknown,
+  installationId: string,
+  localUid: number,
+): AdapterPairingPreparation {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error("Adapter returned an invalid pairing preparation");
+  }
+  const preparation = value as Partial<AdapterPairingPreparation>;
+  const candidate = requirePairingCandidate(preparation.candidate);
+  const route = preparation.route;
+  if (
+    !route
+    || route.installationId !== installationId
+    || route.localUid !== localUid
+    || typeof route.generation !== "string"
+    || !/^[A-Za-z0-9](?:[A-Za-z0-9._:-]{0,190}[A-Za-z0-9])?$/.test(route.generation)
+  ) {
+    throw new Error("Adapter returned an invalid pairing route");
+  }
+  const previous = preparation.previousRoute;
+  if (previous && (
+    typeof previous.installationId !== "string"
+    || !Number.isSafeInteger(previous.localUid)
+    || typeof previous.generation !== "string"
+  )) {
+    throw new Error("Adapter returned an invalid previous pairing route");
+  }
+  return {
+    candidate,
+    route,
+    ...(previous ? { previousRoute: previous } : {}),
+  };
 }
 
 function logAdapterBoundaryFailure(

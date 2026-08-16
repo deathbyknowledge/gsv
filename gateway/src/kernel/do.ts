@@ -32,6 +32,8 @@ import type {
   ManagedOutboundMailClaimOutcome,
   ManagedOutboundMailCompletion,
   ManagedOutboundMailReference,
+  UnlinkManagedTelegramIdentityInput,
+  UnlinkManagedTelegramIdentityResult,
   NetFetchArgs,
   ProcessIdentity,
   ScheduleRecord,
@@ -792,6 +794,40 @@ export class Kernel extends Host<Env> {
       completion,
       this.buildKernelContext({}),
     );
+  }
+
+  async unlinkManagedTelegramIdentity(
+    input: UnlinkManagedTelegramIdentityInput,
+  ): Promise<UnlinkManagedTelegramIdentityResult> {
+    if (input?.installationId !== this.installationId) {
+      throw new Error("Managed Telegram installation identity mismatch");
+    }
+    if (
+      typeof input.operationId !== "string"
+      || !input.operationId.trim()
+      || typeof input.actorId !== "string"
+      || !/^[1-9][0-9]{0,19}$/.test(input.actorId)
+      || input.surfaceId !== input.actorId
+      || !Number.isSafeInteger(input.expectedLocalUid)
+      || input.expectedLocalUid < 0
+      || typeof input.expectedGeneration !== "string"
+      || !input.expectedGeneration
+    ) {
+      throw new Error("Managed Telegram unlink input is invalid");
+    }
+    const link = this.adapters.identityLinks.get("telegram", "managed", input.actorId);
+    if (
+      !link
+      || link.uid !== input.expectedLocalUid
+      || link.metadata?.managed !== true
+      || link.metadata?.surfaceId !== input.surfaceId
+      || link.metadata?.routeGeneration !== input.expectedGeneration
+    ) {
+      return { removed: false };
+    }
+    return {
+      removed: this.adapters.identityLinks.unlink("telegram", "managed", input.actorId),
+    };
   }
 
   async authorizeGitHttp(input: AuthorizeGitHttpInput): Promise<AuthorizeGitHttpResult> {

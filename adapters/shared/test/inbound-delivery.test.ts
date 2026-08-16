@@ -104,6 +104,23 @@ function ledger(
   );
 }
 
+function retainedLedger(
+  storage: MemoryStorage,
+): InboundDeliveryLedger<
+  { providerMessageId: string },
+  { installationId: string; generation: string }
+> {
+  return new InboundDeliveryLedger(
+    storage as unknown as DurableObjectStorage,
+    "retained_inbound:",
+    {
+      completedRetentionMs: 1_000,
+      maxRecords: 4,
+      pendingOrder: "key",
+    },
+  );
+}
+
 describe("InboundDeliveryLedger", () => {
   it("commits a provider payload with its earliest wake-up", async () => {
     const storage = new MemoryStorage();
@@ -333,6 +350,98 @@ describe("InboundDeliveryLedger", () => {
     expect(unexpectedKernelReplay).not.toHaveBeenCalled();
     expect(send).toHaveBeenCalledTimes(2);
     expect(send.mock.calls[0]?.[0]).toEqual(send.mock.calls[1]?.[0]);
+  });
+
+  it("persists response authorization context across provider retries", async () => {
+    const storage = new MemoryStorage();
+    const first = retainedLedger(storage);
+    const context = { installationId: "installation-a", generation: "generation-a" };
+    await first.enqueueAndArm("update:0002", { providerMessageId: "2" }, 100);
+    const enterKernel = vi.fn(async () => ({
+      terminal: true,
+      responses: [{
+        message: {
+          deliveryId: "reply-2",
+          surface: { kind: "dm" as const, id: "2" },
+          actorId: "2",
+          text: "Reply",
+        },
+        context,
+      }],
+    }));
+    const send = vi.fn()
+      .mockResolvedValueOnce({ ok: false as const, error: "retry", retryable: true })
+      .mockResolvedValueOnce({ ok: true as const });
+
+    await expect(first.attempt("update:0002", enterKernel, send)).resolves.toEqual({
+      state: "pending",
+      error: "retry",
+    });
+    await expect(retainedLedger(storage).attempt(
+      "update:0002",
+      vi.fn(async () => ({ terminal: false })),
+      send,
+    )).resolves.toEqual({ state: "completed" });
+    expect(enterKernel).toHaveBeenCalledTimes(1);
+    expect(send.mock.calls).toEqual([
+      [expect.objectContaining({ deliveryId: "reply-2" }), context],
+      [expect.objectContaining({ deliveryId: "reply-2" }), context],
+    ]);
+  });
+
+  it("retains completed ids against provider replay until they expire", async () => {
+    const storage = new MemoryStorage();
+    const clock = vi.spyOn(Date, "now").mockReturnValue(10_000);
+    try {
+      const first = retainedLedger(storage);
+      await first.enqueueAndArm("update:0003", { providerMessageId: "original" }, 100);
+      const deliver = vi.fn(async () => ({ terminal: true }));
+      await expect(first.attempt("update:0003", deliver)).resolves.toEqual({
+        state: "completed",
+      });
+
+      await retainedLedger(storage).enqueueAndArm(
+        "update:0003",
+        { providerMessageId: "replay" },
+        100,
+      );
+      const replay = vi.fn(async () => ({ terminal: true }));
+      await expect(retainedLedger(storage).attempt("update:0003", replay)).resolves.toEqual({
+        state: "completed",
+      });
+      expect(replay).not.toHaveBeenCalled();
+
+      clock.mockReturnValue(11_001);
+      await retainedLedger(storage).enqueueAndArm(
+        "update:0003",
+        { providerMessageId: "after-expiry" },
+        100,
+      );
+      await expect(retainedLedger(storage).attempt("update:0003", replay)).resolves.toEqual({
+        state: "completed",
+      });
+      expect(replay).toHaveBeenCalledWith({ providerMessageId: "after-expiry" });
+    } finally {
+      clock.mockRestore();
+    }
+  });
+
+  it("can order pending provider ids by their stable key", async () => {
+    const storage = new MemoryStorage();
+    const pending = retainedLedger(storage);
+    const clock = vi.spyOn(Date, "now").mockReturnValue(1_000);
+    try {
+      await pending.enqueueAndArm("update:0003", { providerMessageId: "3" }, 100);
+      await pending.enqueueAndArm("update:0001", { providerMessageId: "1" }, 100);
+      await pending.enqueueAndArm("update:0002", { providerMessageId: "2" }, 100);
+      await expect(pending.pendingIds()).resolves.toEqual([
+        "update:0001",
+        "update:0002",
+        "update:0003",
+      ]);
+    } finally {
+      clock.mockRestore();
+    }
   });
 
   it("attempts every response in a retry round", async () => {

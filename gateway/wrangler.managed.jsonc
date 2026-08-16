@@ -88,6 +88,11 @@
     {
       "binding": "RIPGIT",
       "service": "gsv-managed-ripgit"
+    },
+    {
+      "binding": "CHANNEL_TELEGRAM",
+      "service": "gsv-managed-telegram",
+      "entrypoint": "ManagedTelegramChannel"
     }
   ],
   "worker_loaders": [

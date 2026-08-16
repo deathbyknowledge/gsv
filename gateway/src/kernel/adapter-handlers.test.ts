@@ -6,6 +6,10 @@ import {
   deliverAdapterReply,
   handleAdapterInbound as handleAdapterInboundImpl,
   handleAdapterList,
+  handleAdapterPairConfirm,
+  handleAdapterPairDisconnect,
+  handleAdapterPairInfo,
+  handleAdapterPairInspect,
   handleAdapterSend,
   handleAdapterStateUpdate,
   handleAdapterStatus,
@@ -48,6 +52,8 @@ type MakeContextOptions = {
   callerOwnerUid?: number;
   installationId?: KernelContext["installationId"];
   processState?: "idle" | "queued" | "running" | "waiting_tool" | "waiting_hil";
+  connection?: KernelContext["connection"];
+  installationIdentity?: KernelContext["installationIdentity"];
 };
 const TEST_INSTALLATION_ID = "singleton" as KernelContext["installationId"];
 
@@ -291,6 +297,8 @@ function makeContext(
     },
     processId: options.processId,
     processRunId: options.processRunId,
+    connection: options.connection,
+    installationIdentity: options.installationIdentity,
     auth: {
       getPasswdByUid: vi.fn((uid: number) => {
         if (uid === human.uid) return human;
@@ -4173,5 +4181,269 @@ describe("adapter lifecycle handlers", () => {
       error: "Adapter destination is not authorized",
     });
     expect(adapterSend).not.toHaveBeenCalled();
+  });
+});
+
+describe("managed adapter pairing", () => {
+  const installationId = "installation_test" as KernelContext["installationId"];
+  const canonicalOrigin = "https://test.gsv.space";
+  const candidate = {
+    accountId: "managed",
+    actorId: "12345",
+    surfaceId: "12345",
+    actorName: "Hank",
+    actorHandle: "@hank",
+    expiresAt: Date.now() + 60_000,
+    linked: false,
+  };
+  const route = {
+    installationId,
+    localUid: 1000,
+    generation: "generation-new",
+  };
+
+  function directUserOptions(overrides: MakeContextOptions = {}): MakeContextOptions {
+    return {
+      installationId,
+      installationIdentity: {
+        installationId,
+        handle: "test",
+        canonicalOrigin,
+      } as KernelContext["installationIdentity"],
+      connection: {} as KernelContext["connection"],
+      identity: userIdentity(),
+      ...overrides,
+    };
+  }
+
+  function pairingService() {
+    return {
+      adapterPairingInfo: vi.fn(async () => ({
+        accountId: "managed",
+        configured: true,
+        botUsername: "official_gsv_bot",
+      })),
+      adapterPairingInspect: vi.fn(async () => candidate),
+      adapterPairingPrepare: vi.fn(async () => ({ candidate, route })),
+      adapterPairingActivate: vi.fn(async () => ({ candidate, route })),
+      adapterPairingFinalize: vi.fn(async () => ({ candidate, route })),
+      adapterPairingDisconnect: vi.fn(async () => ({ disconnected: true })),
+    };
+  }
+
+  it("discovers the platform bot and confirms the displayed Telegram identity", async () => {
+    const service = pairingService();
+    let currentLink: Record<string, any> | null = null;
+    const link = vi.fn((
+      adapter: string,
+      accountId: string,
+      actorId: string,
+      uid: number,
+      linkedByUid: number,
+      metadata: Record<string, unknown>,
+    ) => {
+      currentLink = {
+        adapter,
+        accountId,
+        actorId,
+        uid,
+        linkedByUid,
+        metadata,
+        createdAt: 1,
+      };
+      return currentLink;
+    });
+    const identityLinks = {
+      get: vi.fn(() => currentLink),
+      link,
+      unlink: vi.fn(() => {
+        currentLink = null;
+        return true;
+      }),
+      listByAccount: vi.fn(() => currentLink ? [currentLink] : []),
+      list: vi.fn(() => currentLink ? [currentLink] : []),
+    };
+    const status = {
+      upsert: vi.fn(),
+      setOwner: vi.fn(),
+      list: vi.fn(() => []),
+      listByOwner: vi.fn(() => []),
+    };
+    const ctx = makeContext(
+      { CHANNEL_TELEGRAM: service },
+      status,
+      directUserOptions({ identityLinks }),
+    );
+
+    await expect(handleAdapterPairInfo({ adapter: "telegram" }, ctx)).resolves.toEqual({
+      adapter: "telegram",
+      accountId: "managed",
+      configured: true,
+      botUsername: "official_gsv_bot",
+    });
+    await expect(handleAdapterPairInspect({
+      adapter: "telegram",
+      code: "ABCD-EFGH-JKLM",
+    }, ctx)).resolves.toEqual({ adapter: "telegram", ...candidate });
+    await expect(handleAdapterPairConfirm({
+      adapter: "telegram",
+      code: "ABCD-EFGH-JKLM",
+    }, ctx)).resolves.toEqual({
+      paired: true,
+      adapter: "telegram",
+      accountId: "managed",
+      actorId: "12345",
+      surfaceId: "12345",
+      uid: 1000,
+    });
+
+    expect(service.adapterPairingPrepare).toHaveBeenCalledWith(
+      { installationId },
+      expect.objectContaining({
+        code: "ABCDEFGHJKLM",
+        installationId,
+        localUid: 1000,
+        canonicalOrigin,
+      }),
+    );
+    expect(service.adapterPairingActivate).toHaveBeenCalledWith(
+      { installationId },
+      expect.objectContaining({ route, canonicalOrigin }),
+    );
+    expect(link).toHaveBeenCalledWith(
+      "telegram",
+      "managed",
+      "12345",
+      1000,
+      1000,
+      expect.objectContaining({
+        managed: true,
+        surfaceKind: "dm",
+        surfaceId: "12345",
+        routeGeneration: "generation-new",
+      }),
+    );
+    expect(link).toHaveBeenCalledBefore(service.adapterPairingActivate);
+    expect(service.adapterPairingFinalize).toHaveBeenCalledAfter(
+      service.adapterPairingActivate,
+    );
+    expect(ctx.broadcastToUserUid).toHaveBeenCalledWith(1000, "adapter.status", {
+      adapter: "telegram",
+      accountId: "managed",
+    });
+
+    await expect(handleAdapterPairDisconnect({
+      adapter: "telegram",
+      accountId: "managed",
+      actorId: "12345",
+    }, ctx)).resolves.toMatchObject({ disconnected: true });
+    expect(service.adapterPairingDisconnect).toHaveBeenCalledWith(
+      { installationId },
+      expect.objectContaining({
+        installationId,
+        actorId: "12345",
+        surfaceId: "12345",
+        localUid: 1000,
+        generation: "generation-new",
+      }),
+    );
+    expect(identityLinks.unlink).toHaveBeenCalledWith("telegram", "managed", "12345");
+  });
+
+  it("never exposes pairing to agents, background processes, root, or standalone", async () => {
+    const service = pairingService();
+    const status = { upsert: vi.fn(), list: vi.fn(() => []) };
+    const direct = makeContext(
+      { CHANNEL_TELEGRAM: service },
+      status,
+      directUserOptions(),
+    );
+    const process = makeContext(
+      { CHANNEL_TELEGRAM: service },
+      status,
+      directUserOptions({ processId: "pid-1" }),
+    );
+    const root = makeContext(
+      { CHANNEL_TELEGRAM: service },
+      status,
+      directUserOptions({ identity: userIdentity(0) }),
+    );
+    const standalone = makeContext(
+      { CHANNEL_TELEGRAM: service },
+      status,
+      {
+        connection: {} as KernelContext["connection"],
+        identity: userIdentity(),
+      },
+    );
+
+    await expect(handleAdapterPairInfo({ adapter: "telegram" }, direct)).resolves.toMatchObject({
+      configured: true,
+    });
+    await expect(handleAdapterPairInfo({ adapter: "telegram" }, process)).rejects.toThrow(
+      "direct signed-in user",
+    );
+    await expect(handleAdapterPairInfo({ adapter: "telegram" }, root)).rejects.toThrow(
+      "active human account",
+    );
+    await expect(handleAdapterPairInfo({ adapter: "telegram" }, standalone)).rejects.toThrow(
+      "not available in standalone",
+    );
+  });
+
+  it("advertises pairing only when the full managed lifecycle is available", () => {
+    const full = pairingService();
+    const partial = { ...pairingService(), adapterPairingDisconnect: undefined };
+    const ctx = makeContext({
+      CHANNEL_TELEGRAM: full,
+      CHANNEL_DISCORD: partial,
+    }, {
+      upsert: vi.fn(),
+      listAll: vi.fn(() => []),
+    });
+
+    expect(handleAdapterList({}, ctx).adapters).toEqual([
+      expect.objectContaining({ adapter: "discord", supportsPairing: false }),
+      expect.objectContaining({ adapter: "telegram", supportsPairing: true }),
+    ]);
+  });
+
+  it("keeps local managed authentication true when live platform status refreshes", async () => {
+    const adapterStatus = vi.fn(async () => [{
+      accountId: "managed",
+      connected: true,
+      authenticated: false,
+      mode: "managed-shared",
+    }]);
+    const upsert = vi.fn();
+    const linkRecord = {
+      adapter: "telegram",
+      accountId: "managed",
+      actorId: "12345",
+      uid: 1000,
+      linkedByUid: 1000,
+      createdAt: 1,
+      metadata: { managed: true },
+    };
+    const ctx = makeContext(
+      { CHANNEL_TELEGRAM: { adapterStatus } },
+      {
+        upsert,
+        list: vi.fn(() => []),
+        listByOwner: vi.fn(() => []),
+      },
+      directUserOptions({
+        identityLinks: {
+          list: vi.fn(() => [linkRecord]),
+          listByAccount: vi.fn(() => [linkRecord]),
+        },
+      }),
+    );
+
+    await handleAdapterStatus({ adapter: "telegram", accountId: "managed" }, ctx);
+    expect(upsert).toHaveBeenCalledWith("telegram", "managed", expect.objectContaining({
+      authenticated: true,
+      mode: "managed-shared",
+    }));
   });
 });

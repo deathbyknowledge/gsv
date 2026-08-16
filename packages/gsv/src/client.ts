@@ -337,6 +337,10 @@ const SYSCALL_NAMES = [
   "adapter.state.update",
   "adapter.status",
   "adapter.list",
+  "adapter.pair.info",
+  "adapter.pair.inspect",
+  "adapter.pair.confirm",
+  "adapter.pair.disconnect",
   "signal.watch",
   "signal.unwatch",
 ] as const satisfies readonly NamespaceSyscall[];

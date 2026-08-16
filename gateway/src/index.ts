@@ -9,9 +9,12 @@ import type {
   ManagedInboundMailCompletion,
   ManagedInboundMailMetadata,
   ManagedMailGatewayService,
+  ManagedTelegramGatewayService,
   ManagedOutboundMailClaimOutcome,
   ManagedOutboundMailCompletion,
   ManagedOutboundMailReference,
+  UnlinkManagedTelegramIdentityInput,
+  UnlinkManagedTelegramIdentityResult,
 } from "@humansandmachines/gsv/protocol";
 import {
   cancelBinaryBody,
@@ -142,7 +145,7 @@ export default {
 } satisfies ExportedHandler<Env>;
 export class GatewayEntrypoint
   extends WorkerEntrypoint<Env & GatewayInstallationBindings>
-  implements GatewayAdapterInterface, ManagedMailGatewayService
+  implements GatewayAdapterInterface, ManagedMailGatewayService, ManagedTelegramGatewayService
 {
   serviceFrame(frame: Frame): Promise<Frame | null>;
   serviceFrame(
@@ -242,6 +245,21 @@ export class GatewayEntrypoint
     }
     const kernel = await getKernelByInstallationId(this.env.KERNEL, installationId);
     await kernel.completeManagedOutboundMail(completion);
+  }
+
+  async unlinkManagedTelegramIdentity(
+    input: UnlinkManagedTelegramIdentityInput,
+  ): Promise<UnlinkManagedTelegramIdentityResult> {
+    if (!this.env.INSTALLATION_DIRECTORY) {
+      throw new Error("Managed Telegram is not enabled");
+    }
+    const installationId = parseManagedInstallationId(input?.installationId);
+    const directory = await this.env.INSTALLATION_DIRECTORY.resolveInstallation(installationId);
+    if (!directory.found || directory.installationId !== installationId) {
+      return { removed: false };
+    }
+    const kernel = await getKernelByInstallationId(this.env.KERNEL, installationId);
+    return await kernel.unlinkManagedTelegramIdentity({ ...input, installationId });
   }
 }
 

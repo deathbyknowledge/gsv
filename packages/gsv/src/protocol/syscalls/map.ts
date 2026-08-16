@@ -201,6 +201,14 @@ import type {
   AdapterInboundSyscallResult,
   AdapterListArgs,
   AdapterListResult,
+  AdapterPairConfirmArgs,
+  AdapterPairConfirmResult,
+  AdapterPairDisconnectArgs,
+  AdapterPairDisconnectResult,
+  AdapterPairInfoArgs,
+  AdapterPairInfoResult,
+  AdapterPairInspectArgs,
+  AdapterPairInspectResult,
   AdapterSendArgs,
   AdapterSendResult,
   AdapterStateUpdateArgs,
@@ -333,6 +341,10 @@ export type SyscallDomains = {
   "adapter.send": { args: AdapterSendArgs; result: AdapterSendResult };
   "adapter.status": { args: AdapterStatusArgs; result: AdapterStatusResult };
   "adapter.list": { args: AdapterListArgs; result: AdapterListResult };
+  "adapter.pair.info": { args: AdapterPairInfoArgs; result: AdapterPairInfoResult };
+  "adapter.pair.inspect": { args: AdapterPairInspectArgs; result: AdapterPairInspectResult };
+  "adapter.pair.confirm": { args: AdapterPairConfirmArgs; result: AdapterPairConfirmResult };
+  "adapter.pair.disconnect": { args: AdapterPairDisconnectArgs; result: AdapterPairDisconnectResult };
 
   "signal.watch": { args: SignalWatchArgs; result: SignalWatchResult };
   "signal.unwatch": { args: SignalUnwatchArgs; result: SignalUnwatchResult };

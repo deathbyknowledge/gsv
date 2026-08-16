@@ -128,6 +128,7 @@ export type AdapterListEntry = {
   supportsSend: boolean;
   supportsStatus: boolean;
   supportsActivity: boolean;
+  supportsPairing: boolean;
   accounts: AdapterAccountStatus[];
 };
 
@@ -153,4 +154,55 @@ export type AdapterStateUpdateArgs = {
 
 export type AdapterStateUpdateResult = {
   ok: true;
+};
+
+export type AdapterPairInfoArgs = {
+  adapter: string;
+};
+
+export type AdapterPairInfoResult = {
+  adapter: string;
+  accountId: string;
+  configured: boolean;
+  botUsername?: string;
+};
+
+export type AdapterPairInspectArgs = {
+  adapter: string;
+  code: string;
+};
+
+export type AdapterPairInspectResult = {
+  adapter: string;
+  accountId: string;
+  actorId: string;
+  surfaceId: string;
+  actorName?: string;
+  actorHandle?: string;
+  expiresAt: number;
+  linked: boolean;
+};
+
+export type AdapterPairConfirmArgs = AdapterPairInspectArgs;
+
+export type AdapterPairConfirmResult = {
+  paired: true;
+  adapter: string;
+  accountId: string;
+  actorId: string;
+  surfaceId: string;
+  uid: number;
+};
+
+export type AdapterPairDisconnectArgs = {
+  adapter: string;
+  accountId: string;
+  actorId: string;
+};
+
+export type AdapterPairDisconnectResult = {
+  disconnected: boolean;
+  adapter: string;
+  accountId: string;
+  actorId: string;
 };
