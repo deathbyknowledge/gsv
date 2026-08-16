@@ -35,6 +35,7 @@ type AdminService = Pick<
   | "inferenceOverview"
   | "create"
   | "reissueOnboarding"
+  | "resetInstallation"
   | "setInferenceControl"
   | "setInstallationInferencePolicy"
   | "setInstallationState"
@@ -195,6 +196,37 @@ export class AccountsAdminHttp {
             ? json(result)
             : adminInstallationPage(result.installation, result);
         }
+        if (installationRoute.action === "reset") {
+          const body = installationRoute.api
+            ? await readJsonObject(request)
+            : await readForm(request);
+          const result = await this.service.resetInstallation(
+            installationId,
+            {
+              operationId: requireString(
+                body instanceof URLSearchParams
+                  ? body.get("operationId")
+                  : body.operationId,
+                "operationId",
+              ),
+              confirmHandle: requireString(
+                body instanceof URLSearchParams
+                  ? body.get("confirmHandle")
+                  : body.confirmHandle,
+                "confirmHandle",
+              ),
+            },
+          );
+          return installationRoute.api
+            ? json(result, 201)
+            : adminInstallationPage(
+                result.installation,
+                result,
+                undefined,
+                false,
+                201,
+              );
+        }
       }
 
       return isAdminApiPath(url.pathname)
@@ -320,14 +352,18 @@ function isInstallationRegistryPath(pathname: string): boolean {
     || pathname === "/admin/installations/";
 }
 
-type InstallationAdminAction = "onboarding" | "inference" | "lifecycle";
+type InstallationAdminAction =
+  | "onboarding"
+  | "inference"
+  | "lifecycle"
+  | "reset";
 
 function parseInstallationRoute(pathname: string): {
   api: boolean;
   installationId: string;
   action: InstallationAdminAction | null;
 } | null {
-  const match = /^\/admin\/(api\/)?installations\/([^/]+)(?:\/(onboarding|inference|lifecycle))?$/.exec(
+  const match = /^\/admin\/(api\/)?installations\/([^/]+)(?:\/(onboarding|inference|lifecycle|reset))?$/.exec(
     pathname,
   );
   return match

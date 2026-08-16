@@ -3,7 +3,10 @@ import { parseOpaqueId } from "../domain";
 import type { ManagedInferencePolicyStore } from "../inference-policy";
 import type { IssuedInstallationOnboarding } from "../onboarding";
 import { InstallationOnboardingStore } from "../onboarding";
-import { AccountStore } from "../store";
+import {
+  AccountStore,
+  type InstallationDataDeletionState,
+} from "../store";
 
 const REGISTRY_PRINCIPAL_ID = "principal_managed_registry";
 const REGISTRY_PRINCIPAL_EMAIL = "registry@gsv.invalid";
@@ -61,6 +64,10 @@ export type AdminInstallation = {
   onboardingExpiresAt: number | null;
   createdAt: number;
   activatedAt: number | null;
+  reset: {
+    previousInstallationId: string;
+    dataDeletionState: InstallationDataDeletionState;
+  } | null;
   inference: {
     enabled: boolean;
     monthlyLimitNanoUsd: number;
@@ -96,6 +103,10 @@ export type AdminInferenceOverview = {
 export type IssuedAdminInstallation = {
   installation: AdminInstallation;
   onboarding: IssuedInstallationOnboarding;
+  reset?: {
+    previousInstallationId: string;
+    dataDeletionState: InstallationDataDeletionState;
+  };
 };
 
 type AdminInstallationRow = {
@@ -118,6 +129,8 @@ type AdminInstallationRow = {
   inference_mail_intake_cost_nano_usd?: number;
   inference_enabled?: number;
   inference_monthly_limit_nano_usd?: number;
+  previous_installation_id?: string | null;
+  data_deletion_state?: InstallationDataDeletionState | null;
 };
 
 type AdminInstallationSummaryRow = Pick<
@@ -165,7 +178,13 @@ export class InstallationAdminService {
       throw new Error("page is invalid");
     }
 
-    const predicates = ["i.state != 'deleted'"];
+    const predicates = [
+      "i.state != 'deleted'",
+      `NOT EXISTS (
+        SELECT 1 FROM installation_reset_operations r
+        WHERE r.previous_installation_id = i.id
+      )`,
+    ];
     const bindings: Array<string | number> = [];
     if (query) {
       predicates.push("(instr(i.handle, ?) > 0 OR instr(i.id, ?) > 0)");
@@ -337,10 +356,14 @@ export class InstallationAdminService {
            AS inference_mail_intake_cost_nano_usd,
          COALESCE(ip.enabled, 0) AS inference_enabled,
          COALESCE(ip.monthly_limit_nano_usd, 0)
-           AS inference_monthly_limit_nano_usd
+           AS inference_monthly_limit_nano_usd,
+         reset.previous_installation_id,
+         reset.data_deletion_state
        FROM installations i
        LEFT JOIN installation_onboarding_claims c ON c.installation_id = i.id
        LEFT JOIN managed_inference_policies ip ON ip.installation_id = i.id
+       LEFT JOIN installation_reset_operations reset
+         ON reset.replacement_installation_id = i.id
        LEFT JOIN (
          SELECT
            installation_id,
@@ -391,6 +414,30 @@ export class InstallationAdminService {
     return {
       installation: await this.requireInstallation(installationId),
       onboarding,
+    };
+  }
+
+  async resetInstallation(
+    installationIdValue: string,
+    input: { operationId: string; confirmHandle: string },
+  ): Promise<IssuedAdminInstallation> {
+    const installationId = parseOpaqueId(
+      installationIdValue,
+      "installationId",
+    );
+    const reset = await this.accounts.resetInstallation({
+      installationId,
+      operationId: input.operationId,
+      confirmHandle: input.confirmHandle,
+    });
+    const onboarding = await this.onboarding.begin(reset.installationId);
+    return {
+      installation: await this.requireInstallation(reset.installationId),
+      onboarding,
+      reset: {
+        previousInstallationId: reset.previousInstallationId,
+        dataDeletionState: reset.dataDeletionState,
+      },
     };
   }
 
@@ -455,6 +502,12 @@ function adminInstallationFromRow(
     onboardingExpiresAt: row.onboarding_expires_at,
     createdAt: row.created_at,
     activatedAt: row.activated_at,
+    reset: row.previous_installation_id && row.data_deletion_state
+      ? {
+          previousInstallationId: row.previous_installation_id,
+          dataDeletionState: row.data_deletion_state,
+        }
+      : null,
     inference: {
       enabled: row.inference_enabled === 1,
       monthlyLimitNanoUsd: row.inference_monthly_limit_nano_usd ?? 0,

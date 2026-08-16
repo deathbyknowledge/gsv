@@ -18,6 +18,23 @@ function adminService(): InstallationAdminService {
   );
 }
 
+async function completeOnboarding(
+  issued: Awaited<ReturnType<InstallationAdminService["create"]>>,
+): Promise<void> {
+  const accounts = new AccountStore(env.ACCOUNT_DB, "gsv.space");
+  const onboarding = new InstallationOnboardingStore(env.ACCOUNT_DB, accounts);
+  const token = new URL(issued.onboarding.onboardingUrl).hash.slice(1);
+  const authorization = await onboarding.authorize({
+    installationId: issued.installation.installationId,
+    token,
+  });
+  if (!authorization.ok) throw new Error("test onboarding was not authorized");
+  await onboarding.complete({
+    installationId: issued.installation.installationId,
+    claimId: authorization.claimId,
+  });
+}
+
 describe("installation admin service", () => {
   it("creates a routed installation and one-time onboarding claim", async () => {
     const suffix = crypto.randomUUID().slice(0, 8);
@@ -202,6 +219,171 @@ describe("installation admin service", () => {
     await expect(new ManagedInferencePolicyStore(env.ACCOUNT_DB).resolve(
       created.installation.installationId,
     )).resolves.toMatchObject({ enabled: true });
+  });
+
+  it("resets a handle onto a fresh installation and records deletion debt", async () => {
+    const suffix = crypto.randomUUID().slice(0, 8);
+    const service = adminService();
+    const created = await service.create({
+      operationId: `operation_reset_source_${suffix}`,
+      handle: `reset-${suffix}`,
+    });
+    await service.setInstallationInferencePolicy(
+      created.installation.installationId,
+      { enabled: true, monthlyLimitNanoUsd: 12_000_000_000 },
+    );
+    const startedAt = Date.now();
+    await new ManagedInferenceUsageStore(env.ACCOUNT_DB).record([{
+      version: 1,
+      installationId: created.installation.installationId,
+      logicalRequestId: `inference:reset:${suffix}`,
+      actor: { localUid: 1_000 },
+      purpose: "agent",
+      period: new Date(startedAt).toISOString().slice(0, 7),
+      model: "gsv/default",
+      inputTokens: 2,
+      outputTokens: 1,
+      cacheReadTokens: 0,
+      cacheWriteTokens: 0,
+      totalTokens: 3,
+      reservedNanoUsd: 6_000,
+      costNanoUsd: 340,
+      outcome: "completed",
+      stopReason: "stop",
+      startedAt,
+      completedAt: startedAt + 10,
+    }]);
+    await completeOnboarding(created);
+
+    const operationId = `operation_reset_${suffix}`;
+    const reset = await service.resetInstallation(
+      created.installation.installationId,
+      {
+        operationId,
+        confirmHandle: created.installation.handle,
+      },
+    );
+
+    expect(reset.installation).toMatchObject({
+      handle: created.installation.handle,
+      canonicalOrigin: created.installation.canonicalOrigin,
+      state: "provisioning",
+      operationState: "provisioning",
+      reset: {
+        previousInstallationId: created.installation.installationId,
+        dataDeletionState: "pending",
+      },
+      inference: {
+        enabled: true,
+        monthlyLimitNanoUsd: 12_000_000_000,
+        requests: 0,
+      },
+    });
+    expect(reset.installation.installationId).not.toBe(
+      created.installation.installationId,
+    );
+    expect(reset.onboarding.installationId).toBe(
+      reset.installation.installationId,
+    );
+    expect(reset.reset).toEqual({
+      previousInstallationId: created.installation.installationId,
+      dataDeletionState: "pending",
+    });
+
+    const accounts = new AccountStore(env.ACCOUNT_DB, "gsv.space");
+    await expect(accounts.resolveHostname(
+      `${created.installation.handle}.gsv.space`,
+    )).resolves.toMatchObject({
+      found: true,
+      installationId: reset.installation.installationId,
+      state: "provisioning",
+    });
+    await expect(accounts.resolveInstallation(
+      created.installation.installationId,
+    )).resolves.toMatchObject({
+      found: true,
+      installationId: created.installation.installationId,
+      state: "retained",
+    });
+    await expect(service.listInstallations(FIRST_PAGE)).resolves.toMatchObject({
+      installations: expect.arrayContaining([expect.objectContaining({
+        installationId: reset.installation.installationId,
+        handle: created.installation.handle,
+      })]),
+    });
+    const list = await service.listInstallations(FIRST_PAGE);
+    expect(list.installations).not.toContainEqual(expect.objectContaining({
+      installationId: created.installation.installationId,
+    }));
+    await expect(env.ACCOUNT_DB.prepare(
+      `SELECT data_deletion_state
+       FROM installation_reset_operations
+       WHERE operation_id = ?`,
+    ).bind(operationId).first()).resolves.toEqual({
+      data_deletion_state: "pending",
+    });
+    await expect(env.ACCOUNT_DB.prepare(
+      `SELECT COUNT(*) AS count
+       FROM managed_inference_usage_events
+       WHERE installation_id = ?`,
+    ).bind(created.installation.installationId).first()).resolves.toEqual({
+      count: 1,
+    });
+
+    const replay = await service.resetInstallation(
+      created.installation.installationId,
+      {
+        operationId,
+        confirmHandle: created.installation.handle,
+      },
+    );
+    expect(replay.installation.installationId).toBe(
+      reset.installation.installationId,
+    );
+    expect(replay.onboarding.onboardingUrl).not.toBe(
+      reset.onboarding.onboardingUrl,
+    );
+    await completeOnboarding(replay);
+    await expect(accounts.resolveHostname(
+      `${created.installation.handle}.gsv.space`,
+    )).resolves.toMatchObject({
+      found: true,
+      installationId: reset.installation.installationId,
+      state: "active",
+    });
+    await expect(accounts.resolveInstallation(
+      created.installation.installationId,
+    )).resolves.toMatchObject({
+      found: true,
+      installationId: created.installation.installationId,
+      state: "retained",
+    });
+  });
+
+  it("requires the exact handle before changing installation routing", async () => {
+    const suffix = crypto.randomUUID().slice(0, 8);
+    const service = adminService();
+    const created = await service.create({
+      operationId: `operation_reset_confirm_source_${suffix}`,
+      handle: `confirm-${suffix}`,
+    });
+    await completeOnboarding(created);
+
+    await expect(service.resetInstallation(
+      created.installation.installationId,
+      {
+        operationId: `operation_reset_confirm_${suffix}`,
+        confirmHandle: `wrong-${suffix}`,
+      },
+    )).rejects.toThrow("confirmation does not match handle");
+    await expect(new AccountStore(
+      env.ACCOUNT_DB,
+      "gsv.space",
+    ).resolveHostname(`${created.installation.handle}.gsv.space`)).resolves.toMatchObject({
+      found: true,
+      installationId: created.installation.installationId,
+      state: "active",
+    });
   });
 
   it("searches and filters the bounded installation registry", async () => {

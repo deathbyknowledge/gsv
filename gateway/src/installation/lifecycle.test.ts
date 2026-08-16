@@ -74,4 +74,23 @@ describe("managed installation lifecycle", () => {
       message: "Managed installation is unavailable",
     });
   });
+
+  it("treats a reset installation retained by Accounts as unavailable", async () => {
+    await expect(managedInstallationWorkGate(
+      {
+        INSTALLATION_DIRECTORY: directory({
+          found: true,
+          installationId: "inst_reset_previous",
+          handle: "reset-previous",
+          canonicalOrigin: "https://reset-previous.invalid",
+          state: "retained",
+        }),
+      },
+      "inst_reset_previous",
+    )).resolves.toEqual({
+      allowed: false,
+      code: 503,
+      message: "Managed installation is unavailable",
+    });
+  });
 });

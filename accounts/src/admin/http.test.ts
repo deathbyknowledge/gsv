@@ -23,6 +23,7 @@ function installation(
     onboardingExpiresAt: 1_800_000,
     createdAt: 1_000_000,
     activatedAt: null,
+    reset: null,
     inference: {
       enabled: false,
       monthlyLimitNanoUsd: 5_000_000_000,
@@ -92,6 +93,29 @@ function issued(): IssuedAdminInstallation {
   };
 }
 
+function resetIssued(): IssuedAdminInstallation {
+  const result = issued();
+  return {
+    ...result,
+    installation: {
+      ...result.installation,
+      installationId: "inst_admin_http_replacement",
+      reset: {
+        previousInstallationId: "inst_admin_http",
+        dataDeletionState: "pending",
+      },
+    },
+    onboarding: {
+      ...result.onboarding,
+      installationId: "inst_admin_http_replacement",
+    },
+    reset: {
+      previousInstallationId: "inst_admin_http",
+      dataDeletionState: "pending",
+    },
+  };
+}
+
 function service(
   current = installation(),
   list = installationList(current),
@@ -104,6 +128,7 @@ function service(
     inferenceOverview: vi.fn(async () => inferenceOverview()),
     create: vi.fn(async () => issued()),
     reissueOnboarding: vi.fn(async () => issued()),
+    resetInstallation: vi.fn(async () => resetIssued()),
     setInferenceControl: vi.fn(async () => {}),
     setInstallationInferencePolicy: vi.fn(async () => {}),
     setInstallationState: vi.fn(async () => {}),
@@ -204,6 +229,9 @@ describe("accounts admin HTTP", () => {
     ));
     const body = await response?.text();
     expect(body).toContain(action);
+    expect(body).toContain(`Reset reviewer`);
+    expect(body).toContain("does not delete the previous installation's stored data");
+    expect(body).toContain('action="/admin/installations/inst_admin_http/reset"');
     expect(body).toContain("Monthly USD allowance");
     expect(body).toContain("Mail intake");
     expect(body).toContain("5.00");
@@ -304,6 +332,78 @@ describe("accounts admin HTTP", () => {
     expect(await response?.text()).toContain("onboard_secret");
     expect(adminService.reissueOnboarding).toHaveBeenCalledWith(
       "inst_admin_http",
+    );
+  });
+
+  it("resets through an explicit handle confirmation and shows the new claim", async () => {
+    const adminService = service(installation("active"));
+    const http = new AccountsAdminHttp(
+      adminService,
+      { allows: vi.fn(async () => true) },
+      ACCOUNT_ORIGIN,
+    );
+    const response = await http.handle(new Request(
+      `${ACCOUNT_ORIGIN}/admin/installations/inst_admin_http/reset`,
+      {
+        method: "POST",
+        headers: { origin: ACCOUNT_ORIGIN },
+        body: new URLSearchParams({
+          operationId: "reset_admin_http",
+          confirmHandle: "reviewer",
+        }),
+      },
+    ));
+
+    expect(response?.status).toBe(201);
+    const body = await response?.text();
+    expect(body).toContain("onboard_secret");
+    expect(body).toContain("inst_admin_http");
+    expect(body).toContain("pending deletion");
+    expect(adminService.resetInstallation).toHaveBeenCalledWith(
+      "inst_admin_http",
+      {
+        operationId: "reset_admin_http",
+        confirmHandle: "reviewer",
+      },
+    );
+  });
+
+  it("resets through the operator API with the same confirmation boundary", async () => {
+    const adminService = service(installation("restricted"));
+    const http = new AccountsAdminHttp(
+      adminService,
+      { allows: vi.fn(async () => true) },
+      ACCOUNT_ORIGIN,
+    );
+    const response = await http.handle(new Request(
+      `${ACCOUNT_ORIGIN}/admin/api/installations/inst_admin_http/reset`,
+      {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          origin: ACCOUNT_ORIGIN,
+        },
+        body: JSON.stringify({
+          operationId: "reset_admin_api",
+          confirmHandle: "reviewer",
+        }),
+      },
+    ));
+
+    expect(response?.status).toBe(201);
+    await expect(response?.json()).resolves.toMatchObject({
+      installation: { installationId: "inst_admin_http_replacement" },
+      reset: {
+        previousInstallationId: "inst_admin_http",
+        dataDeletionState: "pending",
+      },
+    });
+    expect(adminService.resetInstallation).toHaveBeenCalledWith(
+      "inst_admin_http",
+      {
+        operationId: "reset_admin_api",
+        confirmHandle: "reviewer",
+      },
     );
   });
 

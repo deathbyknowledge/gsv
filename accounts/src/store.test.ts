@@ -177,6 +177,54 @@ describe("account directory", () => {
     });
   });
 
+  it("rolls back the complete reset when its provisioning operation conflicts", async () => {
+    const principalId = await createVerifiedPrincipal("reset_atomic");
+    const original = await store().reserveInstallation({
+      principalId,
+      operationId: "op_reset_atomic_source",
+      handle: "reset-atomic",
+    });
+    await env.ACCOUNT_DB.batch([
+      env.ACCOUNT_DB.prepare(
+        "UPDATE installations SET state = 'active' WHERE id = ?",
+      ).bind(original.installationId),
+      env.ACCOUNT_DB.prepare(
+        "UPDATE hostnames SET state = 'active' WHERE installation_id = ?",
+      ).bind(original.installationId),
+      env.ACCOUNT_DB.prepare(
+        `UPDATE provisioning_operations
+         SET state = 'complete'
+         WHERE operation_id = ?`,
+      ).bind(original.operationId),
+    ]);
+    await store().reserveInstallation({
+      principalId,
+      operationId: "op_reset_atomic_conflict",
+      handle: "reset-atomic-other",
+    });
+
+    await expect(store().resetInstallation({
+      installationId: original.installationId,
+      operationId: "op_reset_atomic_conflict",
+      confirmHandle: original.handle,
+    })).rejects.toThrow();
+    await expect(store().resolveHostname("reset-atomic.gsv.space")).resolves.toMatchObject({
+      found: true,
+      installationId: original.installationId,
+      state: "active",
+    });
+    await expect(store().resolveInstallation(original.installationId)).resolves.toMatchObject({
+      found: true,
+      handle: original.handle,
+      state: "active",
+    });
+    await expect(env.ACCOUNT_DB.prepare(
+      `SELECT COUNT(*) AS count
+       FROM installation_reset_operations
+       WHERE previous_installation_id = ?`,
+    ).bind(original.installationId).first()).resolves.toEqual({ count: 0 });
+  });
+
   it("rejects malformed hostname lookups without querying a different name", async () => {
     await expect(store().resolveHostname("")).resolves.toEqual({ found: false });
     await expect(store().resolveHostname("https://hank.gsv.space")).resolves.toEqual({

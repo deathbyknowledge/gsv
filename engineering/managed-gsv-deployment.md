@@ -52,7 +52,7 @@ The Accounts operator surface is server-rendered and split by responsibility:
 - `/admin/installations` lists bounded, searchable installation summaries;
 - `/admin/installations/new` owns reservation and creation;
 - `/admin/installations/<installationId>` owns one installation's lifecycle,
-  provisioning, inference policy, and current-period usage;
+  provisioning, reset, inference policy, and current-period usage;
 - `/admin/inference` owns the platform-wide inference switch and aggregate
   usage.
 
@@ -60,6 +60,26 @@ HTML mutations return to their owning page. Creation and onboarding-link
 reissue render their one-time capability directly because it must not be
 persisted or placed in a redirect URL. The private `/admin/api/*` routes mirror
 the same list, detail, and policy boundaries.
+
+Reset is the staging-safe path for replacing incompatible installation state.
+The operator types the current handle, Accounts atomically gives that hostname
+to a fresh installation ID, carries its inference allowance forward, and
+issues the normal one-time onboarding capability. The prior installation
+becomes `retained`; it is hidden from the primary registry but remains
+addressable by its immutable ID so old work fails closed and later cleanup has
+an exact target. `installation_reset_operations.data_deletion_state` begins at
+`pending`. Reset must never be described as deleting the user's stored data.
+
+Full deletion remains a separate release gate. Its coordinator must be
+resumable and must record confirmation from every state owner before changing a
+reset operation to `complete`: Accounts D1 metadata and usage, the Kernel and
+all Process Durable Objects, installation-scoped R2 objects, ripgit
+repositories, inference Durable Objects and unsettled usage, email Durable
+Objects and queued references, and managed-adapter routes and identity links.
+Ingress is disabled before cleanup begins; retries are idempotent; an export or
+retention window, when offered, precedes irreversible deletion. Until that
+coordinator ships, the admin detail deliberately exposes old data deletion as
+`pending` rather than making a false erasure claim.
 
 Standalone `gateway/wrangler.jsonc`, `ripgit/wrangler.toml`, `gsv infra
 deploy`, and `scripts/build-cloudflare-bundles.sh` remain independent. They do
@@ -180,6 +200,9 @@ After deployment:
 - verify an unauthenticated request is denied;
 - verify a random wildcard hostname returns `404` without creating a Kernel;
 - create a disposable installation, complete onboarding, and log in;
+- reset that disposable installation, verify its hostname selects a new
+  installation ID, verify the old ID resolves only as `retained`, and complete
+  onboarding again from the newly issued capability;
 - verify its R2, Process, repository, and inference addresses use its immutable
   installation ID; and
 - send mail to the reviewed disposable address, then verify `mail list`,

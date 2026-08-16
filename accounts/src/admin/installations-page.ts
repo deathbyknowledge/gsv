@@ -114,6 +114,7 @@ export function adminInstallationPage(
             <dt>Provisioning</dt><dd>${stateBadge(installation.operationState)}</dd>
             <dt>Created</dt><dd>${formatDate(installation.createdAt)}</dd>
             <dt>Activated</dt><dd>${formatDate(installation.activatedAt)}</dd>
+            ${installation.reset ? `<dt>Reset from</dt><dd>${escapeHtml(installation.reset.previousInstallationId)}</dd><dt>Old data deletion</dt><dd>${stateBadge(installation.reset.dataDeletionState)}</dd>` : ""}
           </dl>
         </section>
         <section class="panel"><p class="eyebrow">MANAGED INFERENCE</p><h2>Installation policy</h2>
@@ -133,6 +134,7 @@ export function adminInstallationPage(
         </section>
         ${provisioningPanel(installation, installationPath)}
         ${lifecyclePanel(installation, installationPath)}
+        ${resetPanel(installation, installationPath)}
       </div>
     </section>`,
   });
@@ -213,4 +215,23 @@ function lifecyclePanel(
     return `<section class="panel"><p class="eyebrow">LIFECYCLE</p><h2>Reactivate installation</h2><p>Reactivation restores managed routing and resumes paused durable work.</p><form class="form-actions" method="post" action="${installationPath}/lifecycle"><button type="submit" name="state" value="active">Reactivate ${escapeHtml(installation.handle)}</button></form></section>`;
   }
   return `<section class="panel"><p class="eyebrow">LIFECYCLE</p><h2>No operator transition</h2><p>Lifecycle controls are unavailable while this installation is ${escapeHtml(installation.state.replaceAll("_", " "))}.</p></section>`;
+}
+
+function resetPanel(
+  installation: AdminInstallation,
+  installationPath: string,
+): string {
+  if (installation.state !== "active" && installation.state !== "restricted") {
+    return "";
+  }
+  const operationId = `reset_${crypto.randomUUID()}`;
+  return `<section class="panel danger-zone"><p class="eyebrow">FRESH INSTALLATION</p><h2>Reset ${escapeHtml(installation.handle)}</h2>
+    <p>Reset assigns this handle to a new installation ID and starts onboarding again. Existing sessions and background work stop because the previous installation becomes inactive.</p>
+    <p><strong>This does not delete the previous installation's stored data.</strong> It records that data as pending deletion so a separate deletion operation can remove it from every managed service.</p>
+    <form class="form-actions" method="post" action="${installationPath}/reset">
+      <input type="hidden" name="operationId" value="${escapeHtml(operationId)}">
+      <label><span>Type ${escapeHtml(installation.handle)} to confirm</span><input name="confirmHandle" required autocomplete="off" value=""></label>
+      <button class="danger" type="submit">Reset and issue onboarding link</button>
+    </form>
+  </section>`;
 }

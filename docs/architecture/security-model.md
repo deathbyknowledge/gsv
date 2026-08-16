@@ -60,6 +60,16 @@ the installation state. An operation already admitted may finish its current
 step; durable Process and schedule work remains pending and rechecks after
 reactivation.
 
+An operator reset is identity replacement, not data deletion. Accounts moves
+the canonical hostname to a fresh immutable installation ID and puts the old
+installation in `retained`, so old sessions, adapters, inference, Process
+ticks, and schedules fail their normal lifecycle checks. The reset transaction
+also records the previous installation in the data-deletion backlog. The UI
+must continue to call that data pending deletion until Gateway Durable Objects,
+installation-scoped R2 and ripgit state, inference state, email state, adapter
+links, and Accounts records have each been removed by a separate resumable
+deletion operation.
+
 The accounts directory and onboarding methods are available only through a
 service binding. Cloudflare Access protects its public operator page at
 `https://gsv.space/admin`; it is not a customer login system. The registry

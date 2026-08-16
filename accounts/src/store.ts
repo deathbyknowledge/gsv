@@ -30,6 +30,17 @@ export type InstallationReservation = ManagedInstallationIdentity & {
   operationState: "reserved" | "provisioning" | "complete" | "failed";
 };
 
+export type InstallationDataDeletionState =
+  | "pending"
+  | "deleting"
+  | "complete"
+  | "failed";
+
+export type InstallationResetReservation = InstallationReservation & {
+  previousInstallationId: string;
+  dataDeletionState: InstallationDataDeletionState;
+};
+
 type InstallationRow = {
   id: string;
   owner_principal_id: string;
@@ -177,6 +188,270 @@ export class AccountStore {
       throw new Error("installation reservation was not committed");
     }
     return reservation;
+  }
+
+  async resetInstallation(input: {
+    installationId: string;
+    operationId: string;
+    confirmHandle: string;
+  }): Promise<InstallationResetReservation> {
+    const previousInstallationId = parseOpaqueId(
+      input.installationId,
+      "installationId",
+    );
+    const operationId = parseOpaqueId(input.operationId, "operationId");
+    const confirmHandle = parseHandle(input.confirmHandle);
+    const replay = await this.getResetByOperation(operationId);
+    if (replay) {
+      if (
+        replay.previousInstallationId !== previousInstallationId
+        || replay.handle !== confirmHandle
+      ) {
+        throw new Error("operationId was already used for a different reset");
+      }
+      return replay;
+    }
+
+    const previous = await this.db.prepare(
+      `SELECT handle, canonical_origin
+       FROM installations
+       WHERE id = ? AND state IN ('active', 'restricted')
+       LIMIT 1`,
+    ).bind(previousInstallationId).first<{
+      handle: string;
+      canonical_origin: string;
+    }>();
+    if (!previous) {
+      throw new Error("installation cannot be reset from its current state");
+    }
+    if (previous.handle !== confirmHandle) {
+      throw new Error("installation reset confirmation does not match handle");
+    }
+
+    const replacement = installationIdentity(
+      previous.handle,
+      this.baseDomain,
+      this.installationOriginTemplate,
+    );
+    if (replacement.canonicalOrigin !== previous.canonical_origin) {
+      throw new Error("installation canonical origin is inconsistent");
+    }
+    const retiredHandle = `reset-${crypto.randomUUID()}`;
+    const retiredOrigin = `https://${retiredHandle}.invalid`;
+    const canonicalHostname = hostnameForHandle(
+      previous.handle,
+      this.baseDomain,
+    );
+    const now = Date.now();
+    const reservationExpiresAt = now + RESERVATION_TTL_MS;
+
+    const results = await this.db.batch([
+      this.db.prepare(
+        `UPDATE installations
+         SET handle = ?, canonical_origin = ?, state = 'retained',
+             reservation_expires_at = NULL, retained_until = NULL
+         WHERE id = ? AND handle = ? AND canonical_origin = ?
+           AND state IN ('active', 'restricted')
+           AND EXISTS (
+             SELECT 1 FROM hostnames h
+             WHERE h.installation_id = installations.id
+               AND h.normalized_hostname = ?
+               AND h.kind = 'canonical' AND h.state = 'active'
+           )`,
+      ).bind(
+        retiredHandle,
+        retiredOrigin,
+        previousInstallationId,
+        previous.handle,
+        previous.canonical_origin,
+        canonicalHostname,
+      ),
+      this.db.prepare(
+        `INSERT INTO installation_reset_operations (
+           operation_id, previous_installation_id,
+           replacement_installation_id, handle, canonical_origin,
+           canonical_hostname, data_deletion_state, last_error,
+           created_at, updated_at, completed_at
+         )
+         SELECT ?, i.id, ?, ?, ?, h.normalized_hostname,
+                'pending', NULL, ?, ?, NULL
+         FROM installations i
+         JOIN hostnames h
+           ON h.installation_id = i.id
+          AND h.kind = 'canonical'
+          AND h.state = 'active'
+         WHERE i.id = ? AND i.handle = ? AND i.canonical_origin = ?
+           AND i.state = 'retained' AND h.normalized_hostname = ?`,
+      ).bind(
+        operationId,
+        replacement.installationId,
+        replacement.handle,
+        replacement.canonicalOrigin,
+        now,
+        now,
+        previousInstallationId,
+        retiredHandle,
+        retiredOrigin,
+        canonicalHostname,
+      ),
+      this.db.prepare(
+        `INSERT INTO installations (
+           id, owner_principal_id, handle, canonical_origin, state,
+           provision_version, reservation_expires_at, created_at
+         )
+         SELECT r.replacement_installation_id, i.owner_principal_id,
+                r.handle, r.canonical_origin, 'reserved',
+                i.provision_version, ?, ?
+         FROM installation_reset_operations r
+         JOIN installations i ON i.id = r.previous_installation_id
+         WHERE r.operation_id = ? AND r.previous_installation_id = ?
+           AND r.replacement_installation_id = ?`,
+      ).bind(
+        reservationExpiresAt,
+        now,
+        operationId,
+        previousInstallationId,
+        replacement.installationId,
+      ),
+      this.db.prepare(
+        `UPDATE hostnames
+         SET installation_id = ?, state = 'reserved', created_at = ?,
+             retired_at = NULL
+         WHERE normalized_hostname = ? AND installation_id = ?
+           AND kind = 'canonical' AND state = 'active'
+           AND EXISTS (
+             SELECT 1 FROM installation_reset_operations
+             WHERE operation_id = ? AND replacement_installation_id = ?
+           )`,
+      ).bind(
+        replacement.installationId,
+        now,
+        canonicalHostname,
+        previousInstallationId,
+        operationId,
+        replacement.installationId,
+      ),
+      this.db.prepare(
+        `UPDATE hostnames
+         SET state = 'retired', retired_at = ?
+         WHERE installation_id = ? AND kind = 'alias' AND state != 'retired'
+           AND EXISTS (
+             SELECT 1 FROM installation_reset_operations
+             WHERE operation_id = ? AND replacement_installation_id = ?
+           )`,
+      ).bind(
+        now,
+        previousInstallationId,
+        operationId,
+        replacement.installationId,
+      ),
+      this.db.prepare(
+        `INSERT INTO memberships (
+           installation_id, principal_id, local_uid, role, state, created_at
+         )
+         SELECT r.replacement_installation_id, i.owner_principal_id,
+                NULL, 'owner', 'pending', ?
+         FROM installation_reset_operations r
+         JOIN installations i ON i.id = r.previous_installation_id
+         WHERE r.operation_id = ? AND r.replacement_installation_id = ?`,
+      ).bind(now, operationId, replacement.installationId),
+      this.db.prepare(
+        `INSERT INTO provisioning_operations (
+           operation_id, installation_id, principal_id, kind, state,
+           attempt, last_error, updated_at
+         )
+         SELECT r.operation_id, r.replacement_installation_id,
+                i.owner_principal_id, 'create', 'reserved', 0, NULL, ?
+         FROM installation_reset_operations r
+         JOIN installations i ON i.id = r.previous_installation_id
+         WHERE r.operation_id = ? AND r.replacement_installation_id = ?`,
+      ).bind(now, operationId, replacement.installationId),
+      this.db.prepare(
+        `INSERT INTO managed_inference_policies (
+           installation_id, enabled, monthly_limit_nano_usd, updated_at
+         )
+         SELECT ?, p.enabled, p.monthly_limit_nano_usd, ?
+         FROM managed_inference_policies p
+         WHERE p.installation_id = ?
+           AND EXISTS (
+             SELECT 1 FROM installation_reset_operations
+             WHERE operation_id = ? AND replacement_installation_id = ?
+           )`,
+      ).bind(
+        replacement.installationId,
+        now,
+        previousInstallationId,
+        operationId,
+        replacement.installationId,
+      ),
+      this.db.prepare(
+        `UPDATE managed_inference_policies
+         SET enabled = 0, updated_at = ?
+         WHERE installation_id = ?
+           AND EXISTS (
+             SELECT 1 FROM installation_reset_operations
+             WHERE operation_id = ? AND replacement_installation_id = ?
+           )`,
+      ).bind(
+        now,
+        previousInstallationId,
+        operationId,
+        replacement.installationId,
+      ),
+    ]);
+
+    const committed = await this.getResetByOperation(operationId);
+    if (committed) {
+      if (
+        committed.previousInstallationId !== previousInstallationId
+        || committed.handle !== confirmHandle
+      ) {
+        throw new Error("operationId was already used for a different reset");
+      }
+      const requiredChanges = [0, 1, 2, 3, 5, 6];
+      if (
+        (results[1]?.meta.changes ?? 0) === 1
+        && requiredChanges.some(
+          (index) => (results[index]?.meta.changes ?? 0) !== 1,
+        )
+      ) {
+        throw new Error("installation reset was not committed completely");
+      }
+      return committed;
+    }
+    throw new Error("installation cannot be reset from its current state");
+  }
+
+  async getResetByOperation(
+    operationIdValue: string,
+  ): Promise<InstallationResetReservation | null> {
+    const operationId = parseOpaqueId(operationIdValue, "operationId");
+    const row = await this.db.prepare(
+      `SELECT
+         i.id, i.owner_principal_id,
+         r.handle AS handle, r.canonical_origin AS canonical_origin, i.state,
+         i.provision_version, i.reservation_expires_at,
+         p.operation_id, p.state AS operation_state,
+         r.previous_installation_id, r.data_deletion_state
+       FROM installation_reset_operations r
+       JOIN installations i ON i.id = r.replacement_installation_id
+       JOIN provisioning_operations p
+         ON p.operation_id = r.operation_id
+        AND p.installation_id = r.replacement_installation_id
+       WHERE r.operation_id = ?
+       LIMIT 1`,
+    ).bind(operationId).first<InstallationRow & {
+      operation_id: string;
+      operation_state: InstallationReservation["operationState"];
+      previous_installation_id: string;
+      data_deletion_state: InstallationDataDeletionState;
+    }>();
+    if (!row) return null;
+    return {
+      ...reservationFromRow(row),
+      previousInstallationId: row.previous_installation_id,
+      dataDeletionState: row.data_deletion_state,
+    };
   }
 
   async resolveHostname(hostnameValue: string): Promise<InstallationDirectoryResult> {
