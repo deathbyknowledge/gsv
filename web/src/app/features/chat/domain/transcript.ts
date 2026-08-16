@@ -33,12 +33,6 @@ export type ChatBackupModelInfo = {
 
 export type ChatTranscriptRow = {
   id: string;
-  /**
-   * Client-owned presentation identity. History reconciliation may transfer
-   * this from an exact completed stream to the durable message that persists
-   * it so view-local state survives without treating a run id as a message id.
-   */
-  presentationKey?: string;
   isError?: boolean;
   text: string;
   time: string;
@@ -48,7 +42,6 @@ export type ChatTranscriptRow = {
   origin?: InteractionOrigin;
   toolArgs?: unknown;
   toolCallId?: string;
-  toolExecutionId?: string;
   toolName?: string;
   toolOutcome?: ChatToolOutcome;
   toolOutput?: unknown;
@@ -69,8 +62,6 @@ export type ChatRuntimeState = {
   pendingHil: ProcHilRequest | null;
   rows: ChatTranscriptRow[];
   runState: ChatRunState;
-  /** Last accepted provider stream sequence for each live run. */
-  streamSequences: Readonly<Record<string, number>>;
 };
 
 export type ChatSignalTarget = {
@@ -105,12 +96,6 @@ type ToolResultHistory = {
 };
 
 const OPTIMISTIC_USER_MATCH_WINDOW_MS = 5 * 60 * 1000;
-let nextTransientAssistantPresentation = 1;
-
-function transientAssistantPresentationKey(runId: string, timestamp: number): string {
-  const sequence = nextTransientAssistantPresentation++;
-  return `live-assistant:${runId}:${timestamp}:${sequence}`;
-}
 
 export function emptyChatRuntimeState(processId = ""): ChatRuntimeState {
   void processId;
@@ -121,7 +106,6 @@ export function emptyChatRuntimeState(processId = ""): ChatRuntimeState {
     pendingHil: null,
     rows: [],
     runState: "idle",
-    streamSequences: {},
   };
 }
 
@@ -137,7 +121,6 @@ export function chatRuntimeStateFromHistory(history: ChatHistory | null): ChatRu
     pendingHil: history.pendingHil,
     rows: transcriptRowsFromHistory(history),
     runState: history.runState,
-    streamSequences: {},
   };
 }
 
@@ -209,7 +192,6 @@ export function applyChatSignal(
         activeRunId: runId ?? state.activeRunId,
         pendingHil: null,
         runState: "running",
-        streamSequences: runId && state.activeRunId !== runId ? {} : state.streamSequences,
       },
     };
   }
@@ -218,14 +200,7 @@ export function applyChatSignal(
     const record = asRecord(payload);
     const runId = asString(record?.runId);
     const event = asRecord(record?.event);
-    const sequence = asNumber(record?.seq);
-    const previousSequence = runId ? state.streamSequences[runId] : undefined;
-    if (
-      !runId
-      || !event
-      || state.activeRunId !== runId
-      || (sequence !== null && previousSequence !== undefined && sequence <= previousSequence)
-    ) {
+    if (!runId || !event) {
       return { matched: true, refreshHistory: false, state };
     }
     return {
@@ -236,9 +211,6 @@ export function applyChatSignal(
         activeRunId: runId,
         rows: applyStreamEvent(state.rows, runId, event),
         runState: "running",
-        streamSequences: sequence === null
-          ? state.streamSequences
-          : { ...state.streamSequences, [runId]: sequence },
       },
     };
   }
@@ -296,37 +268,6 @@ export function applyChatSignal(
     };
   }
 
-  if (signal === "proc.run.tool.finished") {
-    const record = asRecord(payload);
-    const runId = asString(record?.runId);
-    const executionId = asString(record?.executionId);
-    const callId = asString(record?.callId);
-    const outcome = normalizeToolOutcome(record?.outcome);
-    if (!runId || !executionId || !callId || !outcome) {
-      return { matched: true, refreshHistory: false, state };
-    }
-    return {
-      matched: true,
-      refreshHistory: false,
-      state: {
-        ...state,
-        rows: state.rows.map((row) => (
-          row.role === "tool"
-          && row.runId === runId
-          && row.toolExecutionId === executionId
-          && row.toolCallId === callId
-            ? {
-                ...row,
-                status: outcome === "completed" ? "done" as const : "error" as const,
-                streaming: false,
-                toolOutcome: outcome,
-              }
-            : row
-        )),
-      },
-    };
-  }
-
   if (signal === "proc.run.hil.requested") {
     const pendingHil = normalizeHilRequest(payload);
     if (!pendingHil) {
@@ -361,9 +302,6 @@ export function applyChatSignal(
         pendingHil: null,
         rows: runId ? finishRowsForRun(state.rows, runId) : state.rows,
         runState: queuedCount > 0 ? "queued" : "idle",
-        streamSequences: runId
-          ? Object.fromEntries(Object.entries(state.streamSequences).filter(([id]) => id !== runId))
-          : state.streamSequences,
       },
     };
   }
@@ -377,7 +315,6 @@ export function applyChatSignal(
         activeRunId: null,
         pendingHil: null,
         runState: "idle",
-        streamSequences: {},
       },
     };
   }
@@ -543,16 +480,13 @@ function isToolActivityRow(row: Pick<ChatTranscriptRow, "role">): boolean {
 }
 
 function sameToolActivityRow(
-  left: Pick<ChatTranscriptRow, "role" | "runId" | "toolCallId" | "toolExecutionId">,
-  right: Pick<ChatTranscriptRow, "role" | "runId" | "toolCallId" | "toolExecutionId">,
+  left: Pick<ChatTranscriptRow, "role" | "runId" | "toolCallId">,
+  right: Pick<ChatTranscriptRow, "role" | "runId" | "toolCallId">,
 ): boolean {
   if (!isToolActivityRow(left) || !isToolActivityRow(right) || !left.toolCallId || !right.toolCallId) {
     return false;
   }
   if (left.toolCallId !== right.toolCallId) {
-    return false;
-  }
-  if (left.toolExecutionId && right.toolExecutionId && left.toolExecutionId !== right.toolExecutionId) {
     return false;
   }
   if (left.runId || right.runId) {
@@ -726,16 +660,11 @@ function applyAssistantOutput(
     next[existingIndex] = {
       ...next[existingIndex],
       ...nextRow,
-      presentationKey: next[existingIndex].presentationKey
-        ?? transientAssistantPresentationKey(runId ?? "unscoped", timestamp),
       thinking: thinking.length > 0 ? thinking : next[existingIndex].thinking,
     };
     return next;
   }
-  next.push({
-    ...nextRow,
-    presentationKey: transientAssistantPresentationKey(runId ?? "unscoped", timestamp),
-  });
+  next.push(nextRow);
   return next;
 }
 
@@ -782,7 +711,6 @@ function ensureThinkingRow(rows: ChatTranscriptRow[], runId: string): ChatTransc
   const now = Date.now();
   return rows.concat({
     id: `assistant:${runId}`,
-    presentationKey: transientAssistantPresentationKey(runId, now),
     role: "assistant",
     text: "",
     timestamp: now,
@@ -810,7 +738,6 @@ function appendAssistantDelta(rows: ChatTranscriptRow[], runId: string, delta: s
   }
   next.push({
     id: `assistant:${runId}`,
-    presentationKey: transientAssistantPresentationKey(runId, now),
     role: "assistant",
     text: delta,
     timestamp: now,
@@ -840,7 +767,6 @@ function setAssistantStreamText(rows: ChatTranscriptRow[], runId: string, text: 
   }
   next.push({
     id: `assistant:${runId}`,
-    presentationKey: transientAssistantPresentationKey(runId, now),
     role: "assistant",
     text,
     timestamp: now,
@@ -887,7 +813,6 @@ function appendAssistantThinkingDelta(rows: ChatTranscriptRow[], runId: string, 
   }
   next.push({
     id: `assistant:${runId}`,
-    presentationKey: transientAssistantPresentationKey(runId, now),
     role: "assistant",
     text: "",
     thinking: [delta],
@@ -973,7 +898,6 @@ function upsertBackupModelRow(
   const now = Date.now();
   const row: ChatTranscriptRow = {
     id: `backup:${runId}`,
-    presentationKey: transientAssistantPresentationKey(runId, now),
     role: "assistant",
     text: "",
     timestamp: now,
@@ -987,7 +911,6 @@ function upsertBackupModelRow(
     next[index] = {
       ...next[index],
       ...row,
-      presentationKey: next[index].presentationKey ?? row.presentationKey,
     };
     return next;
   }
@@ -1008,7 +931,6 @@ function toolRowFromStarted(record: Record<string, unknown> | null): ChatTranscr
     time: formatTranscriptTime(now),
     toolArgs: record?.args ?? {},
     toolCallId: callId,
-    toolExecutionId: asString(record?.executionId) ?? undefined,
     toolName,
     toolSyscall: syscall,
     runId: asString(record?.runId) ?? undefined,

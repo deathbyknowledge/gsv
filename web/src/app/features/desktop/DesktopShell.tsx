@@ -1,8 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef } from "preact/hooks";
 import { useSession } from "../../services/session/SessionProvider";
+import { SessionScreens } from "../session/SessionScreens";
 import { GsvShell } from "../gsv-shell/GsvShell";
-import { TextClientShell } from "../text-client/TextClientShell";
-import { TextSessionScreens } from "../text-client/session/TextSessionScreens";
 
 type StandaloneNavigator = Navigator & {
   standalone?: boolean;
@@ -27,9 +26,6 @@ export function DesktopShell() {
   const { service: sessionService, snapshot: sessionSnapshot } = useSession();
   const standalone = useMemo(isStandaloneDisplay, []);
   const mobileHomeDate = useMemo(formatMobileHomeDate, []);
-  // `/` is the text client. Every existing deep link remains owned by the
-  // classic operational shell, including links it pushes without remounting.
-  const classicShell = window.location.pathname !== "/";
 
   useEffect(() => {
     void sessionService.start();
@@ -42,17 +38,13 @@ export function DesktopShell() {
   return (
     <div class="app-shell-root">
       <div class={`gsv-native-shell${standalone ? " is-standalone" : ""}`} ref={shellRef}>
-        <TextSessionScreens session={sessionService} snapshot={sessionSnapshot} />
-        {classicShell ? (
-          <GsvShell
-            desktopVisible={desktopVisible}
-            sessionUsername={sessionUsername}
-            mobileHomeDate={mobileHomeDate}
-            onLockSession={lockSession}
-          />
-        ) : desktopVisible ? (
-          <TextClientShell username={sessionUsername} onLock={lockSession} />
-        ) : null}
+        <SessionScreens session={sessionService} snapshot={sessionSnapshot} />
+        <GsvShell
+          desktopVisible={desktopVisible}
+          sessionUsername={sessionUsername}
+          mobileHomeDate={mobileHomeDate}
+          onLockSession={lockSession}
+        />
       </div>
     </div>
   );
