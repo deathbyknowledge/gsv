@@ -21,7 +21,9 @@ export function SessionProvider({ children }: SessionProviderProps) {
   const [snapshot, setSnapshot] = useState<SessionSnapshot>(() => service.snapshot());
 
   useEffect(() => {
-    return service.subscribe(setSnapshot);
+    const unsubscribe = service.subscribe(setSnapshot);
+    void service.start();
+    return unsubscribe;
   }, [service]);
 
   return (

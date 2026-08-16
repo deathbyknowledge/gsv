@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef } from "preact/hooks";
+import { useCallback, useMemo, useRef } from "preact/hooks";
 import { useSession } from "../../services/session/SessionProvider";
 import { SessionScreens } from "../session/SessionScreens";
 import { GsvShell } from "../gsv-shell/GsvShell";
@@ -27,9 +27,6 @@ export function DesktopShell() {
   const standalone = useMemo(isStandaloneDisplay, []);
   const mobileHomeDate = useMemo(formatMobileHomeDate, []);
 
-  useEffect(() => {
-    void sessionService.start();
-  }, [sessionService]);
   const desktopVisible = sessionSnapshot.phase === "ready";
   const sessionUsername = sessionSnapshot.username || "operator";
   const lockSession = useCallback((): void => {
