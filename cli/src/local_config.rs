@@ -88,33 +88,68 @@ pub(crate) fn run_local_config(
         }
 
         LocalConfigAction::Set { key, value } => {
-            let mut cfg = CliConfig::load();
+            if !matches!(
+                key.as_str(),
+                "gateway.url"
+                    | "gateway.username"
+                    | "gateway.token"
+                    | "gateway.session_token"
+                    | "gateway.session_token_id"
+                    | "gateway.session_expires_at"
+                    | "gateway.session_expires_at_ms"
+                    | "cloudflare.account_id"
+                    | "cloudflare.api_token"
+                    | "release.channel"
+                    | "r2.account_id"
+                    | "r2.access_key_id"
+                    | "r2.secret_access_key"
+                    | "r2.bucket"
+                    | "session.default_key"
+                    | "device.id"
+                    | "node.id"
+                    | "device.token"
+                    | "node.token"
+                    | "device.workspace"
+                    | "node.workspace"
+            ) {
+                eprintln!("Unknown config key: {}", key);
+                return Ok(());
+            }
+            let parsed_expiry = matches!(
+                key.as_str(),
+                "gateway.session_expires_at" | "gateway.session_expires_at_ms"
+            )
+            .then(|| {
+                value.trim().parse::<i64>().map_err(|error| {
+                    format!(
+                        "gateway.session_expires_at must be unix ms integer: {}",
+                        error
+                    )
+                })
+            })
+            .transpose()?;
+            let release_channel =
+                (key == "release.channel").then(|| value.trim().to_ascii_lowercase());
+            if release_channel
+                .as_deref()
+                .is_some_and(|channel| channel != "stable" && channel != "dev")
+            {
+                eprintln!("release.channel must be 'stable' or 'dev'");
+                return Ok(());
+            }
 
-            match key.as_str() {
+            CliConfig::update(|cfg| match key.as_str() {
                 "gateway.url" => cfg.gateway.url = Some(value.clone()),
                 "gateway.username" => cfg.gateway.username = Some(value.clone()),
                 "gateway.token" => cfg.gateway.token = Some(value.clone()),
                 "gateway.session_token" => cfg.gateway.session_token = Some(value.clone()),
                 "gateway.session_token_id" => cfg.gateway.session_token_id = Some(value.clone()),
                 "gateway.session_expires_at" | "gateway.session_expires_at_ms" => {
-                    let parsed = value.trim().parse::<i64>().map_err(|error| {
-                        format!(
-                            "gateway.session_expires_at must be unix ms integer: {}",
-                            error
-                        )
-                    })?;
-                    cfg.gateway.session_expires_at = Some(parsed);
+                    cfg.gateway.session_expires_at = parsed_expiry;
                 }
                 "cloudflare.account_id" => cfg.cloudflare.account_id = Some(value.clone()),
                 "cloudflare.api_token" => cfg.cloudflare.api_token = Some(value.clone()),
-                "release.channel" => {
-                    let normalized = value.trim().to_ascii_lowercase();
-                    if normalized != "stable" && normalized != "dev" {
-                        eprintln!("release.channel must be 'stable' or 'dev'");
-                        return Ok(());
-                    }
-                    cfg.release.channel = Some(normalized);
-                }
+                "release.channel" => cfg.release.channel = release_channel.clone(),
                 "r2.account_id" => cfg.r2.account_id = Some(value.clone()),
                 "r2.access_key_id" => cfg.r2.access_key_id = Some(value.clone()),
                 "r2.secret_access_key" => cfg.r2.secret_access_key = Some(value.clone()),
@@ -127,17 +162,12 @@ pub(crate) fn run_local_config(
                 "device.workspace" | "node.workspace" => {
                     cfg.device.workspace = Some(PathBuf::from(value.clone()))
                 }
-                _ => {
-                    eprintln!("Unknown config key: {}", key);
-                    return Ok(());
-                }
-            }
-
-            cfg.save()?;
+                _ => {}
+            })?;
             let display_value = if key == "session.default_key" {
-                cfg.session.default_key.as_deref().unwrap_or(&value)
+                config::normalize_session_key(&value)
             } else {
-                &value
+                value.clone()
             };
             println!(
                 "Set {} = {}",
@@ -145,7 +175,7 @@ pub(crate) fn run_local_config(
                 if key.contains("token") || key.contains("secret") {
                     "****"
                 } else {
-                    display_value
+                    &display_value
                 }
             );
         }

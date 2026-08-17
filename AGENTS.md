@@ -71,12 +71,14 @@ The personal agent account is the user's personal intelligence. One Kernel-marke
 - `gateway/src/inference/`: provider integration and model transport.
 - `packages/gsv/`: public client and protocol types.
 - `web/`: desktop shell, setup/login, system UI, and browser-side gateway integration.
-- `cli/`: user, device, deployment, and administration commands.
+- `native/`: GPUI desktop client, text-first interaction model, native presentation, and isolated local transcription/vision helpers.
+- `cli/`: user, deployment, administration, and OS service-control commands.
+- `daemon/`: the `gsvd` machine driver, concrete tools, transfer ownership, reconnect, logging, and shutdown.
 - `adapters/`: platform-specific messaging workers and identity normalization.
 - `extension/`: browser-backed target and browser integration.
 - `ripgit/`: git-backed repositories and filesystem storage operations.
 
-Keep platform-specific identity and delivery behavior in its adapter. Keep visual presentation in the web shell. Keep target selection below stable syscall contracts.
+Keep platform-specific identity and delivery behavior in its adapter. Keep visual presentation in the web and native clients. Keep target selection below stable syscall contracts.
 
 ## Runtime invariants
 
@@ -154,7 +156,9 @@ gsv/
 ├── gateway/       # Kernel, Process, syscalls, inference, filesystem
 ├── packages/gsv/  # Public TypeScript client and protocol
 ├── web/           # Desktop shell and embedded app host
-├── cli/           # Rust CLI and device runtime
+├── native/        # GPUI text-first client and isolated native helpers
+├── cli/           # Rust operator CLI and local service control
+├── daemon/        # gsvd machine driver runtime
 ├── adapters/      # WhatsApp, Discord, Telegram, and test channels
 ├── extension/     # Browser target
 ├── ripgit/        # Git-backed repository worker
@@ -184,8 +188,11 @@ Validate only the surfaces affected by the change:
 - Managed inference: `cd inference && npm run typecheck && npm test`
 - Gateway: `cd gateway && npx tsc --noEmit && npm run test:run`
 - Web: `cd web && npm run check && npm run test:run && npm run build`
+- Native client: `cargo fmt --manifest-path native/Cargo.toml --check && cargo test --manifest-path native/Cargo.toml && cargo clippy --manifest-path native/Cargo.toml --all-targets -- -D warnings`
+- Native vision helper and control protocol: `cargo fmt --package gsv-vision --package gsv-vision-control --check && cargo test --package gsv-vision --package gsv-vision-control && cargo clippy --package gsv-vision --package gsv-vision-control --all-targets -- -D warnings`
 - Public SDK: `npm run gsv:check && npm test --workspace packages/gsv`
-- CLI/device: `cd cli && cargo fmt --check && cargo test`
+- CLI: `cargo fmt --package gsv --check && cargo test --package gsv`
+- Device daemon: `cargo fmt --package gsvd --check && cargo test --package gsvd`
 - ripgit: `cd ripgit && npm test`
 - Browser extension: `cd extension && npm run check && npm run test:run && npm run build`
 - WhatsApp: `cd adapters/whatsapp && npx tsc --noEmit`
@@ -219,6 +226,7 @@ Commit subjects are short, imperative, lowercase, and scoped to one logical chan
 ## Detailed guidance
 
 - Architecture: `docs/architecture/`
+- Rust CLI, daemon, Desktop, and local IPC: `docs/architecture/rust-host-applications.md`
 - Syscalls and protocol: `docs/reference/syscalls.md` and `docs/reference/websocket-protocol.md`
 - Web product and app design: `engineering/builtin-app-design.md`
 

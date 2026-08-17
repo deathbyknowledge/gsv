@@ -1,4 +1,4 @@
-use gsv::kernel_client::{GatewayAuth, KernelClient};
+use gsv::kernel_client::{cli_client_identity, BinaryBodyLimits, GatewayAuth, KernelClient};
 use serde::Deserialize;
 
 use crate::cli::ConfigAction;
@@ -8,7 +8,14 @@ pub(crate) async fn run_config(
     auth: GatewayAuth,
     action: ConfigAction,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let client = KernelClient::connect_user(url, auth, |_| {}).await?;
+    let client = KernelClient::connect_user_with_identity(
+        url,
+        cli_client_identity(),
+        auth,
+        BinaryBodyLimits::default(),
+        |_| {},
+    )
+    .await?;
 
     match action {
         ConfigAction::Get { key } => {

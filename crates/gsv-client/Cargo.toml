@@ -1,0 +1,25 @@
+[package]
+name = "gsv-client"
+version.workspace = true
+edition = "2021"
+publish = false
+
+[dependencies]
+futures-util = "0.3"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["io-util", "macros", "rt", "sync", "time"] }
+tokio-tungstenite = { version = "0.24", default-features = false, features = ["connect"] }
+tokio-util = { version = "0.7", features = ["io", "rt"] }
+uuid = { version = "1", features = ["v4"] }
+
+[features]
+default = ["native-tls"]
+native-tls = ["tokio-tungstenite/native-tls"]
+rustls = ["tokio-tungstenite/rustls-tls-webpki-roots"]
+
+[lints.clippy]
+unwrap_used = "warn"
+panic = "warn"
+todo = "warn"
+dbg_macro = "warn"

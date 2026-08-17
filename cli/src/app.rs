@@ -3,15 +3,15 @@ use gsv::config::CliConfig;
 
 use crate::auth_flow::{
     resolve_device_gateway_auth, run_auth_login, run_auth_logout, run_auth_setup,
-    run_with_auto_setup_and_login_retry, run_with_auto_setup_options_retry,
-    run_with_auto_setup_retry, AuthSetupOptions,
+    run_with_auto_setup_and_login_retry, run_with_auto_setup_retry, AuthSetupOptions,
 };
 use crate::cli::{
     AuthAction, Cli, Commands, ConfigAction, DeviceAction, DeviceServiceAction, LocalConfigAction,
 };
 use crate::commands;
+use crate::desktop::run_desktop;
 use crate::device::{
-    resolve_device_id, resolve_device_workspace, run_device, run_device_service, run_shell,
+    resolve_device_id, resolve_device_workspace, run_device_daemon, run_device_service, run_shell,
 };
 use crate::local_config::run_local_config;
 use crate::version::run_version;
@@ -167,26 +167,13 @@ pub(crate) async fn run() -> Result<(), Box<dyn std::error::Error>> {
             DeviceAction::Run { id, workspace } => {
                 let device_id = resolve_device_id(id.clone(), &cfg);
                 let workspace = resolve_device_workspace(workspace.clone(), &cfg);
-                run_with_auto_setup_options_retry(
-                    &url,
-                    &cfg,
-                    AuthSetupOptions {
-                        username: cli_user_override.clone(),
-                        password: cli_password_override.clone(),
-                        device_id: Some(device_id.clone()),
-                        ..AuthSetupOptions::default()
-                    },
-                    || async {
-                        let attempt_cfg = CliConfig::load();
-                        let auth = resolve_device_gateway_auth(
-                            &attempt_cfg,
-                            cli_token_override.clone(),
-                            cli_user_override.clone(),
-                        )?;
-                        run_device(&url, auth, device_id.clone(), workspace.clone()).await
-                    },
-                )
-                .await
+                let attempt_cfg = CliConfig::load();
+                let auth = resolve_device_gateway_auth(
+                    &attempt_cfg,
+                    cli_token_override.clone(),
+                    cli_user_override.clone(),
+                )?;
+                run_device_daemon(&url, auth, device_id, workspace)
             }
             DeviceAction::Install { id, workspace } => run_device_service(
                 DeviceServiceAction::Install { id, workspace },
@@ -202,6 +189,13 @@ pub(crate) async fn run() -> Result<(), Box<dyn std::error::Error>> {
                 cli_user_override.as_deref(),
                 cli_token_override.as_deref(),
             ),
+            DeviceAction::Restart => run_device_service(
+                DeviceServiceAction::Restart,
+                &cfg,
+                cli_url_override.as_deref(),
+                cli_user_override.as_deref(),
+                cli_token_override.as_deref(),
+            ),
             DeviceAction::Stop => run_device_service(
                 DeviceServiceAction::Stop,
                 &cfg,
@@ -209,8 +203,22 @@ pub(crate) async fn run() -> Result<(), Box<dyn std::error::Error>> {
                 cli_user_override.as_deref(),
                 cli_token_override.as_deref(),
             ),
+            DeviceAction::Uninstall => run_device_service(
+                DeviceServiceAction::Uninstall,
+                &cfg,
+                cli_url_override.as_deref(),
+                cli_user_override.as_deref(),
+                cli_token_override.as_deref(),
+            ),
             DeviceAction::Status => run_device_service(
                 DeviceServiceAction::Status,
+                &cfg,
+                cli_url_override.as_deref(),
+                cli_user_override.as_deref(),
+                cli_token_override.as_deref(),
+            ),
+            DeviceAction::Doctor => run_device_service(
+                DeviceServiceAction::Doctor,
                 &cfg,
                 cli_url_override.as_deref(),
                 cli_user_override.as_deref(),
@@ -224,6 +232,7 @@ pub(crate) async fn run() -> Result<(), Box<dyn std::error::Error>> {
                 cli_token_override.as_deref(),
             ),
         },
+        Commands::Desktop { action } => run_desktop(action).await,
         Commands::Config { local, action } => {
             if local {
                 match action {

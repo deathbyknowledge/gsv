@@ -2,6 +2,7 @@ mod app;
 mod auth_flow;
 mod cli;
 mod commands;
+mod desktop;
 mod device;
 mod local_config;
 mod version;

@@ -1,6 +1,6 @@
 use std::io::IsTerminal;
 
-use gsv::kernel_client::{GatewayAuth, KernelClient};
+use gsv::kernel_client::{cli_client_identity, BinaryBodyLimits, GatewayAuth, KernelClient};
 use qrcode::{render::unicode, QrCode};
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -14,7 +14,14 @@ pub(crate) async fn run_adapter(
     auth: GatewayAuth,
     action: AdapterAction,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let client = KernelClient::connect_user(url, auth, |_| {}).await?;
+    let client = KernelClient::connect_user_with_identity(
+        url,
+        cli_client_identity(),
+        auth,
+        BinaryBodyLimits::default(),
+        |_| {},
+    )
+    .await?;
 
     match action {
         AdapterAction::Connect {
@@ -156,7 +163,7 @@ fn parse_adapter_connect_payload(
     payload: Value,
 ) -> Result<AdapterConnectPayload, Box<dyn std::error::Error>> {
     let result: AdapterConnectPayload = serde_json::from_value(payload)
-        .map_err(|_| "adapter.connect returned an invalid response shape")?;
+        .map_err(|_error| "adapter.connect returned an invalid response shape")?;
     let challenge_valid = result.challenge.as_ref().is_none_or(|challenge| {
         !challenge.challenge_type.trim().is_empty()
             && (challenge.challenge_type != "qr"
@@ -195,7 +202,7 @@ fn parse_adapter_disconnect_payload(
     payload: Value,
 ) -> Result<AdapterDisconnectPayload, Box<dyn std::error::Error>> {
     let result: AdapterDisconnectPayload = serde_json::from_value(payload)
-        .map_err(|_| "adapter.disconnect returned an invalid response shape")?;
+        .map_err(|_error| "adapter.disconnect returned an invalid response shape")?;
     let valid = if result.ok {
         result
             .adapter
@@ -222,7 +229,7 @@ fn parse_adapter_status_payload(
     payload: Value,
 ) -> Result<AdapterStatusPayload, Box<dyn std::error::Error>> {
     let result: AdapterStatusPayload = serde_json::from_value(payload)
-        .map_err(|_| "adapter.status returned an invalid response shape")?;
+        .map_err(|_error| "adapter.status returned an invalid response shape")?;
     if result.adapter.trim().is_empty()
         || result
             .accounts
@@ -322,6 +329,40 @@ fn render_terminal_qr(data: &str) -> Option<String> {
     )
 }
 
+fn print_adapter_disconnect(result: &AdapterDisconnectPayload) {
+    let adapter = result.adapter.as_deref().unwrap_or("<unknown>");
+    let account_id = result.account_id.as_deref().unwrap_or("<unknown>");
+    println!("Disconnected adapter {}:{}", adapter, account_id);
+    if let Some(message) = result.message.as_deref() {
+        if !message.trim().is_empty() {
+            println!("message: {}", message);
+        }
+    }
+}
+
+fn print_adapter_status(result: &AdapterStatusPayload) {
+    if result.accounts.is_empty() {
+        println!("adapter={} (no accounts)", result.adapter);
+        return;
+    }
+
+    for account in &result.accounts {
+        println!(
+            "{}:{} connected={} authenticated={} mode={} last_activity={} error={}",
+            result.adapter,
+            account.account_id,
+            account.connected,
+            account.authenticated,
+            account.mode.as_deref().unwrap_or("-"),
+            account
+                .last_activity
+                .map(format_unix_ms)
+                .unwrap_or_else(|| "-".to_string()),
+            account.error.as_deref().unwrap_or("-"),
+        );
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -401,7 +442,7 @@ mod tests {
             );
         }
 
-        assert!(parse_adapter_connect_payload(json!({
+        parse_adapter_connect_payload(json!({
             "ok": true,
             "adapter": "whatsapp",
             "accountId": "default",
@@ -409,7 +450,7 @@ mod tests {
             "authenticated": false,
             "challenge": { "type": "qr", "data": "secret", "format": "raw" }
         }))
-        .is_ok());
+        .unwrap();
     }
 
     #[test]
@@ -438,39 +479,5 @@ mod tests {
         );
         assert!(!disconnect_error.contains(private_payload));
         assert!(!status_error.contains(private_payload));
-    }
-}
-
-fn print_adapter_disconnect(result: &AdapterDisconnectPayload) {
-    let adapter = result.adapter.as_deref().unwrap_or("<unknown>");
-    let account_id = result.account_id.as_deref().unwrap_or("<unknown>");
-    println!("Disconnected adapter {}:{}", adapter, account_id);
-    if let Some(message) = result.message.as_deref() {
-        if !message.trim().is_empty() {
-            println!("message: {}", message);
-        }
-    }
-}
-
-fn print_adapter_status(result: &AdapterStatusPayload) {
-    if result.accounts.is_empty() {
-        println!("adapter={} (no accounts)", result.adapter);
-        return;
-    }
-
-    for account in &result.accounts {
-        println!(
-            "{}:{} connected={} authenticated={} mode={} last_activity={} error={}",
-            result.adapter,
-            account.account_id,
-            account.connected,
-            account.authenticated,
-            account.mode.as_deref().unwrap_or("-"),
-            account
-                .last_activity
-                .map(format_unix_ms)
-                .unwrap_or_else(|| "-".to_string()),
-            account.error.as_deref().unwrap_or("-"),
-        );
     }
 }

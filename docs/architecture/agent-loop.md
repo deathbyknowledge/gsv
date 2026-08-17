@@ -167,8 +167,14 @@ it to a device driver.
 ## Tool Results and Continuation
 
 When a response frame arrives, the process resolves or fails the matching
-`pending_tool_calls` row. Once all pending calls for a run are resolved, the
-process schedules/continues the loop:
+`pending_tool_calls` row. Each execution that emitted `proc.run.tool.started`
+also emits a best-effort `proc.run.tool.finished` when that durable dispatch
+first reaches a terminal outcome. Both signals share the unique dispatch
+`executionId`; the terminal signal contains only process/run identity, provider
+call identity, outcome, and timestamp—not arguments, output, or error content.
+Clients deduplicate by `executionId` and recover missed terminal events from
+persisted history. Once all pending calls for a run are resolved, the process
+schedules/continues the loop:
 
 1. Completed syscall results are appended as `toolResult` messages.
 2. `proc.changed` tells clients to refresh persisted history.

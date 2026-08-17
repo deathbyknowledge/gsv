@@ -16,8 +16,8 @@ pub use search::SearchTool;
 pub use shell::{subscribe_exec_events, ShellTool};
 pub use write::WriteTool;
 
-use crate::protocol::ToolDefinition;
 use async_trait::async_trait;
+use gsv_client::protocol::ToolDefinition;
 use serde_json::Value;
 use std::fmt;
 use std::io::Cursor;

@@ -2,7 +2,7 @@ use std::io::{self, BufRead, Write};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
-use gsv::kernel_client::{GatewayAuth, KernelClient};
+use gsv::kernel_client::{cli_client_identity, BinaryBodyLimits, GatewayAuth, KernelClient};
 use serde_json::{json, Value};
 
 const CHAT_WAIT_TIMEOUT_SECS: u64 = 120;
@@ -249,84 +249,91 @@ pub(crate) async fn run_client(
     let pending_signals_for_handler = pending_signals.clone();
     let debug_enabled_for_handler = debug_enabled;
 
-    let client = match KernelClient::connect_user(url, auth, move |frame| {
-        if let gsv::protocol::Frame::Sig(sig) = frame {
-            let payload = sig.payload.unwrap_or_else(|| json!({}));
-            let incoming_run_id = signal_run_id(&payload).unwrap_or_else(|| "<none>".to_string());
-            debug_log(
-                debug_enabled_for_handler,
-                format!("signal recv raw={} runId={}", sig.signal, incoming_run_id),
-            );
-            if !sig.signal.starts_with("proc.run.") {
-                debug_log(debug_enabled_for_handler, "signal ignored (non-run)");
-                return;
-            }
-            let expected = expected_run_id_for_handler
-                .lock()
-                .ok()
-                .and_then(|run_id| run_id.clone());
-            debug_log(
-                debug_enabled_for_handler,
-                format!(
-                    "signal recv={} runId={} expected={:?} awaiting={}",
-                    sig.signal,
-                    incoming_run_id,
-                    expected,
-                    awaiting_response_for_handler.load(Ordering::SeqCst)
-                ),
-            );
-
-            if !awaiting_response_for_handler.load(Ordering::SeqCst) {
+    let client = match KernelClient::connect_user_with_identity(
+        url,
+        cli_client_identity(),
+        auth,
+        BinaryBodyLimits::default(),
+        move |frame| {
+            if let gsv::protocol::Frame::Sig(sig) = frame {
+                let payload = sig.payload.unwrap_or_else(|| json!({}));
+                let incoming_run_id =
+                    signal_run_id(&payload).unwrap_or_else(|| "<none>".to_string());
                 debug_log(
                     debug_enabled_for_handler,
-                    "signal ignored (awaiting_response=false)",
+                    format!("signal recv raw={} runId={}", sig.signal, incoming_run_id),
                 );
-                return;
-            }
-
-            let signal_run_id = signal_run_id(&payload);
-
-            let Some(expected) = expected else {
-                if signal_run_id.is_some() {
-                    if let Ok(mut pending) = pending_signals_for_handler.lock() {
-                        pending.push(PendingChatSignal {
-                            signal: sig.signal.clone(),
-                            payload,
-                        });
-                        debug_log(
-                            debug_enabled_for_handler,
-                            format!(
-                                "signal queued (expected runId pending) queue_len={}",
-                                pending.len()
-                            ),
-                        );
-                    }
+                if !sig.signal.starts_with("proc.run.") {
+                    debug_log(debug_enabled_for_handler, "signal ignored (non-run)");
+                    return;
                 }
-                return;
-            };
-
-            if signal_run_id.as_deref() != Some(expected.as_str()) {
+                let expected = expected_run_id_for_handler
+                    .lock()
+                    .ok()
+                    .and_then(|run_id| run_id.clone());
                 debug_log(
                     debug_enabled_for_handler,
                     format!(
-                        "signal ignored (runId mismatch): signal={:?} expected={}",
-                        signal_run_id, expected
+                        "signal recv={} runId={} expected={:?} awaiting={}",
+                        sig.signal,
+                        incoming_run_id,
+                        expected,
+                        awaiting_response_for_handler.load(Ordering::SeqCst)
                     ),
                 );
-                return;
-            }
 
-            process_chat_signal(
-                debug_enabled_for_handler,
-                &sig.signal,
-                &payload,
-                &expected_run_id_for_handler,
-                awaiting_response_for_handler.as_ref(),
-                emitted_text_for_handler.as_ref(),
-                completed_for_handler.as_ref(),
-            );
-        }
-    })
+                if !awaiting_response_for_handler.load(Ordering::SeqCst) {
+                    debug_log(
+                        debug_enabled_for_handler,
+                        "signal ignored (awaiting_response=false)",
+                    );
+                    return;
+                }
+
+                let signal_run_id = signal_run_id(&payload);
+
+                let Some(expected) = expected else {
+                    if signal_run_id.is_some() {
+                        if let Ok(mut pending) = pending_signals_for_handler.lock() {
+                            pending.push(PendingChatSignal {
+                                signal: sig.signal.clone(),
+                                payload,
+                            });
+                            debug_log(
+                                debug_enabled_for_handler,
+                                format!(
+                                    "signal queued (expected runId pending) queue_len={}",
+                                    pending.len()
+                                ),
+                            );
+                        }
+                    }
+                    return;
+                };
+
+                if signal_run_id.as_deref() != Some(expected.as_str()) {
+                    debug_log(
+                        debug_enabled_for_handler,
+                        format!(
+                            "signal ignored (runId mismatch): signal={:?} expected={}",
+                            signal_run_id, expected
+                        ),
+                    );
+                    return;
+                }
+
+                process_chat_signal(
+                    debug_enabled_for_handler,
+                    &sig.signal,
+                    &payload,
+                    &expected_run_id_for_handler,
+                    awaiting_response_for_handler.as_ref(),
+                    emitted_text_for_handler.as_ref(),
+                    completed_for_handler.as_ref(),
+                );
+            }
+        },
+    )
     .await
     {
         Ok(client) => client,

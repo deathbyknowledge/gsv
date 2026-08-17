@@ -25,6 +25,9 @@ jobs:
       whatsapp: ${{ steps.filter.outputs.whatsapp }}
       ripgit: ${{ steps.filter.outputs.ripgit }}
       cli: ${{ steps.filter.outputs.cli }}
+      daemon: ${{ steps.filter.outputs.daemon }}
+      native: ${{ steps.filter.outputs.native }}
+      rust_shared: ${{ steps.filter.outputs.rust_shared }}
     steps:
       - uses: actions/checkout@v4
 
@@ -35,13 +38,23 @@ jobs:
           filters: |
             version:
               - '.github/workflows/ci.yml'
+              - '.github/workflows/release.yml'
               - 'VERSION'
+              - 'Cargo.toml'
+              - 'Cargo.lock'
               - 'scripts/version.mjs'
+              - 'scripts/test-host-installer.sh'
+              - 'install.sh'
+              - 'install.ps1'
               - 'package.json'
               - 'package-lock.json'
               - 'packages/gsv/package.json'
               - 'cli/Cargo.toml'
-              - 'cli/Cargo.lock'
+              - 'crates/*/Cargo.toml'
+              - 'daemon/Cargo.toml'
+              - 'native/Cargo.toml'
+              - 'native/transcribe-helper/Cargo.toml'
+              - 'native/vision-helper/Cargo.toml'
               - 'extension/package.json'
               - 'extension/public/manifest.json'
               - 'extension/src/background/service-worker.ts'
@@ -100,7 +113,34 @@ jobs:
               - 'ripgit/**'
             cli:
               - '.github/workflows/ci.yml'
+              - 'Cargo.toml'
+              - 'Cargo.lock'
               - 'cli/**'
+              - 'crates/gsv-client/**'
+              - 'crates/gsv-config/**'
+              - 'crates/gsv-desktop-control/**'
+            daemon:
+              - '.github/workflows/ci.yml'
+              - 'Cargo.toml'
+              - 'Cargo.lock'
+              - 'daemon/**'
+              - 'crates/gsv-client/**'
+              - 'crates/gsv-config/**'
+            native:
+              - '.github/workflows/ci.yml'
+              - 'Cargo.toml'
+              - 'Cargo.lock'
+              - 'native/**'
+              - 'scripts/vision-mediapipe/**'
+              - 'crates/gsv-client/**'
+              - 'crates/gsv-config/**'
+              - 'crates/gsv-desktop-control/**'
+              - 'web/public/fonts/**'
+            rust_shared:
+              - '.github/workflows/ci.yml'
+              - 'Cargo.toml'
+              - 'Cargo.lock'
+              - 'crates/**'
 
   version-check:
     name: Version Check
@@ -117,6 +157,39 @@ jobs:
 
       - name: Verify synced versions
         run: npm run version:check
+
+  release-scripts-check:
+    name: Release Scripts (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    needs: [changes]
+    if: needs.changes.outputs.version == 'true'
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Test Unix installer
+        if: runner.os == 'Linux'
+        run: |
+          bash -n install.sh scripts/test-host-installer.sh
+          ./scripts/test-host-installer.sh
+
+      - name: Parse Windows installer
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $tokens = $null
+          $errors = $null
+          [System.Management.Automation.Language.Parser]::ParseFile(
+            (Resolve-Path "install.ps1"),
+            [ref]$tokens,
+            [ref]$errors
+          ) | Out-Null
+          if ($errors.Count -gt 0) {
+            $errors | ForEach-Object { Write-Error $_.Message }
+            exit 1
+          }
 
   workspace-check:
     name: Workspace Checks
@@ -279,11 +352,126 @@ jobs:
       
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
       
       - name: Build
-        working-directory: cli
-        run: cargo build --release
+        run: cargo build --locked --release --package gsv
+
+      - name: Check formatting
+        run: cargo fmt --package gsv --check
       
       - name: Run tests
-        working-directory: cli
-        run: cargo test
+        run: cargo test --locked --package gsv
+
+  rust-shared:
+    name: Shared Rust Contracts
+    runs-on: ubuntu-latest
+    needs: [changes]
+    if: needs.changes.outputs.rust_shared == 'true'
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+
+      - name: Check formatting
+        run: >-
+          cargo fmt --package gsv-client --package gsv-config
+          --package gsv-desktop-control --check
+
+      - name: Test shared crates
+        run: >-
+          cargo test --locked --package gsv-client --package gsv-config
+          --package gsv-desktop-control
+
+      - name: Lint shared crates
+        run: >-
+          cargo clippy --locked --package gsv-client --package gsv-config
+          --package gsv-desktop-control --all-targets -- -D warnings
+
+  daemon-build:
+    name: Device Daemon (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    needs: [changes]
+    if: needs.changes.outputs.daemon == 'true'
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+
+      - name: Check daemon
+        run: cargo check --locked --package gsvd
+
+      - name: Check formatting
+        run: cargo fmt --package gsvd --check
+
+      - name: Test daemon
+        run: cargo test --locked --package gsvd
+
+      - name: Lint daemon
+        run: cargo clippy --locked --package gsvd --all-targets -- -D warnings
+
+  native-build:
+    name: Native Desktop (Linux)
+    runs-on: ubuntu-22.04
+    needs: [changes]
+    if: needs.changes.outputs.native == 'true'
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+
+      - name: Install native build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential \
+            clang \
+            cmake \
+            libasound2-dev \
+            libclang-dev \
+            libfontconfig1-dev \
+            libssl-dev \
+            libwayland-dev \
+            libx11-dev \
+            libx11-xcb-dev \
+            libxkbcommon-dev \
+            libxkbcommon-x11-dev \
+            linux-libc-dev \
+            patchelf \
+            pkg-config
+
+      - name: Check vision artifact script
+        run: bash -n scripts/vision-mediapipe/build-linux.sh
+
+      - name: Check Desktop and helpers
+        run: >-
+          cargo check --locked --package gsv-native --package gsv-transcribe
+          --package gsv-vision --package gsv-vision-control
+
+      - name: Check formatting
+        run: >-
+          cargo fmt --package gsv-native --package gsv-transcribe
+          --package gsv-vision --package gsv-vision-control --check
+
+      - name: Test Desktop and helpers
+        run: >-
+          cargo test --locked --package gsv-native --package gsv-transcribe
+          --package gsv-vision --package gsv-vision-control
+
+      - name: Lint Desktop and helpers
+        run: >-
+          cargo clippy --locked --package gsv-native --package gsv-transcribe
+          --package gsv-vision --package gsv-vision-control --all-targets -- -D warnings

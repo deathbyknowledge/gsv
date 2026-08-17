@@ -1,0 +1,58 @@
+[package]
+name = "gsvd"
+version.workspace = true
+edition = "2021"
+publish = false
+
+[dependencies]
+gsv-client = { path = "../crates/gsv-client", default-features = false }
+gsv-config = { path = "../crates/gsv-config" }
+tokio = { version = "1", features = [
+    "rt-multi-thread",
+    "macros",
+    "time",
+    "sync",
+    "io-util",
+    "process",
+    "signal",
+    "fs",
+] }
+tokio-util = { version = "0.7", features = ["io", "rt"] }
+futures-util = "0.3"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+clap = { version = "4", features = ["derive", "env"] }
+uuid = { version = "1", features = ["v4"] }
+hostname = "0.4.2"
+dirs = "5"
+glob = "0.3"
+walkdir = "2"
+async-trait = "0.1"
+tracing = "0.1"
+tracing-appender = "0.2"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+reqwest = { version = "0.12", default-features = false, features = ["stream"] }
+mime_guess = "2.0"
+infer = { version = "0.16", default-features = false }
+libc = "0.2"
+rustls_crate = { package = "rustls", version = "0.23", default-features = false, features = ["ring", "std"], optional = true }
+
+[features]
+default = ["native-tls"]
+native-tls = ["gsv-client/native-tls", "reqwest/native-tls"]
+rustls = [
+    "gsv-client/rustls",
+    "reqwest/rustls-tls",
+    "rustls_crate",
+]
+
+[lints.clippy]
+unwrap_used = "warn"
+panic = "warn"
+todo = "warn"
+unimplemented = "warn"
+unreachable = "warn"
+await_holding_lock = "warn"
+let_underscore_future = "warn"
+undocumented_unsafe_blocks = "warn"
+dbg_macro = "warn"

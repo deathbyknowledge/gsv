@@ -96,6 +96,8 @@ export type ProcHilRequest = {
   callId: string;
   toolName: string;
   syscall: string;
+  /** Authoritative normalized execution target resolved by the Process approval policy. */
+  target: string;
   args: Record<string, unknown>;
   createdAt: number;
 };
@@ -192,6 +194,25 @@ export type ProcHistoryArgs = {
 };
 
 export type ProcToolResultOutcome = "completed" | "failed" | "cancelled" | "denied";
+
+export type ProcRunToolStartedSignal = {
+  pid: string;
+  runId: string;
+  executionId: string;
+  callId: string;
+  name: string;
+  syscall: string;
+  args: unknown;
+};
+
+export type ProcRunToolFinishedSignal = {
+  pid: string;
+  runId: string;
+  executionId: string;
+  callId: string;
+  outcome: ProcToolResultOutcome;
+  timestamp: number;
+};
 
 export type ProcHistoryToolResultContent = {
   toolName: string;

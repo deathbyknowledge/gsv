@@ -10,6 +10,7 @@ describe("user-facing signal policy", () => {
     expect(USER_PROCESS_SIGNALS).toContain("proc.changed");
     expect(USER_PROCESS_SIGNALS).toContain("process.exit");
     expect(USER_PROCESS_SIGNALS).toContain("proc.run.stream");
+    expect(USER_PROCESS_SIGNALS).toContain("proc.run.tool.finished");
     expect(USER_PROCESS_SIGNALS).toContain("proc.run.hil.requested");
 
     for (const signal of USER_PROCESS_SIGNALS) {

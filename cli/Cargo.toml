@@ -1,9 +1,12 @@
 [package]
 name = "gsv"
-version = "0.4.1"
+version.workspace = true
 edition = "2021"
 
 [dependencies]
+gsv-client = { path = "../crates/gsv-client", default-features = false }
+gsv-config = { path = "../crates/gsv-config" }
+gsv-desktop-control = { path = "../crates/gsv-desktop-control" }
 tokio = { version = "1", features = [
     "rt-multi-thread",
     "macros",
@@ -14,8 +17,6 @@ tokio = { version = "1", features = [
     "signal",
     "fs",
 ] }
-tokio-util = { version = "0.7", features = ["io", "rt"] }
-futures-util = "0.3"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 clap = { version = "4", features = ["derive", "env"] }
@@ -23,12 +24,7 @@ uuid = { version = "1", features = ["v4"] }
 hostname = "0.4.2"
 chrono = "0.4"
 dirs = "5"
-glob = "0.3"
 walkdir = "2"
-async-trait = "0.1"
-tracing = "0.1"
-tracing-appender = "0.2"
-tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
 toml = "0.8"
 qrcode = "0.14"
 cliclack = "0.3.8"
@@ -36,13 +32,11 @@ whoami = "1"
 
 # TLS backends - use native-tls by default (respects system certs)
 # CI builds for Linux use rustls feature to avoid OpenSSL dependency
-tokio-tungstenite = { version = "0.24", default-features = false, features = ["connect"] }
 reqwest = { version = "0.12", default-features = false, features = ["json", "multipart", "stream"] }
 sha2 = "0.10"
 base64 = "0.22"
 blake3 = "1.5"
 mime_guess = "2.0"
-infer = { version = "0.16", default-features = false }
 flate2 = "1.0"
 tar = "0.4"
 json5 = "0.4"
@@ -52,25 +46,20 @@ libc = "0.2"
 # Only needed when rustls feature is enabled
 rustls_crate = { package = "rustls", version = "0.23", default-features = false, features = ["ring", "std"], optional = true }
 
-[profile.release]
-strip = true
-lto = true
-codegen-units = 1
-
 [features]
 default = ["native-tls"]
 
 # Use native-tls (macOS: Security.framework, Windows: SChannel, Linux: OpenSSL)
 # This respects system certificate stores (important for corporate proxies/VPNs)
 native-tls = [
-    "tokio-tungstenite/native-tls",
+    "gsv-client/native-tls",
     "reqwest/native-tls",
 ]
 
 # Use rustls with bundled Mozilla roots (no system dependencies)
 # Good for static Linux builds but ignores system cert store
 rustls = [
-    "tokio-tungstenite/rustls-tls-webpki-roots", 
+    "gsv-client/rustls",
     "reqwest/rustls-tls",
     "rustls_crate",
 ]

@@ -61,8 +61,10 @@ export type ToolCallRecord = {
 
 export type PendingToolCallRecord = {
   runId: string;
+  callId: string;
   call: string;
   args: unknown;
+  status: "registered" | "pending";
 };
 
 export type MessageRole = "user" | "assistant" | "system" | "toolResult";
@@ -147,7 +149,7 @@ function normalizeStoredToolResultOutcome(value: string | null): ProcToolResultO
   return null;
 }
 
-function resolvedToolResultOutcome(result: unknown): "completed" | "failed" {
+export function resolvedToolResultOutcome(result: unknown): "completed" | "failed" {
   if (
     result
     && typeof result === "object"
@@ -362,8 +364,8 @@ export class ProcessStore {
     dispatchId: string,
     result: unknown,
     outcome: "completed" | "failed" = resolvedToolResultOutcome(result),
-  ): void {
-    this.sql.exec(
+  ): boolean {
+    const cursor = this.sql.exec(
       `UPDATE pending_tool_calls
           SET status = 'completed', result_json = ?, outcome = ?
         WHERE dispatch_id = ? AND status IN ('registered', 'pending')`,
@@ -371,14 +373,15 @@ export class ProcessStore {
       outcome,
       dispatchId,
     );
+    return cursor.rowsWritten > 0;
   }
 
   fail(
     dispatchId: string,
     error: string,
     outcome: Exclude<ProcToolResultOutcome, "completed"> = "failed",
-  ): void {
-    this.sql.exec(
+  ): boolean {
+    const cursor = this.sql.exec(
       `UPDATE pending_tool_calls
           SET status = 'error', error = ?, outcome = ?
         WHERE dispatch_id = ? AND status IN ('registered', 'pending')`,
@@ -386,6 +389,7 @@ export class ProcessStore {
       outcome,
       dispatchId,
     );
+    return cursor.rowsWritten > 0;
   }
 
   markDispatched(dispatchId: string): boolean {
@@ -400,11 +404,13 @@ export class ProcessStore {
 
   getPending(dispatchId: string): PendingToolCallRecord | null {
     const rows = [...this.sql.exec<{
+      id: string;
       run_id: string;
       call: string;
       args_json: string | null;
+      status: "registered" | "pending";
     }>(
-      `SELECT run_id, call, args_json
+      `SELECT id, run_id, call, args_json, status
          FROM pending_tool_calls
         WHERE dispatch_id = ? AND status IN ('registered', 'pending')`,
       dispatchId,
@@ -412,8 +418,10 @@ export class ProcessStore {
     if (rows.length === 0) return null;
     return {
       runId: rows[0].run_id,
+      callId: rows[0].id,
       call: rows[0].call,
       args: rows[0].args_json ? JSON.parse(rows[0].args_json) : null,
+      status: rows[0].status,
     };
   }
 

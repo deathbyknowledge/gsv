@@ -5,6 +5,7 @@ import type {
   ProcToolResultOutcome,
 } from "@humansandmachines/gsv/protocol";
 import type { ChatHistory, ChatHistoryMessage, ChatRunState } from "./processes";
+import { normalizeHilRequest } from "./hil";
 
 export type ChatTranscriptRowRole = "assistant" | "system" | "tool" | "toolResult" | "user";
 
@@ -269,6 +270,13 @@ export function applyChatSignal(
 
   if (signal === "proc.run.hil.requested") {
     const pendingHil = normalizeHilRequest(payload);
+    if (!pendingHil) {
+      return {
+        matched: true,
+        refreshHistory: true,
+        state,
+      };
+    }
     return {
       matched: true,
       refreshHistory: false,
@@ -1095,29 +1103,6 @@ function extractThinkingBlocks(value: unknown): string[] {
       return (asString(block?.thinking) ?? asString(block?.text) ?? "").trim();
     })
     .filter(Boolean);
-}
-
-function normalizeHilRequest(value: unknown): ProcHilRequest | null {
-  const record = asRecord(value);
-  const pid = asString(record?.pid);
-  const requestId = asString(record?.requestId);
-  const runId = asString(record?.runId);
-  const callId = asString(record?.callId);
-  const toolName = asString(record?.toolName);
-  const syscall = asString(record?.syscall);
-  if (!pid || !requestId || !runId || !callId || !toolName || !syscall) {
-    return null;
-  }
-  return {
-    pid,
-    requestId,
-    runId,
-    callId,
-    toolName,
-    syscall,
-    args: asRecord(record?.args) ?? {},
-    createdAt: asNumber(record?.createdAt) ?? Date.now(),
-  };
 }
 
 function normalizeContextState(value: unknown): ProcContextState | null {

@@ -490,6 +490,8 @@ type ProcHilRequest = {
   callId: string;
   toolName: string;
   syscall: string;
+  // Process-resolved approval scope (for example `gsv` or a connected target).
+  target: string;
   args: Record<string, unknown>;
   createdAt: number;
 };

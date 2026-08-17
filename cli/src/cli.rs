@@ -68,6 +68,12 @@ pub(crate) enum Commands {
         action: DeviceAction,
     },
 
+    /// Launch, focus, or control the local GSV Desktop application
+    Desktop {
+        #[command(subcommand)]
+        action: Option<DesktopAction>,
+    },
+
     /// Get or set gateway configuration (use --local for CLI config)
     Config {
         /// Operate on local CLI config instead of remote kernel config
@@ -89,8 +95,48 @@ pub(crate) enum Commands {
 }
 
 #[derive(Subcommand)]
+pub(crate) enum DesktopAction {
+    /// Show redacted local Desktop state without launching it
+    Status {
+        /// Print machine-readable JSON
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// Create and select a new conversation in Desktop
+    New,
+
+    /// Select an existing process in Desktop
+    Use {
+        /// Process ID to select
+        pid: String,
+    },
+
+    /// List or select the microphone used for voice input
+    Microphone {
+        #[command(subcommand)]
+        action: MicrophoneAction,
+    },
+}
+
+#[derive(Subcommand)]
+pub(crate) enum MicrophoneAction {
+    /// List microphones and the current selection
+    List,
+
+    /// Select and remember a microphone by name
+    Use {
+        /// Microphone name to select
+        name: String,
+    },
+
+    /// Use the operating system's default microphone
+    Default,
+}
+
+#[derive(Subcommand)]
 pub(crate) enum DeviceAction {
-    /// Run the device in the foreground
+    /// Run gsvd in the foreground (compatibility launcher)
     Run {
         /// Device ID (default: device-<hostname>)
         #[arg(long)]
@@ -115,11 +161,20 @@ pub(crate) enum DeviceAction {
     /// Start device daemon service
     Start,
 
+    /// Restart device daemon service
+    Restart,
+
     /// Stop device daemon service
     Stop,
 
+    /// Uninstall and stop device daemon service
+    Uninstall,
+
     /// Show device daemon service status
     Status,
+
+    /// Check the daemon executable and installed service definition
+    Doctor,
 
     /// Show device daemon service logs
     Logs {
@@ -288,11 +343,17 @@ pub(crate) enum DeviceServiceAction {
     /// Start device daemon service
     Start,
 
+    /// Restart device daemon service
+    Restart,
+
     /// Stop device daemon service
     Stop,
 
     /// Show device daemon service status
     Status,
+
+    /// Check the daemon executable and installed service definition
+    Doctor,
 
     /// Show device daemon service logs
     Logs {
@@ -649,4 +710,85 @@ pub(crate) enum LocalConfigAction {
         /// Value to set
         value: String,
     },
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn desktop_without_a_subcommand_means_activate() {
+        let cli = Cli::try_parse_from(["gsv", "desktop"]).expect("desktop command parses");
+        assert!(matches!(cli.command, Commands::Desktop { action: None }));
+    }
+
+    #[test]
+    fn desktop_commands_accept_only_the_narrow_control_surface() {
+        let status =
+            Cli::try_parse_from(["gsv", "desktop", "status", "--json"]).expect("status parses");
+        assert!(matches!(
+            status.command,
+            Commands::Desktop {
+                action: Some(DesktopAction::Status { json: true })
+            }
+        ));
+
+        let new = Cli::try_parse_from(["gsv", "desktop", "new"]).expect("new parses");
+        assert!(matches!(
+            new.command,
+            Commands::Desktop {
+                action: Some(DesktopAction::New)
+            }
+        ));
+
+        let use_process =
+            Cli::try_parse_from(["gsv", "desktop", "use", "proc:1"]).expect("use parses");
+        assert!(matches!(
+            use_process.command,
+            Commands::Desktop {
+                action: Some(DesktopAction::Use { pid })
+            } if pid == "proc:1"
+        ));
+
+        let microphone_list = Cli::try_parse_from(["gsv", "desktop", "microphone", "list"])
+            .expect("microphone list parses");
+        assert!(matches!(
+            microphone_list.command,
+            Commands::Desktop {
+                action: Some(DesktopAction::Microphone {
+                    action: MicrophoneAction::List
+                })
+            }
+        ));
+
+        let microphone_use =
+            Cli::try_parse_from(["gsv", "desktop", "microphone", "use", "Shure MV6"])
+                .expect("microphone use parses");
+        assert!(matches!(
+            microphone_use.command,
+            Commands::Desktop {
+                action: Some(DesktopAction::Microphone {
+                    action: MicrophoneAction::Use { name }
+                })
+            } if name == "Shure MV6"
+        ));
+
+        let microphone_default = Cli::try_parse_from(["gsv", "desktop", "microphone", "default"])
+            .expect("microphone default parses");
+        assert!(matches!(
+            microphone_default.command,
+            Commands::Desktop {
+                action: Some(DesktopAction::Microphone {
+                    action: MicrophoneAction::Default
+                })
+            }
+        ));
+
+        assert!(Cli::try_parse_from(["gsv", "desktop", "send", "secret"]).is_err());
+        assert!(Cli::try_parse_from(["gsv", "desktop", "new", "--label", "private"]).is_err());
+        assert!(Cli::try_parse_from(["gsv", "desktop", "microphone"]).is_err());
+        assert!(
+            Cli::try_parse_from(["gsv", "desktop", "microphone", "use", "one", "two"]).is_err()
+        );
+    }
 }

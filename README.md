@@ -39,13 +39,20 @@ Under the hood, GSV is a distributed operating environment: agents are durable p
 **Or from the terminal:**
 
 ```bash
-# Install the CLI
+# Install the CLI, machine daemon, and Desktop where supported
 curl -fsSL https://install.gsv.space | bash
 # Deploy all components into your own Cloudflare account
 gsv infra deploy --api-token <CLOUDFLARE-API-TOKEN>
 ```
 
 Either way, open the URL it prints to finish onboarding in the web UI.
+
+The verified host installer ships matching versions of `gsv` and `gsvd` on
+Linux x64/ARM64, macOS Intel/Apple Silicon, and Windows x64. Linux and macOS
+also receive the native Desktop and its isolated local transcription helper;
+launch it with `gsv desktop`. See the
+[host application install and upgrade guide](docs/how-to/install-host-apps.md)
+for platform details and service rollback behavior.
 
 ### 2. Start using it
 

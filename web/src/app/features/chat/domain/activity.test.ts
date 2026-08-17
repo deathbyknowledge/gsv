@@ -28,6 +28,7 @@ describe("chat live activity", () => {
         callId: "call-1",
         toolName: "Shell",
         syscall: "shell.exec",
+        target: "gsv",
         args: { input: "npm test" },
         createdAt: 1,
       },
