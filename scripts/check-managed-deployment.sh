@@ -33,8 +33,7 @@ generate_types() {
     npm exec --workspaces=false -- wrangler types \
       "$OUTPUT_DIR/$output.d.ts" \
       --config "$config" \
-      --env-interface "$interface_name" \
-      --include-runtime false
+      --env-interface "$interface_name"
   )
 }
 

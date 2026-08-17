@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "deploy": "wrangler deploy --minify",
-    "cf-typegen": "wrangler types --include-runtime false",
+    "cf-typegen": "wrangler types",
     "typecheck": "tsc --noEmit",
     "test": "vitest run"
   },

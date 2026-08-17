@@ -6,7 +6,7 @@
   "scripts": {
     "deploy": "wrangler deploy --minify",
     "dev": "wrangler dev",
-    "cf-typegen": "wrangler types --include-runtime false",
+    "cf-typegen": "wrangler types",
     "typecheck": "tsc --noEmit",
     "test": "vitest run --config vitest.config.ts"
   },
