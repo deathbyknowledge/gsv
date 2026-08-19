@@ -12,7 +12,7 @@ use crate::observation::{
 
 use self::geometry::{
     decode_hand_rects, map_rect_from_crop, next_hand_rect, overlaps_tracked, project_landmarks,
-    rotate_world_landmarks, sample_rgb, Rect,
+    rotate_world_landmarks, same_projected_hand, sample_rgb, Rect,
 };
 use self::models::{LandmarkOutputs, Models};
 use self::runtime::ModelPaths;
@@ -101,16 +101,24 @@ impl GestureRecognizer {
                 if !overlaps_tracked(detected, &candidate_rects) {
                     candidate_rects.push(detected);
                 }
-                if candidate_rects.len() == MAX_HANDS {
-                    break;
-                }
             }
         }
 
         let mut detected_hands = Vec::with_capacity(candidate_rects.len());
         for rect in candidate_rects {
             if let Some(hand) = self.detect_hand(frame, rect)? {
+                if detected_hands.iter().any(|existing: &DetectedHand| {
+                    same_projected_hand(
+                        &existing.observation.landmarks,
+                        &hand.observation.landmarks,
+                    )
+                }) {
+                    continue;
+                }
                 detected_hands.push(hand);
+                if detected_hands.len() == MAX_HANDS {
+                    break;
+                }
             }
         }
         self.tracked_rects = detected_hands.iter().map(|hand| hand.next_rect).collect();

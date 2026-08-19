@@ -7,6 +7,7 @@ const DETECTOR_SIZE: f32 = 192.0;
 const SCORE_THRESHOLD: f32 = 0.5;
 const NMS_THRESHOLD: f32 = 0.3;
 const TRACKING_THRESHOLD: f32 = 0.5;
+const DUPLICATE_LANDMARK_DISTANCE_RATIO: f32 = 0.25;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub(super) struct Point {
@@ -370,6 +371,48 @@ pub(super) fn next_hand_rect(
     ))
 }
 
+pub(super) fn same_projected_hand(
+    left: &[Landmark; HAND_LANDMARK_COUNT],
+    right: &[Landmark; HAND_LANDMARK_COUNT],
+) -> bool {
+    let Some(scale) = hand_extent(left)
+        .zip(hand_extent(right))
+        .map(|(left, right)| left.min(right))
+    else {
+        return false;
+    };
+    let mean_squared_distance = left
+        .iter()
+        .zip(right)
+        .map(|(left, right)| {
+            let dx = left.x - right.x;
+            let dy = left.y - right.y;
+            dx * dx + dy * dy
+        })
+        .sum::<f32>()
+        / HAND_LANDMARK_COUNT as f32;
+    mean_squared_distance.is_finite()
+        && mean_squared_distance.sqrt() <= scale * DUPLICATE_LANDMARK_DISTANCE_RATIO
+}
+
+fn hand_extent(landmarks: &[Landmark; HAND_LANDMARK_COUNT]) -> Option<f32> {
+    let mut min_x = f32::INFINITY;
+    let mut min_y = f32::INFINITY;
+    let mut max_x = f32::NEG_INFINITY;
+    let mut max_y = f32::NEG_INFINITY;
+    for landmark in landmarks {
+        if !landmark.x.is_finite() || !landmark.y.is_finite() {
+            return None;
+        }
+        min_x = min_x.min(landmark.x);
+        min_y = min_y.min(landmark.y);
+        max_x = max_x.max(landmark.x);
+        max_y = max_y.max(landmark.y);
+    }
+    let extent = (max_x - min_x).hypot(max_y - min_y);
+    (extent > f32::EPSILON && extent.is_finite()).then_some(extent)
+}
+
 fn landmark_bounds(landmarks: &[Landmark]) -> Option<(f32, f32, f32, f32)> {
     let mut min_x = f32::MAX;
     let mut min_y = f32::MAX;
@@ -512,6 +555,27 @@ mod tests {
         }
 
         assert_eq!(decode_hand_rects(&boxes, &scores).len(), 3);
+    }
+
+    #[test]
+    fn projected_landmarks_deduplicate_one_physical_hand() {
+        let mut original = [Landmark::default(); HAND_LANDMARK_COUNT];
+        for (index, landmark) in original.iter_mut().enumerate() {
+            landmark.x = 0.2 + (index % 5) as f32 * 0.03;
+            landmark.y = 0.3 + (index / 5) as f32 * 0.04;
+        }
+        let mut duplicate = original;
+        for landmark in &mut duplicate {
+            landmark.x += 0.005;
+            landmark.y -= 0.005;
+        }
+        let mut other = original;
+        for landmark in &mut other {
+            landmark.x += 0.3;
+        }
+
+        assert!(same_projected_hand(&original, &duplicate));
+        assert!(!same_projected_hand(&original, &other));
     }
 
     #[test]
