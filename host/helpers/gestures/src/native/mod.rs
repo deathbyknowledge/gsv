@@ -22,7 +22,10 @@ const MAX_FRAME_HEIGHT: u32 = 1_080;
 const RGB_CHANNELS: usize = 3;
 const LANDMARK_SIZE: usize = 224;
 const PRESENCE_THRESHOLD: f32 = 0.5;
-const PALM_DISCOVERY_INTERVAL_MS: i64 = 100;
+const PALM_DISCOVERY_FALLBACK_INTERVAL_MS: i64 = 500;
+const MOTION_GRID_SIZE: usize = 16;
+const MOTION_SAMPLE_COUNT: usize = MOTION_GRID_SIZE * MOTION_GRID_SIZE;
+const MOTION_PIXEL_DELTA: u8 = 16;
 const GESTURE_LABELS: [&str; 8] = [
     "None",
     "Closed_Fist",
@@ -60,6 +63,13 @@ pub(crate) struct GestureRecognizer {
     tracked_rects: Vec<Rect>,
     last_timestamp_ms: Option<i64>,
     last_palm_detection_ms: Option<i64>,
+    last_palm_signature: Option<MotionSignature>,
+}
+
+#[derive(Clone)]
+struct MotionSignature {
+    luminance: [u8; MOTION_SAMPLE_COUNT],
+    included: [bool; MOTION_SAMPLE_COUNT],
 }
 
 struct DetectedHand {
@@ -172,6 +182,7 @@ impl GestureRecognizer {
             tracked_rects: Vec::new(),
             last_timestamp_ms: None,
             last_palm_detection_ms: None,
+            last_palm_signature: None,
         })
     }
 
@@ -212,11 +223,21 @@ impl GestureRecognizer {
         let started = Instant::now();
 
         let mut candidate_rects = self.tracked_rects.clone();
+        let discovery_signature =
+            (candidate_rects.len() == 1).then(|| motion_signature(frame, &candidate_rects));
+        let external_motion = self
+            .last_palm_signature
+            .as_ref()
+            .zip(discovery_signature.as_ref())
+            .is_some_and(|(previous, current)| motion_detected(previous, current));
+        let mut detected_palms = false;
         if should_detect_palms(
             candidate_rects.len(),
             timestamp_ms,
             self.last_palm_detection_ms,
+            external_motion,
         ) {
+            detected_palms = true;
             self.last_palm_detection_ms = Some(timestamp_ms);
             let detector_rect = Rect::padded_full_frame(frame.width, frame.height);
             let stage = profiler.start();
@@ -251,6 +272,11 @@ impl GestureRecognizer {
             }
         }
         self.tracked_rects = detected_hands.iter().map(|hand| hand.next_rect).collect();
+        if detected_palms && self.tracked_rects.len() == 1 {
+            self.last_palm_signature = Some(motion_signature(frame, &self.tracked_rects));
+        } else if self.tracked_rects.len() != 1 {
+            self.last_palm_signature = None;
+        }
         let hands = detected_hands
             .into_iter()
             .map(|hand| hand.observation)
@@ -369,13 +395,73 @@ fn should_detect_palms(
     tracked_hands: usize,
     timestamp_ms: i64,
     last_detection_ms: Option<i64>,
+    external_motion: bool,
 ) -> bool {
     match tracked_hands {
         0 => true,
-        1 => last_detection_ms
-            .is_none_or(|last| timestamp_ms.saturating_sub(last) >= PALM_DISCOVERY_INTERVAL_MS),
+        1 => {
+            external_motion
+                || last_detection_ms.is_none_or(|last| {
+                    timestamp_ms.saturating_sub(last) >= PALM_DISCOVERY_FALLBACK_INTERVAL_MS
+                })
+        }
         _ => false,
     }
+}
+
+fn motion_signature(frame: &FrameView, tracked_rects: &[Rect]) -> MotionSignature {
+    let mut signature = MotionSignature {
+        luminance: [0; MOTION_SAMPLE_COUNT],
+        included: [true; MOTION_SAMPLE_COUNT],
+    };
+    for grid_y in 0..MOTION_GRID_SIZE {
+        for grid_x in 0..MOTION_GRID_SIZE {
+            let index = grid_y * MOTION_GRID_SIZE + grid_x;
+            let normalized_x = (grid_x as f32 + 0.5) / MOTION_GRID_SIZE as f32;
+            let normalized_y = (grid_y as f32 + 0.5) / MOTION_GRID_SIZE as f32;
+            if tracked_rects
+                .iter()
+                .any(|rect| expanded_rect_contains(*rect, normalized_x, normalized_y))
+            {
+                signature.included[index] = false;
+                continue;
+            }
+            let pixel_x = ((grid_x * 2 + 1) * frame.width as usize / (MOTION_GRID_SIZE * 2))
+                .min(frame.width as usize - 1);
+            let pixel_y = ((grid_y * 2 + 1) * frame.height as usize / (MOTION_GRID_SIZE * 2))
+                .min(frame.height as usize - 1);
+            let pixel = (pixel_y * frame.width as usize + pixel_x) * RGB_CHANNELS;
+            signature.luminance[index] = ((u32::from(frame.rgb[pixel]) * 77
+                + u32::from(frame.rgb[pixel + 1]) * 150
+                + u32::from(frame.rgb[pixel + 2]) * 29)
+                >> 8) as u8;
+        }
+    }
+    signature
+}
+
+fn expanded_rect_contains(rect: Rect, x: f32, y: f32) -> bool {
+    let half_width = rect.width * 0.6;
+    let half_height = rect.height * 0.6;
+    x >= rect.center.x - half_width
+        && x <= rect.center.x + half_width
+        && y >= rect.center.y - half_height
+        && y <= rect.center.y + half_height
+}
+
+fn motion_detected(previous: &MotionSignature, current: &MotionSignature) -> bool {
+    let mut compared = 0;
+    let mut changed = 0;
+    for index in 0..MOTION_SAMPLE_COUNT {
+        if !previous.included[index] || !current.included[index] {
+            continue;
+        }
+        compared += 1;
+        if previous.luminance[index].abs_diff(current.luminance[index]) >= MOTION_PIXEL_DELTA {
+            changed += 1;
+        }
+    }
+    compared > 0 && changed >= (compared / 32).max(4)
 }
 
 fn validate_frame(frame: &FrameView) -> Result<(), Error> {
@@ -520,15 +606,57 @@ mod tests {
 
     #[test]
     fn palm_discovery_is_immediate_without_tracking_and_bounded_with_one_hand() {
-        assert!(should_detect_palms(0, 1, Some(1)));
-        assert!(should_detect_palms(1, 1, None));
+        assert!(should_detect_palms(0, 1, Some(1), false));
+        assert!(should_detect_palms(1, 1, None, false));
         assert!(!should_detect_palms(
             1,
-            PALM_DISCOVERY_INTERVAL_MS - 1,
-            Some(0)
+            PALM_DISCOVERY_FALLBACK_INTERVAL_MS - 1,
+            Some(0),
+            false,
         ));
-        assert!(should_detect_palms(1, PALM_DISCOVERY_INTERVAL_MS, Some(0)));
-        assert!(!should_detect_palms(2, i64::MAX, None));
+        assert!(should_detect_palms(1, 1, Some(0), true));
+        assert!(should_detect_palms(
+            1,
+            PALM_DISCOVERY_FALLBACK_INTERVAL_MS,
+            Some(0),
+            false,
+        ));
+        assert!(!should_detect_palms(2, i64::MAX, None, true));
+    }
+
+    #[test]
+    fn palm_discovery_motion_ignores_the_tracked_hand_region() {
+        let base = motion_test_frame(None);
+        let tracked = Rect {
+            center: geometry::Point { x: 0.5, y: 0.5 },
+            width: 0.3,
+            height: 0.3,
+            rotation: 0.0,
+        };
+        let baseline = motion_signature(&base, &[tracked]);
+        let inside = motion_signature(&motion_test_frame(Some((6, 6))), &[tracked]);
+        let outside = motion_signature(&motion_test_frame(Some((0, 0))), &[tracked]);
+        assert!(!motion_detected(&baseline, &inside));
+        assert!(motion_detected(&baseline, &outside));
+    }
+
+    fn motion_test_frame(patch: Option<(usize, usize)>) -> FrameView {
+        let mut rgb = vec![0_u8; MOTION_GRID_SIZE * MOTION_GRID_SIZE * RGB_CHANNELS];
+        if let Some((start_x, start_y)) = patch {
+            for y in start_y..start_y + 4 {
+                for x in start_x..start_x + 4 {
+                    let pixel = (y * MOTION_GRID_SIZE + x) * RGB_CHANNELS;
+                    rgb[pixel..pixel + RGB_CHANNELS].fill(255);
+                }
+            }
+        }
+        FrameView {
+            sequence: 1,
+            captured_at: Instant::now(),
+            width: MOTION_GRID_SIZE as u32,
+            height: MOTION_GRID_SIZE as u32,
+            rgb: Arc::from(rgb),
+        }
     }
 
     #[test]
