@@ -65,6 +65,85 @@ struct DetectedHand {
     next_rect: Rect,
 }
 
+#[derive(Clone, Copy)]
+#[repr(usize)]
+enum RecognitionStage {
+    PalmPreprocess,
+    PalmInference,
+    PalmPostprocess,
+    LandmarkPreprocess,
+    LandmarkInference,
+    LandmarkPostprocess,
+    GestureInference,
+    GesturePostprocess,
+}
+
+#[cfg(test)]
+const RECOGNITION_STAGES: [RecognitionStage; 8] = [
+    RecognitionStage::PalmPreprocess,
+    RecognitionStage::PalmInference,
+    RecognitionStage::PalmPostprocess,
+    RecognitionStage::LandmarkPreprocess,
+    RecognitionStage::LandmarkInference,
+    RecognitionStage::LandmarkPostprocess,
+    RecognitionStage::GestureInference,
+    RecognitionStage::GesturePostprocess,
+];
+
+trait RecognitionProfiler {
+    type Started;
+
+    fn start(&mut self) -> Self::Started;
+    fn finish(&mut self, stage: RecognitionStage, started: Self::Started);
+}
+
+struct NoopProfiler;
+
+impl RecognitionProfiler for NoopProfiler {
+    type Started = ();
+
+    #[inline(always)]
+    fn start(&mut self) {}
+
+    #[inline(always)]
+    fn finish(&mut self, _stage: RecognitionStage, _started: ()) {}
+}
+
+#[cfg(test)]
+#[derive(Clone, Debug)]
+struct RecognitionTimings {
+    stages: [std::time::Duration; RECOGNITION_STAGES.len()],
+}
+
+#[cfg(test)]
+impl Default for RecognitionTimings {
+    fn default() -> Self {
+        Self {
+            stages: [std::time::Duration::ZERO; RECOGNITION_STAGES.len()],
+        }
+    }
+}
+
+#[cfg(test)]
+impl RecognitionTimings {
+    fn get(&self, stage: RecognitionStage) -> std::time::Duration {
+        self.stages[stage as usize]
+    }
+}
+
+#[cfg(test)]
+impl RecognitionProfiler for RecognitionTimings {
+    type Started = Instant;
+
+    fn start(&mut self) -> Self::Started {
+        Instant::now()
+    }
+
+    fn finish(&mut self, stage: RecognitionStage, started: Self::Started) {
+        self.stages[stage as usize] += started.elapsed();
+    }
+}
+
 impl GestureRecognizer {
     pub(crate) fn load(paths: &ModelPaths) -> Result<Self, Error> {
         Ok(Self {
@@ -78,6 +157,26 @@ impl GestureRecognizer {
         &mut self,
         frame: &FrameView,
         timestamp_ms: i64,
+    ) -> Result<Observation, Error> {
+        self.recognize_with_profiler(frame, timestamp_ms, &mut NoopProfiler)
+    }
+
+    #[cfg(test)]
+    fn recognize_profiled(
+        &mut self,
+        frame: &FrameView,
+        timestamp_ms: i64,
+    ) -> Result<(Observation, RecognitionTimings), Error> {
+        let mut timings = RecognitionTimings::default();
+        let observation = self.recognize_with_profiler(frame, timestamp_ms, &mut timings)?;
+        Ok((observation, timings))
+    }
+
+    fn recognize_with_profiler<P: RecognitionProfiler>(
+        &mut self,
+        frame: &FrameView,
+        timestamp_ms: i64,
+        profiler: &mut P,
     ) -> Result<Observation, Error> {
         validate_frame(frame)?;
         if timestamp_ms < 0
@@ -93,8 +192,14 @@ impl GestureRecognizer {
         let mut candidate_rects = self.tracked_rects.clone();
         if candidate_rects.len() < MAX_HANDS {
             let detector_rect = Rect::padded_full_frame(frame.width, frame.height);
+            let stage = profiler.start();
             let detector_input = sample_rgb(frame, detector_rect, 192);
-            let (raw_boxes, raw_scores) = self.models.detect_palms(&detector_input)?;
+            profiler.finish(RecognitionStage::PalmPreprocess, stage);
+            let stage = profiler.start();
+            let detector_output = self.models.detect_palms(&detector_input);
+            profiler.finish(RecognitionStage::PalmInference, stage);
+            let (raw_boxes, raw_scores) = detector_output?;
+            let stage = profiler.start();
             for detected in decode_hand_rects(&raw_boxes, &raw_scores) {
                 let detected =
                     map_rect_from_crop(detected, detector_rect, frame.width, frame.height);
@@ -102,11 +207,12 @@ impl GestureRecognizer {
                     candidate_rects.push(detected);
                 }
             }
+            profiler.finish(RecognitionStage::PalmPostprocess, stage);
         }
 
         let mut detected_hands = Vec::with_capacity(candidate_rects.len());
         for rect in candidate_rects {
-            if let Some(hand) = self.detect_hand(frame, rect)? {
+            if let Some(hand) = self.detect_hand(frame, rect, profiler)? {
                 if detected_hands.iter().any(|existing: &DetectedHand| {
                     same_projected_hand(
                         &existing.observation.landmarks,
@@ -135,10 +241,22 @@ impl GestureRecognizer {
         })
     }
 
-    fn detect_hand(&self, frame: &FrameView, rect: Rect) -> Result<Option<DetectedHand>, Error> {
+    fn detect_hand<P: RecognitionProfiler>(
+        &self,
+        frame: &FrameView,
+        rect: Rect,
+        profiler: &mut P,
+    ) -> Result<Option<DetectedHand>, Error> {
+        let stage = profiler.start();
         let input = sample_rgb(frame, rect, LANDMARK_SIZE);
-        let output = self.models.detect_landmarks(&input)?;
+        profiler.finish(RecognitionStage::LandmarkPreprocess, stage);
+        let stage = profiler.start();
+        let landmark_output = self.models.detect_landmarks(&input);
+        profiler.finish(RecognitionStage::LandmarkInference, stage);
+        let output = landmark_output?;
+        let stage = profiler.start();
         if !output.presence.is_finite() || output.presence < PRESENCE_THRESHOLD {
+            profiler.finish(RecognitionStage::LandmarkPostprocess, stage);
             return Ok(None);
         }
         let (crop_landmarks, crop_world_landmarks) = decode_landmarks(&output)?;
@@ -156,11 +274,16 @@ impl GestureRecognizer {
         let normalized_landmarks =
             normalize_landmarks(&landmarks, Some((frame.width, frame.height)))?;
         let normalized_world_landmarks = normalize_landmarks(&world_landmarks, None)?;
-        let scores = self.models.classify_gesture(
+        profiler.finish(RecognitionStage::LandmarkPostprocess, stage);
+        let stage = profiler.start();
+        let classification = self.models.classify_gesture(
             &normalized_landmarks,
             right_hand_score,
             &normalized_world_landmarks,
-        )?;
+        );
+        profiler.finish(RecognitionStage::GestureInference, stage);
+        let scores = classification?;
+        let stage = profiler.start();
         let (gesture_index, gesture_score) = scores
             .iter()
             .copied()
@@ -168,7 +291,7 @@ impl GestureRecognizer {
             .filter(|(_, score)| score.is_finite())
             .max_by(|left, right| left.1.total_cmp(&right.1))
             .ok_or(Error::Inference)?;
-        Ok(Some(DetectedHand {
+        let detected = DetectedHand {
             observation: HandObservation {
                 handedness,
                 handedness_score,
@@ -177,7 +300,9 @@ impl GestureRecognizer {
                 landmarks,
             },
             next_rect,
-        }))
+        };
+        profiler.finish(RecognitionStage::GesturePostprocess, stage);
+        Ok(Some(detected))
     }
 }
 
@@ -399,3 +524,6 @@ mod tests {
         }
     }
 }
+
+#[cfg(test)]
+mod benchmark;

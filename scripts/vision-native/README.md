@@ -29,6 +29,22 @@ the Rust pipeline's gesture, confidence, handedness, and wrist coordinates with
 the outputs of the same model bundle through MediaPipe Tasks. MediaPipe is the
 golden reference only; it is not installed or executed by the test.
 
+Measure the optimized native pipeline with:
+
+```bash
+./scripts/vision-native/benchmark.sh
+```
+
+The benchmark warms the models, then measures full palm discovery, continuous
+one-hand tracking, and processing two known hand regions over checksum-pinned
+images. It reports overall throughput plus per-stage minimum, median, p95,
+maximum, and mean latency. The machine-readable JSON is written to the ignored
+`host/target/vision-native/benchmark/latest.json`; pass another path as the
+first argument to retain named runs. Image decoding, model loading, and report
+serialization are outside the measured intervals. Production recognition uses
+a compile-time no-op profiler, so stage measurement adds no runtime timers to
+normal builds.
+
 For a manually assembled distribution, put the extracted artifact beside
 `gsv-vision` as `vision-models/` (including its `model/` child), or set
 `GSV_VISION_NATIVE_MODELS` to the artifact root. Runtime loading always verifies
