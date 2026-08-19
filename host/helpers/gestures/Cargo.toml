@@ -5,6 +5,7 @@ edition = "2021"
 publish = false
 
 [dependencies]
+cameras = "=0.3.2"
 crossbeam-channel = "0.5"
 font8x8 = "0.3.1"
 gesture-protocol = { path = "../../crates/gesture-protocol" }
@@ -16,12 +17,6 @@ sha2 = "0.10"
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
-
-[target.'cfg(target_os = "linux")'.dependencies]
-nokhwa = { version = "0.10.11", default-features = false, features = ["decoding", "input-v4l"] }
-
-[target.'cfg(target_os = "macos")'.dependencies]
-nokhwa = { version = "0.10.11", default-features = false, features = ["decoding", "input-avfoundation"] }
 
 [dev-dependencies]
 tempfile = "3"

@@ -23,7 +23,7 @@ use gesture_protocol::{
     ControlStatus, GestureCandidate, GestureContext, GestureProgress, ScrollState,
 };
 
-use crate::camera::{CameraConfig, CameraError, CameraStream, FrameReader};
+use crate::camera::{CameraConfig, CameraError, CameraFailure, CameraStream, FrameReader};
 use crate::control::{
     ControlDiagnostic, ControlHand, ControlIntent, ControlSample, GestureControl, ScrollControl,
 };
@@ -53,7 +53,7 @@ enum VisionError {
     InvalidModel,
     InvalidCamera,
     CameraPermissionDenied,
-    CameraUnavailable,
+    CameraUnavailable(CameraFailure),
     CameraStopped,
     WindowUnavailable,
     InferenceUnavailable,
@@ -63,6 +63,9 @@ enum VisionError {
 
 impl Display for VisionError {
     fn fmt(&self, formatter: &mut Formatter<'_>) -> fmt::Result {
+        if let Self::CameraUnavailable(failure) = self {
+            return write!(formatter, "the local camera could not be opened: {failure}");
+        }
         formatter.write_str(match self {
             Self::AssetsUnavailable => "the pinned local MediaPipe artifact is unavailable",
             Self::InvalidRuntime => "the pinned local MediaPipe runtime failed verification",
@@ -74,7 +77,7 @@ impl Display for VisionError {
             Self::InvalidModel => "the local gesture model failed verification",
             Self::InvalidCamera => "GSV_VISION_CAMERA must be a camera index from 0 through 63",
             Self::CameraPermissionDenied => "camera permission was not granted",
-            Self::CameraUnavailable => "the local camera could not be opened",
+            Self::CameraUnavailable(_) => "the local camera could not be opened",
             Self::CameraStopped => "the local camera stopped producing frames",
             Self::WindowUnavailable => "the local gesture debug window is unavailable",
             Self::InferenceUnavailable => "local gesture inference failed",
@@ -591,7 +594,7 @@ impl VisionError {
             | Self::InvalidLibraryOverride
             | Self::InvalidModelOverride
             | Self::InvalidModel => gesture_protocol::LifecycleState::AssetsUnavailable,
-            Self::InvalidCamera | Self::CameraPermissionDenied | Self::CameraUnavailable => {
+            Self::InvalidCamera | Self::CameraPermissionDenied | Self::CameraUnavailable(_) => {
                 gesture_protocol::LifecycleState::CameraUnavailable
             }
             Self::CameraStopped => gesture_protocol::LifecycleState::CameraStopped,
@@ -620,7 +623,10 @@ impl From<CameraError> for VisionError {
     fn from(error: CameraError) -> Self {
         match error {
             CameraError::PermissionDenied => Self::CameraPermissionDenied,
-            _ => Self::CameraUnavailable,
+            CameraError::Open(failure) => Self::CameraUnavailable(failure),
+            CameraError::InvalidConfig(_) | CameraError::Spawn | CameraError::WorkerPanicked => {
+                Self::CameraUnavailable(CameraFailure::Initialization)
+            }
         }
     }
 }
@@ -657,16 +663,16 @@ fn video_timestamp_ms(
     timestamp
 }
 
-fn parse_camera_index(value: Option<&OsStr>) -> Result<u32, VisionError> {
+fn parse_camera_index(value: Option<&OsStr>) -> Result<Option<u32>, VisionError> {
     let Some(value) = value else {
-        return Ok(0);
+        return Ok(None);
     };
     let parsed = value
         .to_str()
         .and_then(|value| value.parse::<u32>().ok())
         .filter(|value| *value <= MAX_CAMERA_INDEX)
         .ok_or(VisionError::InvalidCamera)?;
-    Ok(parsed)
+    Ok(Some(parsed))
 }
 
 #[cfg(test)]
@@ -680,8 +686,8 @@ mod tests {
 
     #[test]
     fn camera_index_is_bounded_and_exact() {
-        assert_eq!(parse_camera_index(None), Ok(0));
-        assert_eq!(parse_camera_index(Some(OsStr::new("7"))), Ok(7));
+        assert_eq!(parse_camera_index(None), Ok(None));
+        assert_eq!(parse_camera_index(Some(OsStr::new("7"))), Ok(Some(7)));
         assert_eq!(
             parse_camera_index(Some(OsStr::new("64"))),
             Err(VisionError::InvalidCamera)
@@ -697,6 +703,23 @@ mod tests {
         let error = VisionError::from(CameraError::PermissionDenied);
         assert_eq!(error, VisionError::CameraPermissionDenied);
         assert_eq!(error.to_string(), "camera permission was not granted");
+        assert_eq!(
+            error.lifecycle_state(),
+            gesture_protocol::LifecycleState::CameraUnavailable
+        );
+    }
+
+    #[test]
+    fn camera_startup_failure_keeps_a_bounded_diagnostic() {
+        let error = VisionError::from(CameraError::Open(CameraFailure::DeviceBusy));
+        assert_eq!(
+            error,
+            VisionError::CameraUnavailable(CameraFailure::DeviceBusy)
+        );
+        assert_eq!(
+            error.to_string(),
+            "the local camera could not be opened: device is already in use"
+        );
         assert_eq!(
             error.lifecycle_state(),
             gesture_protocol::LifecycleState::CameraUnavailable

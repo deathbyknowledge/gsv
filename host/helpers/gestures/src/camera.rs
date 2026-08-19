@@ -6,18 +6,19 @@ use std::sync::{Arc, Condvar, Mutex, MutexGuard};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
-use nokhwa::pixel_format::RgbFormat;
-use nokhwa::utils::{CameraFormat, CameraIndex, FrameFormat, RequestedFormat, RequestedFormatType};
-use nokhwa::{Camera, FormatDecoder, NokhwaError};
+use cameras::{
+    Camera, Device, Error as BackendError, FormatDescriptor, PixelFormat, StreamConfig, Transport,
+};
 
 use crate::observation::FrameView;
 
 const CAPTURE_ERROR_BACKOFF: Duration = Duration::from_millis(25);
+const CAPTURE_FRAME_TIMEOUT: Duration = Duration::from_millis(250);
 const DEFAULT_SHUTDOWN_TIMEOUT: Duration = Duration::from_millis(500);
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CameraConfig {
-    pub index: u32,
+    pub index: Option<u32>,
     pub width: u32,
     pub height: u32,
     pub frames_per_second: u32,
@@ -27,7 +28,7 @@ pub struct CameraConfig {
 impl Default for CameraConfig {
     fn default() -> Self {
         Self {
-            index: 0,
+            index: None,
             width: 640,
             height: 480,
             frames_per_second: 15,
@@ -80,9 +81,13 @@ impl Display for CameraError {
 
 impl Error for CameraError {}
 
-impl From<NokhwaError> for CameraError {
-    fn from(error: NokhwaError) -> Self {
-        Self::Open(CameraFailure::from_nokhwa(&error))
+impl From<BackendError> for CameraError {
+    fn from(error: BackendError) -> Self {
+        if matches!(error, BackendError::PermissionDenied) {
+            Self::PermissionDenied
+        } else {
+            Self::Open(CameraFailure::from_backend(&error))
+        }
     }
 }
 
@@ -92,35 +97,29 @@ impl From<NokhwaError> for CameraError {
 pub enum CameraFailure {
     Initialization,
     DeviceUnavailable,
+    DeviceBusy,
     FormatNegotiation,
     StreamOpen,
     Capture,
     Decode,
     Unsupported,
-    Shutdown,
     Unknown,
 }
 
 impl CameraFailure {
-    fn from_nokhwa(error: &NokhwaError) -> Self {
+    fn from_backend(error: &BackendError) -> Self {
         match error {
-            NokhwaError::UnitializedError | NokhwaError::InitializeError { .. } => {
-                Self::Initialization
-            }
-            NokhwaError::OpenDeviceError(..) => Self::DeviceUnavailable,
-            NokhwaError::GetPropertyError { .. }
-            | NokhwaError::SetPropertyError { .. }
-            | NokhwaError::StructureError { .. } => Self::FormatNegotiation,
-            NokhwaError::OpenStreamError(_) => Self::StreamOpen,
-            NokhwaError::ReadFrameError(_) => Self::Capture,
-            NokhwaError::ProcessFrameError { .. } => Self::Decode,
-            NokhwaError::UnsupportedOperationError(_) | NokhwaError::NotImplementedError(_) => {
+            BackendError::PermissionDenied => Self::Initialization,
+            BackendError::DeviceNotFound(_) => Self::DeviceUnavailable,
+            BackendError::DeviceInUse => Self::DeviceBusy,
+            BackendError::FormatNotSupported => Self::FormatNegotiation,
+            BackendError::Timeout | BackendError::StreamEnded => Self::Capture,
+            BackendError::MjpegDecode(_) => Self::Decode,
+            BackendError::BackendNotImplemented { .. } | BackendError::Unsupported { .. } => {
                 Self::Unsupported
             }
-            NokhwaError::ShutdownError { .. } | NokhwaError::StreamShutdownError(_) => {
-                Self::Shutdown
-            }
-            NokhwaError::GeneralError(_) => Self::Unknown,
+            BackendError::Backend { .. } => Self::StreamOpen,
+            _ => Self::Unknown,
         }
     }
 }
@@ -130,12 +129,12 @@ impl Display for CameraFailure {
         formatter.write_str(match self {
             Self::Initialization => "initialization failed",
             Self::DeviceUnavailable => "device unavailable",
+            Self::DeviceBusy => "device is already in use",
             Self::FormatNegotiation => "format negotiation failed",
             Self::StreamOpen => "stream could not open",
             Self::Capture => "frame capture failed",
             Self::Decode => "frame decode failed",
             Self::Unsupported => "camera operation unsupported",
-            Self::Shutdown => "stream shutdown failed",
             Self::Unknown => "camera backend failed",
         })
     }
@@ -211,7 +210,7 @@ pub struct CameraStream {
 impl CameraStream {
     pub fn open(config: CameraConfig) -> Result<Self, CameraError> {
         config.validate()?;
-        initialize_camera_backend()?;
+        let device = select_camera_device(config.index)?;
         let shared = Arc::new(LatestFrameSlot::new());
         let stop = Arc::new(AtomicBool::new(false));
         let worker_shared = Arc::clone(&shared);
@@ -220,7 +219,13 @@ impl CameraStream {
         let worker = thread::Builder::new()
             .name("gsv-vision-camera".to_string())
             .spawn(move || {
-                camera_worker(config, &worker_shared, &worker_stop, startup_sender);
+                camera_worker(
+                    config,
+                    &device,
+                    &worker_shared,
+                    &worker_stop,
+                    startup_sender,
+                );
             })
             .map_err(|_| CameraError::Spawn)?;
 
@@ -278,23 +283,17 @@ impl CameraStream {
     }
 }
 
-fn initialize_camera_backend() -> Result<(), CameraError> {
-    let (sender, receiver) = sync_channel(1);
-    nokhwa::nokhwa_initialize(move |authorized| {
-        let _ = sender.send(authorized);
-    });
-    let authorized = receiver
-        .recv()
-        .map_err(|_| CameraError::Open(CameraFailure::Initialization))?;
-    validate_camera_authorization(authorized)
-}
-
-fn validate_camera_authorization(authorized: bool) -> Result<(), CameraError> {
-    if authorized {
-        Ok(())
-    } else {
-        Err(CameraError::PermissionDenied)
-    }
+fn select_camera_device(index: Option<u32>) -> Result<Device, CameraError> {
+    let devices = cameras::devices().map_err(CameraError::from)?;
+    let selected = match index {
+        Some(index) => devices.into_iter().nth(index as usize),
+        None => devices
+            .iter()
+            .find(|device| device.transport == Transport::BuiltIn)
+            .cloned()
+            .or_else(|| devices.into_iter().next()),
+    };
+    selected.ok_or(CameraError::Open(CameraFailure::DeviceUnavailable))
 }
 
 impl Drop for CameraStream {
@@ -306,38 +305,24 @@ impl Drop for CameraStream {
     }
 }
 
-fn open_camera(config: &CameraConfig) -> Result<Camera, NokhwaError> {
-    let request = RequestedFormat::new::<RgbFormat>(RequestedFormatType::None);
-    let mut camera = Camera::new(CameraIndex::Index(config.index), request)?;
-
-    // Some native backends do not expose a format list. Their initially selected,
-    // RGB-decodable format remains usable in that case.
-    if let Ok(formats) = camera.compatible_camera_formats() {
-        if let Some(format) = closest_decodable_format(&formats, config) {
-            let accepted_format = [format.format()];
-            camera.set_camera_requset(RequestedFormat::with_formats(
-                RequestedFormatType::Exact(format),
-                &accepted_format,
-            ))?;
-        }
-    }
-
-    Ok(camera)
+fn open_camera(device: &Device, config: &CameraConfig) -> Result<Camera, BackendError> {
+    let capabilities = cameras::probe(device)?;
+    let format = closest_camera_format(&capabilities.formats, config)
+        .ok_or(BackendError::FormatNotSupported)?;
+    cameras::open(device, stream_config(format, config))
 }
 
 fn camera_worker(
     config: CameraConfig,
+    device: &Device,
     shared: &LatestFrameSlot,
     stop: &AtomicBool,
     startup_sender: std::sync::mpsc::SyncSender<Result<(), CameraFailure>>,
 ) {
-    let mut camera = match open_camera(&config).and_then(|mut camera| {
-        camera.open_stream()?;
-        Ok(camera)
-    }) {
+    let camera = match open_camera(device, &config) {
         Ok(camera) => camera,
         Err(error) => {
-            let failure = CameraFailure::from_nokhwa(&error);
+            let failure = CameraFailure::from_backend(&error);
             shared.record_error();
             shared.finish(true);
             let _ = startup_sender.send(Err(failure));
@@ -346,51 +331,95 @@ fn camera_worker(
     };
     shared.mark_started();
     if startup_sender.send(Ok(())).is_err() {
-        let _ = camera.stop_stream();
+        drop(camera);
         shared.finish(false);
         return;
     }
-    capture_loop(&mut camera, shared, stop, config.max_consecutive_errors);
+    let failed = capture_loop(&camera, shared, stop, config.max_consecutive_errors);
+    // Some platform capture drivers do not interrupt a blocked native read.
+    // Publish terminal state only after the backend has actually released, so
+    // CameraStream::shutdown can retain its bounded detach fallback.
+    drop(camera);
+    shared.finish(failed);
 }
 
-fn closest_decodable_format(
-    formats: &[CameraFormat],
+fn closest_camera_format<'a>(
+    formats: &'a [FormatDescriptor],
     config: &CameraConfig,
-) -> Option<CameraFormat> {
-    formats
-        .iter()
-        .filter(|format| <RgbFormat as FormatDecoder>::FORMATS.contains(&format.format()))
-        .min_by_key(|format| {
-            let resolution = format.resolution();
-            let size_distance = u64::from(resolution.width().abs_diff(config.width)).pow(2)
-                + u64::from(resolution.height().abs_diff(config.height)).pow(2);
-            let rate_distance = format.frame_rate().abs_diff(config.frames_per_second);
-            (
-                size_distance,
-                rate_distance,
-                frame_format_preference(format.format()),
-            )
-        })
-        .copied()
+) -> Option<&'a FormatDescriptor> {
+    formats.iter().min_by(|left, right| {
+        format_size_distance(left, config)
+            .cmp(&format_size_distance(right, config))
+            .then_with(|| {
+                format_rate_distance(left, config).total_cmp(&format_rate_distance(right, config))
+            })
+            .then_with(|| {
+                pixel_format_preference(left.pixel_format)
+                    .cmp(&pixel_format_preference(right.pixel_format))
+            })
+    })
 }
 
-fn frame_format_preference(format: FrameFormat) -> u8 {
-    match format {
-        FrameFormat::MJPEG => 0,
-        FrameFormat::NV12 => 1,
-        FrameFormat::YUYV => 2,
-        FrameFormat::RAWRGB => 3,
-        FrameFormat::RAWBGR => 4,
-        FrameFormat::GRAY => 5,
+fn format_size_distance(format: &FormatDescriptor, config: &CameraConfig) -> u64 {
+    format_size_distance_from(format.resolution.width, format.resolution.height, config)
+}
+
+fn format_size_distance_from(width: u32, height: u32, config: &CameraConfig) -> u64 {
+    u64::from(width.abs_diff(config.width)).pow(2)
+        + u64::from(height.abs_diff(config.height)).pow(2)
+}
+
+fn format_rate_distance(format: &FormatDescriptor, config: &CameraConfig) -> f64 {
+    let requested = f64::from(config.frames_per_second);
+    if requested < format.framerate_range.min {
+        format.framerate_range.min - requested
+    } else if requested > format.framerate_range.max {
+        requested - format.framerate_range.max
+    } else {
+        0.0
     }
 }
 
+fn pixel_format_preference(format: PixelFormat) -> u8 {
+    match format {
+        PixelFormat::Mjpeg => 0,
+        PixelFormat::Nv12 => 1,
+        PixelFormat::Yuyv => 2,
+        PixelFormat::Rgb8 => 3,
+        PixelFormat::Rgba8 => 4,
+        PixelFormat::Bgra8 => 5,
+        _ => 6,
+    }
+}
+
+fn stream_config(format: &FormatDescriptor, config: &CameraConfig) -> StreamConfig {
+    StreamConfig {
+        resolution: format.resolution,
+        framerate: closest_frame_rate(format, config.frames_per_second),
+        pixel_format: format.pixel_format,
+    }
+}
+
+fn closest_frame_rate(format: &FormatDescriptor, requested: u32) -> u32 {
+    closest_frame_rate_in_range(
+        format.framerate_range.min,
+        format.framerate_range.max,
+        requested,
+    )
+}
+
+fn closest_frame_rate_in_range(minimum: f64, maximum: f64, requested: u32) -> u32 {
+    let minimum = minimum.ceil().max(1.0) as u32;
+    let maximum = maximum.floor().max(f64::from(minimum)) as u32;
+    requested.clamp(minimum, maximum)
+}
+
 fn capture_loop(
-    camera: &mut Camera,
+    camera: &Camera,
     shared: &LatestFrameSlot,
     stop: &AtomicBool,
     max_consecutive_errors: u32,
-) {
+) -> bool {
     let mut sequence = 0_u64;
     let mut consecutive_errors = 0_u32;
     let mut failed = false;
@@ -414,19 +443,30 @@ fn capture_loop(
         }
     }
 
-    let _ = camera.stop_stream();
-    shared.finish(failed);
+    failed
 }
 
-fn capture_frame(camera: &mut Camera, sequence: u64) -> Result<FrameView, NokhwaError> {
-    let frame = camera.frame()?;
-    let resolution = frame.resolution();
-    let rgb = frame.decode_image::<RgbFormat>()?.into_raw();
+fn capture_frame(camera: &Camera, sequence: u64) -> Result<FrameView, CameraFailure> {
+    let frame = cameras::next_frame(camera, CAPTURE_FRAME_TIMEOUT)
+        .map_err(|error| CameraFailure::from_backend(&error))?;
+    let rgb = cameras::to_rgb8(&frame).map_err(|error| CameraFailure::from_backend(&error))?;
+    let expected_length = usize::try_from(frame.width)
+        .ok()
+        .and_then(|width| {
+            usize::try_from(frame.height)
+                .ok()
+                .and_then(|height| width.checked_mul(height))
+        })
+        .and_then(|pixels| pixels.checked_mul(3))
+        .ok_or(CameraFailure::Decode)?;
+    if rgb.len() != expected_length {
+        return Err(CameraFailure::Decode);
+    }
     Ok(FrameView {
         sequence,
         captured_at: Instant::now(),
-        width: resolution.width(),
-        height: resolution.height(),
+        width: frame.width,
+        height: frame.height,
         rgb: Arc::from(rgb.into_boxed_slice()),
     })
 }
@@ -569,10 +609,6 @@ fn delivery_after(frame: Option<&Arc<FrameView>>, after_sequence: u64) -> Option
 mod tests {
     use super::*;
 
-    fn camera_format(width: u32, height: u32, format: FrameFormat, fps: u32) -> CameraFormat {
-        CameraFormat::new_from(width, height, format, fps)
-    }
-
     fn frame(sequence: u64) -> FrameView {
         FrameView {
             sequence,
@@ -584,17 +620,20 @@ mod tests {
     }
 
     #[test]
-    fn format_selection_prefers_target_size_then_rate() {
-        let formats = [
-            camera_format(1_280, 720, FrameFormat::MJPEG, 15),
-            camera_format(640, 480, FrameFormat::YUYV, 30),
-            camera_format(640, 480, FrameFormat::MJPEG, 15),
-        ];
+    fn format_selection_prefers_target_size_rate_and_native_conversion_order() {
         let config = CameraConfig::default();
-
-        assert_eq!(
-            closest_decodable_format(&formats, &config),
-            Some(camera_format(640, 480, FrameFormat::MJPEG, 15))
+        assert_eq!(format_size_distance_from(640, 480, &config), 0);
+        assert!(format_size_distance_from(1_280, 720, &config) > 0);
+        assert_eq!(closest_frame_rate_in_range(1.0, 30.0, 15), 15);
+        assert_eq!(closest_frame_rate_in_range(30.0, 60.0, 15), 30);
+        assert_eq!(closest_frame_rate_in_range(1.0, 10.0, 15), 10);
+        assert!(
+            pixel_format_preference(PixelFormat::Mjpeg)
+                < pixel_format_preference(PixelFormat::Yuyv)
+        );
+        assert!(
+            pixel_format_preference(PixelFormat::Yuyv)
+                < pixel_format_preference(PixelFormat::Bgra8)
         );
     }
 
@@ -621,17 +660,10 @@ mod tests {
     }
 
     #[test]
-    fn camera_authorization_must_be_granted_before_device_access() {
-        assert!(validate_camera_authorization(true).is_ok());
+    fn backend_permission_errors_keep_the_actionable_category() {
         assert!(matches!(
-            validate_camera_authorization(false),
-            Err(CameraError::PermissionDenied)
+            CameraError::from(BackendError::PermissionDenied),
+            CameraError::PermissionDenied
         ));
-    }
-
-    #[cfg(not(target_os = "macos"))]
-    #[test]
-    fn camera_backend_initialization_is_a_noop_without_avfoundation() {
-        assert!(initialize_camera_backend().is_ok());
     }
 }

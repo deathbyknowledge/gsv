@@ -39,7 +39,9 @@ On macOS, the first camera start requests access before enumerating devices.
 For command-line development builds, macOS may attribute that request to the
 launching terminal; grant that application camera access and rerun the command.
 Denial fails with `camera permission was not granted` instead of attempting to
-open a device without authorization.
+open a device without authorization. The default selection prefers the built-in
+camera and opens it by its stable platform identifier. Capture requests a native
+format explicitly and converts row-strided frames locally to packed RGB.
 
 The matching versioned runtime is discovered automatically from
 `host/target/vision-mediapipe/artifact/`. The headless mode above is the real local
@@ -110,7 +112,9 @@ not infer speech silence or implement auto-send.
 
 ## Local overrides
 
-- `GSV_VISION_CAMERA=1` selects a numeric local camera index (default `0`).
+- `GSV_VISION_CAMERA=1` selects a numeric camera from the current discovery
+  order. Without an override, the built-in camera is preferred and the first
+  discovered camera is the fallback.
 - `GSV_VISION_RUNTIME=/path/to/vision-runtime` overrides the complete runtime;
   its manifest and every listed file are still verified.
 - `GSV_MEDIAPIPE_LIBRARY=/path/to/libgesture_recognizer.so` (or the macOS
