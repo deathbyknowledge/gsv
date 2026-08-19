@@ -6,10 +6,11 @@ use std::time::{Duration, Instant};
 
 use serde::Serialize;
 
-use super::geometry::{Point, Rect};
+use super::geometry::{sample_rgb, Point, Rect};
+use super::models::{ModelProfileSamples, Models};
 use super::{
     runtime, GestureRecognizer, NoopProfiler, RecognitionProfiler, RecognitionStage,
-    RecognitionTimings, RECOGNITION_STAGES,
+    RecognitionTimings, LANDMARK_SIZE, RECOGNITION_STAGES,
 };
 use crate::observation::FrameView;
 
@@ -58,6 +59,7 @@ struct BenchmarkReport {
     warmup_iterations: usize,
     measured_iterations: usize,
     scenarios: Vec<ScenarioReport>,
+    model_profiles: Vec<ModelProfileReport>,
 }
 
 #[derive(Serialize)]
@@ -91,9 +93,33 @@ struct Statistics {
     mean_us: u64,
 }
 
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ModelProfileReport {
+    name: &'static str,
+    samples: usize,
+    node_count: usize,
+    total: Statistics,
+    unattributed: Statistics,
+    operation_groups: BTreeMap<String, Statistics>,
+    hottest_nodes: Vec<NodeProfileReport>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct NodeProfileReport {
+    name: String,
+    operation: String,
+    detail: String,
+    output_facts: Vec<String>,
+    share_percent: f64,
+    latency: Statistics,
+}
+
 struct SampleSet {
     total: Vec<Duration>,
     stages: BTreeMap<&'static str, Vec<Duration>>,
+    stage_executions: BTreeMap<&'static str, usize>,
 }
 
 impl SampleSet {
@@ -103,6 +129,10 @@ impl SampleSet {
             stages: RECOGNITION_STAGES
                 .into_iter()
                 .map(|stage| (stage.name(), Vec::with_capacity(capacity)))
+                .collect(),
+            stage_executions: RECOGNITION_STAGES
+                .into_iter()
+                .map(|stage| (stage.name(), 0))
                 .collect(),
         }
     }
@@ -114,6 +144,10 @@ impl SampleSet {
                 .get_mut(stage.name())
                 .expect("known recognition stage")
                 .push(timings.get(stage));
+            *self
+                .stage_executions
+                .get_mut(stage.name())
+                .expect("known recognition stage") += timings.executions(stage);
         }
     }
 
@@ -127,7 +161,11 @@ impl SampleSet {
             stages: self
                 .stages
                 .into_iter()
-                .map(|(stage, samples)| (stage, statistics(&samples)))
+                .map(|(stage, samples)| {
+                    let mut report = statistics(&samples);
+                    report.executions = self.stage_executions[stage];
+                    (stage, report)
+                })
                 .collect(),
         }
     }
@@ -155,11 +193,14 @@ fn parallel_stage_timings_keep_the_slower_hand_path() {
     let mut right = RecognitionTimings::default();
     left.stages[RecognitionStage::LandmarkInference as usize] = Duration::from_millis(20);
     right.stages[RecognitionStage::LandmarkInference as usize] = Duration::from_millis(30);
+    left.executions[RecognitionStage::LandmarkInference as usize] = 1;
+    right.executions[RecognitionStage::LandmarkInference as usize] = 1;
     combined.merge_parallel(left, right);
     assert_eq!(
         combined.get(RecognitionStage::LandmarkInference),
         Duration::from_millis(30)
     );
+    assert_eq!(combined.executions(RecognitionStage::LandmarkInference), 2);
 }
 
 #[test]
@@ -192,8 +233,27 @@ fn benchmarks_native_pipeline() {
     let continuous_tracking = benchmark_tracking(&models, &fixtures[3], &mut timestamp_ms);
     let two_hand_tracking =
         benchmark_two_hand_tracking(&models, &two_hand_frame, &two_hand_rects, &mut timestamp_ms);
+    let profiling_models = Models::load(&models).expect("native profiling models");
+    let palm_frame = &fixtures[3].frame;
+    let palm_input = sample_rgb(
+        palm_frame,
+        Rect::padded_full_frame(palm_frame.width, palm_frame.height),
+        192,
+    );
+    let landmark_input = sample_rgb(&two_hand_frame, two_hand_rects[0], LANDMARK_SIZE);
+    let model_profiles = [
+        profiling_models
+            .profile_palms(&palm_input, WARMUP_ITERATIONS, MEASURED_ITERATIONS)
+            .expect("palm operator profile"),
+        profiling_models
+            .profile_landmarks(&landmark_input, WARMUP_ITERATIONS, MEASURED_ITERATIONS)
+            .expect("landmark operator profile"),
+    ]
+    .into_iter()
+    .map(model_profile_report)
+    .collect();
     let report = BenchmarkReport {
-        schema_version: 1,
+        schema_version: 2,
         git_revision: benchmark_environment("GSV_VISION_BENCHMARK_REVISION", "unknown"),
         working_tree_dirty: benchmark_environment("GSV_VISION_BENCHMARK_DIRTY", "false") == "true",
         rustc_version: benchmark_environment("GSV_VISION_BENCHMARK_RUSTC", "unknown"),
@@ -207,6 +267,7 @@ fn benchmarks_native_pipeline() {
         warmup_iterations: WARMUP_ITERATIONS,
         measured_iterations: MEASURED_ITERATIONS,
         scenarios: vec![full_detection, continuous_tracking, two_hand_tracking],
+        model_profiles,
     };
     let encoded = serde_json::to_string_pretty(&report).expect("serialized benchmark report");
     if let Some(output) = std::env::var_os("GSV_VISION_BENCHMARK_OUTPUT") {
@@ -439,6 +500,65 @@ fn statistics(samples: &[Duration]) -> Statistics {
         p95_us: percentile(&values, 95),
         maximum_us: values[values.len() - 1],
         mean_us,
+    }
+}
+
+fn model_profile_report(profile: ModelProfileSamples) -> ModelProfileReport {
+    let sample_count = profile.total.len();
+    let node_count = profile.nodes.len();
+    let mut attributed = vec![Duration::ZERO; sample_count];
+    let mut operation_samples: BTreeMap<String, Vec<Duration>> = BTreeMap::new();
+    let attributed_total_us: u128 = profile
+        .nodes
+        .iter()
+        .flat_map(|node| node.samples.iter())
+        .map(Duration::as_micros)
+        .sum();
+    let mut hottest_nodes: Vec<_> = profile
+        .nodes
+        .into_iter()
+        .map(|node| {
+            for (index, duration) in node.samples.iter().copied().enumerate() {
+                attributed[index] += duration;
+                operation_samples
+                    .entry(node.operation.clone())
+                    .or_insert_with(|| vec![Duration::ZERO; sample_count])[index] += duration;
+            }
+            let node_total_us: u128 = node.samples.iter().map(Duration::as_micros).sum();
+            NodeProfileReport {
+                name: node.name,
+                operation: node.operation,
+                detail: node.detail,
+                output_facts: node.output_facts,
+                share_percent: if attributed_total_us == 0 {
+                    0.0
+                } else {
+                    node_total_us as f64 * 100.0 / attributed_total_us as f64
+                },
+                latency: statistics(&node.samples),
+            }
+        })
+        .collect();
+    hottest_nodes.sort_by(|left, right| right.latency.mean_us.cmp(&left.latency.mean_us));
+    hottest_nodes.truncate(20);
+    let unattributed: Vec<_> = profile
+        .total
+        .iter()
+        .copied()
+        .zip(attributed)
+        .map(|(total, nodes)| total.saturating_sub(nodes))
+        .collect();
+    ModelProfileReport {
+        name: profile.name,
+        samples: sample_count,
+        node_count,
+        total: statistics(&profile.total),
+        unattributed: statistics(&unattributed),
+        operation_groups: operation_samples
+            .into_iter()
+            .map(|(operation, samples)| (operation, statistics(&samples)))
+            .collect(),
+        hottest_nodes,
     }
 }
 

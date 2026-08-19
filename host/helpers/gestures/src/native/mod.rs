@@ -120,6 +120,7 @@ impl RecognitionProfiler for NoopProfiler {
 #[derive(Clone, Debug)]
 struct RecognitionTimings {
     stages: [std::time::Duration; RECOGNITION_STAGES.len()],
+    executions: [usize; RECOGNITION_STAGES.len()],
 }
 
 #[cfg(test)]
@@ -127,6 +128,7 @@ impl Default for RecognitionTimings {
     fn default() -> Self {
         Self {
             stages: [std::time::Duration::ZERO; RECOGNITION_STAGES.len()],
+            executions: [0; RECOGNITION_STAGES.len()],
         }
     }
 }
@@ -135,6 +137,10 @@ impl Default for RecognitionTimings {
 impl RecognitionTimings {
     fn get(&self, stage: RecognitionStage) -> std::time::Duration {
         self.stages[stage as usize]
+    }
+
+    fn executions(&self, stage: RecognitionStage) -> usize {
+        self.executions[stage as usize]
     }
 }
 
@@ -148,11 +154,13 @@ impl RecognitionProfiler for RecognitionTimings {
 
     fn finish(&mut self, stage: RecognitionStage, started: Self::Started) {
         self.stages[stage as usize] += started.elapsed();
+        self.executions[stage as usize] += 1;
     }
 
     fn merge_parallel(&mut self, left: Self, right: Self) {
         for (index, stage) in self.stages.iter_mut().enumerate() {
             *stage += left.stages[index].max(right.stages[index]);
+            self.executions[index] += left.executions[index] + right.executions[index];
         }
     }
 }

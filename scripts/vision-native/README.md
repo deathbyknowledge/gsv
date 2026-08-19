@@ -42,6 +42,10 @@ maximum, mean latency, and execution count. The machine-readable JSON is
 written to the ignored `host/target/vision-native/benchmark/latest.json`; pass
 another path as the first argument to retain named runs. Image decoding, model
 loading, and report serialization are outside the measured intervals.
+The report also profiles the optimized Tract graphs for the palm and landmark
+models, grouping time by operation and retaining the twenty hottest graph
+nodes. Operator profiling runs after the scenario measurements so its timers do
+not distort the pipeline results.
 Production recognition uses a compile-time no-op profiler, so stage measurement
 adds no runtime timers to normal builds.
 
