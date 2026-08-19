@@ -92,13 +92,15 @@ const RECOGNITION_STAGES: [RecognitionStage; 8] = [
     RecognitionStage::GesturePostprocess,
 ];
 
-trait RecognitionProfiler {
+trait RecognitionProfiler: Default + Send {
     type Started;
 
     fn start(&mut self) -> Self::Started;
     fn finish(&mut self, stage: RecognitionStage, started: Self::Started);
+    fn merge_parallel(&mut self, left: Self, right: Self);
 }
 
+#[derive(Default)]
 struct NoopProfiler;
 
 impl RecognitionProfiler for NoopProfiler {
@@ -109,6 +111,9 @@ impl RecognitionProfiler for NoopProfiler {
 
     #[inline(always)]
     fn finish(&mut self, _stage: RecognitionStage, _started: ()) {}
+
+    #[inline(always)]
+    fn merge_parallel(&mut self, _left: Self, _right: Self) {}
 }
 
 #[cfg(test)]
@@ -143,6 +148,12 @@ impl RecognitionProfiler for RecognitionTimings {
 
     fn finish(&mut self, stage: RecognitionStage, started: Self::Started) {
         self.stages[stage as usize] += started.elapsed();
+    }
+
+    fn merge_parallel(&mut self, left: Self, right: Self) {
+        for (index, stage) in self.stages.iter_mut().enumerate() {
+            *stage += left.stages[index].max(right.stages[index]);
+        }
     }
 }
 
@@ -218,21 +229,17 @@ impl GestureRecognizer {
             profiler.finish(RecognitionStage::PalmPostprocess, stage);
         }
 
-        let mut detected_hands = Vec::with_capacity(candidate_rects.len());
-        for rect in candidate_rects {
-            if let Some(hand) = self.detect_hand(frame, rect, profiler)? {
-                if detected_hands.iter().any(|existing: &DetectedHand| {
-                    same_projected_hand(
-                        &existing.observation.landmarks,
-                        &hand.observation.landmarks,
-                    )
-                }) {
-                    continue;
-                }
-                detected_hands.push(hand);
-                if detected_hands.len() == MAX_HANDS {
-                    break;
-                }
+        let candidates = self.detect_candidate_hands(frame, candidate_rects, profiler)?;
+        let mut detected_hands = Vec::with_capacity(candidates.len());
+        for hand in candidates.into_iter().flatten() {
+            if detected_hands.iter().any(|existing: &DetectedHand| {
+                same_projected_hand(&existing.observation.landmarks, &hand.observation.landmarks)
+            }) {
+                continue;
+            }
+            detected_hands.push(hand);
+            if detected_hands.len() == MAX_HANDS {
+                break;
             }
         }
         self.tracked_rects = detected_hands.iter().map(|hand| hand.next_rect).collect();
@@ -247,6 +254,42 @@ impl GestureRecognizer {
             hands,
             inference_time: observed_at.saturating_duration_since(started),
         })
+    }
+
+    fn detect_candidate_hands<P: RecognitionProfiler>(
+        &self,
+        frame: &FrameView,
+        candidate_rects: Vec<Rect>,
+        profiler: &mut P,
+    ) -> Result<Vec<Option<DetectedHand>>, Error> {
+        let [first_rect, second_rect] = candidate_rects.as_slice() else {
+            return candidate_rects
+                .into_iter()
+                .map(|rect| self.detect_hand(frame, rect, profiler))
+                .collect();
+        };
+        let Some(pool) = self.models.inference_pool() else {
+            return candidate_rects
+                .into_iter()
+                .map(|rect| self.detect_hand(frame, rect, profiler))
+                .collect();
+        };
+        let ((first, first_profiler), (second, second_profiler)) = pool.install(|| {
+            rayon::join(
+                || {
+                    let mut profiler = P::default();
+                    let result = self.detect_hand(frame, *first_rect, &mut profiler);
+                    (result, profiler)
+                },
+                || {
+                    let mut profiler = P::default();
+                    let result = self.detect_hand(frame, *second_rect, &mut profiler);
+                    (result, profiler)
+                },
+            )
+        });
+        profiler.merge_parallel(first_profiler, second_profiler);
+        Ok(vec![first?, second?])
     }
 
     fn detect_hand<P: RecognitionProfiler>(

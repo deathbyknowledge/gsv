@@ -1,7 +1,7 @@
 use std::path::Path;
 use std::sync::Arc;
 
-use rayon::ThreadPoolBuilder;
+use rayon::{ThreadPool, ThreadPoolBuilder};
 use tract_linalg::multithread::Executor;
 use tract_tflite::prelude::*;
 
@@ -11,6 +11,7 @@ use super::Error;
 type Plan = Arc<TypedRunnableModel>;
 
 pub(super) struct Models {
+    inference_pool: Option<Arc<ThreadPool>>,
     palm_detector: Plan,
     landmark_detector: Plan,
     gesture_embedder: Plan,
@@ -26,13 +27,18 @@ pub(super) struct LandmarkOutputs {
 
 impl Models {
     pub(super) fn load(paths: &ModelPaths) -> Result<Self, Error> {
-        let executor = inference_executor()?;
+        let (executor, inference_pool) = inference_executor()?;
         Ok(Self {
+            inference_pool,
             palm_detector: load(&paths.palm_detector, &executor)?,
             landmark_detector: load(&paths.landmark_detector, &executor)?,
             gesture_embedder: load(&paths.gesture_embedder, &executor)?,
             gesture_classifier: load(&paths.gesture_classifier, &executor)?,
         })
+    }
+
+    pub(super) fn inference_pool(&self) -> Option<&ThreadPool> {
+        self.inference_pool.as_deref()
     }
 
     pub(super) fn detect_palms(&self, input: &[f32]) -> Result<(Vec<f32>, Vec<f32>), Error> {
@@ -105,16 +111,19 @@ fn load(path: &Path, executor: &Executor) -> Result<Plan, Error> {
         .map_err(|_| Error::InvalidModel)
 }
 
-fn inference_executor() -> Result<Executor, Error> {
+fn inference_executor() -> Result<(Executor, Option<Arc<ThreadPool>>), Error> {
     let threads = configured_inference_threads();
     if threads == 1 {
-        return Ok(Executor::SingleThread);
+        return Ok((Executor::SingleThread, None));
     }
     ThreadPoolBuilder::new()
         .num_threads(threads)
         .thread_name(|index| format!("gsv-vision-inference-{index}"))
         .build()
-        .map(|pool| Executor::MultiThread(Arc::new(pool)))
+        .map(|pool| {
+            let pool = Arc::new(pool);
+            (Executor::MultiThread(pool.clone()), Some(pool))
+        })
         .map_err(|_| Error::InvalidModel)
 }
 

@@ -8,8 +8,8 @@ use serde::Serialize;
 
 use super::geometry::{Point, Rect};
 use super::{
-    runtime, GestureRecognizer, NoopProfiler, RecognitionStage, RecognitionTimings,
-    RECOGNITION_STAGES,
+    runtime, GestureRecognizer, NoopProfiler, RecognitionProfiler, RecognitionStage,
+    RecognitionTimings, RECOGNITION_STAGES,
 };
 use crate::observation::FrameView;
 
@@ -146,6 +146,20 @@ impl RecognitionStage {
             Self::GesturePostprocess => "gesturePostprocess",
         }
     }
+}
+
+#[test]
+fn parallel_stage_timings_keep_the_slower_hand_path() {
+    let mut combined = RecognitionTimings::default();
+    let mut left = RecognitionTimings::default();
+    let mut right = RecognitionTimings::default();
+    left.stages[RecognitionStage::LandmarkInference as usize] = Duration::from_millis(20);
+    right.stages[RecognitionStage::LandmarkInference as usize] = Duration::from_millis(30);
+    combined.merge_parallel(left, right);
+    assert_eq!(
+        combined.get(RecognitionStage::LandmarkInference),
+        Duration::from_millis(30)
+    );
 }
 
 #[test]
