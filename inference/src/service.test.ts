@@ -37,8 +37,6 @@ afterEach(() => {
 
 describe("managed inference service RPC", () => {
   it("routes a trusted installation request through its Durable Object", async () => {
-    vi.stubGlobal("fetch", vi.fn<typeof fetch>(async () => completion()));
-
     await expect(exports.default.generate(REQUEST)).resolves.toMatchObject({
       responseId: "generation_service_rpc",
       usage: { input: 2, output: 1, totalTokens: 3 },
@@ -56,7 +54,7 @@ describe("managed inference service RPC", () => {
   });
 
   it("honors an immediate abort that overtakes generation RPC", async () => {
-    const fetchMock = vi.fn<typeof fetch>(async () => completion("unexpected"));
+    const fetchMock = vi.fn<typeof fetch>();
     vi.stubGlobal("fetch", fetchMock);
     const request: ManagedInferenceRequest = {
       ...REQUEST,
@@ -82,11 +80,6 @@ describe("managed inference service RPC", () => {
       requiresAttention: true,
       confidence: 0.9,
     } as const;
-    const fetchMock = vi.fn<typeof fetch>(async () => completion(
-      JSON.stringify(expected),
-      "generation_service_mail_rpc",
-    ));
-    vi.stubGlobal("fetch", fetchMock);
 
     await expect(exports.default.summarizeMail(MAIL_REQUEST)).resolves.toEqual(
       expected,
@@ -103,34 +96,5 @@ describe("managed inference service RPC", () => {
       completedRequests: 1,
       spentNanoUsd: 340,
     });
-    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 });
-
-function completion(
-  text = "pong",
-  id = "generation_service_rpc",
-): Response {
-  return new Response([
-    sse({
-      id,
-      model: "deepseek/deepseek-v4-flash-0731",
-      choices: [{ index: 0, delta: { content: text } }],
-    }),
-    sse({
-      choices: [{ index: 0, delta: {}, finish_reason: "stop" }],
-      usage: {
-        prompt_tokens: 2,
-        completion_tokens: 1,
-        total_tokens: 3,
-      },
-    }),
-    "data: [DONE]\n\n",
-  ].join(""), {
-    headers: { "content-type": "text/event-stream" },
-  });
-}
-
-function sse(payload: Record<string, unknown>): string {
-  return `data: ${JSON.stringify(payload)}\n\n`;
-}

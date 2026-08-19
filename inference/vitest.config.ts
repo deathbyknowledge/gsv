@@ -68,7 +68,48 @@ export default defineConfig({
               }
             }
           `,
+        }, {
+          name: "gsv-openrouter-test",
+          modules: true,
+          script: `
+            export default {
+              async fetch(request) {
+                const payload = await request.json();
+                const mail = payload.messages?.some((message) =>
+                  message.role === "system"
+                    && message.content?.includes("untrusted data")
+                );
+                const content = mail
+                  ? JSON.stringify({
+                      summary: "Mike asked whether tomorrow's meeting is still scheduled.",
+                      category: "work",
+                      requiresAttention: true,
+                      confidence: 0.9,
+                    })
+                  : "pong";
+                const id = mail
+                  ? "generation_service_mail_rpc"
+                  : "generation_service_rpc";
+                const body = "data: " + JSON.stringify({
+                  id,
+                  model: "deepseek/deepseek-v4-flash-0731",
+                  choices: [{ index: 0, delta: { content } }],
+                }) + "\\n\\n" + "data: " + JSON.stringify({
+                  choices: [{ index: 0, delta: {}, finish_reason: "stop" }],
+                  usage: {
+                    prompt_tokens: 2,
+                    completion_tokens: 1,
+                    total_tokens: 3,
+                  },
+                }) + "\\n\\ndata: [DONE]\\n\\n";
+                return new Response(body, {
+                  headers: { "content-type": "text/event-stream" },
+                });
+              },
+            };
+          `,
         }],
+        outboundService: "gsv-openrouter-test",
         serviceBindings: {
           ACCOUNTS: "gsv-accounts-test-sink",
         },
