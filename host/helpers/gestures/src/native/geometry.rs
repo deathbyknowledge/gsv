@@ -130,7 +130,6 @@ pub(super) fn decode_hand_rects(raw_boxes: &[f32], raw_scores: &[f32]) -> Vec<Re
     }
     weighted_nms(detections)
         .into_iter()
-        .take(2)
         .map(detection_to_rect)
         .collect()
 }
@@ -492,6 +491,27 @@ mod tests {
         assert_eq!(output.len(), 1);
         assert!((output[0].score - 0.8).abs() < f32::EPSILON);
         assert!((output[0].xmin - (0.4 * 0.2 / 1.2)).abs() < 1e-6);
+    }
+
+    #[test]
+    fn decoder_retains_candidates_until_track_association() {
+        let anchors = palm_anchors();
+        let mut boxes = vec![0.0; anchors.len() * 18];
+        let mut scores = vec![-100.0; anchors.len()];
+        for (index, target_x) in [(0, 0.1_f32), (900, 0.5), (1_800, 0.9)] {
+            scores[index] = 10.0;
+            let values = &mut boxes[index * 18..(index + 1) * 18];
+            values[0] = (target_x - anchors[index].x) * DETECTOR_SIZE;
+            values[1] = (0.5 - anchors[index].y) * DETECTOR_SIZE;
+            values[2] = 0.05 * DETECTOR_SIZE;
+            values[3] = 0.05 * DETECTOR_SIZE;
+            for keypoint in 0..7 {
+                values[4 + keypoint * 2] = values[0];
+                values[5 + keypoint * 2] = values[1];
+            }
+        }
+
+        assert_eq!(decode_hand_rects(&boxes, &scores).len(), 3);
     }
 
     #[test]
