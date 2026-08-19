@@ -216,3 +216,13 @@ of chat integrations.
 - [Get Started](../get-started/)
 - [How-to Guides](../how-to/)
 - [Reference](../reference/)
+
+## Deferred design proposals
+
+- [Unified Protocol Peers](./unified-protocol-peers.md) records the proposed
+  shared syscall, command, and exact-output model for WebSocket clients and
+  service-bound adapters. It is intentionally deferred until managed staging
+  and the native application are stable.
+- [Universal Routing Graph and Surface Bindings](./interaction-surface-bindings.md)
+  explores durable Process bindings and output graphs. It is also design-only
+  and is not a prerequisite for the unified peer model.
