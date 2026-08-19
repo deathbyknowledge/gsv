@@ -14,6 +14,18 @@ strip = true
 lto = true
 codegen-units = 1
 
+[profile.dev.package.gestures]
+opt-level = 3
+debug-assertions = false
+overflow-checks = false
+codegen-units = 1
+
+[profile.dev.package."*"]
+opt-level = 3
+debug-assertions = false
+overflow-checks = false
+codegen-units = 1
+
 [patch.crates-io]
 # MediaPipe's published gesture models use a small set of TFLite operations
 # that tract 0.23.4 can execute but does not yet import. Keep the importer
