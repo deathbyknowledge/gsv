@@ -13,7 +13,7 @@ renders native diagnostics, which can contain private filesystem paths.
 - Bazel: `7.4.1` (the source tree's `.bazelversion`)
 - Hermetic Bazel Python: `3.12`
 - Source patch SHA-256:
-  `6d5040fe7698bb983c1766e851efe12298467f6adf8cd0d3c922fc17fd0368e8`
+  `421610d4118bf8695a49c1e260aaef1da10740e769e5e49c4cc58c78b7a1dfe8`
 - Bzlmod lock SHA-256:
   `0197909a04fbfd5b765d0a2e402496885ec1a6cc850f76fa34dfa454dc94563f`
 - EasyEXIF commit: `cd994a3b6009bc3c1f84062e96bd7f5ad16e85f6`

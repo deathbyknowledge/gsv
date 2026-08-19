@@ -13,10 +13,13 @@ index 99a0afd..221408b 100644
 -# This bazelrc file can be used for user-specific custom build settings.
 -try-import %workspace%/.user.bazelrc
 diff --git a/MODULE.bazel b/MODULE.bazel
-index f5b6313..2c19d51 100644
+index f5b6313..cc213cb 100644
 --- a/MODULE.bazel
 +++ b/MODULE.bazel
-@@ -16,5 +16,5 @@
+@@ -13,10 +13,10 @@ single_version_override(
+     version = "0.2.9",
+ )
+ 
 -bazel_dep(name = "rules_java", version = "7.10.0")
 +bazel_dep(name = "rules_java", version = "7.11.1")
  single_version_override(
@@ -24,6 +27,8 @@ index f5b6313..2c19d51 100644
 -    version = "7.10.0",
 +    version = "7.11.1",
  )
+ 
+ bazel_dep(name = "rules_kotlin", version = "1.9.6")
 @@ -47,6 +47,7 @@ single_version_override(
  bazel_dep(name = "abseil-cpp", repo_name = "com_google_absl")
  archive_override(
