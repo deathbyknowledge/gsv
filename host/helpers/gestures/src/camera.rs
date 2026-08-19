@@ -60,6 +60,7 @@ impl CameraConfig {
 #[derive(Debug)]
 pub enum CameraError {
     InvalidConfig(&'static str),
+    PermissionDenied,
     Open(CameraFailure),
     Spawn,
     WorkerPanicked,
@@ -69,6 +70,7 @@ impl Display for CameraError {
     fn fmt(&self, formatter: &mut Formatter<'_>) -> fmt::Result {
         match self {
             Self::InvalidConfig(message) => write!(formatter, "invalid camera config: {message}"),
+            Self::PermissionDenied => formatter.write_str("camera permission was not granted"),
             Self::Open(failure) => write!(formatter, "camera could not be opened: {failure}"),
             Self::Spawn => formatter.write_str("camera worker could not start"),
             Self::WorkerPanicked => formatter.write_str("camera worker panicked"),
@@ -209,6 +211,7 @@ pub struct CameraStream {
 impl CameraStream {
     pub fn open(config: CameraConfig) -> Result<Self, CameraError> {
         config.validate()?;
+        initialize_camera_backend()?;
         let shared = Arc::new(LatestFrameSlot::new());
         let stop = Arc::new(AtomicBool::new(false));
         let worker_shared = Arc::clone(&shared);
@@ -272,6 +275,25 @@ impl CameraStream {
             return Err(CameraError::WorkerPanicked);
         }
         Ok(CameraShutdown::Stopped)
+    }
+}
+
+fn initialize_camera_backend() -> Result<(), CameraError> {
+    let (sender, receiver) = sync_channel(1);
+    nokhwa::nokhwa_initialize(move |authorized| {
+        let _ = sender.send(authorized);
+    });
+    let authorized = receiver
+        .recv()
+        .map_err(|_| CameraError::Open(CameraFailure::Initialization))?;
+    validate_camera_authorization(authorized)
+}
+
+fn validate_camera_authorization(authorized: bool) -> Result<(), CameraError> {
+    if authorized {
+        Ok(())
+    } else {
+        Err(CameraError::PermissionDenied)
     }
 }
 
@@ -596,5 +618,20 @@ mod tests {
 
         assert_eq!(reader.try_latest(6).expect("new frame").frame.sequence, 7);
         assert!(reader.try_latest(7).is_none());
+    }
+
+    #[test]
+    fn camera_authorization_must_be_granted_before_device_access() {
+        assert!(validate_camera_authorization(true).is_ok());
+        assert!(matches!(
+            validate_camera_authorization(false),
+            Err(CameraError::PermissionDenied)
+        ));
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    #[test]
+    fn camera_backend_initialization_is_a_noop_without_avfoundation() {
+        assert!(initialize_camera_backend().is_ok());
     }
 }

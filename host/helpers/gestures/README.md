@@ -35,6 +35,12 @@ cargo build --manifest-path host/Cargo.toml --package gestures
 GSV_GESTURES=1 cargo run --manifest-path host/apps/desktop/Cargo.toml
 ```
 
+On macOS, the first camera start requests access before enumerating devices.
+For command-line development builds, macOS may attribute that request to the
+launching terminal; grant that application camera access and rerun the command.
+Denial fails with `camera permission was not granted` instead of attempting to
+open a device without authorization.
+
 The matching versioned runtime is discovered automatically from
 `host/target/vision-mediapipe/artifact/`. The headless mode above is the real local
 control path. Use the diagnostic

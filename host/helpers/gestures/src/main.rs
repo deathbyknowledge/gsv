@@ -23,7 +23,7 @@ use gesture_protocol::{
     ControlStatus, GestureCandidate, GestureContext, GestureProgress, ScrollState,
 };
 
-use crate::camera::{CameraConfig, CameraStream, FrameReader};
+use crate::camera::{CameraConfig, CameraError, CameraStream, FrameReader};
 use crate::control::{
     ControlDiagnostic, ControlHand, ControlIntent, ControlSample, GestureControl, ScrollControl,
 };
@@ -52,6 +52,7 @@ enum VisionError {
     InvalidModelOverride,
     InvalidModel,
     InvalidCamera,
+    CameraPermissionDenied,
     CameraUnavailable,
     CameraStopped,
     WindowUnavailable,
@@ -72,6 +73,7 @@ impl Display for VisionError {
             Self::InvalidModelOverride => "GSV_VISION_MODEL does not name a local file",
             Self::InvalidModel => "the local gesture model failed verification",
             Self::InvalidCamera => "GSV_VISION_CAMERA must be a camera index from 0 through 63",
+            Self::CameraPermissionDenied => "camera permission was not granted",
             Self::CameraUnavailable => "the local camera could not be opened",
             Self::CameraStopped => "the local camera stopped producing frames",
             Self::WindowUnavailable => "the local gesture debug window is unavailable",
@@ -138,7 +140,7 @@ fn run_pipeline(control: Option<HelperControl>, debug_window: bool) -> Result<()
         index: camera_index,
         ..CameraConfig::default()
     })
-    .map_err(|_| VisionError::CameraUnavailable)?;
+    .map_err(VisionError::from)?;
     let reader = camera.reader();
     let stop = Arc::new(AtomicBool::new(false));
     let (annotated_sender, annotated_receiver) = bounded(1);
@@ -589,7 +591,7 @@ impl VisionError {
             | Self::InvalidLibraryOverride
             | Self::InvalidModelOverride
             | Self::InvalidModel => gesture_protocol::LifecycleState::AssetsUnavailable,
-            Self::InvalidCamera | Self::CameraUnavailable => {
+            Self::InvalidCamera | Self::CameraPermissionDenied | Self::CameraUnavailable => {
                 gesture_protocol::LifecycleState::CameraUnavailable
             }
             Self::CameraStopped => gesture_protocol::LifecycleState::CameraStopped,
@@ -610,6 +612,15 @@ impl From<runtime::Error> for VisionError {
             runtime::Error::InvalidLibraryOverride => Self::InvalidLibraryOverride,
             runtime::Error::InvalidModelOverride => Self::InvalidModelOverride,
             runtime::Error::InvalidModel => Self::InvalidModel,
+        }
+    }
+}
+
+impl From<CameraError> for VisionError {
+    fn from(error: CameraError) -> Self {
+        match error {
+            CameraError::PermissionDenied => Self::CameraPermissionDenied,
+            _ => Self::CameraUnavailable,
         }
     }
 }
@@ -678,6 +689,17 @@ mod tests {
         assert_eq!(
             parse_camera_index(Some(OsStr::new("camera 1"))),
             Err(VisionError::InvalidCamera)
+        );
+    }
+
+    #[test]
+    fn camera_permission_failure_is_actionable_but_keeps_the_camera_lifecycle() {
+        let error = VisionError::from(CameraError::PermissionDenied);
+        assert_eq!(error, VisionError::CameraPermissionDenied);
+        assert_eq!(error.to_string(), "camera permission was not granted");
+        assert_eq!(
+            error.lifecycle_state(),
+            gesture_protocol::LifecycleState::CameraUnavailable
         );
     }
 
