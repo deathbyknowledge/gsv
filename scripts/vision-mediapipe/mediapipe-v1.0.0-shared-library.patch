@@ -16,6 +16,14 @@ diff --git a/MODULE.bazel b/MODULE.bazel
 index f5b6313..2c19d51 100644
 --- a/MODULE.bazel
 +++ b/MODULE.bazel
+@@ -16,5 +16,5 @@
+-bazel_dep(name = "rules_java", version = "7.10.0")
++bazel_dep(name = "rules_java", version = "7.11.1")
+ single_version_override(
+     module_name = "rules_java",
+-    version = "7.10.0",
++    version = "7.11.1",
+ )
 @@ -47,6 +47,7 @@ single_version_override(
  bazel_dep(name = "abseil-cpp", repo_name = "com_google_absl")
  archive_override(
