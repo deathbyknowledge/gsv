@@ -271,11 +271,11 @@ window state, and the selected PID; `--json` prints those same redacted fields
 for scripts. The command returns an error when Desktop is not running.
 
 The CLI finds `gsv-desktop` beside `gsv`, then on `PATH`. Development builds
-also recognize the current `gsv-native` binary name. Set `GSV_DESKTOP_PATH` to
+also recognize the legacy `gsv-native` binary name. Set `GSV_DESKTOP_PATH` to
 an explicit executable when testing a nonstandard installation.
 
 These commands use the versioned same-user IPC contract in
-`gsv-desktop-control`; they do not connect through `gsvd`. Credentials,
+`desktop-protocol`; they do not connect through `gsvd`. Credentials,
 messages, drafts, attachment paths, and approval content cannot be sent over
 that contract. Microphone names cross it only for the explicit microphone
 commands and are never included in the general redacted Desktop status. Desktop

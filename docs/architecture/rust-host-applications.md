@@ -17,14 +17,16 @@ contracts, but they do not embed one another's runtime or state ownership.
 
 ## Shared crates
 
-- `crates/gsv-client/` owns WebSocket protocol frames, authentication metadata,
+- `host/crates/gateway-client/` owns WebSocket protocol frames, authentication metadata,
   typed RPC behavior, cancellation, and duplex binary bodies.
-- `crates/gsv-config/` owns compatible local configuration and atomic updates.
-- `crates/gsv-desktop-control/` owns the versioned, local Desktop control
+- `host/crates/config/` owns compatible local configuration and atomic updates.
+- `host/crates/desktop-protocol/` owns the versioned, local Desktop control
   protocol.
+- `host/crates/gesture-protocol/` owns the private, versioned contract between
+  Desktop and its gesture helper.
 
 These crates contain contracts and transport primitives. They do not own a
-daemon lifecycle, a CLI interaction, or Desktop UI state.
+machine lifecycle, a CLI interaction, or Desktop UI state.
 
 ## `gsvd`
 
@@ -44,7 +46,7 @@ chat and process commands, deployment, OS service installation/control for
 `gsvd`, and the client side of local Desktop control.
 
 `gsv desktop` launches or activates the installed Desktop. Its `status`, `new`,
-`use`, and `microphone` subcommands are clients of `gsv-desktop-control`, not
+`use`, and `microphone` subcommands are clients of `desktop-protocol`, not
 alternate owners of Desktop state. `status` is read-only and never starts the
 application; state-changing commands make Desktop perform the operation through
 the runtime that owns it. Process changes use Desktop's authenticated gateway

@@ -9,24 +9,26 @@ const ROOT = resolve(__dirname, "..");
 const VERSION_FILE = join(ROOT, "VERSION");
 const SEMVER_RE = /^\d+\.\d+\.\d+$/;
 const WORKSPACE_MANIFESTS = [
-  "cli/Cargo.toml",
-  "crates/gsv-client/Cargo.toml",
-  "crates/gsv-config/Cargo.toml",
-  "crates/gsv-desktop-control/Cargo.toml",
-  "daemon/Cargo.toml",
-  "native/Cargo.toml",
-  "native/transcribe-helper/Cargo.toml",
-  "native/vision-helper/Cargo.toml",
+  "host/apps/cli/Cargo.toml",
+  "host/apps/desktop/Cargo.toml",
+  "host/apps/machine/Cargo.toml",
+  "host/crates/config/Cargo.toml",
+  "host/crates/desktop-protocol/Cargo.toml",
+  "host/crates/gateway-client/Cargo.toml",
+  "host/crates/gesture-protocol/Cargo.toml",
+  "host/helpers/gestures/Cargo.toml",
+  "host/helpers/transcriber/Cargo.toml",
 ];
 const WORKSPACE_PACKAGES = [
+  "desktop",
+  "desktop-protocol",
+  "gateway-client",
+  "gesture-protocol",
+  "gestures",
   "gsv",
-  "gsv-client",
-  "gsv-config",
-  "gsv-desktop-control",
-  "gsvd",
-  "gsv-native",
-  "gsv-transcribe",
-  "gsv-vision",
+  "host-config",
+  "machine",
+  "transcriber",
 ];
 
 function fail(message) {

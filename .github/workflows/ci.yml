@@ -25,9 +25,9 @@ jobs:
       whatsapp: ${{ steps.filter.outputs.whatsapp }}
       ripgit: ${{ steps.filter.outputs.ripgit }}
       cli: ${{ steps.filter.outputs.cli }}
-      daemon: ${{ steps.filter.outputs.daemon }}
-      native: ${{ steps.filter.outputs.native }}
-      rust_shared: ${{ steps.filter.outputs.rust_shared }}
+      machine: ${{ steps.filter.outputs.machine }}
+      desktop: ${{ steps.filter.outputs.desktop }}
+      host_crates: ${{ steps.filter.outputs.host_crates }}
     steps:
       - uses: actions/checkout@v4
 
@@ -49,12 +49,9 @@ jobs:
               - 'package.json'
               - 'package-lock.json'
               - 'packages/gsv/package.json'
-              - 'cli/Cargo.toml'
-              - 'crates/*/Cargo.toml'
-              - 'daemon/Cargo.toml'
-              - 'native/Cargo.toml'
-              - 'native/transcribe-helper/Cargo.toml'
-              - 'native/vision-helper/Cargo.toml'
+              - 'host/apps/*/Cargo.toml'
+              - 'host/crates/*/Cargo.toml'
+              - 'host/helpers/*/Cargo.toml'
               - 'extension/package.json'
               - 'extension/public/manifest.json'
               - 'extension/src/background/service-worker.ts'
@@ -115,32 +112,34 @@ jobs:
               - '.github/workflows/ci.yml'
               - 'Cargo.toml'
               - 'Cargo.lock'
-              - 'cli/**'
-              - 'crates/gsv-client/**'
-              - 'crates/gsv-config/**'
-              - 'crates/gsv-desktop-control/**'
-            daemon:
+              - 'host/apps/cli/**'
+              - 'host/crates/gateway-client/**'
+              - 'host/crates/config/**'
+              - 'host/crates/desktop-protocol/**'
+            machine:
               - '.github/workflows/ci.yml'
               - 'Cargo.toml'
               - 'Cargo.lock'
-              - 'daemon/**'
-              - 'crates/gsv-client/**'
-              - 'crates/gsv-config/**'
-            native:
+              - 'host/apps/machine/**'
+              - 'host/crates/gateway-client/**'
+              - 'host/crates/config/**'
+            desktop:
               - '.github/workflows/ci.yml'
               - 'Cargo.toml'
               - 'Cargo.lock'
-              - 'native/**'
+              - 'host/apps/desktop/**'
+              - 'host/helpers/**'
               - 'scripts/vision-mediapipe/**'
-              - 'crates/gsv-client/**'
-              - 'crates/gsv-config/**'
-              - 'crates/gsv-desktop-control/**'
+              - 'host/crates/gateway-client/**'
+              - 'host/crates/config/**'
+              - 'host/crates/desktop-protocol/**'
+              - 'host/crates/gesture-protocol/**'
               - 'web/public/fonts/**'
-            rust_shared:
+            host_crates:
               - '.github/workflows/ci.yml'
               - 'Cargo.toml'
               - 'Cargo.lock'
-              - 'crates/**'
+              - 'host/crates/**'
 
   version-check:
     name: Version Check
@@ -364,11 +363,11 @@ jobs:
       - name: Run tests
         run: cargo test --locked --package gsv
 
-  rust-shared:
-    name: Shared Rust Contracts
+  host-crates:
+    name: Host Rust Crates
     runs-on: ubuntu-latest
     needs: [changes]
-    if: needs.changes.outputs.rust_shared == 'true'
+    if: needs.changes.outputs.host_crates == 'true'
     steps:
       - uses: actions/checkout@v4
 
@@ -379,24 +378,24 @@ jobs:
 
       - name: Check formatting
         run: >-
-          cargo fmt --package gsv-client --package gsv-config
-          --package gsv-desktop-control --check
+          cargo fmt --package gateway-client --package host-config
+          --package desktop-protocol --package gesture-protocol --check
 
       - name: Test shared crates
         run: >-
-          cargo test --locked --package gsv-client --package gsv-config
-          --package gsv-desktop-control
+          cargo test --locked --package gateway-client --package host-config
+          --package desktop-protocol --package gesture-protocol
 
       - name: Lint shared crates
         run: >-
-          cargo clippy --locked --package gsv-client --package gsv-config
-          --package gsv-desktop-control --all-targets -- -D warnings
+          cargo clippy --locked --package gateway-client --package host-config
+          --package desktop-protocol --package gesture-protocol --all-targets -- -D warnings
 
-  daemon-build:
-    name: Device Daemon (${{ matrix.os }})
+  machine-build:
+    name: Machine (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     needs: [changes]
-    if: needs.changes.outputs.daemon == 'true'
+    if: needs.changes.outputs.machine == 'true'
     strategy:
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
@@ -408,23 +407,23 @@ jobs:
         with:
           components: clippy, rustfmt
 
-      - name: Check daemon
-        run: cargo check --locked --package gsvd
+      - name: Check machine
+        run: cargo check --locked --package machine
 
       - name: Check formatting
-        run: cargo fmt --package gsvd --check
+        run: cargo fmt --package machine --check
 
-      - name: Test daemon
-        run: cargo test --locked --package gsvd
+      - name: Test machine
+        run: cargo test --locked --package machine
 
-      - name: Lint daemon
-        run: cargo clippy --locked --package gsvd --all-targets -- -D warnings
+      - name: Lint machine
+        run: cargo clippy --locked --package machine --all-targets -- -D warnings
 
-  native-build:
-    name: Native Desktop (Linux)
+  desktop-build:
+    name: Desktop (Linux)
     runs-on: ubuntu-22.04
     needs: [changes]
-    if: needs.changes.outputs.native == 'true'
+    if: needs.changes.outputs.desktop == 'true'
     steps:
       - uses: actions/checkout@v4
 
@@ -458,20 +457,20 @@ jobs:
 
       - name: Check Desktop and helpers
         run: >-
-          cargo check --locked --package gsv-native --package gsv-transcribe
-          --package gsv-vision --package gsv-vision-control
+          cargo check --locked --package desktop --package transcriber
+          --package gestures --package gesture-protocol
 
       - name: Check formatting
         run: >-
-          cargo fmt --package gsv-native --package gsv-transcribe
-          --package gsv-vision --package gsv-vision-control --check
+          cargo fmt --package desktop --package transcriber
+          --package gestures --package gesture-protocol --check
 
       - name: Test Desktop and helpers
         run: >-
-          cargo test --locked --package gsv-native --package gsv-transcribe
-          --package gsv-vision --package gsv-vision-control
+          cargo test --locked --package desktop --package transcriber
+          --package gestures --package gesture-protocol
 
       - name: Lint Desktop and helpers
         run: >-
-          cargo clippy --locked --package gsv-native --package gsv-transcribe
-          --package gsv-vision --package gsv-vision-control --all-targets -- -D warnings
+          cargo clippy --locked --package desktop --package transcriber
+          --package gestures --package gesture-protocol --all-targets -- -D warnings

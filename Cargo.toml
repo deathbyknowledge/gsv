@@ -1,11 +1,8 @@
 [workspace]
 members = [
-    "cli",
-    "crates/*",
-    "daemon",
-    "native",
-    "native/transcribe-helper",
-    "native/vision-helper",
+    "host/apps/*",
+    "host/crates/*",
+    "host/helpers/*",
 ]
 exclude = ["ripgit"]
 resolver = "2"

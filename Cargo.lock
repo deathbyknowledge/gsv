@@ -1745,6 +1745,48 @@ dependencies = [
 ]
 
 [[package]]
+name = "desktop"
+version = "0.4.1"
+dependencies = [
+ "async-trait",
+ "desktop-protocol",
+ "gateway-client",
+ "gesture-protocol",
+ "gpui",
+ "gpui-component",
+ "host-config",
+ "image",
+ "infer",
+ "libc",
+ "markdown",
+ "mime_guess",
+ "reqwest",
+ "rodio",
+ "serde_json",
+ "tempfile",
+ "tokio",
+ "url",
+ "usvg",
+ "uuid",
+]
+
+[[package]]
+name = "desktop-protocol"
+version = "0.4.1"
+dependencies = [
+ "async-trait",
+ "libc",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.20",
+ "tokio",
+ "tokio-util",
+ "uuid",
+ "windows-sys 0.61.2",
+]
+
+[[package]]
 name = "digest"
 version = "0.10.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2468,6 +2510,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "gateway-client"
+version = "0.4.1"
+dependencies = [
+ "futures-util",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tokio-tungstenite",
+ "tokio-util",
+ "uuid",
+]
+
+[[package]]
 name = "generic-array"
 version = "0.14.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2475,6 +2530,31 @@ checksum = "85649ca51fd72272d7821adaf274ad91c288277713d9c18820d8499a7ff69e9a"
 dependencies = [
  "typenum",
  "version_check",
+]
+
+[[package]]
+name = "gesture-protocol"
+version = "0.4.1"
+dependencies = [
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "gestures"
+version = "0.4.1"
+dependencies = [
+ "crossbeam-channel",
+ "font8x8",
+ "gesture-protocol",
+ "libc",
+ "libloading",
+ "minifb",
+ "nokhwa",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "tempfile",
 ]
 
 [[package]]
@@ -2968,11 +3048,11 @@ dependencies = [
  "chrono",
  "clap",
  "cliclack",
+ "desktop-protocol",
  "dirs 5.0.1",
  "flate2",
- "gsv-client",
- "gsv-config",
- "gsv-desktop-control",
+ "gateway-client",
+ "host-config",
  "hostname",
  "json5",
  "libc",
@@ -2990,140 +3070,6 @@ dependencies = [
  "uuid",
  "walkdir",
  "whoami",
-]
-
-[[package]]
-name = "gsv-client"
-version = "0.4.1"
-dependencies = [
- "futures-util",
- "serde",
- "serde_json",
- "tokio",
- "tokio-tungstenite",
- "tokio-util",
- "uuid",
-]
-
-[[package]]
-name = "gsv-config"
-version = "0.4.1"
-dependencies = [
- "chrono",
- "dirs 5.0.1",
- "fs2",
- "serde",
- "tempfile",
- "toml 0.8.23",
-]
-
-[[package]]
-name = "gsv-desktop-control"
-version = "0.4.1"
-dependencies = [
- "async-trait",
- "libc",
- "serde",
- "serde_json",
- "tempfile",
- "thiserror 2.0.20",
- "tokio",
- "tokio-util",
- "uuid",
- "windows-sys 0.61.2",
-]
-
-[[package]]
-name = "gsv-native"
-version = "0.4.1"
-dependencies = [
- "async-trait",
- "gpui",
- "gpui-component",
- "gsv-client",
- "gsv-config",
- "gsv-desktop-control",
- "gsv-vision-control",
- "image",
- "infer",
- "libc",
- "markdown",
- "mime_guess",
- "reqwest",
- "rodio",
- "serde_json",
- "tempfile",
- "tokio",
- "url",
- "usvg",
- "uuid",
-]
-
-[[package]]
-name = "gsv-transcribe"
-version = "0.4.1"
-dependencies = [
- "cpal 0.18.1",
- "crossbeam-channel",
- "libc",
- "serde",
- "serde_json",
- "sha2 0.10.9",
- "transcribe-cpp",
- "ureq",
-]
-
-[[package]]
-name = "gsv-vision"
-version = "0.4.1"
-dependencies = [
- "crossbeam-channel",
- "font8x8",
- "gsv-vision-control",
- "libc",
- "libloading",
- "minifb",
- "nokhwa",
- "serde",
- "serde_json",
- "sha2 0.10.9",
- "tempfile",
-]
-
-[[package]]
-name = "gsv-vision-control"
-version = "0.4.1"
-dependencies = [
- "serde",
- "serde_json",
-]
-
-[[package]]
-name = "gsvd"
-version = "0.4.1"
-dependencies = [
- "async-trait",
- "clap",
- "dirs 5.0.1",
- "futures-util",
- "glob",
- "gsv-client",
- "gsv-config",
- "hostname",
- "infer",
- "libc",
- "mime_guess",
- "reqwest",
- "rustls",
- "serde",
- "serde_json",
- "tokio",
- "tokio-util",
- "tracing",
- "tracing-appender",
- "tracing-subscriber",
- "uuid",
- "walkdir",
 ]
 
 [[package]]
@@ -3244,6 +3190,18 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cc627f471c528ff0c4a49e1d5e60450c8f6461dd6d10ba9dcd3a61d3dff7728d"
 dependencies = [
  "windows-sys 0.61.2",
+]
+
+[[package]]
+name = "host-config"
+version = "0.4.1"
+dependencies = [
+ "chrono",
+ "dirs 5.0.1",
+ "fs2",
+ "serde",
+ "tempfile",
+ "toml 0.8.23",
 ]
 
 [[package]]
@@ -4151,6 +4109,34 @@ name = "mach2"
 version = "0.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "dae608c151f68243f2b000364e1f7b186d9c29845f7d2d85bd31b9ad77ad552b"
+
+[[package]]
+name = "machine"
+version = "0.4.1"
+dependencies = [
+ "async-trait",
+ "clap",
+ "dirs 5.0.1",
+ "futures-util",
+ "gateway-client",
+ "glob",
+ "host-config",
+ "hostname",
+ "infer",
+ "libc",
+ "mime_guess",
+ "reqwest",
+ "rustls",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tokio-util",
+ "tracing",
+ "tracing-appender",
+ "tracing-subscriber",
+ "uuid",
+ "walkdir",
+]
 
 [[package]]
 name = "malloc_buf"
@@ -7775,6 +7761,20 @@ checksum = "278fd6a6da4d9d8d5f2716bd6761a76ea55c129fda6ba57856b80249a8570ed4"
 dependencies = [
  "cmake",
  "serde_json",
+]
+
+[[package]]
+name = "transcriber"
+version = "0.4.1"
+dependencies = [
+ "cpal 0.18.1",
+ "crossbeam-channel",
+ "libc",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "transcribe-cpp",
+ "ureq",
 ]
 
 [[package]]

@@ -1,5 +1,5 @@
 // Compile-only guard for the Rust declarations in
-// native/vision-helper/src/mediapipe/ffi.rs.
+// host/helpers/gestures/src/mediapipe/ffi.rs.
 
 #include <cstddef>
 #include <cstdint>

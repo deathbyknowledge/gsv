@@ -119,14 +119,14 @@ jobs:
         if: runner.os == 'Linux'
         run: >-
           cargo build --locked --release --target ${{ matrix.target }}
-          --package gsv --package gsvd --no-default-features
-          --features gsv/rustls,gsvd/rustls
+          --package gsv --package machine --no-default-features
+          --features gsv/rustls,machine/rustls
 
       - name: Build host tools (native TLS)
         if: runner.os != 'Linux'
         run: >-
           cargo build --locked --release --target ${{ matrix.target }}
-          --package gsv --package gsvd
+          --package gsv --package machine
 
       - name: Stage host tools
         shell: bash
@@ -200,17 +200,17 @@ jobs:
       - name: Build Desktop and transcription helper
         run: >-
           cargo build --locked --release --target ${{ matrix.target }}
-          --package gsv-native --package gsv-transcribe
+          --package desktop --package transcriber
 
       - name: Stage Desktop
         shell: bash
         run: |
           set -euo pipefail
           mkdir -p release
-          cp "target/${{ matrix.target }}/release/gsv-native" "release/gsv-desktop-${{ matrix.platform }}"
+          cp "target/${{ matrix.target }}/release/gsv-desktop" "release/gsv-desktop-${{ matrix.platform }}"
           cp "target/${{ matrix.target }}/release/gsv-transcribe" "release/gsv-transcribe-${{ matrix.platform }}"
           if [ "${{ matrix.platform }}" = "linux-x64" ]; then
-            cp native/transcribe-helper/THIRD_PARTY.md release/gsv-transcribe-THIRD_PARTY.md
+            cp host/helpers/transcriber/THIRD_PARTY.md release/gsv-transcribe-THIRD_PARTY.md
           fi
 
       - name: Upload Desktop

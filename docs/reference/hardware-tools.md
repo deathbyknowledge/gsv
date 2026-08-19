@@ -239,8 +239,8 @@ same `target` and `sessionId` routing rules as the direct `Shell`, `Read`,
 - Native filesystem: `gateway/src/drivers/native/fs.ts`
 - Native shell: `gateway/src/drivers/native/shell.ts`
 - Device registry: `gateway/src/kernel/devices.ts`
-- CLI driver bridge: `cli/src/main.rs`
-- CLI local tools: `cli/src/tools/`
+- CLI driver bridge: `host/apps/cli/src/main.rs`
+- Machine tools: `host/apps/machine/src/tools/`
 
 ## See also
 

@@ -71,14 +71,16 @@ The personal agent account is the user's personal intelligence. One Kernel-marke
 - `gateway/src/inference/`: provider integration and model transport.
 - `packages/gsv/`: public client and protocol types.
 - `web/`: desktop shell, setup/login, system UI, and browser-side gateway integration.
-- `native/`: GPUI desktop client, text-first interaction model, native presentation, and isolated local transcription/vision helpers.
-- `cli/`: user, deployment, administration, and OS service-control commands.
-- `daemon/`: the `gsvd` machine driver, concrete tools, transfer ownership, reconnect, logging, and shutdown.
+- `host/apps/desktop/`: GPUI desktop client, text-first interaction model, and native presentation.
+- `host/apps/cli/`: user, deployment, administration, and OS service-control commands.
+- `host/apps/machine/`: the `gsvd` machine driver, concrete tools, transfer ownership, reconnect, logging, and shutdown.
+- `host/helpers/`: separately supervised local transcription and gesture processes.
+- `host/crates/`: shared gateway transport, host configuration, Desktop IPC, and gesture protocol contracts.
 - `adapters/`: platform-specific messaging workers and identity normalization.
 - `extension/`: browser-backed target and browser integration.
 - `ripgit/`: git-backed repositories and filesystem storage operations.
 
-Keep platform-specific identity and delivery behavior in its adapter. Keep visual presentation in the web and native clients. Keep target selection below stable syscall contracts.
+Keep platform-specific identity and delivery behavior in its adapter. Keep visual presentation in the web and Desktop clients. Keep target selection below stable syscall contracts.
 
 ## Runtime invariants
 
@@ -156,9 +158,10 @@ gsv/
 ├── gateway/       # Kernel, Process, syscalls, inference, filesystem
 ├── packages/gsv/  # Public TypeScript client and protocol
 ├── web/           # Desktop shell and embedded app host
-├── native/        # GPUI text-first client and isolated native helpers
-├── cli/           # Rust operator CLI and local service control
-├── daemon/        # gsvd machine driver runtime
+├── host/
+│   ├── apps/      # Rust CLI, Desktop, and machine applications
+│   ├── helpers/   # Isolated transcription and gesture processes
+│   └── crates/    # Shared host transport, configuration, and IPC contracts
 ├── adapters/      # WhatsApp, Discord, Telegram, and test channels
 ├── extension/     # Browser target
 ├── ripgit/        # Git-backed repository worker
@@ -188,11 +191,11 @@ Validate only the surfaces affected by the change:
 - Managed inference: `cd inference && npm run typecheck && npm test`
 - Gateway: `cd gateway && npx tsc --noEmit && npm run test:run`
 - Web: `cd web && npm run check && npm run test:run && npm run build`
-- Native client: `cargo fmt --manifest-path native/Cargo.toml --check && cargo test --manifest-path native/Cargo.toml && cargo clippy --manifest-path native/Cargo.toml --all-targets -- -D warnings`
-- Native vision helper and control protocol: `cargo fmt --package gsv-vision --package gsv-vision-control --check && cargo test --package gsv-vision --package gsv-vision-control && cargo clippy --package gsv-vision --package gsv-vision-control --all-targets -- -D warnings`
+- Desktop and transcription helper: `cargo fmt --package desktop --package transcriber --check && cargo test --package desktop --package transcriber && cargo clippy --package desktop --package transcriber --all-targets -- -D warnings`
+- Gesture helper and protocol: `cargo fmt --package gestures --package gesture-protocol --check && cargo test --package gestures --package gesture-protocol && cargo clippy --package gestures --package gesture-protocol --all-targets -- -D warnings`
 - Public SDK: `npm run gsv:check && npm test --workspace packages/gsv`
 - CLI: `cargo fmt --package gsv --check && cargo test --package gsv`
-- Device daemon: `cargo fmt --package gsvd --check && cargo test --package gsvd`
+- Machine: `cargo fmt --package machine --check && cargo test --package machine`
 - ripgit: `cd ripgit && npm test`
 - Browser extension: `cd extension && npm run check && npm run test:run && npm run build`
 - WhatsApp: `cd adapters/whatsapp && npx tsc --noEmit`
