@@ -15,7 +15,7 @@ renders native diagnostics, which can contain private filesystem paths.
 - Source patch SHA-256:
   `421610d4118bf8695a49c1e260aaef1da10740e769e5e49c4cc58c78b7a1dfe8`
 - Bzlmod lock SHA-256:
-  `0197909a04fbfd5b765d0a2e402496885ec1a6cc850f76fa34dfa454dc94563f`
+  `e06eee9fa6c7d6cfa1274f21a4db530d92a9cfce082233d2818b04fcef77f73f`
 - EasyEXIF commit: `cd994a3b6009bc3c1f84062e96bd7f5ad16e85f6`
 - OpenCV release: `3.4.11`
 - OpenCV peeled commit: `e8d4259f9ab787b512b9aa1203fc816fb9f19231`
