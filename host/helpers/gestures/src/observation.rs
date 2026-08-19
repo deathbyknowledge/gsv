@@ -3,7 +3,6 @@ use std::time::{Duration, Instant};
 
 pub const HAND_LANDMARK_COUNT: usize = 21;
 pub const MAX_HANDS: usize = 2;
-pub const MAX_GESTURE_LABEL_BYTES: usize = 64;
 
 #[derive(Clone, Debug)]
 pub struct FrameView {

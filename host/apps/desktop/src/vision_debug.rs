@@ -44,9 +44,7 @@ const HELPER_ENVIRONMENT: &[&str] = &[
     "TMPDIR",
     "LANG",
     "LC_ALL",
-    "GSV_VISION_RUNTIME",
-    "GSV_MEDIAPIPE_LIBRARY",
-    "GSV_VISION_MODEL",
+    "GSV_VISION_NATIVE_MODELS",
     "GSV_VISION_CAMERA",
 ];
 
@@ -1131,16 +1129,8 @@ mod tests {
         let environment = vec![
             (OsString::from("PATH"), OsString::from("/bin")),
             (
-                OsString::from("GSV_VISION_RUNTIME"),
-                OsString::from("/debug/vision-runtime"),
-            ),
-            (
-                OsString::from("GSV_MEDIAPIPE_LIBRARY"),
-                OsString::from("/debug/libmediapipe.so"),
-            ),
-            (
-                OsString::from("GSV_VISION_MODEL"),
-                OsString::from("/debug/model.task"),
+                OsString::from("GSV_VISION_NATIVE_MODELS"),
+                OsString::from("/debug/vision-models"),
             ),
             (OsString::from("GSV_VISION_CAMERA"), OsString::from("2")),
             (OsString::from("GSV_TOKEN"), OsString::from("secret")),
@@ -1151,13 +1141,11 @@ mod tests {
         ];
 
         let allowed = allowed_environment(environment);
-        assert_eq!(allowed.len(), 5);
+        assert_eq!(allowed.len(), 3);
         assert!(allowed.iter().any(|(key, _)| key == "PATH"));
-        assert!(allowed.iter().any(|(key, _)| key == "GSV_VISION_RUNTIME"));
         assert!(allowed
             .iter()
-            .any(|(key, _)| key == "GSV_MEDIAPIPE_LIBRARY"));
-        assert!(allowed.iter().any(|(key, _)| key == "GSV_VISION_MODEL"));
+            .any(|(key, _)| key == "GSV_VISION_NATIVE_MODELS"));
         assert!(allowed.iter().any(|(key, _)| key == "GSV_VISION_CAMERA"));
         assert!(!allowed.iter().any(|(key, _)| key == "GSV_TOKEN"));
         assert!(!allowed.iter().any(|(key, _)| key == EVENT_FD_MARKER_ENV));

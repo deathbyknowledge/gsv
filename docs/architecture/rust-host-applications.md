@@ -71,9 +71,9 @@ available as a syscall target.
 
 Platform-native, high-cost Desktop work runs in separately supervised helpers.
 `gsv-transcribe` owns local microphone capture and speech inference. The
-experimental `gsv-vision` helper owns camera capture, MediaPipe inference, and
-temporal gesture recognition; camera frames and landmarks never enter GPUI or
-the gateway. `GSV_GESTURES=1` starts it headlessly, while the exact
+experimental `gsv-vision` helper owns camera capture, native Rust/tract model
+inference, and temporal gesture recognition; camera frames and landmarks never
+enter GPUI or the gateway. `GSV_GESTURES=1` starts it headlessly, while the exact
 `GSV_GESTURE_DEBUG=1` opt-in adds its local diagnostic window. A private,
 bounded parent-child protocol carries reliable typed semantic intents,
 absolute held-scroll state, and replace-latest control status with bounded
@@ -96,13 +96,11 @@ replaces only the model stream while retaining microphone capture, request
 identity, and mute state. Desktop accepts
 the correlated utterance final, submits it through the ordinary conversation
 owner, and rebases the continuing voice draft; a gesture send never masquerades
-as a terminal transcription event. Its runtime is Rust plus a pinned
-native MediaPipe library and model—Python and Bazel are build tools, not
-Desktop runtime dependencies. Linux x86-64 and Apple Silicon development
-artifacts share one versioned, hash-verified runtime manifest and the same C
-ABI. `gsv-vision` is not part of the release distribution until signed macOS
-application packaging, camera permissions, and the model-redistribution policy
-are accepted deliberately.
+as a terminal transcription event. Its runtime is the Rust helper plus four
+checksum-pinned TFLite models executed by tract. It has no Python, Java, Bazel,
+or native MediaPipe build/runtime dependency. `gsv-vision` is not part of the
+release distribution until signed macOS application packaging, camera
+permissions, and the model-redistribution policy are accepted deliberately.
 
 The local protocol exposes `activate`, redacted `status`, `new`, `use`, and the
 narrow `microphone list/use/default` operations. Its endpoint must be accessible

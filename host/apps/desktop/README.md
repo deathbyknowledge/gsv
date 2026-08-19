@@ -70,17 +70,12 @@ selected automatically when `WAYLAND_DISPLAY` is present; no Cargo feature is ne
 ### Run experimental local gesture controls
 
 The optional gesture helper is a separate Rust process. It owns the camera,
-MediaPipe inference, and temporal gesture recognition; it never sends frames or
+native Rust/tract inference, and temporal gesture recognition; it never sends frames or
 landmarks to Desktop or the gateway. Build the pinned runtime for the native
 host and the helper, then opt in explicitly. Headless controls use:
 
 ```bash
-# Linux x86-64:
-./scripts/vision-mediapipe/build-linux.sh
-
-# Apple Silicon macOS:
-./scripts/vision-mediapipe/build-macos.sh
-
+./scripts/vision-native/prepare.sh
 cargo build --manifest-path host/Cargo.toml --package gestures
 GSV_GESTURES=1 cargo run --manifest-path host/apps/desktop/Cargo.toml
 ```
@@ -91,10 +86,9 @@ To see the camera, landmarks, scores, and the same live recognizer while testing
 GSV_GESTURE_DEBUG=1 cargo run --manifest-path host/apps/desktop/Cargo.toml
 ```
 
-The MediaPipe build uses Bazel and its hermetic Python toolchain, but neither
-Python nor Bazel is a runtime dependency. The running proof consists of the
-Rust `gsv-vision` helper, the compiled native library, and the verified local
-model. While Desktop is active and voice input is idle, two open palms request
+The helper uses tract and checksum-pinned TFLite models, with no Python, Java,
+Bazel, or native MediaPipe dependency. While Desktop is active and voice input
+is idle, two open palms request
 a new transcription through the same safety checks and microphone-selection
 path as the keyboard shortcut. During that transcription, open palm + victory
 requests that the overall voice session finish; any final unsent words remain

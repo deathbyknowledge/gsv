@@ -1,6 +1,6 @@
 //! Pure temporal policy for two-hand voice controls.
 //!
-//! This module consumes only bounded MediaPipe label/score observations. It
+//! This module consumes only bounded gesture label/score observations. It
 //! owns no camera, window, IPC, or application action. Missing tracking clears
 //! temporal evidence but never changes Desktop-owned transcription authority.
 

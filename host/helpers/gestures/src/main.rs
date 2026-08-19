@@ -2,10 +2,9 @@ mod camera;
 mod control;
 mod control_transport;
 mod debug_window;
-mod mediapipe;
+mod native;
 mod observation;
 mod overlay;
-mod runtime;
 
 use std::env;
 use std::error::Error as StdError;
@@ -29,10 +28,10 @@ use crate::control::{
 };
 use crate::control_transport::{ControlContext, HelperControl};
 use crate::debug_window::{DebugWindow, DebugWindowConfig};
-use crate::mediapipe::GestureRecognizer;
+use crate::native::runtime::ModelPaths;
+use crate::native::GestureRecognizer;
 use crate::observation::{FrameView, Observation};
 use crate::overlay::ControlPresentationDiagnostic;
-use crate::runtime::AssetPaths;
 
 const PARENT_STDIN_WATCHDOG: &str = "GSV_VISION_PARENT_STDIN";
 const DEBUG_WINDOW_MARKER: &str = "GSV_VISION_DEBUG_WINDOW";
@@ -45,12 +44,8 @@ const MAX_CAMERA_INDEX: u32 = 63;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum VisionError {
-    AssetsUnavailable,
-    InvalidRuntime,
-    InvalidRuntimeOverride,
-    InvalidLibraryOverride,
-    InvalidModelOverride,
-    InvalidModel,
+    NativeModelsUnavailable,
+    InvalidNativeModelsOverride,
     InvalidCamera,
     CameraPermissionDenied,
     CameraUnavailable(CameraFailure),
@@ -67,14 +62,10 @@ impl Display for VisionError {
             return write!(formatter, "the local camera could not be opened: {failure}");
         }
         formatter.write_str(match self {
-            Self::AssetsUnavailable => "the pinned local MediaPipe artifact is unavailable",
-            Self::InvalidRuntime => "the pinned local MediaPipe runtime failed verification",
-            Self::InvalidRuntimeOverride => {
-                "GSV_VISION_RUNTIME does not name a verified local runtime"
+            Self::NativeModelsUnavailable => "the pinned native gesture models are unavailable",
+            Self::InvalidNativeModelsOverride => {
+                "GSV_VISION_NATIVE_MODELS does not name a verified model artifact"
             }
-            Self::InvalidLibraryOverride => "GSV_MEDIAPIPE_LIBRARY does not name a local file",
-            Self::InvalidModelOverride => "GSV_VISION_MODEL does not name a local file",
-            Self::InvalidModel => "the local gesture model failed verification",
             Self::InvalidCamera => "GSV_VISION_CAMERA must be a camera index from 0 through 63",
             Self::CameraPermissionDenied => "camera permission was not granted",
             Self::CameraUnavailable(_) => "the local camera could not be opened",
@@ -129,14 +120,20 @@ fn run() -> Result<(), VisionError> {
 }
 
 fn run_pipeline(control: Option<HelperControl>, debug_window: bool) -> Result<(), VisionError> {
-    let assets = runtime::resolve_assets(
-        env::var_os("GSV_VISION_RUNTIME"),
-        env::var_os("GSV_MEDIAPIPE_LIBRARY"),
-        env::var_os("GSV_VISION_MODEL"),
+    let model_override = env::var_os("GSV_VISION_NATIVE_MODELS");
+    let explicit_model_override = model_override.is_some();
+    let models = native::runtime::resolve_models(
+        model_override,
         env::current_exe().ok(),
         Path::new(env!("CARGO_MANIFEST_DIR")),
     )
-    .map_err(VisionError::from)?;
+    .map_err(|()| {
+        if explicit_model_override {
+            VisionError::InvalidNativeModelsOverride
+        } else {
+            VisionError::NativeModelsUnavailable
+        }
+    })?;
     let camera_index = parse_camera_index(env::var_os("GSV_VISION_CAMERA").as_deref())?;
 
     let camera = CameraStream::open(CameraConfig {
@@ -156,7 +153,7 @@ fn run_pipeline(control: Option<HelperControl>, debug_window: bool) -> Result<()
         .name("gsv-vision-inference".to_string())
         .spawn(move || {
             inference_worker(
-                assets,
+                models,
                 worker_reader,
                 worker_stop,
                 annotated_sender,
@@ -307,7 +304,7 @@ fn control_presentation(
 }
 
 fn inference_worker(
-    assets: AssetPaths,
+    models: ModelPaths,
     reader: FrameReader,
     stop: Arc<AtomicBool>,
     output: Sender<AnnotatedFrame>,
@@ -315,7 +312,7 @@ fn inference_worker(
     failure: Sender<VisionError>,
     control_link: Option<HelperControl>,
 ) {
-    let Ok(mut recognizer) = GestureRecognizer::load(&assets.library, &assets.model) else {
+    let Ok(mut recognizer) = GestureRecognizer::load(&models) else {
         let _ = failure.try_send(VisionError::InferenceUnavailable);
         return;
     };
@@ -588,12 +585,9 @@ fn observe_controls(
 impl VisionError {
     fn lifecycle_state(self) -> gesture_protocol::LifecycleState {
         match self {
-            Self::AssetsUnavailable
-            | Self::InvalidRuntime
-            | Self::InvalidRuntimeOverride
-            | Self::InvalidLibraryOverride
-            | Self::InvalidModelOverride
-            | Self::InvalidModel => gesture_protocol::LifecycleState::AssetsUnavailable,
+            Self::NativeModelsUnavailable | Self::InvalidNativeModelsOverride => {
+                gesture_protocol::LifecycleState::AssetsUnavailable
+            }
             Self::InvalidCamera | Self::CameraPermissionDenied | Self::CameraUnavailable(_) => {
                 gesture_protocol::LifecycleState::CameraUnavailable
             }
@@ -602,19 +596,6 @@ impl VisionError {
             Self::InferenceUnavailable => gesture_protocol::LifecycleState::InferenceUnavailable,
             Self::WorkerUnavailable => gesture_protocol::LifecycleState::WorkerUnavailable,
             Self::ProtocolUnavailable => gesture_protocol::LifecycleState::ProtocolError,
-        }
-    }
-}
-
-impl From<runtime::Error> for VisionError {
-    fn from(error: runtime::Error) -> Self {
-        match error {
-            runtime::Error::AssetsUnavailable => Self::AssetsUnavailable,
-            runtime::Error::InvalidRuntime => Self::InvalidRuntime,
-            runtime::Error::InvalidRuntimeOverride => Self::InvalidRuntimeOverride,
-            runtime::Error::InvalidLibraryOverride => Self::InvalidLibraryOverride,
-            runtime::Error::InvalidModelOverride => Self::InvalidModelOverride,
-            runtime::Error::InvalidModel => Self::InvalidModel,
         }
     }
 }

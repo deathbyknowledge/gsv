@@ -36,7 +36,7 @@ fn runnable_helper_uses_the_current_event_channel_contract() {
         .env(SESSION_LOW_ENV, SESSION.low().to_string())
         // Hello is emitted before asset resolution. Fail there deliberately so
         // this executable-level contract test can never proceed to the camera.
-        .env("GSV_MEDIAPIPE_LIBRARY", "")
+        .env("GSV_VISION_NATIVE_MODELS", "")
         .stdin(Stdio::piped())
         .stdout(Stdio::null())
         .stderr(Stdio::null());

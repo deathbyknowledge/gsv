@@ -1,10 +1,10 @@
 # GSV gesture helper
 
 The `gestures` package builds the experimental `gsv-vision` local hand-control
-helper. It is a separate Rust process that owns the camera, MediaPipe Gesture
-Recognizer, temporal gesture policy, and optional diagnostic window. Camera
+helper. It is a separate Rust process that owns the camera, native Rust/tract
+inference, temporal gesture policy, and optional diagnostic window. Camera
 pixels never enter GPUI, the gateway, logs, files, or GSV application IPC. They
-are handed only to local MediaPipe inference and, in debug mode, the OS display
+are handed only to local inference and, in debug mode, the OS display
 system. A bounded private pipe carries a reliable session-scoped
 `start transcription` intent,
 request-scoped `stop transcription`, `send`, `mute`, and `unmute` intents, and
@@ -15,22 +15,17 @@ the random helper session. Reliable lifecycle, intent, and held-scroll events
 share a strict monotonic sequence, while Desktop applies its bounded local
 freshness policy before acting on received control.
 
-The runtime does not require Python. It consists of this Rust executable, a
-source-built native MediaPipe library, and the verified 8.0 MiB Gesture
-Recognizer task bundle. Bazel and its hermetic Python toolchain are used only
-to build that native artifact.
+The runtime consists of this Rust executable and four verified TFLite models
+from the pinned Gesture Recognizer bundle. tract executes the complete palm,
+landmark, and gesture pipeline. Python, Java, Bazel, and MediaPipe native code
+are not build or runtime dependencies.
 
 ## Build and run locally
 
 From the repository root:
 
 ```bash
-# Linux x86-64:
-./scripts/vision-mediapipe/build-linux.sh
-
-# Apple Silicon macOS:
-./scripts/vision-mediapipe/build-macos.sh
-
+./scripts/vision-native/prepare.sh
 cargo build --manifest-path host/Cargo.toml --package gestures
 GSV_GESTURES=1 cargo run --manifest-path host/apps/desktop/Cargo.toml
 ```
@@ -43,8 +38,8 @@ open a device without authorization. The default selection prefers the built-in
 camera and opens it by its stable platform identifier. Capture requests a native
 format explicitly and converts row-strided frames locally to packed RGB.
 
-The matching versioned runtime is discovered automatically from
-`host/target/vision-mediapipe/artifact/`. The headless mode above is the real local
+The matching versioned models are discovered automatically from
+`host/target/vision-native/artifact/`. The headless mode above is the real local
 control path. Use the diagnostic
 window against the same classifier with:
 
@@ -115,11 +110,8 @@ not infer speech silence or implement auto-send.
 - `GSV_VISION_CAMERA=1` selects a numeric camera from the current discovery
   order. Without an override, the built-in camera is preferred and the first
   discovered camera is the fallback.
-- `GSV_VISION_RUNTIME=/path/to/vision-runtime` overrides the complete runtime;
-  its manifest and every listed file are still verified.
-- `GSV_MEDIAPIPE_LIBRARY=/path/to/libgesture_recognizer.so` (or the macOS
-  `.dylib`) overrides the source-built library.
-- `GSV_VISION_MODEL=/path/to/gesture_recognizer.task` overrides the model path.
+- `GSV_VISION_NATIVE_MODELS=/path/to/gesture-recognizer-float16-1` overrides
+  the extracted model root; every model is still verified by size and SHA-256.
 - `GSV_VISION_HELPER=/path/to/gsv-vision` tells Desktop which helper executable
   to supervise.
 
@@ -127,6 +119,6 @@ An explicit missing override fails closed instead of silently falling back.
 The model must always match the pinned size and SHA-256 before the camera opens.
 Library/model/backend paths and native diagnostics are not printed.
 
-The artifact build contract, source patch, licenses, resource limits, and model
-redistribution caveat live in [`scripts/vision-mediapipe/README.md`](../../../scripts/vision-mediapipe/README.md).
+The artifact and parity contract lives in
+[`scripts/vision-native/README.md`](../../../scripts/vision-native/README.md).
 The proof is not part of release packaging yet.
