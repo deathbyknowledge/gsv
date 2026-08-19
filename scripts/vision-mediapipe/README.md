@@ -82,7 +82,7 @@ accelerator, Python, Java, and system-integration surfaces are disabled; only
 shared `core` and `imgproc` are built, with OpenCV's bundled zlib selected.
 
 The script stages a versioned directory below
-`target/vision-mediapipe/artifact/` containing:
+`host/target/vision-mediapipe/artifact/` containing:
 
 ```text
 BUILD-INFO

@@ -40,8 +40,8 @@ jobs:
               - '.github/workflows/ci.yml'
               - '.github/workflows/release.yml'
               - 'VERSION'
-              - 'Cargo.toml'
-              - 'Cargo.lock'
+              - 'host/Cargo.toml'
+              - 'host/Cargo.lock'
               - 'scripts/version.mjs'
               - 'scripts/test-host-installer.sh'
               - 'install.sh'
@@ -110,23 +110,23 @@ jobs:
               - 'ripgit/**'
             cli:
               - '.github/workflows/ci.yml'
-              - 'Cargo.toml'
-              - 'Cargo.lock'
+              - 'host/Cargo.toml'
+              - 'host/Cargo.lock'
               - 'host/apps/cli/**'
               - 'host/crates/gateway-client/**'
               - 'host/crates/config/**'
               - 'host/crates/desktop-protocol/**'
             machine:
               - '.github/workflows/ci.yml'
-              - 'Cargo.toml'
-              - 'Cargo.lock'
+              - 'host/Cargo.toml'
+              - 'host/Cargo.lock'
               - 'host/apps/machine/**'
               - 'host/crates/gateway-client/**'
               - 'host/crates/config/**'
             desktop:
               - '.github/workflows/ci.yml'
-              - 'Cargo.toml'
-              - 'Cargo.lock'
+              - 'host/Cargo.toml'
+              - 'host/Cargo.lock'
               - 'host/apps/desktop/**'
               - 'host/helpers/**'
               - 'scripts/vision-mediapipe/**'
@@ -137,8 +137,8 @@ jobs:
               - 'web/public/fonts/**'
             host_crates:
               - '.github/workflows/ci.yml'
-              - 'Cargo.toml'
-              - 'Cargo.lock'
+              - 'host/Cargo.toml'
+              - 'host/Cargo.lock'
               - 'host/crates/**'
 
   version-check:
@@ -355,12 +355,15 @@ jobs:
           components: rustfmt
       
       - name: Build
+        working-directory: host
         run: cargo build --locked --release --package gsv
 
       - name: Check formatting
+        working-directory: host
         run: cargo fmt --package gsv --check
       
       - name: Run tests
+        working-directory: host
         run: cargo test --locked --package gsv
 
   host-crates:
@@ -377,16 +380,19 @@ jobs:
           components: clippy, rustfmt
 
       - name: Check formatting
+        working-directory: host
         run: >-
           cargo fmt --package gateway-client --package host-config
           --package desktop-protocol --package gesture-protocol --check
 
       - name: Test shared crates
+        working-directory: host
         run: >-
           cargo test --locked --package gateway-client --package host-config
           --package desktop-protocol --package gesture-protocol
 
       - name: Lint shared crates
+        working-directory: host
         run: >-
           cargo clippy --locked --package gateway-client --package host-config
           --package desktop-protocol --package gesture-protocol --all-targets -- -D warnings
@@ -408,15 +414,19 @@ jobs:
           components: clippy, rustfmt
 
       - name: Check machine
+        working-directory: host
         run: cargo check --locked --package machine
 
       - name: Check formatting
+        working-directory: host
         run: cargo fmt --package machine --check
 
       - name: Test machine
+        working-directory: host
         run: cargo test --locked --package machine
 
       - name: Lint machine
+        working-directory: host
         run: cargo clippy --locked --package machine --all-targets -- -D warnings
 
   desktop-build:
@@ -456,21 +466,25 @@ jobs:
         run: bash -n scripts/vision-mediapipe/build-linux.sh scripts/vision-mediapipe/build-macos.sh
 
       - name: Check Desktop and helpers
+        working-directory: host
         run: >-
           cargo check --locked --package desktop --package transcriber
           --package gestures --package gesture-protocol
 
       - name: Check formatting
+        working-directory: host
         run: >-
           cargo fmt --package desktop --package transcriber
           --package gestures --package gesture-protocol --check
 
       - name: Test Desktop and helpers
+        working-directory: host
         run: >-
           cargo test --locked --package desktop --package transcriber
           --package gestures --package gesture-protocol
 
       - name: Lint Desktop and helpers
+        working-directory: host
         run: >-
           cargo clippy --locked --package desktop --package transcriber
           --package gestures --package gesture-protocol --all-targets -- -D warnings

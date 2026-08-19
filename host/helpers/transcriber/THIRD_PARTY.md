@@ -1,8 +1,8 @@
 # GSV voice-input notices
 
 Distributions that include `gsv-transcribe` must include this file beside the helper binary. The
-Rust dependency versions are locked in `Cargo.lock`; their license metadata and source locations
-are available through `cargo metadata --manifest-path Cargo.toml`. The native inference components
+Rust dependency versions are locked in `host/Cargo.lock`; their license metadata and source locations
+are available through `cargo metadata --manifest-path host/Cargo.toml`. The native inference components
 and downloaded model have the notices reproduced below.
 
 ## transcribe.cpp

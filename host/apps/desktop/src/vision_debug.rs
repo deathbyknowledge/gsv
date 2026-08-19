@@ -942,7 +942,7 @@ fn development_helper_candidates(
     target_override: Option<PathBuf>,
     debug: bool,
 ) -> Vec<PathBuf> {
-    let workspace_root = manifest_dir.ancestors().nth(3).unwrap_or(manifest_dir);
+    let workspace_root = manifest_dir.ancestors().nth(2).unwrap_or(manifest_dir);
     let mut target_dirs = Vec::with_capacity(2);
     if let Some(target) = target_override {
         target_dirs.push(if target.is_absolute() {
@@ -1070,7 +1070,7 @@ mod tests {
         let current_executable = installed.join(format!("gsv-desktop{}", env::consts::EXE_SUFFIX));
         let sibling = installed.join(format!("gsv-vision{}", env::consts::EXE_SUFFIX));
         let workspace_helper = workspace
-            .join("target/debug")
+            .join("host/target/debug")
             .join(format!("gsv-vision{}", env::consts::EXE_SUFFIX));
         fs::write(&override_path, []).expect("override helper");
         fs::write(&sibling, []).expect("sibling helper");

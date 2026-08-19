@@ -24,3 +24,13 @@ names remain stable where they are part of an existing distribution or service
 contract. See
 [`docs/architecture/rust-host-applications.md`](../docs/architecture/rust-host-applications.md)
 for ownership and lifecycle details.
+
+`host/` is a self-contained Cargo workspace. From the repository root:
+
+```bash
+cd host
+cargo build --workspace
+```
+
+Build artifacts are written to `host/target/`. `ripgit/` is a separate Rust
+project with its own manifest and lockfile.

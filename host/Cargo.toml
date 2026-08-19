@@ -1,10 +1,9 @@
 [workspace]
 members = [
-    "host/apps/*",
-    "host/crates/*",
-    "host/helpers/*",
+    "apps/*",
+    "crates/*",
+    "helpers/*",
 ]
-exclude = ["ripgit"]
 resolver = "2"
 
 [workspace.package]

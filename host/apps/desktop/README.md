@@ -81,7 +81,7 @@ host and the helper, then opt in explicitly. Headless controls use:
 # Apple Silicon macOS:
 ./scripts/vision-mediapipe/build-macos.sh
 
-cargo build --package gestures
+cargo build --manifest-path host/Cargo.toml --package gestures
 GSV_GESTURES=1 cargo run --manifest-path host/apps/desktop/Cargo.toml
 ```
 
@@ -142,7 +142,7 @@ release yet.
   with precedence over the saved preference; changing the saved choice does not clear the override.
   Build the isolated helper first with
   `cargo build --release --manifest-path host/helpers/transcriber/Cargo.toml`. Workspace builds place
-  it under the root `target/release` directory. For a distributable build, place that helper and its
+  it under `host/target/release`. For a distributable build, place that helper and its
   `THIRD_PARTY.md` beside the app binary.
 - `Cmd/Ctrl+.` stops the active run.
 - `Cmd/Ctrl+Shift+A` opens the attachment picker. Text is optional when files are attached.

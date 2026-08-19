@@ -974,7 +974,7 @@ fn development_helper_candidates(
     target_override: Option<PathBuf>,
     debug: bool,
 ) -> Vec<PathBuf> {
-    let workspace_root = manifest_dir.ancestors().nth(3).unwrap_or(manifest_dir);
+    let workspace_root = manifest_dir.ancestors().nth(2).unwrap_or(manifest_dir);
     let mut target_dirs = Vec::with_capacity(2);
     if let Some(target) = target_override {
         target_dirs.push(if target.is_absolute() {
@@ -1856,17 +1856,17 @@ mod tests {
     }
 
     #[test]
-    fn workspace_helper_candidates_prefer_the_root_target() {
+    fn workspace_helper_candidates_prefer_the_host_target() {
         let manifest = Path::new("/work/gsv/host/apps/desktop");
         let candidates = development_helper_candidates(manifest, None, true);
         assert_eq!(
             candidates[0],
-            Path::new("/work/gsv/target/debug")
+            Path::new("/work/gsv/host/target/debug")
                 .join(format!("gsv-transcribe{}", std::env::consts::EXE_SUFFIX))
         );
         assert_eq!(
             candidates[1],
-            Path::new("/work/gsv/target/release")
+            Path::new("/work/gsv/host/target/release")
                 .join(format!("gsv-transcribe{}", std::env::consts::EXE_SUFFIX))
         );
         assert!(candidates

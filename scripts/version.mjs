@@ -153,7 +153,7 @@ function syncNpmLockVersions(version) {
 
 function syncSourceVersions(version) {
   replaceInFile(
-    "Cargo.toml",
+    "host/Cargo.toml",
     /^(\[workspace\.package\]\nversion = ")[^"]+("$)/m,
     `$1${version}$2`,
   );
@@ -217,7 +217,7 @@ function syncSourceVersions(version) {
 function syncCargoLocks(version) {
   for (const packageName of WORKSPACE_PACKAGES) {
     replaceInFile(
-      "Cargo.lock",
+      "host/Cargo.lock",
       new RegExp(`(name = "${packageName}"\\nversion = ")[^"]+(")`),
       `$1${version}$2`,
     );
@@ -234,7 +234,7 @@ function verifyWorkspaceVersionInheritance() {
     const manifest = readFileSync(join(ROOT, relativePath), "utf8");
     const packageSection = manifest.match(/\[package\]\n([\s\S]*?)(?=\n\[|$)/)?.[1];
     if (!packageSection || !/^version\.workspace = true$/m.test(packageSection)) {
-      fail(`${relativePath} must inherit version.workspace from the root Cargo.toml`);
+      fail(`${relativePath} must inherit version.workspace from host/Cargo.toml`);
     }
     if (/^version = /m.test(packageSection)) {
       fail(`${relativePath} must not declare an independent package version`);
@@ -245,8 +245,8 @@ function verifyWorkspaceVersionInheritance() {
 function managedFiles() {
   const files = new Set([
     "VERSION",
-    "Cargo.toml",
-    "Cargo.lock",
+    "host/Cargo.toml",
+    "host/Cargo.lock",
     "package.json",
     "package-lock.json",
     "ripgit/Cargo.toml",

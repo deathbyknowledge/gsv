@@ -117,6 +117,7 @@ jobs:
 
       - name: Build host tools (Linux, rustls)
         if: runner.os == 'Linux'
+        working-directory: host
         run: >-
           cargo build --locked --release --target ${{ matrix.target }}
           --package gsv --package machine --no-default-features
@@ -124,6 +125,7 @@ jobs:
 
       - name: Build host tools (native TLS)
         if: runner.os != 'Linux'
+        working-directory: host
         run: >-
           cargo build --locked --release --target ${{ matrix.target }}
           --package gsv --package machine
@@ -135,8 +137,8 @@ jobs:
           mkdir -p release
           suffix=""
           if [ "${{ runner.os }}" = "Windows" ]; then suffix=".exe"; fi
-          cp "target/${{ matrix.target }}/release/gsv${suffix}" "release/gsv-${{ matrix.platform }}${suffix}"
-          cp "target/${{ matrix.target }}/release/gsvd${suffix}" "release/gsvd-${{ matrix.platform }}${suffix}"
+          cp "host/target/${{ matrix.target }}/release/gsv${suffix}" "release/gsv-${{ matrix.platform }}${suffix}"
+          cp "host/target/${{ matrix.target }}/release/gsvd${suffix}" "release/gsvd-${{ matrix.platform }}${suffix}"
 
       - name: Upload host tools
         uses: actions/upload-artifact@v4
@@ -198,6 +200,7 @@ jobs:
             pkg-config
 
       - name: Build Desktop and transcription helper
+        working-directory: host
         run: >-
           cargo build --locked --release --target ${{ matrix.target }}
           --package desktop --package transcriber
@@ -207,8 +210,8 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p release
-          cp "target/${{ matrix.target }}/release/gsv-desktop" "release/gsv-desktop-${{ matrix.platform }}"
-          cp "target/${{ matrix.target }}/release/gsv-transcribe" "release/gsv-transcribe-${{ matrix.platform }}"
+          cp "host/target/${{ matrix.target }}/release/gsv-desktop" "release/gsv-desktop-${{ matrix.platform }}"
+          cp "host/target/${{ matrix.target }}/release/gsv-transcribe" "release/gsv-transcribe-${{ matrix.platform }}"
           if [ "${{ matrix.platform }}" = "linux-x64" ]; then
             cp host/helpers/transcriber/THIRD_PARTY.md release/gsv-transcribe-THIRD_PARTY.md
           fi

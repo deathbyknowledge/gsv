@@ -31,12 +31,12 @@ From the repository root:
 # Apple Silicon macOS:
 ./scripts/vision-mediapipe/build-macos.sh
 
-cargo build --package gestures
+cargo build --manifest-path host/Cargo.toml --package gestures
 GSV_GESTURES=1 cargo run --manifest-path host/apps/desktop/Cargo.toml
 ```
 
 The matching versioned runtime is discovered automatically from
-`target/vision-mediapipe/artifact/`. The headless mode above is the real local
+`host/target/vision-mediapipe/artifact/`. The headless mode above is the real local
 control path. Use the diagnostic
 window against the same classifier with:
 

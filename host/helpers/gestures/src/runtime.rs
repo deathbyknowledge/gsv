@@ -168,7 +168,7 @@ fn runtime_candidates(current_executable: Option<PathBuf>, manifest_dir: &Path) 
     if let Some(parent) = current_executable.as_deref().and_then(Path::parent) {
         candidates.push(parent.join("vision-runtime"));
     }
-    if let Some(workspace_root) = manifest_dir.ancestors().nth(3) {
+    if let Some(workspace_root) = manifest_dir.ancestors().nth(2) {
         if let Some(artifact_name) = development_artifact_name() {
             candidates.push(
                 workspace_root

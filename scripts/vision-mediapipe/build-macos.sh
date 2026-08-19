@@ -200,7 +200,7 @@ require_positive_integer GSV_MEDIAPIPE_LOCAL_CPU_RESOURCES "$bazel_local_cpu_res
 require_positive_integer GSV_MEDIAPIPE_LOCAL_RAM_RESOURCES_MB "$bazel_local_ram_resources_mb"
 readonly bazel_jobs bazel_local_cpu_resources bazel_local_ram_resources_mb
 
-work_dir="${GSV_MEDIAPIPE_WORK_DIR:-$repository_root/target/vision-mediapipe}"
+work_dir="${GSV_MEDIAPIPE_WORK_DIR:-$repository_root/host/target/vision-mediapipe}"
 [[ -n "$work_dir" ]] || die "work directory must not be empty"
 mkdir -p "$work_dir"
 readonly work_dir="$(CDPATH= cd -- "$work_dir" && pwd -P)"
