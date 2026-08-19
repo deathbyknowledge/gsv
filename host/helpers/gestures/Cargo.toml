@@ -13,6 +13,8 @@ minifb = "0.28.0"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sha2 = "0.10"
+rayon = "1"
+tract-linalg = { version = "=0.23.4", features = ["multithread-mm"] }
 tract-tflite = "=0.23.4"
 
 [target.'cfg(unix)'.dependencies]

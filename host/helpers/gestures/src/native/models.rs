@@ -1,6 +1,8 @@
 use std::path::Path;
 use std::sync::Arc;
 
+use rayon::ThreadPoolBuilder;
+use tract_linalg::multithread::Executor;
 use tract_tflite::prelude::*;
 
 use super::runtime::ModelPaths;
@@ -24,11 +26,12 @@ pub(super) struct LandmarkOutputs {
 
 impl Models {
     pub(super) fn load(paths: &ModelPaths) -> Result<Self, Error> {
+        let executor = inference_executor()?;
         Ok(Self {
-            palm_detector: load(&paths.palm_detector)?,
-            landmark_detector: load(&paths.landmark_detector)?,
-            gesture_embedder: load(&paths.gesture_embedder)?,
-            gesture_classifier: load(&paths.gesture_classifier)?,
+            palm_detector: load(&paths.palm_detector, &executor)?,
+            landmark_detector: load(&paths.landmark_detector, &executor)?,
+            gesture_embedder: load(&paths.gesture_embedder, &executor)?,
+            gesture_classifier: load(&paths.gesture_classifier, &executor)?,
         })
     }
 
@@ -89,12 +92,54 @@ impl Models {
     }
 }
 
-fn load(path: &Path) -> Result<Plan, Error> {
+fn load(path: &Path, executor: &Executor) -> Result<Plan, Error> {
     tract_tflite::tflite()
         .model_for_path(path)
         .and_then(|model| model.into_optimized())
-        .and_then(|model| model.into_runnable())
+        .and_then(|model| {
+            model.into_runnable_with_options(&RunOptions {
+                executor: Some(executor.clone()),
+                ..RunOptions::default()
+            })
+        })
         .map_err(|_| Error::InvalidModel)
+}
+
+fn inference_executor() -> Result<Executor, Error> {
+    let threads = configured_inference_threads();
+    if threads == 1 {
+        return Ok(Executor::SingleThread);
+    }
+    ThreadPoolBuilder::new()
+        .num_threads(threads)
+        .thread_name(|index| format!("gsv-vision-inference-{index}"))
+        .build()
+        .map(|pool| Executor::MultiThread(Arc::new(pool)))
+        .map_err(|_| Error::InvalidModel)
+}
+
+pub(super) fn configured_inference_threads() -> usize {
+    selected_inference_threads(
+        std::thread::available_parallelism().map_or(1, usize::from),
+        benchmark_thread_override(),
+    )
+}
+
+fn selected_inference_threads(available: usize, requested: Option<usize>) -> usize {
+    let available = available.max(1);
+    requested.unwrap_or(available.min(4)).clamp(1, available)
+}
+
+#[cfg(test)]
+fn benchmark_thread_override() -> Option<usize> {
+    std::env::var("GSV_VISION_BENCHMARK_THREADS")
+        .ok()
+        .and_then(|value| value.parse().ok())
+}
+
+#[cfg(not(test))]
+fn benchmark_thread_override() -> Option<usize> {
+    None
 }
 
 fn run_one(plan: &Plan, shape: &[usize], values: &[f32]) -> Result<TVec<TValue>, Error> {
@@ -124,4 +169,18 @@ fn tensor_array<const N: usize>(value: &TValue) -> Result<[f32; N], Error> {
     tensor_values(value, N)?
         .try_into()
         .map_err(|_| Error::Inference)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::selected_inference_threads;
+
+    #[test]
+    fn inference_threads_default_to_four_and_stay_within_hardware_bounds() {
+        assert_eq!(selected_inference_threads(1, None), 1);
+        assert_eq!(selected_inference_threads(12, None), 4);
+        assert_eq!(selected_inference_threads(12, Some(2)), 2);
+        assert_eq!(selected_inference_threads(12, Some(0)), 1);
+        assert_eq!(selected_inference_threads(12, Some(100)), 12);
+    }
 }

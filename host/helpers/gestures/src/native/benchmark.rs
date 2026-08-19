@@ -53,6 +53,7 @@ struct BenchmarkReport {
     git_revision: String,
     working_tree_dirty: bool,
     rustc_version: String,
+    inference_threads: usize,
     system: SystemReport,
     warmup_iterations: usize,
     measured_iterations: usize,
@@ -182,6 +183,7 @@ fn benchmarks_native_pipeline() {
         git_revision: benchmark_environment("GSV_VISION_BENCHMARK_REVISION", "unknown"),
         working_tree_dirty: benchmark_environment("GSV_VISION_BENCHMARK_DIRTY", "false") == "true",
         rustc_version: benchmark_environment("GSV_VISION_BENCHMARK_RUSTC", "unknown"),
+        inference_threads: super::models::configured_inference_threads(),
         system: SystemReport {
             operating_system: std::env::consts::OS,
             architecture: std::env::consts::ARCH,

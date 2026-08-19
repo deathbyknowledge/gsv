@@ -2571,10 +2571,12 @@ dependencies = [
  "image",
  "libc",
  "minifb",
+ "rayon",
  "serde",
  "serde_json",
  "sha2 0.10.9",
  "tempfile",
+ "tract-linalg",
  "tract-tflite",
 ]
 
@@ -8007,6 +8009,7 @@ dependencies = [
  "minijinja",
  "num-traits",
  "pastey 0.2.3",
+ "rayon",
  "scan_fmt",
  "tract-data",
  "walkdir",

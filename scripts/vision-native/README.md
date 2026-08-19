@@ -45,6 +45,10 @@ loading, and report serialization are outside the measured intervals.
 Production recognition uses a compile-time no-op profiler, so stage measurement
 adds no runtime timers to normal builds.
 
+Native inference uses up to four worker threads. For controlled benchmark
+experiments only, `GSV_VISION_BENCHMARK_THREADS=1` (or another bounded count)
+overrides that selection and is recorded in the report.
+
 For a manually assembled distribution, put the extracted artifact beside
 `gsv-vision` as `vision-models/` (including its `model/` child), or set
 `GSV_VISION_NATIVE_MODELS` to the artifact root. Runtime loading always verifies
