@@ -3084,7 +3084,10 @@ dependencies = [
  "libloading",
  "minifb",
  "nokhwa",
+ "serde",
+ "serde_json",
  "sha2 0.10.9",
+ "tempfile",
 ]
 
 [[package]]

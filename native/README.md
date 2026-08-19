@@ -71,11 +71,16 @@ selected automatically when `WAYLAND_DISPLAY` is present; no Cargo feature is ne
 
 The optional vision helper is a separate Rust process. It owns the camera,
 MediaPipe inference, and temporal gesture recognition; it never sends frames or
-landmarks to Desktop or the gateway. Build the pinned Linux x86-64 artifact and
-helper, then opt in explicitly. Headless controls use:
+landmarks to Desktop or the gateway. Build the pinned runtime for the native
+host and the helper, then opt in explicitly. Headless controls use:
 
 ```bash
+# Linux x86-64:
 ./scripts/vision-mediapipe/build-linux.sh
+
+# Apple Silicon macOS:
+./scripts/vision-mediapipe/build-macos.sh
+
 cargo build --package gsv-vision
 GSV_GESTURES=1 cargo run --manifest-path native/Cargo.toml
 ```

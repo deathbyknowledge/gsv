@@ -453,8 +453,8 @@ jobs:
             patchelf \
             pkg-config
 
-      - name: Check vision artifact script
-        run: bash -n scripts/vision-mediapipe/build-linux.sh
+      - name: Check vision artifact scripts
+        run: bash -n scripts/vision-mediapipe/build-linux.sh scripts/vision-mediapipe/build-macos.sh
 
       - name: Check Desktop and helpers
         run: >-

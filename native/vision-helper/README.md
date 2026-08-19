@@ -19,17 +19,24 @@ source-built native MediaPipe library, and the verified 8.0 MiB Gesture
 Recognizer task bundle. Bazel and its hermetic Python toolchain are used only
 to build that native artifact.
 
-## Run on Linux x86-64
+## Build and run locally
 
 From the repository root:
 
 ```bash
+# Linux x86-64:
 ./scripts/vision-mediapipe/build-linux.sh
+
+# Apple Silicon macOS:
+./scripts/vision-mediapipe/build-macos.sh
+
 cargo build --package gsv-vision
 GSV_GESTURES=1 cargo run --manifest-path native/Cargo.toml
 ```
 
-The headless mode above is the real local control path. Use the diagnostic
+The matching versioned runtime is discovered automatically from
+`target/vision-mediapipe/artifact/`. The headless mode above is the real local
+control path. Use the diagnostic
 window against the same classifier with:
 
 ```bash
@@ -97,8 +104,10 @@ not infer speech silence or implement auto-send.
 ## Local overrides
 
 - `GSV_VISION_CAMERA=1` selects a numeric local camera index (default `0`).
-- `GSV_MEDIAPIPE_LIBRARY=/path/to/libgesture_recognizer.so` overrides the
-  source-built library.
+- `GSV_VISION_RUNTIME=/path/to/vision-runtime` overrides the complete runtime;
+  its manifest and every listed file are still verified.
+- `GSV_MEDIAPIPE_LIBRARY=/path/to/libgesture_recognizer.so` (or the macOS
+  `.dylib`) overrides the source-built library.
 - `GSV_VISION_MODEL=/path/to/gesture_recognizer.task` overrides the model path.
 - `GSV_VISION_HELPER=/path/to/gsv-vision` tells Desktop which helper executable
   to supervise.

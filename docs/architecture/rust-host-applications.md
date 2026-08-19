@@ -92,9 +92,11 @@ the correlated utterance final, submits it through the ordinary conversation
 owner, and rebases the continuing voice draft; a gesture send never masquerades
 as a terminal transcription event. Its runtime is Rust plus a pinned
 native MediaPipe library and model—Python and Bazel are build tools, not
-Desktop runtime dependencies. `gsv-vision` is not part of the release
-distribution until permissions, packaging, additional platforms, and the
-model-redistribution policy are accepted deliberately.
+Desktop runtime dependencies. Linux x86-64 and Apple Silicon development
+artifacts share one versioned, hash-verified runtime manifest and the same C
+ABI. `gsv-vision` is not part of the release distribution until signed macOS
+application packaging, camera permissions, and the model-redistribution policy
+are accepted deliberately.
 
 The local protocol exposes `activate`, redacted `status`, `new`, `use`, and the
 narrow `microphone list/use/default` operations. Its endpoint must be accessible

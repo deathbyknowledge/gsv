@@ -5,14 +5,13 @@ mod debug_window;
 mod mediapipe;
 mod observation;
 mod overlay;
+mod runtime;
 
 use std::env;
 use std::error::Error as StdError;
-use std::ffi::{OsStr, OsString};
+use std::ffi::OsStr;
 use std::fmt::{self, Display, Formatter};
-use std::fs::File;
-use std::io::{self, BufReader, Read};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::process::ExitCode;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -23,7 +22,6 @@ use crossbeam_channel::{bounded, Receiver, Sender, TryRecvError, TrySendError};
 use gsv_vision_control::{
     ControlStatus, GestureCandidate, GestureContext, GestureProgress, ScrollState,
 };
-use sha2::{Digest, Sha256};
 
 use crate::camera::{CameraConfig, CameraStream, FrameReader};
 use crate::control::{
@@ -34,9 +32,8 @@ use crate::debug_window::{DebugWindow, DebugWindowConfig};
 use crate::mediapipe::GestureRecognizer;
 use crate::observation::{FrameView, Observation};
 use crate::overlay::ControlPresentationDiagnostic;
+use crate::runtime::AssetPaths;
 
-const MODEL_BYTES: u64 = 8_373_440;
-const MODEL_SHA256: &str = "97952348cf6a6a4915c2ea1496b4b37ebabc50cbbf80571435643c455f2b0482";
 const PARENT_STDIN_WATCHDOG: &str = "GSV_VISION_PARENT_STDIN";
 const DEBUG_WINDOW_MARKER: &str = "GSV_VISION_DEBUG_WINDOW";
 const FIRST_FRAME_TIMEOUT: Duration = Duration::from_secs(5);
@@ -49,6 +46,8 @@ const MAX_CAMERA_INDEX: u32 = 63;
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum VisionError {
     AssetsUnavailable,
+    InvalidRuntime,
+    InvalidRuntimeOverride,
     InvalidLibraryOverride,
     InvalidModelOverride,
     InvalidModel,
@@ -65,6 +64,10 @@ impl Display for VisionError {
     fn fmt(&self, formatter: &mut Formatter<'_>) -> fmt::Result {
         formatter.write_str(match self {
             Self::AssetsUnavailable => "the pinned local MediaPipe artifact is unavailable",
+            Self::InvalidRuntime => "the pinned local MediaPipe runtime failed verification",
+            Self::InvalidRuntimeOverride => {
+                "GSV_VISION_RUNTIME does not name a verified local runtime"
+            }
             Self::InvalidLibraryOverride => "GSV_MEDIAPIPE_LIBRARY does not name a local file",
             Self::InvalidModelOverride => "GSV_VISION_MODEL does not name a local file",
             Self::InvalidModel => "the local gesture model failed verification",
@@ -80,11 +83,6 @@ impl Display for VisionError {
 }
 
 impl StdError for VisionError {}
-
-struct AssetPaths {
-    library: PathBuf,
-    model: PathBuf,
-}
 
 struct AnnotatedFrame {
     frame: Arc<FrameView>,
@@ -126,13 +124,14 @@ fn run() -> Result<(), VisionError> {
 }
 
 fn run_pipeline(control: Option<HelperControl>, debug_window: bool) -> Result<(), VisionError> {
-    let assets = resolve_assets(
+    let assets = runtime::resolve_assets(
+        env::var_os("GSV_VISION_RUNTIME"),
         env::var_os("GSV_MEDIAPIPE_LIBRARY"),
         env::var_os("GSV_VISION_MODEL"),
         env::current_exe().ok(),
         Path::new(env!("CARGO_MANIFEST_DIR")),
-    )?;
-    verify_model(&assets.model)?;
+    )
+    .map_err(VisionError::from)?;
     let camera_index = parse_camera_index(env::var_os("GSV_VISION_CAMERA").as_deref())?;
 
     let camera = CameraStream::open(CameraConfig {
@@ -585,6 +584,8 @@ impl VisionError {
     fn lifecycle_state(self) -> gsv_vision_control::LifecycleState {
         match self {
             Self::AssetsUnavailable
+            | Self::InvalidRuntime
+            | Self::InvalidRuntimeOverride
             | Self::InvalidLibraryOverride
             | Self::InvalidModelOverride
             | Self::InvalidModel => gsv_vision_control::LifecycleState::AssetsUnavailable,
@@ -596,6 +597,19 @@ impl VisionError {
             Self::InferenceUnavailable => gsv_vision_control::LifecycleState::InferenceUnavailable,
             Self::WorkerUnavailable => gsv_vision_control::LifecycleState::WorkerUnavailable,
             Self::ProtocolUnavailable => gsv_vision_control::LifecycleState::ProtocolError,
+        }
+    }
+}
+
+impl From<runtime::Error> for VisionError {
+    fn from(error: runtime::Error) -> Self {
+        match error {
+            runtime::Error::AssetsUnavailable => Self::AssetsUnavailable,
+            runtime::Error::InvalidRuntime => Self::InvalidRuntime,
+            runtime::Error::InvalidRuntimeOverride => Self::InvalidRuntimeOverride,
+            runtime::Error::InvalidLibraryOverride => Self::InvalidLibraryOverride,
+            runtime::Error::InvalidModelOverride => Self::InvalidModelOverride,
+            runtime::Error::InvalidModel => Self::InvalidModel,
         }
     }
 }
@@ -644,113 +658,8 @@ fn parse_camera_index(value: Option<&OsStr>) -> Result<u32, VisionError> {
     Ok(parsed)
 }
 
-fn resolve_assets(
-    library_override: Option<OsString>,
-    model_override: Option<OsString>,
-    current_executable: Option<PathBuf>,
-    manifest_dir: &Path,
-) -> Result<AssetPaths, VisionError> {
-    let (library_candidates, model_candidates) = asset_candidates(current_executable, manifest_dir);
-    let library = resolve_asset(
-        library_override,
-        &library_candidates,
-        VisionError::InvalidLibraryOverride,
-    )?;
-    let model = resolve_asset(
-        model_override,
-        &model_candidates,
-        VisionError::InvalidModelOverride,
-    )?;
-    Ok(AssetPaths { library, model })
-}
-
-fn resolve_asset(
-    explicit: Option<OsString>,
-    candidates: &[PathBuf],
-    invalid_override: VisionError,
-) -> Result<PathBuf, VisionError> {
-    if let Some(explicit) = explicit {
-        let path = PathBuf::from(explicit);
-        return path.is_file().then_some(path).ok_or(invalid_override);
-    }
-    candidates
-        .iter()
-        .find(|candidate| candidate.is_file())
-        .cloned()
-        .ok_or(VisionError::AssetsUnavailable)
-}
-
-fn asset_candidates(
-    current_executable: Option<PathBuf>,
-    manifest_dir: &Path,
-) -> (Vec<PathBuf>, Vec<PathBuf>) {
-    let library_name = if cfg!(target_os = "macos") {
-        "libgesture_recognizer.dylib"
-    } else {
-        "libgesture_recognizer.so"
-    };
-    let model_name = "gesture_recognizer.task";
-    let mut libraries = Vec::new();
-    let mut models = Vec::new();
-    if let Some(parent) = current_executable.as_deref().and_then(Path::parent) {
-        libraries.push(parent.join(library_name));
-        libraries.push(parent.join("lib").join(library_name));
-        models.push(parent.join(model_name));
-        models.push(parent.join("model").join(model_name));
-    }
-
-    if let Some(workspace_root) = manifest_dir.parent().and_then(Path::parent) {
-        if let Some(artifact_name) = development_artifact_name() {
-            let artifact = workspace_root
-                .join("target/vision-mediapipe/artifact")
-                .join(artifact_name);
-            libraries.push(artifact.join("lib").join(library_name));
-            models.push(artifact.join("model").join(model_name));
-        }
-    }
-    (libraries, models)
-}
-
-fn development_artifact_name() -> Option<&'static str> {
-    match (env::consts::OS, env::consts::ARCH) {
-        ("linux", "x86_64") => Some("linux-x86_64-mediapipe-1.0.0"),
-        _ => None,
-    }
-}
-
-fn verify_model(path: &Path) -> Result<(), VisionError> {
-    let file = File::open(path).map_err(|_| VisionError::InvalidModel)?;
-    if file
-        .metadata()
-        .map_err(|_| VisionError::InvalidModel)?
-        .len()
-        != MODEL_BYTES
-    {
-        return Err(VisionError::InvalidModel);
-    }
-    if digest_hex(BufReader::new(file)).map_err(|_| VisionError::InvalidModel)? != MODEL_SHA256 {
-        return Err(VisionError::InvalidModel);
-    }
-    Ok(())
-}
-
-fn digest_hex(mut input: impl Read) -> io::Result<String> {
-    let mut digest = Sha256::new();
-    let mut buffer = [0_u8; 64 * 1024];
-    loop {
-        let read = input.read(&mut buffer)?;
-        if read == 0 {
-            break;
-        }
-        digest.update(&buffer[..read]);
-    }
-    Ok(format!("{:x}", digest.finalize()))
-}
-
 #[cfg(test)]
 mod tests {
-    use std::io::Cursor;
-
     use super::*;
 
     const ACTIVE: GestureContext = GestureContext::Active {
@@ -787,14 +696,6 @@ mod tests {
     }
 
     #[test]
-    fn digest_is_streamed_and_stable() {
-        assert_eq!(
-            digest_hex(Cursor::new(b"abc")).expect("hash input"),
-            "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
-        );
-    }
-
-    #[test]
     fn video_timestamps_are_strictly_increasing() {
         let start = Instant::now();
         let mut first = None;
@@ -825,14 +726,6 @@ mod tests {
             started_at,
             started_at + FIRST_FRAME_TIMEOUT + Duration::from_secs(1),
         ));
-    }
-
-    #[test]
-    fn known_development_artifact_is_architecture_specific() {
-        assert_eq!(
-            development_artifact_name().is_some(),
-            env::consts::OS == "linux" && env::consts::ARCH == "x86_64"
-        );
     }
 
     #[test]
