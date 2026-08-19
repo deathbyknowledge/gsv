@@ -285,15 +285,41 @@ impl CameraStream {
 
 fn select_camera_device(index: Option<u32>) -> Result<Device, CameraError> {
     let devices = cameras::devices().map_err(CameraError::from)?;
-    let selected = match index {
-        Some(index) => devices.into_iter().nth(index as usize),
-        None => devices
-            .iter()
-            .find(|device| device.transport == Transport::BuiltIn)
-            .cloned()
-            .or_else(|| devices.into_iter().next()),
-    };
-    selected.ok_or(CameraError::Open(CameraFailure::DeviceUnavailable))
+    if let Some(index) = index {
+        return devices
+            .into_iter()
+            .nth(index as usize)
+            .ok_or(CameraError::Open(CameraFailure::DeviceUnavailable));
+    }
+
+    let (built_in, other): (Vec<_>, Vec<_>) = devices
+        .into_iter()
+        .partition(|device| device.transport == Transport::BuiltIn);
+    select_capture_candidate(built_in.into_iter().chain(other), |device| {
+        cameras::probe(device)
+            .map(|capabilities| !capabilities.formats.is_empty())
+            .map_err(CameraError::from)
+    })
+}
+
+fn select_capture_candidate<T>(
+    candidates: impl IntoIterator<Item = T>,
+    mut probe: impl FnMut(&T) -> Result<bool, CameraError>,
+) -> Result<T, CameraError> {
+    let mut first_error = None;
+    for candidate in candidates {
+        match probe(&candidate) {
+            Ok(true) => return Ok(candidate),
+            Ok(_) => {}
+            Err(error) => {
+                if matches!(error, CameraError::PermissionDenied) {
+                    return Err(error);
+                }
+                first_error.get_or_insert(error);
+            }
+        }
+    }
+    Err(first_error.unwrap_or(CameraError::Open(CameraFailure::DeviceUnavailable)))
 }
 
 impl Drop for CameraStream {
@@ -635,6 +661,19 @@ mod tests {
             pixel_format_preference(PixelFormat::Yuyv)
                 < pixel_format_preference(PixelFormat::Bgra8)
         );
+    }
+
+    #[test]
+    fn default_selection_skips_devices_without_capture_formats() {
+        let mut probed = Vec::new();
+        let selected = select_capture_candidate([1_u8, 0], |candidate| {
+            probed.push(*candidate);
+            Ok(*candidate == 0)
+        })
+        .expect("capture device");
+
+        assert_eq!(selected, 0);
+        assert_eq!(probed, [1, 0]);
     }
 
     #[test]
