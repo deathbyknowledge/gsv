@@ -38,12 +38,12 @@ Measure the optimized native pipeline with:
 The benchmark warms the models, then measures full palm discovery, continuous
 one-hand tracking, and processing two known hand regions over checksum-pinned
 images. It reports overall throughput plus per-stage minimum, median, p95,
-maximum, and mean latency. The machine-readable JSON is written to the ignored
-`host/target/vision-native/benchmark/latest.json`; pass another path as the
-first argument to retain named runs. Image decoding, model loading, and report
-serialization are outside the measured intervals. Production recognition uses
-a compile-time no-op profiler, so stage measurement adds no runtime timers to
-normal builds.
+maximum, mean latency, and execution count. The machine-readable JSON is
+written to the ignored `host/target/vision-native/benchmark/latest.json`; pass
+another path as the first argument to retain named runs. Image decoding, model
+loading, and report serialization are outside the measured intervals.
+Production recognition uses a compile-time no-op profiler, so stage measurement
+adds no runtime timers to normal builds.
 
 For a manually assembled distribution, put the extracted artifact beside
 `gsv-vision` as `vision-models/` (including its `model/` child), or set

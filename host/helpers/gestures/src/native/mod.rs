@@ -22,6 +22,7 @@ const MAX_FRAME_HEIGHT: u32 = 1_080;
 const RGB_CHANNELS: usize = 3;
 const LANDMARK_SIZE: usize = 224;
 const PRESENCE_THRESHOLD: f32 = 0.5;
+const PALM_DISCOVERY_INTERVAL_MS: i64 = 100;
 const GESTURE_LABELS: [&str; 8] = [
     "None",
     "Closed_Fist",
@@ -58,6 +59,7 @@ pub(crate) struct GestureRecognizer {
     models: Models,
     tracked_rects: Vec<Rect>,
     last_timestamp_ms: Option<i64>,
+    last_palm_detection_ms: Option<i64>,
 }
 
 struct DetectedHand {
@@ -150,6 +152,7 @@ impl GestureRecognizer {
             models: Models::load(paths)?,
             tracked_rects: Vec::new(),
             last_timestamp_ms: None,
+            last_palm_detection_ms: None,
         })
     }
 
@@ -190,7 +193,12 @@ impl GestureRecognizer {
         let started = Instant::now();
 
         let mut candidate_rects = self.tracked_rects.clone();
-        if candidate_rects.len() < MAX_HANDS {
+        if should_detect_palms(
+            candidate_rects.len(),
+            timestamp_ms,
+            self.last_palm_detection_ms,
+        ) {
+            self.last_palm_detection_ms = Some(timestamp_ms);
             let detector_rect = Rect::padded_full_frame(frame.width, frame.height);
             let stage = profiler.start();
             let detector_input = sample_rgb(frame, detector_rect, 192);
@@ -303,6 +311,19 @@ impl GestureRecognizer {
         };
         profiler.finish(RecognitionStage::GesturePostprocess, stage);
         Ok(Some(detected))
+    }
+}
+
+fn should_detect_palms(
+    tracked_hands: usize,
+    timestamp_ms: i64,
+    last_detection_ms: Option<i64>,
+) -> bool {
+    match tracked_hands {
+        0 => true,
+        1 => last_detection_ms
+            .is_none_or(|last| timestamp_ms.saturating_sub(last) >= PALM_DISCOVERY_INTERVAL_MS),
+        _ => false,
     }
 }
 
@@ -444,6 +465,19 @@ mod tests {
     fn malformed_probabilities_fail_closed() {
         assert_eq!(finite_probability(f32::NAN), Err(Error::Inference));
         assert_eq!(finite_probability(1.1), Err(Error::Inference));
+    }
+
+    #[test]
+    fn palm_discovery_is_immediate_without_tracking_and_bounded_with_one_hand() {
+        assert!(should_detect_palms(0, 1, Some(1)));
+        assert!(should_detect_palms(1, 1, None));
+        assert!(!should_detect_palms(
+            1,
+            PALM_DISCOVERY_INTERVAL_MS - 1,
+            Some(0)
+        ));
+        assert!(should_detect_palms(1, PALM_DISCOVERY_INTERVAL_MS, Some(0)));
+        assert!(!should_detect_palms(2, i64::MAX, None));
     }
 
     #[test]

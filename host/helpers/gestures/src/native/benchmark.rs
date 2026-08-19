@@ -82,6 +82,7 @@ struct ScenarioReport {
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct Statistics {
+    executions: usize,
     minimum_us: u64,
     median_us: u64,
     p95_us: u64,
@@ -413,6 +414,10 @@ fn statistics(samples: &[Duration]) -> Statistics {
     let total: u128 = values.iter().copied().map(u128::from).sum();
     let mean_us = u64::try_from(total / values.len() as u128).unwrap_or(u64::MAX);
     Statistics {
+        executions: samples
+            .iter()
+            .filter(|duration| !duration.is_zero())
+            .count(),
         minimum_us: values[0],
         median_us: percentile(&values, 50),
         p95_us: percentile(&values, 95),
