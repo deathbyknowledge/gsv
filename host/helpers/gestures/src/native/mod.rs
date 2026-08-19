@@ -26,6 +26,10 @@ const PALM_DISCOVERY_FALLBACK_INTERVAL_MS: i64 = 500;
 const MOTION_GRID_SIZE: usize = 16;
 const MOTION_SAMPLE_COUNT: usize = MOTION_GRID_SIZE * MOTION_GRID_SIZE;
 const MOTION_PIXEL_DELTA: u8 = 16;
+const LANDMARK_REVALIDATION_INTERVAL_MS: i64 = 100;
+const CROP_SIGNATURE_SIZE: usize = 16;
+const CROP_SIGNATURE_SAMPLES: usize = CROP_SIGNATURE_SIZE * CROP_SIGNATURE_SIZE;
+const CROP_PIXEL_DELTA: u8 = 12;
 const GESTURE_LABELS: [&str; 8] = [
     "None",
     "Closed_Fist",
@@ -64,6 +68,7 @@ pub(crate) struct GestureRecognizer {
     last_timestamp_ms: Option<i64>,
     last_palm_detection_ms: Option<i64>,
     last_palm_signature: Option<MotionSignature>,
+    cached_hands: Vec<CachedHand>,
 }
 
 #[derive(Clone)]
@@ -72,6 +77,17 @@ struct MotionSignature {
     included: [bool; MOTION_SAMPLE_COUNT],
 }
 
+#[derive(Clone)]
+struct CropSignature([u8; CROP_SIGNATURE_SAMPLES]);
+
+#[derive(Clone)]
+struct CachedHand {
+    detected: DetectedHand,
+    crop_signature: CropSignature,
+    inferred_at_ms: i64,
+}
+
+#[derive(Clone)]
 struct DetectedHand {
     observation: HandObservation,
     next_rect: Rect,
@@ -183,6 +199,7 @@ impl GestureRecognizer {
             last_timestamp_ms: None,
             last_palm_detection_ms: None,
             last_palm_signature: None,
+            cached_hands: Vec::new(),
         })
     }
 
@@ -258,11 +275,15 @@ impl GestureRecognizer {
             profiler.finish(RecognitionStage::PalmPostprocess, stage);
         }
 
-        let candidates = self.detect_candidate_hands(frame, candidate_rects, profiler)?;
+        let candidates =
+            self.detect_candidate_hands(frame, candidate_rects, timestamp_ms, profiler)?;
         let mut detected_hands = Vec::with_capacity(candidates.len());
         for hand in candidates.into_iter().flatten() {
-            if detected_hands.iter().any(|existing: &DetectedHand| {
-                same_projected_hand(&existing.observation.landmarks, &hand.observation.landmarks)
+            if detected_hands.iter().any(|existing: &CachedHand| {
+                same_projected_hand(
+                    &existing.detected.observation.landmarks,
+                    &hand.detected.observation.landmarks,
+                )
             }) {
                 continue;
             }
@@ -271,16 +292,20 @@ impl GestureRecognizer {
                 break;
             }
         }
-        self.tracked_rects = detected_hands.iter().map(|hand| hand.next_rect).collect();
+        self.tracked_rects = detected_hands
+            .iter()
+            .map(|hand| hand.detected.next_rect)
+            .collect();
         if detected_palms && self.tracked_rects.len() == 1 {
             self.last_palm_signature = Some(motion_signature(frame, &self.tracked_rects));
         } else if self.tracked_rects.len() != 1 {
             self.last_palm_signature = None;
         }
         let hands = detected_hands
-            .into_iter()
-            .map(|hand| hand.observation)
+            .iter()
+            .map(|hand| hand.detected.observation.clone())
             .collect();
+        self.cached_hands = detected_hands;
         let observed_at = Instant::now();
         Ok(Observation {
             frame_sequence: frame.sequence,
@@ -294,30 +319,58 @@ impl GestureRecognizer {
         &self,
         frame: &FrameView,
         candidate_rects: Vec<Rect>,
+        timestamp_ms: i64,
         profiler: &mut P,
-    ) -> Result<Vec<Option<DetectedHand>>, Error> {
-        let [first_rect, second_rect] = candidate_rects.as_slice() else {
-            return candidate_rects
+    ) -> Result<Vec<Option<CachedHand>>, Error> {
+        let candidates: Vec<_> = candidate_rects
+            .into_iter()
+            .enumerate()
+            .map(|(index, rect)| {
+                let cached = self
+                    .cached_hands
+                    .get(index)
+                    .filter(|_| index < self.tracked_rects.len());
+                (rect, cached)
+            })
+            .collect();
+        let [first, second] = candidates.as_slice() else {
+            return candidates
                 .into_iter()
-                .map(|rect| self.detect_hand(frame, rect, profiler))
+                .map(|(rect, cached)| {
+                    self.detect_cached_hand(frame, rect, cached, timestamp_ms, profiler)
+                })
                 .collect();
         };
         let Some(pool) = self.models.inference_pool() else {
-            return candidate_rects
+            return candidates
                 .into_iter()
-                .map(|rect| self.detect_hand(frame, rect, profiler))
+                .map(|(rect, cached)| {
+                    self.detect_cached_hand(frame, rect, cached, timestamp_ms, profiler)
+                })
                 .collect();
         };
         let ((first, first_profiler), (second, second_profiler)) = pool.install(|| {
             rayon::join(
                 || {
                     let mut profiler = P::default();
-                    let result = self.detect_hand(frame, *first_rect, &mut profiler);
+                    let result = self.detect_cached_hand(
+                        frame,
+                        first.0,
+                        first.1,
+                        timestamp_ms,
+                        &mut profiler,
+                    );
                     (result, profiler)
                 },
                 || {
                     let mut profiler = P::default();
-                    let result = self.detect_hand(frame, *second_rect, &mut profiler);
+                    let result = self.detect_cached_hand(
+                        frame,
+                        second.0,
+                        second.1,
+                        timestamp_ms,
+                        &mut profiler,
+                    );
                     (result, profiler)
                 },
             )
@@ -326,6 +379,7 @@ impl GestureRecognizer {
         Ok(vec![first?, second?])
     }
 
+    #[cfg(test)]
     fn detect_hand<P: RecognitionProfiler>(
         &self,
         frame: &FrameView,
@@ -335,8 +389,50 @@ impl GestureRecognizer {
         let stage = profiler.start();
         let input = sample_rgb(frame, rect, LANDMARK_SIZE);
         profiler.finish(RecognitionStage::LandmarkPreprocess, stage);
+        self.detect_hand_from_input(frame, rect, &input, profiler)
+    }
+
+    fn detect_cached_hand<P: RecognitionProfiler>(
+        &self,
+        frame: &FrameView,
+        rect: Rect,
+        cached: Option<&CachedHand>,
+        timestamp_ms: i64,
+        profiler: &mut P,
+    ) -> Result<Option<CachedHand>, Error> {
         let stage = profiler.start();
-        let landmark_output = self.models.detect_landmarks(&input);
+        let input = sample_rgb(frame, rect, LANDMARK_SIZE);
+        profiler.finish(RecognitionStage::LandmarkPreprocess, stage);
+        let crop_signature = crop_signature(&input);
+        if let Some(cached) = cached.filter(|cached| {
+            should_reuse_landmarks(
+                &cached.crop_signature,
+                cached.inferred_at_ms,
+                &crop_signature,
+                timestamp_ms,
+            )
+        }) {
+            return Ok(Some(cached.clone()));
+        }
+        self.detect_hand_from_input(frame, rect, &input, profiler)
+            .map(|detected| {
+                detected.map(|detected| CachedHand {
+                    detected,
+                    crop_signature,
+                    inferred_at_ms: timestamp_ms,
+                })
+            })
+    }
+
+    fn detect_hand_from_input<P: RecognitionProfiler>(
+        &self,
+        frame: &FrameView,
+        rect: Rect,
+        input: &[f32],
+        profiler: &mut P,
+    ) -> Result<Option<DetectedHand>, Error> {
+        let stage = profiler.start();
+        let landmark_output = self.models.detect_landmarks(input);
         profiler.finish(RecognitionStage::LandmarkInference, stage);
         let output = landmark_output?;
         let stage = profiler.start();
@@ -462,6 +558,44 @@ fn motion_detected(previous: &MotionSignature, current: &MotionSignature) -> boo
         }
     }
     compared > 0 && changed >= (compared / 32).max(4)
+}
+
+fn crop_signature(input: &[f32]) -> CropSignature {
+    let mut signature = [0; CROP_SIGNATURE_SAMPLES];
+    for grid_y in 0..CROP_SIGNATURE_SIZE {
+        for grid_x in 0..CROP_SIGNATURE_SIZE {
+            let source_x = ((grid_x * 2 + 1) * LANDMARK_SIZE / (CROP_SIGNATURE_SIZE * 2))
+                .min(LANDMARK_SIZE - 1);
+            let source_y = ((grid_y * 2 + 1) * LANDMARK_SIZE / (CROP_SIGNATURE_SIZE * 2))
+                .min(LANDMARK_SIZE - 1);
+            let source = (source_y * LANDMARK_SIZE + source_x) * RGB_CHANNELS;
+            let luminance =
+                input[source] * 0.299 + input[source + 1] * 0.587 + input[source + 2] * 0.114;
+            signature[grid_y * CROP_SIGNATURE_SIZE + grid_x] =
+                (luminance * 255.0).round().clamp(0.0, 255.0) as u8;
+        }
+    }
+    CropSignature(signature)
+}
+
+fn should_reuse_landmarks(
+    previous: &CropSignature,
+    inferred_at_ms: i64,
+    current: &CropSignature,
+    timestamp_ms: i64,
+) -> bool {
+    timestamp_ms.saturating_sub(inferred_at_ms) < LANDMARK_REVALIDATION_INTERVAL_MS
+        && !crop_motion_detected(previous, current)
+}
+
+fn crop_motion_detected(previous: &CropSignature, current: &CropSignature) -> bool {
+    previous
+        .0
+        .iter()
+        .zip(&current.0)
+        .filter(|(previous, current)| previous.abs_diff(**current) >= CROP_PIXEL_DELTA)
+        .count()
+        >= (CROP_SIGNATURE_SAMPLES / 32).max(4)
 }
 
 fn validate_frame(frame: &FrameView) -> Result<(), Error> {
@@ -638,6 +772,19 @@ mod tests {
         let outside = motion_signature(&motion_test_frame(Some((0, 0))), &[tracked]);
         assert!(!motion_detected(&baseline, &inside));
         assert!(motion_detected(&baseline, &outside));
+    }
+
+    #[test]
+    fn stable_landmarks_are_reused_only_within_the_revalidation_bound() {
+        let previous = CropSignature([0; CROP_SIGNATURE_SAMPLES]);
+        let unchanged = previous.clone();
+        let mut changed = previous.clone();
+        for value in changed.0.iter_mut().take(CROP_SIGNATURE_SAMPLES / 32) {
+            *value = CROP_PIXEL_DELTA;
+        }
+        assert!(should_reuse_landmarks(&previous, 0, &unchanged, 99));
+        assert!(!should_reuse_landmarks(&previous, 0, &unchanged, 100));
+        assert!(!should_reuse_landmarks(&previous, 0, &changed, 1));
     }
 
     fn motion_test_frame(patch: Option<(usize, usize)>) -> FrameView {
