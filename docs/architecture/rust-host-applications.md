@@ -101,10 +101,13 @@ is no independent persistent gesture-arming bit. Within an active request,
 replaces only the model stream while retaining microphone capture, request
 identity, and mute state. Desktop accepts
 the correlated utterance final, submits it through the ordinary conversation
-owner, and rebases the continuing voice draft; a gesture send never masquerades
-as a terminal transcription event. Its runtime is the Rust helper plus two
-checksum-pinned palm and hand-landmark TFLite models executed by tract; the
-command vocabulary is owned by Rust rather than the upstream canned gesture
+owner, and rebases the continuing voice draft; the same exact boundary lets
+Desktop delete one Unicode grapheme or clear only unsent voice-owned text while
+preserving typed anchors and attachments. A later partial begins on the new
+segment and cannot resurrect corrected text. Gesture send and correction never
+masquerade as terminal transcription events. Its runtime is the Rust helper
+plus two checksum-pinned palm and hand-landmark TFLite models executed by tract;
+the command vocabulary is owned by Rust rather than the upstream canned gesture
 classifier. It has no Python, Java, Bazel, or native MediaPipe build/runtime
 dependency. `gsv-vision` is not part of the
 release distribution until signed macOS application packaging, camera

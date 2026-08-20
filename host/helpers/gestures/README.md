@@ -6,8 +6,8 @@ inference, temporal gesture policy, and optional diagnostic window. Camera
 pixels never enter GPUI, the gateway, logs, files, or GSV application IPC. They
 are handed only to local inference and, in debug mode, the OS display
 system. A bounded private pipe carries a reliable session-scoped
-`start transcription` intent,
-request-scoped `stop transcription`, `send`, `mute`, and `unmute` intents, and
+`start transcription` intent, request-scoped `stop transcription`, `send`,
+`delete backward`, `clear dictation`, `mute`, and `unmute` intents, and
 absolute held-scroll state, plus replace-latest semantic control status with
 bounded candidate progress. Every active action identifies the exact voice
 request, and every event is scoped to
@@ -88,6 +88,13 @@ context; the helper has no separate persistent armed bit.
   for 450 ms to mute or 700 ms to unmute, depending on current state.
 - Point the dominant index above or below the modifier palm for 250 ms, then
   hold to scroll in that direction.
+- With the dominant index level with the modifier palm, flick it left at least
+  12% of the mirrored camera width within 500 ms to delete one visible Unicode
+  character (grapheme) from the unsent voice-owned transcription. Relax the
+  pointing hand between repeated deletes.
+- Gather all dominant fingertips to the thumb and hold for 1 second to clear
+  the unsent voice-owned transcription. Text typed before or after the voice
+  insertion point and draft attachments remain intact.
 
 Scroll gestures work in either standby or active voice mode. On a long moment,
 holding scrolls only that moment and stops at its edge. A fresh gesture begun at
@@ -101,7 +108,10 @@ request. The emitted pose stays latched across disabled, standby, active, and
 request transitions until the helper positively observes a different known
 two-hand pose at sufficient confidence. Missing, stale, invalid, or unknown
 tracking cannot release this latch, so holding Start or Stop cannot loop after
-an authority echo. `Send` remains nonterminal and does not end capture.
+an authority echo. Send, delete, and clear remain nonterminal and do not end
+capture. Desktop first asks the transcription helper to finalize the exact
+current segment; only the matching `SegmentFinal` may send or edit the draft,
+so a later partial cannot resurrect corrected text.
 
 Evidence also requires the gesture-specific dwell, match count, strong-sample
 count, consecutive and support thresholds, fresh frames, and bounded inference

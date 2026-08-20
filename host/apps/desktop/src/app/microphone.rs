@@ -10,6 +10,7 @@ use desktop_protocol::{
 };
 use gpui::{AppContext, Context, Focusable, Window};
 use host_config::{CliConfig, MicrophonePreference};
+use unicode_segmentation::UnicodeSegmentation;
 
 use crate::model::SurfaceMode;
 use crate::transcription::{VoiceCommand, VoiceErrorCode, VoiceEvent, VoicePhase};
@@ -28,12 +29,26 @@ enum MuteStateApplication {
     Contradicted,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum VoiceSegmentAction {
+    Send,
+    DeleteBackward,
+    ClearDictation,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct PendingVoiceSegment {
+    segment_id: u64,
+    action: VoiceSegmentAction,
+}
+
 #[derive(Debug)]
 pub(super) struct VoiceDraft {
     request_id: u64,
     segment_id: u64,
-    pending_segment_commit: Option<u64>,
+    pending_segment: Option<PendingVoiceSegment>,
     before: String,
+    settled: String,
     after: String,
     pub(super) rendered: String,
     revision: i32,
@@ -49,8 +64,9 @@ impl VoiceDraft {
         Self {
             request_id,
             segment_id: 0,
-            pending_segment_commit: None,
+            pending_segment: None,
             before,
+            settled: String::new(),
             after,
             rendered,
             revision: -1,
@@ -62,31 +78,45 @@ impl VoiceDraft {
         }
     }
 
-    fn can_request_segment_commit(&self) -> bool {
-        !self.stopping && self.pending_segment_commit.is_none()
+    fn can_request_segment_action(&self) -> bool {
+        !self.stopping && self.pending_segment.is_none()
     }
 
-    fn note_segment_commit_requested(&mut self) {
-        debug_assert!(self.can_request_segment_commit());
-        self.pending_segment_commit = Some(self.segment_id);
+    fn note_segment_action_requested(&mut self, action: VoiceSegmentAction) {
+        debug_assert!(self.can_request_segment_action());
+        self.pending_segment = Some(PendingVoiceSegment {
+            segment_id: self.segment_id,
+            action,
+        });
     }
 
     fn accepts_segment(&self, segment_id: u64) -> bool {
         self.segment_id == segment_id
     }
 
-    fn awaits_segment_final(&self, segment_id: u64) -> bool {
-        self.pending_segment_commit == Some(segment_id) && self.accepts_segment(segment_id)
+    fn pending_action_for(&self, segment_id: u64) -> Option<VoiceSegmentAction> {
+        self.pending_segment
+            .filter(|pending| pending.segment_id == segment_id && self.accepts_segment(segment_id))
+            .map(|pending| pending.action)
     }
 
-    fn begin_next_segment(&mut self, value: String, cursor: usize) {
+    fn begin_next_segment_after_send(&mut self, value: String, cursor: usize) {
         debug_assert!(cursor <= value.len());
         debug_assert!(value.is_char_boundary(cursor));
         self.segment_id = self.segment_id.wrapping_add(1);
-        self.pending_segment_commit = None;
+        self.pending_segment = None;
         self.before = value[..cursor].to_string();
+        self.settled.clear();
         self.after = value[cursor..].to_string();
         self.rendered = value;
+        self.revision = -1;
+    }
+
+    fn begin_next_segment_after_edit(&mut self, settled: String, rendered: String) {
+        self.segment_id = self.segment_id.wrapping_add(1);
+        self.pending_segment = None;
+        self.settled = settled;
+        self.rendered = rendered;
         self.revision = -1;
     }
 
@@ -124,6 +154,26 @@ impl VoiceDraft {
         }
         MuteStateApplication::Applied
     }
+}
+
+fn voice_text_after_segment(settled: &str, current: &str, action: VoiceSegmentAction) -> String {
+    let mut text = combine_voice_segments(settled, current);
+    match action {
+        VoiceSegmentAction::Send => text,
+        VoiceSegmentAction::ClearDictation => String::new(),
+        VoiceSegmentAction::DeleteBackward => {
+            let trimmed_len = text.trim_end().len();
+            text.truncate(trimmed_len);
+            if let Some((index, _)) = text.grapheme_indices(true).next_back() {
+                text.truncate(index);
+            }
+            text
+        }
+    }
+}
+
+fn combine_voice_segments(settled: &str, current: &str) -> String {
+    compose_voice_text(settled, current, "").value
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -1010,17 +1060,34 @@ impl GsvApp {
         true
     }
 
-    /// Commits the current ASR segment without releasing the microphone, voice
-    /// request, gesture lease, or applied mute state. The helper owns the exact
-    /// audio boundary and returns one authoritative, segment-fenced result.
+    /// Finalizes the current ASR segment without releasing the microphone,
+    /// voice request, gesture lease, or applied mute state. The helper owns the
+    /// exact audio boundary and returns one authoritative, segment-fenced
+    /// result before Desktop sends or edits the voice-owned text.
     pub(super) fn gesture_send_dictation_now(&mut self, cx: &mut Context<Self>) -> bool {
+        self.request_dictation_segment_action(VoiceSegmentAction::Send, cx)
+    }
+
+    pub(super) fn gesture_delete_dictation_backward(&mut self, cx: &mut Context<Self>) -> bool {
+        self.request_dictation_segment_action(VoiceSegmentAction::DeleteBackward, cx)
+    }
+
+    pub(super) fn gesture_clear_dictation(&mut self, cx: &mut Context<Self>) -> bool {
+        self.request_dictation_segment_action(VoiceSegmentAction::ClearDictation, cx)
+    }
+
+    fn request_dictation_segment_action(
+        &mut self,
+        action: VoiceSegmentAction,
+        cx: &mut Context<Self>,
+    ) -> bool {
         let Some((request_id, segment_id)) = self
             .voice_draft
             .as_ref()
             .filter(|voice| {
-                voice.can_request_segment_commit()
+                voice.can_request_segment_action()
                     && self.voice_final_conversation_is_safe(voice, cx)
-                    && self.voice_final_send_is_safe()
+                    && (action != VoiceSegmentAction::Send || self.voice_final_send_is_safe())
             })
             .map(|voice| (voice.request_id, voice.segment_id))
         else {
@@ -1046,9 +1113,16 @@ impl GsvApp {
             .as_mut()
             .filter(|voice| voice.request_id == request_id && voice.segment_id == segment_id)
         {
-            voice.note_segment_commit_requested();
+            voice.note_segment_action_requested(action);
         }
-        self.voice_notice = Some("LISTENING · PREPARING TO SEND".to_string());
+        self.voice_notice = Some(
+            match action {
+                VoiceSegmentAction::Send => "LISTENING · PREPARING TO SEND",
+                VoiceSegmentAction::DeleteBackward => "LISTENING · DELETING LAST CHARACTER",
+                VoiceSegmentAction::ClearDictation => "LISTENING · CLEARING DICTATION",
+            }
+            .to_string(),
+        );
         cx.notify();
         true
     }
@@ -1063,10 +1137,14 @@ impl GsvApp {
             .and_then(|voice| voice.pending_mute)
     }
 
-    pub(super) fn dictation_segment_commit_is_pending(&self) -> bool {
+    pub(super) fn dictation_pending_segment_action(&self) -> Option<VoiceSegmentAction> {
         self.voice_draft
             .as_ref()
-            .is_some_and(|voice| voice.pending_segment_commit.is_some())
+            .and_then(|voice| voice.pending_segment.map(|pending| pending.action))
+    }
+
+    pub(super) fn dictation_segment_action_is_pending(&self) -> bool {
+        self.dictation_pending_segment_action().is_some()
     }
 
     pub(super) fn active_voice_request_id(&self) -> Option<u64> {
@@ -1096,7 +1174,7 @@ impl GsvApp {
             && self.voice_draft.as_ref().is_some_and(|voice| {
                 voice.request_id == request_id
                     && voice.pending_mute.is_none()
-                    && voice.pending_segment_commit.is_none()
+                    && voice.pending_segment.is_none()
             })
     }
 
@@ -1279,19 +1357,28 @@ impl GsvApp {
                 }
                 voice.revision = revision;
                 let transcript = format!("{committed}{tentative}");
+                let transcript = combine_voice_segments(&voice.settled, &transcript);
                 let composition = compose_voice_text(&voice.before, &transcript, &voice.after);
                 let stopping = voice.stopping;
-                let sending = voice.pending_segment_commit.is_some();
+                let pending_segment = voice.pending_segment.map(|pending| pending.action);
                 voice.rendered.clone_from(&composition.value);
                 self.reveal_voice_draft_if_needed(&composition.value, window, cx);
                 self.interaction.on_input(composition.value.clone());
                 self.set_input_value_at(composition.value, composition.cursor, window, cx);
                 self.voice_notice = Some(if stopping {
                     "FINISHING VOICE INPUT".to_string()
-                } else if sending {
-                    "LISTENING · PREPARING TO SEND".to_string()
                 } else {
-                    self.listening_voice_notice(request_id).to_string()
+                    match pending_segment {
+                        Some(VoiceSegmentAction::Send) => "LISTENING · PREPARING TO SEND",
+                        Some(VoiceSegmentAction::DeleteBackward) => {
+                            "LISTENING · DELETING LAST CHARACTER"
+                        }
+                        Some(VoiceSegmentAction::ClearDictation) => {
+                            "LISTENING · CLEARING DICTATION"
+                        }
+                        None => self.listening_voice_notice(request_id),
+                    }
+                    .to_string()
                 });
             }
             VoiceEvent::SegmentFinal {
@@ -1299,64 +1386,84 @@ impl GsvApp {
                 segment_id,
                 text,
             } if self.voice_request_is(request_id) => {
-                let safe = self
+                let pending_action = self
                     .voice_draft
                     .as_ref()
-                    .filter(|voice| voice.awaits_segment_final(segment_id))
-                    .is_some_and(|voice| {
+                    .and_then(|voice| voice.pending_action_for(segment_id));
+                let safe = self.voice_draft.as_ref().is_some_and(|voice| {
+                    pending_action.is_some_and(|action| {
                         self.voice_final_conversation_is_safe(voice, cx)
-                            && self.voice_final_send_is_safe()
-                    });
+                            && (action != VoiceSegmentAction::Send
+                                || self.voice_final_send_is_safe())
+                    })
+                });
                 if !safe {
-                    let matching = self
-                        .voice_draft
-                        .as_ref()
-                        .is_some_and(|voice| voice.awaits_segment_final(segment_id));
-                    if matching {
+                    if pending_action.is_some() {
                         self.fail_continuous_dictation(request_id, cx);
                     }
                     return;
                 }
 
-                let Some(voice) = self
-                    .voice_draft
-                    .as_ref()
-                    .filter(|voice| voice.awaits_segment_final(segment_id))
+                let Some((action, voice_text, composition)) =
+                    self.voice_draft.as_ref().and_then(|voice| {
+                        let action = voice.pending_action_for(segment_id)?;
+                        let voice_text = voice_text_after_segment(&voice.settled, &text, action);
+                        let composition =
+                            compose_voice_text(&voice.before, &voice_text, &voice.after);
+                        Some((action, voice_text, composition))
+                    })
                 else {
                     return;
                 };
-                let composition = compose_voice_text(&voice.before, &text, &voice.after);
                 self.reveal_voice_draft_if_needed(&composition.value, window, cx);
                 self.interaction.on_input(composition.value.clone());
                 self.set_input_value_at(composition.value.clone(), composition.cursor, window, cx);
 
-                let should_submit =
-                    !composition.value.trim().is_empty() || !self.draft_attachments.is_empty();
-                if should_submit {
-                    self.submit_conversation(composition.value, window, cx);
-                    if !self.interaction.is_submitting() {
-                        // The ordinary submission owner restored the exact
-                        // authoritative segment after a synchronous failure.
-                        // Preserve it and fence future voice output.
-                        self.fail_continuous_dictation(request_id, cx);
-                        return;
-                    }
-                }
+                match action {
+                    VoiceSegmentAction::Send => {
+                        let should_submit = !composition.value.trim().is_empty()
+                            || !self.draft_attachments.is_empty();
+                        if should_submit {
+                            self.submit_conversation(composition.value, window, cx);
+                            if !self.interaction.is_submitting() {
+                                // The ordinary submission owner restored the exact
+                                // authoritative segment after a synchronous failure.
+                                // Preserve it and fence future voice output.
+                                self.fail_continuous_dictation(request_id, cx);
+                                return;
+                            }
+                        }
 
-                // Submission success clears the input, while a synchronous
-                // delivery failure restores it. Rebase from that authoritative
-                // post-submit value so the next segment preserves either case.
-                let value = self.input.read(cx).value().to_string();
-                let cursor = self.input.read(cx).cursor().min(value.len());
-                let cursor = value.floor_char_boundary(cursor);
-                if let Some(voice) = self.voice_draft.as_mut().filter(|voice| {
-                    voice.request_id == request_id && voice.awaits_segment_final(segment_id)
-                }) {
-                    voice.begin_next_segment(value, cursor);
+                        // Submission success clears the input, while a synchronous
+                        // delivery failure restores it. Rebase from that authoritative
+                        // post-submit value so the next segment preserves either case.
+                        let value = self.input.read(cx).value().to_string();
+                        let cursor = self.input.read(cx).cursor().min(value.len());
+                        let cursor = value.floor_char_boundary(cursor);
+                        if let Some(voice) = self.voice_draft.as_mut().filter(|voice| {
+                            voice.request_id == request_id
+                                && voice.pending_action_for(segment_id)
+                                    == Some(VoiceSegmentAction::Send)
+                        }) {
+                            voice.begin_next_segment_after_send(value, cursor);
+                        }
+                    }
+                    VoiceSegmentAction::DeleteBackward | VoiceSegmentAction::ClearDictation => {
+                        if let Some(voice) = self.voice_draft.as_mut().filter(|voice| {
+                            voice.request_id == request_id
+                                && voice.pending_action_for(segment_id) == Some(action)
+                        }) {
+                            voice.begin_next_segment_after_edit(
+                                voice_text,
+                                composition.value.clone(),
+                            );
+                        }
+                    }
                 }
                 self.clear_voice_gesture_status();
                 self.enable_vision_for_voice(request_id);
-                // SegmentFinal is the helper-owned completion edge for Send.
+                // SegmentFinal is the helper-owned completion edge for every
+                // continuous dictation action.
                 // Request and mute context are intentionally unchanged, so
                 // force an authority frame instead of replace-if-changed sync.
                 self.reassert_vision_context();
@@ -1368,6 +1475,7 @@ impl GsvApp {
                     return;
                 };
                 self.disable_vision_for_voice(request_id);
+                let text = combine_voice_segments(&voice.settled, &text);
                 if text.trim().is_empty() {
                     if voice.revision < 0 {
                         self.voice_notice = Some("NO SPEECH HEARD · CHECK INPUT".to_string());
@@ -1715,19 +1823,68 @@ mod tests {
     fn session_actions_need_no_redundant_arm_bit() {
         let mut voice = VoiceDraft::new(7, String::new(), String::new(), String::new());
 
-        assert!(voice.can_request_segment_commit());
+        assert!(voice.can_request_segment_action());
         assert_eq!(
             voice.apply_mute_state(0, true),
             MuteStateApplication::Applied
         );
-        assert!(voice.can_request_segment_commit());
-        voice.note_segment_commit_requested();
-        assert!(!voice.can_request_segment_commit());
-        assert!(voice.awaits_segment_final(0));
-        voice.begin_next_segment(String::new(), 0);
+        assert!(voice.can_request_segment_action());
+        voice.note_segment_action_requested(VoiceSegmentAction::Send);
+        assert!(!voice.can_request_segment_action());
+        assert_eq!(voice.pending_action_for(0), Some(VoiceSegmentAction::Send));
+        voice.begin_next_segment_after_send(String::new(), 0);
         assert_eq!(voice.segment_id, 1);
-        assert!(voice.can_request_segment_commit());
+        assert!(voice.can_request_segment_action());
         assert!(voice.muted);
+    }
+
+    #[test]
+    fn dictation_corrections_edit_only_complete_unicode_graphemes() {
+        assert_eq!(
+            voice_text_after_segment("hello", "world", VoiceSegmentAction::DeleteBackward),
+            "hello worl"
+        );
+        assert_eq!(
+            voice_text_after_segment("", "Cafe\u{301}", VoiceSegmentAction::DeleteBackward),
+            "Caf"
+        );
+        assert_eq!(
+            voice_text_after_segment("", "👨‍👩‍👧‍👦", VoiceSegmentAction::DeleteBackward),
+            ""
+        );
+        assert_eq!(
+            voice_text_after_segment(
+                "kept before",
+                "new words",
+                VoiceSegmentAction::ClearDictation
+            ),
+            ""
+        );
+    }
+
+    #[test]
+    fn edited_voice_text_rebases_without_moving_typed_anchors() {
+        let mut voice = VoiceDraft::new(
+            7,
+            "typed before ".to_string(),
+            " typed after".to_string(),
+            "typed before hello typed after".to_string(),
+        );
+        voice.note_segment_action_requested(VoiceSegmentAction::DeleteBackward);
+        voice.begin_next_segment_after_edit(
+            "hell".to_string(),
+            "typed before hell typed after".to_string(),
+        );
+
+        assert_eq!(voice.segment_id, 1);
+        assert_eq!(voice.pending_segment, None);
+        assert_eq!(voice.before, "typed before ");
+        assert_eq!(voice.settled, "hell");
+        assert_eq!(voice.after, " typed after");
+        assert_eq!(
+            combine_voice_segments(&voice.settled, "again"),
+            "hell again"
+        );
     }
 
     #[test]
@@ -1735,7 +1892,7 @@ mod tests {
         let mut voice = VoiceDraft::new(7, String::new(), String::new(), String::new());
         voice.stopping = true;
 
-        assert!(!voice.can_request_segment_commit());
+        assert!(!voice.can_request_segment_action());
         assert!(!voice.can_request_mute(true));
     }
 
@@ -2151,6 +2308,182 @@ mod tests {
     }
 
     #[gpui::test]
+    fn correction_segment_finals_rebase_without_resurrecting_voice_text(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            gpui_component::init(cx);
+            bind_keys(cx);
+            crate::register_fonts(cx);
+            crate::configure_theme(cx);
+        });
+
+        let (command_tx, mut command_rx) = tokio::sync::mpsc::unbounded_channel();
+        let (_event_tx, event_rx) = tokio::sync::mpsc::unbounded_channel();
+        let client = crate::client::ClientHandle {
+            commands: command_tx,
+            events: event_rx,
+            login: None,
+        };
+        let app = Rc::new(RefCell::new(None));
+        let app_for_window = app.clone();
+        let window = cx.update(|cx| {
+            cx.open_window(WindowOptions::default(), move |window, cx| {
+                let view = cx.new(|cx| GsvApp::new(window, cx, client, true, false, true));
+                *app_for_window.borrow_mut() = Some(view.clone());
+                cx.new(|cx| Root::new(view, window, cx))
+            })
+            .expect("the GPUI surface should open")
+        });
+
+        cx.run_until_parked();
+        cx.simulate_input(window.into(), "typed before hello typed after");
+        cx.run_until_parked();
+        let app = app.borrow().clone().expect("app entity should be retained");
+        let window_handle: gpui::AnyWindowHandle = window.into();
+        let (voice_commands, voice_command_rx) =
+            crate::transcription::VoiceCommandSender::channel_for_test();
+        window_handle
+            .update(cx, |_, window, cx| {
+                app.update(cx, |app, cx| {
+                    app.voice_commands = voice_commands;
+                    app.vision_context = Some(crate::vision_debug::VisionContextSender::for_test());
+                    app.vision_lifecycle = Some(gesture_protocol::LifecycleState::Ready);
+                    app.vision_voice_request_id = Some(71);
+                    let mut voice = VoiceDraft::new(
+                        71,
+                        "typed before ".to_string(),
+                        "typed after".to_string(),
+                        "typed before hello typed after".to_string(),
+                    );
+                    voice.revision = 1;
+                    voice.listening = true;
+                    assert_eq!(
+                        voice.apply_mute_state(0, false),
+                        MuteStateApplication::Applied
+                    );
+                    app.voice_draft = Some(voice);
+                    app.sync_vision_context();
+                    app.handle_vision_event(
+                        crate::vision_debug::VisionEvent::Intent {
+                            sequence: 1,
+                            received_at: Instant::now(),
+                            intent: gesture_protocol::GestureIntent::VoiceRequest {
+                                voice_request_id: 71,
+                                action: gesture_protocol::VoiceRequestGestureIntent::DeleteBackward,
+                            },
+                        },
+                        window,
+                        cx,
+                    );
+                });
+            })
+            .expect("window remains open");
+        assert_eq!(
+            voice_command_rx.try_recv(),
+            Ok(VoiceCommand::CommitSegment {
+                request_id: 71,
+                segment_id: 0,
+            })
+        );
+
+        window_handle
+            .update(cx, |_, window, cx| {
+                app.update(cx, |app, cx| {
+                    app.handle_voice_event(
+                        VoiceEvent::SegmentFinal {
+                            request_id: 71,
+                            segment_id: 0,
+                            text: "hello".to_string(),
+                        },
+                        window,
+                        cx,
+                    );
+                    assert_eq!(
+                        app.input.read(cx).value().as_ref(),
+                        "typed before hell typed after"
+                    );
+                    app.handle_voice_event(
+                        VoiceEvent::Partial {
+                            request_id: 71,
+                            segment_id: 1,
+                            revision: 1,
+                            committed: "again".to_string(),
+                            tentative: String::new(),
+                        },
+                        window,
+                        cx,
+                    );
+                    assert_eq!(
+                        app.input.read(cx).value().as_ref(),
+                        "typed before hell again typed after"
+                    );
+                    app.handle_vision_event(
+                        crate::vision_debug::VisionEvent::Intent {
+                            sequence: 2,
+                            received_at: Instant::now(),
+                            intent: gesture_protocol::GestureIntent::VoiceRequest {
+                                voice_request_id: 71,
+                                action: gesture_protocol::VoiceRequestGestureIntent::ClearDictation,
+                            },
+                        },
+                        window,
+                        cx,
+                    );
+                });
+            })
+            .expect("window remains open");
+        assert_eq!(
+            voice_command_rx.try_recv(),
+            Ok(VoiceCommand::CommitSegment {
+                request_id: 71,
+                segment_id: 1,
+            })
+        );
+
+        window_handle
+            .update(cx, |_, window, cx| {
+                app.update(cx, |app, cx| {
+                    app.handle_voice_event(
+                        VoiceEvent::SegmentFinal {
+                            request_id: 71,
+                            segment_id: 1,
+                            text: "again".to_string(),
+                        },
+                        window,
+                        cx,
+                    );
+                    assert_eq!(
+                        app.input.read(cx).value().as_ref(),
+                        "typed before typed after"
+                    );
+                    app.handle_voice_event(
+                        VoiceEvent::Partial {
+                            request_id: 71,
+                            segment_id: 2,
+                            revision: 1,
+                            committed: "fresh".to_string(),
+                            tentative: String::new(),
+                        },
+                        window,
+                        cx,
+                    );
+                    assert_eq!(
+                        app.input.read(cx).value().as_ref(),
+                        "typed before fresh typed after"
+                    );
+                    let voice = app
+                        .voice_draft
+                        .as_ref()
+                        .expect("voice lease remains active");
+                    assert_eq!(voice.segment_id, 2);
+                    assert_eq!(voice.settled, "");
+                    assert_eq!(voice.pending_segment, None);
+                });
+            })
+            .expect("window remains open");
+        assert!(command_rx.try_recv().is_err());
+    }
+
+    #[gpui::test]
     fn matching_segment_final_submits_and_keeps_the_voice_lease(cx: &mut TestAppContext) {
         cx.update(|cx| {
             gpui_component::init(cx);
@@ -2222,7 +2555,7 @@ mod tests {
                         window,
                         cx,
                     );
-                    assert!(app.dictation_segment_commit_is_pending());
+                    assert!(app.dictation_segment_action_is_pending());
                     assert!(!app.voice_request_accepts_gestures(41));
                     assert_eq!(
                         app.vision_context
@@ -2244,7 +2577,7 @@ mod tests {
                         window,
                         cx,
                     );
-                    assert!(app.dictation_segment_commit_is_pending());
+                    assert!(app.dictation_segment_action_is_pending());
                 });
             })
             .expect("window remains open");
@@ -2286,7 +2619,7 @@ mod tests {
                         window,
                         cx,
                     );
-                    assert!(app.dictation_segment_commit_is_pending());
+                    assert!(app.dictation_segment_action_is_pending());
                     assert_eq!(app.input.read(cx).value().as_ref(), "draft partial");
                     assert_eq!(
                         app.vision_context
@@ -2329,7 +2662,7 @@ mod tests {
                 .expect("voice lease remains active");
             assert_eq!(voice.request_id, 41);
             assert_eq!(voice.segment_id, 1);
-            assert_eq!(voice.pending_segment_commit, None);
+            assert_eq!(voice.pending_segment, None);
             assert_eq!(voice.revision, -1);
             assert!(voice.listening);
             assert!(!voice.muted);
@@ -2515,7 +2848,7 @@ mod tests {
                         voice.apply_mute_state(0, false),
                         MuteStateApplication::Applied
                     );
-                    voice.note_segment_commit_requested();
+                    voice.note_segment_action_requested(VoiceSegmentAction::Send);
                     app.voice_draft = Some(voice);
                     app.handle_voice_event(
                         VoiceEvent::SegmentFinal {
@@ -2626,7 +2959,7 @@ mod tests {
                         voice.apply_mute_state(0, false),
                         MuteStateApplication::Applied
                     );
-                    voice.note_segment_commit_requested();
+                    voice.note_segment_action_requested(VoiceSegmentAction::Send);
                     app.voice_draft = Some(voice);
                     app.handle_voice_event(
                         VoiceEvent::SegmentFinal {

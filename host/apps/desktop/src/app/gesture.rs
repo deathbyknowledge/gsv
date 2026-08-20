@@ -8,6 +8,7 @@ use gpui::{point, px, Context, Window};
 
 use crate::vision_debug::{VisionContext, VisionEvent};
 
+use super::microphone::VoiceSegmentAction;
 use super::{GsvApp, VisionScrollGesture, VoiceGestureStatus};
 
 const MAX_GESTURE_INTENT_AGE: Duration = Duration::from_secs(1);
@@ -28,10 +29,15 @@ const VOICE_GESTURES_ACTIVE: &str = "LISTENING · GESTURES ACTIVE";
 const VOICE_GESTURES_MUTED: &str = "LISTENING · MICROPHONE MUTED";
 const VOICE_GESTURE_STOP: &str = "LISTENING · HOLD TO FINISH";
 const VOICE_GESTURE_SEND: &str = "LISTENING · HOLD TO SEND";
+const VOICE_GESTURE_DELETE: &str = "LISTENING · FLICK LEFT TO DELETE";
+const VOICE_GESTURE_CLEAR: &str = "LISTENING · HOLD TO CLEAR DICTATION";
 const VOICE_GESTURE_MUTE: &str = "LISTENING · HOLD TO MUTE";
 const VOICE_GESTURE_UNMUTE: &str = "LISTENING · HOLD TO UNMUTE";
+const VOICE_GESTURE_SENDING: &str = "LISTENING · PREPARING TO SEND";
 const VOICE_GESTURE_MUTING: &str = "LISTENING · MUTING MICROPHONE";
 const VOICE_GESTURE_UNMUTING: &str = "LISTENING · UNMUTING MICROPHONE";
+const VOICE_GESTURE_DELETING: &str = "LISTENING · DELETING LAST CHARACTER";
+const VOICE_GESTURE_CLEARING: &str = "LISTENING · CLEARING DICTATION";
 
 impl GsvApp {
     /// Claims one Desktop-owned voice request for eventual gesture actions.
@@ -207,6 +213,16 @@ impl GsvApp {
                                 {
                                     self.gesture_send_dictation_now(cx);
                                 }
+                                VoiceRequestGestureIntent::DeleteBackward
+                                    if self.voice_request_accepts_gestures(voice_request_id) =>
+                                {
+                                    self.gesture_delete_dictation_backward(cx);
+                                }
+                                VoiceRequestGestureIntent::ClearDictation
+                                    if self.voice_request_accepts_gestures(voice_request_id) =>
+                                {
+                                    self.gesture_clear_dictation(cx);
+                                }
                                 VoiceRequestGestureIntent::Mute
                                     if self.voice_request_accepts_gestures(voice_request_id) =>
                                 {
@@ -218,6 +234,8 @@ impl GsvApp {
                                     self.gesture_set_dictation_muted(false, cx);
                                 }
                                 VoiceRequestGestureIntent::Send
+                                | VoiceRequestGestureIntent::DeleteBackward
+                                | VoiceRequestGestureIntent::ClearDictation
                                 | VoiceRequestGestureIntent::Mute
                                 | VoiceRequestGestureIntent::Unmute => {}
                             }
@@ -227,12 +245,12 @@ impl GsvApp {
 
                 // Reliable actions supersede explanatory status. Rejected and
                 // idempotent intents receive a fresh absolute authority echo.
-                // Accepted mute/send actions remain pending until their exact
+                // Accepted mute and segment actions remain pending until their exact
                 // MuteState/SegmentFinal completion, so replaying the old
                 // state here would acknowledge them prematurely.
                 self.clear_voice_gesture_status();
                 if self.dictation_pending_mute().is_none()
-                    && !self.dictation_segment_commit_is_pending()
+                    && !self.dictation_segment_action_is_pending()
                 {
                     self.reassert_vision_context();
                 }
@@ -426,6 +444,13 @@ impl GsvApp {
                 VOICE_GESTURE_UNMUTING
             };
         }
+        if let Some(action) = self.dictation_pending_segment_action() {
+            return match action {
+                VoiceSegmentAction::Send => VOICE_GESTURE_SENDING,
+                VoiceSegmentAction::DeleteBackward => VOICE_GESTURE_DELETING,
+                VoiceSegmentAction::ClearDictation => VOICE_GESTURE_CLEARING,
+            };
+        }
 
         let muted = self.dictation_is_muted();
         if self.vision_context.is_none() {
@@ -452,6 +477,8 @@ impl GsvApp {
             return match progress.candidate() {
                 GestureCandidate::StopTranscription => VOICE_GESTURE_STOP,
                 GestureCandidate::Send => VOICE_GESTURE_SEND,
+                GestureCandidate::DeleteBackward => VOICE_GESTURE_DELETE,
+                GestureCandidate::ClearDictation => VOICE_GESTURE_CLEAR,
                 GestureCandidate::Mute => VOICE_GESTURE_MUTE,
                 GestureCandidate::Unmute => VOICE_GESTURE_UNMUTE,
                 GestureCandidate::StartTranscription => VOICE_GESTURES_ACTIVE,
@@ -472,7 +499,7 @@ impl GsvApp {
         if self.vision_lifecycle != Some(LifecycleState::Ready)
             || context == GestureContext::Disabled
             || self.dictation_pending_mute().is_some()
-            || self.dictation_segment_commit_is_pending()
+            || self.dictation_segment_action_is_pending()
         {
             return None;
         }
@@ -938,7 +965,7 @@ mod tests {
                         window,
                         cx,
                     );
-                    assert!(!app.dictation_segment_commit_is_pending());
+                    assert!(!app.dictation_segment_action_is_pending());
 
                     app.handle_vision_event_with_window_state(
                         VisionEvent::Intent {
@@ -956,7 +983,7 @@ mod tests {
                     assert_eq!(app.dictation_pending_mute(), None);
                     assert!(app.voice_request_can_stop(1));
                     assert!(!app.dictation_is_muted());
-                    assert!(!app.dictation_segment_commit_is_pending());
+                    assert!(!app.dictation_segment_action_is_pending());
                 });
             })
             .expect("window remains open");

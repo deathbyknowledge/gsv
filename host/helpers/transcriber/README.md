@@ -81,6 +81,9 @@ the reliable, nonterminal
 snapshots carry their segment ID because the model-local revision restarts for every fresh stream.
 Only `stop` produces the terminal `final` event and releases capture. Segment IDs must be exact and
 monotonic; a disagreement fails the active request closed rather than committing ambiguous audio.
+Desktop uses this same boundary before sending, deleting one visible Unicode character (grapheme),
+or clearing the voice-owned draft, so later partials start from a fresh segment and cannot restore
+corrected text.
 
 Muting keeps the selected microphone device and CPAL stream open. An atomic request-generation
 gate rejects newly captured frames before mono conversion and queueing, and the inference loop

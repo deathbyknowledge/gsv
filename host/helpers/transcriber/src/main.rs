@@ -511,7 +511,8 @@ fn run_stream(
             Err(_) => {
                 // Finalization made the previous segment authoritative even if
                 // opening its successor fails. Deliver that result before the
-                // request's terminal error so Desktop can still honor Send.
+                // request's terminal error so Desktop can still honor the
+                // pending segment action.
                 if let Some((completed_segment, text)) = pending_segment_final.take() {
                     emit(&Event::SegmentFinal {
                         request_id,

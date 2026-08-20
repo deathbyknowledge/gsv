@@ -21,6 +21,8 @@ const MIN_STRONG_SAMPLES: u16 = 3;
 const START_DWELL: Duration = Duration::from_millis(350);
 const STOP_DWELL: Duration = Duration::from_millis(350);
 const SEND_DWELL: Duration = Duration::from_millis(700);
+const DELETE_DWELL: Duration = Duration::ZERO;
+const CLEAR_DWELL: Duration = Duration::from_millis(1_000);
 const MUTE_DWELL: Duration = Duration::from_millis(450);
 const UNMUTE_DWELL: Duration = Duration::from_millis(700);
 const MAX_FRAME_AGE: Duration = Duration::from_millis(250);
@@ -33,6 +35,12 @@ const SCROLL_TRACKING_GRACE: Duration = Duration::from_millis(180);
 const MIN_HANDEDNESS_SCORE: f32 = 0.72;
 const MIN_POSE_SCORE: f32 = 0.50;
 const SCROLL_VERTICAL_OFFSET: f32 = 0.10;
+const DELETE_FLICK_MIN_DURATION: Duration = Duration::from_millis(80);
+const DELETE_FLICK_MAX_DURATION: Duration = Duration::from_millis(500);
+const DELETE_FLICK_DISTANCE: f32 = 0.12;
+const DELETE_FLICK_VERTICAL_BAND: f32 = 0.08;
+const DELETE_FLICK_MAX_VERTICAL_DRIFT: f32 = 0.07;
+const DELETE_FLICK_OPPOSITE_RESET: f32 = 0.05;
 
 /// Fixed local-only vocabulary for explaining the temporal controller in the
 /// diagnostic window. Its observation-derived counts, percentages, and
@@ -43,6 +51,8 @@ pub enum ControlChord {
     StartTranscription,
     StopTranscription,
     Send,
+    DeleteBackward,
+    ClearDictation,
     Mute,
     Unmute,
 }
@@ -387,6 +397,7 @@ pub struct GestureControl {
     last_intent_at: Option<Instant>,
     preference: HandPreference,
     roles: Option<RoleAssignment>,
+    point_motion: Option<PointMotion>,
 }
 
 impl Default for GestureControl {
@@ -415,6 +426,7 @@ impl GestureControl {
             last_intent_at: None,
             preference,
             roles: None,
+            point_motion: None,
         }
     }
 
@@ -449,6 +461,7 @@ impl GestureControl {
         self.state = state;
         self.pending = None;
         self.candidate = None;
+        self.point_motion = None;
         self.diagnostic = ControlDiagnostic::AwaitingPose;
     }
 
@@ -501,6 +514,7 @@ impl GestureControl {
                 None
             }
         };
+        let physical = self.recognize_point_motion(now, physical);
 
         if self
             .release_latch
@@ -682,7 +696,10 @@ impl GestureControl {
             (ControlState::Standby, Chord::StartTranscription)
                 | (
                     ControlState::Active { .. },
-                    Chord::StopTranscription | Chord::Send,
+                    Chord::StopTranscription
+                        | Chord::Send
+                        | Chord::DeleteBackward
+                        | Chord::ClearDictation,
                 )
                 | (ControlState::Active { muted: false, .. }, Chord::Mute)
                 | (ControlState::Active { muted: true, .. }, Chord::Unmute)
@@ -714,6 +731,60 @@ impl GestureControl {
 
     fn fence_tracking(&mut self) {
         self.candidate = None;
+        self.point_motion = None;
+    }
+
+    fn recognize_point_motion(
+        &mut self,
+        now: Instant,
+        reading: Option<PairReading>,
+    ) -> Option<PairReading> {
+        let Some(PairReading::Point {
+            quality,
+            user_x,
+            user_y,
+            modifier_offset_y,
+        }) = reading
+        else {
+            self.point_motion = None;
+            return reading;
+        };
+        let point = PairReading::Point {
+            quality,
+            user_x,
+            user_y,
+            modifier_offset_y,
+        };
+        if quality < ACTION_ENTER_SCORE
+            || modifier_offset_y.abs() > DELETE_FLICK_VERTICAL_BAND
+            || self.release_latch == Some(ActionPose::DeleteFlick)
+        {
+            self.point_motion = None;
+            return Some(point);
+        }
+
+        let Some(motion) = self.point_motion else {
+            self.point_motion = Some(PointMotion::new(now, user_x, user_y));
+            return Some(point);
+        };
+        let elapsed = now.saturating_duration_since(motion.started_at);
+        let horizontal = user_x - motion.origin_user_x;
+        let vertical = (user_y - motion.origin_y).abs();
+        if elapsed > DELETE_FLICK_MAX_DURATION
+            || vertical > DELETE_FLICK_MAX_VERTICAL_DRIFT
+            || horizontal >= DELETE_FLICK_OPPOSITE_RESET
+        {
+            self.point_motion = Some(PointMotion::new(now, user_x, user_y));
+            return Some(point);
+        }
+        if elapsed >= DELETE_FLICK_MIN_DURATION && horizontal <= -DELETE_FLICK_DISTANCE {
+            self.point_motion = None;
+            return Some(PairReading::Action {
+                action: ActionPose::DeleteFlick,
+                quality,
+            });
+        }
+        Some(point)
     }
 }
 
@@ -722,6 +793,8 @@ enum Chord {
     StartTranscription,
     StopTranscription,
     Send,
+    DeleteBackward,
+    ClearDictation,
     Mute,
     Unmute,
 }
@@ -730,7 +803,26 @@ enum Chord {
 enum ActionPose {
     PrimaryPinch,
     SendPinch,
+    DeleteFlick,
+    ClearPinch,
     MuteFist,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct PointMotion {
+    started_at: Instant,
+    origin_user_x: f32,
+    origin_y: f32,
+}
+
+impl PointMotion {
+    const fn new(started_at: Instant, origin_user_x: f32, origin_y: f32) -> Self {
+        Self {
+            started_at,
+            origin_user_x,
+            origin_y,
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -751,6 +843,8 @@ impl From<Chord> for ControlChord {
             Chord::StartTranscription => Self::StartTranscription,
             Chord::StopTranscription => Self::StopTranscription,
             Chord::Send => Self::Send,
+            Chord::DeleteBackward => Self::DeleteBackward,
+            Chord::ClearDictation => Self::ClearDictation,
             Chord::Mute => Self::Mute,
             Chord::Unmute => Self::Unmute,
         }
@@ -764,6 +858,8 @@ impl From<ControlIntent> for ControlChord {
             ControlIntent::VoiceRequest { action, .. } => match action {
                 VoiceRequestGestureIntent::StopTranscription => Self::StopTranscription,
                 VoiceRequestGestureIntent::Send => Self::Send,
+                VoiceRequestGestureIntent::DeleteBackward => Self::DeleteBackward,
+                VoiceRequestGestureIntent::ClearDictation => Self::ClearDictation,
                 VoiceRequestGestureIntent::Mute => Self::Mute,
                 VoiceRequestGestureIntent::Unmute => Self::Unmute,
             },
@@ -785,6 +881,8 @@ fn control_intent(state: ControlState, chord: Chord) -> Option<ControlIntent> {
             let action = match chord {
                 Chord::StopTranscription => VoiceRequestGestureIntent::StopTranscription,
                 Chord::Send => VoiceRequestGestureIntent::Send,
+                Chord::DeleteBackward => VoiceRequestGestureIntent::DeleteBackward,
+                Chord::ClearDictation => VoiceRequestGestureIntent::ClearDictation,
                 Chord::Mute => VoiceRequestGestureIntent::Mute,
                 Chord::Unmute => VoiceRequestGestureIntent::Unmute,
                 Chord::StartTranscription => return None,
@@ -804,6 +902,8 @@ impl Chord {
             Self::StartTranscription => START_DWELL,
             Self::StopTranscription => STOP_DWELL,
             Self::Send => SEND_DWELL,
+            Self::DeleteBackward => DELETE_DWELL,
+            Self::ClearDictation => CLEAR_DWELL,
             Self::Mute => MUTE_DWELL,
             Self::Unmute => UNMUTE_DWELL,
         }
@@ -814,6 +914,24 @@ impl Chord {
             Self::StartTranscription | Self::StopTranscription => 4,
             Self::Mute => 5,
             Self::Send | Self::Unmute => 7,
+            Self::DeleteBackward => 1,
+            Self::ClearDictation => 10,
+        }
+    }
+
+    const fn minimum_strong_matches(self) -> u16 {
+        if matches!(self, Self::DeleteBackward) {
+            1
+        } else {
+            MIN_STRONG_SAMPLES
+        }
+    }
+
+    const fn minimum_consecutive_matches(self) -> u16 {
+        if matches!(self, Self::DeleteBackward) {
+            1
+        } else {
+            2
         }
     }
 }
@@ -827,8 +945,19 @@ struct ChordReading {
 
 #[derive(Clone, Copy, Debug)]
 enum PairReading {
-    Action { action: ActionPose, quality: f32 },
-    KnownOther { quality: f32 },
+    Action {
+        action: ActionPose,
+        quality: f32,
+    },
+    Point {
+        quality: f32,
+        user_x: f32,
+        user_y: f32,
+        modifier_offset_y: f32,
+    },
+    KnownOther {
+        quality: f32,
+    },
 }
 
 impl PairReading {
@@ -840,10 +969,18 @@ impl PairReading {
             (ControlState::Standby, ActionPose::PrimaryPinch) => Chord::StartTranscription,
             (ControlState::Active { .. }, ActionPose::PrimaryPinch) => Chord::StopTranscription,
             (ControlState::Active { .. }, ActionPose::SendPinch) => Chord::Send,
+            (ControlState::Active { .. }, ActionPose::DeleteFlick) => Chord::DeleteBackward,
+            (ControlState::Active { .. }, ActionPose::ClearPinch) => Chord::ClearDictation,
             (ControlState::Active { muted: false, .. }, ActionPose::MuteFist) => Chord::Mute,
             (ControlState::Active { muted: true, .. }, ActionPose::MuteFist) => Chord::Unmute,
             (ControlState::Disabled, _)
-            | (ControlState::Standby, ActionPose::SendPinch | ActionPose::MuteFist) => return None,
+            | (
+                ControlState::Standby,
+                ActionPose::SendPinch
+                | ActionPose::DeleteFlick
+                | ActionPose::ClearPinch
+                | ActionPose::MuteFist,
+            ) => return None,
         };
         Some(ChordReading {
             chord,
@@ -855,6 +992,9 @@ impl PairReading {
     fn releases(self, latched: ActionPose) -> bool {
         match self {
             Self::KnownOther { quality } => quality >= CONTINUE_SCORE,
+            Self::Point { quality, .. } => {
+                latched != ActionPose::DeleteFlick && quality >= CONTINUE_SCORE
+            }
             Self::Action { action, quality } => action != latched && quality >= CONTINUE_SCORE,
         }
     }
@@ -953,8 +1093,8 @@ impl Candidate {
     fn is_stable(&self, now: Instant) -> bool {
         now.saturating_duration_since(self.started_at) >= self.chord.dwell()
             && self.matches >= self.chord.minimum_matches()
-            && self.strong_matches >= MIN_STRONG_SAMPLES
-            && self.consecutive_matches >= 2
+            && self.strong_matches >= self.chord.minimum_strong_matches()
+            && self.consecutive_matches >= self.chord.minimum_consecutive_matches()
             && u32::from(self.matches) * 100
                 >= u32::from(self.samples) * u32::from(MIN_SUPPORT_PERCENT)
     }
@@ -965,8 +1105,12 @@ impl Candidate {
             self.chord.dwell(),
         );
         let matches = count_progress_permille(self.matches, self.chord.minimum_matches());
-        let strong = count_progress_permille(self.strong_matches, MIN_STRONG_SAMPLES);
-        let consecutive = count_progress_permille(self.consecutive_matches, 2);
+        let strong =
+            count_progress_permille(self.strong_matches, self.chord.minimum_strong_matches());
+        let consecutive = count_progress_permille(
+            self.consecutive_matches,
+            self.chord.minimum_consecutive_matches(),
+        );
         let required_support = u32::from(self.samples)
             .saturating_mul(u32::from(MIN_SUPPORT_PERCENT))
             .div_ceil(100);
@@ -1020,10 +1164,17 @@ fn classify_pair(
     let action = match pair.action.pose {
         HandPose::IndexPinch => ActionPose::PrimaryPinch,
         HandPose::MiddlePinch => ActionPose::SendPinch,
+        HandPose::GatheredPinch => ActionPose::ClearPinch,
         HandPose::SoftFist => ActionPose::MuteFist,
-        HandPose::Anchor | HandPose::Point | HandPose::GatheredPinch => {
-            return Ok(PairReading::KnownOther { quality });
+        HandPose::Point => {
+            return Ok(PairReading::Point {
+                quality,
+                user_x: 1.0 - pair.action.index_tip_x,
+                user_y: pair.action.index_tip_y,
+                modifier_offset_y: pair.action.index_tip_y - pair.modifier.palm_y,
+            });
         }
+        HandPose::Anchor => return Ok(PairReading::KnownOther { quality }),
         HandPose::Unknown => return Err(ClassificationFailure::UnsupportedPose),
     };
     Ok(PairReading::Action { action, quality })
@@ -1286,6 +1437,11 @@ mod tests {
             ),
             (
                 ACTIVE,
+                HandPose::GatheredPinch,
+                request(VoiceRequestGestureIntent::ClearDictation),
+            ),
+            (
+                ACTIVE,
                 HandPose::SoftFist,
                 request(VoiceRequestGestureIntent::Mute),
             ),
@@ -1297,8 +1453,45 @@ mod tests {
         ];
         for (state, pose, expected) in cases {
             let mut harness = Harness::new(state);
-            assert_eq!(harness.drive(20, &anchored(pose, 0.95)), vec![expected]);
+            assert_eq!(harness.drive(24, &anchored(pose, 0.95)), vec![expected]);
         }
+    }
+
+    #[test]
+    fn horizontal_point_flick_is_directional_released_and_separate_from_scroll() {
+        let anchor = ControlHand::test(Handedness::Left, HandPose::Anchor, 0.95, 0.35, 0.55);
+        let point = |x, y| ControlHand::test_point(Handedness::Right, 0.95, 0.65, y, x, y);
+        let mut harness = Harness::new(ACTIVE);
+        assert_eq!(harness.sample(&[anchor, point(0.60, 0.55)]), None);
+        assert_eq!(
+            harness.sample_after(Duration::from_millis(100), &[anchor, point(0.74, 0.55)]),
+            Some(request(VoiceRequestGestureIntent::DeleteBackward))
+        );
+        harness.synchronize(ACTIVE);
+        assert_eq!(harness.control.release_latch, Some(ActionPose::DeleteFlick));
+        assert_eq!(harness.sample(&[anchor, point(0.60, 0.55)]), None);
+        assert_eq!(harness.sample(&[anchor, point(0.80, 0.55)]), None);
+        assert_eq!(harness.control.release_latch, Some(ActionPose::DeleteFlick));
+        assert_eq!(harness.sample(&anchored(HandPose::Anchor, 0.95)), None);
+        assert_eq!(harness.control.release_latch, None);
+
+        let mut opposite_direction = Harness::new(ACTIVE);
+        assert_eq!(
+            opposite_direction.sample(&[anchor, point(0.60, 0.55)]),
+            None
+        );
+        assert_eq!(
+            opposite_direction
+                .sample_after(Duration::from_millis(100), &[anchor, point(0.46, 0.55)]),
+            None
+        );
+
+        let mut scroll_position = Harness::new(ACTIVE);
+        assert_eq!(scroll_position.sample(&[anchor, point(0.60, 0.35)]), None);
+        assert_eq!(
+            scroll_position.sample_after(Duration::from_millis(100), &[anchor, point(0.74, 0.35)]),
+            None
+        );
     }
 
     #[test]

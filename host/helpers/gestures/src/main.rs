@@ -507,6 +507,8 @@ fn gesture_candidate(
         crate::control::ControlChord::StartTranscription => GestureCandidate::StartTranscription,
         crate::control::ControlChord::StopTranscription => GestureCandidate::StopTranscription,
         crate::control::ControlChord::Send => GestureCandidate::Send,
+        crate::control::ControlChord::DeleteBackward => GestureCandidate::DeleteBackward,
+        crate::control::ControlChord::ClearDictation => GestureCandidate::ClearDictation,
         crate::control::ControlChord::Mute => GestureCandidate::Mute,
         crate::control::ControlChord::Unmute => GestureCandidate::Unmute,
     };
@@ -904,6 +906,16 @@ mod tests {
                 Some(GestureCandidate::StopTranscription),
             ),
             (ACTIVE, ControlChord::Send, Some(GestureCandidate::Send)),
+            (
+                ACTIVE,
+                ControlChord::DeleteBackward,
+                Some(GestureCandidate::DeleteBackward),
+            ),
+            (
+                ACTIVE,
+                ControlChord::ClearDictation,
+                Some(GestureCandidate::ClearDictation),
+            ),
             (ACTIVE, ControlChord::Mute, Some(GestureCandidate::Mute)),
             (
                 GestureContext::Active {
@@ -919,6 +931,8 @@ mod tests {
                 None,
             ),
             (ControlState::Standby, ControlChord::Send, None),
+            (ControlState::Standby, ControlChord::DeleteBackward, None),
+            (ControlState::Standby, ControlChord::ClearDictation, None),
             (
                 GestureContext::Active {
                     voice_request_id: 12,

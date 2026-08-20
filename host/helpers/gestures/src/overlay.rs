@@ -403,6 +403,8 @@ fn chord_text(chord: ControlChord) -> &'static str {
         ControlChord::StartTranscription => "START",
         ControlChord::StopTranscription => "STOP",
         ControlChord::Send => "SEND",
+        ControlChord::DeleteBackward => "DELETE",
+        ControlChord::ClearDictation => "CLEAR",
         ControlChord::Mute => "MUTE",
         ControlChord::Unmute => "UNMUTE",
     }
@@ -479,6 +481,8 @@ fn candidate_style(candidate: GestureCandidate) -> (&'static str, u32) {
         GestureCandidate::StartTranscription => ("START", PAIR_COLOR),
         GestureCandidate::StopTranscription => ("STOP", LEFT_COLOR),
         GestureCandidate::Send => ("SEND", WARNING_COLOR),
+        GestureCandidate::DeleteBackward => ("DELETE", LEFT_COLOR),
+        GestureCandidate::ClearDictation => ("CLEAR", WARNING_COLOR),
         GestureCandidate::Mute => ("MUTE", RIGHT_COLOR),
         GestureCandidate::Unmute => ("UNMUTE", PAIR_COLOR),
     }
@@ -962,6 +966,8 @@ mod tests {
             (GestureCandidate::StartTranscription, "START", PAIR_COLOR),
             (GestureCandidate::StopTranscription, "STOP", LEFT_COLOR),
             (GestureCandidate::Send, "SEND", WARNING_COLOR),
+            (GestureCandidate::DeleteBackward, "DELETE", LEFT_COLOR),
+            (GestureCandidate::ClearDictation, "CLEAR", WARNING_COLOR),
             (GestureCandidate::Mute, "MUTE", RIGHT_COLOR),
             (GestureCandidate::Unmute, "UNMUTE", PAIR_COLOR),
         ];

@@ -1749,6 +1749,7 @@ dependencies = [
  "serde_json",
  "tempfile",
  "tokio",
+ "unicode-segmentation",
  "url",
  "usvg",
  "uuid",

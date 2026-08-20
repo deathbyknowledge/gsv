@@ -16,7 +16,7 @@ pub const EVENT_FD: i32 = 3;
 pub const EVENT_FD_MARKER_ENV: &str = "GSV_VISION_EVENT_FD";
 /// Exact private launch contract. Rotate this on an incompatible unshipped
 /// helper/Desktop cutover so a stale sibling fails before semantic traffic.
-pub const EVENT_CHANNEL_CONTRACT_MARKER: &str = "gsv-vision-control-v1-held-scroll";
+pub const EVENT_CHANNEL_CONTRACT_MARKER: &str = "gsv-vision-control-v2-dictation-editing";
 pub const SESSION_HIGH_ENV: &str = "GSV_VISION_SESSION_HIGH";
 pub const SESSION_LOW_ENV: &str = "GSV_VISION_SESSION_LOW";
 
@@ -90,6 +90,8 @@ impl<'de> Deserialize<'de> for GestureContext {
 pub enum VoiceRequestGestureIntent {
     StopTranscription,
     Send,
+    DeleteBackward,
+    ClearDictation,
     Mute,
     Unmute,
 }
@@ -196,6 +198,8 @@ pub enum GestureCandidate {
     StartTranscription,
     StopTranscription,
     Send,
+    DeleteBackward,
+    ClearDictation,
     Mute,
     Unmute,
 }
@@ -243,7 +247,10 @@ impl GestureProgress {
                 GestureCandidate::StartTranscription
             ) | (
                 GestureContext::Active { .. },
-                GestureCandidate::StopTranscription | GestureCandidate::Send,
+                GestureCandidate::StopTranscription
+                    | GestureCandidate::Send
+                    | GestureCandidate::DeleteBackward
+                    | GestureCandidate::ClearDictation,
             ) | (
                 GestureContext::Active { muted: false, .. },
                 GestureCandidate::Mute
@@ -594,13 +601,14 @@ mod tests {
         assert_eq!(PROTOCOL_VERSION, 1);
         assert_eq!(
             EVENT_CHANNEL_CONTRACT_MARKER,
-            "gsv-vision-control-v1-held-scroll"
+            "gsv-vision-control-v2-dictation-editing"
         );
         for stale in [
             "1",
             "gsv-vision-control-v1",
             "gsv-vision-control-v1-explicit-modes",
             "gsv-vision-control-v1-transcription-sessions",
+            "gsv-vision-control-v1-held-scroll",
         ] {
             assert_ne!(EVENT_CHANNEL_CONTRACT_MARKER, stale);
         }
@@ -706,6 +714,8 @@ mod tests {
                 "stop_transcription",
             ),
             (VoiceRequestGestureIntent::Send, "send"),
+            (VoiceRequestGestureIntent::DeleteBackward, "delete_backward"),
+            (VoiceRequestGestureIntent::ClearDictation, "clear_dictation"),
             (VoiceRequestGestureIntent::Mute, "mute"),
             (VoiceRequestGestureIntent::Unmute, "unmute"),
         ] {
@@ -885,6 +895,8 @@ mod tests {
             GestureCandidate::StartTranscription,
             GestureCandidate::StopTranscription,
             GestureCandidate::Send,
+            GestureCandidate::DeleteBackward,
+            GestureCandidate::ClearDictation,
             GestureCandidate::Mute,
             GestureCandidate::Unmute,
         ] {
@@ -919,6 +931,8 @@ mod tests {
                 GestureCandidate::StartTranscription,
                 GestureCandidate::StopTranscription,
                 GestureCandidate::Send,
+                GestureCandidate::DeleteBackward,
+                GestureCandidate::ClearDictation,
                 GestureCandidate::Mute,
                 GestureCandidate::Unmute,
             ] {
@@ -929,7 +943,10 @@ mod tests {
                         GestureCandidate::StartTranscription
                     ) | (
                         GestureContext::Active { .. },
-                        GestureCandidate::StopTranscription | GestureCandidate::Send,
+                        GestureCandidate::StopTranscription
+                            | GestureCandidate::Send
+                            | GestureCandidate::DeleteBackward
+                            | GestureCandidate::ClearDictation,
                     ) | (
                         GestureContext::Active { muted: false, .. },
                         GestureCandidate::Mute
