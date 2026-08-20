@@ -246,7 +246,7 @@ fn draw_perf(
     );
     let (control_status, control_color) = control_status_text(control.status);
     let (control_diagnostic, diagnostic_color) = match control.scroll_state {
-        ScrollState::Dragging { .. } => scroll_status_text(control.scroll_state),
+        ScrollState::Active { .. } => scroll_status_text(control.scroll_state),
         ScrollState::Idle => control_diagnostic_text(control.status, control.diagnostic),
     };
 
@@ -291,17 +291,17 @@ fn draw_perf(
 fn scroll_status_text(state: ScrollState) -> (String, u32) {
     match state {
         ScrollState::Idle => (
-            "SCROLL IDLE - SETTLE RIGHT FIST, THEN DRAG VERTICALLY".to_string(),
+            "SCROLL IDLE - OPEN CONTROL PALM + SETTLE ACTION FIST".to_string(),
             MUTED_TEXT_COLOR,
         ),
-        ScrollState::Dragging {
+        ScrollState::Active {
             offset_millipalms, ..
         } => {
             let sign = if offset_millipalms < 0 { '-' } else { '+' };
             let magnitude = offset_millipalms.unsigned_abs();
             (
                 format!(
-                    "SCROLL DRAGGING {sign}{}.{:03} PALMS - OPEN HAND TO RELEASE",
+                    "SCROLL ACTIVE {sign}{}.{:03} PALMS - POSITION SETS SPEED",
                     magnitude / 1_000,
                     magnitude % 1_000,
                 ),
@@ -317,19 +317,19 @@ fn control_status_text(status: ControlStatus) -> (&'static str, u32) {
             ("GESTURES DISARMED - HOLD BOTH FISTS TO ARM", WARNING_COLOR)
         }
         ControlStatus::Disabled { .. } => (
-            "GESTURES ARMED - ACTIONS TEMPORARILY UNAVAILABLE / FIST DRAG SCROLLS / BOTH FISTS DISARM",
+            "GESTURES ARMED - ACTIONS TEMPORARILY UNAVAILABLE / OPEN CONTROL + ACTION FIST SCROLLS",
             WARNING_COLOR,
         ),
         ControlStatus::Standby { .. } => (
-            "GESTURES ARMED - RIGHT 1 STARTS / FIST DRAG SCROLLS / BOTH FISTS DISARM",
+            "GESTURES ARMED - RIGHT 1 STARTS / OPEN CONTROL + ACTION FIST SCROLLS",
             PAIR_COLOR,
         ),
         ControlStatus::Active { muted: false, .. } => (
-            "TRANSCRIBING - RIGHT 1 STOP / 2 SEND / 3 DELETE / 4 CLEAR / 5 MUTE / FIST DRAG SCROLL",
+            "TRANSCRIBING - RIGHT 1 STOP / 2 SEND / 3 DELETE / 4 CLEAR / 5 MUTE / TWO-HAND SCROLL",
             PAIR_COLOR,
         ),
         ControlStatus::Active { muted: true, .. } => (
-            "TRANSCRIBING + MUTED - RIGHT 5 UNMUTE / 1 STOP / FIST DRAG SCROLL",
+            "TRANSCRIBING + MUTED - RIGHT 5 UNMUTE / 1 STOP / TWO-HAND SCROLL",
             RIGHT_COLOR,
         ),
     }
@@ -354,7 +354,7 @@ fn control_diagnostic_text(
             ControlStatus::Disabled { .. }
             | ControlStatus::Standby { .. }
             | ControlStatus::Active { .. } => (
-                "CONTROL WAITING FOR RIGHT 1-5 OR FIST DRAG".to_string(),
+                "CONTROL WAITING FOR RIGHT 1-5 OR SCROLL CHORD".to_string(),
                 MUTED_TEXT_COLOR,
             ),
         },
@@ -1191,7 +1191,7 @@ mod tests {
         let cases = [
             (
                 ControlDiagnostic::AwaitingPose,
-                "CONTROL WAITING FOR RIGHT 1-5 OR FIST DRAG",
+                "CONTROL WAITING FOR RIGHT 1-5 OR SCROLL CHORD",
             ),
             (
                 ControlDiagnostic::NeedTwoHands { detected: 1 },

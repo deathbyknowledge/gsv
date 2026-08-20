@@ -13,31 +13,40 @@ use super::{GsvApp, VoiceGestureStatus};
 
 const MAX_GESTURE_INTENT_AGE: Duration = Duration::from_secs(1);
 const MAX_GESTURE_STATUS_AGE: Duration = Duration::from_secs(1);
-const MAX_GESTURE_SCROLL_STATE_AGE: Duration = Duration::from_millis(500);
+const MAX_GESTURE_SCROLL_STATE_AGE: Duration = Duration::from_millis(250);
+pub(super) const GESTURE_SCROLL_FRAME_INTERVAL: Duration = Duration::from_millis(16);
+const MAX_GESTURE_SCROLL_FRAME_ELAPSED: Duration = Duration::from_millis(50);
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 enum GestureScrollUpdate {
-    Start { delta_palms: f32 },
-    Move { delta_palms: f32 },
+    Start { instance_id: u64 },
     End,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum GestureScrollTick {
+    Apply {
+        offset_palms: f32,
+        elapsed: Duration,
+    },
+    Expired,
+    Stop,
+}
+
+#[derive(Clone, Copy)]
+struct ActiveGestureScroll {
+    instance_id: u64,
+    offset_millipalms: i16,
+    received_at: Instant,
+    last_tick_at: Instant,
 }
 
 #[derive(Default)]
 pub(super) struct GestureScroller {
-    instance_id: Option<u64>,
-    offset_millipalms: i16,
+    active: Option<ActiveGestureScroll>,
 }
 
 impl GestureScroller {
-    fn observe(
-        &mut self,
-        state: ScrollState,
-        received_at: Instant,
-        armed: bool,
-    ) -> Option<GestureScrollUpdate> {
-        self.observe_at(state, received_at, armed, Instant::now())
-    }
-
     fn observe_at(
         &mut self,
         state: ScrollState,
@@ -48,7 +57,7 @@ impl GestureScroller {
         if !armed || now.saturating_duration_since(received_at) > MAX_GESTURE_SCROLL_STATE_AGE {
             return self.reset();
         }
-        let ScrollState::Dragging {
+        let ScrollState::Active {
             instance_id,
             offset_millipalms,
         } = state
@@ -56,24 +65,47 @@ impl GestureScroller {
             return self.reset();
         };
 
-        let starting = self.instance_id != Some(instance_id);
-        let previous = if starting { 0 } else { self.offset_millipalms };
-        self.instance_id = Some(instance_id);
-        self.offset_millipalms = offset_millipalms;
-        let delta_millipalms = i32::from(offset_millipalms) - i32::from(previous);
-        let delta_palms = delta_millipalms as f32 / 1_000.0;
-        if starting {
-            Some(GestureScrollUpdate::Start { delta_palms })
-        } else if delta_millipalms != 0 {
-            Some(GestureScrollUpdate::Move { delta_palms })
-        } else {
-            None
+        if let Some(active) = self
+            .active
+            .as_mut()
+            .filter(|active| active.instance_id == instance_id)
+        {
+            active.offset_millipalms = offset_millipalms;
+            active.received_at = received_at;
+            return None;
+        }
+        self.active = Some(ActiveGestureScroll {
+            instance_id,
+            offset_millipalms,
+            received_at,
+            last_tick_at: now,
+        });
+        Some(GestureScrollUpdate::Start { instance_id })
+    }
+
+    fn tick_at(&mut self, instance_id: u64, now: Instant) -> GestureScrollTick {
+        let Some(active) = self.active.as_mut() else {
+            return GestureScrollTick::Stop;
+        };
+        if active.instance_id != instance_id {
+            return GestureScrollTick::Stop;
+        }
+        if now.saturating_duration_since(active.received_at) > MAX_GESTURE_SCROLL_STATE_AGE {
+            self.active = None;
+            return GestureScrollTick::Expired;
+        }
+        let elapsed = now
+            .saturating_duration_since(active.last_tick_at)
+            .min(MAX_GESTURE_SCROLL_FRAME_ELAPSED);
+        active.last_tick_at = now;
+        GestureScrollTick::Apply {
+            offset_palms: f32::from(active.offset_millipalms) / 1_000.0,
+            elapsed,
         }
     }
 
     fn reset(&mut self) -> Option<GestureScrollUpdate> {
-        self.offset_millipalms = 0;
-        self.instance_id.take().map(|_| GestureScrollUpdate::End)
+        self.active.take().map(|_| GestureScrollUpdate::End)
     }
 }
 
@@ -198,18 +230,16 @@ impl GsvApp {
                     return;
                 }
                 self.vision_scroll_sequence = sequence;
-                let update = self.vision_scroll.observe(
+                let update = self.vision_scroll.observe_at(
                     state,
                     received_at,
                     self.vision_armed && self.vision_lifecycle == Some(LifecycleState::Ready),
+                    cx.background_executor().now(),
                 );
                 match update {
-                    Some(GestureScrollUpdate::Start { delta_palms }) => {
+                    Some(GestureScrollUpdate::Start { instance_id }) => {
                         self.finish_gesture_scroll(cx);
-                        self.scroll_conversation_by_gesture(delta_palms, window, cx);
-                    }
-                    Some(GestureScrollUpdate::Move { delta_palms }) => {
-                        self.scroll_conversation_by_gesture(delta_palms, window, cx);
+                        self.start_gesture_scroll_loop(instance_id, window, cx);
                     }
                     Some(GestureScrollUpdate::End) => self.finish_gesture_scroll(cx),
                     None => {}
@@ -345,6 +375,46 @@ impl GsvApp {
                 cx.notify();
             }
         }
+    }
+
+    fn start_gesture_scroll_loop(
+        &mut self,
+        instance_id: u64,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let executor = cx.background_executor().clone();
+        cx.spawn_in(window, async move |this, cx| loop {
+            executor.timer(GESTURE_SCROLL_FRAME_INTERVAL).await;
+            let now = executor.now();
+            let keep_running = this
+                .update_in(cx, |this, window, cx| {
+                    match this.vision_scroll.tick_at(instance_id, now) {
+                        GestureScrollTick::Apply {
+                            offset_palms,
+                            elapsed,
+                        } => {
+                            this.scroll_conversation_by_gesture_velocity(
+                                offset_palms,
+                                elapsed,
+                                window,
+                                cx,
+                            );
+                            true
+                        }
+                        GestureScrollTick::Expired => {
+                            this.finish_gesture_scroll(cx);
+                            false
+                        }
+                        GestureScrollTick::Stop => false,
+                    }
+                })
+                .unwrap_or(false);
+            if !keep_running {
+                break;
+            }
+        })
+        .detach();
     }
 
     pub(super) fn sync_vision_context(&self) {
@@ -633,13 +703,13 @@ mod tests {
     use super::*;
 
     #[test]
-    fn absolute_scroll_positions_become_incremental_palm_motion() {
+    fn fresh_absolute_scroll_position_drives_bounded_velocity_ticks() {
         let now = Instant::now();
         let mut scroll = GestureScroller::default();
 
         assert_eq!(
             scroll.observe_at(
-                ScrollState::Dragging {
+                ScrollState::Active {
                     instance_id: 7,
                     offset_millipalms: -500,
                 },
@@ -647,76 +717,88 @@ mod tests {
                 true,
                 now,
             ),
-            Some(GestureScrollUpdate::Start { delta_palms: -0.5 })
+            Some(GestureScrollUpdate::Start { instance_id: 7 })
         );
         assert_eq!(
+            scroll.tick_at(7, now + Duration::from_millis(16)),
+            GestureScrollTick::Apply {
+                offset_palms: -0.5,
+                elapsed: Duration::from_millis(16),
+            }
+        );
+        let heartbeat_at = now + Duration::from_millis(20);
+        assert_eq!(
             scroll.observe_at(
-                ScrollState::Dragging {
+                ScrollState::Active {
                     instance_id: 7,
                     offset_millipalms: -750,
                 },
-                now,
+                heartbeat_at,
                 true,
-                now,
+                heartbeat_at,
             ),
-            Some(GestureScrollUpdate::Move { delta_palms: -0.25 })
+            None
+        );
+        assert_eq!(
+            scroll.tick_at(7, now + Duration::from_millis(32)),
+            GestureScrollTick::Apply {
+                offset_palms: -0.75,
+                elapsed: Duration::from_millis(16),
+            }
+        );
+        assert_eq!(
+            scroll.tick_at(7, now + Duration::from_millis(200)),
+            GestureScrollTick::Apply {
+                offset_palms: -0.75,
+                elapsed: MAX_GESTURE_SCROLL_FRAME_ELAPSED,
+            }
         );
         assert_eq!(
             scroll.observe_at(ScrollState::Idle, now, true, now),
             Some(GestureScrollUpdate::End)
         );
-        assert_eq!(scroll.observe_at(ScrollState::Idle, now, true, now), None);
-        assert_eq!(
-            scroll.observe_at(
-                ScrollState::Dragging {
-                    instance_id: 8,
-                    offset_millipalms: 0,
-                },
-                now,
-                true,
-                now,
-            ),
-            Some(GestureScrollUpdate::Start { delta_palms: 0.0 })
-        );
-        assert_eq!(
-            scroll.observe_at(
-                ScrollState::Dragging {
-                    instance_id: 8,
-                    offset_millipalms: -250,
-                },
-                now,
-                true,
-                now,
-            ),
-            Some(GestureScrollUpdate::Move { delta_palms: -0.25 })
-        );
+        assert_eq!(scroll.tick_at(7, now), GestureScrollTick::Stop);
     }
 
     #[test]
-    fn a_coalesced_new_drag_resets_its_origin_and_stale_authority_ends_it() {
+    fn a_new_instance_supersedes_the_old_loop_and_stale_authority_expires() {
         let now = Instant::now();
         let stale = now
             .checked_sub(MAX_GESTURE_SCROLL_STATE_AGE + Duration::from_millis(1))
             .expect("test instant supports a short subtraction");
         let mut scroll = GestureScroller::default();
-        let dragging = |instance_id, offset_millipalms| ScrollState::Dragging {
+        let active = |instance_id, offset_millipalms| ScrollState::Active {
             instance_id,
             offset_millipalms,
         };
 
         assert_eq!(
-            scroll.observe_at(dragging(11, 500), now, true, now),
-            Some(GestureScrollUpdate::Start { delta_palms: 0.5 })
+            scroll.observe_at(active(11, 500), now, true, now),
+            Some(GestureScrollUpdate::Start { instance_id: 11 })
         );
         assert_eq!(
-            scroll.observe_at(dragging(12, -250), now, true, now),
-            Some(GestureScrollUpdate::Start { delta_palms: -0.25 })
+            scroll.observe_at(active(12, -250), now, true, now),
+            Some(GestureScrollUpdate::Start { instance_id: 12 })
         );
+        assert_eq!(scroll.tick_at(11, now), GestureScrollTick::Stop);
         assert_eq!(
-            scroll.observe_at(dragging(12, -500), stale, true, now),
+            scroll.observe_at(active(12, -500), stale, true, now),
             Some(GestureScrollUpdate::End)
         );
-        assert_eq!(scroll.observe_at(dragging(13, 500), now, false, now), None);
+        assert_eq!(scroll.observe_at(active(13, 500), now, false, now), None);
+
+        assert_eq!(
+            scroll.observe_at(active(14, 500), now, true, now),
+            Some(GestureScrollUpdate::Start { instance_id: 14 })
+        );
+        assert_eq!(
+            scroll.tick_at(
+                14,
+                now + MAX_GESTURE_SCROLL_STATE_AGE + Duration::from_millis(1)
+            ),
+            GestureScrollTick::Expired
+        );
+        assert_eq!(scroll.tick_at(14, now), GestureScrollTick::Stop);
     }
 
     fn open_test_app(

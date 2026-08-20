@@ -181,7 +181,7 @@ enum RichPresentationEffect {
 const HISTORY_SCROLL_THRESHOLD: f32 = 144.0;
 const HISTORY_SCROLL_LINE_HEIGHT: f32 = 16.0;
 const HISTORY_SCROLL_IDLE: Duration = Duration::from_millis(180);
-const GESTURE_SCROLL_LINES_PER_PALM: f32 = 6.0;
+const GESTURE_SCROLL_LINES_PER_PALM_SECOND: f32 = 30.0;
 const TIMELINE_MARKER_WIDTH: f32 = 4.0;
 const TIMELINE_MARKER_HEIGHT: f32 = 8.0;
 const TYPE_LAYOUT_CACHE_LIMIT: usize = crate::history::MAX_FETCHED_HISTORY_MESSAGES + 8;
@@ -248,36 +248,43 @@ fn prepare_history_scroll_gesture(
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
-enum CanvasWheelAction {
+enum CanvasScrollAction {
     ScrollTo(f32),
     Resist { direction: i8, progress: f32 },
     Blocked,
     Navigate(i8),
 }
 
-fn canvas_wheel_action(
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ConversationScrollInput {
+    Wheel,
+    ContinuousGesture,
+}
+
+fn canvas_scroll_action(
     accumulator: &mut f32,
     offset: f32,
     maximum: f32,
     vertical: f32,
     can_navigate: bool,
-) -> CanvasWheelAction {
+    input: ConversationScrollInput,
+) -> CanvasScrollAction {
     let target = (offset + vertical).clamp(-maximum, 0.0);
     let can_scroll = (vertical > 0.0 && offset < 0.0) || (vertical < 0.0 && offset > -maximum);
     if can_scroll {
         *accumulator = 0.0;
-        return CanvasWheelAction::ScrollTo(target);
+        return CanvasScrollAction::ScrollTo(target);
     }
 
     if !can_navigate {
         *accumulator = 0.0;
-        return CanvasWheelAction::Blocked;
+        return CanvasScrollAction::Blocked;
     }
 
     let direction = if vertical > 0.0 { -1 } else { 1 };
-    if maximum <= 0.5 {
+    if maximum <= 0.5 && input == ConversationScrollInput::Wheel {
         *accumulator = 0.0;
-        return CanvasWheelAction::Navigate(direction);
+        return CanvasScrollAction::Navigate(direction);
     }
 
     if *accumulator != 0.0 && accumulator.signum() != vertical.signum() {
@@ -285,12 +292,12 @@ fn canvas_wheel_action(
     }
     *accumulator += vertical;
     if accumulator.abs() < HISTORY_SCROLL_THRESHOLD {
-        CanvasWheelAction::Resist {
+        CanvasScrollAction::Resist {
             direction,
             progress: (accumulator.abs() / HISTORY_SCROLL_THRESHOLD).clamp(0.0, 1.0),
         }
     } else {
-        CanvasWheelAction::Navigate(direction)
+        CanvasScrollAction::Navigate(direction)
     }
 }
 
@@ -1663,17 +1670,25 @@ impl GsvApp {
             return;
         };
         cx.stop_propagation();
-        self.apply_conversation_scroll(vertical, Instant::now(), window, cx);
+        self.apply_conversation_scroll(
+            vertical,
+            Instant::now(),
+            ConversationScrollInput::Wheel,
+            window,
+            cx,
+        );
     }
 
-    pub(super) fn scroll_conversation_by_gesture(
+    pub(super) fn scroll_conversation_by_gesture_velocity(
         &mut self,
-        delta_palms: f32,
+        offset_palms: f32,
+        elapsed: Duration,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if !delta_palms.is_finite()
-            || delta_palms == 0.0
+        if !offset_palms.is_finite()
+            || offset_palms == 0.0
+            || elapsed.is_zero()
             || self.login.is_some()
             || self.microphone_chooser.is_some()
             || self.gesture_guide_open
@@ -1682,8 +1697,17 @@ impl GsvApp {
         {
             return;
         }
-        let vertical = delta_palms * HISTORY_SCROLL_LINE_HEIGHT * GESTURE_SCROLL_LINES_PER_PALM;
-        self.apply_conversation_scroll(vertical, Instant::now(), window, cx);
+        let vertical = offset_palms
+            * HISTORY_SCROLL_LINE_HEIGHT
+            * GESTURE_SCROLL_LINES_PER_PALM_SECOND
+            * elapsed.as_secs_f32();
+        self.apply_conversation_scroll(
+            vertical,
+            Instant::now(),
+            ConversationScrollInput::ContinuousGesture,
+            window,
+            cx,
+        );
     }
 
     pub(super) fn finish_gesture_scroll(&mut self, cx: &mut Context<Self>) {
@@ -1702,6 +1726,7 @@ impl GsvApp {
         &mut self,
         vertical: f32,
         now: Instant,
+        input: ConversationScrollInput,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -1725,34 +1750,39 @@ impl GsvApp {
         } else {
             self.conversation.selected + 1 < self.conversation.moments.len()
         };
-        match canvas_wheel_action(
+        match canvas_scroll_action(
             &mut self.history_scroll_accumulator,
             offset,
             maximum,
             vertical,
             can_navigate,
+            input,
         ) {
-            CanvasWheelAction::ScrollTo(target) => {
+            CanvasScrollAction::ScrollTo(target) => {
                 self.clear_history_edge_feedback();
                 self.message_scroll.set_offset(point(px(0.0), px(target)));
                 cx.notify();
             }
-            CanvasWheelAction::Resist {
+            CanvasScrollAction::Resist {
                 direction,
                 progress,
             } => {
                 self.show_history_edge_feedback(direction, progress, cx);
             }
-            CanvasWheelAction::Blocked => {
+            CanvasScrollAction::Blocked => {
                 let feedback_cleared = self.clear_history_edge_feedback();
                 if selection_cleared || feedback_cleared {
                     cx.notify();
                 }
             }
-            CanvasWheelAction::Navigate(direction) => {
+            CanvasScrollAction::Navigate(direction) => {
                 self.clear_history_edge_feedback();
                 self.move_moment(direction, window, cx);
-                latch_history_scroll(&mut self.history_scroll_accumulator, vertical);
+                if input == ConversationScrollInput::Wheel {
+                    latch_history_scroll(&mut self.history_scroll_accumulator, vertical);
+                } else {
+                    self.history_scroll_accumulator = 0.0;
+                }
                 self.history_scroll_last_event = Some(now);
                 if selection_cleared {
                     cx.notify();
@@ -2284,6 +2314,7 @@ mod tests {
     use gpui_component::Root;
 
     use super::*;
+    use crate::app::gesture::GESTURE_SCROLL_FRAME_INTERVAL;
     use crate::vision_debug::VisionEvent;
 
     #[test]
@@ -2420,28 +2451,56 @@ mod tests {
     fn canvas_requires_fresh_overscroll_after_reaching_the_boundary() {
         let mut accumulator = 0.0;
         assert_eq!(
-            canvas_wheel_action(&mut accumulator, -40.0, 100.0, -120.0, true),
-            CanvasWheelAction::ScrollTo(-100.0)
+            canvas_scroll_action(
+                &mut accumulator,
+                -40.0,
+                100.0,
+                -120.0,
+                true,
+                ConversationScrollInput::Wheel,
+            ),
+            CanvasScrollAction::ScrollTo(-100.0)
         );
         assert_eq!(accumulator, 0.0);
 
         assert_eq!(
-            canvas_wheel_action(&mut accumulator, -100.0, 100.0, -48.0, true),
-            CanvasWheelAction::Resist {
+            canvas_scroll_action(
+                &mut accumulator,
+                -100.0,
+                100.0,
+                -48.0,
+                true,
+                ConversationScrollInput::Wheel,
+            ),
+            CanvasScrollAction::Resist {
                 direction: 1,
                 progress: 1.0 / 3.0,
             }
         );
         assert_eq!(
-            canvas_wheel_action(&mut accumulator, -100.0, 100.0, -48.0, true),
-            CanvasWheelAction::Resist {
+            canvas_scroll_action(
+                &mut accumulator,
+                -100.0,
+                100.0,
+                -48.0,
+                true,
+                ConversationScrollInput::Wheel,
+            ),
+            CanvasScrollAction::Resist {
                 direction: 1,
                 progress: 2.0 / 3.0,
             }
         );
         assert_eq!(
-            canvas_wheel_action(&mut accumulator, -100.0, 100.0, -48.0, true),
-            CanvasWheelAction::Navigate(1)
+            canvas_scroll_action(
+                &mut accumulator,
+                -100.0,
+                100.0,
+                -48.0,
+                true,
+                ConversationScrollInput::Wheel,
+            ),
+            CanvasScrollAction::Navigate(1)
         );
     }
 
@@ -2451,8 +2510,15 @@ mod tests {
         let mut accumulator = 0.0;
         let mut last_event = Some(start);
         assert_eq!(
-            canvas_wheel_action(&mut accumulator, 0.0, 0.0, -30.0, true),
-            CanvasWheelAction::Navigate(1)
+            canvas_scroll_action(
+                &mut accumulator,
+                0.0,
+                0.0,
+                -30.0,
+                true,
+                ConversationScrollInput::Wheel,
+            ),
+            CanvasScrollAction::Navigate(1)
         );
 
         latch_history_scroll(&mut accumulator, -48.0);
@@ -2477,19 +2543,65 @@ mod tests {
     }
 
     #[test]
+    fn continuous_gesture_accumulates_distance_before_crossing_short_moments() {
+        let mut accumulator = 0.0;
+        for progress in [1.0 / 3.0, 2.0 / 3.0] {
+            assert_eq!(
+                canvas_scroll_action(
+                    &mut accumulator,
+                    0.0,
+                    0.0,
+                    -48.0,
+                    true,
+                    ConversationScrollInput::ContinuousGesture,
+                ),
+                CanvasScrollAction::Resist {
+                    direction: 1,
+                    progress,
+                }
+            );
+        }
+        assert_eq!(
+            canvas_scroll_action(
+                &mut accumulator,
+                0.0,
+                0.0,
+                -48.0,
+                true,
+                ConversationScrollInput::ContinuousGesture,
+            ),
+            CanvasScrollAction::Navigate(1)
+        );
+    }
+
+    #[test]
     fn boundary_resistance_reverses_and_missing_neighbor_is_blocked() {
         let mut accumulator = 80.0;
         assert_eq!(
-            canvas_wheel_action(&mut accumulator, -100.0, 100.0, -30.0, true),
-            CanvasWheelAction::Resist {
+            canvas_scroll_action(
+                &mut accumulator,
+                -100.0,
+                100.0,
+                -30.0,
+                true,
+                ConversationScrollInput::Wheel,
+            ),
+            CanvasScrollAction::Resist {
                 direction: 1,
                 progress: 30.0 / HISTORY_SCROLL_THRESHOLD,
             }
         );
         assert_eq!(accumulator, -30.0);
         assert_eq!(
-            canvas_wheel_action(&mut accumulator, -100.0, 100.0, -48.0, false),
-            CanvasWheelAction::Blocked
+            canvas_scroll_action(
+                &mut accumulator,
+                -100.0,
+                100.0,
+                -48.0,
+                false,
+                ConversationScrollInput::Wheel,
+            ),
+            CanvasScrollAction::Blocked
         );
         assert_eq!(accumulator, 0.0);
     }
@@ -2967,11 +3079,12 @@ mod tests {
 
         cx.update(|window, cx| {
             app.update(cx, |app, cx| {
+                let received_at = cx.background_executor().now();
                 app.handle_vision_event(
                     VisionEvent::Scroll {
                         sequence: 1,
-                        received_at: Instant::now(),
-                        state: ScrollState::Dragging {
+                        received_at,
+                        state: ScrollState::Active {
                             instance_id: 7,
                             offset_millipalms: -1_000,
                         },
@@ -2979,22 +3092,25 @@ mod tests {
                     window,
                     cx,
                 );
+            });
+        });
+        cx.run_until_parked();
+        cx.executor().advance_clock(GESTURE_SCROLL_FRAME_INTERVAL);
+        cx.run_until_parked();
+        let first_offset = cx.cx.update(|cx| app.read(cx).message_scroll.offset().y);
+        assert!(first_offset < px(0.0));
+
+        cx.executor().advance_clock(GESTURE_SCROLL_FRAME_INTERVAL);
+        cx.run_until_parked();
+        let second_offset = cx.cx.update(|cx| app.read(cx).message_scroll.offset().y);
+        assert!(second_offset < first_offset);
+
+        cx.update(|window, cx| {
+            app.update(cx, |app, cx| {
                 app.handle_vision_event(
                     VisionEvent::Scroll {
                         sequence: 2,
-                        received_at: Instant::now(),
-                        state: ScrollState::Dragging {
-                            instance_id: 7,
-                            offset_millipalms: -1_500,
-                        },
-                    },
-                    window,
-                    cx,
-                );
-                app.handle_vision_event(
-                    VisionEvent::Scroll {
-                        sequence: 3,
-                        received_at: Instant::now(),
+                        received_at: cx.background_executor().now(),
                         state: ScrollState::Idle,
                     },
                     window,
@@ -3002,10 +3118,13 @@ mod tests {
                 );
             });
         });
+        let stopped_offset = cx.cx.update(|cx| app.read(cx).message_scroll.offset().y);
+        cx.executor().advance_clock(Duration::from_millis(64));
+        cx.run_until_parked();
         cx.cx.update(|cx| {
             let app = app.read(cx);
             assert_eq!(app.conversation.selected, 1);
-            assert_eq!(app.message_scroll.offset().y, px(-144.0));
+            assert_eq!(app.message_scroll.offset().y, stopped_offset);
             assert_eq!(app.history_scroll_accumulator, 0.0);
             assert!(app.history_scroll_last_event.is_none());
         });

@@ -562,10 +562,10 @@ fn observe_controls(
         scroll: &mut ScrollControl,
         sample: ControlSample<'_>,
     ) -> (Option<ControlIntent>, Option<ScrollState>) {
-        let was_dragging = scroll.is_dragging();
+        let was_scrolling = scroll.is_active();
         let intent = gesture.observe(sample);
         let scroll_state = scroll.observe(sample);
-        if was_dragging || scroll.is_dragging() {
+        if was_scrolling || scroll.is_active() {
             gesture.latch_scroll_release();
         }
         (intent, scroll_state)

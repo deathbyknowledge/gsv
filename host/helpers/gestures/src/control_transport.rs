@@ -163,8 +163,8 @@ impl HelperControl {
     /// Replaces an obsolete semantic snapshot without ever waiting for the
     /// event writer. Status is explanatory only; reliable lifecycle and intent
     /// events use a separate, prioritized queue.
-    /// Scroll position is absolute, so it is safe to share this replace-latest
-    /// lane without replaying dropped deltas.
+    /// Scroll control position is absolute and heartbeated, so it is safe to
+    /// share this replace-latest lane without replaying dropped deltas.
     pub fn publish_status(&self, status: ControlStatus) -> bool {
         self.publish_snapshot(SnapshotPayload::Status(status))
     }
@@ -552,7 +552,7 @@ mod tests {
         let control = test_control(events, snapshots, snapshot_receiver.clone());
 
         assert!(control.publish_status(ControlStatus::Standby { progress: None }));
-        let latest = ScrollState::Dragging {
+        let latest = ScrollState::Active {
             instance_id: 4,
             offset_millipalms: 325,
         };

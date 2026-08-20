@@ -100,14 +100,16 @@ and visibly echoes the armed state. Typed text and attachments survive
 correction gestures, applied mute state survives an utterance send, and the
 dictation shortcut remains the equivalent explicit Start/Stop control.
 
-The same right fist is a scroll clutch. Hold it still briefly, then move it
-vertically to grab-scroll the current conversation; open the hand to release.
-Small motion remains inside a dead zone, tracking loss stops the drag, and a
-fresh fist is required before an opened hand can become another numbered
-command. Desktop validates fresh armed state and applies the palm movement
-directly to its existing view-scroll policy: a long message scrolls to its edge
-before continued movement changes moments. This path needs no window focus or
-synthetic operating-system input.
+Scrolling uses both hands so it cannot collide with the fist reset. Hold the
+control hand open, settle the action fist briefly, then move that fist above or
+below its neutral position. Its distance from neutral controls continuous
+scroll speed; return it to neutral to pause, or release either posture to end
+the chord. Small motion remains inside a dead zone, tracking loss stops the
+scroll, and a fresh action fist is required before an opened action hand can
+become another numbered command. Desktop validates fresh armed state and
+applies the velocity directly to its existing view-scroll policy: a long
+message scrolls to its edge before continued movement changes moments. This
+path needs no window focus or synthetic operating-system input.
 
 When gestures are enabled, choose `GESTURES · ⌘⇧G` in Desktop or press
 `Command/Ctrl+Shift+G` for the complete posture and timing cheat sheet. It can

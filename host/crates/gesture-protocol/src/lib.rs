@@ -1,7 +1,7 @@
 //! Bounded local protocol between GSV Desktop and its vision helper.
 //!
 //! This boundary carries reliable semantic gesture intents plus replace-latest
-//! absolute fist-drag position and bounded semantic control status. Camera
+//! absolute scroll-control position and bounded semantic control status. Camera
 //! frames, landmarks, model labels, raw scores, diagnostics, paths, and user
 //! content do not belong in this protocol.
 
@@ -16,7 +16,8 @@ pub const EVENT_FD: i32 = 3;
 pub const EVENT_FD_MARKER_ENV: &str = "GSV_VISION_EVENT_FD";
 /// Exact private launch contract. Rotate this on an incompatible unshipped
 /// helper/Desktop cutover so a stale sibling fails before semantic traffic.
-pub const EVENT_CHANNEL_CONTRACT_MARKER: &str = "gsv-vision-control-v5-fist-drag-scroll";
+pub const EVENT_CHANNEL_CONTRACT_MARKER: &str =
+    "gsv-vision-control-v6-modifier-fist-continuous-scroll";
 pub const SESSION_HIGH_ENV: &str = "GSV_VISION_SESSION_HIGH";
 pub const SESSION_LOW_ENV: &str = "GSV_VISION_SESSION_LOW";
 
@@ -152,16 +153,17 @@ impl<'de> Deserialize<'de> for GestureIntent {
 
 pub const MAX_SCROLL_OFFSET_MILLIPALMS: i16 = 4_000;
 
-/// Absolute helper-owned position for one bounded fist-drag gesture.
+/// Absolute helper-owned action-fist position for one bounded scroll chord.
 ///
-/// Desktop derives view movement from changes in `offset_millipalms`. A new
-/// nonzero `instance_id` starts at the helper's captured fist position, so a
+/// The control hand must remain open while the action fist supplies this
+/// palm-normalized displacement from its captured neutral position. Desktop
+/// maps the latest fresh displacement to continuous view velocity, so a
 /// coalesced update remains sufficient and never replays dropped deltas.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
 #[serde(tag = "state", rename_all = "snake_case")]
 pub enum ScrollState {
     Idle,
-    Dragging {
+    Active {
         instance_id: u64,
         offset_millipalms: i16,
     },
@@ -171,7 +173,7 @@ pub enum ScrollState {
 #[serde(tag = "state", rename_all = "snake_case", deny_unknown_fields)]
 enum WireScrollState {
     Idle {},
-    Dragging {
+    Active {
         instance_id: u64,
         offset_millipalms: i16,
     },
@@ -184,19 +186,19 @@ impl<'de> Deserialize<'de> for ScrollState {
     {
         Ok(match WireScrollState::deserialize(deserializer)? {
             WireScrollState::Idle {} => Self::Idle,
-            WireScrollState::Dragging {
+            WireScrollState::Active {
                 instance_id,
                 offset_millipalms,
             } if instance_id != 0
                 && (-MAX_SCROLL_OFFSET_MILLIPALMS..=MAX_SCROLL_OFFSET_MILLIPALMS)
                     .contains(&offset_millipalms) =>
             {
-                Self::Dragging {
+                Self::Active {
                     instance_id,
                     offset_millipalms,
                 }
             }
-            WireScrollState::Dragging { .. } => {
+            WireScrollState::Active { .. } => {
                 return Err(de::Error::custom(
                     "scroll instance must be nonzero and palm offset must be bounded",
                 ));
@@ -656,7 +658,7 @@ mod tests {
         assert_eq!(PROTOCOL_VERSION, 1);
         assert_eq!(
             EVENT_CHANNEL_CONTRACT_MARKER,
-            "gsv-vision-control-v5-fist-drag-scroll"
+            "gsv-vision-control-v6-modifier-fist-continuous-scroll"
         );
         for stale in [
             "1",
@@ -667,6 +669,7 @@ mod tests {
             "gsv-vision-control-v2-dictation-editing",
             "gsv-vision-control-v3-finger-counts",
             "gsv-vision-control-v4-armed-one-hand",
+            "gsv-vision-control-v5-fist-drag-scroll",
         ] {
             assert_ne!(EVENT_CHANNEL_CONTRACT_MARKER, stale);
         }
@@ -759,7 +762,7 @@ mod tests {
             HelperEvent::Scroll {
                 session_id: SESSION,
                 sequence: 9,
-                state: ScrollState::Dragging {
+                state: ScrollState::Active {
                     instance_id: 3,
                     offset_millipalms: -425,
                 },
@@ -773,14 +776,14 @@ mod tests {
 
     #[test]
     fn scroll_state_is_absolute_bounded_semantics_only() {
-        let dragging = ScrollState::Dragging {
+        let active = ScrollState::Active {
             instance_id: 3,
             offset_millipalms: -425,
         };
         let event = HelperEvent::Scroll {
             session_id: SESSION,
             sequence: 9,
-            state: dragging,
+            state: active,
         };
         let wire = serde_json::to_value(event).expect("scroll serializes");
         assert_eq!(
@@ -790,7 +793,7 @@ mod tests {
                 "session_id": { "high": 7, "low": 11 },
                 "sequence": 9,
                 "state": {
-                    "state": "dragging",
+                    "state": "active",
                     "instance_id": 3,
                     "offset_millipalms": -425
                 }
@@ -807,12 +810,12 @@ mod tests {
 
         for invalid in [
             json!({
-                "state": "dragging",
+                "state": "active",
                 "instance_id": 0,
                 "offset_millipalms": 0
             }),
             json!({
-                "state": "dragging",
+                "state": "active",
                 "instance_id": 1,
                 "offset_millipalms": MAX_SCROLL_OFFSET_MILLIPALMS + 1
             }),

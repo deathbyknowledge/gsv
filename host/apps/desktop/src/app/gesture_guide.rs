@@ -57,9 +57,9 @@ const EDIT_GESTURE_ROWS: [GestureGuideRow; 4] = [
     },
     GestureGuideRow {
         action: "SCROLL",
-        posture: "RIGHT FIST · SETTLE, THEN MOVE UP / DOWN",
-        timing: "HOLD + DRAG",
-        effect: "Scrolls this conversation. Open to release; fist again before a number.",
+        posture: "CONTROL PALM OPEN + ACTION FIST · MOVE FIST UP / DOWN",
+        timing: "SETTLE 180 MS + HOLD",
+        effect: "Fist position sets continuous speed. Center pauses; release either hand to end.",
     },
 ];
 
@@ -179,7 +179,7 @@ impl GsvApp {
                             .line_height(relative(1.2))
                             .text_color(theme::color(theme::TEXT_QUIET))
                             .child(
-                                "Hold both fists to arm. Then control everything with your right hand.",
+                                "Hold both fists to arm. Use your action hand for commands; add an open control palm to scroll.",
                             ),
                     )
                     .child(
@@ -232,7 +232,7 @@ impl GsvApp {
                             .line_height(relative(1.4))
                             .text_color(theme::color(theme::TEXT_FAINT))
                             .child(
-                                "RIGHT FIST REARMS · SETTLE + DRAG THAT FIST TO SCROLL · OPEN TO RELEASE · BOTH FISTS DISARM",
+                                "ACTION FIST REARMS · OPEN CONTROL + ACTION FIST SCROLLS · CENTER PAUSES · BOTH FISTS DISARM",
                             ),
                     ),
             )
@@ -320,7 +320,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn cheat_sheet_covers_every_authored_action_without_legacy_pose_names() {
+    fn cheat_sheet_covers_every_authored_action_without_removed_pose_names() {
         let rows = VOICE_GESTURE_ROWS
             .into_iter()
             .chain(EDIT_GESTURE_ROWS)
@@ -344,16 +344,12 @@ mod tests {
             .collect::<Vec<_>>()
             .join(" ")
             .to_ascii_lowercase();
-        for legacy in [
-            "open palm",
-            "victory",
-            "thumbs-up",
-            "thumbs-down",
-            "pinch",
-            "flick",
-        ] {
+        for legacy in ["victory", "thumbs-up", "thumbs-down", "pinch", "flick"] {
             assert!(!vocabulary.contains(legacy));
         }
+        assert!(vocabulary.contains("control palm open"));
+        assert!(vocabulary.contains("action fist"));
+        assert!(vocabulary.contains("continuous speed"));
     }
 
     #[gpui::test]

@@ -8,7 +8,7 @@ are handed only to local inference and, in debug mode, the OS display
 system. A bounded private pipe carries a reliable session-scoped
 `start transcription` intent, request-scoped `stop transcription`, `send`,
 `delete backward`, `clear dictation`, `mute`, and `unmute` intents, plus
-replace-latest absolute fist-drag position and semantic control status with
+replace-latest absolute scroll-control position and semantic control status with
 bounded candidate progress. Every active action identifies the exact voice
 request, and every event is scoped to
 the random helper session. Reliable lifecycle and intent events
@@ -94,10 +94,13 @@ to learn the first unambiguous action hand.
   depending on current state.
 - Close the action hand into a fist (`0`) after every command. This is the only
   reset that rearms the next count.
-- Hold that fist still for 180 ms, then move it vertically to grab-scroll the
-  current Desktop conversation. Motion starts outside a 0.20-palm dead zone;
-  opening the hand releases the drag. After a drag, make a fresh fist before
-  showing a numbered command so the release posture cannot act accidentally.
+- Hold the control hand open while settling the action fist for 180 ms. Moving
+  that fist above or below its captured neutral position controls continuous
+  scroll speed; return to neutral to pause, or release either posture to end
+  the chord. Motion starts outside a 0.20-palm dead zone. Four or five visible
+  control-hand fingers count as an open modifier, so thumb ambiguity does not
+  interrupt scrolling. Make a fresh action fist before showing a numbered
+  command so the release posture cannot act accidentally.
 - Hold both fists for 700 ms whenever gesture commands should be armed or
   disarmed. Open either fist after the toggle before toggling again.
 
@@ -114,12 +117,13 @@ current segment; only the matching `SegmentFinal` may send or edit the draft,
 so a later partial cannot resurrect corrected text.
 
 Scroll recognition is independent of the reliable command edge controller. It
-normalizes vertical palm-center motion by the observed palm size and publishes
-an absolute bounded offset for one nonzero drag instance. Replace-latest
-transport may discard intermediate camera frames because Desktop derives view
-movement from the newest absolute position. A known open posture stops
-immediately; missing or weak tracking stops after a 180 ms grace period. Two
-fists are always reserved for arm/disarm and never begin a scroll.
+normalizes action-fist palm-center motion by the observed palm size and
+heartbeats an absolute bounded offset while the open-control-plus-action-fist
+chord remains valid. Replace-latest transport may discard intermediate camera
+frames because Desktop maps the newest fresh position to continuous view
+velocity. A known posture change stops immediately; missing or weak tracking
+stops after a 180 ms grace period. An action fist alone remains the number
+reset, and two fists are always reserved for arm/disarm.
 
 Evidence also requires the gesture-specific dwell, match count, strong-sample
 count, consecutive and support thresholds, fresh frames, and bounded inference
