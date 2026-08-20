@@ -137,7 +137,7 @@ impl VisionSnapshotEvent {
 /// cell. The lanes alternate when both remain busy so continuous status updates
 /// cannot starve reliable actions. A terminal lifecycle clears the status cell
 /// before entering the reliable lane.
-/// The same cell carries fresh absolute scroll-control position; both snapshot
+/// The same cell carries fresh absolute scroll-control velocity; both snapshot
 /// variants can be coalesced without replaying work.
 pub(crate) struct VisionEventReceiver {
     reliable: tokio_mpsc::Receiver<VisionEvent>,
@@ -1450,7 +1450,7 @@ mod tests {
         let received_at = Instant::now();
         let state = ScrollState::Active {
             instance_id: 7,
-            offset_millipalms: -350,
+            velocity_milliunits: -350,
         };
         let event = |session_id, sequence| HelperEvent::Scroll {
             session_id,
@@ -1706,7 +1706,7 @@ mod tests {
         let received_at = Instant::now();
         let state = ScrollState::Active {
             instance_id: 9,
-            offset_millipalms: 625,
+            velocity_milliunits: 625,
         };
         send_vision_event(
             &events,

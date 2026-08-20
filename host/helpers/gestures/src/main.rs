@@ -413,6 +413,8 @@ fn inference_worker(
                             &mut scroll_control,
                             &observation,
                             delivery.frame.captured_at,
+                            delivery.frame.width,
+                            delivery.frame.height,
                         );
                         if let Some(intent) = intent {
                             if !control_link.publish_intent(intent) {
@@ -556,6 +558,8 @@ fn observe_controls(
     scroll: &mut ScrollControl,
     observation: &Observation,
     captured_at: Instant,
+    frame_width: u32,
+    frame_height: u32,
 ) -> (Option<ControlIntent>, Option<ScrollState>) {
     fn observe(
         gesture: &mut GestureControl,
@@ -571,11 +575,12 @@ fn observe_controls(
         (intent, scroll_state)
     }
 
+    let frame_aspect_ratio = frame_width as f32 / frame_height as f32;
     match observation.hands.as_slice() {
         [first, second] => {
             let hands = [
-                ControlHand::from_observation(first),
-                ControlHand::from_observation(second),
+                ControlHand::from_observation(first, frame_aspect_ratio),
+                ControlHand::from_observation(second, frame_aspect_ratio),
             ];
             observe(
                 gesture,
@@ -584,12 +589,13 @@ fn observe_controls(
                     frame_sequence: observation.frame_sequence,
                     captured_at,
                     observed_at: observation.observed_at,
+                    frame_aspect_ratio,
                     hands: &hands,
                 },
             )
         }
         [hand] => {
-            let hands = [ControlHand::from_observation(hand)];
+            let hands = [ControlHand::from_observation(hand, frame_aspect_ratio)];
             observe(
                 gesture,
                 scroll,
@@ -597,6 +603,7 @@ fn observe_controls(
                     frame_sequence: observation.frame_sequence,
                     captured_at,
                     observed_at: observation.observed_at,
+                    frame_aspect_ratio,
                     hands: &hands,
                 },
             )
@@ -608,6 +615,7 @@ fn observe_controls(
                 frame_sequence: observation.frame_sequence,
                 captured_at,
                 observed_at: observation.observed_at,
+                frame_aspect_ratio,
                 hands: &[],
             },
         ),
@@ -999,6 +1007,7 @@ mod tests {
                 frame_sequence: 1,
                 captured_at: now,
                 observed_at: now + Duration::from_millis(20),
+                frame_aspect_ratio: 1.0,
                 hands: &hands,
             }),
             None
@@ -1097,7 +1106,14 @@ mod tests {
         let mut scroll = ScrollControl::new(GestureContext::Standby);
 
         assert_eq!(
-            observe_controls(&mut control, &mut scroll, &observation, captured_at),
+            observe_controls(
+                &mut control,
+                &mut scroll,
+                &observation,
+                captured_at,
+                640,
+                480,
+            ),
             (None, None)
         );
         assert_eq!(control.diagnostic(), ControlDiagnostic::NeedActionHand);

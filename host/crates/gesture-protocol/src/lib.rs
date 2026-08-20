@@ -1,7 +1,7 @@
 //! Bounded local protocol between GSV Desktop and its vision helper.
 //!
 //! This boundary carries reliable semantic gesture intents plus replace-latest
-//! absolute scroll-control position and bounded semantic control status. Camera
+//! absolute scroll-control velocity and bounded semantic control status. Camera
 //! frames, landmarks, model labels, raw scores, diagnostics, paths, and user
 //! content do not belong in this protocol.
 
@@ -16,8 +16,7 @@ pub const EVENT_FD: i32 = 3;
 pub const EVENT_FD_MARKER_ENV: &str = "GSV_VISION_EVENT_FD";
 /// Exact private launch contract. Rotate this on an incompatible unshipped
 /// helper/Desktop cutover so a stale sibling fails before semantic traffic.
-pub const EVENT_CHANNEL_CONTRACT_MARKER: &str =
-    "gsv-vision-control-v6-modifier-fist-continuous-scroll";
+pub const EVENT_CHANNEL_CONTRACT_MARKER: &str = "gsv-vision-control-v7-relative-angle-scroll";
 pub const SESSION_HIGH_ENV: &str = "GSV_VISION_SESSION_HIGH";
 pub const SESSION_LOW_ENV: &str = "GSV_VISION_SESSION_LOW";
 
@@ -151,21 +150,21 @@ impl<'de> Deserialize<'de> for GestureIntent {
     }
 }
 
-pub const MAX_SCROLL_OFFSET_MILLIPALMS: i16 = 4_000;
+pub const MAX_SCROLL_VELOCITY_MILLIUNITS: i16 = 4_000;
 
-/// Absolute helper-owned action-fist position for one bounded scroll chord.
+/// Absolute helper-owned velocity for one bounded scroll chord.
 ///
-/// The control hand must remain open while the action fist supplies this
-/// palm-normalized displacement from its captured neutral position. Desktop
-/// maps the latest fresh displacement to continuous view velocity, so a
-/// coalesced update remains sufficient and never replays dropped deltas.
+/// The control hand must remain open while the helper maps the change in angle
+/// between both palm centers from its captured neutral angle to this normalized
+/// velocity. Desktop maps the latest fresh value to continuous view motion, so
+/// a coalesced update remains sufficient and never replays dropped deltas.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
 #[serde(tag = "state", rename_all = "snake_case")]
 pub enum ScrollState {
     Idle,
     Active {
         instance_id: u64,
-        offset_millipalms: i16,
+        velocity_milliunits: i16,
     },
 }
 
@@ -175,7 +174,7 @@ enum WireScrollState {
     Idle {},
     Active {
         instance_id: u64,
-        offset_millipalms: i16,
+        velocity_milliunits: i16,
     },
 }
 
@@ -188,19 +187,19 @@ impl<'de> Deserialize<'de> for ScrollState {
             WireScrollState::Idle {} => Self::Idle,
             WireScrollState::Active {
                 instance_id,
-                offset_millipalms,
+                velocity_milliunits,
             } if instance_id != 0
-                && (-MAX_SCROLL_OFFSET_MILLIPALMS..=MAX_SCROLL_OFFSET_MILLIPALMS)
-                    .contains(&offset_millipalms) =>
+                && (-MAX_SCROLL_VELOCITY_MILLIUNITS..=MAX_SCROLL_VELOCITY_MILLIUNITS)
+                    .contains(&velocity_milliunits) =>
             {
                 Self::Active {
                     instance_id,
-                    offset_millipalms,
+                    velocity_milliunits,
                 }
             }
             WireScrollState::Active { .. } => {
                 return Err(de::Error::custom(
-                    "scroll instance must be nonzero and palm offset must be bounded",
+                    "scroll instance must be nonzero and velocity must be bounded",
                 ));
             }
         })
@@ -658,7 +657,7 @@ mod tests {
         assert_eq!(PROTOCOL_VERSION, 1);
         assert_eq!(
             EVENT_CHANNEL_CONTRACT_MARKER,
-            "gsv-vision-control-v6-modifier-fist-continuous-scroll"
+            "gsv-vision-control-v7-relative-angle-scroll"
         );
         for stale in [
             "1",
@@ -670,6 +669,7 @@ mod tests {
             "gsv-vision-control-v3-finger-counts",
             "gsv-vision-control-v4-armed-one-hand",
             "gsv-vision-control-v5-fist-drag-scroll",
+            "gsv-vision-control-v6-modifier-fist-continuous-scroll",
         ] {
             assert_ne!(EVENT_CHANNEL_CONTRACT_MARKER, stale);
         }
@@ -764,7 +764,7 @@ mod tests {
                 sequence: 9,
                 state: ScrollState::Active {
                     instance_id: 3,
-                    offset_millipalms: -425,
+                    velocity_milliunits: -425,
                 },
             },
         ];
@@ -775,10 +775,10 @@ mod tests {
     }
 
     #[test]
-    fn scroll_state_is_absolute_bounded_semantics_only() {
+    fn scroll_state_is_absolute_bounded_velocity_only() {
         let active = ScrollState::Active {
             instance_id: 3,
-            offset_millipalms: -425,
+            velocity_milliunits: -425,
         };
         let event = HelperEvent::Scroll {
             session_id: SESSION,
@@ -795,7 +795,7 @@ mod tests {
                 "state": {
                     "state": "active",
                     "instance_id": 3,
-                    "offset_millipalms": -425
+                    "velocity_milliunits": -425
                 }
             })
         );
@@ -812,15 +812,20 @@ mod tests {
             json!({
                 "state": "active",
                 "instance_id": 0,
-                "offset_millipalms": 0
+                "velocity_milliunits": 0
             }),
             json!({
                 "state": "active",
                 "instance_id": 1,
-                "offset_millipalms": MAX_SCROLL_OFFSET_MILLIPALMS + 1
+                "velocity_milliunits": MAX_SCROLL_VELOCITY_MILLIUNITS + 1
             }),
             json!({
                 "state": "idle",
+                "velocity_milliunits": 0
+            }),
+            json!({
+                "state": "active",
+                "instance_id": 1,
                 "offset_millipalms": 0
             }),
         ] {

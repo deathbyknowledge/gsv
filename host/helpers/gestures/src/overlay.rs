@@ -295,13 +295,14 @@ fn scroll_status_text(state: ScrollState) -> (String, u32) {
             MUTED_TEXT_COLOR,
         ),
         ScrollState::Active {
-            offset_millipalms, ..
+            velocity_milliunits,
+            ..
         } => {
-            let sign = if offset_millipalms < 0 { '-' } else { '+' };
-            let magnitude = offset_millipalms.unsigned_abs();
+            let sign = if velocity_milliunits < 0 { '-' } else { '+' };
+            let magnitude = velocity_milliunits.unsigned_abs();
             (
                 format!(
-                    "SCROLL ACTIVE {sign}{}.{:03} PALMS - POSITION SETS SPEED",
+                    "SCROLL ACTIVE - SPEED {sign}{}.{:03} - HAND ANGLE SETS SPEED",
                     magnitude / 1_000,
                     magnitude % 1_000,
                 ),

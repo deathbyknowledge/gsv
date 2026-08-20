@@ -428,6 +428,7 @@ mod tests {
             "gsv-vision-control-v1-explicit-modes",
             "gsv-vision-control-v2-dictation-editing",
             "gsv-vision-control-v4-armed-one-hand",
+            "gsv-vision-control-v6-modifier-fist-continuous-scroll",
         ] {
             assert_eq!(
                 event_channel_enabled(Some(stale)),
@@ -554,7 +555,7 @@ mod tests {
         assert!(control.publish_status(ControlStatus::Standby { progress: None }));
         let latest = ScrollState::Active {
             instance_id: 4,
-            offset_millipalms: 325,
+            velocity_milliunits: 325,
         };
         assert!(control.publish_scroll(latest));
         assert_eq!(

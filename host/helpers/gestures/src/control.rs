@@ -5,15 +5,15 @@
 //! returns to a fist to rearm. This module owns no camera, window, IPC, or
 //! application action.
 //!
-//! For scrolling, an open control hand acts as the modifier while the action
-//! fist supplies a palm-relative vertical control position.
+//! For scrolling, an open control hand acts as the modifier while the angle
+//! between its palm center and the action fist supplies continuous velocity.
 
 use std::time::{Duration, Instant};
 
 pub use gesture_protocol::{
     GestureContext as ControlState, GestureIntent as ControlIntent, ScrollState,
 };
-use gesture_protocol::{VoiceRequestGestureIntent, MAX_SCROLL_OFFSET_MILLIPALMS};
+use gesture_protocol::{VoiceRequestGestureIntent, MAX_SCROLL_VELOCITY_MILLIUNITS};
 
 use crate::observation::{HandObservation, HandPose, Handedness};
 
@@ -32,8 +32,11 @@ const MIN_POSE_SCORE: f32 = 0.50;
 const SCROLL_SETTLE_DWELL: Duration = Duration::from_millis(180);
 const SCROLL_TRACKING_GRACE: Duration = Duration::from_millis(180);
 const SCROLL_MIN_SETTLE_MATCHES: u16 = 4;
-const SCROLL_SETTLE_DRIFT_PALMS: f32 = 0.12;
-const SCROLL_DEAD_ZONE_PALMS: f32 = 0.20;
+const SCROLL_SETTLE_DRIFT_RADIANS: f32 = 4.0 * std::f32::consts::PI / 180.0;
+const SCROLL_DEAD_ZONE_RADIANS: f32 = 3.0 * std::f32::consts::PI / 180.0;
+const SCROLL_RADIANS_PER_VELOCITY_UNIT: f32 = 20.0 * std::f32::consts::PI / 180.0;
+const SCROLL_ANGLE_SMOOTHING: Duration = Duration::from_millis(75);
+const MIN_SCROLL_HORIZONTAL_SPAN_PALMS: f32 = 1.25;
 const MIN_PALM_SCALE: f32 = 0.01;
 
 /// Fixed local-only vocabulary for explaining the temporal controller in the
@@ -120,26 +123,39 @@ pub struct ControlHand {
     pub handedness_score: f32,
     pub pose: HandPose,
     pub score: f32,
+    pub palm_x: f32,
     pub palm_y: f32,
     pub palm_scale: f32,
 }
 
 impl ControlHand {
     #[must_use]
-    pub fn from_observation(hand: &HandObservation) -> Self {
+    pub fn from_observation(hand: &HandObservation, frame_aspect_ratio: f32) -> Self {
         let wrist = hand.landmarks[0];
         let index_mcp = hand.landmarks[5];
         let middle_mcp = hand.landmarks[9];
         let ring_mcp = hand.landmarks[13];
         let pinky_mcp = hand.landmarks[17];
+        let palm_x = (wrist.x + index_mcp.x + middle_mcp.x + ring_mcp.x + pinky_mcp.x) / 5.0;
         let palm_y = (wrist.y + index_mcp.y + middle_mcp.y + ring_mcp.y + pinky_mcp.y) / 5.0;
-        let palm_width = distance(index_mcp.x, index_mcp.y, pinky_mcp.x, pinky_mcp.y);
-        let palm_length = distance(wrist.x, wrist.y, middle_mcp.x, middle_mcp.y);
+        let palm_width = distance(
+            index_mcp.x * frame_aspect_ratio,
+            index_mcp.y,
+            pinky_mcp.x * frame_aspect_ratio,
+            pinky_mcp.y,
+        );
+        let palm_length = distance(
+            wrist.x * frame_aspect_ratio,
+            wrist.y,
+            middle_mcp.x * frame_aspect_ratio,
+            middle_mcp.y,
+        );
         Self {
             handedness: hand.handedness,
             handedness_score: hand.handedness_score,
             pose: hand.pose,
             score: hand.pose_score,
+            palm_x,
             palm_y,
             palm_scale: max_f32(palm_width, palm_length),
         }
@@ -147,7 +163,12 @@ impl ControlHand {
 
     #[cfg(test)]
     pub(crate) const fn test(handedness: Handedness, pose: HandPose, score: f32) -> Self {
-        Self::test_at(handedness, pose, score, 0.5, 0.2)
+        let palm_x = match handedness {
+            Handedness::Left => 0.30,
+            Handedness::Right => 0.70,
+            Handedness::Unknown => 0.50,
+        };
+        Self::test_at(handedness, pose, score, palm_x, 0.5, 0.2)
     }
 
     #[cfg(test)]
@@ -155,6 +176,7 @@ impl ControlHand {
         handedness: Handedness,
         pose: HandPose,
         score: f32,
+        palm_x: f32,
         palm_y: f32,
         palm_scale: f32,
     ) -> Self {
@@ -163,6 +185,7 @@ impl ControlHand {
             handedness_score: 0.95,
             pose,
             score,
+            palm_x,
             palm_y,
             palm_scale,
         }
@@ -174,14 +197,15 @@ pub struct ControlSample<'a> {
     pub frame_sequence: u64,
     pub captured_at: Instant,
     pub observed_at: Instant,
+    pub frame_aspect_ratio: f32,
     pub hands: &'a [ControlHand],
 }
 
 /// Deterministic, allocation-free recognition of the two-hand scroll chord.
 ///
-/// The control palm must remain open while the action fist settles and moves.
-/// State is absolute so replace-latest transport can coalesce camera frames
-/// without losing or replaying relative scroll deltas.
+/// The control palm must remain open while the action fist settles and changes
+/// their inter-hand angle. State is absolute so replace-latest transport can
+/// coalesce camera frames without losing or replaying relative scroll deltas.
 pub struct ScrollControl {
     authority: ControlState,
     state: ScrollState,
@@ -273,7 +297,12 @@ impl ScrollControl {
             return self.stop();
         }
 
-        let reading = classify_scroll_chord(sample.hands, self.preference, &mut self.roles);
+        let reading = classify_scroll_chord(
+            sample.hands,
+            sample.frame_aspect_ratio,
+            self.preference,
+            &mut self.roles,
+        );
         if self.is_active() {
             return self.observe_active(sample.captured_at, reading);
         }
@@ -283,15 +312,14 @@ impl ScrollControl {
     fn observe_anchor(&mut self, now: Instant, reading: ScrollReading) -> Option<ScrollState> {
         let ScrollReading::Chord {
             quality,
-            palm_y,
-            palm_scale,
+            angle_radians,
         } = reading
         else {
             self.anchor = None;
             self.last_chord_at = None;
             return None;
         };
-        if quality < ENTER_SCORE || !valid_scroll_geometry(palm_y, palm_scale) {
+        if quality < ENTER_SCORE || !angle_radians.is_finite() {
             self.anchor = None;
             self.last_chord_at = None;
             return None;
@@ -299,21 +327,21 @@ impl ScrollControl {
         self.last_chord_at = Some(now);
 
         let Some(anchor) = self.anchor.as_mut() else {
-            self.anchor = Some(ScrollAnchor::new(now, palm_y, palm_scale));
+            self.anchor = Some(ScrollAnchor::new(now, angle_radians));
             return None;
         };
         if !anchor.settled && now.saturating_duration_since(anchor.last_match_at) > MAX_EVIDENCE_GAP
         {
-            *anchor = ScrollAnchor::new(now, palm_y, palm_scale);
+            *anchor = ScrollAnchor::new(now, angle_radians);
             return None;
         }
         if !anchor.settled {
-            let drift = (palm_y - anchor.average_y()).abs() / anchor.average_scale();
-            if drift > SCROLL_SETTLE_DRIFT_PALMS {
-                *anchor = ScrollAnchor::new(now, palm_y, palm_scale);
+            let drift = (angle_radians - anchor.average_angle()).abs();
+            if drift > SCROLL_SETTLE_DRIFT_RADIANS {
+                *anchor = ScrollAnchor::new(now, angle_radians);
                 return None;
             }
-            anchor.record(now, palm_y, palm_scale);
+            anchor.record(now, angle_radians);
             if anchor.is_stable(now) {
                 anchor.settle();
             } else {
@@ -321,12 +349,11 @@ impl ScrollControl {
             }
         }
 
-        let offset_millipalms = scroll_offset_millipalms(palm_y, anchor.palm_y, anchor.palm_scale);
         let instance_id = self.next_instance_id;
         self.next_instance_id = self.next_instance_id.wrapping_add(1).max(1);
         self.state = ScrollState::Active {
             instance_id,
-            offset_millipalms,
+            velocity_milliunits: 0,
         };
         Some(self.state)
     }
@@ -337,8 +364,7 @@ impl ScrollControl {
         };
         let ScrollReading::Chord {
             quality,
-            palm_y,
-            palm_scale,
+            angle_radians,
         } = reading
         else {
             return match reading {
@@ -355,7 +381,7 @@ impl ScrollControl {
                 ScrollReading::Chord { .. } => None,
             };
         };
-        if quality < CONTINUE_SCORE || !valid_scroll_geometry(palm_y, palm_scale) {
+        if quality < CONTINUE_SCORE || !angle_radians.is_finite() {
             if self
                 .last_chord_at
                 .is_some_and(|last| now.saturating_duration_since(last) <= SCROLL_TRACKING_GRACE)
@@ -365,12 +391,16 @@ impl ScrollControl {
             return self.stop();
         }
         self.last_chord_at = Some(now);
-        let Some(anchor) = self.anchor else {
+        let Some(anchor) = self.anchor.as_mut() else {
             return self.stop();
         };
+        let filtered_angle = anchor.smooth(now, angle_radians);
         let next = ScrollState::Active {
             instance_id,
-            offset_millipalms: scroll_offset_millipalms(palm_y, anchor.palm_y, anchor.palm_scale),
+            velocity_milliunits: scroll_velocity_milliunits(
+                filtered_angle,
+                anchor.neutral_angle_radians,
+            ),
         };
         self.state = next;
         Some(next)
@@ -389,11 +419,7 @@ impl ScrollControl {
 
 #[derive(Clone, Copy, Debug)]
 enum ScrollReading {
-    Chord {
-        quality: f32,
-        palm_y: f32,
-        palm_scale: f32,
-    },
+    Chord { quality: f32, angle_radians: f32 },
     KnownOther,
     Unknown,
 }
@@ -403,40 +429,35 @@ struct ScrollAnchor {
     started_at: Instant,
     last_match_at: Instant,
     samples: u16,
-    palm_y: f32,
-    palm_scale: f32,
-    sum_y: f32,
-    sum_scale: f32,
+    neutral_angle_radians: f32,
+    filtered_angle_radians: f32,
+    sum_angle_radians: f32,
+    last_filtered_at: Instant,
     settled: bool,
 }
 
 impl ScrollAnchor {
-    fn new(now: Instant, palm_y: f32, palm_scale: f32) -> Self {
+    fn new(now: Instant, angle_radians: f32) -> Self {
         Self {
             started_at: now,
             last_match_at: now,
             samples: 1,
-            palm_y,
-            palm_scale,
-            sum_y: palm_y,
-            sum_scale: palm_scale,
+            neutral_angle_radians: angle_radians,
+            filtered_angle_radians: angle_radians,
+            sum_angle_radians: angle_radians,
+            last_filtered_at: now,
             settled: false,
         }
     }
 
-    fn record(&mut self, now: Instant, palm_y: f32, palm_scale: f32) {
+    fn record(&mut self, now: Instant, angle_radians: f32) {
         self.last_match_at = now;
         self.samples = self.samples.saturating_add(1);
-        self.sum_y += palm_y;
-        self.sum_scale += palm_scale;
+        self.sum_angle_radians += angle_radians;
     }
 
-    fn average_y(self) -> f32 {
-        self.sum_y / f32::from(self.samples)
-    }
-
-    fn average_scale(self) -> f32 {
-        (self.sum_scale / f32::from(self.samples)).max(MIN_PALM_SCALE)
+    fn average_angle(self) -> f32 {
+        self.sum_angle_radians / f32::from(self.samples)
     }
 
     fn is_stable(self, now: Instant) -> bool {
@@ -445,9 +466,19 @@ impl ScrollAnchor {
     }
 
     fn settle(&mut self) {
-        self.palm_y = self.average_y();
-        self.palm_scale = self.average_scale();
+        self.neutral_angle_radians = self.average_angle();
+        self.filtered_angle_radians = self.neutral_angle_radians;
+        self.last_filtered_at = self.last_match_at;
         self.settled = true;
+    }
+
+    fn smooth(&mut self, now: Instant, angle_radians: f32) -> f32 {
+        let elapsed = now.saturating_duration_since(self.last_filtered_at);
+        let alpha =
+            elapsed.as_secs_f32() / (SCROLL_ANGLE_SMOOTHING.as_secs_f32() + elapsed.as_secs_f32());
+        self.filtered_angle_radians += alpha * (angle_radians - self.filtered_angle_radians);
+        self.last_filtered_at = now;
+        self.filtered_angle_radians
     }
 }
 
@@ -1092,6 +1123,7 @@ fn classify_hands(
 
 fn classify_scroll_chord(
     hands: &[ControlHand],
+    frame_aspect_ratio: f32,
     preference: HandPreference,
     roles: &mut Option<RoleAssignment>,
 ) -> ScrollReading {
@@ -1105,10 +1137,12 @@ fn classify_scroll_chord(
         return ScrollReading::KnownOther;
     }
     match resolve_scroll_hands(first, second, preference, roles) {
-        Ok((action, control)) => ScrollReading::Chord {
-            quality: hand_quality(action).min(hand_quality(control)),
-            palm_y: action.palm_y,
-            palm_scale: action.palm_scale,
+        Ok((action, control)) => match scroll_angle_radians(action, control, frame_aspect_ratio) {
+            Some(angle_radians) => ScrollReading::Chord {
+                quality: hand_quality(action).min(hand_quality(control)),
+                angle_radians,
+            },
+            None => ScrollReading::Unknown,
         },
         Err(ClassificationFailure::InvalidScore | ClassificationFailure::AmbiguousHandedness) => {
             ScrollReading::Unknown
@@ -1292,24 +1326,48 @@ fn valid_score(score: f32) -> bool {
     score.is_finite() && (0.0..=1.0).contains(&score)
 }
 
-fn valid_scroll_geometry(palm_y: f32, palm_scale: f32) -> bool {
-    palm_y.is_finite()
-        && palm_scale.is_finite()
-        && (0.0..=1.0).contains(&palm_y)
-        && palm_scale >= MIN_PALM_SCALE
+fn scroll_angle_radians(
+    action: &ControlHand,
+    control: &ControlHand,
+    frame_aspect_ratio: f32,
+) -> Option<f32> {
+    if !valid_scroll_geometry(action)
+        || !valid_scroll_geometry(control)
+        || !frame_aspect_ratio.is_finite()
+        || frame_aspect_ratio <= 0.0
+    {
+        return None;
+    }
+    let horizontal_span = (action.palm_x - control.palm_x).abs() * frame_aspect_ratio;
+    let average_scale = (action.palm_scale + control.palm_scale) / 2.0;
+    if horizontal_span < average_scale * MIN_SCROLL_HORIZONTAL_SPAN_PALMS {
+        return None;
+    }
+    Some((action.palm_y - control.palm_y).atan2(horizontal_span))
 }
 
-fn scroll_offset_millipalms(palm_y: f32, anchor_y: f32, anchor_scale: f32) -> i16 {
-    let raw = (palm_y - anchor_y) / anchor_scale.max(MIN_PALM_SCALE);
-    let adjusted = if raw.abs() <= SCROLL_DEAD_ZONE_PALMS {
+fn valid_scroll_geometry(hand: &ControlHand) -> bool {
+    hand.palm_x.is_finite()
+        && hand.palm_y.is_finite()
+        && hand.palm_scale.is_finite()
+        && (0.0..=1.0).contains(&hand.palm_x)
+        && (0.0..=1.0).contains(&hand.palm_y)
+        && hand.palm_scale >= MIN_PALM_SCALE
+}
+
+fn scroll_velocity_milliunits(angle_radians: f32, neutral_angle_radians: f32) -> i16 {
+    let raw = angle_radians - neutral_angle_radians;
+    let adjusted = if raw.abs() <= SCROLL_DEAD_ZONE_RADIANS {
         0.0
     } else {
-        raw.signum() * (raw.abs() - SCROLL_DEAD_ZONE_PALMS)
+        raw.signum() * (raw.abs() - SCROLL_DEAD_ZONE_RADIANS)
     };
-    let bounded = (adjusted * 1_000.0).round().clamp(
-        -f32::from(MAX_SCROLL_OFFSET_MILLIPALMS),
-        f32::from(MAX_SCROLL_OFFSET_MILLIPALMS),
-    );
+    let bounded = (adjusted / SCROLL_RADIANS_PER_VELOCITY_UNIT * 1_000.0)
+        .round()
+        .clamp(
+            -f32::from(MAX_SCROLL_VELOCITY_MILLIUNITS),
+            f32::from(MAX_SCROLL_VELOCITY_MILLIUNITS),
+        );
     bounded as i16
 }
 
@@ -1393,16 +1451,40 @@ mod tests {
     }
 
     fn right_scroll_chord_with_modifier(action_y: f32, modifier: HandPose) -> [ControlHand; 2] {
+        right_scroll_chord_at(0.30, 0.30, 0.70, action_y, modifier)
+    }
+
+    fn right_scroll_chord_at(
+        control_x: f32,
+        control_y: f32,
+        action_x: f32,
+        action_y: f32,
+        modifier: HandPose,
+    ) -> [ControlHand; 2] {
         [
-            ControlHand::test_at(Handedness::Left, modifier, 0.95, 0.30, 0.20),
-            ControlHand::test_at(Handedness::Right, HandPose::Fist, 0.95, action_y, 0.20),
+            ControlHand::test_at(Handedness::Left, modifier, 0.95, control_x, control_y, 0.20),
+            ControlHand::test_at(
+                Handedness::Right,
+                HandPose::Fist,
+                0.95,
+                action_x,
+                action_y,
+                0.20,
+            ),
         ]
     }
 
     fn left_scroll_chord(action_y: f32) -> [ControlHand; 2] {
         [
-            ControlHand::test_at(Handedness::Right, HandPose::FiveFingers, 0.95, 0.30, 0.20),
-            ControlHand::test_at(Handedness::Left, HandPose::Fist, 0.95, action_y, 0.20),
+            ControlHand::test_at(
+                Handedness::Right,
+                HandPose::FiveFingers,
+                0.95,
+                0.70,
+                0.30,
+                0.20,
+            ),
+            ControlHand::test_at(Handedness::Left, HandPose::Fist, 0.95, 0.30, action_y, 0.20),
         ]
     }
 
@@ -1439,6 +1521,7 @@ mod tests {
                 frame_sequence: self.sequence,
                 captured_at,
                 observed_at: captured_at + Duration::from_millis(20),
+                frame_aspect_ratio: 1.0,
                 hands,
             })
         }
@@ -1485,6 +1568,7 @@ mod tests {
                 frame_sequence: self.sequence,
                 captured_at,
                 observed_at: captured_at + Duration::from_millis(20),
+                frame_aspect_ratio: 1.0,
                 hands,
             })
         }
@@ -1584,7 +1668,7 @@ mod tests {
     }
 
     #[test]
-    fn settled_two_hand_chord_emits_position_heartbeats_and_opening_action_releases() {
+    fn settled_two_hand_chord_emits_smoothed_angle_velocity_and_opening_action_releases() {
         let settled = right_scroll_chord(0.50);
         let down = right_scroll_chord(0.60);
         let farther_down = right_scroll_chord(0.64);
@@ -1600,28 +1684,34 @@ mod tests {
         assert!(matches!(update, Some(ScrollState::Active { .. })));
         let Some(ScrollState::Active {
             instance_id,
-            offset_millipalms,
+            velocity_milliunits,
         }) = update
         else {
             return;
         };
         assert_ne!(instance_id, 0);
-        assert_eq!(offset_millipalms, 0);
+        assert_eq!(velocity_milliunits, 0);
         assert_eq!(harness.sample(&settled), update);
-        assert_eq!(
-            harness.sample(&down),
-            Some(ScrollState::Active {
-                instance_id,
-                offset_millipalms: 300,
-            })
-        );
-        assert_eq!(
-            harness.sample(&farther_down),
-            Some(ScrollState::Active {
-                instance_id,
-                offset_millipalms: 500,
-            })
-        );
+        let moved = harness.sample(&down);
+        assert!(matches!(moved, Some(ScrollState::Active { .. })));
+        let Some(ScrollState::Active {
+            velocity_milliunits: initial_velocity,
+            ..
+        }) = moved
+        else {
+            return;
+        };
+        assert!(initial_velocity > 0);
+        let moved_farther = harness.sample(&farther_down);
+        assert!(matches!(moved_farther, Some(ScrollState::Active { .. })));
+        let Some(ScrollState::Active {
+            velocity_milliunits: faster_velocity,
+            ..
+        }) = moved_farther
+        else {
+            return;
+        };
+        assert!(faster_velocity > initial_velocity);
         assert_eq!(harness.sample(&both_open), Some(ScrollState::Idle));
         assert_eq!(harness.control.state(), ScrollState::Idle);
     }
@@ -1629,7 +1719,7 @@ mod tests {
     #[test]
     fn fist_jitter_stays_at_zero_velocity_inside_the_dead_zone() {
         let settled = right_scroll_chord(0.50);
-        let jitter = right_scroll_chord(0.53);
+        let jitter = right_scroll_chord(0.52);
         let mut harness = ScrollHarness::new(STANDBY);
 
         let active = harness.drive(5, &settled);
@@ -1642,9 +1732,75 @@ mod tests {
             *state
                 == ScrollState::Active {
                     instance_id,
-                    offset_millipalms: 0,
+                    velocity_milliunits: 0,
                 }
         }));
+    }
+
+    #[test]
+    fn moving_both_hands_together_does_not_change_angle_velocity() {
+        let neutral = right_scroll_chord_at(0.25, 0.25, 0.65, 0.45, HandPose::FiveFingers);
+        let translated = right_scroll_chord_at(0.35, 0.45, 0.75, 0.65, HandPose::FiveFingers);
+        let mut harness = ScrollHarness::new(STANDBY);
+
+        let active = harness.drive(5, &neutral);
+        assert!(matches!(active.last(), Some(ScrollState::Active { .. })));
+        let Some(ScrollState::Active { instance_id, .. }) = active.last() else {
+            return;
+        };
+        assert!(harness.drive(8, &translated).iter().all(|state| {
+            *state
+                == ScrollState::Active {
+                    instance_id: *instance_id,
+                    velocity_milliunits: 0,
+                }
+        }));
+    }
+
+    #[test]
+    fn horizontally_overlapping_hands_do_not_start_angle_scroll() {
+        let overlapping = right_scroll_chord_at(0.45, 0.30, 0.55, 0.50, HandPose::FiveFingers);
+        let mut harness = ScrollHarness::new(STANDBY);
+
+        assert!(harness.drive(20, &overlapping).is_empty());
+        assert_eq!(harness.control.state(), ScrollState::Idle);
+    }
+
+    #[test]
+    fn angle_velocity_has_a_dead_zone_and_normalized_scale() {
+        let neutral = 0.25;
+        assert_eq!(
+            scroll_velocity_milliunits(neutral + SCROLL_DEAD_ZONE_RADIANS, neutral),
+            0
+        );
+        assert_eq!(
+            scroll_velocity_milliunits(
+                neutral + SCROLL_DEAD_ZONE_RADIANS + SCROLL_RADIANS_PER_VELOCITY_UNIT,
+                neutral,
+            ),
+            1_000
+        );
+        assert_eq!(
+            scroll_velocity_milliunits(
+                neutral - SCROLL_DEAD_ZONE_RADIANS - SCROLL_RADIANS_PER_VELOCITY_UNIT,
+                neutral,
+            ),
+            -1_000
+        );
+    }
+
+    #[test]
+    fn hand_line_angle_accounts_for_camera_aspect_ratio() {
+        let square = right_scroll_chord_at(0.25, 0.30, 0.65, 0.50, HandPose::FiveFingers);
+        let wide = right_scroll_chord_at(0.35, 0.30, 0.55, 0.50, HandPose::FiveFingers);
+        let square_angle = scroll_angle_radians(&square[1], &square[0], 1.0);
+        let wide_angle = scroll_angle_radians(&wide[1], &wide[0], 2.0);
+
+        assert!(square_angle.is_some());
+        assert!(wide_angle.is_some());
+        assert!(square_angle
+            .zip(wide_angle)
+            .is_some_and(|(square, wide)| (square - wide).abs() < 0.000_001));
     }
 
     #[test]
@@ -1672,6 +1828,7 @@ mod tests {
             Handedness::Right,
             HandPose::Fist,
             0.95,
+            0.70,
             0.70,
             0.20,
         )];
@@ -1859,6 +2016,7 @@ mod tests {
                 frame_sequence: harness.sequence,
                 captured_at,
                 observed_at: captured_at + MAX_FRAME_AGE + Duration::from_millis(1),
+                frame_aspect_ratio: 1.0,
                 hands: &hands,
             }),
             None
@@ -1873,6 +2031,7 @@ mod tests {
                 frame_sequence: harness.sequence,
                 captured_at,
                 observed_at: captured_at,
+                frame_aspect_ratio: 1.0,
                 hands: &hands,
             }),
             None

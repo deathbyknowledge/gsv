@@ -26,7 +26,7 @@ enum GestureScrollUpdate {
 #[derive(Clone, Copy, Debug, PartialEq)]
 enum GestureScrollTick {
     Apply {
-        offset_palms: f32,
+        velocity_units: f32,
         elapsed: Duration,
     },
     Expired,
@@ -36,7 +36,7 @@ enum GestureScrollTick {
 #[derive(Clone, Copy)]
 struct ActiveGestureScroll {
     instance_id: u64,
-    offset_millipalms: i16,
+    velocity_milliunits: i16,
     received_at: Instant,
     last_tick_at: Instant,
 }
@@ -59,7 +59,7 @@ impl GestureScroller {
         }
         let ScrollState::Active {
             instance_id,
-            offset_millipalms,
+            velocity_milliunits,
         } = state
         else {
             return self.reset();
@@ -70,13 +70,13 @@ impl GestureScroller {
             .as_mut()
             .filter(|active| active.instance_id == instance_id)
         {
-            active.offset_millipalms = offset_millipalms;
+            active.velocity_milliunits = velocity_milliunits;
             active.received_at = received_at;
             return None;
         }
         self.active = Some(ActiveGestureScroll {
             instance_id,
-            offset_millipalms,
+            velocity_milliunits,
             received_at,
             last_tick_at: now,
         });
@@ -99,7 +99,7 @@ impl GestureScroller {
             .min(MAX_GESTURE_SCROLL_FRAME_ELAPSED);
         active.last_tick_at = now;
         GestureScrollTick::Apply {
-            offset_palms: f32::from(active.offset_millipalms) / 1_000.0,
+            velocity_units: f32::from(active.velocity_milliunits) / 1_000.0,
             elapsed,
         }
     }
@@ -391,11 +391,11 @@ impl GsvApp {
                 .update_in(cx, |this, window, cx| {
                     match this.vision_scroll.tick_at(instance_id, now) {
                         GestureScrollTick::Apply {
-                            offset_palms,
+                            velocity_units,
                             elapsed,
                         } => {
                             this.scroll_conversation_by_gesture_velocity(
-                                offset_palms,
+                                velocity_units,
                                 elapsed,
                                 window,
                                 cx,
@@ -703,7 +703,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn fresh_absolute_scroll_position_drives_bounded_velocity_ticks() {
+    fn fresh_absolute_scroll_velocity_drives_bounded_ticks() {
         let now = Instant::now();
         let mut scroll = GestureScroller::default();
 
@@ -711,7 +711,7 @@ mod tests {
             scroll.observe_at(
                 ScrollState::Active {
                     instance_id: 7,
-                    offset_millipalms: -500,
+                    velocity_milliunits: -500,
                 },
                 now,
                 true,
@@ -722,7 +722,7 @@ mod tests {
         assert_eq!(
             scroll.tick_at(7, now + Duration::from_millis(16)),
             GestureScrollTick::Apply {
-                offset_palms: -0.5,
+                velocity_units: -0.5,
                 elapsed: Duration::from_millis(16),
             }
         );
@@ -731,7 +731,7 @@ mod tests {
             scroll.observe_at(
                 ScrollState::Active {
                     instance_id: 7,
-                    offset_millipalms: -750,
+                    velocity_milliunits: -750,
                 },
                 heartbeat_at,
                 true,
@@ -742,14 +742,14 @@ mod tests {
         assert_eq!(
             scroll.tick_at(7, now + Duration::from_millis(32)),
             GestureScrollTick::Apply {
-                offset_palms: -0.75,
+                velocity_units: -0.75,
                 elapsed: Duration::from_millis(16),
             }
         );
         assert_eq!(
             scroll.tick_at(7, now + Duration::from_millis(200)),
             GestureScrollTick::Apply {
-                offset_palms: -0.75,
+                velocity_units: -0.75,
                 elapsed: MAX_GESTURE_SCROLL_FRAME_ELAPSED,
             }
         );
@@ -767,9 +767,9 @@ mod tests {
             .checked_sub(MAX_GESTURE_SCROLL_STATE_AGE + Duration::from_millis(1))
             .expect("test instant supports a short subtraction");
         let mut scroll = GestureScroller::default();
-        let active = |instance_id, offset_millipalms| ScrollState::Active {
+        let active = |instance_id, velocity_milliunits| ScrollState::Active {
             instance_id,
-            offset_millipalms,
+            velocity_milliunits,
         };
 
         assert_eq!(

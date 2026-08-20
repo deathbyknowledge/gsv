@@ -181,7 +181,7 @@ enum RichPresentationEffect {
 const HISTORY_SCROLL_THRESHOLD: f32 = 144.0;
 const HISTORY_SCROLL_LINE_HEIGHT: f32 = 16.0;
 const HISTORY_SCROLL_IDLE: Duration = Duration::from_millis(180);
-const GESTURE_SCROLL_LINES_PER_PALM_SECOND: f32 = 30.0;
+const GESTURE_SCROLL_LINES_PER_VELOCITY_UNIT_SECOND: f32 = 30.0;
 const TIMELINE_MARKER_WIDTH: f32 = 4.0;
 const TIMELINE_MARKER_HEIGHT: f32 = 8.0;
 const TYPE_LAYOUT_CACHE_LIMIT: usize = crate::history::MAX_FETCHED_HISTORY_MESSAGES + 8;
@@ -1681,13 +1681,13 @@ impl GsvApp {
 
     pub(super) fn scroll_conversation_by_gesture_velocity(
         &mut self,
-        offset_palms: f32,
+        velocity_units: f32,
         elapsed: Duration,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if !offset_palms.is_finite()
-            || offset_palms == 0.0
+        if !velocity_units.is_finite()
+            || velocity_units == 0.0
             || elapsed.is_zero()
             || self.login.is_some()
             || self.microphone_chooser.is_some()
@@ -1697,9 +1697,9 @@ impl GsvApp {
         {
             return;
         }
-        let vertical = offset_palms
+        let vertical = velocity_units
             * HISTORY_SCROLL_LINE_HEIGHT
-            * GESTURE_SCROLL_LINES_PER_PALM_SECOND
+            * GESTURE_SCROLL_LINES_PER_VELOCITY_UNIT_SECOND
             * elapsed.as_secs_f32();
         self.apply_conversation_scroll(
             vertical,
@@ -3086,7 +3086,7 @@ mod tests {
                         received_at,
                         state: ScrollState::Active {
                             instance_id: 7,
-                            offset_millipalms: -1_000,
+                            velocity_milliunits: -1_000,
                         },
                     },
                     window,

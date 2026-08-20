@@ -57,9 +57,9 @@ const EDIT_GESTURE_ROWS: [GestureGuideRow; 4] = [
     },
     GestureGuideRow {
         action: "SCROLL",
-        posture: "CONTROL PALM OPEN + ACTION FIST · MOVE FIST UP / DOWN",
+        posture: "CONTROL PALM OPEN + ACTION FIST · TILT THE LINE BETWEEN HANDS",
         timing: "SETTLE 180 MS + HOLD",
-        effect: "Fist position sets continuous speed. Center pauses; release either hand to end.",
+        effect: "Relative hand angle sets continuous speed. Neutral angle pauses; release either hand to end.",
     },
 ];
 
@@ -232,7 +232,7 @@ impl GsvApp {
                             .line_height(relative(1.4))
                             .text_color(theme::color(theme::TEXT_FAINT))
                             .child(
-                                "ACTION FIST REARMS · OPEN CONTROL + ACTION FIST SCROLLS · CENTER PAUSES · BOTH FISTS DISARM",
+                                "ACTION FIST REARMS · OPEN CONTROL + ACTION FIST SCROLLS · NEUTRAL ANGLE PAUSES · BOTH FISTS DISARM",
                             ),
                     ),
             )

@@ -82,7 +82,7 @@ camera frames and landmarks never
 enter GPUI or the gateway. `GSV_GESTURES=1` starts it headlessly, while the exact
 `GSV_GESTURE_DEBUG=1` opt-in adds its local diagnostic window. A private,
 bounded parent-child protocol carries reliable typed semantic intents plus
-replace-latest absolute scroll-control position and control status with bounded
+replace-latest absolute scroll-control velocity and control status with bounded
 semantic candidate progress for presentation. In standby, the helper may
 propose starting transcription without a voice-request identity. Desktop owns
 an explicit, inspectable armed state that starts disarmed. The helper may
@@ -91,11 +91,14 @@ resulting absolute authority. Once armed, the right action hand alone maps
 sequentially opened fingers 1 through 5 to start/finish, send, delete, clear,
 and mute/unmute; those commands remain available while the Desktop window is
 unfocused. Scrolling deliberately requires a two-hand chord: the control palm
-stays open while a settled action fist supplies palm-relative vertical
-position. Desktop maps that fresh position to continuous view velocity through
-the conversation's existing long-message and history-scroll policy; returning
-the fist to neutral stops movement, and releasing either posture ends the
-chord. A stationary action fist by itself remains the only positive reset
+stays open while the helper captures the image-aspect-corrected angle between
+both palm centers and a settled action fist changes that relative angle.
+Translating both hands together does not change the signal. The helper smooths
+and maps the change from neutral to a bounded velocity; Desktop applies that
+fresh velocity through the conversation's existing long-message and
+history-scroll policy. Returning to the neutral angle stops movement, and
+releasing either posture ends the chord.
+A stationary action fist by itself remains the only positive reset
 between number commands. Releasing the scroll chord cannot become a numbered
 command until another fist reset, and tracking loss can neither rearm a command
 nor continue scrolling. While transcription is preparing or
