@@ -27,9 +27,8 @@ Run the reference parity test with:
 ```
 
 That test downloads four checksum-pinned official fixture images and checks the
-Rust pipeline's wrist coordinates against the outputs of the same landmark
-model through MediaPipe Tasks and checks physical handedness after normalizing
-the model's mirrored-selfie convention. It also verifies that authored fist and
+Rust pipeline's handedness and wrist coordinates against the outputs of the same
+landmark model through MediaPipe Tasks. It also verifies that authored fist and
 sequential one- and two-finger poses remain actionable while a thumbs-up remains
 unassigned. MediaPipe supplies the landmark golden reference only; it is not
 installed or executed by the test.

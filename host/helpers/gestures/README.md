@@ -68,9 +68,7 @@ frames rather than accumulating a private video queue.
 ## Gesture grammar
 
 The physical left hand is the closed-fist modifier and the physical right hand
-performs actions by default; camera array order is irrelevant. The model's
-selfie-oriented handedness is normalized at landmark decoding because inference
-receives the original, unmirrored camera frame. Set
+performs actions by default; camera array order is irrelevant. Set
 `GSV_GESTURE_DOMINANT_HAND=left` to swap the roles or `auto` to learn them from
 the first unambiguous fist-and-count pair. Desktop supplies one
 strict absolute context: standby when there is no voice request and the helper

@@ -487,13 +487,10 @@ impl GestureRecognizer {
         let next_rect =
             next_hand_rect(&landmarks, frame.width, frame.height).ok_or(Error::Inference)?;
         let right_hand_score = finite_probability(output.handedness)?;
-        // The bundled classifier labels mirrored selfie input. Camera inference
-        // receives the original frame, so normalize once here to the user's
-        // physical left and right hands.
         let handedness = if right_hand_score >= 0.5 {
-            Handedness::Left
-        } else {
             Handedness::Right
+        } else {
+            Handedness::Left
         };
         let handedness_score = right_hand_score.max(1.0 - right_hand_score);
         profiler.finish(RecognitionStage::LandmarkPostprocess, stage);
@@ -997,7 +994,7 @@ mod tests {
             let observation = recognizer.recognize(&frame, 0).expect("fixture inference");
             assert_eq!(observation.hands.len(), 1, "{name}");
             let hand = &observation.hands[0];
-            assert_eq!(hand.handedness, Handedness::Left, "{name}");
+            assert_eq!(hand.handedness, Handedness::Right, "{name}");
             assert_eq!(hand.pose, expected_pose, "{name} score {}", hand.pose_score);
             assert_eq!(hand.pose_score >= 0.50, actionable, "{name}");
             assert!(
