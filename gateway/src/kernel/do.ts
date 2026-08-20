@@ -18,6 +18,7 @@ import type {
   ResponseFrame,
   SignalFrame,
 } from "../protocol/frames";
+import { consumeProcessRunStream } from "../protocol/process-run-stream";
 import type {
   AdapterMedia,
   AdapterMediaPart,
@@ -665,6 +666,26 @@ export class Kernel extends Host<Env> {
     }
 
     return null;
+  }
+
+  async acceptProcessRunStream(
+    processId: string,
+    stream: ReadableStream<Uint8Array>,
+  ): Promise<boolean> {
+    if (!this.procs.get(processId)) {
+      await stream.cancel("Unknown process").catch(() => {});
+      return false;
+    }
+    void consumeProcessRunStream(
+      processId,
+      stream,
+      async (frame) => {
+        await this.recvFrame(processId, frame);
+      },
+    ).catch(() => {
+      console.warn("[Kernel] Process run stream ended before completion");
+    });
+    return true;
   }
 
   async requestProcessNetFetch(

@@ -54,6 +54,15 @@ export async function sendFrameToKernel(
   return kernel.recvFrame(processId, frame);
 }
 
+export async function attachProcessRunStream(
+  installationId: string,
+  processId: string,
+  stream: ReadableStream<Uint8Array>,
+): Promise<boolean> {
+  const kernel = await getKernelPtr(installationId);
+  return await kernel.acceptProcessRunStream(processId, stream);
+}
+
 export async function requestProcessNetFetch(
   installationId: string,
   processId: string,

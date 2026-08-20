@@ -187,10 +187,12 @@ import {
 } from "../shared/message-media-limits";
 import { assembleSystemPrompt } from "./context";
 import {
+  attachProcessRunStream,
   cancelProcessRequests,
   requestProcessNetFetch,
   sendFrameToKernel,
 } from "../shared/utils";
+import { encodeProcessRunStreamFrame } from "../protocol/process-run-stream";
 import { raceWithAbort } from "../shared/abort";
 import { encodeBase64Bytes } from "../shared/base64";
 import {
@@ -253,6 +255,11 @@ type RunState = {
   outputMedia?: RunOutputMedia[];
   stagedOutputMediaKeys?: string[];
   outputMediaPersisted?: boolean;
+};
+
+type ProcessRunEventSink = {
+  emit(seq: number, event: AssistantMessageEvent): Promise<void>;
+  close(): Promise<void>;
 };
 
 type RunOutputMedia = ProcMediaInput & {
@@ -5200,25 +5207,30 @@ export class Process extends Host<Env> {
       });
     }
 
-    let seq = options.streamSeq?.value ?? 0;
-    let response: AssistantMessage | null = null;
-    for await (const event of stream) {
-      seq += 1;
-      if (options.streamSeq) {
-        options.streamSeq.value = seq;
+    const eventSink = await this.openRunEventSink(options.runId);
+    try {
+      let seq = options.streamSeq?.value ?? 0;
+      let response: AssistantMessage | null = null;
+      for await (const event of stream) {
+        seq += 1;
+        if (options.streamSeq) {
+          options.streamSeq.value = seq;
+        }
+        await eventSink?.emit(seq, event);
+        if (event.type === "done") {
+          response = event.message;
+        } else if (event.type === "error") {
+          response = event.error;
+        }
+        if (this.handleRunStopped(options.runId)) {
+          return null;
+        }
       }
-      await this.emitRunStreamEvent(options.runId, seq, event);
-      if (event.type === "done") {
-        response = event.message;
-      } else if (event.type === "error") {
-        response = event.error;
-      }
-      if (this.handleRunStopped(options.runId)) {
-        return null;
-      }
-    }
 
-    return response ?? await stream.result();
+      return response ?? await stream.result();
+    } finally {
+      await eventSink?.close();
+    }
   }
 
   private async generateCompactionText(options: {
@@ -5981,19 +5993,69 @@ export class Process extends Host<Env> {
     return transitioned;
   }
 
-  private async emitRunStreamEvent(
+  private async openRunEventSink(
     runId: string,
-    seq: number,
-    event: AssistantMessageEvent,
-  ): Promise<void> {
-    if (this.killed || !this.interactive) return;
-    await this.sendSignal("proc.run.stream", {
-      pid: this.pid,
-      runId,
-      seq,
-      event: snapshotAssistantMessageEvent(event),
-      timestamp: Date.now(),
-    });
+  ): Promise<ProcessRunEventSink | null> {
+    if (this.killed || !this.interactive) return null;
+
+    const transport = new IdentityTransformStream({ highWaterMark: 65_536 });
+    const writer = transport.writable.getWriter();
+    try {
+      const attached = await attachProcessRunStream(
+        this.installationId,
+        this.pid,
+        transport.readable,
+      );
+      if (!attached) {
+        await writer.abort("Process run stream was rejected").catch(() => {});
+        writer.releaseLock();
+        return null;
+      }
+    } catch {
+      await writer.abort("Process run stream could not be attached").catch(() => {});
+      writer.releaseLock();
+      return null;
+    }
+
+    let active = true;
+    const finish = async (close: boolean): Promise<void> => {
+      if (!active) return;
+      active = false;
+      try {
+        if (close) {
+          await writer.close();
+        } else {
+          await writer.abort("Process run stream delivery failed");
+        }
+      } catch {
+        // Live output is observational; history remains authoritative.
+      } finally {
+        writer.releaseLock();
+      }
+    };
+
+    return {
+      emit: async (seq, event) => {
+        if (!active) return;
+        try {
+          const frame = {
+            type: "sig",
+            signal: "proc.run.stream",
+            payload: {
+              pid: this.pid,
+              runId,
+              seq,
+              event: snapshotAssistantMessageEvent(event),
+              timestamp: Date.now(),
+            },
+          } satisfies SignalFrame;
+          await writer.write(encodeProcessRunStreamFrame(frame));
+        } catch {
+          await finish(false);
+        }
+      },
+      close: () => finish(true),
+    };
   }
 
   private async emitRunRetrying(

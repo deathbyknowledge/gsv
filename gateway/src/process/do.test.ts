@@ -155,6 +155,22 @@ function offeredTools(...names: string[]) {
   }));
 }
 
+function mockRunEventSink(
+  process: any,
+  pid: string,
+  emitted: Array<{ signal: string; payload: unknown }>,
+): void {
+  process.openRunEventSink = async (runId: string) => ({
+    emit: async (seq: number, event: unknown) => {
+      emitted.push({
+        signal: "proc.run.stream",
+        payload: { pid, runId, seq, event },
+      });
+    },
+    close: async () => {},
+  });
+}
+
 function openAiChatSseChunk(payload: Record<string, unknown>): string {
   return `data: ${JSON.stringify(payload)}\n\n`;
 }
@@ -4647,6 +4663,7 @@ describe("Process DO — mechanical", () => {
         process.sendSignal = async (signal: string, payload: unknown) => {
           emitted.push({ signal, payload });
         };
+        mockRunEventSink(process, pid, emitted);
         process.generation = {
           stream() {
             const stream = createAssistantMessageEventStream();
@@ -4747,25 +4764,150 @@ describe("Process DO — mechanical", () => {
       expect(outputSignal?.payload.text).toBe("hello");
     });
 
-    it("does not relay provider stream events from noninteractive workers", async () => {
+    it("transfers hundreds of run events after the Kernel attachment RPC returns", async () => {
+      const pid = "mech-chat-stream-transport";
+      const runId = "run-chat-stream-transport";
+      const eventCount = 256;
+      const stub = await initProcess(pid, ROOT_IDENTITY);
+      const kernel = await getKernelPtr();
+
+      await kernel.recvFrame(pid, {
+        type: "sig",
+        signal: "proc.run.started",
+        payload: { pid, runId, timestamp: Date.now() },
+      });
+      await runInDurableObject(kernel, (instance: Kernel) => {
+        const k = instance as any;
+        k.testRunStreamFrames = [];
+        k.testOriginalEnqueueProcessSignal = k.enqueueProcessSignal;
+        k.enqueueProcessSignal = async (_processId: string, frame: unknown) => {
+          k.testRunStreamFrames.push(frame);
+        };
+      });
+
+      try {
+        await runInDurableObject(stub, async (instance: Process) => {
+          const process = instance as any;
+          const sink = await process.openRunEventSink(runId);
+          expect(sink).not.toBeNull();
+
+          for (let index = 0; index < eventCount; index += 1) {
+            await sink.emit(index + 1, {
+              type: "text_delta",
+              contentIndex: 0,
+              delta: `chunk-${index}`,
+              partial: {
+                role: "assistant",
+                content: [{ type: "text", text: `chunk-${index}` }],
+                api: "test",
+                provider: "test",
+                model: "test",
+                timestamp: Date.now(),
+              },
+            });
+          }
+          await sink.close();
+        });
+
+        await vi.waitFor(async () => {
+          const frames = await runInDurableObject(kernel, (instance: Kernel) => (
+            (instance as any).testRunStreamFrames
+          ));
+          expect(frames).toHaveLength(eventCount);
+          expect(frames[0]).toMatchObject({
+            signal: "proc.run.stream",
+            payload: { pid, runId, seq: 1 },
+          });
+          expect(frames[eventCount - 1]).toMatchObject({
+            signal: "proc.run.stream",
+            payload: { pid, runId, seq: eventCount },
+          });
+        });
+      } finally {
+        await runInDurableObject(kernel, (instance: Kernel) => {
+          const k = instance as any;
+          if (k.testOriginalEnqueueProcessSignal) {
+            k.enqueueProcessSignal = k.testOriginalEnqueueProcessSignal;
+          }
+          delete k.testOriginalEnqueueProcessSignal;
+          delete k.testRunStreamFrames;
+        });
+      }
+    });
+
+    it("keeps generation authoritative when the Kernel rejects stream attachment", async () => {
+      const pid = "mech-chat-stream-rejected";
+      const runId = "run-chat-stream-rejected";
+      const stub = await initProcess(pid, ROOT_IDENTITY, { register: false });
+
+      const response = await runInDurableObject(stub, async (instance: Process) => {
+        const process = instance as any;
+        const message = {
+          role: "assistant",
+          content: [{ type: "text", text: "still completed" }],
+          api: "test",
+          provider: "test",
+          model: "test",
+          usage: {
+            input: 1,
+            output: 2,
+            cacheRead: 0,
+            cacheWrite: 0,
+            totalTokens: 3,
+            cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+          },
+          stopReason: "stop",
+          timestamp: Date.now(),
+        };
+        process.currentRun = { runId };
+        process.generation = {
+          stream() {
+            const stream = createAssistantMessageEventStream();
+            stream.push({ type: "text_delta", contentIndex: 0, delta: "still completed", partial: message });
+            stream.push({ type: "done", reason: "stop", message });
+            return stream;
+          },
+        };
+
+        return await process.generateAssistantResponseLocally({
+          runId,
+          config: {
+            executor: { kind: "process", pid },
+            profile: "task",
+            provider: "test",
+            model: "test",
+            apiKey: "",
+            reasoning: "off",
+            maxTokens: 1024,
+            contextWindowTokens: 8192,
+            contextWindowSource: "config",
+            maxContextBytes: 32768,
+          },
+          context: { systemPrompt: "", messages: [], tools: [] },
+        }, {
+          installationId: "singleton",
+          logicalRequestId: "inference:test-stream-rejected",
+          actor: { localUid: 0, processId: pid, runId },
+        });
+      });
+
+      expect(response).toMatchObject({
+        role: "assistant",
+        content: [{ type: "text", text: "still completed" }],
+      });
+    });
+
+    it("does not open provider event streams from noninteractive workers", async () => {
       const pid = "mech-background-stream";
       const stub = await initProcess(pid, ROOT_IDENTITY);
 
-      const sendSignal = await runInDurableObject(stub, async (instance: Process) => {
+      const sink = await runInDurableObject(stub, async (instance: Process) => {
         const process = instance as any;
         process.store.setValue("interactive", "0");
-        process.sendSignal = vi.fn();
-
-        await process.emitRunStreamEvent("run-background", 1, {
-          type: "text_delta",
-          contentIndex: 0,
-          delta: "opaque work",
-          partial: {},
-        });
-        return process.sendSignal;
+        return await process.openRunEventSink("run-background");
       });
 
-      expect(sendSignal).not.toHaveBeenCalled();
+      expect(sink).toBeNull();
     });
 
     it("retries streamed reasoning-only model turns with monotonic stream sequence numbers", async () => {
@@ -4779,6 +4921,7 @@ describe("Process DO — mechanical", () => {
         process.sendSignal = async (signal: string, payload: unknown) => {
           emitted.push({ signal, payload });
         };
+        mockRunEventSink(process, pid, emitted);
         process.generation = {
           stream() {
             calls += 1;
@@ -4899,6 +5042,7 @@ describe("Process DO — mechanical", () => {
         process.sendSignal = async (signal: string, payload: unknown) => {
           emitted.push({ signal, payload });
         };
+        mockRunEventSink(process, pid, emitted);
         process.generation = {
           stream() {
             calls += 1;
