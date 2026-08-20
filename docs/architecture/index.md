@@ -224,6 +224,10 @@ of chat integrations.
 
 ## Deferred design proposals
 
+- [Resource References and Lazy Binary Resolution](./resource-references.md)
+  records the proposed common file-reference contract for machines, clients,
+  adapters, model context, and durable GSV retention. It replaces eager media
+  copying with lazy binary resolution and is intentionally not implemented yet.
 - [Unified Protocol Peers](./unified-protocol-peers.md) records the proposed
   shared syscall, command, and exact-output model for WebSocket clients and
   service-bound adapters. It is intentionally deferred until managed staging
