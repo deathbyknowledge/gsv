@@ -98,11 +98,10 @@ to learn the first unambiguous action hand.
   helper captures the angle of the line between both palm centers as neutral;
   making that line steeper in either direction controls continuous scroll
   speed. Return to the neutral angle to pause, or release either posture to end
-  the chord. The relative angle is smoothed over 75 ms and motion starts outside
-  a 3-degree dead zone. Four or five visible control-hand fingers count as an
-  open modifier, so thumb ambiguity does not interrupt scrolling. Make a fresh
-  action fist before showing a numbered command so the release posture cannot
-  act accidentally.
+  the chord. Each measured angle is mapped directly, without a dead zone or
+  smoothing. Four or five visible control-hand fingers count as an open modifier,
+  so thumb ambiguity does not interrupt scrolling. Make a fresh action fist
+  before showing a numbered command so the release posture cannot act accidentally.
 - Hold both fists for 700 ms whenever gesture commands should be armed or
   disarmed. Open either fist after the toggle before toggling again.
 
@@ -121,8 +120,8 @@ so a later partial cannot resurrect corrected text.
 Scroll recognition is independent of the reliable command edge controller. It
 uses the image-aspect-corrected change from the captured inter-hand neutral
 angle, so translating both hands together does not change scroll speed. Twenty
-degrees beyond the dead zone is one normalized velocity unit, bounded to four
-units. Hands must remain at least 1.25 average palm widths apart horizontally
+degrees from neutral is one normalized velocity unit, bounded to four units.
+Hands must remain at least 1.25 average palm widths apart horizontally
 because a nearly vertical reference line is unstable. The helper heartbeats the
 absolute bounded velocity while the open-control-plus-action-fist chord remains
 valid. Replace-latest transport may discard intermediate camera frames because

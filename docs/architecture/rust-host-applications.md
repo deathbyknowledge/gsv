@@ -93,11 +93,11 @@ and mute/unmute; those commands remain available while the Desktop window is
 unfocused. Scrolling deliberately requires a two-hand chord: the control palm
 stays open while the helper captures the image-aspect-corrected angle between
 both palm centers and a settled action fist changes that relative angle.
-Translating both hands together does not change the signal. The helper smooths
-and maps the change from neutral to a bounded velocity; Desktop applies that
-fresh velocity through the conversation's existing long-message and
-history-scroll policy. Returning to the neutral angle stops movement, and
-releasing either posture ends the chord.
+Translating both hands together does not change the signal. The helper maps each
+fresh change from neutral directly to a bounded velocity without a dead zone or
+smoothing; Desktop applies that velocity through the conversation's existing
+long-message and history-scroll policy. Returning to the neutral angle stops
+movement, and releasing either posture ends the chord.
 A stationary action fist by itself remains the only positive reset
 between number commands. Releasing the scroll chord cannot become a numbered
 command until another fist reset, and tracking loss can neither rearm a command

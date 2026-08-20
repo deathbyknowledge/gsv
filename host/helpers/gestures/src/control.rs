@@ -33,9 +33,7 @@ const SCROLL_SETTLE_DWELL: Duration = Duration::from_millis(180);
 const SCROLL_TRACKING_GRACE: Duration = Duration::from_millis(180);
 const SCROLL_MIN_SETTLE_MATCHES: u16 = 4;
 const SCROLL_SETTLE_DRIFT_RADIANS: f32 = 4.0 * std::f32::consts::PI / 180.0;
-const SCROLL_DEAD_ZONE_RADIANS: f32 = 3.0 * std::f32::consts::PI / 180.0;
 const SCROLL_RADIANS_PER_VELOCITY_UNIT: f32 = 20.0 * std::f32::consts::PI / 180.0;
-const SCROLL_ANGLE_SMOOTHING: Duration = Duration::from_millis(75);
 const MIN_SCROLL_HORIZONTAL_SPAN_PALMS: f32 = 1.25;
 const MIN_PALM_SCALE: f32 = 0.01;
 
@@ -391,14 +389,13 @@ impl ScrollControl {
             return self.stop();
         }
         self.last_chord_at = Some(now);
-        let Some(anchor) = self.anchor.as_mut() else {
+        let Some(anchor) = self.anchor else {
             return self.stop();
         };
-        let filtered_angle = anchor.smooth(now, angle_radians);
         let next = ScrollState::Active {
             instance_id,
             velocity_milliunits: scroll_velocity_milliunits(
-                filtered_angle,
+                angle_radians,
                 anchor.neutral_angle_radians,
             ),
         };
@@ -430,9 +427,7 @@ struct ScrollAnchor {
     last_match_at: Instant,
     samples: u16,
     neutral_angle_radians: f32,
-    filtered_angle_radians: f32,
     sum_angle_radians: f32,
-    last_filtered_at: Instant,
     settled: bool,
 }
 
@@ -443,9 +438,7 @@ impl ScrollAnchor {
             last_match_at: now,
             samples: 1,
             neutral_angle_radians: angle_radians,
-            filtered_angle_radians: angle_radians,
             sum_angle_radians: angle_radians,
-            last_filtered_at: now,
             settled: false,
         }
     }
@@ -467,18 +460,7 @@ impl ScrollAnchor {
 
     fn settle(&mut self) {
         self.neutral_angle_radians = self.average_angle();
-        self.filtered_angle_radians = self.neutral_angle_radians;
-        self.last_filtered_at = self.last_match_at;
         self.settled = true;
-    }
-
-    fn smooth(&mut self, now: Instant, angle_radians: f32) -> f32 {
-        let elapsed = now.saturating_duration_since(self.last_filtered_at);
-        let alpha =
-            elapsed.as_secs_f32() / (SCROLL_ANGLE_SMOOTHING.as_secs_f32() + elapsed.as_secs_f32());
-        self.filtered_angle_radians += alpha * (angle_radians - self.filtered_angle_radians);
-        self.last_filtered_at = now;
-        self.filtered_angle_radians
     }
 }
 
@@ -1356,13 +1338,8 @@ fn valid_scroll_geometry(hand: &ControlHand) -> bool {
 }
 
 fn scroll_velocity_milliunits(angle_radians: f32, neutral_angle_radians: f32) -> i16 {
-    let raw = angle_radians - neutral_angle_radians;
-    let adjusted = if raw.abs() <= SCROLL_DEAD_ZONE_RADIANS {
-        0.0
-    } else {
-        raw.signum() * (raw.abs() - SCROLL_DEAD_ZONE_RADIANS)
-    };
-    let bounded = (adjusted / SCROLL_RADIANS_PER_VELOCITY_UNIT * 1_000.0)
+    let angle_delta = angle_radians - neutral_angle_radians;
+    let bounded = (angle_delta / SCROLL_RADIANS_PER_VELOCITY_UNIT * 1_000.0)
         .round()
         .clamp(
             -f32::from(MAX_SCROLL_VELOCITY_MILLIUNITS),
@@ -1668,7 +1645,7 @@ mod tests {
     }
 
     #[test]
-    fn settled_two_hand_chord_emits_smoothed_angle_velocity_and_opening_action_releases() {
+    fn settled_two_hand_chord_emits_immediate_angle_velocity_and_opening_action_releases() {
         let settled = right_scroll_chord(0.50);
         let down = right_scroll_chord(0.60);
         let farther_down = right_scroll_chord(0.64);
@@ -1717,9 +1694,9 @@ mod tests {
     }
 
     #[test]
-    fn fist_jitter_stays_at_zero_velocity_inside_the_dead_zone() {
+    fn small_angle_changes_apply_immediately_without_a_dead_zone() {
         let settled = right_scroll_chord(0.50);
-        let jitter = right_scroll_chord(0.52);
+        let moved = right_scroll_chord(0.52);
         let mut harness = ScrollHarness::new(STANDBY);
 
         let active = harness.drive(5, &settled);
@@ -1728,13 +1705,18 @@ mod tests {
             return;
         };
         let instance_id = *instance_id;
-        assert!(harness.drive(8, &jitter).iter().all(|state| {
-            *state
-                == ScrollState::Active {
-                    instance_id,
-                    velocity_milliunits: 0,
-                }
-        }));
+        let update = harness.sample(&moved);
+        assert!(matches!(update, Some(ScrollState::Active { .. })));
+        let Some(ScrollState::Active {
+            instance_id: observed,
+            velocity_milliunits,
+        }) = update
+        else {
+            return;
+        };
+        assert_eq!(observed, instance_id);
+        assert!(velocity_milliunits > 0);
+        assert_eq!(harness.sample(&moved), update);
     }
 
     #[test]
@@ -1767,24 +1749,20 @@ mod tests {
     }
 
     #[test]
-    fn angle_velocity_has_a_dead_zone_and_normalized_scale() {
+    fn angle_velocity_has_no_dead_zone_or_filter_and_keeps_normalized_scale() {
         let neutral = 0.25;
+        const ONE_DEGREE: f32 = std::f32::consts::PI / 180.0;
+        assert_eq!(scroll_velocity_milliunits(neutral, neutral), 0);
         assert_eq!(
-            scroll_velocity_milliunits(neutral + SCROLL_DEAD_ZONE_RADIANS, neutral),
-            0
+            scroll_velocity_milliunits(neutral + ONE_DEGREE, neutral),
+            50
         );
         assert_eq!(
-            scroll_velocity_milliunits(
-                neutral + SCROLL_DEAD_ZONE_RADIANS + SCROLL_RADIANS_PER_VELOCITY_UNIT,
-                neutral,
-            ),
+            scroll_velocity_milliunits(neutral + SCROLL_RADIANS_PER_VELOCITY_UNIT, neutral,),
             1_000
         );
         assert_eq!(
-            scroll_velocity_milliunits(
-                neutral - SCROLL_DEAD_ZONE_RADIANS - SCROLL_RADIANS_PER_VELOCITY_UNIT,
-                neutral,
-            ),
+            scroll_velocity_milliunits(neutral - SCROLL_RADIANS_PER_VELOCITY_UNIT, neutral,),
             -1_000
         );
     }
