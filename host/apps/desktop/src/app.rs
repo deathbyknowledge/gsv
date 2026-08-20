@@ -32,6 +32,7 @@ use gesture_protocol::{GestureContext, GestureProgress, LifecycleState, ScrollDi
 use host_config::MicrophonePreference;
 
 mod gesture;
+mod gesture_guide;
 mod login;
 mod media;
 mod microphone;
@@ -61,6 +62,7 @@ actions!(
         PreviousMoment,
         NextMoment,
         ToggleDictation,
+        ToggleGestureGuide,
         ChooseMicrophone,
         PreviousMicrophone,
         NextMicrophone,
@@ -296,6 +298,7 @@ pub struct GsvApp {
     vision_scroll_gesture: Option<VisionScrollGesture>,
     vision_scroll_last_instance: Option<u64>,
     vision_scroll_task: Option<Task<()>>,
+    gesture_guide_open: bool,
     _input_subscription: Subscription,
     _login_subscription: Option<Subscription>,
     _event_task: Task<()>,
@@ -857,6 +860,7 @@ impl GsvApp {
             vision_scroll_gesture: None,
             vision_scroll_last_instance: None,
             vision_scroll_task: None,
+            gesture_guide_open: false,
             _input_subscription: input_subscription,
             _login_subscription: login_subscription,
             _event_task: event_task,
@@ -1737,6 +1741,9 @@ impl GsvApp {
     }
 
     fn hide_draft(&mut self, _: &HideDraft, window: &mut Window, cx: &mut Context<Self>) {
+        if self.close_gesture_guide(cx) {
+            return;
+        }
         if self.close_microphone_chooser(window, cx) {
             return;
         }
@@ -1945,6 +1952,7 @@ pub fn bind_keys(cx: &mut App) {
         KeyBinding::new("escape", HideDraft, None),
         KeyBinding::new("secondary-.", AbortRun, None),
         KeyBinding::new("secondary-shift-space", ToggleDictation, None),
+        KeyBinding::new("secondary-shift-g", ToggleGestureGuide, None),
         KeyBinding::new("secondary-shift-m", ChooseMicrophone, None),
         KeyBinding::new("up", PreviousMicrophone, Some("MicrophoneChooser")),
         KeyBinding::new("down", NextMicrophone, Some("MicrophoneChooser")),

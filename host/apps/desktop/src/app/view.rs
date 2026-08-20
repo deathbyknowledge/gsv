@@ -2190,6 +2190,7 @@ impl Render for GsvApp {
             .on_action(cx.listener(Self::previous_moment))
             .on_action(cx.listener(Self::next_moment))
             .on_action(cx.listener(Self::toggle_dictation_action))
+            .on_action(cx.listener(Self::toggle_gesture_guide_action))
             .on_action(cx.listener(Self::choose_microphone_action))
             .on_action(cx.listener(Self::previous_microphone))
             .on_action(cx.listener(Self::next_microphone))
@@ -2223,6 +2224,13 @@ impl Render for GsvApp {
                     && self.conversation.mode == SurfaceMode::Terminal,
                 |this| this.child(self.render_terminal(cx)),
             )
+            .when(
+                !login_visible && !microphone_visible && self.gesture_guide_available(),
+                |this| this.child(self.render_gesture_guide_toggle(cx)),
+            )
+            .when(self.gesture_guide_open, |this| {
+                this.child(self.render_gesture_guide(cx))
+            })
     }
 }
 

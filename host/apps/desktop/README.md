@@ -87,32 +87,25 @@ GSV_GESTURE_DEBUG=1 cargo run --manifest-path host/apps/desktop/Cargo.toml
 ```
 
 The helper uses tract and checksum-pinned TFLite models, with no Python, Java,
-Bazel, or native MediaPipe dependency. While Desktop is active and voice input
-is idle, two open palms request
-a new transcription through the same safety checks and microphone-selection
-path as the keyboard shortcut. During that transcription, open palm + victory
-requests that the overall voice session finish; any final unsent words remain
-as the visible draft. Open palm + thumbs-up commits and sends the current
-utterance, including while the microphone is muted, then keeps the same
-microphone session listening for the next utterance; open palm + thumbs-down
-requests mute; and open palm + pointing-up requests unmute. To send the last
-utterance and finish, perform Send, let it complete, and then perform Stop. A
-closed fist + pointing-up scrolls up and closed fist + thumbs-down scrolls down.
-Holding scrolls inside a long moment until its edge; crossing that edge requires
-releasing and beginning a fresh gesture, which moves exactly one moment. All
-other pairs are reserved and have no action. The active
-transcription itself is the gesture authority—there is no separate armed bit—and
-applied mute state survives an utterance send. The dictation shortcut remains
-the equivalent explicit Start/Stop control. Applied mute state changes only
-after the transcription helper acknowledges that its input gate is applied or
-reopened. The device and stream stay open; while muted, new samples are
-discarded before queueing or inference.
-Desktop and the diagnostic overlay show whether controls are standing by,
-starting, listening, stopping, muting, muted, or unmuting. As a supported pose
-accumulates evidence, both surfaces show the same filled clockwise disk; it is
-presentation only and never triggers an action. Tracking loss never starts,
-stops, mutes, or unmutes a session. Press `Escape` or close the diagnostic
-window to stop debug mode without closing Desktop. See
+Bazel, or native MediaPipe dependency. Keep the modifier hand in a relaxed
+open/C-shaped Anchor while the action hand performs the authored controls:
+thumb + index starts or finishes transcription, thumb + middle sends and keeps
+listening, a loose fist mutes or unmutes, and a point above or below the Anchor
+scrolls. A level point flicked left deletes one visible character from unsent
+dictation; gathering all fingertips to the thumb clears the unsent dictated
+text while preserving typed text and attachments. The active transcription
+itself is the gesture authority—there is no separate armed bit—and applied mute
+state survives an utterance send. The dictation shortcut remains the equivalent
+explicit Start/Stop control.
+
+When gestures are enabled, choose `GESTURES · ⌘⇧G` in Desktop or press
+`Command/Ctrl+Shift+G` for the complete posture and timing cheat sheet. It can
+remain open while practicing; `Escape` closes it before affecting dictation or
+the current draft. Desktop and the diagnostic overlay show the same bounded
+gesture progress, but that presentation never triggers an action. Tracking
+loss never starts, stops, sends, edits, mutes, or unmutes a session. Press
+`Escape` or close the diagnostic window to stop debug mode without closing
+Desktop. See
 `host/helpers/gestures/README.md` for thresholds, artifacts, and the override
 contract. Gesture controls remain experimental and are not packaged in a
 release yet.
