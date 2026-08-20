@@ -82,8 +82,8 @@ camera frames and landmarks never
 enter GPUI or the gateway. `GSV_GESTURES=1` starts it headlessly, while the exact
 `GSV_GESTURE_DEBUG=1` opt-in adds its local diagnostic window. A private,
 bounded parent-child protocol carries reliable typed semantic intents,
-absolute held-scroll state, and replace-latest control status with bounded
-semantic candidate progress for presentation. In standby, the helper may propose starting transcription without
+a replace-latest control status with bounded semantic candidate progress for
+presentation. In standby, the helper may propose starting transcription without
 a voice-request identity; Desktop accepts that intent only through the ordinary
 focused-window safety and microphone-selection owner. While transcription is
 preparing or stopping, Desktop explicitly disables gesture authority. Once
@@ -91,12 +91,13 @@ listening and its initial mute state are authoritative, Desktop grants an action
 lease for that exact voice request. Active events echo the exact voice request,
 and every helper event echoes the random supervisor session, so stale work
 cannot act on or describe later dictation. Status and progress never invoke an
-action. Desktop alone interprets held scroll state against the selected
-moment's viewport: it scrolls within the moment, consumes the held instance at
-an edge, and permits adjacent-moment navigation only from a fresh gesture that
-began at that edge. Desktop remains the owner of starting and ending the overall voice
-request, acknowledged microphone mute state, and conversation submission; there
-is no independent persistent gesture-arming bit. Within an active request,
+action. The helper requires one closed-fist modifier and maps sequentially
+opened action-hand fingers 1 through 5 to start/finish, send, delete, clear, and
+mute/unmute. An action-hand fist is the only positive reset between commands;
+tracking loss cannot rearm one. Desktop remains the owner of starting and
+ending the overall voice request, acknowledged microphone mute state, and
+conversation submission; there is no independent persistent gesture-arming
+bit. Within an active request,
 `gsv-transcribe` owns authoritative utterance boundaries: it finalizes and
 replaces only the model stream while retaining microphone capture, request
 identity, and mute state. Desktop accepts

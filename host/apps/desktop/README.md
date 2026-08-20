@@ -87,16 +87,15 @@ GSV_GESTURE_DEBUG=1 cargo run --manifest-path host/apps/desktop/Cargo.toml
 ```
 
 The helper uses tract and checksum-pinned TFLite models, with no Python, Java,
-Bazel, or native MediaPipe dependency. Keep the modifier hand in a relaxed
-open/C-shaped Anchor while the action hand performs the authored controls:
-thumb + index starts or finishes transcription, thumb + middle sends and keeps
-listening, a loose fist mutes or unmutes, and a point above or below the Anchor
-scrolls. A level point flicked left deletes one visible character from unsent
-dictation; gathering all fingertips to the thumb clears the unsent dictated
-text while preserving typed text and attachments. The active transcription
-itself is the gesture authority—there is no separate armed bit—and applied mute
-state survives an utterance send. The dictation shortcut remains the equivalent
-explicit Start/Stop control.
+Bazel, or native MediaPipe dependency. Keep the modifier hand in a closed fist
+while the action hand counts by opening fingers in order: 1 starts or finishes
+transcription, 2 sends and keeps listening, 3 deletes one visible character
+from unsent dictation, 4 clears the unsent dictated text after a one-second
+hold, and 5 mutes or unmutes. Return the action hand to a fist between every
+command. Typed text and attachments survive correction gestures. The active
+transcription itself is the gesture authority—there is no separate armed
+bit—and applied mute state survives an utterance send. The dictation shortcut
+remains the equivalent explicit Start/Stop control.
 
 When gestures are enabled, choose `GESTURES · ⌘⇧G` in Desktop or press
 `Command/Ctrl+Shift+G` for the complete posture and timing cheat sheet. It can

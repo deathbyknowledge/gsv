@@ -2,37 +2,33 @@ use std::time::{Duration, Instant};
 
 use gesture_protocol::{
     ControlStatus, GestureCandidate, GestureContext, GestureIntent, GestureProgress,
-    LifecycleState, ScrollDirection, ScrollState, VoiceRequestGestureIntent,
+    LifecycleState, VoiceRequestGestureIntent,
 };
-use gpui::{point, px, Context, Window};
+use gpui::{Context, Window};
 
 use crate::vision_debug::{VisionContext, VisionEvent};
 
 use super::microphone::VoiceSegmentAction;
-use super::{GsvApp, VisionScrollGesture, VoiceGestureStatus};
+use super::{GsvApp, VoiceGestureStatus};
 
 const MAX_GESTURE_INTENT_AGE: Duration = Duration::from_secs(1);
 const MAX_GESTURE_STATUS_AGE: Duration = Duration::from_secs(1);
-const MAX_SCROLL_STATE_AGE: Duration = Duration::from_secs(1);
-const SCROLL_REPEAT_INTERVAL: Duration = Duration::from_millis(70);
-const SCROLL_STEP: f32 = 48.0;
-const SCROLL_EDGE_EPSILON: f32 = 0.5;
 
 const GESTURES_STARTING: &str = "GESTURE TRANSCRIPTION · STARTING";
 const GESTURES_STANDBY: &str = "GESTURE TRANSCRIPTION · STANDBY";
-const GESTURES_HOLD_TO_START: &str = "GESTURE TRANSCRIPTION · HOLD TO START";
+const GESTURES_HOLD_TO_START: &str = "GESTURE TRANSCRIPTION · HOLD 1 TO START";
 const GESTURES_UNAVAILABLE: &str = "GESTURE TRANSCRIPTION · UNAVAILABLE";
 const VOICE_GESTURES_DISABLED: &str = "LISTENING · SPEAK NOW · PRESS AGAIN TO FINISH";
 const VOICE_GESTURES_STARTING: &str = "LISTENING · GESTURES STARTING";
 const VOICE_GESTURES_UNAVAILABLE: &str = "LISTENING · GESTURES UNAVAILABLE · PRESS AGAIN TO FINISH";
 const VOICE_GESTURES_ACTIVE: &str = "LISTENING · GESTURES ACTIVE";
 const VOICE_GESTURES_MUTED: &str = "LISTENING · MICROPHONE MUTED";
-const VOICE_GESTURE_STOP: &str = "LISTENING · HOLD TO FINISH";
-const VOICE_GESTURE_SEND: &str = "LISTENING · HOLD TO SEND";
-const VOICE_GESTURE_DELETE: &str = "LISTENING · FLICK LEFT TO DELETE";
-const VOICE_GESTURE_CLEAR: &str = "LISTENING · HOLD TO CLEAR DICTATION";
-const VOICE_GESTURE_MUTE: &str = "LISTENING · HOLD TO MUTE";
-const VOICE_GESTURE_UNMUTE: &str = "LISTENING · HOLD TO UNMUTE";
+const VOICE_GESTURE_STOP: &str = "LISTENING · HOLD 1 TO FINISH";
+const VOICE_GESTURE_SEND: &str = "LISTENING · HOLD 2 TO SEND";
+const VOICE_GESTURE_DELETE: &str = "LISTENING · HOLD 3 TO DELETE";
+const VOICE_GESTURE_CLEAR: &str = "LISTENING · HOLD 4 TO CLEAR DICTATION";
+const VOICE_GESTURE_MUTE: &str = "LISTENING · HOLD 5 TO MUTE";
+const VOICE_GESTURE_UNMUTE: &str = "LISTENING · HOLD 5 TO UNMUTE";
 const VOICE_GESTURE_SENDING: &str = "LISTENING · PREPARING TO SEND";
 const VOICE_GESTURE_MUTING: &str = "LISTENING · MUTING MICROPHONE";
 const VOICE_GESTURE_UNMUTING: &str = "LISTENING · UNMUTING MICROPHONE";
@@ -124,7 +120,6 @@ impl GsvApp {
                         self.disable_vision_for_voice(request_id);
                     }
                     self.clear_voice_gesture_status();
-                    self.clear_vision_scroll(true);
                 }
                 self.sync_vision_context();
                 self.refresh_voice_gesture_notice();
@@ -166,13 +161,6 @@ impl GsvApp {
                 );
                 self.refresh_voice_gesture_notice();
                 cx.notify();
-            }
-            VisionEvent::Scroll {
-                sequence: _,
-                received_at,
-                state,
-            } => {
-                self.handle_vision_scroll_state(state, received_at, window_is_active, window, cx);
             }
             VisionEvent::Intent {
                 sequence: _,
@@ -257,142 +245,6 @@ impl GsvApp {
                 self.refresh_voice_gesture_notice();
                 cx.notify();
             }
-        }
-    }
-
-    fn handle_vision_scroll_state(
-        &mut self,
-        state: ScrollState,
-        received_at: Instant,
-        window_is_active: bool,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let ScrollState::Held {
-            instance_id,
-            direction,
-        } = state
-        else {
-            self.clear_vision_scroll(false);
-            return;
-        };
-
-        let fresh_instance = self.vision_scroll_last_instance != Some(instance_id);
-        self.vision_scroll_last_instance = Some(instance_id);
-        if Instant::now().saturating_duration_since(received_at) > MAX_SCROLL_STATE_AGE
-            || !self.vision_scroll_is_safe(window_is_active)
-        {
-            self.clear_vision_scroll(false);
-            return;
-        }
-
-        let same_active_instance = self
-            .vision_scroll_gesture
-            .is_some_and(|active| active.instance_id == instance_id);
-        if same_active_instance {
-            if let Some(active) = self.vision_scroll_gesture.as_mut() {
-                active.received_at = received_at;
-            }
-        } else {
-            self.vision_scroll_gesture = Some(VisionScrollGesture {
-                instance_id,
-                direction,
-                received_at,
-                consumed: false,
-            });
-            if !self.advance_vision_scroll(fresh_instance, window_is_active, window, cx) {
-                return;
-            }
-        }
-
-        if self
-            .vision_scroll_gesture
-            .is_some_and(|active| !active.consumed)
-        {
-            self.start_vision_scroll_task(window, cx);
-        }
-    }
-
-    fn start_vision_scroll_task(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let executor = cx.background_executor().clone();
-        self.vision_scroll_task = Some(cx.spawn_in(window, async move |this, cx| loop {
-            executor.timer(SCROLL_REPEAT_INTERVAL).await;
-            let keep_scrolling = this
-                .update_in(cx, |this, window, cx| {
-                    this.advance_vision_scroll(false, window.is_window_active(), window, cx)
-                })
-                .unwrap_or(false);
-            if !keep_scrolling {
-                break;
-            }
-        }));
-    }
-
-    fn advance_vision_scroll(
-        &mut self,
-        fresh_trigger: bool,
-        window_is_active: bool,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> bool {
-        let Some(active) = self.vision_scroll_gesture else {
-            return false;
-        };
-        if active.consumed
-            || Instant::now().saturating_duration_since(active.received_at) > MAX_SCROLL_STATE_AGE
-            || !self.vision_scroll_is_safe(window_is_active)
-        {
-            self.vision_scroll_gesture = None;
-            return false;
-        }
-
-        let maximum = f32::from(self.message_scroll.max_offset().height).max(0.0);
-        let offset = f32::from(self.message_scroll.offset().y).clamp(-maximum, 0.0);
-        match vision_scroll_action(offset, maximum, active.direction, fresh_trigger) {
-            VisionScrollAction::ScrollTo {
-                target,
-                reached_edge,
-            } => {
-                self.message_scroll.set_offset(point(px(0.0), px(target)));
-                if reached_edge {
-                    if let Some(active) = self.vision_scroll_gesture.as_mut() {
-                        active.consumed = true;
-                    }
-                }
-                cx.notify();
-                !reached_edge
-            }
-            VisionScrollAction::Navigate(direction) => {
-                if let Some(active) = self.vision_scroll_gesture.as_mut() {
-                    active.consumed = true;
-                }
-                self.move_moment(direction, window, cx);
-                false
-            }
-            VisionScrollAction::Stop => {
-                if let Some(active) = self.vision_scroll_gesture.as_mut() {
-                    active.consumed = true;
-                }
-                false
-            }
-        }
-    }
-
-    fn vision_scroll_is_safe(&self, window_is_active: bool) -> bool {
-        window_is_active
-            && self.vision_lifecycle == Some(LifecycleState::Ready)
-            && self.login.is_none()
-            && self.microphone_chooser.is_none()
-            && !self.desktop_switch_pending
-            && self.conversation.mode == crate::model::SurfaceMode::Conversation
-            && !self.interaction.is_approval()
-    }
-
-    fn clear_vision_scroll(&mut self, clear_instance: bool) {
-        self.vision_scroll_gesture = None;
-        self.vision_scroll_task = None;
-        if clear_instance {
-            self.vision_scroll_last_instance = None;
         }
     }
 
@@ -621,50 +473,6 @@ impl GsvApp {
             return;
         }
         self.refresh_idle_vision_notice();
-    }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq)]
-enum VisionScrollAction {
-    ScrollTo { target: f32, reached_edge: bool },
-    Navigate(i8),
-    Stop,
-}
-
-fn vision_scroll_action(
-    offset: f32,
-    maximum: f32,
-    direction: ScrollDirection,
-    fresh_trigger: bool,
-) -> VisionScrollAction {
-    let maximum = maximum.max(0.0);
-    let offset = offset.clamp(-maximum, 0.0);
-    let can_scroll = match direction {
-        ScrollDirection::Up => offset < -SCROLL_EDGE_EPSILON,
-        ScrollDirection::Down => offset > -maximum + SCROLL_EDGE_EPSILON,
-    };
-    if !can_scroll {
-        return if fresh_trigger {
-            VisionScrollAction::Navigate(match direction {
-                ScrollDirection::Up => -1,
-                ScrollDirection::Down => 1,
-            })
-        } else {
-            VisionScrollAction::Stop
-        };
-    }
-
-    let target = match direction {
-        ScrollDirection::Up => (offset + SCROLL_STEP).min(0.0),
-        ScrollDirection::Down => (offset - SCROLL_STEP).max(-maximum),
-    };
-    let reached_edge = match direction {
-        ScrollDirection::Up => target >= -SCROLL_EDGE_EPSILON,
-        ScrollDirection::Down => target <= -maximum + SCROLL_EDGE_EPSILON,
-    };
-    VisionScrollAction::ScrollTo {
-        target,
-        reached_edge,
     }
 }
 
@@ -1220,54 +1028,5 @@ mod tests {
             Ok(VoiceCommand::Stop { request_id: 1 })
         );
         assert_eq!(context.context_for_test(), GestureContext::Standby);
-    }
-
-    #[test]
-    fn fresh_scroll_crosses_an_existing_edge_but_a_held_scroll_stops_there() {
-        assert_eq!(
-            vision_scroll_action(0.0, 400.0, ScrollDirection::Up, true),
-            VisionScrollAction::Navigate(-1)
-        );
-        assert_eq!(
-            vision_scroll_action(0.0, 400.0, ScrollDirection::Up, false),
-            VisionScrollAction::Stop
-        );
-        assert_eq!(
-            vision_scroll_action(-400.0, 400.0, ScrollDirection::Down, true),
-            VisionScrollAction::Navigate(1)
-        );
-        assert_eq!(
-            vision_scroll_action(-400.0, 400.0, ScrollDirection::Down, false),
-            VisionScrollAction::Stop
-        );
-    }
-
-    #[test]
-    fn held_scroll_moves_inside_the_page_and_consumes_itself_at_the_edge() {
-        assert_eq!(
-            vision_scroll_action(-100.0, 400.0, ScrollDirection::Up, false),
-            VisionScrollAction::ScrollTo {
-                target: -52.0,
-                reached_edge: false,
-            }
-        );
-        assert_eq!(
-            vision_scroll_action(-20.0, 400.0, ScrollDirection::Up, false),
-            VisionScrollAction::ScrollTo {
-                target: 0.0,
-                reached_edge: true,
-            }
-        );
-        assert_eq!(
-            vision_scroll_action(-380.0, 400.0, ScrollDirection::Down, false),
-            VisionScrollAction::ScrollTo {
-                target: -400.0,
-                reached_edge: true,
-            }
-        );
-        assert_eq!(
-            vision_scroll_action(0.0, 0.0, ScrollDirection::Down, true),
-            VisionScrollAction::Navigate(1)
-        );
     }
 }

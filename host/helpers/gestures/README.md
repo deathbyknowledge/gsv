@@ -7,11 +7,11 @@ pixels never enter GPUI, the gateway, logs, files, or GSV application IPC. They
 are handed only to local inference and, in debug mode, the OS display
 system. A bounded private pipe carries a reliable session-scoped
 `start transcription` intent, request-scoped `stop transcription`, `send`,
-`delete backward`, `clear dictation`, `mute`, and `unmute` intents, and
-absolute held-scroll state, plus replace-latest semantic control status with
+`delete backward`, `clear dictation`, `mute`, and `unmute` intents, plus
+replace-latest semantic control status with
 bounded candidate progress. Every active action identifies the exact voice
 request, and every event is scoped to
-the random helper session. Reliable lifecycle, intent, and held-scroll events
+the random helper session. Reliable lifecycle and intent events
 share a strict monotonic sequence, while Desktop applies its bounded local
 freshness policy before acting on received control.
 
@@ -67,9 +67,9 @@ frames rather than accumulating a private video queue.
 
 ## Gesture grammar
 
-The non-dominant hand is the modifier and the dominant hand performs actions;
-camera array order is irrelevant. By default, the helper learns the roles when
-it sees exactly one relaxed open/C-shaped `Anchor` hand. Set
+One hand is the closed-fist modifier and the other performs actions; camera
+array order is irrelevant. By default, the helper learns the roles when it
+sees exactly one fist beside one numbered action pose. Set
 `GSV_GESTURE_DOMINANT_HAND=left` or `right` to assign them explicitly. Desktop supplies one
 strict absolute context: standby when there is no voice request and the helper
 may propose starting one, disabled while an existing request is preparing,
@@ -78,37 +78,27 @@ request and acknowledged mute state. Desktop still owns final Start admission
 under transient UI policy. Keyboard-started dictation enters the same active
 context; the helper has no separate persistent armed bit.
 
-- Keep the modifier in `Anchor`: a relaxed open/C-shaped hand with the thumb
-  comfortably separated from the fingers.
-- Touch the dominant thumb and index fingertip, with the remaining fingers
-  relaxed inward, for 350 ms. In standby this starts transcription; while
-  active the same primary pinch stops it.
-- Touch the dominant thumb and middle fingertip for 700 ms to send now.
-- Make a loose dominant fist, with the thumb resting near the curled fingers,
-  for 450 ms to mute or 700 ms to unmute, depending on current state.
-- Point the dominant index above or below the modifier palm for 250 ms, then
-  hold to scroll in that direction.
-- With the dominant index level with the modifier palm, flick it left at least
-  12% of the mirrored camera width within 500 ms to delete one visible Unicode
-  character (grapheme) from the unsent voice-owned transcription. Relax the
-  pointing hand between repeated deletes.
-- Gather all dominant fingertips to the thumb and hold for 1 second to clear
-  the unsent voice-owned transcription. Text typed before or after the voice
-  insertion point and draft attachments remain intact.
+- Keep the modifier hand in a closed fist throughout every action.
+- Open only the action index finger (`1`) and hold for 350 ms. In standby this
+  starts transcription; while active the same count finishes it.
+- Open the action index and middle fingers (`2`) for 350 ms to send now and keep
+  listening.
+- Open the action index, middle, and ring fingers (`3`) for 350 ms to delete one
+  visible Unicode character (grapheme) from the unsent voice-owned transcription.
+- Open all four action fingers while keeping its thumb closed (`4`) for 1 second
+  to clear the unsent voice-owned transcription. Text typed before or after the
+  voice insertion point and draft attachments remain intact.
+- Open all four action fingers and the thumb (`5`) for 350 ms to mute or unmute,
+  depending on current state.
+- Close the action hand into a fist (`0`) after every command. This is the only
+  reset that rearms the next count.
 
-Scroll gestures work in either standby or active voice mode. On a long moment,
-holding scrolls only that moment and stops at its edge. A fresh gesture begun at
-an edge moves exactly one moment; the held gesture is then consumed until a
-different known pose is observed, so it cannot skip through multiple moments.
-All other postures are unassigned.
-Every gesture enters and continues at 0.50 confidence. After emitting any
-intent, the helper blocks further commands until Desktop echoes a fresh
-absolute context; an unchanged echo also resolves a rejected or nonterminal
-request. The emitted pose stays latched across disabled, standby, active, and
-request transitions until the helper positively observes a different known
-two-hand pose at sufficient confidence. Missing, stale, invalid, or unknown
-tracking cannot release this latch, so holding Start or Stop cannot loop after
-an authority echo. Send, delete, and clear remain nonterminal and do not end
+All other postures are unassigned. Every gesture enters and continues at 0.50
+confidence. After emitting any intent, the helper blocks every numbered command
+until it positively observes the action-hand fist at sufficient confidence.
+That reset latch survives disabled, standby, active, and request transitions.
+Missing, stale, invalid, weak, or unknown tracking cannot release it, so a held
+count cannot loop after an authority echo. Send, delete, and clear remain nonterminal and do not end
 capture. Desktop first asks the transcription helper to finalize the exact
 current segment; only the matching `SegmentFinal` may send or edit the draft,
 so a later partial cannot resurrect corrected text.
@@ -130,7 +120,7 @@ not infer speech silence or implement auto-send.
 - `GSV_VISION_NATIVE_MODELS=/path/to/gesture-recognizer-float16-1` overrides
   the extracted model root; every model is still verified by size and SHA-256.
 - `GSV_GESTURE_DOMINANT_HAND=auto|left|right` selects the action hand. `auto`
-  is the default and assigns roles from the first unambiguous modifier anchor.
+  is the default and assigns roles from the first unambiguous fist-and-count pair.
 - `GSV_VISION_HELPER=/path/to/gsv-vision` tells Desktop which helper executable
   to supervise.
 

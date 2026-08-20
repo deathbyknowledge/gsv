@@ -1,13 +1,15 @@
-//! Authored, camera-local hand posture recognition.
+//! Camera-local recognition for the fist-and-finger-count vocabulary.
 //!
 //! The native landmark model supplies 21 world-space joints. This module turns
-//! that private geometry into GSV's small typed posture vocabulary using only
-//! palm-normalized distances and joint angles. It owns no temporal action or
-//! application semantics.
+//! that private geometry into a palm-normalized count from zero through five.
+//! It owns no temporal action or application semantics.
 
 use crate::observation::{HandPose, Landmark, HAND_LANDMARK_COUNT};
 
 const WRIST: usize = 0;
+const THUMB_CMC: usize = 1;
+const THUMB_MCP: usize = 2;
+const THUMB_IP: usize = 3;
 const THUMB_TIP: usize = 4;
 const INDEX_MCP: usize = 5;
 const INDEX_PIP: usize = 6;
@@ -44,12 +46,12 @@ pub fn recognize(landmarks: &[Landmark; HAND_LANDMARK_COUNT]) -> PoseRecognition
     };
 
     let candidates = [
-        (HandPose::GatheredPinch, features.gathered_pinch()),
-        (HandPose::IndexPinch, features.index_pinch()),
-        (HandPose::MiddlePinch, features.middle_pinch()),
-        (HandPose::Point, features.point()),
-        (HandPose::SoftFist, features.soft_fist()),
-        (HandPose::Anchor, features.anchor()),
+        (HandPose::Fist, features.count_score(0)),
+        (HandPose::OneFinger, features.count_score(1)),
+        (HandPose::TwoFingers, features.count_score(2)),
+        (HandPose::ThreeFingers, features.count_score(3)),
+        (HandPose::FourFingers, features.count_score(4)),
+        (HandPose::FiveFingers, features.count_score(5)),
     ];
     let (pose, score) = candidates
         .into_iter()
@@ -66,17 +68,9 @@ pub fn recognize(landmarks: &[Landmark; HAND_LANDMARK_COUNT]) -> PoseRecognition
 }
 
 struct Features {
-    index_straight: f32,
-    middle_straight: f32,
-    ring_straight: f32,
-    pinky_straight: f32,
-    thumb_index: f32,
-    thumb_middle: f32,
-    thumb_ring: f32,
-    thumb_pinky: f32,
-    index_middle: f32,
-    middle_ring: f32,
-    ring_pinky: f32,
+    fingers: [f32; 4],
+    thumb_open: f32,
+    thumb_closed: f32,
 }
 
 impl Features {
@@ -92,115 +86,69 @@ impl Features {
         if !scale.is_finite() || scale <= f32::EPSILON {
             return None;
         }
+
+        let thumb_straight = finger_straightness(
+            landmarks[THUMB_CMC],
+            landmarks[THUMB_MCP],
+            landmarks[THUMB_IP],
+            landmarks[THUMB_TIP],
+        );
+        let thumb_spread = distance(landmarks[THUMB_TIP], landmarks[INDEX_MCP]) / scale;
         Some(Self {
-            index_straight: finger_straightness(
-                landmarks[INDEX_MCP],
-                landmarks[INDEX_PIP],
-                landmarks[INDEX_DIP],
-                landmarks[INDEX_TIP],
-            ),
-            middle_straight: finger_straightness(
-                landmarks[MIDDLE_MCP],
-                landmarks[MIDDLE_PIP],
-                landmarks[MIDDLE_DIP],
-                landmarks[MIDDLE_TIP],
-            ),
-            ring_straight: finger_straightness(
-                landmarks[RING_MCP],
-                landmarks[RING_PIP],
-                landmarks[RING_DIP],
-                landmarks[RING_TIP],
-            ),
-            pinky_straight: finger_straightness(
-                landmarks[PINKY_MCP],
-                landmarks[PINKY_PIP],
-                landmarks[PINKY_DIP],
-                landmarks[PINKY_TIP],
-            ),
-            thumb_index: distance(landmarks[THUMB_TIP], landmarks[INDEX_TIP]) / scale,
-            thumb_middle: distance(landmarks[THUMB_TIP], landmarks[MIDDLE_TIP]) / scale,
-            thumb_ring: distance(landmarks[THUMB_TIP], landmarks[RING_TIP]) / scale,
-            thumb_pinky: distance(landmarks[THUMB_TIP], landmarks[PINKY_TIP]) / scale,
-            index_middle: distance(landmarks[INDEX_TIP], landmarks[MIDDLE_TIP]) / scale,
-            middle_ring: distance(landmarks[MIDDLE_TIP], landmarks[RING_TIP]) / scale,
-            ring_pinky: distance(landmarks[RING_TIP], landmarks[PINKY_TIP]) / scale,
+            fingers: [
+                finger_straightness(
+                    landmarks[INDEX_MCP],
+                    landmarks[INDEX_PIP],
+                    landmarks[INDEX_DIP],
+                    landmarks[INDEX_TIP],
+                ),
+                finger_straightness(
+                    landmarks[MIDDLE_MCP],
+                    landmarks[MIDDLE_PIP],
+                    landmarks[MIDDLE_DIP],
+                    landmarks[MIDDLE_TIP],
+                ),
+                finger_straightness(
+                    landmarks[RING_MCP],
+                    landmarks[RING_PIP],
+                    landmarks[RING_DIP],
+                    landmarks[RING_TIP],
+                ),
+                finger_straightness(
+                    landmarks[PINKY_MCP],
+                    landmarks[PINKY_PIP],
+                    landmarks[PINKY_DIP],
+                    landmarks[PINKY_TIP],
+                ),
+            ],
+            thumb_open: minimum(&[
+                high(thumb_straight, 0.62, 0.25),
+                high(thumb_spread, 0.52, 0.20),
+            ]),
+            thumb_closed: low(thumb_spread, 0.42, 0.22),
         })
     }
 
-    fn gathered_pinch(&self) -> f32 {
-        minimum(&[
-            low(self.thumb_index, 0.34, 0.18),
-            low(self.thumb_middle, 0.38, 0.20),
-            low(self.thumb_ring, 0.43, 0.22),
-            low(self.thumb_pinky, 0.48, 0.24),
-        ])
-    }
-
-    fn index_pinch(&self) -> f32 {
-        minimum(&[
-            low(self.thumb_index, 0.32, 0.18),
-            high(self.thumb_middle, 0.31, 0.18),
-            high(self.thumb_ring, 0.39, 0.20),
-            high(self.thumb_pinky, 0.46, 0.22),
-            low(self.middle_straight, 0.78, 0.35),
-            low(self.ring_straight, 0.76, 0.35),
-            low(self.pinky_straight, 0.74, 0.35),
-        ])
-    }
-
-    fn middle_pinch(&self) -> f32 {
-        minimum(&[
-            low(self.thumb_middle, 0.34, 0.18),
-            high(self.thumb_index, 0.30, 0.16),
-            high(self.thumb_ring, 0.30, 0.18),
-            high(self.thumb_pinky, 0.40, 0.20),
-            low(self.ring_straight, 0.76, 0.35),
-            low(self.pinky_straight, 0.74, 0.35),
-        ])
-    }
-
-    fn point(&self) -> f32 {
-        minimum(&[
-            high(self.index_straight, 0.72, 0.24),
-            low(self.middle_straight, 0.50, 0.28),
-            low(self.ring_straight, 0.48, 0.28),
-            low(self.pinky_straight, 0.46, 0.28),
-            high(self.thumb_index, 0.35, 0.18),
-        ])
-    }
-
-    fn soft_fist(&self) -> f32 {
-        minimum(&[
-            low(self.index_straight, 0.48, 0.30),
-            low(self.middle_straight, 0.46, 0.30),
-            low(self.ring_straight, 0.44, 0.30),
-            low(self.pinky_straight, 0.42, 0.30),
-            high(self.thumb_index, 0.24, 0.16),
-            high(self.thumb_middle, 0.18, 0.12),
-            low(self.thumb_middle, 0.55, 0.22),
-            low(self.thumb_ring, 0.65, 0.25),
-            low(self.thumb_pinky, 0.78, 0.28),
-        ])
-    }
-
-    fn anchor(&self) -> f32 {
-        minimum(&[
-            high(self.index_straight, 0.52, 0.28),
-            high(self.middle_straight, 0.52, 0.28),
-            high(self.ring_straight, 0.48, 0.28),
-            high(self.pinky_straight, 0.44, 0.28),
-            low(self.index_middle, 0.72, 0.32),
-            low(self.middle_ring, 0.65, 0.30),
-            low(self.ring_pinky, 0.60, 0.28),
-            high(self.thumb_index, 0.38, 0.20),
-        ])
+    fn count_score(&self, count: usize) -> f32 {
+        let mut scores = [1.0; 5];
+        for (index, straightness) in self.fingers.into_iter().enumerate() {
+            scores[index] = if index < count.min(4) {
+                high(straightness, 0.68, 0.28)
+            } else {
+                low(straightness, 0.50, 0.30)
+            };
+        }
+        scores[4] = match count {
+            0 | 4 => self.thumb_closed,
+            5 => self.thumb_open,
+            _ => 1.0,
+        };
+        minimum(&scores)
     }
 }
 
 fn finger_straightness(mcp: Landmark, pip: Landmark, dip: Landmark, tip: Landmark) -> f32 {
-    let proximal = straight_joint(mcp, pip, dip);
-    let distal = straight_joint(pip, dip, tip);
-    proximal.min(distal)
+    straight_joint(mcp, pip, dip).min(straight_joint(pip, dip, tip))
 }
 
 fn straight_joint(start: Landmark, joint: Landmark, end: Landmark) -> f32 {
@@ -246,20 +194,11 @@ fn magnitude(value: [f32; 3]) -> f32 {
 mod tests {
     use super::*;
 
-    fn authored_pose(
-        straight: [bool; 4],
-        tips: [(f32, f32); 4],
-        thumb_tip: (f32, f32),
-    ) -> [Landmark; HAND_LANDMARK_COUNT] {
+    fn finger_count(count: usize) -> [Landmark; HAND_LANDMARK_COUNT] {
         let mut landmarks = [Landmark::default(); HAND_LANDMARK_COUNT];
         landmarks[WRIST] = Landmark {
             x: 0.0,
             y: -1.0,
-            z: 0.0,
-        };
-        landmarks[THUMB_TIP] = Landmark {
-            x: thumb_tip.0,
-            y: thumb_tip.1,
             z: 0.0,
         };
         for (finger, (mcp, pip, dip, tip)) in [
@@ -271,38 +210,66 @@ mod tests {
         .into_iter()
         .enumerate()
         {
-            let mcp_x = -0.6 + finger as f32 * 0.4;
-            landmarks[mcp] = Landmark {
-                x: mcp_x,
-                y: 0.0,
-                z: 0.0,
-            };
-            if straight[finger] {
-                landmarks[pip] = Landmark {
-                    x: mcp_x,
+            let x = -0.6 + finger as f32 * 0.4;
+            landmarks[mcp] = Landmark { x, y: 0.0, z: 0.0 };
+            landmarks[pip] = Landmark { x, y: 0.4, z: 0.0 };
+            if finger < count.min(4) {
+                landmarks[dip] = Landmark { x, y: 0.8, z: 0.0 };
+                landmarks[tip] = Landmark { x, y: 1.2, z: 0.0 };
+            } else {
+                landmarks[dip] = Landmark {
+                    x: x + 0.25,
                     y: 0.4,
                     z: 0.0,
                 };
-                landmarks[dip] = Landmark {
-                    x: mcp_x,
-                    y: 0.8,
-                    z: 0.0,
-                };
-            } else {
-                landmarks[pip] = Landmark {
-                    x: mcp_x,
-                    y: 0.35,
-                    z: 0.0,
-                };
-                landmarks[dip] = Landmark {
-                    x: tips[finger].0,
-                    y: 0.35,
+                landmarks[tip] = Landmark {
+                    x: x + 0.25,
+                    y: 0.05,
                     z: 0.0,
                 };
             }
-            landmarks[tip] = Landmark {
-                x: tips[finger].0,
-                y: tips[finger].1,
+        }
+
+        if count == 5 {
+            landmarks[THUMB_CMC] = Landmark {
+                x: -0.72,
+                y: -0.02,
+                z: 0.0,
+            };
+            landmarks[THUMB_MCP] = Landmark {
+                x: -0.92,
+                y: 0.20,
+                z: 0.0,
+            };
+            landmarks[THUMB_IP] = Landmark {
+                x: -1.12,
+                y: 0.42,
+                z: 0.0,
+            };
+            landmarks[THUMB_TIP] = Landmark {
+                x: -1.32,
+                y: 0.64,
+                z: 0.0,
+            };
+        } else {
+            landmarks[THUMB_CMC] = Landmark {
+                x: -0.72,
+                y: 0.0,
+                z: 0.0,
+            };
+            landmarks[THUMB_MCP] = Landmark {
+                x: -0.82,
+                y: 0.14,
+                z: 0.0,
+            };
+            landmarks[THUMB_IP] = Landmark {
+                x: -0.65,
+                y: 0.20,
+                z: 0.0,
+            };
+            landmarks[THUMB_TIP] = Landmark {
+                x: -0.45,
+                y: 0.10,
                 z: 0.0,
             };
         }
@@ -331,62 +298,36 @@ mod tests {
     }
 
     #[test]
-    fn authored_geometry_covers_the_complete_pose_vocabulary() {
-        let cases = [
-            (
-                HandPose::Anchor,
-                authored_pose(
-                    [true; 4],
-                    [(-0.6, 1.15), (-0.2, 1.15), (0.2, 1.15), (0.6, 1.15)],
-                    (-1.2, 0.5),
-                ),
-            ),
-            (
-                HandPose::IndexPinch,
-                authored_pose(
-                    [false; 4],
-                    [(-0.4, 0.05), (0.05, 0.05), (0.45, 0.05), (0.85, 0.05)],
-                    (-0.4, 0.05),
-                ),
-            ),
-            (
-                HandPose::MiddlePinch,
-                authored_pose(
-                    [false; 4],
-                    [(-0.4, 0.05), (0.05, 0.05), (0.45, 0.05), (0.85, 0.05)],
-                    (0.05, 0.05),
-                ),
-            ),
-            (
-                HandPose::SoftFist,
-                authored_pose(
-                    [false; 4],
-                    [(-0.4, 0.05), (-0.05, 0.05), (0.0, 0.05), (0.2, 0.05)],
-                    (-0.7, 0.05),
-                ),
-            ),
-            (
-                HandPose::Point,
-                authored_pose(
-                    [true, false, false, false],
-                    [(-0.6, 1.15), (0.0, 0.05), (0.4, 0.05), (0.8, 0.05)],
-                    (0.0, 0.05),
-                ),
-            ),
-            (
-                HandPose::GatheredPinch,
-                authored_pose(
-                    [false; 4],
-                    [(-0.1, 0.05), (0.0, 0.05), (0.1, 0.05), (0.2, 0.05)],
-                    (0.05, 0.05),
-                ),
-            ),
+    fn sequential_opening_covers_zero_through_five() {
+        let poses = [
+            HandPose::Fist,
+            HandPose::OneFinger,
+            HandPose::TwoFingers,
+            HandPose::ThreeFingers,
+            HandPose::FourFingers,
+            HandPose::FiveFingers,
         ];
-
-        for (expected, landmarks) in cases {
-            let recognized = recognize(&landmarks);
-            assert_eq!(recognized.pose, expected);
-            assert!(recognized.score >= MIN_POSE_SCORE);
+        for (count, expected) in poses.into_iter().enumerate() {
+            let recognized = recognize(&finger_count(count));
+            assert_eq!(recognized.pose, expected, "finger count {count}");
+            assert!(recognized.score >= MIN_POSE_SCORE, "finger count {count}");
         }
+    }
+
+    #[test]
+    fn a_thumb_alone_is_not_a_fist_reset() {
+        let mut landmarks = finger_count(0);
+        let open_thumb = finger_count(5);
+        landmarks[THUMB_CMC..=THUMB_TIP].copy_from_slice(&open_thumb[THUMB_CMC..=THUMB_TIP]);
+        assert_eq!(recognize(&landmarks).pose, HandPose::Unknown);
+    }
+
+    #[test]
+    fn fingers_opened_out_of_sequence_are_unassigned() {
+        let mut landmarks = finger_count(0);
+        for (joint, y) in [(RING_PIP, 0.4), (RING_DIP, 0.8), (RING_TIP, 1.2)] {
+            landmarks[joint] = Landmark { x: 0.2, y, z: 0.0 };
+        }
+        assert_eq!(recognize(&landmarks).pose, HandPose::Unknown);
     }
 }

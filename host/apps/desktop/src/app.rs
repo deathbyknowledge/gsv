@@ -28,7 +28,7 @@ use crate::startup::{LoginDefaults, LoginFlow, LoginProgress, LoginStep};
 use crate::transcription::{coalesce_for_ui, VoiceCommand};
 use crate::typography::TypeLayout;
 use desktop_protocol::{DesktopStatus, GatewayState, OperationError, ProcessId, WindowState};
-use gesture_protocol::{GestureContext, GestureProgress, LifecycleState, ScrollDirection};
+use gesture_protocol::{GestureContext, GestureProgress, LifecycleState};
 use host_config::MicrophonePreference;
 
 mod gesture;
@@ -147,14 +147,6 @@ struct VoiceGestureStatus {
     received_at: Instant,
     context: GestureContext,
     progress: Option<GestureProgress>,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq)]
-struct VisionScrollGesture {
-    instance_id: u64,
-    direction: ScrollDirection,
-    received_at: Instant,
-    consumed: bool,
 }
 
 pub(crate) enum VisionStartup {
@@ -295,9 +287,6 @@ pub struct GsvApp {
     vision_gesture_status: Option<VoiceGestureStatus>,
     vision_gesture_expiry_task: Option<Task<()>>,
     vision_status_sequence: u64,
-    vision_scroll_gesture: Option<VisionScrollGesture>,
-    vision_scroll_last_instance: Option<u64>,
-    vision_scroll_task: Option<Task<()>>,
     gesture_guide_open: bool,
     _input_subscription: Subscription,
     _login_subscription: Option<Subscription>,
@@ -857,9 +846,6 @@ impl GsvApp {
             vision_gesture_status: None,
             vision_gesture_expiry_task: None,
             vision_status_sequence: 0,
-            vision_scroll_gesture: None,
-            vision_scroll_last_instance: None,
-            vision_scroll_task: None,
             gesture_guide_open: false,
             _input_subscription: input_subscription,
             _login_subscription: login_subscription,

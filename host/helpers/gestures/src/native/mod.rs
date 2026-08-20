@@ -795,7 +795,7 @@ mod tests {
 
     #[test]
     fn weak_landmark_frames_retain_the_roi_without_emitting_stale_poses() {
-        let previous = tracked_test_hand(0.25, HandPose::SoftFist);
+        let previous = tracked_test_hand(0.25, HandPose::Fist);
         let candidate = HandCandidate {
             rect: previous.rect,
             previous: Some(0),
@@ -821,8 +821,8 @@ mod tests {
 
     #[test]
     fn a_second_hand_does_not_discard_a_recovering_track() {
-        let fist = tracked_test_hand(0.25, HandPose::SoftFist);
-        let anchor = tracked_test_hand(0.75, HandPose::Anchor);
+        let fist = tracked_test_hand(0.25, HandPose::Fist);
+        let anchor = tracked_test_hand(0.75, HandPose::FiveFingers);
         let candidates = vec![
             HandCandidate {
                 rect: fist.rect,
@@ -836,7 +836,7 @@ mod tests {
         let detections = vec![None, anchor.cached.clone()];
         let (tracked, hands) = reconcile_tracking(vec![fist, anchor], candidates, detections, 100);
         assert_eq!(hands.len(), 1);
-        assert_eq!(hands[0].pose, HandPose::Anchor);
+        assert_eq!(hands[0].pose, HandPose::FiveFingers);
         assert_eq!(tracked.len(), 2);
         assert_eq!(
             tracked
@@ -849,9 +849,9 @@ mod tests {
 
     #[test]
     fn detected_hands_replace_recovery_slots_before_the_two_hand_limit() {
-        let fist = tracked_test_hand(0.15, HandPose::SoftFist);
-        let anchor = tracked_test_hand(0.5, HandPose::Anchor);
-        let point = tracked_test_hand(0.85, HandPose::Point);
+        let fist = tracked_test_hand(0.15, HandPose::Fist);
+        let anchor = tracked_test_hand(0.5, HandPose::FiveFingers);
+        let point = tracked_test_hand(0.85, HandPose::OneFinger);
         let candidates = vec![
             HandCandidate {
                 rect: fist.rect,
@@ -950,14 +950,14 @@ mod tests {
         for (name, expected_pose, actionable, expected_handedness, wrist) in [
             (
                 "fist.jpg",
-                HandPose::SoftFist,
+                HandPose::Fist,
                 true,
                 0.989_296_1_f32,
                 (0.477_097_f32, 0.661_291_f32),
             ),
             (
                 "pointing_up.jpg",
-                HandPose::Point,
+                HandPose::OneFinger,
                 true,
                 0.995_088_8_f32,
                 (0.479_238_4_f32, 0.742_612_f32),
@@ -971,8 +971,8 @@ mod tests {
             ),
             (
                 "victory.jpg",
-                HandPose::Unknown,
-                false,
+                HandPose::TwoFingers,
+                true,
                 0.995_300_7_f32,
                 (0.516_432_1_f32, 0.804_093_7_f32),
             ),
@@ -995,7 +995,7 @@ mod tests {
             assert_eq!(observation.hands.len(), 1, "{name}");
             let hand = &observation.hands[0];
             assert_eq!(hand.handedness, Handedness::Right, "{name}");
-            assert_eq!(hand.pose, expected_pose, "{name}");
+            assert_eq!(hand.pose, expected_pose, "{name} score {}", hand.pose_score);
             assert_eq!(hand.pose_score >= 0.50, actionable, "{name}");
             assert!(
                 (hand.handedness_score - expected_handedness).abs() <= 0.03,

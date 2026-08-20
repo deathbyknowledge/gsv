@@ -1,7 +1,7 @@
 //! Bounded local protocol between GSV Desktop and its vision helper.
 //!
-//! This boundary carries reliable semantic gesture intents and held-scroll
-//! state plus replace-latest, bounded semantic control status. Camera frames,
+//! This boundary carries reliable semantic gesture intents plus replace-latest,
+//! bounded semantic control status. Camera frames,
 //! landmarks, model labels, raw scores, diagnostics, paths, and user content
 //! do not belong in this protocol.
 
@@ -16,7 +16,7 @@ pub const EVENT_FD: i32 = 3;
 pub const EVENT_FD_MARKER_ENV: &str = "GSV_VISION_EVENT_FD";
 /// Exact private launch contract. Rotate this on an incompatible unshipped
 /// helper/Desktop cutover so a stale sibling fails before semantic traffic.
-pub const EVENT_CHANNEL_CONTRACT_MARKER: &str = "gsv-vision-control-v2-dictation-editing";
+pub const EVENT_CHANNEL_CONTRACT_MARKER: &str = "gsv-vision-control-v3-finger-counts";
 pub const SESSION_HIGH_ENV: &str = "GSV_VISION_SESSION_HIGH";
 pub const SESSION_LOW_ENV: &str = "GSV_VISION_SESSION_LOW";
 
@@ -94,58 +94,6 @@ pub enum VoiceRequestGestureIntent {
     ClearDictation,
     Mute,
     Unmute,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ScrollDirection {
-    Up,
-    Down,
-}
-
-/// Absolute helper-owned scroll gesture state.
-///
-/// Heartbeats repeat the same nonzero `instance_id`; only a later held state
-/// with a different ID is a fresh gesture that may cross a document boundary.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
-#[serde(tag = "state", rename_all = "snake_case")]
-pub enum ScrollState {
-    Idle,
-    Held {
-        instance_id: u64,
-        direction: ScrollDirection,
-    },
-}
-
-#[derive(Deserialize)]
-#[serde(tag = "state", rename_all = "snake_case", deny_unknown_fields)]
-enum WireScrollState {
-    Idle {},
-    Held {
-        instance_id: u64,
-        direction: ScrollDirection,
-    },
-}
-
-impl<'de> Deserialize<'de> for ScrollState {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        Ok(match WireScrollState::deserialize(deserializer)? {
-            WireScrollState::Idle {} => Self::Idle,
-            WireScrollState::Held {
-                instance_id,
-                direction,
-            } if instance_id != 0 => Self::Held {
-                instance_id,
-                direction,
-            },
-            WireScrollState::Held { .. } => {
-                return Err(de::Error::custom("scroll instance ID must be nonzero"));
-            }
-        })
-    }
 }
 
 /// A reliable semantic edge from the helper.
@@ -441,11 +389,6 @@ pub enum HelperEvent {
         sequence: u64,
         intent: GestureIntent,
     },
-    Scroll {
-        session_id: SessionId,
-        sequence: u64,
-        state: ScrollState,
-    },
 }
 
 #[derive(Debug)]
@@ -601,7 +544,7 @@ mod tests {
         assert_eq!(PROTOCOL_VERSION, 1);
         assert_eq!(
             EVENT_CHANNEL_CONTRACT_MARKER,
-            "gsv-vision-control-v2-dictation-editing"
+            "gsv-vision-control-v3-finger-counts"
         );
         for stale in [
             "1",
@@ -609,6 +552,7 @@ mod tests {
             "gsv-vision-control-v1-explicit-modes",
             "gsv-vision-control-v1-transcription-sessions",
             "gsv-vision-control-v1-held-scroll",
+            "gsv-vision-control-v2-dictation-editing",
         ] {
             assert_ne!(EVENT_CHANNEL_CONTRACT_MARKER, stale);
         }
@@ -672,14 +616,6 @@ mod tests {
                 session_id: SESSION,
                 sequence: 5,
                 intent: active_intent(VoiceRequestGestureIntent::Send),
-            },
-            HelperEvent::Scroll {
-                session_id: SESSION,
-                sequence: 6,
-                state: ScrollState::Held {
-                    instance_id: 3,
-                    direction: ScrollDirection::Down,
-                },
             },
         ];
         for expected in values {
@@ -759,57 +695,6 @@ mod tests {
                 "sequence": 3,
                 "voice_request_id": 22,
                 "intent": { "scope": "start_transcription" }
-            }),
-        ] {
-            assert!(serde_json::from_value::<HelperEvent>(invalid).is_err());
-        }
-    }
-
-    #[test]
-    fn scroll_state_is_closed_bounded_semantics_only() {
-        let held = HelperEvent::Scroll {
-            session_id: SESSION,
-            sequence: 6,
-            state: ScrollState::Held {
-                instance_id: 3,
-                direction: ScrollDirection::Up,
-            },
-        };
-        let wire = serde_json::to_value(held).expect("scroll serializes");
-        assert_eq!(
-            wire,
-            json!({
-                "type": "scroll",
-                "session_id": { "high": 7, "low": 11 },
-                "sequence": 6,
-                "state": {
-                    "state": "held",
-                    "instance_id": 3,
-                    "direction": "up"
-                }
-            })
-        );
-        assert_eq!(
-            serde_json::from_value::<HelperEvent>(wire).expect("scroll reads"),
-            held
-        );
-        for invalid in [
-            json!({
-                "type": "scroll",
-                "session_id": { "high": 7, "low": 11 },
-                "sequence": 6,
-                "state": { "state": "held", "instance_id": 0, "direction": "up" }
-            }),
-            json!({
-                "type": "scroll",
-                "session_id": { "high": 7, "low": 11 },
-                "sequence": 6,
-                "state": {
-                    "state": "held",
-                    "instance_id": 3,
-                    "direction": "up",
-                    "position": 0.4
-                }
             }),
         ] {
             assert!(serde_json::from_value::<HelperEvent>(invalid).is_err());

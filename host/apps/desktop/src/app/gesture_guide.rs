@@ -18,42 +18,42 @@ struct GestureGuideRow {
 const VOICE_GESTURE_ROWS: [GestureGuideRow; 3] = [
     GestureGuideRow {
         action: "START / FINISH",
-        posture: "THUMB + INDEX TIP",
+        posture: "1 · INDEX ONLY",
         timing: "HOLD 350 MS",
         effect: "Starts while idle; finishes while listening.",
     },
     GestureGuideRow {
         action: "SEND",
-        posture: "THUMB + MIDDLE TIP",
-        timing: "HOLD 700 MS",
+        posture: "2 · INDEX + MIDDLE",
+        timing: "HOLD 350 MS",
         effect: "Sends the current utterance and keeps listening.",
     },
     GestureGuideRow {
         action: "MUTE / UNMUTE",
-        posture: "LOOSE FIST",
-        timing: "MUTE 450 MS · UNMUTE 700 MS",
+        posture: "5 · OPEN ALL FIVE FINGERS",
+        timing: "HOLD 350 MS",
         effect: "Changes only after the microphone acknowledges it.",
     },
 ];
 
 const EDIT_GESTURE_ROWS: [GestureGuideRow; 3] = [
     GestureGuideRow {
-        action: "SCROLL",
-        posture: "POINT ABOVE / BELOW MODIFIER PALM",
-        timing: "HOLD 250 MS, THEN KEEP HOLDING",
-        effect: "Moves in that direction until the current edge.",
-    },
-    GestureGuideRow {
         action: "DELETE",
-        posture: "POINT LEVEL + FLICK LEFT",
-        timing: "12% IN 80–500 MS",
+        posture: "3 · INDEX + MIDDLE + RING",
+        timing: "HOLD 350 MS",
         effect: "Deletes one visible character from unsent dictation.",
     },
     GestureGuideRow {
         action: "CLEAR DICTATION",
-        posture: "ALL FINGERTIPS TO THUMB",
+        posture: "4 · FOUR FINGERS, THUMB CLOSED",
         timing: "HOLD 1 SECOND",
         effect: "Clears dictated text; typed text and files stay.",
+    },
+    GestureGuideRow {
+        action: "RESET / REARM",
+        posture: "ACTION HAND · CLOSED FIST",
+        timing: "BETWEEN EVERY COMMAND",
+        effect: "Return to a fist before showing the next number.",
     },
 ];
 
@@ -172,7 +172,7 @@ impl GsvApp {
                             .text_size(px(25.0))
                             .line_height(relative(1.2))
                             .text_color(theme::color(theme::TEXT_QUIET))
-                            .child("Keep one hand steady. Let the other hand act."),
+                            .child("Keep one fist closed. Count with the other hand."),
                     )
                     .child(
                         div()
@@ -194,9 +194,7 @@ impl GsvApp {
                                 div()
                                     .text_size(px(11.0))
                                     .text_color(theme::color(theme::TEXT_QUIET))
-                                    .child(
-                                        "RELAXED OPEN / C-SHAPED HAND · THUMB COMFORTABLY APART",
-                                    ),
+                                    .child("CLOSED FIST · KEEP CLOSED THROUGH EVERY ACTION"),
                             ),
                     )
                     .child(
@@ -206,7 +204,7 @@ impl GsvApp {
                             .gap(px(42.0))
                             .child(render_gesture_guide_column("VOICE", voice_rows))
                             .child(render_gesture_guide_column(
-                                "NAVIGATION + EDITING",
+                                "EDITING + RESET",
                                 edit_rows,
                             )),
                     )
@@ -224,7 +222,7 @@ impl GsvApp {
                             .line_height(relative(1.4))
                             .text_color(theme::color(theme::TEXT_FAINT))
                             .child(
-                                "RELAX OR CHANGE THE ACTION HAND BETWEEN COMMANDS · CORRECTIONS CHANGE ONLY UNSENT DICTATION",
+                                "MAKE AN ACTION-HAND FIST BETWEEN COMMANDS · CORRECTIONS CHANGE ONLY UNSENT DICTATION",
                             ),
                     ),
             )
@@ -321,9 +319,9 @@ mod tests {
                 "START / FINISH",
                 "SEND",
                 "MUTE / UNMUTE",
-                "SCROLL",
                 "DELETE",
                 "CLEAR DICTATION",
+                "RESET / REARM",
             ]
         );
         let vocabulary = rows
@@ -332,7 +330,15 @@ mod tests {
             .collect::<Vec<_>>()
             .join(" ")
             .to_ascii_lowercase();
-        for legacy in ["open palm", "victory", "thumbs-up", "thumbs-down"] {
+        for legacy in [
+            "open palm",
+            "victory",
+            "thumbs-up",
+            "thumbs-down",
+            "pinch",
+            "flick",
+            "scroll",
+        ] {
             assert!(!vocabulary.contains(legacy));
         }
     }

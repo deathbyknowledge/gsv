@@ -13,7 +13,7 @@ use std::time::{Duration, Instant};
 
 use gesture_protocol::{
     read_frame, write_frame, ControlStatus, DesktopCommand, GestureContext, GestureIntent,
-    HelperEvent, LifecycleState, ScrollState, SessionId, EVENT_CHANNEL_CONTRACT_MARKER, EVENT_FD,
+    HelperEvent, LifecycleState, SessionId, EVENT_CHANNEL_CONTRACT_MARKER, EVENT_FD,
     EVENT_FD_MARKER_ENV, PROTOCOL_VERSION, SESSION_HIGH_ENV, SESSION_LOW_ENV,
 };
 use tokio::sync::{mpsc as tokio_mpsc, watch};
@@ -85,11 +85,6 @@ pub(crate) enum VisionEvent {
         sequence: u64,
         received_at: Instant,
         intent: GestureIntent,
-    },
-    Scroll {
-        sequence: u64,
-        received_at: Instant,
-        state: ScrollState,
     },
 }
 
@@ -783,11 +778,6 @@ fn translate_event(
             session_id,
             sequence,
             ..
-        }
-        | HelperEvent::Scroll {
-            session_id,
-            sequence,
-            ..
         } => (session_id, sequence),
     };
     if session_id != expected_session || sequence == 0 || sequence <= *last_sequence {
@@ -864,11 +854,6 @@ fn translate_event(
             }))
         }
         HelperEvent::Intent { .. } => Ok(None),
-        HelperEvent::Scroll { state, .. } => Ok(Some(VisionEvent::Scroll {
-            sequence,
-            received_at,
-            state,
-        })),
         HelperEvent::Hello { .. } => Err(()),
     }
 }
@@ -1308,49 +1293,6 @@ mod tests {
                 sequence: 4,
                 received_at,
                 intent: send(21),
-            }))
-        );
-    }
-
-    #[test]
-    fn scroll_state_is_session_fenced_but_independent_of_voice_context() {
-        let received_at = Instant::now();
-        let held = ScrollState::Held {
-            instance_id: 4,
-            direction: gesture_protocol::ScrollDirection::Up,
-        };
-        let mut sequence = 0;
-        assert_eq!(
-            translate_event(
-                HelperEvent::Scroll {
-                    session_id: SessionId::new(9, 9),
-                    sequence: 1,
-                    state: held,
-                },
-                received_at,
-                SESSION,
-                &mut sequence,
-                VisionContext::Standby,
-            ),
-            Ok(None)
-        );
-        assert_eq!(sequence, 0);
-        assert_eq!(
-            translate_event(
-                HelperEvent::Scroll {
-                    session_id: SESSION,
-                    sequence: 1,
-                    state: held,
-                },
-                received_at,
-                SESSION,
-                &mut sequence,
-                VisionContext::Disabled,
-            ),
-            Ok(Some(VisionEvent::Scroll {
-                sequence: 1,
-                received_at,
-                state: held,
             }))
         );
     }

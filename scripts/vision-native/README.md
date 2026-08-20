@@ -29,7 +29,7 @@ Run the reference parity test with:
 That test downloads four checksum-pinned official fixture images and checks the
 Rust pipeline's handedness and wrist coordinates against the outputs of the same
 landmark model through MediaPipe Tasks. It also verifies that authored fist and
-point poses remain actionable while legacy thumbs-up and victory poses remain
+sequential one- and two-finger poses remain actionable while a thumbs-up remains
 unassigned. MediaPipe supplies the landmark golden reference only; it is not
 installed or executed by the test.
 

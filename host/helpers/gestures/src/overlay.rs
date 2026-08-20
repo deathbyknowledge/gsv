@@ -289,15 +289,15 @@ fn control_status_text(status: ControlStatus) -> (&'static str, u32) {
     match status {
         ControlStatus::Disabled => ("GESTURES DISABLED", WARNING_COLOR),
         ControlStatus::Standby { .. } => (
-            "GESTURES STANDBY - TWO OPEN PALMS START TRANSCRIPTION",
+            "GESTURES STANDBY - FIST + 1 STARTS TRANSCRIPTION",
             PAIR_COLOR,
         ),
         ControlStatus::Active { muted: false, .. } => (
-            "TRANSCRIBING - VICTORY STOP / THUMB UP SEND / DOWN MUTE",
+            "TRANSCRIBING - FIST + 1 STOP / 2 SEND / 3 DELETE / 4 CLEAR / 5 MUTE",
             PAIR_COLOR,
         ),
         ControlStatus::Active { muted: true, .. } => (
-            "TRANSCRIBING + MUTED - POINTING UP UNMUTE / VICTORY STOP",
+            "TRANSCRIBING + MUTED - FIST + 5 UNMUTE / 1 STOP",
             RIGHT_COLOR,
         ),
     }
@@ -342,7 +342,7 @@ fn control_diagnostic_text(
             WARNING_COLOR,
         ),
         ControlDiagnostic::AwaitingRelease { chord } => (
-            format!("CONTROL RELEASE {} POSE TO REARM", chord_text(chord)),
+            format!("CONTROL ACTION FIST TO REARM AFTER {}", chord_text(chord)),
             WARNING_COLOR,
         ),
         ControlDiagnostic::InvalidScore => {
@@ -388,9 +388,6 @@ fn control_diagnostic_text(
             ),
             PAIR_COLOR,
         ),
-        ControlDiagnostic::Cooldown { remaining_ms } => {
-            (format!("CONTROL COOLDOWN {remaining_ms}MS"), WARNING_COLOR)
-        }
         ControlDiagnostic::Accepted { chord } => (
             format!("CONTROL {} ACCEPTED", chord_text(chord)),
             PAIR_COLOR,
@@ -1024,8 +1021,8 @@ mod tests {
             frame_sequence: 4,
             observed_at,
             hands: vec![
-                hand(Handedness::Left, 0.25, HandPose::Anchor),
-                hand(Handedness::Right, 0.75, HandPose::SoftFist),
+                hand(Handedness::Left, 0.25, HandPose::Fist),
+                hand(Handedness::Right, 0.75, HandPose::FiveFingers),
             ],
             inference_time: Duration::from_millis(12),
         };
@@ -1113,12 +1110,12 @@ mod tests {
         let hand = HandObservation {
             handedness: Handedness::Left,
             handedness_score: 0.912,
-            pose: HandPose::Anchor,
+            pose: HandPose::FiveFingers,
             pose_score: 0.795,
             landmarks: [Landmark::default(); 21],
         };
 
-        assert_eq!(hand_label(&hand), "L 91.2%  Anchor 79.5%");
+        assert_eq!(hand_label(&hand), "L 91.2%  5 fingers 79.5%");
     }
 
     #[test]
@@ -1160,7 +1157,7 @@ mod tests {
                 ControlDiagnostic::AwaitingRelease {
                     chord: ControlChord::StartTranscription,
                 },
-                "CONTROL RELEASE START POSE TO REARM",
+                "CONTROL ACTION FIST TO REARM AFTER START",
             ),
             (
                 ControlDiagnostic::InvalidScore,
@@ -1197,10 +1194,6 @@ mod tests {
                     progress_percent: 57,
                 },
                 "CONTROL SEND 84% - EVIDENCE 57%",
-            ),
-            (
-                ControlDiagnostic::Cooldown { remaining_ms: 412 },
-                "CONTROL COOLDOWN 412MS",
             ),
             (
                 ControlDiagnostic::Accepted {

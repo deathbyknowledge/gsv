@@ -30,12 +30,12 @@ pub enum Handedness {
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub enum HandPose {
-    Anchor,
-    IndexPinch,
-    MiddlePinch,
-    SoftFist,
-    Point,
-    GatheredPinch,
+    Fist,
+    OneFinger,
+    TwoFingers,
+    ThreeFingers,
+    FourFingers,
+    FiveFingers,
     #[default]
     Unknown,
 }
@@ -44,12 +44,12 @@ impl HandPose {
     #[must_use]
     pub const fn label(self) -> &'static str {
         match self {
-            Self::Anchor => "Anchor",
-            Self::IndexPinch => "Index pinch",
-            Self::MiddlePinch => "Middle pinch",
-            Self::SoftFist => "Soft fist",
-            Self::Point => "Point",
-            Self::GatheredPinch => "Gathered pinch",
+            Self::Fist => "Fist",
+            Self::OneFinger => "1 finger",
+            Self::TwoFingers => "2 fingers",
+            Self::ThreeFingers => "3 fingers",
+            Self::FourFingers => "4 fingers",
+            Self::FiveFingers => "5 fingers",
             Self::Unknown => "Unknown",
         }
     }
