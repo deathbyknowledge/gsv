@@ -16,6 +16,8 @@ use crate::observation::FrameView;
 
 const WARMUP_ITERATIONS: usize = 6;
 const MEASURED_ITERATIONS: usize = 30;
+const MODEL_LOAD_WARMUP_ITERATIONS: usize = 1;
+const MODEL_LOAD_MEASURED_ITERATIONS: usize = 6;
 
 const FIXTURES: [Fixture; 4] = [
     Fixture {
@@ -59,6 +61,7 @@ struct BenchmarkReport {
     system: SystemReport,
     warmup_iterations: usize,
     measured_iterations: usize,
+    model_load: Statistics,
     scenarios: Vec<ScenarioReport>,
     model_profiles: Vec<ModelProfileReport>,
 }
@@ -228,6 +231,7 @@ fn benchmarks_native_pipeline() {
         .collect();
     let (two_hand_frame, two_hand_rects) =
         compose_tracked_frames(&models, &fixtures[3].frame, &fixtures[2].frame);
+    let model_load = benchmark_model_load(&models);
 
     let mut timestamp_ms = 0_i64;
     let full_detection = benchmark_detection(&models, &fixtures, &mut timestamp_ms);
@@ -254,7 +258,7 @@ fn benchmarks_native_pipeline() {
     .map(model_profile_report)
     .collect();
     let report = BenchmarkReport {
-        schema_version: 3,
+        schema_version: 4,
         git_revision: benchmark_environment("GSV_VISION_BENCHMARK_REVISION", "unknown"),
         working_tree_dirty: benchmark_environment("GSV_VISION_BENCHMARK_DIRTY", "false") == "true",
         rustc_version: benchmark_environment("GSV_VISION_BENCHMARK_RUSTC", "unknown"),
@@ -268,6 +272,7 @@ fn benchmarks_native_pipeline() {
         },
         warmup_iterations: WARMUP_ITERATIONS,
         measured_iterations: MEASURED_ITERATIONS,
+        model_load,
         scenarios: vec![full_detection, continuous_tracking, two_hand_tracking],
         model_profiles,
     };
@@ -282,6 +287,20 @@ fn benchmarks_native_pipeline() {
     } else {
         println!("{encoded}");
     }
+}
+
+fn benchmark_model_load(models: &runtime::ModelPaths) -> Statistics {
+    for _ in 0..MODEL_LOAD_WARMUP_ITERATIONS {
+        Models::load(models).expect("native model load warmup");
+    }
+    let samples = (0..MODEL_LOAD_MEASURED_ITERATIONS)
+        .map(|_| {
+            let started = Instant::now();
+            Models::load(models).expect("native model load");
+            started.elapsed()
+        })
+        .collect::<Vec<_>>();
+    statistics(&samples)
 }
 
 fn benchmark_detection(

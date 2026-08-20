@@ -24,9 +24,11 @@ verify_file() {
   local path="$1"
   local expected_bytes="$2"
   local expected_sha="$3"
+  local actual_bytes
   [[ -f "$path" ]] || die "missing extracted model $(basename "$path")"
-  [[ "$(wc -c < "$path" | tr -d '[:space:]')" == "$expected_bytes" ]] \
-    || die "unexpected size for $(basename "$path")"
+  actual_bytes="$(wc -c < "$path" | tr -d '[:space:]')"
+  [[ "$actual_bytes" == "$expected_bytes" ]] \
+    || die "unexpected size for $(basename "$path"): expected $expected_bytes, got $actual_bytes"
   [[ "$(sha256 "$path")" == "$expected_sha" ]] \
     || die "unexpected checksum for $(basename "$path")"
 }
@@ -78,6 +80,7 @@ verify_file "$stage/model/canned_gesture_classifier.tflite" 7773 \
   62a87ded76da05155f6a59c8babb4c537c138c25138b29450fb030e207a5c0e9
 
 printf '%s\n' "$BUNDLE_SHA256" > "$stage/bundle.sha256"
+rm -f "$stage/hand_landmarker.task" "$stage/hand_gesture_recognizer.task"
 rm -rf "$artifact_root"
 mv "$stage" "$artifact_root"
 trap - EXIT

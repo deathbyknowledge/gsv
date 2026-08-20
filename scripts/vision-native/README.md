@@ -15,8 +15,9 @@ cargo build --workspace
 The preparation script downloads the official Gesture Recognizer float16 v1
 bundle, verifies its SHA-256, extracts only the palm detector, hand landmark
 detector, gesture embedder, and canned classifier, and verifies every extracted
-file. The artifact stays under ignored `host/target/vision-native/`; it is not
-checked into Git.
+file. Intermediate nested task archives are discarded, so the final artifact
+contains one checksum and the four runtime models only. The artifact stays under
+ignored `host/target/vision-native/`; it is not checked into Git.
 
 Run the reference parity test with:
 
@@ -41,7 +42,8 @@ images. It reports overall throughput plus per-stage minimum, median, p95,
 maximum, mean latency, and execution count. The machine-readable JSON is
 written to the ignored `host/target/vision-native/benchmark/latest.json`; pass
 another path as the first argument to retain named runs. Image decoding, model
-loading, and report serialization are outside the measured intervals.
+loading, and report serialization are outside the scenario intervals. Model
+initialization is measured separately after one warmup load.
 The report also profiles the optimized Tract graphs for the palm and landmark
 models, grouping time by operation and retaining the twenty hottest graph
 nodes. Operator profiling runs after the scenario measurements so its timers do
@@ -57,6 +59,9 @@ Eligible float32 NHWC depthwise convolutions use the native channel-SIMD
 kernel; all other operations remain in tract. The report records the selected
 depthwise kernel. Set `GSV_VISION_BENCHMARK_DEPTHWISE=tract` when running the
 benchmark to produce a stock-tract comparison without changing production.
+The upstream TFLite graph is intentionally retained at runtime because it
+preserves this NHWC execution shape; alternative deployment formats must clear
+the same parity, size, loading, and inference benchmarks before replacing it.
 
 For a manually assembled distribution, put the extracted artifact beside
 `gsv-vision` as `vision-models/` (including its `model/` child), or set
