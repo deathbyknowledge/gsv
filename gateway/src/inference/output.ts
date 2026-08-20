@@ -61,7 +61,8 @@ export function hasRawToolCallMarkupOutput(response: AssistantMessage): boolean 
 
 export function isRetryableGenerationErrorMessage(message: string): boolean {
   const normalized = message.toLowerCase();
-  return normalized.includes("reasoning but no final response") ||
+  return normalized.includes("subrequest depth limit exceeded") ||
+    normalized.includes("reasoning but no final response") ||
     normalized.includes("malformed tool call markup") ||
     normalized.includes("generation returned no text") ||
     normalized.includes("returned an empty response") ||

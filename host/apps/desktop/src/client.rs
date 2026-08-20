@@ -36,6 +36,8 @@ const RPC_TIMEOUT: Duration = Duration::from_secs(45);
 const RPC_ENVELOPE_TIMEOUT: Duration = Duration::from_secs(46);
 const CONNECTION_CHECK_INTERVAL: Duration = Duration::from_secs(1);
 const HISTORY_POLL_INTERVAL: Duration = Duration::from_secs(5);
+const HISTORY_FETCH_ATTEMPTS: usize = 3;
+const HISTORY_FETCH_RETRY_DELAY: Duration = Duration::from_millis(150);
 const INITIAL_RECONNECT_DELAY: Duration = Duration::from_millis(250);
 const MAX_RECONNECT_DELAY: Duration = Duration::from_secs(8);
 const MEDIA_FETCH_TIMEOUT: Duration = Duration::from_secs(45);
@@ -1010,6 +1012,7 @@ enum RequestFailureKind {
 struct RequestFailure {
     kind: RequestFailureKind,
     message: String,
+    retryable: bool,
 }
 
 impl RequestFailure {
@@ -1017,6 +1020,7 @@ impl RequestFailure {
         Self {
             kind: RequestFailureKind::Rejected,
             message: message.into(),
+            retryable: false,
         }
     }
 
@@ -1024,6 +1028,15 @@ impl RequestFailure {
         Self {
             kind: RequestFailureKind::Transport,
             message: message.into(),
+            retryable: false,
+        }
+    }
+
+    fn retryable(kind: RequestFailureKind, message: impl Into<String>) -> Self {
+        Self {
+            kind,
+            message: message.into(),
+            retryable: true,
         }
     }
 }
@@ -2836,14 +2849,19 @@ async fn fetch_history(
     pid: &str,
     generation: u64,
 ) -> Result<PreparedHistory, RequestFailure> {
-    let payload = request_ok(
-        client,
-        "proc.history",
-        Some(json!({
-            "pid": pid,
-            "tail": true,
-            "limit": MAX_FETCHED_HISTORY_MESSAGES,
-        })),
+    let payload = retry_history_fetch(
+        || {
+            request_ok(
+                client,
+                "proc.history",
+                Some(json!({
+                    "pid": pid,
+                    "tail": true,
+                    "limit": MAX_FETCHED_HISTORY_MESSAGES,
+                })),
+            )
+        },
+        HISTORY_FETCH_RETRY_DELAY,
     )
     .await?;
     let snapshot = tokio::task::spawn_blocking(move || Arc::new(normalize_history(&payload)))
@@ -2857,6 +2875,26 @@ async fn fetch_history(
         generation,
         snapshot,
     })
+}
+
+async fn retry_history_fetch<F, Fut>(
+    mut fetch: F,
+    retry_delay: Duration,
+) -> Result<Value, RequestFailure>
+where
+    F: FnMut() -> Fut,
+    Fut: std::future::Future<Output = Result<Value, RequestFailure>>,
+{
+    let mut attempt = 1;
+    loop {
+        match fetch().await {
+            Err(error) if error.retryable && attempt < HISTORY_FETCH_ATTEMPTS => {
+                tokio::time::sleep(retry_delay.saturating_mul(attempt as u32)).await;
+                attempt += 1;
+            }
+            result => return result,
+        }
+    }
 }
 
 async fn load_media(
@@ -3040,9 +3078,11 @@ async fn request_ok(
             )));
         };
         let kind = classify_response_failure(error.code, error.retryable);
-        return Err(RequestFailure {
-            kind,
-            message: format!("{} failed (code {}): {}", call, error.code, error.message),
+        let message = format!("{} failed (code {}): {}", call, error.code, error.message);
+        return Err(if kind == RequestFailureKind::Transport {
+            RequestFailure::retryable(kind, message)
+        } else {
+            RequestFailure::rejected(message)
         });
     }
     let data = response.data.unwrap_or_else(|| json!({}));
@@ -4105,6 +4145,47 @@ mod tests {
             classify_response_failure(403, Some(false)),
             RequestFailureKind::Rejected
         );
+    }
+
+    #[test]
+    fn history_retries_retryable_server_failures_only() -> Result<(), String> {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .map_err(|error| error.to_string())?;
+
+        let mut retryable_attempts = 0;
+        let recovered = runtime.block_on(retry_history_fetch(
+            || {
+                retryable_attempts += 1;
+                let attempt = retryable_attempts;
+                async move {
+                    if attempt < HISTORY_FETCH_ATTEMPTS {
+                        Err(RequestFailure::retryable(
+                            RequestFailureKind::Transport,
+                            "temporary server failure",
+                        ))
+                    } else {
+                        Ok(json!({ "messages": [] }))
+                    }
+                }
+            },
+            Duration::ZERO,
+        ));
+        assert!(recovered.is_ok());
+        assert_eq!(retryable_attempts, HISTORY_FETCH_ATTEMPTS);
+
+        let mut terminal_attempts = 0;
+        let rejected = runtime.block_on(retry_history_fetch(
+            || {
+                terminal_attempts += 1;
+                async { Err(RequestFailure::rejected("permission denied")) }
+            },
+            Duration::ZERO,
+        ));
+        assert!(rejected.is_err());
+        assert_eq!(terminal_attempts, 1);
+        Ok(())
     }
 
     #[test]
