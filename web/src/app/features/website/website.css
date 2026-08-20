@@ -239,11 +239,21 @@
   isolation: isolate;
 }
 
+/* Upright content: the window narrows and the crop goes portrait, so a phone
+   photograph keeps its subject instead of being letterboxed into a landscape
+   column. Held clear of the viewport height so it never overflows its beat. */
+.gsv-site-win.is-portrait {
+  max-width: min(22rem, 100%);
+  margin-inline: auto;
+}
+
 .gsv-site-photo {
   display: block;
   width: 100%;
-  aspect-ratio: 4 / 3;
+  aspect-ratio: 4 / 5;
+  max-height: 58vh;
   object-fit: cover;
+  object-position: center 48%;
 }
 
 /* Placeholder shown until a real photograph is dropped in at the path the
@@ -255,7 +265,7 @@
   align-items: center;
   justify-content: center;
   gap: 10px;
-  aspect-ratio: 4 / 3;
+  aspect-ratio: 4 / 5;
   padding: 24px;
   text-align: center;
   color: var(--text-dim);
@@ -796,6 +806,25 @@
 }
 
 /* ── narrow viewports ──────────────────────────────────────────────────── */
+
+/* On desktop the centred column stops well short of the rail. On narrow
+   viewports it does not, so the rail narrows and the content reserves room for
+   it — otherwise the markers sit on top of the copy and the media window. */
+@media (max-width: 900px) {
+  .gsv-site-rail {
+    width: 44px;
+  }
+
+  .gsv-site-rail-slot {
+    width: 20px;
+    justify-content: center;
+  }
+
+  .gsv-site-beat,
+  .gsv-site-landing {
+    padding-right: calc(var(--site-gutter) + 34px);
+  }
+}
 
 @media (max-width: 640px) {
   .gsv-site-skip {

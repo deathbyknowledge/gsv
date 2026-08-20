@@ -153,7 +153,7 @@ export function NarrativeBeat({ beat, active, index }: NarrativeBeatProps) {
             ) : null}
 
             {beat.kind === "photo" ? (
-              <MediaWindow title={beat.caption}>
+              <MediaWindow title={beat.caption} portrait>
                 {missingPhoto ? (
                   <div class="gsv-site-photo-missing">
                     <span class="gsv-sublabel">Photo not found</span>
