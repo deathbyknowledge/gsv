@@ -286,16 +286,17 @@ impl CameraStream {
 fn select_camera_device(index: Option<u32>) -> Result<Device, CameraError> {
     let devices = cameras::devices().map_err(CameraError::from)?;
     if let Some(index) = index {
-        return devices
-            .into_iter()
-            .nth(index as usize)
-            .ok_or(CameraError::Open(CameraFailure::DeviceUnavailable));
+        return select_capture_candidate(devices, Some(index as usize), |device| {
+            cameras::probe(device)
+                .map(|capabilities| !capabilities.formats.is_empty())
+                .map_err(CameraError::from)
+        });
     }
 
     let (built_in, other): (Vec<_>, Vec<_>) = devices
         .into_iter()
         .partition(|device| device.transport == Transport::BuiltIn);
-    select_capture_candidate(built_in.into_iter().chain(other), |device| {
+    select_capture_candidate(built_in.into_iter().chain(other), None, |device| {
         cameras::probe(device)
             .map(|capabilities| !capabilities.formats.is_empty())
             .map_err(CameraError::from)
@@ -304,12 +305,19 @@ fn select_camera_device(index: Option<u32>) -> Result<Device, CameraError> {
 
 fn select_capture_candidate<T>(
     candidates: impl IntoIterator<Item = T>,
+    selected_index: Option<usize>,
     mut probe: impl FnMut(&T) -> Result<bool, CameraError>,
 ) -> Result<T, CameraError> {
     let mut first_error = None;
+    let mut capture_index = 0;
     for candidate in candidates {
         match probe(&candidate) {
-            Ok(true) => return Ok(candidate),
+            Ok(true) => {
+                if selected_index.is_none_or(|selected| selected == capture_index) {
+                    return Ok(candidate);
+                }
+                capture_index += 1;
+            }
             Ok(_) => {}
             Err(error) => {
                 if matches!(error, CameraError::PermissionDenied) {
@@ -319,7 +327,11 @@ fn select_capture_candidate<T>(
             }
         }
     }
-    Err(first_error.unwrap_or(CameraError::Open(CameraFailure::DeviceUnavailable)))
+    if capture_index == 0 {
+        Err(first_error.unwrap_or(CameraError::Open(CameraFailure::DeviceUnavailable)))
+    } else {
+        Err(CameraError::Open(CameraFailure::DeviceUnavailable))
+    }
 }
 
 impl Drop for CameraStream {
@@ -457,7 +469,8 @@ fn capture_loop(
                 consecutive_errors = 0;
                 shared.publish(frame);
             }
-            Err(_) => {
+            Err(CaptureFrameError::Timeout) => continue,
+            Err(CaptureFrameError::Failure(_)) => {
                 consecutive_errors = consecutive_errors.saturating_add(1);
                 shared.record_error();
                 if consecutive_errors >= max_consecutive_errors {
@@ -472,10 +485,17 @@ fn capture_loop(
     failed
 }
 
-fn capture_frame(camera: &Camera, sequence: u64) -> Result<FrameView, CameraFailure> {
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum CaptureFrameError {
+    Timeout,
+    Failure(CameraFailure),
+}
+
+fn capture_frame(camera: &Camera, sequence: u64) -> Result<FrameView, CaptureFrameError> {
     let frame = cameras::next_frame(camera, CAPTURE_FRAME_TIMEOUT)
-        .map_err(|error| CameraFailure::from_backend(&error))?;
-    let rgb = cameras::to_rgb8(&frame).map_err(|error| CameraFailure::from_backend(&error))?;
+        .map_err(|error| capture_frame_error(&error))?;
+    let rgb = cameras::to_rgb8(&frame)
+        .map_err(|error| CaptureFrameError::Failure(CameraFailure::from_backend(&error)))?;
     let expected_length = usize::try_from(frame.width)
         .ok()
         .and_then(|width| {
@@ -484,9 +504,9 @@ fn capture_frame(camera: &Camera, sequence: u64) -> Result<FrameView, CameraFail
                 .and_then(|height| width.checked_mul(height))
         })
         .and_then(|pixels| pixels.checked_mul(3))
-        .ok_or(CameraFailure::Decode)?;
+        .ok_or(CaptureFrameError::Failure(CameraFailure::Decode))?;
     if rgb.len() != expected_length {
-        return Err(CameraFailure::Decode);
+        return Err(CaptureFrameError::Failure(CameraFailure::Decode));
     }
     Ok(FrameView {
         sequence,
@@ -495,6 +515,14 @@ fn capture_frame(camera: &Camera, sequence: u64) -> Result<FrameView, CameraFail
         height: frame.height,
         rgb: Arc::from(rgb.into_boxed_slice()),
     })
+}
+
+fn capture_frame_error(error: &BackendError) -> CaptureFrameError {
+    if matches!(error, BackendError::Timeout) {
+        CaptureFrameError::Timeout
+    } else {
+        CaptureFrameError::Failure(CameraFailure::from_backend(error))
+    }
 }
 
 struct LatestFrameSlot {
@@ -666,7 +694,7 @@ mod tests {
     #[test]
     fn default_selection_skips_devices_without_capture_formats() {
         let mut probed = Vec::new();
-        let selected = select_capture_candidate([1_u8, 0], |candidate| {
+        let selected = select_capture_candidate([1_u8, 0], None, |candidate| {
             probed.push(*candidate);
             Ok(*candidate == 0)
         })
@@ -674,6 +702,31 @@ mod tests {
 
         assert_eq!(selected, 0);
         assert_eq!(probed, [1, 0]);
+    }
+
+    #[test]
+    fn explicit_indices_count_only_capture_capable_devices() {
+        let mut probed = Vec::new();
+        let selected = select_capture_candidate([0_u8, 1, 2, 3], Some(1), |candidate| {
+            probed.push(*candidate);
+            Ok(*candidate == 1 || *candidate == 3)
+        })
+        .expect("second capture device");
+
+        assert_eq!(selected, 3);
+        assert_eq!(probed, [0, 1, 2, 3]);
+    }
+
+    #[test]
+    fn temporary_capture_timeouts_are_retryable() {
+        assert_eq!(
+            capture_frame_error(&BackendError::Timeout),
+            CaptureFrameError::Timeout
+        );
+        assert_eq!(
+            capture_frame_error(&BackendError::StreamEnded),
+            CaptureFrameError::Failure(CameraFailure::Capture)
+        );
     }
 
     #[test]
