@@ -56,14 +56,13 @@ impl Rect {
 
 pub(super) fn sample_rgb(frame: &FrameView, rect: Rect, size: usize) -> Vec<f32> {
     let mut output = vec![0.0; size * size * 3];
-    let cos = rect.rotation.cos();
-    let sin = rect.rotation.sin();
+    let (x_axis, y_axis) = rect_axes(rect, frame.width, frame.height);
     for output_y in 0..size {
         let local_y = (output_y as f32 + 0.5) / size as f32 - 0.5;
         for output_x in 0..size {
             let local_x = (output_x as f32 + 0.5) / size as f32 - 0.5;
-            let source_x = rect.center.x + cos * local_x * rect.width - sin * local_y * rect.height;
-            let source_y = rect.center.y + sin * local_x * rect.width + cos * local_y * rect.height;
+            let source_x = rect.center.x + local_x * x_axis.x + local_y * y_axis.x;
+            let source_y = rect.center.y + local_x * x_axis.y + local_y * y_axis.y;
             let pixel_x = source_x * frame.width as f32 - 0.5;
             let pixel_y = source_y * frame.height as f32 - 0.5;
             let destination = (output_y * size + output_x) * 3;
@@ -243,7 +242,7 @@ pub(super) fn map_rect_from_crop(
     frame_width: u32,
     frame_height: u32,
 ) -> Rect {
-    let center = project_point(crop, rect.center);
+    let center = project_point(crop, rect.center, frame_width, frame_height);
     let crop_width_pixels = crop.width * frame_width as f32;
     let crop_height_pixels = crop.height * frame_height as f32;
     Rect {
@@ -257,6 +256,8 @@ pub(super) fn map_rect_from_crop(
 pub(super) fn project_landmarks(
     crop_landmarks: &[Landmark; HAND_LANDMARK_COUNT],
     crop: Rect,
+    image_width: u32,
+    image_height: u32,
 ) -> [Landmark; HAND_LANDMARK_COUNT] {
     let mut projected = [Landmark::default(); HAND_LANDMARK_COUNT];
     for (input, output) in crop_landmarks.iter().zip(projected.iter_mut()) {
@@ -266,6 +267,8 @@ pub(super) fn project_landmarks(
                 x: input.x,
                 y: input.y,
             },
+            image_width,
+            image_height,
         );
         *output = Landmark {
             x: point.x,
@@ -292,15 +295,30 @@ pub(super) fn rotate_world_landmarks(
     projected
 }
 
-fn project_point(rect: Rect, point: Point) -> Point {
+fn project_point(rect: Rect, point: Point, image_width: u32, image_height: u32) -> Point {
     let local_x = point.x - 0.5;
     let local_y = point.y - 0.5;
+    let (x_axis, y_axis) = rect_axes(rect, image_width, image_height);
+    Point {
+        x: rect.center.x + local_x * x_axis.x + local_y * y_axis.x,
+        y: rect.center.y + local_x * x_axis.y + local_y * y_axis.y,
+    }
+}
+
+fn rect_axes(rect: Rect, image_width: u32, image_height: u32) -> (Point, Point) {
     let cos = rect.rotation.cos();
     let sin = rect.rotation.sin();
-    Point {
-        x: rect.center.x + cos * local_x * rect.width - sin * local_y * rect.height,
-        y: rect.center.y + sin * local_x * rect.width + cos * local_y * rect.height,
-    }
+    let aspect = image_width as f32 / image_height as f32;
+    (
+        Point {
+            x: cos * rect.width,
+            y: sin * rect.width * aspect,
+        },
+        Point {
+            x: -sin * rect.height / aspect,
+            y: cos * rect.height,
+        },
+    )
 }
 
 pub(super) fn next_hand_rect(
@@ -586,7 +604,24 @@ mod tests {
             height: 0.3,
             rotation: 0.8,
         };
-        assert_eq!(project_point(rect, Point { x: 0.5, y: 0.5 }), rect.center);
+        assert_eq!(
+            project_point(rect, Point { x: 0.5, y: 0.5 }, 16, 9),
+            rect.center
+        );
+    }
+
+    #[test]
+    fn rotated_projection_uses_image_space_aspect_ratio() {
+        let rect = Rect {
+            center: Point { x: 0.5, y: 0.5 },
+            width: 0.5,
+            height: 1.0,
+            rotation: FRAC_PI_2,
+        };
+        let projected = project_point(rect, Point { x: 1.0, y: 0.5 }, 200, 100);
+
+        assert!((projected.x - 0.5).abs() < 1e-6);
+        assert!((projected.y - 1.0).abs() < 1e-6);
     }
 
     #[test]

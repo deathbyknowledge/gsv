@@ -494,7 +494,7 @@ impl GestureRecognizer {
             return Ok(None);
         }
         let (crop_landmarks, crop_world_landmarks) = decode_landmarks(&output)?;
-        let landmarks = project_landmarks(&crop_landmarks, rect);
+        let landmarks = project_landmarks(&crop_landmarks, rect, frame.width, frame.height);
         let world_landmarks = rotate_world_landmarks(&crop_world_landmarks, rect.rotation);
         let next_rect =
             next_hand_rect(&landmarks, frame.width, frame.height).ok_or(Error::Inference)?;
