@@ -2105,6 +2105,7 @@ mod tests {
                         crate::transcription::VoiceCommandSender::closed_for_test();
                     app.vision_context = Some(crate::vision_debug::VisionContextSender::for_test());
                     app.vision_lifecycle = Some(gesture_protocol::LifecycleState::Ready);
+                    app.vision_armed = true;
 
                     for (request_id, requested_muted, applied_muted) in
                         [(50, true, false), (51, false, true)]
@@ -2173,6 +2174,7 @@ mod tests {
                     app.voice_commands = commands;
                     app.vision_context = Some(crate::vision_debug::VisionContextSender::for_test());
                     app.vision_lifecycle = Some(gesture_protocol::LifecycleState::Ready);
+                    app.vision_armed = true;
                     app.vision_voice_request_id = Some(60);
                     let mut voice =
                         VoiceDraft::new(60, String::new(), String::new(), String::new());
@@ -2347,6 +2349,7 @@ mod tests {
                     app.voice_commands = voice_commands;
                     app.vision_context = Some(crate::vision_debug::VisionContextSender::for_test());
                     app.vision_lifecycle = Some(gesture_protocol::LifecycleState::Ready);
+                    app.vision_armed = true;
                     app.vision_voice_request_id = Some(71);
                     let mut voice = VoiceDraft::new(
                         71,
@@ -2523,6 +2526,7 @@ mod tests {
                     app.voice_commands = voice_commands;
                     app.vision_context = Some(crate::vision_debug::VisionContextSender::for_test());
                     app.vision_lifecycle = Some(gesture_protocol::LifecycleState::Ready);
+                    app.vision_armed = true;
                     app.vision_voice_request_id = Some(41);
                     let mut voice = VoiceDraft::new(
                         41,

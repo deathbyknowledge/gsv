@@ -16,7 +16,7 @@ pub const EVENT_FD: i32 = 3;
 pub const EVENT_FD_MARKER_ENV: &str = "GSV_VISION_EVENT_FD";
 /// Exact private launch contract. Rotate this on an incompatible unshipped
 /// helper/Desktop cutover so a stale sibling fails before semantic traffic.
-pub const EVENT_CHANNEL_CONTRACT_MARKER: &str = "gsv-vision-control-v3-finger-counts";
+pub const EVENT_CHANNEL_CONTRACT_MARKER: &str = "gsv-vision-control-v4-armed-one-hand";
 pub const SESSION_HIGH_ENV: &str = "GSV_VISION_SESSION_HIGH";
 pub const SESSION_LOW_ENV: &str = "GSV_VISION_SESSION_LOW";
 
@@ -46,13 +46,15 @@ impl SessionId {
 
 /// Absolute Desktop-owned gesture authority.
 ///
+/// `Disarmed` permits only the deliberate two-hand arm gesture. Once armed,
 /// `Standby` is the only state in which the helper may request a new
-/// transcription. `Disabled` explicitly revokes that authority while Desktop
-/// is busy or otherwise unable to start. An active context is the complete
-/// gesture lease for one exact voice request; there is no separate armed bit.
+/// transcription. `Disabled` temporarily revokes action authority while still
+/// permitting the two-hand disarm gesture. An active context is the complete
+/// gesture lease for one exact voice request.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
 #[serde(tag = "mode", rename_all = "snake_case")]
 pub enum GestureContext {
+    Disarmed,
     Disabled,
     Standby,
     Active { voice_request_id: u64, muted: bool },
@@ -61,6 +63,7 @@ pub enum GestureContext {
 #[derive(Deserialize)]
 #[serde(tag = "mode", rename_all = "snake_case", deny_unknown_fields)]
 enum WireGestureContext {
+    Disarmed {},
     Disabled {},
     Standby {},
     Active { voice_request_id: u64, muted: bool },
@@ -72,6 +75,7 @@ impl<'de> Deserialize<'de> for GestureContext {
         D: Deserializer<'de>,
     {
         Ok(match WireGestureContext::deserialize(deserializer)? {
+            WireGestureContext::Disarmed {} => Self::Disarmed,
             WireGestureContext::Disabled {} => Self::Disabled,
             WireGestureContext::Standby {} => Self::Standby,
             WireGestureContext::Active {
@@ -104,6 +108,9 @@ pub enum VoiceRequestGestureIntent {
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
 #[serde(tag = "scope", rename_all = "snake_case")]
 pub enum GestureIntent {
+    SetArmed {
+        armed: bool,
+    },
     StartTranscription,
     VoiceRequest {
         voice_request_id: u64,
@@ -114,6 +121,9 @@ pub enum GestureIntent {
 #[derive(Deserialize)]
 #[serde(tag = "scope", rename_all = "snake_case", deny_unknown_fields)]
 enum WireGestureIntent {
+    SetArmed {
+        armed: bool,
+    },
     StartTranscription {},
     VoiceRequest {
         voice_request_id: u64,
@@ -127,6 +137,7 @@ impl<'de> Deserialize<'de> for GestureIntent {
         D: Deserializer<'de>,
     {
         Ok(match WireGestureIntent::deserialize(deserializer)? {
+            WireGestureIntent::SetArmed { armed } => Self::SetArmed { armed },
             WireGestureIntent::StartTranscription {} => Self::StartTranscription,
             WireGestureIntent::VoiceRequest {
                 voice_request_id,
@@ -143,6 +154,8 @@ impl<'de> Deserialize<'de> for GestureIntent {
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum GestureCandidate {
+    Arm,
+    Disarm,
     StartTranscription,
     StopTranscription,
     Send,
@@ -190,22 +203,32 @@ impl GestureProgress {
     pub const fn is_compatible_with(self, context: GestureContext) -> bool {
         matches!(
             (context, self.candidate),
-            (
-                GestureContext::Standby,
-                GestureCandidate::StartTranscription
-            ) | (
-                GestureContext::Active { .. },
-                GestureCandidate::StopTranscription
-                    | GestureCandidate::Send
-                    | GestureCandidate::DeleteBackward
-                    | GestureCandidate::ClearDictation,
-            ) | (
-                GestureContext::Active { muted: false, .. },
-                GestureCandidate::Mute
-            ) | (
-                GestureContext::Active { muted: true, .. },
-                GestureCandidate::Unmute
-            )
+            (GestureContext::Disarmed, GestureCandidate::Arm)
+                | (
+                    GestureContext::Disabled
+                        | GestureContext::Standby
+                        | GestureContext::Active { .. },
+                    GestureCandidate::Disarm
+                )
+                | (
+                    GestureContext::Standby,
+                    GestureCandidate::StartTranscription
+                )
+                | (
+                    GestureContext::Active { .. },
+                    GestureCandidate::StopTranscription
+                        | GestureCandidate::Send
+                        | GestureCandidate::DeleteBackward
+                        | GestureCandidate::ClearDictation,
+                )
+                | (
+                    GestureContext::Active { muted: false, .. },
+                    GestureCandidate::Mute
+                )
+                | (
+                    GestureContext::Active { muted: true, .. },
+                    GestureCandidate::Unmute
+                )
         )
     }
 }
@@ -240,12 +263,17 @@ impl<'de> Deserialize<'de> for GestureProgress {
 
 /// Complete, presentation-only snapshot of semantic gesture control.
 ///
-/// The three authority modes stay wire-distinct, request identity is possible
-/// only in the active mode, and progress is bounded and state-compatible.
+/// Authority modes stay wire-distinct, request identity is possible only in
+/// the active mode, and progress is bounded and state-compatible.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
 #[serde(tag = "mode", rename_all = "snake_case")]
 pub enum ControlStatus {
-    Disabled,
+    Disarmed {
+        progress: Option<GestureProgress>,
+    },
+    Disabled {
+        progress: Option<GestureProgress>,
+    },
     Standby {
         progress: Option<GestureProgress>,
     },
@@ -259,7 +287,12 @@ pub enum ControlStatus {
 #[derive(Deserialize)]
 #[serde(tag = "mode", rename_all = "snake_case", deny_unknown_fields)]
 enum WireControlStatus {
-    Disabled {},
+    Disarmed {
+        progress: Option<GestureProgress>,
+    },
+    Disabled {
+        progress: Option<GestureProgress>,
+    },
     Standby {
         progress: Option<GestureProgress>,
     },
@@ -276,7 +309,26 @@ impl<'de> Deserialize<'de> for ControlStatus {
         D: Deserializer<'de>,
     {
         Ok(match WireControlStatus::deserialize(deserializer)? {
-            WireControlStatus::Disabled {} => Self::Disabled,
+            WireControlStatus::Disarmed { progress } => {
+                if progress
+                    .is_some_and(|progress| !progress.is_compatible_with(GestureContext::Disarmed))
+                {
+                    return Err(de::Error::custom(
+                        "gesture candidate is incompatible with controller context",
+                    ));
+                }
+                Self::Disarmed { progress }
+            }
+            WireControlStatus::Disabled { progress } => {
+                if progress
+                    .is_some_and(|progress| !progress.is_compatible_with(GestureContext::Disabled))
+                {
+                    return Err(de::Error::custom(
+                        "gesture candidate is incompatible with controller context",
+                    ));
+                }
+                Self::Disabled { progress }
+            }
             WireControlStatus::Standby { progress } => {
                 if progress
                     .is_some_and(|progress| !progress.is_compatible_with(GestureContext::Standby))
@@ -544,7 +596,7 @@ mod tests {
         assert_eq!(PROTOCOL_VERSION, 1);
         assert_eq!(
             EVENT_CHANNEL_CONTRACT_MARKER,
-            "gsv-vision-control-v3-finger-counts"
+            "gsv-vision-control-v4-armed-one-hand"
         );
         for stale in [
             "1",
@@ -553,6 +605,7 @@ mod tests {
             "gsv-vision-control-v1-transcription-sessions",
             "gsv-vision-control-v1-held-scroll",
             "gsv-vision-control-v2-dictation-editing",
+            "gsv-vision-control-v3-finger-counts",
         ] {
             assert_ne!(EVENT_CHANNEL_CONTRACT_MARKER, stale);
         }
@@ -561,6 +614,7 @@ mod tests {
     #[test]
     fn strict_commands_and_events_round_trip() {
         for context in [
+            GestureContext::Disarmed,
             GestureContext::Disabled,
             GestureContext::Standby,
             ACTIVE,
@@ -591,6 +645,25 @@ mod tests {
             HelperEvent::Status {
                 session_id: SESSION,
                 sequence: 2,
+                status: ControlStatus::Disarmed {
+                    progress: Some(
+                        GestureProgress::new(GestureCandidate::Arm, 420).expect("bounded progress"),
+                    ),
+                },
+            },
+            HelperEvent::Status {
+                session_id: SESSION,
+                sequence: 3,
+                status: ControlStatus::Disabled {
+                    progress: Some(
+                        GestureProgress::new(GestureCandidate::Disarm, 420)
+                            .expect("bounded progress"),
+                    ),
+                },
+            },
+            HelperEvent::Status {
+                session_id: SESSION,
+                sequence: 4,
                 status: ControlStatus::Standby {
                     progress: Some(
                         GestureProgress::new(GestureCandidate::StartTranscription, 420)
@@ -600,7 +673,7 @@ mod tests {
             },
             HelperEvent::Status {
                 session_id: SESSION,
-                sequence: 3,
+                sequence: 5,
                 status: ControlStatus::Active {
                     voice_request_id: 22,
                     muted: false,
@@ -609,12 +682,17 @@ mod tests {
             },
             HelperEvent::Intent {
                 session_id: SESSION,
-                sequence: 4,
+                sequence: 6,
+                intent: GestureIntent::SetArmed { armed: true },
+            },
+            HelperEvent::Intent {
+                session_id: SESSION,
+                sequence: 7,
                 intent: GestureIntent::StartTranscription,
             },
             HelperEvent::Intent {
                 session_id: SESSION,
-                sequence: 5,
+                sequence: 8,
                 intent: active_intent(VoiceRequestGestureIntent::Send),
             },
         ];
@@ -626,6 +704,22 @@ mod tests {
 
     #[test]
     fn intent_scope_structurally_owns_request_identity() {
+        let arm = serde_json::to_value(HelperEvent::Intent {
+            session_id: SESSION,
+            sequence: 1,
+            intent: GestureIntent::SetArmed { armed: true },
+        })
+        .expect("arm serializes");
+        assert_eq!(
+            arm,
+            json!({
+                "type": "intent",
+                "session_id": { "high": 7, "low": 11 },
+                "sequence": 1,
+                "intent": { "scope": "set_armed", "armed": true }
+            })
+        );
+
         let start = serde_json::to_value(HelperEvent::Intent {
             session_id: SESSION,
             sequence: 1,
@@ -704,6 +798,10 @@ mod tests {
     #[test]
     fn context_and_status_modes_reject_invalid_combinations() {
         assert_eq!(
+            serde_json::to_value(GestureContext::Disarmed).expect("context serializes"),
+            json!({ "mode": "disarmed" })
+        );
+        assert_eq!(
             serde_json::to_value(GestureContext::Disabled).expect("context serializes"),
             json!({ "mode": "disabled" })
         );
@@ -720,6 +818,18 @@ mod tests {
             })
         );
 
+        let disarmed = ControlStatus::Disarmed {
+            progress: Some(
+                GestureProgress::new(GestureCandidate::Arm, 500).expect("bounded progress"),
+            ),
+        };
+        assert_eq!(
+            serde_json::from_value::<ControlStatus>(
+                serde_json::to_value(disarmed).expect("status serializes")
+            )
+            .expect("status reads"),
+            disarmed
+        );
         let standby = ControlStatus::Standby {
             progress: Some(
                 GestureProgress::new(GestureCandidate::StartTranscription, 500)
@@ -749,6 +859,13 @@ mod tests {
         );
 
         for invalid in [
+            json!({
+                "mode": "disarmed",
+                "progress": {
+                    "candidate": "send",
+                    "progress_permille": 500
+                }
+            }),
             json!({ "mode": "disabled", "voice_request_id": 22 }),
             json!({ "mode": "standby", "muted": false, "progress": null }),
             json!({ "mode": "active", "muted": false, "progress": null }),
@@ -777,6 +894,8 @@ mod tests {
     #[test]
     fn progress_is_bounded_closed_and_context_compatible() {
         for candidate in [
+            GestureCandidate::Arm,
+            GestureCandidate::Disarm,
             GestureCandidate::StartTranscription,
             GestureCandidate::StopTranscription,
             GestureCandidate::Send,
@@ -806,6 +925,7 @@ mod tests {
         );
 
         let contexts = [
+            GestureContext::Disarmed,
             GestureContext::Disabled,
             GestureContext::Standby,
             ACTIVE,
@@ -813,6 +933,8 @@ mod tests {
         ];
         for context in contexts {
             for candidate in [
+                GestureCandidate::Arm,
+                GestureCandidate::Disarm,
                 GestureCandidate::StartTranscription,
                 GestureCandidate::StopTranscription,
                 GestureCandidate::Send,
@@ -823,22 +945,32 @@ mod tests {
             ] {
                 let expected = matches!(
                     (context, candidate),
-                    (
-                        GestureContext::Standby,
-                        GestureCandidate::StartTranscription
-                    ) | (
-                        GestureContext::Active { .. },
-                        GestureCandidate::StopTranscription
-                            | GestureCandidate::Send
-                            | GestureCandidate::DeleteBackward
-                            | GestureCandidate::ClearDictation,
-                    ) | (
-                        GestureContext::Active { muted: false, .. },
-                        GestureCandidate::Mute
-                    ) | (
-                        GestureContext::Active { muted: true, .. },
-                        GestureCandidate::Unmute
-                    )
+                    (GestureContext::Disarmed, GestureCandidate::Arm)
+                        | (
+                            GestureContext::Disabled
+                                | GestureContext::Standby
+                                | GestureContext::Active { .. },
+                            GestureCandidate::Disarm
+                        )
+                        | (
+                            GestureContext::Standby,
+                            GestureCandidate::StartTranscription
+                        )
+                        | (
+                            GestureContext::Active { .. },
+                            GestureCandidate::StopTranscription
+                                | GestureCandidate::Send
+                                | GestureCandidate::DeleteBackward
+                                | GestureCandidate::ClearDictation,
+                        )
+                        | (
+                            GestureContext::Active { muted: false, .. },
+                            GestureCandidate::Mute
+                        )
+                        | (
+                            GestureContext::Active { muted: true, .. },
+                            GestureCandidate::Unmute
+                        )
                 );
                 let progress = GestureProgress::new(candidate, 500).expect("bounded");
                 assert_eq!(progress.is_compatible_with(context), expected);

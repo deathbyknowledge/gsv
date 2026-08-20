@@ -17,6 +17,12 @@ struct GestureGuideRow {
 
 const VOICE_GESTURE_ROWS: [GestureGuideRow; 3] = [
     GestureGuideRow {
+        action: "ARM / DISARM",
+        posture: "BOTH HANDS · CLOSED FISTS",
+        timing: "HOLD 700 MS",
+        effect: "Works in the background. Open either fist after it toggles.",
+    },
+    GestureGuideRow {
         action: "START / FINISH",
         posture: "1 · INDEX ONLY",
         timing: "HOLD 350 MS",
@@ -27,12 +33,6 @@ const VOICE_GESTURE_ROWS: [GestureGuideRow; 3] = [
         posture: "2 · INDEX + MIDDLE",
         timing: "HOLD 350 MS",
         effect: "Sends the current utterance and keeps listening.",
-    },
-    GestureGuideRow {
-        action: "MUTE / UNMUTE",
-        posture: "5 · OPEN ALL FIVE FINGERS",
-        timing: "HOLD 350 MS",
-        effect: "Changes only after the microphone acknowledges it.",
     },
 ];
 
@@ -50,10 +50,10 @@ const EDIT_GESTURE_ROWS: [GestureGuideRow; 3] = [
         effect: "Clears dictated text; typed text and files stay.",
     },
     GestureGuideRow {
-        action: "RESET / REARM",
-        posture: "ACTION HAND (RIGHT BY DEFAULT) · CLOSED FIST",
-        timing: "BETWEEN EVERY COMMAND",
-        effect: "Return to a fist before showing the next number.",
+        action: "MUTE / UNMUTE",
+        posture: "5 · OPEN ALL FIVE FINGERS",
+        timing: "HOLD 350 MS",
+        effect: "Changes only after the microphone acknowledges it.",
     },
 ];
 
@@ -123,7 +123,7 @@ impl GsvApp {
         let live_status = self
             .voice_notice
             .clone()
-            .unwrap_or_else(|| "GESTURE CONTROLS ENABLED".to_string());
+            .unwrap_or_else(|| "GESTURE CONTROL · DISARMED".to_string());
 
         div()
             .id("gesture-guide")
@@ -173,7 +173,7 @@ impl GsvApp {
                             .line_height(relative(1.2))
                             .text_color(theme::color(theme::TEXT_QUIET))
                             .child(
-                                "By default, keep your left fist closed. Count with your right hand.",
+                                "Hold both fists to arm. Then control everything with your right hand.",
                             ),
                     )
                     .child(
@@ -190,14 +190,14 @@ impl GsvApp {
                                 div()
                                     .text_size(px(10.0))
                                     .text_color(theme::color(theme::ACCENT))
-                                    .child("MODIFIER · HOLD"),
+                                    .child("AUTHORITY · TOGGLE"),
                             )
                             .child(
                                 div()
                                     .text_size(px(11.0))
                                     .text_color(theme::color(theme::TEXT_QUIET))
                                     .child(
-                                        "LEFT HAND BY DEFAULT · CLOSED FIST THROUGH EVERY ACTION",
+                                        "BOTH FISTS · 700 MS · ARM OR DISARM FROM THE BACKGROUND",
                                     ),
                             ),
                     )
@@ -208,7 +208,7 @@ impl GsvApp {
                             .gap(px(42.0))
                             .child(render_gesture_guide_column("VOICE", voice_rows))
                             .child(render_gesture_guide_column(
-                                "EDITING + RESET",
+                                "EDITING + AUDIO",
                                 edit_rows,
                             )),
                     )
@@ -226,7 +226,7 @@ impl GsvApp {
                             .line_height(relative(1.4))
                             .text_color(theme::color(theme::TEXT_FAINT))
                             .child(
-                                "MAKE AN ACTION-HAND FIST BETWEEN COMMANDS · CORRECTIONS CHANGE ONLY UNSENT DICTATION",
+                                "RIGHT FIST BETWEEN NUMBER COMMANDS · BOTH FISTS DISARM · CORRECTIONS CHANGE ONLY UNSENT DICTATION",
                             ),
                     ),
             )
@@ -320,12 +320,12 @@ mod tests {
         assert_eq!(
             rows.iter().map(|row| row.action).collect::<Vec<_>>(),
             [
+                "ARM / DISARM",
                 "START / FINISH",
                 "SEND",
-                "MUTE / UNMUTE",
                 "DELETE",
                 "CLEAR DICTATION",
-                "RESET / REARM",
+                "MUTE / UNMUTE",
             ]
         );
         let vocabulary = rows

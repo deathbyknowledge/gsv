@@ -267,7 +267,7 @@ fn run_window(
             None => (
                 &*raw_frame,
                 None,
-                ControlStatus::Disabled,
+                ControlStatus::Disabled { progress: None },
                 ControlPresentationDiagnostic::Controller(ControlDiagnostic::AwaitingPose),
             ),
         };
@@ -301,7 +301,8 @@ fn control_presentation(
     }
 
     let status = match status {
-        ControlStatus::Disabled => ControlStatus::Disabled,
+        ControlStatus::Disarmed { .. } => ControlStatus::Disarmed { progress: None },
+        ControlStatus::Disabled { .. } => ControlStatus::Disabled { progress: None },
         ControlStatus::Standby { .. } => ControlStatus::Standby { progress: None },
         ControlStatus::Active {
             voice_request_id,
@@ -377,7 +378,7 @@ fn inference_worker(
                 match control_link.context() {
                     ControlContext::Uninitialized => (
                         None,
-                        ControlStatus::Disabled,
+                        ControlStatus::Disabled { progress: None },
                         ControlDiagnostic::AwaitingPose,
                     ),
                     ControlContext::Authoritative { revision, gesture } => {
@@ -408,7 +409,7 @@ fn inference_worker(
             } else {
                 (
                     None,
-                    ControlStatus::Disabled,
+                    ControlStatus::Disabled { progress: None },
                     ControlDiagnostic::AwaitingPose,
                 )
             };
@@ -459,7 +460,8 @@ fn sync_control_context(
 fn control_status(control: &GestureControl, now: Instant) -> ControlStatus {
     let progress = control_progress(control, now);
     match control.state() {
-        GestureContext::Disabled => ControlStatus::Disabled,
+        GestureContext::Disarmed => ControlStatus::Disarmed { progress },
+        GestureContext::Disabled => ControlStatus::Disabled { progress },
         GestureContext::Standby => ControlStatus::Standby { progress },
         GestureContext::Active {
             voice_request_id,
@@ -483,6 +485,8 @@ fn gesture_candidate(
     chord: crate::control::ControlChord,
 ) -> Option<GestureCandidate> {
     let candidate = match chord {
+        crate::control::ControlChord::Arm => GestureCandidate::Arm,
+        crate::control::ControlChord::Disarm => GestureCandidate::Disarm,
         crate::control::ControlChord::StartTranscription => GestureCandidate::StartTranscription,
         crate::control::ControlChord::StopTranscription => GestureCandidate::StopTranscription,
         crate::control::ControlChord::Send => GestureCandidate::Send,
@@ -506,10 +510,7 @@ fn control_status_publish_due(
     previous.is_none_or(|(previous_revision, previous, published_at)| {
         previous_revision != context_revision
             || previous != current
-            || matches!(
-                current,
-                ControlStatus::Standby { .. } | ControlStatus::Active { .. }
-            ) && now.saturating_duration_since(published_at) >= CONTROL_STATUS_HEARTBEAT
+            || now.saturating_duration_since(published_at) >= CONTROL_STATUS_HEARTBEAT
     })
 }
 
@@ -812,10 +813,19 @@ mod tests {
     }
 
     #[test]
-    fn semantic_status_mirrors_all_three_authority_modes() {
+    fn semantic_status_mirrors_all_four_authority_modes() {
         let now = Instant::now();
         let mut control = GestureControl::default();
-        assert_eq!(control_status(&control, now), ControlStatus::Disabled);
+        assert_eq!(
+            control_status(&control, now),
+            ControlStatus::Disarmed { progress: None }
+        );
+
+        control.synchronize_state(GestureContext::Disabled);
+        assert_eq!(
+            control_status(&control, now),
+            ControlStatus::Disabled { progress: None }
+        );
 
         control.synchronize_state(GestureContext::Standby);
         assert_eq!(
@@ -852,6 +862,22 @@ mod tests {
         use crate::control::{ControlChord, ControlState};
 
         let cases = [
+            (
+                ControlState::Disarmed,
+                ControlChord::Arm,
+                Some(GestureCandidate::Arm),
+            ),
+            (
+                ControlState::Disabled,
+                ControlChord::Disarm,
+                Some(GestureCandidate::Disarm),
+            ),
+            (
+                ControlState::Standby,
+                ControlChord::Disarm,
+                Some(GestureCandidate::Disarm),
+            ),
+            (ACTIVE, ControlChord::Disarm, Some(GestureCandidate::Disarm)),
             (
                 ControlState::Standby,
                 ControlChord::StartTranscription,
@@ -908,10 +934,11 @@ mod tests {
     fn standby_status_carries_only_bounded_start_progress() {
         let now = Instant::now();
         let mut control = GestureControl::new(GestureContext::Standby);
-        let hands = [
-            ControlHand::test(Handedness::Left, HandPose::Fist, 0.9),
-            ControlHand::test(Handedness::Right, HandPose::OneFinger, 0.9),
-        ];
+        let hands = [ControlHand::test(
+            Handedness::Right,
+            HandPose::OneFinger,
+            0.9,
+        )];
         assert_eq!(
             control.observe(ControlSample {
                 frame_sequence: 1,
@@ -995,7 +1022,7 @@ mod tests {
     }
 
     #[test]
-    fn one_visible_hand_reaches_the_controller_diagnostic() {
+    fn the_wrong_visible_hand_reaches_the_controller_diagnostic() {
         use crate::observation::{HandObservation, HandPose, Handedness, Landmark};
 
         let captured_at = Instant::now();
@@ -1017,16 +1044,15 @@ mod tests {
             observe_controls(&mut control, &observation, captured_at),
             None
         );
-        assert_eq!(
-            control.diagnostic(),
-            ControlDiagnostic::NeedTwoHands { detected: 1 }
-        );
+        assert_eq!(control.diagnostic(), ControlDiagnostic::NeedActionHand);
     }
 
     #[test]
-    fn actionable_statuses_heartbeat_but_disabled_does_not() {
+    fn all_authority_statuses_heartbeat() {
         let started_at = Instant::now();
         for status in [
+            ControlStatus::Disarmed { progress: None },
+            ControlStatus::Disabled { progress: None },
             ControlStatus::Standby { progress: None },
             ControlStatus::Active {
                 voice_request_id: 12,
@@ -1054,19 +1080,5 @@ mod tests {
                 started_at + Duration::from_millis(1),
             ));
         }
-
-        let disabled = Some((3, ControlStatus::Disabled, started_at));
-        assert!(!control_status_publish_due(
-            disabled,
-            3,
-            ControlStatus::Disabled,
-            started_at + CONTROL_STATUS_HEARTBEAT + Duration::from_secs(5),
-        ));
-        assert!(control_status_publish_due(
-            disabled,
-            3,
-            ControlStatus::Standby { progress: None },
-            started_at + Duration::from_millis(1),
-        ));
     }
 }

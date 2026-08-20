@@ -1,8 +1,9 @@
-//! Pure temporal policy for two-hand voice controls.
+//! Pure temporal policy for armed voice controls.
 //!
-//! One hand is a closed-fist modifier. The other opens fingers sequentially
-//! from one through five to select an action, then returns to a fist to rearm.
-//! This module owns no camera, window, IPC, or application action.
+//! Two fists deliberately arm or disarm control. While armed, the action hand
+//! opens fingers sequentially from one through five to select an action, then
+//! returns to a fist to rearm. This module owns no camera, window, IPC, or
+//! application action.
 
 use std::time::{Duration, Instant};
 
@@ -16,6 +17,7 @@ const CONTINUE_SCORE: f32 = 0.50;
 const MIN_SUPPORT_PERCENT: u16 = 80;
 const MIN_STRONG_SAMPLES: u16 = 3;
 const STANDARD_DWELL: Duration = Duration::from_millis(350);
+const ARM_DWELL: Duration = Duration::from_millis(700);
 const CLEAR_DWELL: Duration = Duration::from_millis(1_000);
 const MAX_FRAME_AGE: Duration = Duration::from_millis(250);
 const MAX_SAMPLE_GAP: Duration = Duration::from_millis(250);
@@ -29,6 +31,8 @@ const MIN_POSE_SCORE: f32 = 0.50;
 /// omitted, and the value never crosses GSV IPC or logs.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ControlChord {
+    Arm,
+    Disarm,
     StartTranscription,
     StopTranscription,
     Send,
@@ -50,6 +54,7 @@ pub enum ControlDiagnostic {
     NeedTwoHands {
         detected: u8,
     },
+    NeedActionHand,
     UnsupportedPose,
     UnexpectedPose {
         chord: ControlChord,
@@ -135,12 +140,12 @@ pub struct ControlSample<'a> {
     pub hands: &'a [ControlHand],
 }
 
-/// Deterministic, allocation-free recognition of the supported two-hand
-/// control vocabulary.
+/// Deterministic, allocation-free recognition of the supported two-fist toggle
+/// and single-action-hand control vocabulary.
 pub struct GestureControl {
     state: ControlState,
     pending: Option<ControlIntent>,
-    release_latched: bool,
+    release_latched: Option<Chord>,
     diagnostic: ControlDiagnostic,
     candidate: Option<Candidate>,
     last_frame_sequence: Option<u64>,
@@ -151,7 +156,7 @@ pub struct GestureControl {
 
 impl Default for GestureControl {
     fn default() -> Self {
-        Self::new(ControlState::Disabled)
+        Self::new(ControlState::Disarmed)
     }
 }
 
@@ -167,7 +172,7 @@ impl GestureControl {
         Self {
             state,
             pending: None,
-            release_latched: false,
+            release_latched: None,
             diagnostic: ControlDiagnostic::AwaitingPose,
             candidate: None,
             last_frame_sequence: None,
@@ -249,21 +254,35 @@ impl GestureControl {
             return None;
         }
 
-        let now = sample.captured_at;
-        let reading = match classify_pair(sample.hands, self.preference, &mut self.roles) {
-            Ok(reading) => reading,
-            Err(failure) => {
-                self.diagnostic = failure.diagnostic();
+        if matches!(self.release_latched, Some(Chord::Arm | Chord::Disarm)) {
+            if let Some(quality) = toggle_release_quality(sample.hands) {
                 self.candidate = None;
+                if quality >= ENTER_SCORE {
+                    self.release_latched = None;
+                    self.diagnostic = ControlDiagnostic::AwaitingPose;
+                } else {
+                    self.diagnostic = ControlDiagnostic::UnsupportedPose;
+                }
                 return None;
             }
-        };
+        }
+
+        let now = sample.captured_at;
+        let reading =
+            match classify_hands(sample.hands, self.state, self.preference, &mut self.roles) {
+                Ok(reading) => reading,
+                Err(failure) => {
+                    self.diagnostic = failure.diagnostic(self.state);
+                    self.candidate = None;
+                    return None;
+                }
+            };
 
         match reading {
             PairReading::Reset { quality } => {
                 self.candidate = None;
                 if quality >= ENTER_SCORE {
-                    self.release_latched = false;
+                    self.release_latched = None;
                     self.diagnostic = ControlDiagnostic::AwaitingPose;
                 } else {
                     self.diagnostic = ControlDiagnostic::UnsupportedPose;
@@ -275,32 +294,37 @@ impl GestureControl {
                 self.diagnostic = ControlDiagnostic::UnsupportedPose;
                 None
             }
+            PairReading::Toggle { quality } => {
+                let chord = if self.state == ControlState::Disarmed {
+                    Chord::Arm
+                } else {
+                    Chord::Disarm
+                };
+                self.observe_chord(now, ChordReading { chord, quality })
+            }
             PairReading::Action { action, quality } => {
                 let chord = action.chord(self.state);
-                if let Some(intent) = self.pending {
-                    self.candidate = None;
-                    self.diagnostic = ControlDiagnostic::AwaitingAuthority {
-                        chord: intent.into(),
-                    };
-                    return None;
-                }
-                if self.release_latched {
-                    self.candidate = None;
-                    self.diagnostic = ControlDiagnostic::AwaitingRelease {
-                        chord: chord.into(),
-                    };
-                    return None;
-                }
-                self.advance_candidate(
-                    now,
-                    ChordReading {
-                        chord,
-                        action,
-                        quality,
-                    },
-                )
+                self.observe_chord(now, ChordReading { chord, quality })
             }
         }
+    }
+
+    fn observe_chord(&mut self, now: Instant, reading: ChordReading) -> Option<ControlIntent> {
+        if let Some(intent) = self.pending {
+            self.candidate = None;
+            self.diagnostic = ControlDiagnostic::AwaitingAuthority {
+                chord: intent.into(),
+            };
+            return None;
+        }
+        if let Some(chord) = self.release_latched {
+            self.candidate = None;
+            self.diagnostic = ControlDiagnostic::AwaitingRelease {
+                chord: chord.into(),
+            };
+            return None;
+        }
+        self.advance_candidate(now, reading)
     }
 
     fn accept_order(&self, sample: &ControlSample<'_>) -> bool {
@@ -330,14 +354,12 @@ impl GestureControl {
 
         let mut evidence_gap = None;
         match self.candidate.as_mut() {
-            Some(candidate)
-                if candidate.chord == reading.chord && candidate.action == reading.action =>
-            {
+            Some(candidate) if candidate.chord == reading.chord => {
                 let gap = now.saturating_duration_since(candidate.last_match_at);
                 if gap > MAX_EVIDENCE_GAP {
                     evidence_gap = Some(gap);
                     if reading.quality >= ENTER_SCORE {
-                        *candidate = Candidate::new(reading.chord, reading.action, now);
+                        *candidate = Candidate::new(reading.chord, now);
                     } else {
                         self.candidate = None;
                     }
@@ -348,11 +370,11 @@ impl GestureControl {
                 }
             }
             Some(candidate) if reading.quality >= ENTER_SCORE => {
-                *candidate = Candidate::new(reading.chord, reading.action, now);
+                *candidate = Candidate::new(reading.chord, now);
             }
             Some(_) => self.candidate = None,
             None if reading.quality >= ENTER_SCORE => {
-                self.candidate = Some(Candidate::new(reading.chord, reading.action, now));
+                self.candidate = Some(Candidate::new(reading.chord, now));
             }
             None => {}
         }
@@ -379,7 +401,6 @@ impl GestureControl {
 
         let stable = self.candidate.as_ref().is_some_and(|candidate| {
             candidate.chord == reading.chord
-                && candidate.action == reading.action
                 && reading.quality >= ENTER_SCORE
                 && candidate.is_stable(now)
         });
@@ -387,25 +408,26 @@ impl GestureControl {
             return None;
         }
 
-        let (chord, action) = self
-            .candidate
-            .as_ref()
-            .map(|candidate| (candidate.chord, candidate.action))?;
+        let chord = self.candidate.as_ref().map(|candidate| candidate.chord)?;
         let intent = control_intent(self.state, chord)?;
         self.candidate = None;
         self.pending = Some(intent);
-        self.release_latched = true;
+        self.release_latched = Some(chord);
         self.diagnostic = ControlDiagnostic::Accepted {
             chord: chord.into(),
         };
-        debug_assert_eq!(action.chord(self.state), chord);
         Some(intent)
     }
 
     fn accepted_target(&self, chord: Chord) -> bool {
         matches!(
             (self.state, chord),
-            (ControlState::Standby, Chord::StartTranscription)
+            (ControlState::Disarmed, Chord::Arm)
+                | (
+                    ControlState::Disabled | ControlState::Standby | ControlState::Active { .. },
+                    Chord::Disarm
+                )
+                | (ControlState::Standby, Chord::StartTranscription)
                 | (
                     ControlState::Active { .. },
                     Chord::StopTranscription
@@ -421,7 +443,12 @@ impl GestureControl {
     fn target_is_satisfied(&self, chord: Chord) -> bool {
         matches!(
             (self.state, chord),
-            (ControlState::Active { .. }, Chord::StartTranscription)
+            (ControlState::Disarmed, Chord::Disarm)
+                | (
+                    ControlState::Disabled | ControlState::Standby | ControlState::Active { .. },
+                    Chord::Arm
+                )
+                | (ControlState::Active { .. }, Chord::StartTranscription)
                 | (ControlState::Standby, Chord::StopTranscription)
                 | (ControlState::Active { muted: true, .. }, Chord::Mute)
                 | (ControlState::Active { muted: false, .. }, Chord::Unmute)
@@ -431,6 +458,8 @@ impl GestureControl {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum Chord {
+    Arm,
+    Disarm,
     StartTranscription,
     StopTranscription,
     Send,
@@ -452,9 +481,10 @@ enum ActionPose {
 impl ActionPose {
     const fn chord(self, state: ControlState) -> Chord {
         match (self, state) {
-            (Self::One, ControlState::Standby | ControlState::Disabled) => {
-                Chord::StartTranscription
-            }
+            (
+                Self::One,
+                ControlState::Disarmed | ControlState::Standby | ControlState::Disabled,
+            ) => Chord::StartTranscription,
             (Self::One, ControlState::Active { .. }) => Chord::StopTranscription,
             (Self::Two, _) => Chord::Send,
             (Self::Three, _) => Chord::DeleteBackward,
@@ -467,19 +497,14 @@ impl ActionPose {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct RoleAssignment {
-    modifier: Handedness,
     action: Handedness,
-}
-
-#[derive(Clone, Copy)]
-struct RoleHands<'a> {
-    modifier: &'a ControlHand,
-    action: &'a ControlHand,
 }
 
 impl From<Chord> for ControlChord {
     fn from(chord: Chord) -> Self {
         match chord {
+            Chord::Arm => Self::Arm,
+            Chord::Disarm => Self::Disarm,
             Chord::StartTranscription => Self::StartTranscription,
             Chord::StopTranscription => Self::StopTranscription,
             Chord::Send => Self::Send,
@@ -494,6 +519,8 @@ impl From<Chord> for ControlChord {
 impl From<ControlIntent> for ControlChord {
     fn from(intent: ControlIntent) -> Self {
         match intent {
+            ControlIntent::SetArmed { armed: true } => Self::Arm,
+            ControlIntent::SetArmed { armed: false } => Self::Disarm,
             ControlIntent::StartTranscription => Self::StartTranscription,
             ControlIntent::VoiceRequest { action, .. } => match action {
                 VoiceRequestGestureIntent::StopTranscription => Self::StopTranscription,
@@ -509,6 +536,11 @@ impl From<ControlIntent> for ControlChord {
 
 fn control_intent(state: ControlState, chord: Chord) -> Option<ControlIntent> {
     match (state, chord) {
+        (ControlState::Disarmed, Chord::Arm) => Some(ControlIntent::SetArmed { armed: true }),
+        (
+            ControlState::Disabled | ControlState::Standby | ControlState::Active { .. },
+            Chord::Disarm,
+        ) => Some(ControlIntent::SetArmed { armed: false }),
         (ControlState::Standby, Chord::StartTranscription) => {
             Some(ControlIntent::StartTranscription)
         }
@@ -519,6 +551,7 @@ fn control_intent(state: ControlState, chord: Chord) -> Option<ControlIntent> {
             chord,
         ) => {
             let action = match chord {
+                Chord::Arm | Chord::Disarm => return None,
                 Chord::StopTranscription => VoiceRequestGestureIntent::StopTranscription,
                 Chord::Send => VoiceRequestGestureIntent::Send,
                 Chord::DeleteBackward => VoiceRequestGestureIntent::DeleteBackward,
@@ -538,18 +571,28 @@ fn control_intent(state: ControlState, chord: Chord) -> Option<ControlIntent> {
 
 impl Chord {
     const fn dwell(self) -> Duration {
-        if matches!(self, Self::ClearDictation) {
-            CLEAR_DWELL
-        } else {
-            STANDARD_DWELL
+        match self {
+            Self::Arm | Self::Disarm => ARM_DWELL,
+            Self::ClearDictation => CLEAR_DWELL,
+            Self::StartTranscription
+            | Self::StopTranscription
+            | Self::Send
+            | Self::DeleteBackward
+            | Self::Mute
+            | Self::Unmute => STANDARD_DWELL,
         }
     }
 
     const fn minimum_matches(self) -> u16 {
-        if matches!(self, Self::ClearDictation) {
-            10
-        } else {
-            4
+        match self {
+            Self::Arm | Self::Disarm => 6,
+            Self::ClearDictation => 10,
+            Self::StartTranscription
+            | Self::StopTranscription
+            | Self::Send
+            | Self::DeleteBackward
+            | Self::Mute
+            | Self::Unmute => 4,
         }
     }
 }
@@ -557,13 +600,13 @@ impl Chord {
 #[derive(Clone, Copy, Debug)]
 struct ChordReading {
     chord: Chord,
-    action: ActionPose,
     quality: f32,
 }
 
 #[derive(Clone, Copy, Debug)]
 enum PairReading {
     Action { action: ActionPose, quality: f32 },
+    Toggle { quality: f32 },
     Reset { quality: f32 },
     KnownOther,
 }
@@ -571,7 +614,6 @@ enum PairReading {
 #[derive(Clone, Copy, Debug)]
 struct Candidate {
     chord: Chord,
-    action: ActionPose,
     started_at: Instant,
     last_match_at: Instant,
     samples: u16,
@@ -581,10 +623,9 @@ struct Candidate {
 }
 
 impl Candidate {
-    fn new(chord: Chord, action: ActionPose, now: Instant) -> Self {
+    fn new(chord: Chord, now: Instant) -> Self {
         Self {
             chord,
-            action,
             started_at: now,
             last_match_at: now,
             samples: 1,
@@ -638,48 +679,63 @@ impl Candidate {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum ClassificationFailure {
     HandCount(usize),
+    MissingAction,
     InvalidScore,
     UnsupportedPose,
     AmbiguousHandedness,
 }
 
 impl ClassificationFailure {
-    fn diagnostic(self) -> ControlDiagnostic {
+    fn diagnostic(self, state: ControlState) -> ControlDiagnostic {
         match self {
-            Self::HandCount(detected) => ControlDiagnostic::NeedTwoHands {
-                detected: u8::try_from(detected).unwrap_or(u8::MAX),
-            },
+            Self::HandCount(detected) if state == ControlState::Disarmed => {
+                ControlDiagnostic::NeedTwoHands {
+                    detected: u8::try_from(detected).unwrap_or(u8::MAX),
+                }
+            }
+            Self::HandCount(_) | Self::MissingAction => ControlDiagnostic::NeedActionHand,
             Self::InvalidScore => ControlDiagnostic::InvalidScore,
             Self::UnsupportedPose | Self::AmbiguousHandedness => ControlDiagnostic::UnsupportedPose,
         }
     }
 }
 
-fn classify_pair(
+fn classify_hands(
     hands: &[ControlHand],
+    state: ControlState,
     preference: HandPreference,
     roles: &mut Option<RoleAssignment>,
 ) -> Result<PairReading, ClassificationFailure> {
-    validate_pair(hands)?;
-    let [first, second] = hands else {
-        unreachable!("validate_pair requires exactly two hands")
-    };
-    let pair_quality = hand_quality(first).min(hand_quality(second));
-    if first.pose == HandPose::Fist && second.pose == HandPose::Fist {
-        return Ok(PairReading::Reset {
-            quality: pair_quality,
-        });
+    if hands.len() > 2 {
+        return Err(ClassificationFailure::HandCount(hands.len()));
+    }
+    if let [first, second] = hands {
+        if first.pose == HandPose::Fist && second.pose == HandPose::Fist {
+            validate_toggle(first, second)?;
+            return Ok(PairReading::Toggle {
+                quality: hand_quality(first).min(hand_quality(second)),
+            });
+        }
+    }
+    if state == ControlState::Disarmed {
+        return if hands.len() == 2 {
+            Ok(PairReading::KnownOther)
+        } else {
+            Err(ClassificationFailure::HandCount(hands.len()))
+        };
     }
 
-    let pair = resolve_roles(hands, preference, roles)?;
-    if pair.modifier.pose == HandPose::Unknown || pair.action.pose == HandPose::Unknown {
-        return Err(ClassificationFailure::UnsupportedPose);
+    let action_hand = resolve_action_hand(hands, preference, roles)?;
+    if !valid_hand(action_hand) {
+        return Err(ClassificationFailure::InvalidScore);
     }
-    let quality = hand_quality(pair.modifier).min(hand_quality(pair.action));
-    if pair.modifier.pose != HandPose::Fist {
-        return Ok(PairReading::KnownOther);
+    if action_hand.handedness == Handedness::Unknown
+        || action_hand.handedness_score < MIN_HANDEDNESS_SCORE
+    {
+        return Err(ClassificationFailure::AmbiguousHandedness);
     }
-    let action = match pair.action.pose {
+    let quality = hand_quality(action_hand);
+    let action = match action_hand.pose {
         HandPose::Fist => return Ok(PairReading::Reset { quality }),
         HandPose::OneFinger => ActionPose::One,
         HandPose::TwoFingers => ActionPose::Two,
@@ -691,10 +747,21 @@ fn classify_pair(
     Ok(PairReading::Action { action, quality })
 }
 
-fn validate_pair(hands: &[ControlHand]) -> Result<(), ClassificationFailure> {
+fn toggle_release_quality(hands: &[ControlHand]) -> Option<f32> {
     let [first, second] = hands else {
-        return Err(ClassificationFailure::HandCount(hands.len()));
+        return None;
     };
+    if first.pose == HandPose::Fist && second.pose == HandPose::Fist
+        || first.pose == HandPose::Unknown
+        || second.pose == HandPose::Unknown
+        || validate_toggle(first, second).is_err()
+    {
+        return None;
+    }
+    Some(hand_quality(first).min(hand_quality(second)))
+}
+
+fn validate_toggle(first: &ControlHand, second: &ControlHand) -> Result<(), ClassificationFailure> {
     if !valid_hand(first) || !valid_hand(second) {
         return Err(ClassificationFailure::InvalidScore);
     }
@@ -709,36 +776,40 @@ fn validate_pair(hands: &[ControlHand]) -> Result<(), ClassificationFailure> {
     Ok(())
 }
 
-fn resolve_roles<'a>(
+fn resolve_action_hand<'a>(
     hands: &'a [ControlHand],
     preference: HandPreference,
     roles: &mut Option<RoleAssignment>,
-) -> Result<RoleHands<'a>, ClassificationFailure> {
-    let [first, second] = hands else {
+) -> Result<&'a ControlHand, ClassificationFailure> {
+    if hands.is_empty() || hands.len() > 2 {
         return Err(ClassificationFailure::HandCount(hands.len()));
-    };
+    }
     let assignment = match preference {
         HandPreference::Left => RoleAssignment {
-            modifier: Handedness::Right,
             action: Handedness::Left,
         },
         HandPreference::Right => RoleAssignment {
-            modifier: Handedness::Left,
             action: Handedness::Right,
         },
         HandPreference::Auto => match *roles {
             Some(assignment) => assignment,
             None => {
-                let (modifier, action) = match (
-                    first.pose == HandPose::Fist && first.score >= MIN_POSE_SCORE,
-                    second.pose == HandPose::Fist && second.score >= MIN_POSE_SCORE,
-                ) {
-                    (true, false) => (first, second),
-                    (false, true) => (second, first),
-                    _ => return Err(ClassificationFailure::UnsupportedPose),
+                let mut assignable = hands.iter().filter(|hand| assignable_action_hand(hand));
+                let first = assignable
+                    .next()
+                    .ok_or(ClassificationFailure::MissingAction)?;
+                let action = match assignable.next() {
+                    None => first,
+                    Some(second) => match (
+                        action_pose(first.pose).is_some(),
+                        action_pose(second.pose).is_some(),
+                    ) {
+                        (true, false) => first,
+                        (false, true) => second,
+                        _ => return Err(ClassificationFailure::AmbiguousHandedness),
+                    },
                 };
                 let assignment = RoleAssignment {
-                    modifier: modifier.handedness,
                     action: action.handedness,
                 };
                 *roles = Some(assignment);
@@ -746,15 +817,35 @@ fn resolve_roles<'a>(
             }
         },
     };
-    let modifier = hands
+    let mut matching = hands
         .iter()
-        .find(|hand| hand.handedness == assignment.modifier)
-        .ok_or(ClassificationFailure::AmbiguousHandedness)?;
-    let action = hands
-        .iter()
-        .find(|hand| hand.handedness == assignment.action)
-        .ok_or(ClassificationFailure::AmbiguousHandedness)?;
-    Ok(RoleHands { modifier, action })
+        .filter(|hand| hand.handedness == assignment.action);
+    let action = matching
+        .next()
+        .ok_or(ClassificationFailure::MissingAction)?;
+    if matching.next().is_some() {
+        return Err(ClassificationFailure::AmbiguousHandedness);
+    }
+    Ok(action)
+}
+
+fn assignable_action_hand(hand: &ControlHand) -> bool {
+    valid_hand(hand)
+        && hand.handedness != Handedness::Unknown
+        && hand.handedness_score >= MIN_HANDEDNESS_SCORE
+        && hand.pose != HandPose::Unknown
+        && hand.score >= MIN_POSE_SCORE
+}
+
+const fn action_pose(pose: HandPose) -> Option<ActionPose> {
+    match pose {
+        HandPose::OneFinger => Some(ActionPose::One),
+        HandPose::TwoFingers => Some(ActionPose::Two),
+        HandPose::ThreeFingers => Some(ActionPose::Three),
+        HandPose::FourFingers => Some(ActionPose::Four),
+        HandPose::FiveFingers => Some(ActionPose::Five),
+        HandPose::Fist | HandPose::Unknown => None,
+    }
 }
 
 fn hand_quality(hand: &ControlHand) -> f32 {
@@ -817,17 +908,18 @@ mod tests {
         }
     }
 
-    fn counted(action: HandPose, score: f32) -> [ControlHand; 2] {
-        [
-            ControlHand::test(Handedness::Left, HandPose::Fist, score),
-            ControlHand::test(Handedness::Right, action, score),
-        ]
+    fn counted(action: HandPose, score: f32) -> [ControlHand; 1] {
+        [ControlHand::test(Handedness::Right, action, score)]
     }
 
-    fn mirrored(action: HandPose, score: f32) -> [ControlHand; 2] {
+    fn mirrored(action: HandPose, score: f32) -> [ControlHand; 1] {
+        [ControlHand::test(Handedness::Left, action, score)]
+    }
+
+    fn toggle(score: f32) -> [ControlHand; 2] {
         [
             ControlHand::test(Handedness::Right, HandPose::Fist, score),
-            ControlHand::test(Handedness::Left, action, score),
+            ControlHand::test(Handedness::Left, HandPose::Fist, score),
         ]
     }
 
@@ -969,24 +1061,32 @@ mod tests {
     }
 
     #[test]
-    fn both_fists_reset_without_assigning_auto_roles() {
-        let fists = counted(HandPose::Fist, 0.95);
+    fn both_fists_toggle_without_assigning_auto_roles() {
+        let fists = toggle(0.95);
         let mut roles = None;
         assert!(matches!(
-            classify_pair(&fists, HandPreference::Auto, &mut roles),
-            Ok(PairReading::Reset { .. })
+            classify_hands(
+                &fists,
+                ControlState::Disarmed,
+                HandPreference::Auto,
+                &mut roles
+            ),
+            Ok(PairReading::Toggle { .. })
         ));
         assert_eq!(roles, None);
     }
 
     #[test]
-    fn roles_follow_the_fist_and_not_array_order() {
+    fn auto_roles_follow_the_first_unambiguous_action_and_not_array_order() {
         let mut roles = None;
-        let forward = counted(HandPose::TwoFingers, 0.9);
+        let forward = [
+            ControlHand::test(Handedness::Left, HandPose::Unknown, 0.9),
+            ControlHand::test(Handedness::Right, HandPose::TwoFingers, 0.9),
+        ];
         let reverse = [forward[1], forward[0]];
         for hands in [&forward, &reverse] {
             assert!(matches!(
-                classify_pair(hands, HandPreference::Auto, &mut roles),
+                classify_hands(hands, STANDBY, HandPreference::Auto, &mut roles),
                 Ok(PairReading::Action {
                     action: ActionPose::Two,
                     ..
@@ -1013,6 +1113,48 @@ mod tests {
         assert!(right
             .drive(10, &mirrored(HandPose::OneFinger, 0.95))
             .is_empty());
+    }
+
+    #[test]
+    fn two_fists_arm_and_disarm_desktop_owned_control() {
+        let fists = toggle(0.95);
+        let toggle_release = [
+            ControlHand::test(Handedness::Left, HandPose::FiveFingers, 0.95),
+            ControlHand::test(Handedness::Right, HandPose::Fist, 0.95),
+        ];
+        let mut harness = Harness::new(ControlState::Disarmed);
+
+        assert_eq!(
+            harness.drive(20, &fists),
+            vec![ControlIntent::SetArmed { armed: true }]
+        );
+        harness.synchronize(STANDBY);
+        assert_eq!(harness.sample(&[]), None);
+        assert!(harness.drive(20, &fists).is_empty());
+        assert!(matches!(
+            harness.control.diagnostic(),
+            ControlDiagnostic::AwaitingRelease {
+                chord: ControlChord::Arm
+            }
+        ));
+        assert_eq!(harness.sample(&toggle_release), None);
+        assert_eq!(
+            harness.drive(20, &fists),
+            vec![ControlIntent::SetArmed { armed: false }]
+        );
+        harness.synchronize(ControlState::Disarmed);
+        assert!(harness.drive(20, &fists).is_empty());
+        assert!(matches!(
+            harness.control.diagnostic(),
+            ControlDiagnostic::AwaitingRelease {
+                chord: ControlChord::Disarm
+            }
+        ));
+        assert_eq!(harness.sample(&toggle_release), None);
+        assert_eq!(
+            harness.drive(20, &fists),
+            vec![ControlIntent::SetArmed { armed: true }]
+        );
     }
 
     #[test]

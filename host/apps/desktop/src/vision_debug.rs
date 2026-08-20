@@ -279,7 +279,7 @@ impl ContextState {
             inner: Mutex::new(ContextInner {
                 snapshot: ContextSnapshot {
                     revision: 1,
-                    context: VisionContext::Disabled,
+                    context: VisionContext::Disarmed,
                 },
                 closed: false,
             }),
@@ -342,7 +342,7 @@ impl ContextState {
     fn close(&self) {
         let mut inner = self.lock();
         inner.snapshot.revision = inner.snapshot.revision.wrapping_add(1).max(1);
-        inner.snapshot.context = VisionContext::Disabled;
+        inner.snapshot.context = VisionContext::Disarmed;
         inner.closed = true;
         self.changed.notify_all();
     }
@@ -788,12 +788,20 @@ fn translate_event(
     match event {
         HelperEvent::Lifecycle { state, .. } => Ok(Some(VisionEvent::Lifecycle(state))),
         HelperEvent::Status {
-            status: ControlStatus::Disabled,
+            status: status @ ControlStatus::Disarmed { .. },
+            ..
+        } if context == VisionContext::Disarmed => Ok(Some(VisionEvent::Status {
+            sequence,
+            received_at,
+            status,
+        })),
+        HelperEvent::Status {
+            status: status @ ControlStatus::Disabled { .. },
             ..
         } if context == VisionContext::Disabled => Ok(Some(VisionEvent::Status {
             sequence,
             received_at,
-            status: ControlStatus::Disabled,
+            status,
         })),
         HelperEvent::Status {
             status: status @ ControlStatus::Standby { .. },
@@ -826,6 +834,22 @@ fn translate_event(
             }))
         }
         HelperEvent::Status { .. } => Ok(None),
+        HelperEvent::Intent {
+            intent: intent @ GestureIntent::SetArmed { armed: true },
+            ..
+        } if context == VisionContext::Disarmed => Ok(Some(VisionEvent::Intent {
+            sequence,
+            received_at,
+            intent,
+        })),
+        HelperEvent::Intent {
+            intent: intent @ GestureIntent::SetArmed { armed: false },
+            ..
+        } if context != VisionContext::Disarmed => Ok(Some(VisionEvent::Intent {
+            sequence,
+            received_at,
+            intent,
+        })),
         HelperEvent::Intent {
             intent: intent @ GestureIntent::StartTranscription,
             ..
@@ -1153,10 +1177,10 @@ mod tests {
         let sender = VisionContextSender {
             state: Arc::clone(&state),
         };
-        let initial = state.wait_after(0).expect("initial disabled context");
-        assert_eq!(initial.context, VisionContext::Disabled);
+        let initial = state.wait_after(0).expect("initial disarmed context");
+        assert_eq!(initial.context, VisionContext::Disarmed);
         sender
-            .set_context(VisionContext::Disabled)
+            .set_context(VisionContext::Disarmed)
             .expect("identical context remains valid");
         assert_eq!(state.lock().snapshot.revision, initial.revision);
 
@@ -1301,6 +1325,66 @@ mod tests {
                 sequence: 4,
                 received_at,
                 intent: send(21),
+            }))
+        );
+    }
+
+    #[test]
+    fn armed_intents_are_fenced_by_absolute_context() {
+        let received_at = Instant::now();
+        let event = |sequence, armed| HelperEvent::Intent {
+            session_id: SESSION,
+            sequence,
+            intent: GestureIntent::SetArmed { armed },
+        };
+        let mut sequence = 0;
+
+        assert_eq!(
+            translate_event(
+                event(1, true),
+                received_at,
+                SESSION,
+                &mut sequence,
+                VisionContext::Standby,
+            ),
+            Ok(None)
+        );
+        assert_eq!(
+            translate_event(
+                event(2, true),
+                received_at,
+                SESSION,
+                &mut sequence,
+                VisionContext::Disarmed,
+            ),
+            Ok(Some(VisionEvent::Intent {
+                sequence: 2,
+                received_at,
+                intent: GestureIntent::SetArmed { armed: true },
+            }))
+        );
+        assert_eq!(
+            translate_event(
+                event(3, false),
+                received_at,
+                SESSION,
+                &mut sequence,
+                VisionContext::Disarmed,
+            ),
+            Ok(None)
+        );
+        assert_eq!(
+            translate_event(
+                event(4, false),
+                received_at,
+                SESSION,
+                &mut sequence,
+                VisionContext::Disabled,
+            ),
+            Ok(Some(VisionEvent::Intent {
+                sequence: 4,
+                received_at,
+                intent: GestureIntent::SetArmed { armed: false },
             }))
         );
     }

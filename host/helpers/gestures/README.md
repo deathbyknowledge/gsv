@@ -55,10 +55,11 @@ camera or inference call is stuck below Rust.
 
 The debug window mirrors presentation, but inference always receives the
 original camera frame. It draws up to two 21-point hand skeletons, handedness,
-authored pose labels and confidence, a simple two-hand relationship, and
+authored pose labels and confidence, the armed-control relationship, and
 capture/inference/render timing. It also shows the semantic controller state:
-DISABLED, STANDBY, TRANSCRIBING, or TRANSCRIBING + MUTED, the fixed-vocabulary
-rejection, and clockwise progress through the complete temporal evidence gate.
+DISARMED, DISABLED, STANDBY, TRANSCRIBING, or TRANSCRIBING + MUTED, the
+fixed-vocabulary rejection, and clockwise progress through the complete
+temporal evidence gate.
 The same bounded semantic state and quantized progress are sent to Desktop as
 replace-latest presentation feedback; they cannot invoke an action. Raw labels,
 scores, landmarks, and diagnostics remain inside the helper. Capture and
@@ -67,18 +68,19 @@ frames rather than accumulating a private video queue.
 
 ## Gesture grammar
 
-The physical left hand is the closed-fist modifier and the physical right hand
-performs actions by default; camera array order is irrelevant. Set
-`GSV_GESTURE_DOMINANT_HAND=left` to swap the roles or `auto` to learn them from
-the first unambiguous fist-and-count pair. Desktop supplies one
-strict absolute context: standby when there is no voice request and the helper
-may propose starting one, disabled while an existing request is preparing,
-stopping, or otherwise not gesture-eligible, or active with the exact listening
-request and acknowledged mute state. Desktop still owns final Start admission
-under transient UI policy. Keyboard-started dictation enters the same active
-context; the helper has no separate persistent armed bit.
+Gesture control starts disarmed. Hold both hands in closed fists for 700 ms to
+request arming or disarming. Desktop owns that explicit state and echoes one
+strict absolute context: disarmed, armed standby, temporarily disabled, or
+armed and active with the exact listening request and acknowledged mute state.
+The helper cannot arm itself. Disarming turns off gesture commands without
+stopping an active transcription. Keyboard-started dictation enters the same
+Desktop-owned context.
 
-- Keep the modifier hand in a closed fist throughout every action.
+Once armed, the physical right hand performs actions alone by default; camera
+array order and the left-hand posture are irrelevant. Set
+`GSV_GESTURE_DOMINANT_HAND=left` to use the physical left action hand or `auto`
+to learn the first unambiguous action hand.
+
 - Open only the action index finger (`1`) and hold for 350 ms. In standby this
   starts transcription; while active the same count finishes it.
 - Open the action index and middle fingers (`2`) for 350 ms to send now and keep
@@ -92,13 +94,17 @@ context; the helper has no separate persistent armed bit.
   depending on current state.
 - Close the action hand into a fist (`0`) after every command. This is the only
   reset that rearms the next count.
+- Hold both fists for 700 ms whenever gesture commands should be armed or
+  disarmed. Open either fist after the toggle before toggling again.
 
 All other postures are unassigned. Every gesture enters and continues at 0.50
-confidence. After emitting any intent, the helper blocks every numbered command
-until it positively observes the action-hand fist at sufficient confidence.
-That reset latch survives disabled, standby, active, and request transitions.
-Missing, stale, invalid, weak, or unknown tracking cannot release it, so a held
-count cannot loop after an authority echo. Send, delete, and clear remain nonterminal and do not end
+confidence. After emitting a numbered intent, the helper blocks every numbered
+command until it positively observes the action-hand fist at sufficient
+confidence. After an arm or disarm intent, it requires both tracked hands with
+at least one fist opened. Those reset latches survive disarmed, disabled,
+standby, active, and request transitions. Missing, stale, invalid, weak, or
+unknown tracking cannot release them, so a held posture cannot loop after an
+authority echo. Send, delete, and clear remain nonterminal and do not end
 capture. Desktop first asks the transcription helper to finalize the exact
 current segment; only the matching `SegmentFinal` may send or edit the draft,
 so a later partial cannot resurrect corrected text.
@@ -120,8 +126,7 @@ not infer speech silence or implement auto-send.
 - `GSV_VISION_NATIVE_MODELS=/path/to/gesture-recognizer-float16-1` overrides
   the extracted model root; every model is still verified by size and SHA-256.
 - `GSV_GESTURE_DOMINANT_HAND=auto|left|right` selects the action hand. `auto`
-  assigns roles from the first unambiguous fist-and-count pair; `right` is the
-  default.
+  learns the first unambiguous action hand after arming; `right` is the default.
 - `GSV_VISION_HELPER=/path/to/gsv-vision` tells Desktop which helper executable
   to supervise.
 

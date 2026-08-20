@@ -87,16 +87,18 @@ GSV_GESTURE_DEBUG=1 cargo run --manifest-path host/apps/desktop/Cargo.toml
 ```
 
 The helper uses tract and checksum-pinned TFLite models, with no Python, Java,
-Bazel, or native MediaPipe dependency. The physical left hand is the closed-fist
-modifier by default, while the physical right hand counts by opening fingers in
-order: 1 starts or finishes transcription, 2 sends and keeps listening, 3
-deletes one visible character from unsent dictation, 4 clears the unsent
-dictated text after a one-second hold, and 5 mutes or unmutes. Return the action
-hand to a fist between every command. Typed text and attachments survive
-correction gestures. The active
-transcription itself is the gesture authority—there is no separate armed
-bit—and applied mute state survives an utterance send. The dictation shortcut
-remains the equivalent explicit Start/Stop control.
+Bazel, or native MediaPipe dependency. Gesture control starts disarmed. Hold
+both hands in fists for 700 ms to arm or disarm it. Once armed, the physical
+right hand acts alone by opening fingers in order: 1 starts or finishes
+transcription, 2 sends and keeps listening, 3 deletes one visible character
+from unsent dictation, 4 clears the unsent dictated text after a one-second
+hold, and 5 mutes or unmutes. Return the right hand to a fist between every
+number command. Because arming is a deliberate two-hand action, numbered
+commands remain available while Desktop is in the background. Disarming turns
+off gesture commands without stopping an active transcription. Desktop owns
+and visibly echoes the armed state. Typed text and attachments survive
+correction gestures, applied mute state survives an utterance send, and the
+dictation shortcut remains the equivalent explicit Start/Stop control.
 
 When gestures are enabled, choose `GESTURES · ⌘⇧G` in Desktop or press
 `Command/Ctrl+Shift+G` for the complete posture and timing cheat sheet. It can

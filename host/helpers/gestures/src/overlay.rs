@@ -287,17 +287,23 @@ fn draw_perf(
 
 fn control_status_text(status: ControlStatus) -> (&'static str, u32) {
     match status {
-        ControlStatus::Disabled => ("GESTURES DISABLED", WARNING_COLOR),
+        ControlStatus::Disarmed { .. } => {
+            ("GESTURES DISARMED - HOLD BOTH FISTS TO ARM", WARNING_COLOR)
+        }
+        ControlStatus::Disabled { .. } => (
+            "GESTURES ARMED - ACTIONS TEMPORARILY UNAVAILABLE / BOTH FISTS DISARM",
+            WARNING_COLOR,
+        ),
         ControlStatus::Standby { .. } => (
-            "GESTURES STANDBY - FIST + 1 STARTS TRANSCRIPTION",
+            "GESTURES ARMED - RIGHT 1 STARTS / BOTH FISTS DISARM",
             PAIR_COLOR,
         ),
         ControlStatus::Active { muted: false, .. } => (
-            "TRANSCRIBING - FIST + 1 STOP / 2 SEND / 3 DELETE / 4 CLEAR / 5 MUTE",
+            "TRANSCRIBING - RIGHT 1 STOP / 2 SEND / 3 DELETE / 4 CLEAR / 5 MUTE",
             PAIR_COLOR,
         ),
         ControlStatus::Active { muted: true, .. } => (
-            "TRANSCRIBING + MUTED - FIST + 5 UNMUTE / 1 STOP",
+            "TRANSCRIBING + MUTED - RIGHT 5 UNMUTE / 1 STOP",
             RIGHT_COLOR,
         ),
     }
@@ -307,10 +313,6 @@ fn control_diagnostic_text(
     status: ControlStatus,
     diagnostic: ControlPresentationDiagnostic,
 ) -> (String, u32) {
-    if status == ControlStatus::Disabled {
-        return ("CONTROL INACTIVE".to_string(), MUTED_TEXT_COLOR);
-    }
-
     let ControlPresentationDiagnostic::Controller(diagnostic) = diagnostic else {
         return (
             "CONTROL WAITING FOR FRESH OBSERVATION".to_string(),
@@ -318,17 +320,29 @@ fn control_diagnostic_text(
         );
     };
     match diagnostic {
-        ControlDiagnostic::AwaitingPose => {
-            ("CONTROL WAITING FOR POSE".to_string(), MUTED_TEXT_COLOR)
-        }
+        ControlDiagnostic::AwaitingPose => match status {
+            ControlStatus::Disarmed { .. } => (
+                "CONTROL HOLD BOTH FISTS TO ARM".to_string(),
+                MUTED_TEXT_COLOR,
+            ),
+            ControlStatus::Disabled { .. }
+            | ControlStatus::Standby { .. }
+            | ControlStatus::Active { .. } => (
+                "CONTROL WAITING FOR RIGHT 1-5".to_string(),
+                MUTED_TEXT_COLOR,
+            ),
+        },
         ControlDiagnostic::NeedTwoHands { detected } => (
             format!("CONTROL NEEDS 2 HANDS - DETECTED {}", detected.min(2)),
             WARNING_COLOR,
         ),
-        ControlDiagnostic::UnsupportedPose => (
-            "CONTROL UNSUPPORTED TWO-HAND POSE".to_string(),
-            WARNING_COLOR,
+        ControlDiagnostic::NeedActionHand => (
+            "CONTROL WAITING FOR ACTION HAND".to_string(),
+            MUTED_TEXT_COLOR,
         ),
+        ControlDiagnostic::UnsupportedPose => {
+            ("CONTROL UNSUPPORTED POSE".to_string(), WARNING_COLOR)
+        }
         ControlDiagnostic::UnexpectedPose { chord } => (
             format!("CONTROL {} NOT VALID IN THIS STATE", chord_text(chord)),
             WARNING_COLOR,
@@ -341,10 +355,17 @@ fn control_diagnostic_text(
             format!("CONTROL {} WAITING FOR APP", chord_text(chord)),
             WARNING_COLOR,
         ),
-        ControlDiagnostic::AwaitingRelease { chord } => (
-            format!("CONTROL ACTION FIST TO REARM AFTER {}", chord_text(chord)),
-            WARNING_COLOR,
-        ),
+        ControlDiagnostic::AwaitingRelease { chord } => {
+            let instruction = if matches!(chord, ControlChord::Arm | ControlChord::Disarm) {
+                "OPEN EITHER FIST"
+            } else {
+                "RIGHT FIST TO REARM"
+            };
+            (
+                format!("CONTROL {instruction} AFTER {}", chord_text(chord)),
+                WARNING_COLOR,
+            )
+        }
         ControlDiagnostic::InvalidScore => {
             ("CONTROL INVALID CONFIDENCE".to_string(), WARNING_COLOR)
         }
@@ -397,6 +418,8 @@ fn control_diagnostic_text(
 
 fn chord_text(chord: ControlChord) -> &'static str {
     match chord {
+        ControlChord::Arm => "ARM",
+        ControlChord::Disarm => "DISARM",
         ControlChord::StartTranscription => "START",
         ControlChord::StopTranscription => "STOP",
         ControlChord::Send => "SEND",
@@ -409,8 +432,10 @@ fn chord_text(chord: ControlChord) -> &'static str {
 
 fn status_progress(status: ControlStatus) -> Option<GestureProgress> {
     match status {
-        ControlStatus::Disabled => None,
-        ControlStatus::Standby { progress } | ControlStatus::Active { progress, .. } => progress,
+        ControlStatus::Disarmed { progress }
+        | ControlStatus::Disabled { progress }
+        | ControlStatus::Standby { progress }
+        | ControlStatus::Active { progress, .. } => progress,
     }
 }
 
@@ -475,6 +500,8 @@ fn draw_gesture_progress(
 
 fn candidate_style(candidate: GestureCandidate) -> (&'static str, u32) {
     match candidate {
+        GestureCandidate::Arm => ("ARM", PAIR_COLOR),
+        GestureCandidate::Disarm => ("DISARM", WARNING_COLOR),
         GestureCandidate::StartTranscription => ("START", PAIR_COLOR),
         GestureCandidate::StopTranscription => ("STOP", LEFT_COLOR),
         GestureCandidate::Send => ("SEND", WARNING_COLOR),
@@ -960,6 +987,8 @@ mod tests {
     #[test]
     fn progress_candidate_labels_and_colors_are_closed() {
         let cases = [
+            (GestureCandidate::Arm, "ARM", PAIR_COLOR),
+            (GestureCandidate::Disarm, "DISARM", WARNING_COLOR),
             (GestureCandidate::StartTranscription, "START", PAIR_COLOR),
             (GestureCandidate::StopTranscription, "STOP", LEFT_COLOR),
             (GestureCandidate::Send, "SEND", WARNING_COLOR),
@@ -982,7 +1011,10 @@ mod tests {
     #[test]
     fn progress_indicator_reads_only_the_bounded_status_snapshot() {
         let progress = GestureProgress::new(GestureCandidate::Send, 640).expect("bounded progress");
-        assert_eq!(status_progress(ControlStatus::Disabled), None);
+        assert_eq!(
+            status_progress(ControlStatus::Disabled { progress: None }),
+            None
+        );
         assert_eq!(
             status_progress(ControlStatus::Standby {
                 progress: Some(progress),
@@ -1069,13 +1101,17 @@ mod tests {
     }
 
     #[test]
-    fn semantic_overlay_uses_transcription_lifetime_vocabulary_without_request_identity() {
+    fn semantic_overlay_uses_armed_transcription_vocabulary_without_request_identity() {
         let statuses = [
-            (ControlStatus::Disabled, "GESTURES DISABLED"),
             (
-                ControlStatus::Standby { progress: None },
-                "GESTURES STANDBY",
+                ControlStatus::Disarmed { progress: None },
+                "GESTURES DISARMED",
             ),
+            (
+                ControlStatus::Disabled { progress: None },
+                "GESTURES ARMED - ACTIONS TEMPORARILY UNAVAILABLE",
+            ),
+            (ControlStatus::Standby { progress: None }, "GESTURES ARMED"),
             (
                 ControlStatus::Active {
                     voice_request_id: 8,
@@ -1101,7 +1137,6 @@ mod tests {
             assert!(!text.contains('8'));
             assert!(!text.contains('9'));
             assert!(!text.contains("READY"));
-            assert!(!text.contains("HOLD"));
         }
     }
 
@@ -1126,14 +1161,21 @@ mod tests {
             progress: None,
         };
         let cases = [
-            (ControlDiagnostic::AwaitingPose, "CONTROL WAITING FOR POSE"),
+            (
+                ControlDiagnostic::AwaitingPose,
+                "CONTROL WAITING FOR RIGHT 1-5",
+            ),
             (
                 ControlDiagnostic::NeedTwoHands { detected: 1 },
                 "CONTROL NEEDS 2 HANDS - DETECTED 1",
             ),
             (
+                ControlDiagnostic::NeedActionHand,
+                "CONTROL WAITING FOR ACTION HAND",
+            ),
+            (
                 ControlDiagnostic::UnsupportedPose,
-                "CONTROL UNSUPPORTED TWO-HAND POSE",
+                "CONTROL UNSUPPORTED POSE",
             ),
             (
                 ControlDiagnostic::UnexpectedPose {
@@ -1157,7 +1199,13 @@ mod tests {
                 ControlDiagnostic::AwaitingRelease {
                     chord: ControlChord::StartTranscription,
                 },
-                "CONTROL ACTION FIST TO REARM AFTER START",
+                "CONTROL RIGHT FIST TO REARM AFTER START",
+            ),
+            (
+                ControlDiagnostic::AwaitingRelease {
+                    chord: ControlChord::Arm,
+                },
+                "CONTROL OPEN EITHER FIST AFTER ARM",
             ),
             (
                 ControlDiagnostic::InvalidScore,
@@ -1214,11 +1262,19 @@ mod tests {
 
         assert_eq!(
             control_diagnostic_text(
-                ControlStatus::Disabled,
+                ControlStatus::Disabled { progress: None },
                 ControlPresentationDiagnostic::Controller(ControlDiagnostic::InvalidScore),
             )
             .0,
-            "CONTROL INACTIVE"
+            "CONTROL INVALID CONFIDENCE"
+        );
+        assert_eq!(
+            control_diagnostic_text(
+                ControlStatus::Disarmed { progress: None },
+                ControlPresentationDiagnostic::Controller(ControlDiagnostic::AwaitingPose),
+            )
+            .0,
+            "CONTROL HOLD BOTH FISTS TO ARM"
         );
         assert_eq!(
             control_diagnostic_text(

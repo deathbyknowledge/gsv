@@ -15,13 +15,17 @@ const MAX_GESTURE_INTENT_AGE: Duration = Duration::from_secs(1);
 const MAX_GESTURE_STATUS_AGE: Duration = Duration::from_secs(1);
 
 const GESTURES_STARTING: &str = "GESTURE TRANSCRIPTION · STARTING";
-const GESTURES_STANDBY: &str = "GESTURE TRANSCRIPTION · STANDBY";
+const GESTURES_DISARMED: &str = "GESTURE CONTROL · DISARMED · HOLD BOTH FISTS TO ARM";
+const GESTURES_ARMING: &str = "GESTURE CONTROL · HOLD BOTH FISTS TO ARM";
+const GESTURES_STANDBY: &str = "GESTURE CONTROL · ARMED · SHOW 1 TO START";
+const GESTURES_DISARMING: &str = "GESTURE CONTROL · HOLD BOTH FISTS TO DISARM";
 const GESTURES_HOLD_TO_START: &str = "GESTURE TRANSCRIPTION · HOLD 1 TO START";
 const GESTURES_UNAVAILABLE: &str = "GESTURE TRANSCRIPTION · UNAVAILABLE";
 const VOICE_GESTURES_DISABLED: &str = "LISTENING · SPEAK NOW · PRESS AGAIN TO FINISH";
 const VOICE_GESTURES_STARTING: &str = "LISTENING · GESTURES STARTING";
 const VOICE_GESTURES_UNAVAILABLE: &str = "LISTENING · GESTURES UNAVAILABLE · PRESS AGAIN TO FINISH";
 const VOICE_GESTURES_ACTIVE: &str = "LISTENING · GESTURES ACTIVE";
+const VOICE_GESTURES_DISARMED: &str = "LISTENING · GESTURES DISARMED";
 const VOICE_GESTURES_MUTED: &str = "LISTENING · MICROPHONE MUTED";
 const VOICE_GESTURE_STOP: &str = "LISTENING · HOLD 1 TO FINISH";
 const VOICE_GESTURE_SEND: &str = "LISTENING · HOLD 2 TO SEND";
@@ -29,6 +33,7 @@ const VOICE_GESTURE_DELETE: &str = "LISTENING · HOLD 3 TO DELETE";
 const VOICE_GESTURE_CLEAR: &str = "LISTENING · HOLD 4 TO CLEAR DICTATION";
 const VOICE_GESTURE_MUTE: &str = "LISTENING · HOLD 5 TO MUTE";
 const VOICE_GESTURE_UNMUTE: &str = "LISTENING · HOLD 5 TO UNMUTE";
+const VOICE_GESTURE_DISARM: &str = "LISTENING · HOLD BOTH FISTS TO DISARM";
 const VOICE_GESTURE_SENDING: &str = "LISTENING · PREPARING TO SEND";
 const VOICE_GESTURE_MUTING: &str = "LISTENING · MUTING MICROPHONE";
 const VOICE_GESTURE_UNMUTING: &str = "LISTENING · UNMUTING MICROPHONE";
@@ -39,6 +44,7 @@ impl GsvApp {
     /// Claims one Desktop-owned voice request for eventual gesture actions.
     /// A newly accepted transcription remains Disabled until Listening and
     /// its initial MuteState have both become authoritative.
+    /// Disarmed remains the outer authority when gesture control is off.
     pub(super) fn begin_vision_for_voice(&mut self, request_id: u64) {
         if self.vision_context.is_none() || self.active_voice_request_id() != Some(request_id) {
             return;
@@ -53,6 +59,7 @@ impl GsvApp {
     /// Recomputes the exact request lease after authoritative transcription
     /// state changes. This promotes Disabled to Active only when every
     /// request-scoped action precondition is known.
+    /// Disarmed continues to mask that lease until the user arms control.
     pub(super) fn enable_vision_for_voice(&mut self, request_id: u64) {
         if self.vision_context.is_none()
             || self.active_voice_request_id() != Some(request_id)
@@ -73,6 +80,7 @@ impl GsvApp {
     /// presence of a VoiceDraft keeps the context Disabled until the matching
     /// Final, Cancelled, or Error event clears the request and restores
     /// Standby.
+    /// When control is off, both states remain masked by Disarmed.
     pub(super) fn disable_vision_for_voice(&mut self, request_id: u64) {
         if self.vision_gesture_status.is_some_and(|status| {
             matches!(
@@ -99,16 +107,6 @@ impl GsvApp {
     pub(super) fn handle_vision_event(
         &mut self,
         event: VisionEvent,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        self.handle_vision_event_with_window_state(event, window.is_window_active(), window, cx);
-    }
-
-    fn handle_vision_event_with_window_state(
-        &mut self,
-        event: VisionEvent,
-        window_is_active: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -146,7 +144,6 @@ impl GsvApp {
                 }
                 if self.vision_lifecycle != Some(LifecycleState::Ready)
                     || context != current_context
-                    || context == GestureContext::Disabled
                 {
                     return;
                 }
@@ -172,11 +169,17 @@ impl GsvApp {
                 let ready = self.vision_lifecycle == Some(LifecycleState::Ready);
 
                 match intent {
+                    GestureIntent::SetArmed { armed } => {
+                        if fresh && ready {
+                            self.vision_armed = armed;
+                            self.clear_voice_gesture_status();
+                            self.sync_vision_context();
+                        }
+                    }
                     GestureIntent::StartTranscription => {
                         let eligible = fresh
                             && ready
                             && self.current_vision_context() == GestureContext::Standby
-                            && window_is_active
                             && self.dictation_start_is_safe();
                         if eligible {
                             self.start_dictation(window, cx);
@@ -263,6 +266,9 @@ impl GsvApp {
     }
 
     fn current_vision_context(&self) -> VisionContext {
+        if !self.vision_armed {
+            return VisionContext::Disarmed;
+        }
         if let Some(request_id) = self
             .vision_voice_request_id
             .filter(|request_id| self.active_voice_request_id() == Some(*request_id))
@@ -319,6 +325,9 @@ impl GsvApp {
                 VOICE_GESTURES_UNAVAILABLE
             };
         }
+        if !self.vision_armed {
+            return VOICE_GESTURES_DISARMED;
+        }
         if !self.voice_request_accepts_gestures(request_id) {
             return VOICE_GESTURES_STARTING;
         }
@@ -327,13 +336,16 @@ impl GsvApp {
             muted,
         }) {
             return match progress.candidate() {
+                GestureCandidate::Disarm => VOICE_GESTURE_DISARM,
                 GestureCandidate::StopTranscription => VOICE_GESTURE_STOP,
                 GestureCandidate::Send => VOICE_GESTURE_SEND,
                 GestureCandidate::DeleteBackward => VOICE_GESTURE_DELETE,
                 GestureCandidate::ClearDictation => VOICE_GESTURE_CLEAR,
                 GestureCandidate::Mute => VOICE_GESTURE_MUTE,
                 GestureCandidate::Unmute => VOICE_GESTURE_UNMUTE,
-                GestureCandidate::StartTranscription => VOICE_GESTURES_ACTIVE,
+                GestureCandidate::Arm | GestureCandidate::StartTranscription => {
+                    VOICE_GESTURES_ACTIVE
+                }
             };
         }
         if muted {
@@ -349,7 +361,6 @@ impl GsvApp {
     pub(super) fn visible_voice_gesture_progress(&self) -> Option<GestureProgress> {
         let context = self.current_vision_context();
         if self.vision_lifecycle != Some(LifecycleState::Ready)
-            || context == GestureContext::Disabled
             || self.dictation_pending_mute().is_some()
             || self.dictation_segment_action_is_pending()
         {
@@ -419,7 +430,10 @@ impl GsvApp {
             !matches!(
                 notice,
                 GESTURES_STARTING
+                    | GESTURES_DISARMED
+                    | GESTURES_ARMING
                     | GESTURES_STANDBY
+                    | GESTURES_DISARMING
                     | GESTURES_HOLD_TO_START
                     | GESTURES_UNAVAILABLE
             )
@@ -436,18 +450,31 @@ impl GsvApp {
         } else {
             Some(
                 match self.vision_lifecycle {
-                    Some(LifecycleState::Ready) => {
-                        if self
+                    Some(LifecycleState::Ready) => match self.current_vision_context() {
+                        GestureContext::Disarmed => {
+                            if self
+                                .voice_gesture_progress(GestureContext::Disarmed)
+                                .is_some_and(|progress| {
+                                    progress.candidate() == GestureCandidate::Arm
+                                })
+                            {
+                                GESTURES_ARMING
+                            } else {
+                                GESTURES_DISARMED
+                            }
+                        }
+                        GestureContext::Standby => match self
                             .voice_gesture_progress(GestureContext::Standby)
-                            .is_some_and(|progress| {
-                                progress.candidate() == GestureCandidate::StartTranscription
-                            })
+                            .map(GestureProgress::candidate)
                         {
-                            GESTURES_HOLD_TO_START
-                        } else {
+                            Some(GestureCandidate::StartTranscription) => GESTURES_HOLD_TO_START,
+                            Some(GestureCandidate::Disarm) => GESTURES_DISARMING,
+                            _ => GESTURES_STANDBY,
+                        },
+                        GestureContext::Disabled | GestureContext::Active { .. } => {
                             GESTURES_STANDBY
                         }
-                    }
+                    },
                     None => GESTURES_STARTING,
                     Some(_) => GESTURES_UNAVAILABLE,
                 }
@@ -478,7 +505,8 @@ impl GsvApp {
 
 fn status_context(status: ControlStatus) -> (GestureContext, Option<GestureProgress>) {
     match status {
-        ControlStatus::Disabled => (GestureContext::Disabled, None),
+        ControlStatus::Disarmed { progress } => (GestureContext::Disarmed, progress),
+        ControlStatus::Disabled { progress } => (GestureContext::Disabled, progress),
         ControlStatus::Standby { progress } => (GestureContext::Standby, progress),
         ControlStatus::Active {
             voice_request_id,
@@ -559,6 +587,7 @@ mod tests {
                 app.update(cx, |app, _cx| {
                     app.vision_context = Some(context);
                     app.vision_lifecycle = Some(LifecycleState::Ready);
+                    app.vision_armed = true;
                     app.microphone_preference = MicrophonePreference::SystemDefault;
                     app.voice_commands = voice_commands;
                     app.sync_vision_context();
@@ -601,7 +630,7 @@ mod tests {
     }
 
     #[gpui::test]
-    fn gesture_start_uses_the_desktop_owned_start_path(cx: &mut TestAppContext) {
+    fn gesture_start_uses_the_desktop_owned_path_without_window_focus(cx: &mut TestAppContext) {
         let (app, window, _client_commands) = open_test_app(cx);
         let (context, voice_events) = install_ready_vision(&app, window, cx);
 
@@ -609,13 +638,12 @@ mod tests {
             .update(cx, |_, window, cx| {
                 app.update(cx, |app, cx| {
                     assert_eq!(context.context_for_test(), GestureContext::Standby);
-                    app.handle_vision_event_with_window_state(
+                    app.handle_vision_event(
                         VisionEvent::Intent {
                             sequence: 1,
                             received_at: Instant::now(),
                             intent: GestureIntent::StartTranscription,
                         },
-                        true,
                         window,
                         cx,
                     );
@@ -636,6 +664,95 @@ mod tests {
                 muted: false,
             }
         );
+    }
+
+    #[gpui::test]
+    fn two_hand_intents_toggle_desktop_owned_armed_state(cx: &mut TestAppContext) {
+        let (app, window, _client_commands) = open_test_app(cx);
+        let context = crate::vision_debug::VisionContextSender::for_test();
+        let returned_context = context.clone();
+
+        window
+            .update(cx, |_, window, cx| {
+                app.update(cx, |app, cx| {
+                    app.vision_context = Some(context);
+                    app.vision_lifecycle = Some(LifecycleState::Ready);
+                    app.microphone_preference = MicrophonePreference::SystemDefault;
+                    app.sync_vision_context();
+                    assert_eq!(
+                        returned_context.context_for_test(),
+                        GestureContext::Disarmed
+                    );
+
+                    app.handle_vision_event(
+                        VisionEvent::Intent {
+                            sequence: 1,
+                            received_at: Instant::now(),
+                            intent: GestureIntent::SetArmed { armed: true },
+                        },
+                        window,
+                        cx,
+                    );
+                    assert!(app.vision_armed);
+                    assert_eq!(returned_context.context_for_test(), GestureContext::Standby);
+                    assert_eq!(app.voice_notice.as_deref(), Some(GESTURES_STANDBY));
+
+                    app.handle_vision_event(
+                        VisionEvent::Intent {
+                            sequence: 2,
+                            received_at: Instant::now(),
+                            intent: GestureIntent::SetArmed { armed: false },
+                        },
+                        window,
+                        cx,
+                    );
+                    assert!(!app.vision_armed);
+                    assert_eq!(
+                        returned_context.context_for_test(),
+                        GestureContext::Disarmed
+                    );
+                    assert_eq!(app.voice_notice.as_deref(), Some(GESTURES_DISARMED));
+                    assert!(app.voice_draft.is_none());
+                });
+            })
+            .expect("window remains open");
+    }
+
+    #[gpui::test]
+    fn disarming_leaves_an_active_transcription_running(cx: &mut TestAppContext) {
+        let (app, window, _client_commands) = open_test_app(cx);
+        let (context, voice_events) = install_ready_vision(&app, window, cx);
+        window
+            .update(cx, |_, window, cx| {
+                app.update(cx, |app, cx| app.start_dictation(window, cx));
+            })
+            .expect("window remains open");
+        assert!(matches!(
+            voice_events.try_recv(),
+            Ok(VoiceCommand::Start { request_id: 1, .. })
+        ));
+        start_and_activate(&app, window, cx, 1);
+
+        window
+            .update(cx, |_, window, cx| {
+                app.update(cx, |app, cx| {
+                    app.handle_vision_event(
+                        VisionEvent::Intent {
+                            sequence: 1,
+                            received_at: Instant::now(),
+                            intent: GestureIntent::SetArmed { armed: false },
+                        },
+                        window,
+                        cx,
+                    );
+                    assert_eq!(app.active_voice_request_id(), Some(1));
+                    assert!(app.voice_request_is_listening(1));
+                });
+            })
+            .expect("window remains open");
+
+        assert_eq!(context.context_for_test(), GestureContext::Disarmed);
+        assert!(voice_events.try_recv().is_err());
     }
 
     #[gpui::test]
@@ -685,34 +802,22 @@ mod tests {
                         cx,
                     );
                     assert!(app.voice_draft.is_none());
-                    app.handle_vision_event_with_window_state(
+                    app.handle_vision_event(
                         VisionEvent::Intent {
                             sequence: 2,
-                            received_at: Instant::now(),
-                            intent: GestureIntent::StartTranscription,
-                        },
-                        false,
-                        window,
-                        cx,
-                    );
-                    app.handle_vision_event_with_window_state(
-                        VisionEvent::Intent {
-                            sequence: 3,
                             received_at: stale,
                             intent: GestureIntent::StartTranscription,
                         },
-                        true,
                         window,
                         cx,
                     );
                     app.desktop_switch_pending = true;
-                    app.handle_vision_event_with_window_state(
+                    app.handle_vision_event(
                         VisionEvent::Intent {
-                            sequence: 4,
+                            sequence: 3,
                             received_at: Instant::now(),
                             intent: GestureIntent::StartTranscription,
                         },
-                        true,
                         window,
                         cx,
                     );
@@ -746,7 +851,7 @@ mod tests {
         window
             .update(cx, |_, window, cx| {
                 app.update(cx, |app, cx| {
-                    app.handle_vision_event_with_window_state(
+                    app.handle_vision_event(
                         VisionEvent::Intent {
                             sequence: 1,
                             received_at: stale,
@@ -755,12 +860,11 @@ mod tests {
                                 action: VoiceRequestGestureIntent::StopTranscription,
                             },
                         },
-                        false,
                         window,
                         cx,
                     );
                     assert!(app.voice_request_can_stop(1));
-                    app.handle_vision_event_with_window_state(
+                    app.handle_vision_event(
                         VisionEvent::Intent {
                             sequence: 2,
                             received_at: Instant::now(),
@@ -769,13 +873,12 @@ mod tests {
                                 action: VoiceRequestGestureIntent::Send,
                             },
                         },
-                        true,
                         window,
                         cx,
                     );
                     assert!(!app.dictation_segment_action_is_pending());
 
-                    app.handle_vision_event_with_window_state(
+                    app.handle_vision_event(
                         VisionEvent::Intent {
                             sequence: 3,
                             received_at: Instant::now(),
@@ -784,7 +887,6 @@ mod tests {
                                 action: VoiceRequestGestureIntent::Mute,
                             },
                         },
-                        true,
                         window,
                         cx,
                     );
@@ -837,7 +939,7 @@ mod tests {
                         window,
                         cx,
                     );
-                    app.handle_vision_event_with_window_state(
+                    app.handle_vision_event(
                         VisionEvent::Intent {
                             sequence: 1,
                             received_at: Instant::now(),
@@ -846,7 +948,6 @@ mod tests {
                                 action: VoiceRequestGestureIntent::StopTranscription,
                             },
                         },
-                        false,
                         window,
                         cx,
                     );
@@ -935,17 +1036,17 @@ mod tests {
                 app.update(cx, |app, cx| {
                     app.vision_context = Some(context);
                     app.vision_lifecycle = Some(LifecycleState::Ready);
+                    app.vision_armed = true;
                     app.microphone_preference = MicrophonePreference::SystemDefault;
                     app.voice_commands = voice_commands;
                     app.sync_vision_context();
                     let revision = returned_context.revision_for_test();
-                    app.handle_vision_event_with_window_state(
+                    app.handle_vision_event(
                         VisionEvent::Intent {
                             sequence: 1,
                             received_at: Instant::now(),
                             intent: GestureIntent::StartTranscription,
                         },
-                        true,
                         window,
                         cx,
                     );
