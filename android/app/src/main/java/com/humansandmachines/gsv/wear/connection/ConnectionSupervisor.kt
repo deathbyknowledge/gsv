@@ -34,7 +34,6 @@ class ConnectionSupervisor(
     private val onStatus: (ConnectionStatus) -> Unit,
     private val client: OkHttpClient = OkHttpClient.Builder()
         .connectTimeout(15, TimeUnit.SECONDS)
-        .pingInterval(20, TimeUnit.SECONDS)
         .build(),
     private val reconnectPolicy: ReconnectPolicy = ReconnectPolicy(),
 ) {

@@ -48,10 +48,10 @@ The phone connects with protocol 2, role `driver`, platform `android`, and:
 ```
 
 One connection supervisor owns the active socket. A monotonically increasing
-epoch fences callbacks from replaced sockets. OkHttp WebSocket pings detect
-half-open connections, Android's default-network callback prompts immediate
-reconnect on network changes, and other failures use full-jitter exponential
-backoff. There is no FCM dependency.
+epoch fences callbacks from replaced sockets. GSV's acknowledged
+`device.ping`/`device.pong` heartbeat detects half-open connections, Android's
+default-network callback prompts immediate reconnect on network changes, and
+other failures use full-jitter exponential backoff. There is no FCM dependency.
 
 Reconnect restores reachability for later calls. It does not replay a request
 whose delivery or physical outcome is uncertain. The Kernel binds an in-flight

@@ -57,4 +57,28 @@ class GsvProtocolTest {
         assertTrue(parsed is IncomingTextFrame.RequestCancel)
         assertEquals("req-1", (parsed as IncomingTextFrame.RequestCancel).id)
     }
+
+    @Test
+    fun ignoresDeviceStatusWhileTheConnectResponseIsPending() {
+        val parsed = GsvProtocol.parseText(
+            """{"type":"sig","signal":"device.status","payload":{"deviceId":"pixel-10"}}""",
+        )
+
+        assertTrue(parsed is IncomingTextFrame.Ignored)
+    }
+
+    @Test
+    fun roundTripsTheDriverHeartbeatNonce() {
+        val ping = JSONObject(GsvProtocol.heartbeatFrame("heartbeat-1", 1234))
+        assertEquals("sig", ping.getString("type"))
+        assertEquals("device.ping", ping.getString("signal"))
+        assertEquals("heartbeat-1", ping.getJSONObject("payload").getString("nonce"))
+        assertEquals(1234, ping.getJSONObject("payload").getLong("at"))
+
+        val parsed = GsvProtocol.parseText(
+            """{"type":"sig","signal":"device.pong","payload":{"nonce":"heartbeat-1"}}""",
+        )
+        assertTrue(parsed is IncomingTextFrame.DriverPong)
+        assertEquals("heartbeat-1", (parsed as IncomingTextFrame.DriverPong).nonce)
+    }
 }

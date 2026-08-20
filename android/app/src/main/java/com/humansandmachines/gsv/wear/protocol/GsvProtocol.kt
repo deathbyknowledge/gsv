@@ -17,12 +17,15 @@ sealed interface IncomingTextFrame {
     data class Response(val id: String, val json: JSONObject) : IncomingTextFrame
     data class Request(val request: IncomingRequest) : IncomingTextFrame
     data class RequestCancel(val id: String) : IncomingTextFrame
+    data class DriverPong(val nonce: String) : IncomingTextFrame
     data object Ignored : IncomingTextFrame
 }
 
 object GsvProtocol {
     const val VERSION = 2
     const val REQUEST_CANCEL_SIGNAL = "request.cancel"
+    const val DEVICE_PING_SIGNAL = "device.ping"
+    const val DEVICE_PONG_SIGNAL = "device.pong"
     val DRIVER_IMPLEMENTS: List<String> = listOf("fs.read")
 
     fun connectFrame(id: String, config: DriverConfig): String = JSONObject()
@@ -52,6 +55,17 @@ object GsvProtocol {
         )
         .toString()
 
+    fun heartbeatFrame(nonce: String, nowMillis: Long): String = JSONObject()
+        .put("type", "sig")
+        .put("signal", DEVICE_PING_SIGNAL)
+        .put(
+            "payload",
+            JSONObject()
+                .put("at", nowMillis)
+                .put("nonce", nonce),
+        )
+        .toString()
+
     fun parseText(text: String): IncomingTextFrame {
         val json = JSONObject(text)
         return when (json.requireString("type")) {
@@ -65,11 +79,16 @@ object GsvProtocol {
                 ),
             )
             "sig" -> {
-                if (json.optString("signal") != REQUEST_CANCEL_SIGNAL) {
-                    IncomingTextFrame.Ignored
-                } else {
-                    val id = json.optJSONObject("payload")?.optString("id").orEmpty()
-                    if (id.isBlank()) IncomingTextFrame.Ignored else IncomingTextFrame.RequestCancel(id)
+                when (json.optString("signal")) {
+                    REQUEST_CANCEL_SIGNAL -> {
+                        val id = json.optJSONObject("payload")?.optString("id").orEmpty()
+                        if (id.isBlank()) IncomingTextFrame.Ignored else IncomingTextFrame.RequestCancel(id)
+                    }
+                    DEVICE_PONG_SIGNAL -> {
+                        val nonce = json.optJSONObject("payload")?.optString("nonce").orEmpty()
+                        if (nonce.isBlank()) IncomingTextFrame.Ignored else IncomingTextFrame.DriverPong(nonce)
+                    }
+                    else -> IncomingTextFrame.Ignored
                 }
             }
             else -> IncomingTextFrame.Ignored

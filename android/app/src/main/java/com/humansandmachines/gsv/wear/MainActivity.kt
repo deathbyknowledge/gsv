@@ -125,8 +125,16 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun renderRuntime(snapshot: RuntimeSnapshot) {
+        val connection = buildString {
+            append(snapshot.connection.displayName())
+            snapshot.connectionFailure?.let { failure ->
+                append(" (")
+                append(failure.displayName())
+                append(")")
+            }
+        }
         binding.connectionState.text =
-            getString(R.string.runtime_state, getString(R.string.connection_label), snapshot.connection.displayName())
+            getString(R.string.runtime_state, getString(R.string.connection_label), connection)
         binding.authorityState.text =
             getString(R.string.runtime_state, getString(R.string.authority_label), snapshot.authority.displayName())
         binding.cameraState.text =

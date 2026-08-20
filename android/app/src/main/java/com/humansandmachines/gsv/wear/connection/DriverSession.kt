@@ -6,10 +6,13 @@ import com.humansandmachines.gsv.wear.protocol.GsvProtocol
 import com.humansandmachines.gsv.wear.protocol.IncomingTextFrame
 import java.util.UUID
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicReference
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.Response
@@ -32,6 +35,8 @@ class DriverSession(
     private val dispatcher = dispatcherFactory.create(this)
     private var handshakeComplete = false
     private var handshakeTimeout: Job? = null
+    private var heartbeat: Job? = null
+    private val pendingHeartbeat = AtomicReference<PendingHeartbeat?>()
     private var webSocket: WebSocket? = null
 
     fun open() {
@@ -63,6 +68,7 @@ class DriverSession(
             return
         }
         if (!handshakeComplete) {
+            if (frame is IncomingTextFrame.Ignored) return
             if (frame !is IncomingTextFrame.Response || frame.id != connectRequestId) {
                 terminate(ConnectFailure.PROTOCOL)
                 return
@@ -74,6 +80,7 @@ class DriverSession(
             }
             handshakeComplete = true
             handshakeTimeout?.cancel()
+            startHeartbeat()
             onReady(epoch)
             return
         }
@@ -81,6 +88,7 @@ class DriverSession(
         when (frame) {
             is IncomingTextFrame.Request -> dispatcher.onRequest(frame.request)
             is IncomingTextFrame.RequestCancel -> dispatcher.onRequestCancel(frame.id)
+            is IncomingTextFrame.DriverPong -> acknowledgeHeartbeat(frame.nonce)
             else -> Unit
         }
     }
@@ -114,12 +122,60 @@ class DriverSession(
     private fun terminate(reason: ConnectFailure) {
         if (!terminal.compareAndSet(false, true)) return
         handshakeTimeout?.cancel()
+        heartbeat?.cancel()
+        heartbeat = null
+        pendingHeartbeat.getAndSet(null)?.acknowledgement?.cancel()
         dispatcher.close()
         webSocket?.cancel()
         onTerminated(epoch, reason)
     }
 
+    private fun startHeartbeat() {
+        heartbeat?.cancel()
+        heartbeat = scope.launch {
+            while (!terminal.get()) {
+                val pending = PendingHeartbeat(UUID.randomUUID().toString())
+                pendingHeartbeat.set(pending)
+                if (terminal.get()) {
+                    pendingHeartbeat.compareAndSet(pending, null)
+                    pending.acknowledgement.cancel()
+                    return@launch
+                }
+                if (!sendText(GsvProtocol.heartbeatFrame(pending.nonce, System.currentTimeMillis()))) {
+                    pendingHeartbeat.compareAndSet(pending, null)
+                    pending.acknowledgement.cancel()
+                    terminate(ConnectFailure.NETWORK)
+                    return@launch
+                }
+                val acknowledged = withTimeoutOrNull(HEARTBEAT_TIMEOUT_MILLIS) {
+                    pending.acknowledgement.await()
+                    true
+                } ?: false
+                pendingHeartbeat.compareAndSet(pending, null)
+                if (!acknowledged) {
+                    terminate(ConnectFailure.NETWORK)
+                    return@launch
+                }
+                delay(HEARTBEAT_INTERVAL_MILLIS)
+            }
+        }
+    }
+
+    private fun acknowledgeHeartbeat(nonce: String) {
+        pendingHeartbeat.get()
+            ?.takeIf { it.nonce == nonce }
+            ?.acknowledgement
+            ?.complete(Unit)
+    }
+
+    private data class PendingHeartbeat(
+        val nonce: String,
+        val acknowledgement: CompletableDeferred<Unit> = CompletableDeferred(),
+    )
+
     companion object {
         private const val HANDSHAKE_TIMEOUT_MILLIS = 15_000L
+        private const val HEARTBEAT_INTERVAL_MILLIS = 30_000L
+        private const val HEARTBEAT_TIMEOUT_MILLIS = 10_000L
     }
 }
