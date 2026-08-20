@@ -382,7 +382,7 @@ fn recognize_fixture(
     force_detection: bool,
 ) -> (Duration, RecognitionTimings) {
     if force_detection {
-        recognizer.tracked_rects.clear();
+        recognizer.clear_tracking();
     }
     *timestamp_ms += 33;
     let (observation, timings) = recognizer
@@ -403,7 +403,7 @@ fn recognize_two_hands(
     tracked_rects: &[Rect],
     timestamp_ms: &mut i64,
 ) -> (Duration, RecognitionTimings) {
-    recognizer.tracked_rects = tracked_rects.to_vec();
+    recognizer.set_tracked_rects(tracked_rects);
     *timestamp_ms += 33;
     let (observation, timings) = recognizer
         .recognize_profiled(frame, *timestamp_ms)
@@ -490,7 +490,7 @@ fn tracked_rect(models: &runtime::ModelPaths, frame: &FrameView) -> Rect {
     let mut recognizer = GestureRecognizer::load(models).expect("native recognizer");
     let observation = recognizer.recognize(frame, 0).expect("fixture inference");
     assert_eq!(observation.hands.len(), 1, "tracked fixture");
-    recognizer.tracked_rects[0]
+    recognizer.tracked_rect(0)
 }
 
 fn map_tracked_rect(rect: Rect, source: &FrameView, target: &FrameView, x: u32, y: u32) -> Rect {

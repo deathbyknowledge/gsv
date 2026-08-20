@@ -23,6 +23,7 @@ const MAX_FRAME_HEIGHT: u32 = 1_080;
 const RGB_CHANNELS: usize = 3;
 const LANDMARK_SIZE: usize = 224;
 const PRESENCE_THRESHOLD: f32 = 0.5;
+const TRACK_RECOVERY_GRACE_MS: i64 = 250;
 const PALM_DISCOVERY_FALLBACK_INTERVAL_MS: i64 = 500;
 const MOTION_GRID_SIZE: usize = 16;
 const MOTION_SAMPLE_COUNT: usize = MOTION_GRID_SIZE * MOTION_GRID_SIZE;
@@ -65,11 +66,10 @@ impl StdError for Error {}
 
 pub(crate) struct GestureRecognizer {
     models: Models,
-    tracked_rects: Vec<Rect>,
+    tracked_hands: Vec<TrackedHand>,
     last_timestamp_ms: Option<i64>,
     last_palm_detection_ms: Option<i64>,
     last_palm_signature: Option<MotionSignature>,
-    cached_hands: Vec<CachedHand>,
 }
 
 #[derive(Clone)]
@@ -86,6 +86,18 @@ struct CachedHand {
     detected: DetectedHand,
     crop_signature: CropSignature,
     inferred_at_ms: i64,
+}
+
+#[derive(Clone)]
+struct TrackedHand {
+    rect: Rect,
+    cached: Option<CachedHand>,
+    missed_since_ms: Option<i64>,
+}
+
+struct HandCandidate {
+    rect: Rect,
+    previous: Option<usize>,
 }
 
 #[derive(Clone)]
@@ -196,11 +208,10 @@ impl GestureRecognizer {
     pub(crate) fn load(paths: &ModelPaths) -> Result<Self, Error> {
         Ok(Self {
             models: Models::load(paths)?,
-            tracked_rects: Vec::new(),
+            tracked_hands: Vec::new(),
             last_timestamp_ms: None,
             last_palm_detection_ms: None,
             last_palm_signature: None,
-            cached_hands: Vec::new(),
         })
     }
 
@@ -240,9 +251,27 @@ impl GestureRecognizer {
         self.last_timestamp_ms = Some(timestamp_ms);
         let started = Instant::now();
 
-        let mut candidate_rects = self.tracked_rects.clone();
+        let active_tracks = self
+            .tracked_hands
+            .iter()
+            .filter(|tracked| tracked.missed_since_ms.is_none())
+            .count();
+        let mut occupied_rects: Vec<_> = self
+            .tracked_hands
+            .iter()
+            .map(|tracked| tracked.rect)
+            .collect();
+        let mut candidates: Vec<_> = self
+            .tracked_hands
+            .iter()
+            .enumerate()
+            .map(|(index, tracked)| HandCandidate {
+                rect: tracked.rect,
+                previous: Some(index),
+            })
+            .collect();
         let discovery_signature =
-            (candidate_rects.len() == 1).then(|| motion_signature(frame, &candidate_rects));
+            (active_tracks == 1).then(|| motion_signature(frame, &occupied_rects));
         let external_motion = self
             .last_palm_signature
             .as_ref()
@@ -250,7 +279,7 @@ impl GestureRecognizer {
             .is_some_and(|(previous, current)| motion_detected(previous, current));
         let mut detected_palms = false;
         if should_detect_palms(
-            candidate_rects.len(),
+            active_tracks,
             timestamp_ms,
             self.last_palm_detection_ms,
             external_motion,
@@ -269,44 +298,32 @@ impl GestureRecognizer {
             for detected in decode_hand_rects(&raw_boxes, &raw_scores) {
                 let detected =
                     map_rect_from_crop(detected, detector_rect, frame.width, frame.height);
-                if !overlaps_tracked(detected, &candidate_rects) {
-                    candidate_rects.push(detected);
+                if !overlaps_tracked(detected, &occupied_rects) {
+                    occupied_rects.push(detected);
+                    candidates.push(HandCandidate {
+                        rect: detected,
+                        previous: None,
+                    });
                 }
             }
             profiler.finish(RecognitionStage::PalmPostprocess, stage);
         }
 
-        let candidates =
-            self.detect_candidate_hands(frame, candidate_rects, timestamp_ms, profiler)?;
-        let mut detected_hands = Vec::with_capacity(candidates.len());
-        for hand in candidates.into_iter().flatten() {
-            if detected_hands.iter().any(|existing: &CachedHand| {
-                same_projected_hand(
-                    &existing.detected.observation.landmarks,
-                    &hand.detected.observation.landmarks,
-                )
-            }) {
-                continue;
-            }
-            detected_hands.push(hand);
-            if detected_hands.len() == MAX_HANDS {
-                break;
-            }
-        }
-        self.tracked_rects = detected_hands
+        let detections = self.detect_candidate_hands(frame, &candidates, timestamp_ms, profiler)?;
+        let previous_tracks = std::mem::take(&mut self.tracked_hands);
+        let (tracked_hands, hands) =
+            reconcile_tracking(previous_tracks, candidates, detections, timestamp_ms);
+        self.tracked_hands = tracked_hands;
+        let tracked_rects: Vec<_> = self
+            .tracked_hands
             .iter()
-            .map(|hand| hand.detected.next_rect)
+            .map(|tracked| tracked.rect)
             .collect();
-        if detected_palms && self.tracked_rects.len() == 1 {
-            self.last_palm_signature = Some(motion_signature(frame, &self.tracked_rects));
-        } else if self.tracked_rects.len() != 1 {
+        if detected_palms && hands.len() == 1 {
+            self.last_palm_signature = Some(motion_signature(frame, &tracked_rects));
+        } else if hands.len() != 1 {
             self.last_palm_signature = None;
         }
-        let hands = detected_hands
-            .iter()
-            .map(|hand| hand.detected.observation.clone())
-            .collect();
-        self.cached_hands = detected_hands;
         let observed_at = Instant::now();
         Ok(Observation {
             frame_sequence: frame.sequence,
@@ -319,34 +336,39 @@ impl GestureRecognizer {
     fn detect_candidate_hands<P: RecognitionProfiler>(
         &self,
         frame: &FrameView,
-        candidate_rects: Vec<Rect>,
+        candidates: &[HandCandidate],
         timestamp_ms: i64,
         profiler: &mut P,
     ) -> Result<Vec<Option<CachedHand>>, Error> {
-        let candidates: Vec<_> = candidate_rects
-            .into_iter()
-            .enumerate()
-            .map(|(index, rect)| {
-                let cached = self
-                    .cached_hands
-                    .get(index)
-                    .filter(|_| index < self.tracked_rects.len());
-                (rect, cached)
-            })
-            .collect();
-        let [first, second] = candidates.as_slice() else {
+        let [first, second] = candidates else {
             return candidates
-                .into_iter()
-                .map(|(rect, cached)| {
-                    self.detect_cached_hand(frame, rect, cached, timestamp_ms, profiler)
+                .iter()
+                .map(|candidate| {
+                    self.detect_cached_hand(
+                        frame,
+                        candidate.rect,
+                        candidate
+                            .previous
+                            .and_then(|index| self.tracked_hands[index].cached.as_ref()),
+                        timestamp_ms,
+                        profiler,
+                    )
                 })
                 .collect();
         };
         let Some(pool) = self.models.inference_pool() else {
             return candidates
-                .into_iter()
-                .map(|(rect, cached)| {
-                    self.detect_cached_hand(frame, rect, cached, timestamp_ms, profiler)
+                .iter()
+                .map(|candidate| {
+                    self.detect_cached_hand(
+                        frame,
+                        candidate.rect,
+                        candidate
+                            .previous
+                            .and_then(|index| self.tracked_hands[index].cached.as_ref()),
+                        timestamp_ms,
+                        profiler,
+                    )
                 })
                 .collect();
         };
@@ -356,8 +378,10 @@ impl GestureRecognizer {
                     let mut profiler = P::default();
                     let result = self.detect_cached_hand(
                         frame,
-                        first.0,
-                        first.1,
+                        first.rect,
+                        first
+                            .previous
+                            .and_then(|index| self.tracked_hands[index].cached.as_ref()),
                         timestamp_ms,
                         &mut profiler,
                     );
@@ -367,8 +391,10 @@ impl GestureRecognizer {
                     let mut profiler = P::default();
                     let result = self.detect_cached_hand(
                         frame,
-                        second.0,
-                        second.1,
+                        second.rect,
+                        second
+                            .previous
+                            .and_then(|index| self.tracked_hands[index].cached.as_ref()),
                         timestamp_ms,
                         &mut profiler,
                     );
@@ -378,6 +404,32 @@ impl GestureRecognizer {
         });
         profiler.merge_parallel(first_profiler, second_profiler);
         Ok(vec![first?, second?])
+    }
+
+    #[cfg(test)]
+    fn clear_tracking(&mut self) {
+        self.tracked_hands.clear();
+    }
+
+    #[cfg(test)]
+    fn set_tracked_rects(&mut self, rects: &[Rect]) {
+        let previous = std::mem::take(&mut self.tracked_hands);
+        self.tracked_hands = rects
+            .iter()
+            .enumerate()
+            .map(|(index, rect)| TrackedHand {
+                rect: *rect,
+                cached: previous
+                    .get(index)
+                    .and_then(|tracked| tracked.cached.clone()),
+                missed_since_ms: None,
+            })
+            .collect();
+    }
+
+    #[cfg(test)]
+    fn tracked_rect(&self, index: usize) -> Rect {
+        self.tracked_hands[index].rect
     }
 
     #[cfg(test)]
@@ -486,6 +538,61 @@ impl GestureRecognizer {
         profiler.finish(RecognitionStage::GesturePostprocess, stage);
         Ok(Some(detected))
     }
+}
+
+fn reconcile_tracking(
+    previous_tracks: Vec<TrackedHand>,
+    candidates: Vec<HandCandidate>,
+    detections: Vec<Option<CachedHand>>,
+    timestamp_ms: i64,
+) -> (Vec<TrackedHand>, Vec<HandObservation>) {
+    debug_assert_eq!(candidates.len(), detections.len());
+    let mut previous_tracks: Vec<_> = previous_tracks.into_iter().map(Some).collect();
+    let mut missed = Vec::new();
+    let mut tracked = Vec::with_capacity(MAX_HANDS);
+    let mut hands = Vec::with_capacity(MAX_HANDS);
+    for (candidate, detection) in candidates.into_iter().zip(detections) {
+        let Some(hand) = detection else {
+            if let Some(previous) = candidate
+                .previous
+                .and_then(|index| previous_tracks[index].take())
+            {
+                missed.push(previous);
+            }
+            continue;
+        };
+        if tracked.len() == MAX_HANDS
+            || hands.iter().any(|existing: &HandObservation| {
+                same_projected_hand(&existing.landmarks, &hand.detected.observation.landmarks)
+            })
+        {
+            continue;
+        }
+        let observation = hand.detected.observation.clone();
+        tracked.push(TrackedHand {
+            rect: hand.detected.next_rect,
+            cached: Some(hand),
+            missed_since_ms: None,
+        });
+        hands.push(observation);
+    }
+
+    for mut previous in missed {
+        if tracked.len() == MAX_HANDS {
+            break;
+        }
+        let missed_since_ms = previous.missed_since_ms.unwrap_or(timestamp_ms);
+        if timestamp_ms.saturating_sub(missed_since_ms) > TRACK_RECOVERY_GRACE_MS {
+            continue;
+        }
+        let occupied: Vec<_> = tracked.iter().map(|hand| hand.rect).collect();
+        if overlaps_tracked(previous.rect, &occupied) {
+            continue;
+        }
+        previous.missed_since_ms = Some(missed_since_ms);
+        tracked.push(previous);
+    }
+    (tracked, hands)
 }
 
 fn should_detect_palms(
@@ -788,6 +895,125 @@ mod tests {
         assert!(!should_reuse_landmarks(&previous, 0, &changed, 1));
     }
 
+    #[test]
+    fn weak_landmark_frames_retain_the_roi_without_emitting_stale_gestures() {
+        let previous = tracked_test_hand(0.25, "Thumb_Down");
+        let candidate = HandCandidate {
+            rect: previous.rect,
+            previous: Some(0),
+        };
+        let (tracked, hands) = reconcile_tracking(vec![previous], vec![candidate], vec![None], 100);
+        assert!(hands.is_empty());
+        assert_eq!(tracked.len(), 1);
+        assert_eq!(tracked[0].missed_since_ms, Some(100));
+
+        let candidate = HandCandidate {
+            rect: tracked[0].rect,
+            previous: Some(0),
+        };
+        let (tracked, hands) = reconcile_tracking(
+            tracked,
+            vec![candidate],
+            vec![None],
+            100 + TRACK_RECOVERY_GRACE_MS + 1,
+        );
+        assert!(hands.is_empty());
+        assert!(tracked.is_empty());
+    }
+
+    #[test]
+    fn a_second_hand_does_not_discard_a_recovering_thumb_down_track() {
+        let thumb = tracked_test_hand(0.25, "Thumb_Down");
+        let open = tracked_test_hand(0.75, "Open_Palm");
+        let candidates = vec![
+            HandCandidate {
+                rect: thumb.rect,
+                previous: Some(0),
+            },
+            HandCandidate {
+                rect: open.rect,
+                previous: Some(1),
+            },
+        ];
+        let detections = vec![None, open.cached.clone()];
+        let (tracked, hands) = reconcile_tracking(vec![thumb, open], candidates, detections, 100);
+        assert_eq!(hands.len(), 1);
+        assert_eq!(hands[0].gesture, "Open_Palm");
+        assert_eq!(tracked.len(), 2);
+        assert_eq!(
+            tracked
+                .iter()
+                .filter(|track| track.missed_since_ms.is_some())
+                .count(),
+            1
+        );
+    }
+
+    #[test]
+    fn detected_hands_replace_recovery_slots_before_the_two_hand_limit() {
+        let thumb = tracked_test_hand(0.15, "Thumb_Down");
+        let open = tracked_test_hand(0.5, "Open_Palm");
+        let victory = tracked_test_hand(0.85, "Victory");
+        let candidates = vec![
+            HandCandidate {
+                rect: thumb.rect,
+                previous: Some(0),
+            },
+            HandCandidate {
+                rect: open.rect,
+                previous: Some(1),
+            },
+            HandCandidate {
+                rect: victory.rect,
+                previous: None,
+            },
+        ];
+        let (tracked, hands) = reconcile_tracking(
+            vec![thumb, open.clone()],
+            candidates,
+            vec![None, open.cached.clone(), victory.cached.clone()],
+            100,
+        );
+        assert_eq!(hands.len(), MAX_HANDS);
+        assert_eq!(tracked.len(), MAX_HANDS);
+        assert!(tracked.iter().all(|track| track.missed_since_ms.is_none()));
+    }
+
+    fn tracked_test_hand(center_x: f32, gesture: &str) -> TrackedHand {
+        let mut landmarks = [Landmark::default(); HAND_LANDMARK_COUNT];
+        for (index, landmark) in landmarks.iter_mut().enumerate() {
+            landmark.x = center_x + (index % 5) as f32 * 0.01;
+            landmark.y = 0.4 + (index / 5) as f32 * 0.01;
+        }
+        let rect = Rect {
+            center: geometry::Point {
+                x: center_x,
+                y: 0.5,
+            },
+            width: 0.15,
+            height: 0.2,
+            rotation: 0.0,
+        };
+        TrackedHand {
+            rect,
+            cached: Some(CachedHand {
+                detected: DetectedHand {
+                    observation: HandObservation {
+                        handedness: Handedness::Right,
+                        handedness_score: 1.0,
+                        gesture: gesture.to_string(),
+                        gesture_score: 1.0,
+                        landmarks,
+                    },
+                    next_rect: rect,
+                },
+                crop_signature: CropSignature([0; CROP_SIGNATURE_SAMPLES]),
+                inferred_at_ms: 0,
+            }),
+            missed_since_ms: None,
+        }
+    }
+
     fn motion_test_frame(patch: Option<(usize, usize)>) -> FrameView {
         let mut rgb = vec![0_u8; MOTION_GRID_SIZE * MOTION_GRID_SIZE * RGB_CHANNELS];
         if let Some((start_x, start_y)) = patch {
@@ -853,7 +1079,7 @@ mod tests {
                 (0.516_432_1, 0.804_093_7),
             ),
         ] {
-            recognizer.tracked_rects.clear();
+            recognizer.clear_tracking();
             recognizer.last_timestamp_ms = None;
             let decoded = image::ImageReader::open(fixture_root.join(name))
                 .expect("fixture image")
