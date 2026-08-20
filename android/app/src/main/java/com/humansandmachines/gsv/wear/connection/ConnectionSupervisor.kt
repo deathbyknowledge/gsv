@@ -61,8 +61,8 @@ class ConnectionSupervisor(
         actor = scope.launch {
             eventLoop()
         }
-        connectivity.registerDefaultNetworkCallback(networkCallback)
         events.trySend(Event.Start(connectivity.activeNetwork))
+        connectivity.registerDefaultNetworkCallback(networkCallback)
     }
 
     fun stop() {
