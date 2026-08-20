@@ -1,6 +1,5 @@
 use std::error::Error;
 use std::fmt::{self, Display, Formatter};
-use std::io::Cursor;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::sync_channel;
 use std::sync::{Arc, Condvar, Mutex, MutexGuard};
@@ -287,26 +286,74 @@ impl CameraStream {
 fn select_camera_device(index: Option<u32>) -> Result<Device, CameraError> {
     let devices = cameras::devices().map_err(CameraError::from)?;
     if let Some(index) = index {
-        return select_capture_candidate(devices, Some(index as usize), |device| {
+        return select_capture_candidate(devices, index as usize, |device| {
             cameras::probe(device)
                 .map(|capabilities| !capabilities.formats.is_empty())
                 .map_err(CameraError::from)
         });
     }
 
-    let (built_in, other): (Vec<_>, Vec<_>) = devices
-        .into_iter()
-        .partition(|device| device.transport == Transport::BuiltIn);
-    select_capture_candidate(built_in.into_iter().chain(other), None, |device| {
+    select_best_capture_candidate(devices, |device| {
         cameras::probe(device)
-            .map(|capabilities| !capabilities.formats.is_empty())
+            .map(|capabilities| {
+                (!capabilities.formats.is_empty()).then(|| CameraCandidateRank {
+                    explicit_color: capabilities
+                        .formats
+                        .iter()
+                        .any(|format| is_explicit_color_format(format.pixel_format)),
+                    built_in: device.transport == Transport::BuiltIn,
+                })
+            })
             .map_err(CameraError::from)
     })
 }
 
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+struct CameraCandidateRank {
+    explicit_color: bool,
+    built_in: bool,
+}
+
+fn is_explicit_color_format(format: PixelFormat) -> bool {
+    matches!(
+        format,
+        PixelFormat::Nv12
+            | PixelFormat::Yuyv
+            | PixelFormat::Bgra8
+            | PixelFormat::Rgb8
+            | PixelFormat::Rgba8
+    )
+}
+
+fn select_best_capture_candidate<T, R: Ord>(
+    candidates: impl IntoIterator<Item = T>,
+    mut probe: impl FnMut(&T) -> Result<Option<R>, CameraError>,
+) -> Result<T, CameraError> {
+    let mut best: Option<(R, T)> = None;
+    let mut first_error = None;
+    for candidate in candidates {
+        match probe(&candidate) {
+            Ok(Some(rank)) => {
+                if best.as_ref().is_none_or(|(best_rank, _)| &rank > best_rank) {
+                    best = Some((rank, candidate));
+                }
+            }
+            Ok(None) => {}
+            Err(error) => {
+                if matches!(error, CameraError::PermissionDenied) {
+                    return Err(error);
+                }
+                first_error.get_or_insert(error);
+            }
+        }
+    }
+    best.map(|(_, candidate)| candidate)
+        .ok_or_else(|| first_error.unwrap_or(CameraError::Open(CameraFailure::DeviceUnavailable)))
+}
+
 fn select_capture_candidate<T>(
     candidates: impl IntoIterator<Item = T>,
-    selected_index: Option<usize>,
+    selected_index: usize,
     mut probe: impl FnMut(&T) -> Result<bool, CameraError>,
 ) -> Result<T, CameraError> {
     let mut first_error = None;
@@ -314,7 +361,7 @@ fn select_capture_candidate<T>(
     for candidate in candidates {
         match probe(&candidate) {
             Ok(true) => {
-                if selected_index.is_none_or(|selected| selected == capture_index) {
+                if selected_index == capture_index {
                     return Ok(candidate);
                 }
                 capture_index += 1;
@@ -495,17 +542,8 @@ enum CaptureFrameError {
 fn capture_frame(camera: &Camera, sequence: u64) -> Result<FrameView, CaptureFrameError> {
     let frame = cameras::next_frame(camera, CAPTURE_FRAME_TIMEOUT)
         .map_err(|error| capture_frame_error(&error))?;
-    let rgb = match cameras::to_rgb8(&frame) {
-        Ok(rgb) => rgb,
-        Err(BackendError::MjpegDecode(_)) if frame.pixel_format == PixelFormat::Mjpeg => {
-            decode_mjpeg(&frame.plane_primary, frame.width, frame.height)?
-        }
-        Err(error) => {
-            return Err(CaptureFrameError::Failure(CameraFailure::from_backend(
-                &error,
-            )));
-        }
-    };
+    let rgb = cameras::to_rgb8(&frame)
+        .map_err(|error| CaptureFrameError::Failure(CameraFailure::from_backend(&error)))?;
     let expected_length = usize::try_from(frame.width)
         .ok()
         .and_then(|width| {
@@ -525,18 +563,6 @@ fn capture_frame(camera: &Camera, sequence: u64) -> Result<FrameView, CaptureFra
         height: frame.height,
         rgb: Arc::from(rgb.into_boxed_slice()),
     })
-}
-
-fn decode_mjpeg(bytes: &[u8], width: u32, height: u32) -> Result<Vec<u8>, CaptureFrameError> {
-    let mut decoder = zune_jpeg::JpegDecoder::new(Cursor::new(bytes));
-    decoder.set_options(
-        (*decoder.options())
-            .set_max_width(width as usize)
-            .set_max_height(height as usize),
-    );
-    decoder
-        .decode()
-        .map_err(|_| CaptureFrameError::Failure(CameraFailure::Decode))
 }
 
 fn capture_frame_error(error: &BackendError) -> CaptureFrameError {
@@ -684,7 +710,6 @@ fn delivery_after(frame: Option<&Arc<FrameView>>, after_sequence: u64) -> Option
 #[cfg(test)]
 mod tests {
     use super::*;
-    use image::codecs::jpeg::JpegEncoder;
 
     fn frame(sequence: u64) -> FrameView {
         FrameView {
@@ -715,22 +740,9 @@ mod tests {
     }
 
     #[test]
-    fn default_selection_skips_devices_without_capture_formats() {
-        let mut probed = Vec::new();
-        let selected = select_capture_candidate([1_u8, 0], None, |candidate| {
-            probed.push(*candidate);
-            Ok(*candidate == 0)
-        })
-        .expect("capture device");
-
-        assert_eq!(selected, 0);
-        assert_eq!(probed, [1, 0]);
-    }
-
-    #[test]
     fn explicit_indices_count_only_capture_capable_devices() {
         let mut probed = Vec::new();
-        let selected = select_capture_candidate([0_u8, 1, 2, 3], Some(1), |candidate| {
+        let selected = select_capture_candidate([0_u8, 1, 2, 3], 1, |candidate| {
             probed.push(*candidate);
             Ok(*candidate == 1 || *candidate == 3)
         })
@@ -738,6 +750,53 @@ mod tests {
 
         assert_eq!(selected, 3);
         assert_eq!(probed, [0, 1, 2, 3]);
+    }
+
+    #[test]
+    fn automatic_selection_prefers_an_explicit_color_camera_over_an_ir_sensor() {
+        let selected = select_best_capture_candidate([3_u8, 2, 1, 0], |candidate| {
+            Ok(match candidate {
+                3 | 1 => None,
+                2 => Some(CameraCandidateRank {
+                    explicit_color: false,
+                    built_in: false,
+                }),
+                0 => Some(CameraCandidateRank {
+                    explicit_color: true,
+                    built_in: false,
+                }),
+                _ => None,
+            })
+        })
+        .expect("color camera");
+
+        assert_eq!(selected, 0);
+    }
+
+    #[test]
+    fn automatic_selection_keeps_a_compressed_only_camera_as_fallback() {
+        let selected = select_best_capture_candidate([2_u8], |_| {
+            Ok(Some(CameraCandidateRank {
+                explicit_color: false,
+                built_in: false,
+            }))
+        })
+        .expect("compressed camera");
+
+        assert_eq!(selected, 2);
+    }
+
+    #[test]
+    fn automatic_selection_prefers_built_in_between_color_cameras() {
+        let selected = select_best_capture_candidate([0_u8, 1], |candidate| {
+            Ok(Some(CameraCandidateRank {
+                explicit_color: true,
+                built_in: *candidate == 1,
+            }))
+        })
+        .expect("built-in camera");
+
+        assert_eq!(selected, 1);
     }
 
     #[test]
@@ -760,19 +819,6 @@ mod tests {
         let stats = slot.stats();
         assert!(!stats.running);
         assert_eq!(stats.failure, Some(CameraFailure::Decode));
-    }
-
-    #[test]
-    fn compatibility_decoder_produces_packed_rgb() {
-        let mut encoded = Vec::new();
-        JpegEncoder::new(&mut encoded)
-            .encode(&[255, 0, 0], 1, 1, image::ExtendedColorType::Rgb8)
-            .expect("jpeg fixture");
-
-        let decoded = decode_mjpeg(&encoded, 1, 1).expect("decoded jpeg");
-        assert_eq!(decoded.len(), 3);
-        assert!(decoded[0] > decoded[1]);
-        assert!(decoded[0] > decoded[2]);
     }
 
     #[test]
