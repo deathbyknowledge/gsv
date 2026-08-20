@@ -1,0 +1,12 @@
+<resources>
+    <style name="Theme.GsvWear" parent="Theme.AppCompat.DayNight.NoActionBar">
+        <item name="android:fontFamily">sans</item>
+        <item name="android:windowLightStatusBar">false</item>
+        <item name="android:navigationBarColor">@color/gsv_background</item>
+        <item name="android:statusBarColor">@color/gsv_background</item>
+        <item name="android:windowBackground">@color/gsv_background</item>
+        <item name="colorAccent">@color/gsv_primary</item>
+        <item name="colorPrimary">@color/gsv_primary</item>
+        <item name="colorPrimaryDark">@color/gsv_background</item>
+    </style>
+</resources>

@@ -1,0 +1,11 @@
+<resources>
+    <string name="app_name">GSV Wear</string>
+    <string name="setup_title">Connect this phone to GSV</string>
+    <string name="setup_explanation">Use a driver-bound device token. Credentials stay on this phone and are never written to logs.</string>
+    <string name="gateway_url">Gateway WebSocket URL</string>
+    <string name="username">GSV username</string>
+    <string name="device_id">Device ID</string>
+    <string name="device_token">Device token</string>
+    <string name="save">Save connection</string>
+    <string name="saved">Connection saved</string>
+</resources>

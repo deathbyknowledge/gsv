@@ -4,6 +4,9 @@ target/
 !extension/src/target/
 !extension/src/target/**
 .wrangler/
+.gradle/
+android/local.properties
+android/**/build/
 
 # Build artifacts
 dist/
