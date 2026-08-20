@@ -81,23 +81,30 @@ inference, authored landmark-to-pose recognition, and temporal gesture policy;
 camera frames and landmarks never
 enter GPUI or the gateway. `GSV_GESTURES=1` starts it headlessly, while the exact
 `GSV_GESTURE_DEBUG=1` opt-in adds its local diagnostic window. A private,
-bounded parent-child protocol carries reliable typed semantic intents,
-a replace-latest control status with bounded semantic candidate progress for
-presentation. In standby, the helper may propose starting transcription without
-a voice-request identity. Desktop owns an explicit, inspectable armed state
-that starts disarmed. The helper may propose changing it only after a 700 ms
-two-fist hold, and Desktop echoes the resulting absolute authority. Once armed,
-the right action hand alone maps sequentially opened fingers 1 through 5 to
-start/finish, send, delete, clear, and mute/unmute; those commands remain
-available while the Desktop window is unfocused. An action-hand fist is the
-only positive reset between number commands, and tracking loss cannot rearm
-one. While transcription is preparing or stopping, Desktop temporarily
-disables action authority but still permits the two-fist disarm gesture. Once
-listening and its initial mute state are authoritative, Desktop grants an
-action lease for that exact voice request. Disarming removes gesture authority
-without ending that request. Active events echo the exact voice request, and
-every helper event echoes the random supervisor session, so stale work cannot
-act on or describe later dictation. Status and progress never invoke an action.
+bounded parent-child protocol carries reliable typed semantic intents plus
+replace-latest absolute fist-drag position and control status with bounded
+semantic candidate progress for presentation. In standby, the helper may
+propose starting transcription without a voice-request identity. Desktop owns
+an explicit, inspectable armed state that starts disarmed. The helper may
+propose changing it only after a 700 ms two-fist hold, and Desktop echoes the
+resulting absolute authority. Once armed, the right action hand alone maps
+sequentially opened fingers 1 through 5 to start/finish, send, delete, clear,
+and mute/unmute; those commands remain available while the Desktop window is
+unfocused. A settled action-hand fist also acts as a scroll clutch: vertical
+movement produces absolute palm-relative drag positions, opening releases it,
+and Desktop turns fresh armed updates into native wheel input for the
+application under the pointer. A stationary fist is the only positive reset
+between number commands. Releasing a drag cannot become a numbered command
+until another fist reset, and tracking loss can neither rearm a command nor
+continue scrolling. While transcription is preparing or stopping, Desktop
+temporarily disables action authority but still permits the two-fist disarm
+gesture. Once listening and its initial mute state are authoritative, Desktop
+grants an action lease for that exact voice request. Disarming removes gesture
+authority without ending that request. Active events echo the exact voice
+request, and every helper event echoes the random supervisor session, so stale
+work cannot act on or describe later dictation. Scroll state is absolute and coalescible;
+Desktop validates session, sequence, armed authority, and freshness before
+deriving relative native input. Status and progress never invoke an action.
 Desktop remains the owner of starting and ending the overall voice request,
 acknowledged microphone mute state, and conversation submission. Within an active request,
 `gsv-transcribe` owns authoritative utterance boundaries: it finalizes and

@@ -1,7 +1,7 @@
 use std::time::Duration;
 
 use font8x8::{UnicodeFonts, BASIC_FONTS};
-use gesture_protocol::{ControlStatus, GestureCandidate, GestureProgress};
+use gesture_protocol::{ControlStatus, GestureCandidate, GestureProgress, ScrollState};
 
 use crate::control::{ControlChord, ControlDiagnostic};
 use crate::observation::{HandObservation, Handedness, Landmark, Observation};
@@ -63,6 +63,7 @@ pub struct PerfText {
 pub struct ControlOverlay {
     pub status: ControlStatus,
     pub diagnostic: ControlPresentationDiagnostic,
+    pub scroll_state: ScrollState,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -244,8 +245,10 @@ fn draw_perf(
         perf.capture_errors,
     );
     let (control_status, control_color) = control_status_text(control.status);
-    let (control_diagnostic, diagnostic_color) =
-        control_diagnostic_text(control.status, control.diagnostic);
+    let (control_diagnostic, diagnostic_color) = match control.scroll_state {
+        ScrollState::Dragging { .. } => scroll_status_text(control.scroll_state),
+        ScrollState::Idle => control_diagnostic_text(control.status, control.diagnostic),
+    };
 
     let panel_width = [
         camera_status.len(),
@@ -285,25 +288,48 @@ fn draw_perf(
     );
 }
 
+fn scroll_status_text(state: ScrollState) -> (String, u32) {
+    match state {
+        ScrollState::Idle => (
+            "SCROLL IDLE - SETTLE RIGHT FIST, THEN DRAG VERTICALLY".to_string(),
+            MUTED_TEXT_COLOR,
+        ),
+        ScrollState::Dragging {
+            offset_millipalms, ..
+        } => {
+            let sign = if offset_millipalms < 0 { '-' } else { '+' };
+            let magnitude = offset_millipalms.unsigned_abs();
+            (
+                format!(
+                    "SCROLL DRAGGING {sign}{}.{:03} PALMS - OPEN HAND TO RELEASE",
+                    magnitude / 1_000,
+                    magnitude % 1_000,
+                ),
+                PAIR_COLOR,
+            )
+        }
+    }
+}
+
 fn control_status_text(status: ControlStatus) -> (&'static str, u32) {
     match status {
         ControlStatus::Disarmed { .. } => {
             ("GESTURES DISARMED - HOLD BOTH FISTS TO ARM", WARNING_COLOR)
         }
         ControlStatus::Disabled { .. } => (
-            "GESTURES ARMED - ACTIONS TEMPORARILY UNAVAILABLE / BOTH FISTS DISARM",
+            "GESTURES ARMED - ACTIONS TEMPORARILY UNAVAILABLE / FIST DRAG SCROLLS / BOTH FISTS DISARM",
             WARNING_COLOR,
         ),
         ControlStatus::Standby { .. } => (
-            "GESTURES ARMED - RIGHT 1 STARTS / BOTH FISTS DISARM",
+            "GESTURES ARMED - RIGHT 1 STARTS / FIST DRAG SCROLLS / BOTH FISTS DISARM",
             PAIR_COLOR,
         ),
         ControlStatus::Active { muted: false, .. } => (
-            "TRANSCRIBING - RIGHT 1 STOP / 2 SEND / 3 DELETE / 4 CLEAR / 5 MUTE",
+            "TRANSCRIBING - RIGHT 1 STOP / 2 SEND / 3 DELETE / 4 CLEAR / 5 MUTE / FIST DRAG SCROLL",
             PAIR_COLOR,
         ),
         ControlStatus::Active { muted: true, .. } => (
-            "TRANSCRIBING + MUTED - RIGHT 5 UNMUTE / 1 STOP",
+            "TRANSCRIBING + MUTED - RIGHT 5 UNMUTE / 1 STOP / FIST DRAG SCROLL",
             RIGHT_COLOR,
         ),
     }
@@ -328,7 +354,7 @@ fn control_diagnostic_text(
             ControlStatus::Disabled { .. }
             | ControlStatus::Standby { .. }
             | ControlStatus::Active { .. } => (
-                "CONTROL WAITING FOR RIGHT 1-5".to_string(),
+                "CONTROL WAITING FOR RIGHT 1-5 OR FIST DRAG".to_string(),
                 MUTED_TEXT_COLOR,
             ),
         },
@@ -427,6 +453,7 @@ fn chord_text(chord: ControlChord) -> &'static str {
         ControlChord::ClearDictation => "CLEAR",
         ControlChord::Mute => "MUTE",
         ControlChord::Unmute => "UNMUTE",
+        ControlChord::Scroll => "SCROLL",
     }
 }
 
@@ -1092,6 +1119,7 @@ mod tests {
                         progress_percent: 40,
                     },
                 ),
+                scroll_state: ScrollState::Idle,
             },
             &perf,
             false,
@@ -1163,7 +1191,7 @@ mod tests {
         let cases = [
             (
                 ControlDiagnostic::AwaitingPose,
-                "CONTROL WAITING FOR RIGHT 1-5",
+                "CONTROL WAITING FOR RIGHT 1-5 OR FIST DRAG",
             ),
             (
                 ControlDiagnostic::NeedTwoHands { detected: 1 },
@@ -1206,6 +1234,12 @@ mod tests {
                     chord: ControlChord::Arm,
                 },
                 "CONTROL OPEN EITHER FIST AFTER ARM",
+            ),
+            (
+                ControlDiagnostic::AwaitingRelease {
+                    chord: ControlChord::Scroll,
+                },
+                "CONTROL RIGHT FIST TO REARM AFTER SCROLL",
             ),
             (
                 ControlDiagnostic::InvalidScore,

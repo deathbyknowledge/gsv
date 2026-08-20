@@ -2,7 +2,7 @@ use std::error::Error;
 use std::fmt::{self, Display, Formatter};
 use std::time::{Duration, Instant};
 
-use gesture_protocol::ControlStatus;
+use gesture_protocol::{ControlStatus, ScrollState};
 use minifb::{Key, ScaleMode, Window, WindowOptions};
 
 use crate::camera::CameraStats;
@@ -113,6 +113,7 @@ impl DebugWindow {
         observation: Option<&Observation>,
         control_status: ControlStatus,
         control_diagnostic: ControlPresentationDiagnostic,
+        scroll_state: ScrollState,
         camera_stats: &CameraStats,
     ) -> Result<(), DebugWindowError> {
         let width = usize::try_from(frame.width).map_err(|_| DebugWindowError::InvalidFrame)?;
@@ -166,6 +167,7 @@ impl DebugWindow {
             ControlOverlay {
                 status: control_status,
                 diagnostic: control_diagnostic,
+                scroll_state,
             },
             &perf,
             self.mirror,

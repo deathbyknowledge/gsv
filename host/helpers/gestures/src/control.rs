@@ -4,11 +4,15 @@
 //! opens fingers sequentially from one through five to select an action, then
 //! returns to a fist to rearm. This module owns no camera, window, IPC, or
 //! application action.
+//!
+//! A settled fist can also clutch vertical scroll motion.
 
 use std::time::{Duration, Instant};
 
-use gesture_protocol::VoiceRequestGestureIntent;
-pub use gesture_protocol::{GestureContext as ControlState, GestureIntent as ControlIntent};
+pub use gesture_protocol::{
+    GestureContext as ControlState, GestureIntent as ControlIntent, ScrollState,
+};
+use gesture_protocol::{VoiceRequestGestureIntent, MAX_SCROLL_OFFSET_MILLIPALMS};
 
 use crate::observation::{HandObservation, HandPose, Handedness};
 
@@ -24,6 +28,12 @@ const MAX_SAMPLE_GAP: Duration = Duration::from_millis(250);
 const MAX_EVIDENCE_GAP: Duration = Duration::from_millis(180);
 const MIN_HANDEDNESS_SCORE: f32 = 0.72;
 const MIN_POSE_SCORE: f32 = 0.50;
+const SCROLL_SETTLE_DWELL: Duration = Duration::from_millis(180);
+const SCROLL_TRACKING_GRACE: Duration = Duration::from_millis(180);
+const SCROLL_MIN_SETTLE_MATCHES: u16 = 4;
+const SCROLL_SETTLE_DRIFT_PALMS: f32 = 0.12;
+const SCROLL_DEAD_ZONE_PALMS: f32 = 0.20;
+const MIN_PALM_SCALE: f32 = 0.01;
 
 /// Fixed local-only vocabulary for explaining the temporal controller in the
 /// diagnostic window. Its observation-derived counts, percentages, and
@@ -40,6 +50,7 @@ pub enum ControlChord {
     ClearDictation,
     Mute,
     Unmute,
+    Scroll,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -108,26 +119,51 @@ pub struct ControlHand {
     pub handedness_score: f32,
     pub pose: HandPose,
     pub score: f32,
+    pub palm_y: f32,
+    pub palm_scale: f32,
 }
 
 impl ControlHand {
     #[must_use]
-    pub const fn from_observation(hand: &HandObservation) -> Self {
+    pub fn from_observation(hand: &HandObservation) -> Self {
+        let wrist = hand.landmarks[0];
+        let index_mcp = hand.landmarks[5];
+        let middle_mcp = hand.landmarks[9];
+        let ring_mcp = hand.landmarks[13];
+        let pinky_mcp = hand.landmarks[17];
+        let palm_y = (wrist.y + index_mcp.y + middle_mcp.y + ring_mcp.y + pinky_mcp.y) / 5.0;
+        let palm_width = distance(index_mcp.x, index_mcp.y, pinky_mcp.x, pinky_mcp.y);
+        let palm_length = distance(wrist.x, wrist.y, middle_mcp.x, middle_mcp.y);
         Self {
             handedness: hand.handedness,
             handedness_score: hand.handedness_score,
             pose: hand.pose,
             score: hand.pose_score,
+            palm_y,
+            palm_scale: max_f32(palm_width, palm_length),
         }
     }
 
     #[cfg(test)]
     pub(crate) const fn test(handedness: Handedness, pose: HandPose, score: f32) -> Self {
+        Self::test_at(handedness, pose, score, 0.5, 0.2)
+    }
+
+    #[cfg(test)]
+    pub(crate) const fn test_at(
+        handedness: Handedness,
+        pose: HandPose,
+        score: f32,
+        palm_y: f32,
+        palm_scale: f32,
+    ) -> Self {
         Self {
             handedness,
             handedness_score: 0.95,
             pose,
             score,
+            palm_y,
+            palm_scale,
         }
     }
 }
@@ -140,12 +176,292 @@ pub struct ControlSample<'a> {
     pub hands: &'a [ControlHand],
 }
 
+/// Deterministic, allocation-free recognition of an action-fist vertical drag.
+///
+/// The fist must first settle before motion is measured. State is absolute so
+/// replace-latest transport can coalesce camera frames without losing or
+/// replaying relative scroll deltas.
+pub struct ScrollControl {
+    authority: ControlState,
+    state: ScrollState,
+    anchor: Option<ScrollAnchor>,
+    last_fist_at: Option<Instant>,
+    last_frame_sequence: Option<u64>,
+    last_captured_at: Option<Instant>,
+    next_instance_id: u64,
+    preference: HandPreference,
+    roles: Option<RoleAssignment>,
+}
+
+impl Default for ScrollControl {
+    fn default() -> Self {
+        Self::new(ControlState::Disarmed)
+    }
+}
+
+impl ScrollControl {
+    #[must_use]
+    pub const fn new(authority: ControlState) -> Self {
+        Self::with_preference(authority, HandPreference::Right)
+    }
+
+    #[must_use]
+    pub const fn with_preference(authority: ControlState, preference: HandPreference) -> Self {
+        Self {
+            authority,
+            state: ScrollState::Idle,
+            anchor: None,
+            last_fist_at: None,
+            last_frame_sequence: None,
+            last_captured_at: None,
+            next_instance_id: 1,
+            preference,
+            roles: None,
+        }
+    }
+
+    #[must_use]
+    pub const fn state(&self) -> ScrollState {
+        self.state
+    }
+
+    #[must_use]
+    pub const fn is_dragging(&self) -> bool {
+        matches!(self.state, ScrollState::Dragging { .. })
+    }
+
+    /// Synchronizes Desktop's outer armed authority. Transcription context
+    /// changes do not interrupt a drag, while disarming ends it immediately.
+    pub fn synchronize_state(&mut self, authority: ControlState) -> Option<ScrollState> {
+        self.authority = authority;
+        if authority == ControlState::Disarmed {
+            return self.stop();
+        }
+        None
+    }
+
+    /// Consumes one fresh, ordered inference result and returns only an
+    /// absolute scroll-state change.
+    pub fn observe(&mut self, sample: ControlSample<'_>) -> Option<ScrollState> {
+        if sample.frame_sequence == 0
+            || self
+                .last_frame_sequence
+                .is_some_and(|previous| sample.frame_sequence <= previous)
+            || self
+                .last_captured_at
+                .is_some_and(|previous| sample.captured_at <= previous)
+        {
+            return None;
+        }
+        let gap = self
+            .last_captured_at
+            .and_then(|previous| sample.captured_at.checked_duration_since(previous));
+        self.last_frame_sequence = Some(sample.frame_sequence);
+        self.last_captured_at = Some(sample.captured_at);
+
+        let Some(age) = sample
+            .observed_at
+            .checked_duration_since(sample.captured_at)
+        else {
+            return self.stop();
+        };
+        if age > MAX_FRAME_AGE || gap.is_some_and(|gap| gap > MAX_SAMPLE_GAP) {
+            return self.stop();
+        }
+        if self.authority == ControlState::Disarmed {
+            return self.stop();
+        }
+
+        let reading = classify_scroll_hand(sample.hands, self.preference, &mut self.roles);
+        if self.is_dragging() {
+            return self.observe_drag(sample.captured_at, reading);
+        }
+        self.observe_anchor(sample.captured_at, reading)
+    }
+
+    fn observe_anchor(&mut self, now: Instant, reading: ScrollReading) -> Option<ScrollState> {
+        let ScrollReading::Fist {
+            quality,
+            palm_y,
+            palm_scale,
+        } = reading
+        else {
+            self.anchor = None;
+            self.last_fist_at = None;
+            return None;
+        };
+        if quality < ENTER_SCORE || !valid_scroll_geometry(palm_y, palm_scale) {
+            self.anchor = None;
+            self.last_fist_at = None;
+            return None;
+        }
+        self.last_fist_at = Some(now);
+
+        let Some(anchor) = self.anchor.as_mut() else {
+            self.anchor = Some(ScrollAnchor::new(now, palm_y, palm_scale));
+            return None;
+        };
+        if !anchor.settled && now.saturating_duration_since(anchor.last_match_at) > MAX_EVIDENCE_GAP
+        {
+            *anchor = ScrollAnchor::new(now, palm_y, palm_scale);
+            return None;
+        }
+        if !anchor.settled {
+            let drift = (palm_y - anchor.average_y()).abs() / anchor.average_scale();
+            if drift > SCROLL_SETTLE_DRIFT_PALMS {
+                *anchor = ScrollAnchor::new(now, palm_y, palm_scale);
+                return None;
+            }
+            anchor.record(now, palm_y, palm_scale);
+            if anchor.is_stable(now) {
+                anchor.settle();
+            }
+            return None;
+        }
+
+        let offset_millipalms = scroll_offset_millipalms(palm_y, anchor.palm_y, anchor.palm_scale);
+        if offset_millipalms == 0 {
+            return None;
+        }
+        let instance_id = self.next_instance_id;
+        self.next_instance_id = self.next_instance_id.wrapping_add(1).max(1);
+        self.state = ScrollState::Dragging {
+            instance_id,
+            offset_millipalms,
+        };
+        Some(self.state)
+    }
+
+    fn observe_drag(&mut self, now: Instant, reading: ScrollReading) -> Option<ScrollState> {
+        let ScrollState::Dragging { instance_id, .. } = self.state else {
+            return None;
+        };
+        let ScrollReading::Fist {
+            quality,
+            palm_y,
+            palm_scale,
+        } = reading
+        else {
+            return match reading {
+                ScrollReading::KnownOther => self.stop(),
+                ScrollReading::Unknown => {
+                    if self.last_fist_at.is_some_and(|last| {
+                        now.saturating_duration_since(last) <= SCROLL_TRACKING_GRACE
+                    }) {
+                        None
+                    } else {
+                        self.stop()
+                    }
+                }
+                ScrollReading::Fist { .. } => None,
+            };
+        };
+        if quality < CONTINUE_SCORE || !valid_scroll_geometry(palm_y, palm_scale) {
+            if self
+                .last_fist_at
+                .is_some_and(|last| now.saturating_duration_since(last) <= SCROLL_TRACKING_GRACE)
+            {
+                return None;
+            }
+            return self.stop();
+        }
+        self.last_fist_at = Some(now);
+        let Some(anchor) = self.anchor else {
+            return self.stop();
+        };
+        let next = ScrollState::Dragging {
+            instance_id,
+            offset_millipalms: scroll_offset_millipalms(palm_y, anchor.palm_y, anchor.palm_scale),
+        };
+        if next == self.state {
+            return None;
+        }
+        self.state = next;
+        Some(next)
+    }
+
+    fn stop(&mut self) -> Option<ScrollState> {
+        self.anchor = None;
+        self.last_fist_at = None;
+        if self.state == ScrollState::Idle {
+            return None;
+        }
+        self.state = ScrollState::Idle;
+        Some(ScrollState::Idle)
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+enum ScrollReading {
+    Fist {
+        quality: f32,
+        palm_y: f32,
+        palm_scale: f32,
+    },
+    KnownOther,
+    Unknown,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct ScrollAnchor {
+    started_at: Instant,
+    last_match_at: Instant,
+    samples: u16,
+    palm_y: f32,
+    palm_scale: f32,
+    sum_y: f32,
+    sum_scale: f32,
+    settled: bool,
+}
+
+impl ScrollAnchor {
+    fn new(now: Instant, palm_y: f32, palm_scale: f32) -> Self {
+        Self {
+            started_at: now,
+            last_match_at: now,
+            samples: 1,
+            palm_y,
+            palm_scale,
+            sum_y: palm_y,
+            sum_scale: palm_scale,
+            settled: false,
+        }
+    }
+
+    fn record(&mut self, now: Instant, palm_y: f32, palm_scale: f32) {
+        self.last_match_at = now;
+        self.samples = self.samples.saturating_add(1);
+        self.sum_y += palm_y;
+        self.sum_scale += palm_scale;
+    }
+
+    fn average_y(self) -> f32 {
+        self.sum_y / f32::from(self.samples)
+    }
+
+    fn average_scale(self) -> f32 {
+        (self.sum_scale / f32::from(self.samples)).max(MIN_PALM_SCALE)
+    }
+
+    fn is_stable(self, now: Instant) -> bool {
+        self.samples >= SCROLL_MIN_SETTLE_MATCHES
+            && now.saturating_duration_since(self.started_at) >= SCROLL_SETTLE_DWELL
+    }
+
+    fn settle(&mut self) {
+        self.palm_y = self.average_y();
+        self.palm_scale = self.average_scale();
+        self.settled = true;
+    }
+}
+
 /// Deterministic, allocation-free recognition of the supported two-fist toggle
 /// and single-action-hand control vocabulary.
 pub struct GestureControl {
     state: ControlState,
     pending: Option<ControlIntent>,
     release_latched: Option<Chord>,
+    scroll_release_latched: bool,
     diagnostic: ControlDiagnostic,
     candidate: Option<Candidate>,
     last_frame_sequence: Option<u64>,
@@ -173,6 +489,7 @@ impl GestureControl {
             state,
             pending: None,
             release_latched: None,
+            scroll_release_latched: false,
             diagnostic: ControlDiagnostic::AwaitingPose,
             candidate: None,
             last_frame_sequence: None,
@@ -213,7 +530,20 @@ impl GestureControl {
         self.state = state;
         self.pending = None;
         self.candidate = None;
+        if state == ControlState::Disarmed {
+            self.scroll_release_latched = false;
+        }
         self.diagnostic = ControlDiagnostic::AwaitingPose;
+    }
+
+    /// Prevents an open hand used to release a drag from becoming a numbered
+    /// command. A new action-hand fist is the only positive reset.
+    pub fn latch_scroll_release(&mut self) {
+        self.candidate = None;
+        self.scroll_release_latched = true;
+        self.diagnostic = ControlDiagnostic::AwaitingRelease {
+            chord: ControlChord::Scroll,
+        };
     }
 
     /// Consumes one fresh, ordered inference result and returns at most one
@@ -283,6 +613,7 @@ impl GestureControl {
                 self.candidate = None;
                 if quality >= ENTER_SCORE {
                     self.release_latched = None;
+                    self.scroll_release_latched = false;
                     self.diagnostic = ControlDiagnostic::AwaitingPose;
                 } else {
                     self.diagnostic = ControlDiagnostic::UnsupportedPose;
@@ -321,6 +652,13 @@ impl GestureControl {
             self.candidate = None;
             self.diagnostic = ControlDiagnostic::AwaitingRelease {
                 chord: chord.into(),
+            };
+            return None;
+        }
+        if self.scroll_release_latched && !matches!(reading.chord, Chord::Arm | Chord::Disarm) {
+            self.candidate = None;
+            self.diagnostic = ControlDiagnostic::AwaitingRelease {
+                chord: ControlChord::Scroll,
             };
             return None;
         }
@@ -747,6 +1085,40 @@ fn classify_hands(
     Ok(PairReading::Action { action, quality })
 }
 
+fn classify_scroll_hand(
+    hands: &[ControlHand],
+    preference: HandPreference,
+    roles: &mut Option<RoleAssignment>,
+) -> ScrollReading {
+    if let [first, second] = hands {
+        if first.pose == HandPose::Fist && second.pose == HandPose::Fist {
+            return ScrollReading::KnownOther;
+        }
+    }
+    let Ok(action_hand) = resolve_action_hand(hands, preference, roles) else {
+        return ScrollReading::Unknown;
+    };
+    if !valid_hand(action_hand)
+        || action_hand.handedness == Handedness::Unknown
+        || action_hand.handedness_score < MIN_HANDEDNESS_SCORE
+    {
+        return ScrollReading::Unknown;
+    }
+    match action_hand.pose {
+        HandPose::Fist => ScrollReading::Fist {
+            quality: hand_quality(action_hand),
+            palm_y: action_hand.palm_y,
+            palm_scale: action_hand.palm_scale,
+        },
+        HandPose::Unknown => ScrollReading::Unknown,
+        HandPose::OneFinger
+        | HandPose::TwoFingers
+        | HandPose::ThreeFingers
+        | HandPose::FourFingers
+        | HandPose::FiveFingers => ScrollReading::KnownOther,
+    }
+}
+
 fn toggle_release_quality(hands: &[ControlHand]) -> Option<f32> {
     let [first, second] = hands else {
         return None;
@@ -860,6 +1232,39 @@ fn valid_score(score: f32) -> bool {
     score.is_finite() && (0.0..=1.0).contains(&score)
 }
 
+fn valid_scroll_geometry(palm_y: f32, palm_scale: f32) -> bool {
+    palm_y.is_finite()
+        && palm_scale.is_finite()
+        && (0.0..=1.0).contains(&palm_y)
+        && palm_scale >= MIN_PALM_SCALE
+}
+
+fn scroll_offset_millipalms(palm_y: f32, anchor_y: f32, anchor_scale: f32) -> i16 {
+    let raw = (palm_y - anchor_y) / anchor_scale.max(MIN_PALM_SCALE);
+    let adjusted = if raw.abs() <= SCROLL_DEAD_ZONE_PALMS {
+        0.0
+    } else {
+        raw.signum() * (raw.abs() - SCROLL_DEAD_ZONE_PALMS)
+    };
+    let bounded = (adjusted * 1_000.0).round().clamp(
+        -f32::from(MAX_SCROLL_OFFSET_MILLIPALMS),
+        f32::from(MAX_SCROLL_OFFSET_MILLIPALMS),
+    );
+    bounded as i16
+}
+
+fn distance(first_x: f32, first_y: f32, second_x: f32, second_y: f32) -> f32 {
+    (first_x - second_x).hypot(first_y - second_y)
+}
+
+const fn max_f32(first: f32, second: f32) -> f32 {
+    if first > second {
+        first
+    } else {
+        second
+    }
+}
+
 fn bounded_millis(duration: Duration) -> u16 {
     u16::try_from(duration.as_millis()).unwrap_or(u16::MAX)
 }
@@ -969,6 +1374,48 @@ mod tests {
         }
     }
 
+    struct ScrollHarness {
+        control: ScrollControl,
+        start: Instant,
+        sequence: u64,
+        elapsed: Duration,
+    }
+
+    impl ScrollHarness {
+        fn new(state: ControlState) -> Self {
+            Self::with_control(ScrollControl::new(state))
+        }
+
+        fn with_control(control: ScrollControl) -> Self {
+            Self {
+                control,
+                start: Instant::now(),
+                sequence: 0,
+                elapsed: Duration::ZERO,
+            }
+        }
+
+        fn sample(&mut self, hands: &[ControlHand]) -> Option<ScrollState> {
+            self.sample_after(STEP, hands)
+        }
+
+        fn sample_after(&mut self, step: Duration, hands: &[ControlHand]) -> Option<ScrollState> {
+            self.sequence += 1;
+            self.elapsed += step;
+            let captured_at = self.start + self.elapsed;
+            self.control.observe(ControlSample {
+                frame_sequence: self.sequence,
+                captured_at,
+                observed_at: captured_at + Duration::from_millis(20),
+                hands,
+            })
+        }
+
+        fn drive(&mut self, count: usize, hands: &[ControlHand]) -> Vec<ScrollState> {
+            (0..count).filter_map(|_| self.sample(hands)).collect()
+        }
+    }
+
     #[test]
     fn finger_counts_map_context_to_semantic_actions() {
         let cases = [
@@ -1035,6 +1482,175 @@ mod tests {
             harness.drive(10, &two),
             vec![request(VoiceRequestGestureIntent::Send)]
         );
+    }
+
+    #[test]
+    fn a_scroll_release_cannot_become_a_number_without_a_new_fist() {
+        let five = counted(HandPose::FiveFingers, 0.95);
+        let fist = counted(HandPose::Fist, 0.95);
+        let mut harness = Harness::new(ACTIVE);
+        harness.control.latch_scroll_release();
+
+        assert!(harness.drive(20, &five).is_empty());
+        assert_eq!(
+            harness.control.diagnostic(),
+            ControlDiagnostic::AwaitingRelease {
+                chord: ControlChord::Scroll,
+            }
+        );
+        assert_eq!(harness.sample(&fist), None);
+        assert_eq!(
+            harness.drive(10, &five),
+            vec![request(VoiceRequestGestureIntent::Mute)]
+        );
+    }
+
+    #[test]
+    fn settled_right_fist_drag_emits_absolute_motion_and_opening_releases() {
+        let settled = [ControlHand::test_at(
+            Handedness::Right,
+            HandPose::Fist,
+            0.95,
+            0.50,
+            0.20,
+        )];
+        let down = [ControlHand::test_at(
+            Handedness::Right,
+            HandPose::Fist,
+            0.95,
+            0.60,
+            0.20,
+        )];
+        let farther_down = [ControlHand::test_at(
+            Handedness::Right,
+            HandPose::Fist,
+            0.95,
+            0.64,
+            0.20,
+        )];
+        let open = counted(HandPose::FiveFingers, 0.95);
+        let mut harness = ScrollHarness::new(STANDBY);
+
+        assert!(harness.drive(8, &settled).is_empty());
+        let update = harness.sample(&down);
+        assert!(matches!(update, Some(ScrollState::Dragging { .. })));
+        let (instance_id, offset_millipalms) = match update {
+            Some(ScrollState::Dragging {
+                instance_id,
+                offset_millipalms,
+            }) => (instance_id, offset_millipalms),
+            Some(ScrollState::Idle) | None => return,
+        };
+        assert_ne!(instance_id, 0);
+        assert_eq!(offset_millipalms, 300);
+        assert_eq!(
+            harness.sample(&farther_down),
+            Some(ScrollState::Dragging {
+                instance_id,
+                offset_millipalms: 500,
+            })
+        );
+        assert_eq!(harness.sample(&open), Some(ScrollState::Idle));
+        assert_eq!(harness.control.state(), ScrollState::Idle);
+    }
+
+    #[test]
+    fn fist_jitter_stays_inside_the_scroll_dead_zone() {
+        let settled = [ControlHand::test_at(
+            Handedness::Right,
+            HandPose::Fist,
+            0.95,
+            0.50,
+            0.20,
+        )];
+        let jitter = [ControlHand::test_at(
+            Handedness::Right,
+            HandPose::Fist,
+            0.95,
+            0.53,
+            0.20,
+        )];
+        let mut harness = ScrollHarness::new(STANDBY);
+
+        assert!(harness.drive(8, &settled).is_empty());
+        assert!(harness.drive(8, &jitter).is_empty());
+        assert_eq!(harness.control.state(), ScrollState::Idle);
+    }
+
+    #[test]
+    fn tracking_loss_ends_drag_after_grace_without_making_motion() {
+        let settled = [ControlHand::test_at(
+            Handedness::Right,
+            HandPose::Fist,
+            0.95,
+            0.50,
+            0.20,
+        )];
+        let moved = [ControlHand::test_at(
+            Handedness::Right,
+            HandPose::Fist,
+            0.95,
+            0.60,
+            0.20,
+        )];
+        let mut harness = ScrollHarness::new(STANDBY);
+        assert!(harness.drive(8, &settled).is_empty());
+        assert!(matches!(
+            harness.sample(&moved),
+            Some(ScrollState::Dragging { .. })
+        ));
+
+        assert_eq!(harness.sample(&[]), None);
+        assert_eq!(
+            harness.sample_after(Duration::from_millis(180), &[]),
+            Some(ScrollState::Idle)
+        );
+    }
+
+    #[test]
+    fn two_fists_and_disarmed_authority_never_start_scroll() {
+        let fists = toggle(0.95);
+        let right = [ControlHand::test_at(
+            Handedness::Right,
+            HandPose::Fist,
+            0.95,
+            0.70,
+            0.20,
+        )];
+        let mut armed = ScrollHarness::new(STANDBY);
+        assert!(armed.drive(20, &fists).is_empty());
+        assert_eq!(armed.control.state(), ScrollState::Idle);
+
+        let mut disarmed = ScrollHarness::new(ControlState::Disarmed);
+        assert!(disarmed.drive(20, &right).is_empty());
+        assert_eq!(disarmed.control.state(), ScrollState::Idle);
+    }
+
+    #[test]
+    fn scroll_uses_the_configured_action_hand_and_ignores_an_open_other_hand() {
+        let left_open =
+            ControlHand::test_at(Handedness::Left, HandPose::FiveFingers, 0.95, 0.30, 0.20);
+        let right_settled =
+            ControlHand::test_at(Handedness::Right, HandPose::Fist, 0.95, 0.50, 0.20);
+        let right_moved = ControlHand::test_at(Handedness::Right, HandPose::Fist, 0.95, 0.60, 0.20);
+        let mut right = ScrollHarness::new(STANDBY);
+        assert!(right.drive(8, &[left_open, right_settled]).is_empty());
+        assert!(matches!(
+            right.sample(&[left_open, right_moved]),
+            Some(ScrollState::Dragging { .. })
+        ));
+
+        let left_settled = ControlHand::test_at(Handedness::Left, HandPose::Fist, 0.95, 0.50, 0.20);
+        let left_moved = ControlHand::test_at(Handedness::Left, HandPose::Fist, 0.95, 0.60, 0.20);
+        let mut left = ScrollHarness::with_control(ScrollControl::with_preference(
+            STANDBY,
+            HandPreference::Left,
+        ));
+        assert!(left.drive(8, &[left_settled]).is_empty());
+        assert!(matches!(
+            left.sample(&[left_moved]),
+            Some(ScrollState::Dragging { .. })
+        ));
     }
 
     #[test]

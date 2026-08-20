@@ -100,6 +100,18 @@ and visibly echoes the armed state. Typed text and attachments survive
 correction gestures, applied mute state survives an utterance send, and the
 dictation shortcut remains the equivalent explicit Start/Stop control.
 
+The same right fist is a scroll clutch. Hold it still briefly, then move it
+vertically to grab-scroll the application under the pointer; open the hand to
+release. Small motion remains inside a dead zone, tracking loss stops the drag,
+and a fresh fist is required before an opened hand can become another numbered
+command. Desktop validates fresh armed state before emitting native wheel input,
+so scrolling also works while the Desktop window is in the background. Native
+input permissions may be requested by the operating system on first use.
+Desktop prefers a compositor's Wayland virtual-pointer protocol and otherwise
+falls back to X11 surfaces. A compositor that exposes neither usable route
+leaves scrolling unavailable and emits a generic local-access message without
+disabling the other gesture commands.
+
 When gestures are enabled, choose `GESTURES · ⌘⇧G` in Desktop or press
 `Command/Ctrl+Shift+G` for the complete posture and timing cheat sheet. It can
 remain open while practicing; `Escape` closes it before affecting dictation or

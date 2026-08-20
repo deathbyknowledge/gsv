@@ -1,9 +1,9 @@
 //! Bounded local protocol between GSV Desktop and its vision helper.
 //!
-//! This boundary carries reliable semantic gesture intents plus replace-latest,
-//! bounded semantic control status. Camera frames,
-//! landmarks, model labels, raw scores, diagnostics, paths, and user content
-//! do not belong in this protocol.
+//! This boundary carries reliable semantic gesture intents plus replace-latest
+//! absolute fist-drag position and bounded semantic control status. Camera
+//! frames, landmarks, model labels, raw scores, diagnostics, paths, and user
+//! content do not belong in this protocol.
 
 use std::fmt::{self, Display, Formatter};
 use std::io::{self, Read, Write};
@@ -16,7 +16,7 @@ pub const EVENT_FD: i32 = 3;
 pub const EVENT_FD_MARKER_ENV: &str = "GSV_VISION_EVENT_FD";
 /// Exact private launch contract. Rotate this on an incompatible unshipped
 /// helper/Desktop cutover so a stale sibling fails before semantic traffic.
-pub const EVENT_CHANNEL_CONTRACT_MARKER: &str = "gsv-vision-control-v4-armed-one-hand";
+pub const EVENT_CHANNEL_CONTRACT_MARKER: &str = "gsv-vision-control-v5-fist-drag-scroll";
 pub const SESSION_HIGH_ENV: &str = "GSV_VISION_SESSION_HIGH";
 pub const SESSION_LOW_ENV: &str = "GSV_VISION_SESSION_LOW";
 
@@ -146,6 +146,61 @@ impl<'de> Deserialize<'de> for GestureIntent {
                 voice_request_id,
                 action,
             },
+        })
+    }
+}
+
+pub const MAX_SCROLL_OFFSET_MILLIPALMS: i16 = 4_000;
+
+/// Absolute helper-owned position for one bounded fist-drag gesture.
+///
+/// Desktop derives wheel movement from changes in `offset_millipalms`. A new
+/// nonzero `instance_id` starts at the helper's captured fist position, so a
+/// coalesced update remains sufficient and never replays dropped deltas.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[serde(tag = "state", rename_all = "snake_case")]
+pub enum ScrollState {
+    Idle,
+    Dragging {
+        instance_id: u64,
+        offset_millipalms: i16,
+    },
+}
+
+#[derive(Deserialize)]
+#[serde(tag = "state", rename_all = "snake_case", deny_unknown_fields)]
+enum WireScrollState {
+    Idle {},
+    Dragging {
+        instance_id: u64,
+        offset_millipalms: i16,
+    },
+}
+
+impl<'de> Deserialize<'de> for ScrollState {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        Ok(match WireScrollState::deserialize(deserializer)? {
+            WireScrollState::Idle {} => Self::Idle,
+            WireScrollState::Dragging {
+                instance_id,
+                offset_millipalms,
+            } if instance_id != 0
+                && (-MAX_SCROLL_OFFSET_MILLIPALMS..=MAX_SCROLL_OFFSET_MILLIPALMS)
+                    .contains(&offset_millipalms) =>
+            {
+                Self::Dragging {
+                    instance_id,
+                    offset_millipalms,
+                }
+            }
+            WireScrollState::Dragging { .. } => {
+                return Err(de::Error::custom(
+                    "scroll instance must be nonzero and palm offset must be bounded",
+                ));
+            }
         })
     }
 }
@@ -441,6 +496,11 @@ pub enum HelperEvent {
         sequence: u64,
         intent: GestureIntent,
     },
+    Scroll {
+        session_id: SessionId,
+        sequence: u64,
+        state: ScrollState,
+    },
 }
 
 #[derive(Debug)]
@@ -596,7 +656,7 @@ mod tests {
         assert_eq!(PROTOCOL_VERSION, 1);
         assert_eq!(
             EVENT_CHANNEL_CONTRACT_MARKER,
-            "gsv-vision-control-v4-armed-one-hand"
+            "gsv-vision-control-v5-fist-drag-scroll"
         );
         for stale in [
             "1",
@@ -606,6 +666,7 @@ mod tests {
             "gsv-vision-control-v1-held-scroll",
             "gsv-vision-control-v2-dictation-editing",
             "gsv-vision-control-v3-finger-counts",
+            "gsv-vision-control-v4-armed-one-hand",
         ] {
             assert_ne!(EVENT_CHANNEL_CONTRACT_MARKER, stale);
         }
@@ -695,10 +756,72 @@ mod tests {
                 sequence: 8,
                 intent: active_intent(VoiceRequestGestureIntent::Send),
             },
+            HelperEvent::Scroll {
+                session_id: SESSION,
+                sequence: 9,
+                state: ScrollState::Dragging {
+                    instance_id: 3,
+                    offset_millipalms: -425,
+                },
+            },
         ];
         for expected in values {
             let mut bytes = Cursor::new(encoded(&expected));
             assert_eq!(read_frame(&mut bytes).expect("frame reads"), Some(expected));
+        }
+    }
+
+    #[test]
+    fn scroll_state_is_absolute_bounded_semantics_only() {
+        let dragging = ScrollState::Dragging {
+            instance_id: 3,
+            offset_millipalms: -425,
+        };
+        let event = HelperEvent::Scroll {
+            session_id: SESSION,
+            sequence: 9,
+            state: dragging,
+        };
+        let wire = serde_json::to_value(event).expect("scroll serializes");
+        assert_eq!(
+            wire,
+            json!({
+                "type": "scroll",
+                "session_id": { "high": 7, "low": 11 },
+                "sequence": 9,
+                "state": {
+                    "state": "dragging",
+                    "instance_id": 3,
+                    "offset_millipalms": -425
+                }
+            })
+        );
+        assert_eq!(
+            serde_json::from_value::<HelperEvent>(wire).expect("scroll reads"),
+            event
+        );
+        assert_eq!(
+            serde_json::from_value::<ScrollState>(json!({ "state": "idle" })).expect("idle reads"),
+            ScrollState::Idle
+        );
+
+        for invalid in [
+            json!({
+                "state": "dragging",
+                "instance_id": 0,
+                "offset_millipalms": 0
+            }),
+            json!({
+                "state": "dragging",
+                "instance_id": 1,
+                "offset_millipalms": MAX_SCROLL_OFFSET_MILLIPALMS + 1
+            }),
+            json!({
+                "state": "idle",
+                "offset_millipalms": 0
+            }),
+        ] {
+            assert!(serde_json::from_value::<ScrollState>(invalid).is_err());
         }
     }
 

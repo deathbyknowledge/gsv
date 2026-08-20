@@ -13,7 +13,7 @@ use std::time::{Duration, Instant};
 
 use gesture_protocol::{
     read_frame, write_frame, ControlStatus, DesktopCommand, GestureContext, GestureIntent,
-    HelperEvent, LifecycleState, SessionId, EVENT_CHANNEL_CONTRACT_MARKER, EVENT_FD,
+    HelperEvent, LifecycleState, ScrollState, SessionId, EVENT_CHANNEL_CONTRACT_MARKER, EVENT_FD,
     EVENT_FD_MARKER_ENV, PROTOCOL_VERSION, SESSION_HIGH_ENV, SESSION_LOW_ENV,
 };
 use tokio::sync::{mpsc as tokio_mpsc, watch};
@@ -87,21 +87,48 @@ pub(crate) enum VisionEvent {
         received_at: Instant,
         intent: GestureIntent,
     },
+    Scroll {
+        sequence: u64,
+        received_at: Instant,
+        state: ScrollState,
+    },
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-struct VisionStatusEvent {
-    sequence: u64,
-    received_at: Instant,
-    status: ControlStatus,
+enum VisionSnapshotEvent {
+    Status {
+        sequence: u64,
+        received_at: Instant,
+        status: ControlStatus,
+    },
+    Scroll {
+        sequence: u64,
+        received_at: Instant,
+        state: ScrollState,
+    },
 }
 
-impl VisionStatusEvent {
+impl VisionSnapshotEvent {
     const fn into_event(self) -> VisionEvent {
-        VisionEvent::Status {
-            sequence: self.sequence,
-            received_at: self.received_at,
-            status: self.status,
+        match self {
+            Self::Status {
+                sequence,
+                received_at,
+                status,
+            } => VisionEvent::Status {
+                sequence,
+                received_at,
+                status,
+            },
+            Self::Scroll {
+                sequence,
+                received_at,
+                state,
+            } => VisionEvent::Scroll {
+                sequence,
+                received_at,
+                state,
+            },
         }
     }
 }
@@ -110,9 +137,11 @@ impl VisionStatusEvent {
 /// cell. The lanes alternate when both remain busy so continuous status updates
 /// cannot starve reliable actions. A terminal lifecycle clears the status cell
 /// before entering the reliable lane.
+/// The same cell now carries absolute scroll position; both snapshot variants
+/// can be coalesced without replaying work.
 pub(crate) struct VisionEventReceiver {
     reliable: tokio_mpsc::Receiver<VisionEvent>,
-    status: watch::Receiver<Option<VisionStatusEvent>>,
+    status: watch::Receiver<Option<VisionSnapshotEvent>>,
     reliable_closed: bool,
     status_closed: bool,
     prefer_reliable: bool,
@@ -654,7 +683,7 @@ fn supervise(
     context: Arc<ContextState>,
     signals: SupervisorSignals,
     events: tokio_mpsc::Sender<VisionEvent>,
-    statuses: watch::Sender<Option<VisionStatusEvent>>,
+    statuses: watch::Sender<Option<VisionSnapshotEvent>>,
 ) {
     let mut last_sequence = 0;
     let mut terminal_reported = false;
@@ -729,7 +758,7 @@ fn supervise(
 
 fn send_vision_event(
     events: &tokio_mpsc::Sender<VisionEvent>,
-    statuses: &watch::Sender<Option<VisionStatusEvent>>,
+    statuses: &watch::Sender<Option<VisionSnapshotEvent>>,
     event: VisionEvent,
 ) -> Result<(), ()> {
     if let VisionEvent::Status {
@@ -738,10 +767,23 @@ fn send_vision_event(
         status,
     } = event
     {
-        statuses.send_replace(Some(VisionStatusEvent {
+        statuses.send_replace(Some(VisionSnapshotEvent::Status {
             sequence,
             received_at,
             status,
+        }));
+        return Ok(());
+    }
+    if let VisionEvent::Scroll {
+        sequence,
+        received_at,
+        state,
+    } = event
+    {
+        statuses.send_replace(Some(VisionSnapshotEvent::Scroll {
+            sequence,
+            received_at,
+            state,
         }));
         return Ok(());
     }
@@ -751,6 +793,7 @@ fn send_vision_event(
     ) {
         // A terminal lifecycle is authoritative over any explanatory snapshot
         // that the stalled UI has not consumed yet.
+        // Absolute scroll state shares that snapshot cell and is cleared too.
         statuses.send_replace(None);
     }
     events.blocking_send(event).map_err(|_| ())
@@ -776,6 +819,11 @@ fn translate_event(
             ..
         }
         | HelperEvent::Intent {
+            session_id,
+            sequence,
+            ..
+        }
+        | HelperEvent::Scroll {
             session_id,
             sequence,
             ..
@@ -879,6 +927,14 @@ fn translate_event(
             }))
         }
         HelperEvent::Intent { .. } => Ok(None),
+        HelperEvent::Scroll { state, .. } if context != VisionContext::Disarmed => {
+            Ok(Some(VisionEvent::Scroll {
+                sequence,
+                received_at,
+                state,
+            }))
+        }
+        HelperEvent::Scroll { .. } => Ok(None),
         HelperEvent::Hello { .. } => Err(()),
     }
 }
@@ -1390,6 +1446,58 @@ mod tests {
     }
 
     #[test]
+    fn absolute_scroll_is_session_sequence_and_armed_context_fenced() {
+        let received_at = Instant::now();
+        let state = ScrollState::Dragging {
+            instance_id: 7,
+            offset_millipalms: -350,
+        };
+        let event = |session_id, sequence| HelperEvent::Scroll {
+            session_id,
+            sequence,
+            state,
+        };
+        let mut sequence = 0;
+
+        assert_eq!(
+            translate_event(
+                event(SessionId::new(9, 9), 1),
+                received_at,
+                SESSION,
+                &mut sequence,
+                VisionContext::Standby,
+            ),
+            Ok(None)
+        );
+        assert_eq!(sequence, 0);
+        assert_eq!(
+            translate_event(
+                event(SESSION, 1),
+                received_at,
+                SESSION,
+                &mut sequence,
+                VisionContext::Disarmed,
+            ),
+            Ok(None)
+        );
+        assert_eq!(sequence, 1);
+        assert_eq!(
+            translate_event(
+                event(SESSION, 2),
+                received_at,
+                SESSION,
+                &mut sequence,
+                VisionContext::Standby,
+            ),
+            Ok(Some(VisionEvent::Scroll {
+                sequence: 2,
+                received_at,
+                state,
+            }))
+        );
+    }
+
+    #[test]
     fn semantic_status_is_session_sequence_and_context_fenced() {
         let received_at = Instant::now();
         let status = |session_id, sequence, status| HelperEvent::Status {
@@ -1572,6 +1680,56 @@ mod tests {
                 })
             ));
         });
+    }
+
+    #[test]
+    fn stalled_ui_receives_only_the_latest_absolute_snapshot() {
+        let (events, reliable) = tokio_mpsc::channel(EVENT_CAPACITY);
+        let (snapshots, status) = watch::channel(None);
+        let mut receiver = VisionEventReceiver {
+            reliable,
+            status,
+            reliable_closed: false,
+            status_closed: false,
+            prefer_reliable: false,
+        };
+        send_vision_event(
+            &events,
+            &snapshots,
+            VisionEvent::Status {
+                sequence: 1,
+                received_at: Instant::now(),
+                status: ControlStatus::Standby { progress: None },
+            },
+        )
+        .expect("status snapshot queues");
+        let received_at = Instant::now();
+        let state = ScrollState::Dragging {
+            instance_id: 9,
+            offset_millipalms: 625,
+        };
+        send_vision_event(
+            &events,
+            &snapshots,
+            VisionEvent::Scroll {
+                sequence: 2,
+                received_at,
+                state,
+            },
+        )
+        .expect("scroll snapshot replaces status");
+
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .build()
+            .expect("test runtime");
+        assert_eq!(
+            runtime.block_on(receiver.recv()),
+            Some(VisionEvent::Scroll {
+                sequence: 2,
+                received_at,
+                state,
+            })
+        );
     }
 
     #[test]

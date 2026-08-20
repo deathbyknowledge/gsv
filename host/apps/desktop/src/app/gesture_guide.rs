@@ -36,7 +36,7 @@ const VOICE_GESTURE_ROWS: [GestureGuideRow; 3] = [
     },
 ];
 
-const EDIT_GESTURE_ROWS: [GestureGuideRow; 3] = [
+const EDIT_GESTURE_ROWS: [GestureGuideRow; 4] = [
     GestureGuideRow {
         action: "DELETE",
         posture: "3 · INDEX + MIDDLE + RING",
@@ -54,6 +54,12 @@ const EDIT_GESTURE_ROWS: [GestureGuideRow; 3] = [
         posture: "5 · OPEN ALL FIVE FINGERS",
         timing: "HOLD 350 MS",
         effect: "Changes only after the microphone acknowledges it.",
+    },
+    GestureGuideRow {
+        action: "SCROLL",
+        posture: "RIGHT FIST · SETTLE, THEN MOVE UP / DOWN",
+        timing: "HOLD + DRAG",
+        effect: "Grabs the app under the pointer. Open to release; fist again before a number.",
     },
 ];
 
@@ -226,7 +232,7 @@ impl GsvApp {
                             .line_height(relative(1.4))
                             .text_color(theme::color(theme::TEXT_FAINT))
                             .child(
-                                "RIGHT FIST BETWEEN NUMBER COMMANDS · BOTH FISTS DISARM · CORRECTIONS CHANGE ONLY UNSENT DICTATION",
+                                "RIGHT FIST REARMS · SETTLE + DRAG THAT FIST TO SCROLL · OPEN TO RELEASE · BOTH FISTS DISARM",
                             ),
                     ),
             )
@@ -234,7 +240,10 @@ impl GsvApp {
     }
 }
 
-fn render_gesture_guide_column(heading: &'static str, rows: [AnyElement; 3]) -> AnyElement {
+fn render_gesture_guide_column<const N: usize>(
+    heading: &'static str,
+    rows: [AnyElement; N],
+) -> AnyElement {
     div()
         .flex_1()
         .min_w(px(0.0))
@@ -316,7 +325,7 @@ mod tests {
             .into_iter()
             .chain(EDIT_GESTURE_ROWS)
             .collect::<Vec<_>>();
-        assert_eq!(rows.len(), 6);
+        assert_eq!(rows.len(), 7);
         assert_eq!(
             rows.iter().map(|row| row.action).collect::<Vec<_>>(),
             [
@@ -326,6 +335,7 @@ mod tests {
                 "DELETE",
                 "CLEAR DICTATION",
                 "MUTE / UNMUTE",
+                "SCROLL",
             ]
         );
         let vocabulary = rows
@@ -341,7 +351,6 @@ mod tests {
             "thumbs-down",
             "pinch",
             "flick",
-            "scroll",
         ] {
             assert!(!vocabulary.contains(legacy));
         }

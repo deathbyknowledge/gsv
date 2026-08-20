@@ -114,6 +114,7 @@ impl GsvApp {
             VisionEvent::Lifecycle(state) => {
                 self.vision_lifecycle = Some(state);
                 if state != LifecycleState::Ready {
+                    self.vision_scroll.reset();
                     if let Some(request_id) = self.vision_voice_request_id {
                         self.disable_vision_for_voice(request_id);
                     }
@@ -122,6 +123,21 @@ impl GsvApp {
                 self.sync_vision_context();
                 self.refresh_voice_gesture_notice();
                 cx.notify();
+            }
+            VisionEvent::Scroll {
+                sequence,
+                received_at,
+                state,
+            } => {
+                if sequence == 0 || sequence <= self.vision_scroll_sequence {
+                    return;
+                }
+                self.vision_scroll_sequence = sequence;
+                self.vision_scroll.observe(
+                    state,
+                    received_at,
+                    self.vision_armed && self.vision_lifecycle == Some(LifecycleState::Ready),
+                );
             }
             VisionEvent::Status {
                 sequence,
@@ -160,10 +176,11 @@ impl GsvApp {
                 cx.notify();
             }
             VisionEvent::Intent {
-                sequence: _,
+                sequence,
                 received_at,
                 intent,
             } => {
+                self.vision_scroll_sequence = self.vision_scroll_sequence.max(sequence);
                 let fresh =
                     Instant::now().saturating_duration_since(received_at) <= MAX_GESTURE_INTENT_AGE;
                 let ready = self.vision_lifecycle == Some(LifecycleState::Ready);
@@ -172,6 +189,9 @@ impl GsvApp {
                     GestureIntent::SetArmed { armed } => {
                         if fresh && ready {
                             self.vision_armed = armed;
+                            if !armed {
+                                self.vision_scroll.reset();
+                            }
                             self.clear_voice_gesture_status();
                             self.sync_vision_context();
                         }

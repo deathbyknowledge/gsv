@@ -17,18 +17,24 @@ use std::time::Duration;
 use crossbeam_channel::{bounded, Receiver, Sender, TryRecvError, TrySendError};
 use gesture_protocol::{
     read_frame, write_frame, ControlStatus, DesktopCommand, GestureContext, GestureIntent,
-    HelperEvent, LifecycleState, SessionId, EVENT_CHANNEL_CONTRACT_MARKER, EVENT_FD,
+    HelperEvent, LifecycleState, ScrollState, SessionId, EVENT_CHANNEL_CONTRACT_MARKER, EVENT_FD,
     EVENT_FD_MARKER_ENV, PROTOCOL_VERSION, SESSION_HIGH_ENV, SESSION_LOW_ENV,
 };
 
 const EVENT_QUEUE_CAPACITY: usize = 4;
-const STATUS_QUEUE_CAPACITY: usize = 1;
+const SNAPSHOT_QUEUE_CAPACITY: usize = 1;
 const TERMINAL_ENQUEUE_TIMEOUT: Duration = Duration::from_millis(100);
 const TERMINAL_WRITE_TIMEOUT: Duration = Duration::from_millis(500);
 
 enum EventPayload {
     Lifecycle(LifecycleState),
     Intent(GestureIntent),
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum SnapshotPayload {
+    Status(ControlStatus),
+    Scroll(ScrollState),
 }
 
 struct QueuedEvent {
@@ -49,8 +55,8 @@ pub enum ControlContext {
 pub struct HelperControl {
     context: Arc<Mutex<ControlContext>>,
     events: Sender<QueuedEvent>,
-    statuses: Sender<ControlStatus>,
-    status_replacements: Receiver<ControlStatus>,
+    snapshots: Sender<SnapshotPayload>,
+    snapshot_replacements: Receiver<SnapshotPayload>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -85,8 +91,8 @@ impl HelperControl {
         .map_err(|_| ControlTransportError::EventChannelUnavailable)?;
 
         let (events, event_receiver) = bounded(EVENT_QUEUE_CAPACITY);
-        let (statuses, status_receiver) = bounded(STATUS_QUEUE_CAPACITY);
-        let status_replacements = status_receiver.clone();
+        let (snapshots, snapshot_receiver) = bounded(SNAPSHOT_QUEUE_CAPACITY);
+        let snapshot_replacements = snapshot_receiver.clone();
         thread::Builder::new()
             .name("gsv-vision-events".to_string())
             .spawn(move || {
@@ -94,7 +100,7 @@ impl HelperControl {
                     &mut event_output,
                     session_id,
                     event_receiver,
-                    status_receiver,
+                    snapshot_receiver,
                 );
             })
             .map_err(|_| ControlTransportError::WorkerUnavailable)?;
@@ -109,8 +115,8 @@ impl HelperControl {
         Ok(Some(Self {
             context,
             events,
-            statuses,
-            status_replacements,
+            snapshots,
+            snapshot_replacements,
         }))
     }
 
@@ -150,15 +156,25 @@ impl HelperControl {
         self.publish(EventPayload::Intent(intent))
     }
 
+    pub fn publish_scroll(&self, state: ScrollState) -> bool {
+        self.publish_snapshot(SnapshotPayload::Scroll(state))
+    }
+
     /// Replaces an obsolete semantic snapshot without ever waiting for the
     /// event writer. Status is explanatory only; reliable lifecycle and intent
     /// events use a separate, prioritized queue.
+    /// Scroll position is absolute, so it is safe to share this replace-latest
+    /// lane without replaying dropped deltas.
     pub fn publish_status(&self, status: ControlStatus) -> bool {
-        match self.statuses.try_send(status) {
+        self.publish_snapshot(SnapshotPayload::Status(status))
+    }
+
+    fn publish_snapshot(&self, snapshot: SnapshotPayload) -> bool {
+        match self.snapshots.try_send(snapshot) {
             Ok(()) => true,
-            Err(TrySendError::Full(status)) => {
-                let _ = self.status_replacements.try_recv();
-                self.statuses.try_send(status).is_ok()
+            Err(TrySendError::Full(snapshot)) => {
+                let _ = self.snapshot_replacements.try_recv();
+                self.snapshots.try_send(snapshot).is_ok()
             }
             Err(TrySendError::Disconnected(_)) => false,
         }
@@ -189,7 +205,7 @@ fn write_events(
     output: &mut impl Write,
     session_id: SessionId,
     events: Receiver<QueuedEvent>,
-    statuses: Receiver<ControlStatus>,
+    snapshots: Receiver<SnapshotPayload>,
 ) {
     let mut next_sequence = 1_u64;
     loop {
@@ -202,8 +218,8 @@ fn write_events(
                 continue;
             }
             Err(TryRecvError::Disconnected) => {
-                for status in statuses {
-                    if !write_status(output, session_id, &mut next_sequence, status) {
+                for snapshot in snapshots {
+                    if !write_snapshot(output, session_id, &mut next_sequence, snapshot) {
                         return;
                     }
                 }
@@ -220,17 +236,17 @@ fn write_events(
                     }
                 }
                 Err(_) => {
-                    for status in statuses {
-                        if !write_status(output, session_id, &mut next_sequence, status) {
+                    for snapshot in snapshots {
+                        if !write_snapshot(output, session_id, &mut next_sequence, snapshot) {
                             return;
                         }
                     }
                     return;
                 }
             },
-            recv(statuses) -> status => match status {
-                Ok(status) => {
-                    if !write_status(output, session_id, &mut next_sequence, status) {
+            recv(snapshots) -> snapshot => match snapshot {
+                Ok(snapshot) => {
+                    if !write_snapshot(output, session_id, &mut next_sequence, snapshot) {
                         return;
                     }
                 }
@@ -273,16 +289,24 @@ fn write_reliable(
     written
 }
 
-fn write_status(
+fn write_snapshot(
     output: &mut impl Write,
     session_id: SessionId,
     next_sequence: &mut u64,
-    status: ControlStatus,
+    snapshot: SnapshotPayload,
 ) -> bool {
-    let event = HelperEvent::Status {
-        session_id,
-        sequence: take_sequence(next_sequence),
-        status,
+    let sequence = take_sequence(next_sequence);
+    let event = match snapshot {
+        SnapshotPayload::Status(status) => HelperEvent::Status {
+            session_id,
+            sequence,
+            status,
+        },
+        SnapshotPayload::Scroll(state) => HelperEvent::Scroll {
+            session_id,
+            sequence,
+            state,
+        },
     };
     write_frame(output, &event).is_ok()
 }
@@ -384,14 +408,14 @@ mod tests {
 
     fn test_control(
         events: Sender<QueuedEvent>,
-        statuses: Sender<ControlStatus>,
-        status_replacements: Receiver<ControlStatus>,
+        snapshots: Sender<SnapshotPayload>,
+        snapshot_replacements: Receiver<SnapshotPayload>,
     ) -> HelperControl {
         HelperControl {
             context: Arc::new(Mutex::new(ControlContext::Uninitialized)),
             events,
-            statuses,
-            status_replacements,
+            snapshots,
+            snapshot_replacements,
         }
     }
 
@@ -403,6 +427,7 @@ mod tests {
             "gsv-vision-control-v1",
             "gsv-vision-control-v1-explicit-modes",
             "gsv-vision-control-v2-dictation-editing",
+            "gsv-vision-control-v4-armed-one-hand",
         ] {
             assert_eq!(
                 event_channel_enabled(Some(stale)),
@@ -429,13 +454,18 @@ mod tests {
         .expect("hello writes");
 
         let (events, event_receiver) = bounded(EVENT_QUEUE_CAPACITY);
-        let (statuses, status_receiver) = bounded(STATUS_QUEUE_CAPACITY);
-        let status_replacements = status_receiver.clone();
+        let (snapshots, snapshot_receiver) = bounded(SNAPSHOT_QUEUE_CAPACITY);
+        let snapshot_replacements = snapshot_receiver.clone();
         let mut event_output = output.clone();
         let writer = thread::spawn(move || {
-            write_events(&mut event_output, SESSION, event_receiver, status_receiver);
+            write_events(
+                &mut event_output,
+                SESSION,
+                event_receiver,
+                snapshot_receiver,
+            );
         });
-        let control = test_control(events, statuses, status_replacements);
+        let control = test_control(events, snapshots, snapshot_replacements);
 
         assert!(control.publish_terminal_lifecycle(LifecycleState::AssetsUnavailable));
         drop(control);
@@ -516,27 +546,29 @@ mod tests {
     }
 
     #[test]
-    fn semantic_status_is_nonblocking_and_latest_wins() {
+    fn semantic_snapshots_are_nonblocking_and_latest_wins() {
         let (events, _event_receiver) = bounded(EVENT_QUEUE_CAPACITY);
-        let (statuses, status_receiver) = bounded(STATUS_QUEUE_CAPACITY);
-        let control = test_control(events, statuses, status_receiver.clone());
+        let (snapshots, snapshot_receiver) = bounded(SNAPSHOT_QUEUE_CAPACITY);
+        let control = test_control(events, snapshots, snapshot_receiver.clone());
 
         assert!(control.publish_status(ControlStatus::Standby { progress: None }));
-        let latest = ControlStatus::Active {
-            voice_request_id: 41,
-            muted: true,
-            progress: None,
+        let latest = ScrollState::Dragging {
+            instance_id: 4,
+            offset_millipalms: 325,
         };
-        assert!(control.publish_status(latest));
-        assert_eq!(status_receiver.try_recv(), Ok(latest));
+        assert!(control.publish_scroll(latest));
+        assert_eq!(
+            snapshot_receiver.try_recv(),
+            Ok(SnapshotPayload::Scroll(latest))
+        );
     }
 
     #[test]
     fn reliable_intents_precede_status_and_share_monotonic_sequence() {
         let output = SharedOutput::default();
         let (events, event_receiver) = bounded(EVENT_QUEUE_CAPACITY);
-        let (statuses, status_receiver) = bounded(STATUS_QUEUE_CAPACITY);
-        let control = test_control(events, statuses, status_receiver.clone());
+        let (snapshots, snapshot_receiver) = bounded(SNAPSHOT_QUEUE_CAPACITY);
+        let control = test_control(events, snapshots, snapshot_receiver.clone());
         assert!(control.publish_status(ControlStatus::Standby { progress: None }));
         assert!(control.publish_intent(GestureIntent::StartTranscription));
         assert!(control.publish_intent(GestureIntent::VoiceRequest {
@@ -546,7 +578,12 @@ mod tests {
 
         let mut event_output = output.clone();
         let writer = thread::spawn(move || {
-            write_events(&mut event_output, SESSION, event_receiver, status_receiver);
+            write_events(
+                &mut event_output,
+                SESSION,
+                event_receiver,
+                snapshot_receiver,
+            );
         });
         drop(control);
         writer.join().expect("writer exits");

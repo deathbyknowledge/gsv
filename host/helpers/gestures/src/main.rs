@@ -19,11 +19,14 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use crossbeam_channel::{bounded, Receiver, Sender, TryRecvError, TrySendError};
-use gesture_protocol::{ControlStatus, GestureCandidate, GestureContext, GestureProgress};
+use gesture_protocol::{
+    ControlStatus, GestureCandidate, GestureContext, GestureProgress, ScrollState,
+};
 
 use crate::camera::{CameraConfig, CameraError, CameraFailure, CameraStream, FrameReader};
 use crate::control::{
     ControlDiagnostic, ControlHand, ControlIntent, ControlSample, GestureControl, HandPreference,
+    ScrollControl,
 };
 use crate::control_transport::{ControlContext, HelperControl};
 use crate::debug_window::{DebugWindow, DebugWindowConfig};
@@ -92,6 +95,7 @@ struct AnnotatedFrame {
     observation: Observation,
     control_status: ControlStatus,
     control_diagnostic: ControlDiagnostic,
+    scroll_state: ScrollState,
 }
 
 struct InferenceWorkerConfig {
@@ -249,34 +253,45 @@ fn run_window(
             return Err(VisionError::CameraStopped(stats.failure));
         }
         let presentation_at = Instant::now();
-        let (frame, observation, control_status, control_diagnostic) = match annotated.as_ref() {
-            Some(annotated) => {
-                let presentation = control_presentation(
-                    annotated.control_status,
-                    annotated.control_diagnostic,
-                    annotated.observation.observed_at,
-                    presentation_at,
-                );
-                (
-                    &*annotated.frame,
-                    Some(&annotated.observation),
-                    presentation.status,
-                    presentation.diagnostic,
-                )
-            }
-            None => (
-                &*raw_frame,
-                None,
-                ControlStatus::Disabled { progress: None },
-                ControlPresentationDiagnostic::Controller(ControlDiagnostic::AwaitingPose),
-            ),
-        };
+        let (frame, observation, control_status, control_diagnostic, scroll_state) =
+            match annotated.as_ref() {
+                Some(annotated) => {
+                    let presentation = control_presentation(
+                        annotated.control_status,
+                        annotated.control_diagnostic,
+                        annotated.observation.observed_at,
+                        presentation_at,
+                    );
+                    (
+                        &*annotated.frame,
+                        Some(&annotated.observation),
+                        presentation.status,
+                        presentation.diagnostic,
+                        if matches!(
+                            presentation.diagnostic,
+                            ControlPresentationDiagnostic::AwaitingFreshObservation
+                        ) {
+                            ScrollState::Idle
+                        } else {
+                            annotated.scroll_state
+                        },
+                    )
+                }
+                None => (
+                    &*raw_frame,
+                    None,
+                    ControlStatus::Disabled { progress: None },
+                    ControlPresentationDiagnostic::Controller(ControlDiagnostic::AwaitingPose),
+                    ScrollState::Idle,
+                ),
+            };
         window
             .render(
                 frame,
                 observation,
                 control_status,
                 control_diagnostic,
+                scroll_state,
                 &stats,
             )
             .map_err(|_| VisionError::WindowUnavailable)?;
@@ -340,6 +355,8 @@ fn inference_worker(
     let mut last_timestamp = None;
     let mut gesture_control =
         GestureControl::with_preference(GestureContext::Disabled, config.hand_preference);
+    let mut scroll_control =
+        ScrollControl::with_preference(GestureContext::Disabled, config.hand_preference);
     let mut control_revision = 0;
     let mut published_control_status = None;
     while !stop.load(Ordering::Acquire) {
@@ -373,23 +390,27 @@ fn inference_worker(
             }
             ready_published = true;
         }
-        let (context_revision, control_status, control_diagnostic) =
+        let (context_revision, control_status, control_diagnostic, scroll_state, scroll_update) =
             if let Some(control_link) = &control_link {
                 match control_link.context() {
                     ControlContext::Uninitialized => (
                         None,
                         ControlStatus::Disabled { progress: None },
                         ControlDiagnostic::AwaitingPose,
+                        ScrollState::Idle,
+                        None,
                     ),
                     ControlContext::Authoritative { revision, gesture } => {
-                        sync_control_context(
+                        let synchronized_scroll = sync_control_context(
                             &mut gesture_control,
+                            &mut scroll_control,
                             &mut control_revision,
                             revision,
                             gesture,
                         );
-                        let intent = observe_controls(
+                        let (intent, observed_scroll) = observe_controls(
                             &mut gesture_control,
+                            &mut scroll_control,
                             &observation,
                             delivery.frame.captured_at,
                         );
@@ -403,6 +424,8 @@ fn inference_worker(
                             Some(revision),
                             control_status(&gesture_control, delivery.frame.captured_at),
                             gesture_control.diagnostic(),
+                            scroll_control.state(),
+                            observed_scroll.or(synchronized_scroll),
                         )
                     }
                 }
@@ -411,6 +434,8 @@ fn inference_worker(
                     None,
                     ControlStatus::Disabled { progress: None },
                     ControlDiagnostic::AwaitingPose,
+                    ScrollState::Idle,
+                    None,
                 )
             };
         let publish_at = Instant::now();
@@ -428,12 +453,19 @@ fn inference_worker(
                 let _ = control_link.publish_status(control_status);
                 published_control_status = Some((context_revision, control_status, publish_at));
             }
+            if let Some(state) = scroll_update {
+                if !control_link.publish_scroll(state) {
+                    let _ = failure.try_send(VisionError::ProtocolUnavailable);
+                    return;
+                }
+            }
         }
         let annotated = AnnotatedFrame {
             frame: delivery.frame,
             observation,
             control_status,
             control_diagnostic,
+            scroll_state,
         };
         if !publish_latest(&output, &replacement_receiver, annotated) {
             return;
@@ -447,14 +479,18 @@ fn first_frame_timed_out(last_sequence: u64, started_at: Instant, checked_at: In
 
 fn sync_control_context(
     control: &mut GestureControl,
+    scroll: &mut ScrollControl,
     current_revision: &mut u64,
     revision: u64,
     gesture: GestureContext,
-) {
+) -> Option<ScrollState> {
     if revision != *current_revision {
         control.synchronize_state(gesture);
+        let scroll_state = scroll.synchronize_state(gesture);
         *current_revision = revision;
+        return scroll_state;
     }
+    None
 }
 
 fn control_status(control: &GestureControl, now: Instant) -> ControlStatus {
@@ -494,6 +530,7 @@ fn gesture_candidate(
         crate::control::ControlChord::ClearDictation => GestureCandidate::ClearDictation,
         crate::control::ControlChord::Mute => GestureCandidate::Mute,
         crate::control::ControlChord::Unmute => GestureCandidate::Unmute,
+        crate::control::ControlChord::Scroll => return None,
     };
     GestureProgress::new(candidate, 0)
         .expect("zero is bounded")
@@ -516,11 +553,22 @@ fn control_status_publish_due(
 
 fn observe_controls(
     gesture: &mut GestureControl,
+    scroll: &mut ScrollControl,
     observation: &Observation,
     captured_at: Instant,
-) -> Option<ControlIntent> {
-    fn observe(gesture: &mut GestureControl, sample: ControlSample<'_>) -> Option<ControlIntent> {
-        gesture.observe(sample)
+) -> (Option<ControlIntent>, Option<ScrollState>) {
+    fn observe(
+        gesture: &mut GestureControl,
+        scroll: &mut ScrollControl,
+        sample: ControlSample<'_>,
+    ) -> (Option<ControlIntent>, Option<ScrollState>) {
+        let was_dragging = scroll.is_dragging();
+        let intent = gesture.observe(sample);
+        let scroll_state = scroll.observe(sample);
+        if was_dragging || scroll.is_dragging() {
+            gesture.latch_scroll_release();
+        }
+        (intent, scroll_state)
     }
 
     match observation.hands.as_slice() {
@@ -531,6 +579,7 @@ fn observe_controls(
             ];
             observe(
                 gesture,
+                scroll,
                 ControlSample {
                     frame_sequence: observation.frame_sequence,
                     captured_at,
@@ -543,6 +592,7 @@ fn observe_controls(
             let hands = [ControlHand::from_observation(hand)];
             observe(
                 gesture,
+                scroll,
                 ControlSample {
                     frame_sequence: observation.frame_sequence,
                     captured_at,
@@ -553,6 +603,7 @@ fn observe_controls(
         }
         _ => observe(
             gesture,
+            scroll,
             ControlSample {
                 frame_sequence: observation.frame_sequence,
                 captured_at,
@@ -771,10 +822,12 @@ mod tests {
     #[test]
     fn context_revision_applies_strict_absolute_modes() {
         let mut control = GestureControl::default();
+        let mut scroll = ScrollControl::default();
         let mut current_revision = 0;
 
         sync_control_context(
             &mut control,
+            &mut scroll,
             &mut current_revision,
             1,
             GestureContext::Standby,
@@ -785,6 +838,7 @@ mod tests {
         // An unchanged revision cannot smuggle in a different request.
         sync_control_context(
             &mut control,
+            &mut scroll,
             &mut current_revision,
             1,
             GestureContext::Active {
@@ -796,6 +850,7 @@ mod tests {
 
         sync_control_context(
             &mut control,
+            &mut scroll,
             &mut current_revision,
             2,
             GestureContext::Active {
@@ -1039,10 +1094,11 @@ mod tests {
             inference_time: Duration::from_millis(20),
         };
         let mut control = GestureControl::new(GestureContext::Standby);
+        let mut scroll = ScrollControl::new(GestureContext::Standby);
 
         assert_eq!(
-            observe_controls(&mut control, &observation, captured_at),
-            None
+            observe_controls(&mut control, &mut scroll, &observation, captured_at),
+            (None, None)
         );
         assert_eq!(control.diagnostic(), ControlDiagnostic::NeedActionHand);
     }
