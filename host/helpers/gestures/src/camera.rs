@@ -149,7 +149,7 @@ pub enum CameraShutdown {
 #[derive(Clone, Debug)]
 pub struct CameraStats {
     pub running: bool,
-    pub failed: bool,
+    pub failure: Option<CameraFailure>,
     pub published_frames: u64,
     pub slot_replacements: u64,
     pub capture_errors: u64,
@@ -362,7 +362,7 @@ fn camera_worker(
         Err(error) => {
             let failure = CameraFailure::from_backend(&error);
             shared.record_error();
-            shared.finish(true);
+            shared.finish(Some(failure));
             let _ = startup_sender.send(Err(failure));
             return;
         }
@@ -370,15 +370,15 @@ fn camera_worker(
     shared.mark_started();
     if startup_sender.send(Ok(())).is_err() {
         drop(camera);
-        shared.finish(false);
+        shared.finish(None);
         return;
     }
-    let failed = capture_loop(&camera, shared, stop, config.max_consecutive_errors);
+    let failure = capture_loop(&camera, shared, stop, config.max_consecutive_errors);
     // Some platform capture drivers do not interrupt a blocked native read.
     // Publish terminal state only after the backend has actually released, so
     // CameraStream::shutdown can retain its bounded detach fallback.
     drop(camera);
-    shared.finish(failed);
+    shared.finish(failure);
 }
 
 fn closest_camera_format<'a>(
@@ -457,10 +457,10 @@ fn capture_loop(
     shared: &LatestFrameSlot,
     stop: &AtomicBool,
     max_consecutive_errors: u32,
-) -> bool {
+) -> Option<CameraFailure> {
     let mut sequence = 0_u64;
     let mut consecutive_errors = 0_u32;
-    let mut failed = false;
+    let mut terminal_failure = None;
 
     while !stop.load(Ordering::Acquire) {
         match capture_frame(camera, sequence.wrapping_add(1).max(1)) {
@@ -470,11 +470,11 @@ fn capture_loop(
                 shared.publish(frame);
             }
             Err(CaptureFrameError::Timeout) => continue,
-            Err(CaptureFrameError::Failure(_)) => {
+            Err(CaptureFrameError::Failure(failure)) => {
                 consecutive_errors = consecutive_errors.saturating_add(1);
                 shared.record_error();
                 if consecutive_errors >= max_consecutive_errors {
-                    failed = true;
+                    terminal_failure = Some(failure);
                     break;
                 }
                 thread::sleep(CAPTURE_ERROR_BACKOFF);
@@ -482,7 +482,7 @@ fn capture_loop(
         }
     }
 
-    failed
+    terminal_failure
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -533,7 +533,7 @@ struct LatestFrameSlot {
 struct LatestFrameState {
     latest: Option<Arc<FrameView>>,
     running: bool,
-    failed: bool,
+    failure: Option<CameraFailure>,
     published_frames: u64,
     slot_replacements: u64,
     capture_errors: u64,
@@ -547,7 +547,7 @@ impl LatestFrameSlot {
             state: Mutex::new(LatestFrameState {
                 latest: None,
                 running: true,
-                failed: false,
+                failure: None,
                 published_frames: 0,
                 slot_replacements: 0,
                 capture_errors: 0,
@@ -586,10 +586,10 @@ impl LatestFrameSlot {
         state.capture_errors = state.capture_errors.saturating_add(1);
     }
 
-    fn finish(&self, failed: bool) {
+    fn finish(&self, failure: Option<CameraFailure>) {
         let mut state = self.lock();
         state.running = false;
-        state.failed = failed;
+        state.failure = failure;
         drop(state);
         self.changed.notify_all();
     }
@@ -640,7 +640,7 @@ impl LatestFrameSlot {
         let state = self.lock();
         CameraStats {
             running: state.running,
-            failed: state.failed,
+            failure: state.failure,
             published_frames: state.published_frames,
             slot_replacements: state.slot_replacements,
             capture_errors: state.capture_errors,
@@ -727,6 +727,16 @@ mod tests {
             capture_frame_error(&BackendError::StreamEnded),
             CaptureFrameError::Failure(CameraFailure::Capture)
         );
+    }
+
+    #[test]
+    fn terminal_capture_failure_remains_available_to_the_caller() {
+        let slot = LatestFrameSlot::new();
+        slot.finish(Some(CameraFailure::Decode));
+
+        let stats = slot.stats();
+        assert!(!stats.running);
+        assert_eq!(stats.failure, Some(CameraFailure::Decode));
     }
 
     #[test]

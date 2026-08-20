@@ -49,7 +49,7 @@ enum VisionError {
     InvalidCamera,
     CameraPermissionDenied,
     CameraUnavailable(CameraFailure),
-    CameraStopped,
+    CameraStopped(Option<CameraFailure>),
     WindowUnavailable,
     InferenceUnavailable,
     WorkerUnavailable,
@@ -61,6 +61,12 @@ impl Display for VisionError {
         if let Self::CameraUnavailable(failure) = self {
             return write!(formatter, "the local camera could not be opened: {failure}");
         }
+        if let Self::CameraStopped(Some(failure)) = self {
+            return write!(
+                formatter,
+                "the local camera stopped producing frames: {failure}"
+            );
+        }
         formatter.write_str(match self {
             Self::NativeModelsUnavailable => "the pinned native gesture models are unavailable",
             Self::InvalidNativeModelsOverride => {
@@ -69,7 +75,7 @@ impl Display for VisionError {
             Self::InvalidCamera => "GSV_VISION_CAMERA must be a camera index from 0 through 63",
             Self::CameraPermissionDenied => "camera permission was not granted",
             Self::CameraUnavailable(_) => "the local camera could not be opened",
-            Self::CameraStopped => "the local camera stopped producing frames",
+            Self::CameraStopped(_) => "the local camera stopped producing frames",
             Self::WindowUnavailable => "the local gesture debug window is unavailable",
             Self::InferenceUnavailable => "local gesture inference failed",
             Self::WorkerUnavailable => "the local gesture inference worker could not start",
@@ -204,7 +210,7 @@ fn run_window(
 ) -> Result<(), VisionError> {
     let first = reader
         .wait_latest(0, FIRST_FRAME_TIMEOUT)
-        .ok_or(VisionError::CameraStopped)?;
+        .ok_or_else(|| VisionError::CameraStopped(reader.stats().failure))?;
     let mut raw_frame = first.frame;
     let mut raw_sequence = raw_frame.sequence;
     let mut annotated: Option<AnnotatedFrame> = None;
@@ -229,8 +235,8 @@ fn run_window(
         }
 
         let stats = reader.stats();
-        if stats.failed {
-            return Err(VisionError::CameraStopped);
+        if stats.failure.is_some() {
+            return Err(VisionError::CameraStopped(stats.failure));
         }
         let presentation_at = Instant::now();
         let (frame, observation, control_status, control_diagnostic) = match annotated.as_ref() {
@@ -329,11 +335,11 @@ fn inference_worker(
     while !stop.load(Ordering::Acquire) {
         let Some(delivery) = reader.wait_latest(last_sequence, INFERENCE_POLL) else {
             let stats = reader.stats();
-            if stats.failed
+            if stats.failure.is_some()
                 || !stats.running
                 || first_frame_timed_out(last_sequence, first_frame_started, Instant::now())
             {
-                let _ = failure.try_send(VisionError::CameraStopped);
+                let _ = failure.try_send(VisionError::CameraStopped(stats.failure));
                 return;
             }
             continue;
@@ -591,7 +597,7 @@ impl VisionError {
             Self::InvalidCamera | Self::CameraPermissionDenied | Self::CameraUnavailable(_) => {
                 gesture_protocol::LifecycleState::CameraUnavailable
             }
-            Self::CameraStopped => gesture_protocol::LifecycleState::CameraStopped,
+            Self::CameraStopped(_) => gesture_protocol::LifecycleState::CameraStopped,
             Self::WindowUnavailable => gesture_protocol::LifecycleState::WindowUnavailable,
             Self::InferenceUnavailable => gesture_protocol::LifecycleState::InferenceUnavailable,
             Self::WorkerUnavailable => gesture_protocol::LifecycleState::WorkerUnavailable,
