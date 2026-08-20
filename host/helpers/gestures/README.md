@@ -95,7 +95,7 @@ to learn the first unambiguous action hand.
 - Close the action hand into a fist (`0`) after every command. This is the only
   reset that rearms the next count.
 - Hold that fist still for 180 ms, then move it vertically to grab-scroll the
-  application under the pointer. Motion starts outside a 0.20-palm dead zone;
+  current Desktop conversation. Motion starts outside a 0.20-palm dead zone;
   opening the hand releases the drag. After a drag, make a fresh fist before
   showing a numbered command so the release posture cannot act accidentally.
 - Hold both fists for 700 ms whenever gesture commands should be armed or
@@ -116,7 +116,7 @@ so a later partial cannot resurrect corrected text.
 Scroll recognition is independent of the reliable command edge controller. It
 normalizes vertical palm-center motion by the observed palm size and publishes
 an absolute bounded offset for one nonzero drag instance. Replace-latest
-transport may discard intermediate camera frames because Desktop derives wheel
+transport may discard intermediate camera frames because Desktop derives view
 movement from the newest absolute position. A known open posture stops
 immediately; missing or weak tracking stops after a 180 ms grace period. Two
 fists are always reserved for arm/disarm and never begin a scroll.

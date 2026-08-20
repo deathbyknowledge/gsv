@@ -181,6 +181,7 @@ enum RichPresentationEffect {
 const HISTORY_SCROLL_THRESHOLD: f32 = 144.0;
 const HISTORY_SCROLL_LINE_HEIGHT: f32 = 16.0;
 const HISTORY_SCROLL_IDLE: Duration = Duration::from_millis(180);
+const GESTURE_SCROLL_LINES_PER_PALM: f32 = 6.0;
 const TIMELINE_MARKER_WIDTH: f32 = 4.0;
 const TIMELINE_MARKER_HEIGHT: f32 = 8.0;
 const TYPE_LAYOUT_CACHE_LIMIT: usize = crate::history::MAX_FETCHED_HISTORY_MESSAGES + 8;
@@ -1654,21 +1655,57 @@ impl GsvApp {
         cx: &mut Context<Self>,
     ) {
         if matches!(event.touch_phase, TouchPhase::Ended) {
-            self.history_scroll_accumulator = 0.0;
-            self.history_scroll_last_event = None;
-            let feedback_cleared = self.clear_history_edge_feedback();
+            self.finish_conversation_scroll(cx);
             cx.stop_propagation();
-            if feedback_cleared {
-                cx.notify();
-            }
             return;
         }
         let Some(vertical) = normalized_vertical_delta(event.delta) else {
             return;
         };
         cx.stop_propagation();
+        self.apply_conversation_scroll(vertical, Instant::now(), window, cx);
+    }
+
+    pub(super) fn scroll_conversation_by_gesture(
+        &mut self,
+        delta_palms: f32,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if !delta_palms.is_finite()
+            || delta_palms == 0.0
+            || self.login.is_some()
+            || self.microphone_chooser.is_some()
+            || self.gesture_guide_open
+            || self.conversation.mode != SurfaceMode::Conversation
+            || self.interaction.is_approval()
+        {
+            return;
+        }
+        let vertical = delta_palms * HISTORY_SCROLL_LINE_HEIGHT * GESTURE_SCROLL_LINES_PER_PALM;
+        self.apply_conversation_scroll(vertical, Instant::now(), window, cx);
+    }
+
+    pub(super) fn finish_gesture_scroll(&mut self, cx: &mut Context<Self>) {
+        self.finish_conversation_scroll(cx);
+    }
+
+    fn finish_conversation_scroll(&mut self, cx: &mut Context<Self>) {
+        self.history_scroll_accumulator = 0.0;
+        self.history_scroll_last_event = None;
+        if self.clear_history_edge_feedback() {
+            cx.notify();
+        }
+    }
+
+    fn apply_conversation_scroll(
+        &mut self,
+        vertical: f32,
+        now: Instant,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let selection_cleared = self.text_selection.clear();
-        let now = Instant::now();
         if !prepare_history_scroll_gesture(
             &mut self.history_scroll_accumulator,
             &mut self.history_scroll_last_event,
@@ -2239,6 +2276,7 @@ mod tests {
     use std::cell::RefCell;
     use std::rc::Rc;
 
+    use gesture_protocol::{LifecycleState, ScrollState};
     use gpui::{
         point, AppContext as _, Modifiers, ScrollDelta, ScrollWheelEvent, TestAppContext,
         VisualTestContext, WindowOptions,
@@ -2246,6 +2284,7 @@ mod tests {
     use gpui_component::Root;
 
     use super::*;
+    use crate::vision_debug::VisionEvent;
 
     #[test]
     fn expensive_message_layouts_do_not_repeat_during_a_transition() {
@@ -2877,6 +2916,98 @@ mod tests {
             assert_eq!(app.conversation.selected, 2);
             assert_eq!(app.audio.request_count(crate::audio::KeySound::Navigate), 1);
             assert!(app.history_edge_intent.is_none());
+        });
+    }
+
+    #[gpui::test]
+    fn gesture_scroll_moves_the_long_message_canvas_without_a_pointer_event(
+        cx: &mut TestAppContext,
+    ) {
+        cx.update(|cx| {
+            gpui_component::init(cx);
+            bind_keys(cx);
+            crate::register_fonts(cx);
+            crate::configure_theme(cx);
+        });
+
+        let app = Rc::new(RefCell::new(None));
+        let app_for_window = app.clone();
+        let client = crate::client::start(true);
+        let window = cx.update(|cx| {
+            cx.open_window(WindowOptions::default(), move |window, cx| {
+                let view = cx.new(|cx| GsvApp::new(window, cx, client, true, false, true));
+                *app_for_window.borrow_mut() = Some(view.clone());
+                cx.new(|cx| Root::new(view, window, cx))
+            })
+            .expect("the GPUI surface should open")
+        });
+        let mut cx = VisualTestContext::from_window(window.into(), cx);
+        cx.run_until_parked();
+
+        let app = app.borrow().clone().expect("app entity should be retained");
+        cx.cx.update(|cx| {
+            app.update(cx, |app, cx| {
+                app.conversation.moments[1] = crate::model::Moment::new(
+                    "demo-2",
+                    MomentRole::User,
+                    "A long message. ".repeat(2_000),
+                );
+                app.conversation.select(1);
+                app.vision_lifecycle = Some(LifecycleState::Ready);
+                app.vision_armed = true;
+                cx.notify();
+            });
+        });
+        cx.run_until_parked();
+        cx.cx.update(|cx| {
+            let app = app.read(cx);
+            assert!(app.message_scroll.max_offset().height > px(144.0));
+            assert_eq!(app.message_scroll.offset().y, px(0.0));
+        });
+
+        cx.update(|window, cx| {
+            app.update(cx, |app, cx| {
+                app.handle_vision_event(
+                    VisionEvent::Scroll {
+                        sequence: 1,
+                        received_at: Instant::now(),
+                        state: ScrollState::Dragging {
+                            instance_id: 7,
+                            offset_millipalms: -1_000,
+                        },
+                    },
+                    window,
+                    cx,
+                );
+                app.handle_vision_event(
+                    VisionEvent::Scroll {
+                        sequence: 2,
+                        received_at: Instant::now(),
+                        state: ScrollState::Dragging {
+                            instance_id: 7,
+                            offset_millipalms: -1_500,
+                        },
+                    },
+                    window,
+                    cx,
+                );
+                app.handle_vision_event(
+                    VisionEvent::Scroll {
+                        sequence: 3,
+                        received_at: Instant::now(),
+                        state: ScrollState::Idle,
+                    },
+                    window,
+                    cx,
+                );
+            });
+        });
+        cx.cx.update(|cx| {
+            let app = app.read(cx);
+            assert_eq!(app.conversation.selected, 1);
+            assert_eq!(app.message_scroll.offset().y, px(-144.0));
+            assert_eq!(app.history_scroll_accumulator, 0.0);
+            assert!(app.history_scroll_last_event.is_none());
         });
     }
 

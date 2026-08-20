@@ -92,21 +92,22 @@ sequentially opened fingers 1 through 5 to start/finish, send, delete, clear,
 and mute/unmute; those commands remain available while the Desktop window is
 unfocused. A settled action-hand fist also acts as a scroll clutch: vertical
 movement produces absolute palm-relative drag positions, opening releases it,
-and Desktop turns fresh armed updates into native wheel input for the
-application under the pointer. A stationary fist is the only positive reset
-between number commands. Releasing a drag cannot become a numbered command
-until another fist reset, and tracking loss can neither rearm a command nor
-continue scrolling. While transcription is preparing or stopping, Desktop
-temporarily disables action authority but still permits the two-fist disarm
-gesture. Once listening and its initial mute state are authoritative, Desktop
-grants an action lease for that exact voice request. Disarming removes gesture
-authority without ending that request. Active events echo the exact voice
-request, and every helper event echoes the random supervisor session, so stale
-work cannot act on or describe later dictation. Scroll state is absolute and coalescible;
-Desktop validates session, sequence, armed authority, and freshness before
-deriving relative native input. Status and progress never invoke an action.
-Desktop remains the owner of starting and ending the overall voice request,
-acknowledged microphone mute state, and conversation submission. Within an active request,
+and Desktop applies fresh armed updates directly to the conversation view's
+existing long-message and history-scroll policy. A stationary fist is the only
+positive reset between number commands. Releasing a drag cannot become a
+numbered command until another fist reset, and tracking loss can neither rearm
+a command nor continue scrolling. While transcription is preparing or
+stopping, Desktop temporarily disables action authority but still permits the
+two-fist disarm gesture. Once listening and its initial mute state are
+authoritative, Desktop grants an action lease for that exact voice request.
+Disarming removes gesture authority without ending that request. Active events
+echo the exact voice request, and every helper event echoes the random
+supervisor session, so stale work cannot act on or describe later dictation.
+Scroll state is absolute and coalescible; Desktop validates session, sequence,
+armed authority, and freshness before deriving relative view movement. Status
+and progress never invoke an action. Desktop remains the owner of starting and
+ending the overall voice request, acknowledged microphone mute state, and
+conversation submission. Within an active request,
 `gsv-transcribe` owns authoritative utterance boundaries: it finalizes and
 replaces only the model stream while retaining microphone capture, request
 identity, and mute state. Desktop accepts

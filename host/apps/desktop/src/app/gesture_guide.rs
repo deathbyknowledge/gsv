@@ -59,7 +59,7 @@ const EDIT_GESTURE_ROWS: [GestureGuideRow; 4] = [
         action: "SCROLL",
         posture: "RIGHT FIST · SETTLE, THEN MOVE UP / DOWN",
         timing: "HOLD + DRAG",
-        effect: "Grabs the app under the pointer. Open to release; fist again before a number.",
+        effect: "Scrolls this conversation. Open to release; fist again before a number.",
     },
 ];
 

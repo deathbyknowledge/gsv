@@ -154,7 +154,7 @@ pub const MAX_SCROLL_OFFSET_MILLIPALMS: i16 = 4_000;
 
 /// Absolute helper-owned position for one bounded fist-drag gesture.
 ///
-/// Desktop derives wheel movement from changes in `offset_millipalms`. A new
+/// Desktop derives view movement from changes in `offset_millipalms`. A new
 /// nonzero `instance_id` starts at the helper's captured fist position, so a
 /// coalesced update remains sufficient and never replays dropped deltas.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]

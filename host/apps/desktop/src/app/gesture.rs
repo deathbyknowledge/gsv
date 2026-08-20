@@ -2,7 +2,7 @@ use std::time::{Duration, Instant};
 
 use gesture_protocol::{
     ControlStatus, GestureCandidate, GestureContext, GestureIntent, GestureProgress,
-    LifecycleState, VoiceRequestGestureIntent,
+    LifecycleState, ScrollState, VoiceRequestGestureIntent,
 };
 use gpui::{Context, Window};
 
@@ -13,6 +13,69 @@ use super::{GsvApp, VoiceGestureStatus};
 
 const MAX_GESTURE_INTENT_AGE: Duration = Duration::from_secs(1);
 const MAX_GESTURE_STATUS_AGE: Duration = Duration::from_secs(1);
+const MAX_GESTURE_SCROLL_STATE_AGE: Duration = Duration::from_millis(500);
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum GestureScrollUpdate {
+    Start { delta_palms: f32 },
+    Move { delta_palms: f32 },
+    End,
+}
+
+#[derive(Default)]
+pub(super) struct GestureScroller {
+    instance_id: Option<u64>,
+    offset_millipalms: i16,
+}
+
+impl GestureScroller {
+    fn observe(
+        &mut self,
+        state: ScrollState,
+        received_at: Instant,
+        armed: bool,
+    ) -> Option<GestureScrollUpdate> {
+        self.observe_at(state, received_at, armed, Instant::now())
+    }
+
+    fn observe_at(
+        &mut self,
+        state: ScrollState,
+        received_at: Instant,
+        armed: bool,
+        now: Instant,
+    ) -> Option<GestureScrollUpdate> {
+        if !armed || now.saturating_duration_since(received_at) > MAX_GESTURE_SCROLL_STATE_AGE {
+            return self.reset();
+        }
+        let ScrollState::Dragging {
+            instance_id,
+            offset_millipalms,
+        } = state
+        else {
+            return self.reset();
+        };
+
+        let starting = self.instance_id != Some(instance_id);
+        let previous = if starting { 0 } else { self.offset_millipalms };
+        self.instance_id = Some(instance_id);
+        self.offset_millipalms = offset_millipalms;
+        let delta_millipalms = i32::from(offset_millipalms) - i32::from(previous);
+        let delta_palms = delta_millipalms as f32 / 1_000.0;
+        if starting {
+            Some(GestureScrollUpdate::Start { delta_palms })
+        } else if delta_millipalms != 0 {
+            Some(GestureScrollUpdate::Move { delta_palms })
+        } else {
+            None
+        }
+    }
+
+    fn reset(&mut self) -> Option<GestureScrollUpdate> {
+        self.offset_millipalms = 0;
+        self.instance_id.take().map(|_| GestureScrollUpdate::End)
+    }
+}
 
 const GESTURES_STARTING: &str = "GESTURE TRANSCRIPTION · STARTING";
 const GESTURES_DISARMED: &str = "GESTURE CONTROL · DISARMED · HOLD BOTH FISTS TO ARM";
@@ -114,7 +177,9 @@ impl GsvApp {
             VisionEvent::Lifecycle(state) => {
                 self.vision_lifecycle = Some(state);
                 if state != LifecycleState::Ready {
-                    self.vision_scroll.reset();
+                    if self.vision_scroll.reset().is_some() {
+                        self.finish_gesture_scroll(cx);
+                    }
                     if let Some(request_id) = self.vision_voice_request_id {
                         self.disable_vision_for_voice(request_id);
                     }
@@ -133,11 +198,22 @@ impl GsvApp {
                     return;
                 }
                 self.vision_scroll_sequence = sequence;
-                self.vision_scroll.observe(
+                let update = self.vision_scroll.observe(
                     state,
                     received_at,
                     self.vision_armed && self.vision_lifecycle == Some(LifecycleState::Ready),
                 );
+                match update {
+                    Some(GestureScrollUpdate::Start { delta_palms }) => {
+                        self.finish_gesture_scroll(cx);
+                        self.scroll_conversation_by_gesture(delta_palms, window, cx);
+                    }
+                    Some(GestureScrollUpdate::Move { delta_palms }) => {
+                        self.scroll_conversation_by_gesture(delta_palms, window, cx);
+                    }
+                    Some(GestureScrollUpdate::End) => self.finish_gesture_scroll(cx),
+                    None => {}
+                }
             }
             VisionEvent::Status {
                 sequence,
@@ -189,8 +265,8 @@ impl GsvApp {
                     GestureIntent::SetArmed { armed } => {
                         if fresh && ready {
                             self.vision_armed = armed;
-                            if !armed {
-                                self.vision_scroll.reset();
+                            if !armed && self.vision_scroll.reset().is_some() {
+                                self.finish_gesture_scroll(cx);
                             }
                             self.clear_voice_gesture_status();
                             self.sync_vision_context();
@@ -555,6 +631,93 @@ mod tests {
     use crate::transcription::{VoiceCommand, VoiceEvent, VoicePhase};
 
     use super::*;
+
+    #[test]
+    fn absolute_scroll_positions_become_incremental_palm_motion() {
+        let now = Instant::now();
+        let mut scroll = GestureScroller::default();
+
+        assert_eq!(
+            scroll.observe_at(
+                ScrollState::Dragging {
+                    instance_id: 7,
+                    offset_millipalms: -500,
+                },
+                now,
+                true,
+                now,
+            ),
+            Some(GestureScrollUpdate::Start { delta_palms: -0.5 })
+        );
+        assert_eq!(
+            scroll.observe_at(
+                ScrollState::Dragging {
+                    instance_id: 7,
+                    offset_millipalms: -750,
+                },
+                now,
+                true,
+                now,
+            ),
+            Some(GestureScrollUpdate::Move { delta_palms: -0.25 })
+        );
+        assert_eq!(
+            scroll.observe_at(ScrollState::Idle, now, true, now),
+            Some(GestureScrollUpdate::End)
+        );
+        assert_eq!(scroll.observe_at(ScrollState::Idle, now, true, now), None);
+        assert_eq!(
+            scroll.observe_at(
+                ScrollState::Dragging {
+                    instance_id: 8,
+                    offset_millipalms: 0,
+                },
+                now,
+                true,
+                now,
+            ),
+            Some(GestureScrollUpdate::Start { delta_palms: 0.0 })
+        );
+        assert_eq!(
+            scroll.observe_at(
+                ScrollState::Dragging {
+                    instance_id: 8,
+                    offset_millipalms: -250,
+                },
+                now,
+                true,
+                now,
+            ),
+            Some(GestureScrollUpdate::Move { delta_palms: -0.25 })
+        );
+    }
+
+    #[test]
+    fn a_coalesced_new_drag_resets_its_origin_and_stale_authority_ends_it() {
+        let now = Instant::now();
+        let stale = now
+            .checked_sub(MAX_GESTURE_SCROLL_STATE_AGE + Duration::from_millis(1))
+            .expect("test instant supports a short subtraction");
+        let mut scroll = GestureScroller::default();
+        let dragging = |instance_id, offset_millipalms| ScrollState::Dragging {
+            instance_id,
+            offset_millipalms,
+        };
+
+        assert_eq!(
+            scroll.observe_at(dragging(11, 500), now, true, now),
+            Some(GestureScrollUpdate::Start { delta_palms: 0.5 })
+        );
+        assert_eq!(
+            scroll.observe_at(dragging(12, -250), now, true, now),
+            Some(GestureScrollUpdate::Start { delta_palms: -0.25 })
+        );
+        assert_eq!(
+            scroll.observe_at(dragging(12, -500), stale, true, now),
+            Some(GestureScrollUpdate::End)
+        );
+        assert_eq!(scroll.observe_at(dragging(13, 500), now, false, now), None);
+    }
 
     fn open_test_app(
         cx: &mut TestAppContext,

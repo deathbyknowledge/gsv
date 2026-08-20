@@ -10,7 +10,6 @@ mod media_files;
 mod model;
 mod prepared;
 mod startup;
-mod system_scroll;
 mod theme;
 mod transcription;
 mod typography;
