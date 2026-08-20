@@ -8,6 +8,7 @@ use rayon::{ThreadPool, ThreadPoolBuilder};
 use tract_linalg::multithread::Executor;
 use tract_tflite::prelude::*;
 
+use super::depthwise::replace_depthwise_convolutions;
 use super::runtime::ModelPaths;
 use super::Error;
 
@@ -154,6 +155,12 @@ impl Models {
 fn load(path: &Path, executor: &Executor) -> Result<Plan, Error> {
     tract_tflite::tflite()
         .model_for_path(path)
+        .and_then(|mut model| {
+            if channel_depthwise_enabled() {
+                replace_depthwise_convolutions(&mut model)?;
+            }
+            Ok(model)
+        })
         .and_then(|model| model.into_optimized())
         .and_then(|model| {
             model.into_runnable_with_options(&RunOptions {
@@ -162,6 +169,25 @@ fn load(path: &Path, executor: &Executor) -> Result<Plan, Error> {
             })
         })
         .map_err(|_| Error::InvalidModel)
+}
+
+#[cfg(test)]
+pub(super) fn selected_depthwise_kernel() -> &'static str {
+    if channel_depthwise_enabled() {
+        "channel-simd"
+    } else {
+        "tract"
+    }
+}
+
+#[cfg(test)]
+fn channel_depthwise_enabled() -> bool {
+    std::env::var("GSV_VISION_BENCHMARK_DEPTHWISE").map_or(true, |value| value != "tract")
+}
+
+#[cfg(not(test))]
+fn channel_depthwise_enabled() -> bool {
+    true
 }
 
 fn inference_executor() -> Result<(Executor, Option<Arc<ThreadPool>>), Error> {

@@ -53,6 +53,11 @@ Native inference uses up to four worker threads. For controlled benchmark
 experiments only, `GSV_VISION_BENCHMARK_THREADS=1` (or another bounded count)
 overrides that selection and is recorded in the report.
 
+Eligible float32 NHWC depthwise convolutions use the native channel-SIMD
+kernel; all other operations remain in tract. The report records the selected
+depthwise kernel. Set `GSV_VISION_BENCHMARK_DEPTHWISE=tract` when running the
+benchmark to produce a stock-tract comparison without changing production.
+
 For a manually assembled distribution, put the extracted artifact beside
 `gsv-vision` as `vision-models/` (including its `model/` child), or set
 `GSV_VISION_NATIVE_MODELS` to the artifact root. Runtime loading always verifies

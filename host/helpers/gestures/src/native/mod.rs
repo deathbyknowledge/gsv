@@ -1,3 +1,4 @@
+mod depthwise;
 mod geometry;
 mod models;
 pub(crate) mod runtime;
