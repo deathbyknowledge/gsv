@@ -21,12 +21,11 @@ import com.humansandmachines.gsv.wear.MainActivity
 import com.humansandmachines.gsv.wear.R
 import com.humansandmachines.gsv.wear.authority.AuthorityState
 import com.humansandmachines.gsv.wear.authority.WearAuthority
+import com.humansandmachines.gsv.wear.camera.CameraController
 import com.humansandmachines.gsv.wear.config.DriverConfig
 import com.humansandmachines.gsv.wear.config.DriverConfigStore
 import com.humansandmachines.gsv.wear.connection.ConnectionState
 import com.humansandmachines.gsv.wear.connection.ConnectionSupervisor
-import com.humansandmachines.gsv.wear.connection.DriverRequestDispatcherFactory
-import com.humansandmachines.gsv.wear.connection.UnsupportedRequestDispatcher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -34,6 +33,8 @@ import kotlinx.coroutines.SupervisorJob
 class WearRuntimeService : LifecycleService() {
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private val authority = WearAuthority()
+    private lateinit var camera: CameraController
+    private lateinit var dispatcherFactory: WearRequestDispatcherFactory
     private var connection: ConnectionSupervisor? = null
     private var connectionConfig: DriverConfig? = null
     private var foregroundStarted = false
@@ -42,6 +43,16 @@ class WearRuntimeService : LifecycleService() {
         super.onCreate()
         createNotificationChannel()
         WearRuntimeState.reset()
+        camera = CameraController(
+            context = applicationContext,
+            lifecycleOwner = this,
+            authority = authority,
+            onState = { state ->
+                WearRuntimeState.setCamera(state)
+                refreshNotification()
+            },
+        )
+        dispatcherFactory = WearRequestDispatcherFactory(serviceScope, authority, camera)
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -49,12 +60,16 @@ class WearRuntimeService : LifecycleService() {
         when (intent?.action) {
             ACTION_ARM -> handleArm()
             ACTION_PAUSE -> {
-                if (authority.pause()) publishAuthority()
+                if (authority.pause()) {
+                    dispatcherFactory.cancelAll()
+                    publishAuthority()
+                }
             }
             ACTION_RESUME -> {
                 if (authority.resume()) publishAuthority()
             }
             ACTION_DISARM -> {
+                dispatcherFactory.cancelAll()
                 authority.disarm()
                 publishAuthority()
             }
@@ -65,10 +80,12 @@ class WearRuntimeService : LifecycleService() {
     }
 
     override fun onDestroy() {
+        if (::dispatcherFactory.isInitialized) dispatcherFactory.cancelAll()
         authority.disarm()
         connection?.stop()
         connection = null
         connectionConfig = null
+        if (::camera.isInitialized) camera.close()
         WearRuntimeState.reset()
         super.onDestroy()
     }
@@ -101,6 +118,7 @@ class WearRuntimeService : LifecycleService() {
             return
         }
 
+        dispatcherFactory.cancelAll()
         authority.arm()
         publishAuthority()
         if (!sameConnection(config, connectionConfig)) {
@@ -117,7 +135,7 @@ class WearRuntimeService : LifecycleService() {
             context = applicationContext,
             scope = serviceScope,
             config = config,
-            dispatcherFactory = DriverRequestDispatcherFactory(::UnsupportedRequestDispatcher),
+            dispatcherFactory = dispatcherFactory,
             onStatus = { status ->
                 WearRuntimeState.setConnection(status)
                 refreshNotification()
@@ -126,6 +144,7 @@ class WearRuntimeService : LifecycleService() {
     }
 
     private fun disconnectRuntime() {
+        dispatcherFactory.cancelAll()
         authority.disarm()
         connection?.stop()
         connection = null
