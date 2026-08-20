@@ -51,7 +51,7 @@ const EDIT_GESTURE_ROWS: [GestureGuideRow; 3] = [
     },
     GestureGuideRow {
         action: "RESET / REARM",
-        posture: "ACTION HAND · CLOSED FIST",
+        posture: "ACTION HAND (RIGHT BY DEFAULT) · CLOSED FIST",
         timing: "BETWEEN EVERY COMMAND",
         effect: "Return to a fist before showing the next number.",
     },
@@ -172,7 +172,9 @@ impl GsvApp {
                             .text_size(px(25.0))
                             .line_height(relative(1.2))
                             .text_color(theme::color(theme::TEXT_QUIET))
-                            .child("Keep one fist closed. Count with the other hand."),
+                            .child(
+                                "By default, keep your left fist closed. Count with your right hand.",
+                            ),
                     )
                     .child(
                         div()
@@ -194,7 +196,9 @@ impl GsvApp {
                                 div()
                                     .text_size(px(11.0))
                                     .text_color(theme::color(theme::TEXT_QUIET))
-                                    .child("CLOSED FIST · KEEP CLOSED THROUGH EVERY ACTION"),
+                                    .child(
+                                        "LEFT HAND BY DEFAULT · CLOSED FIST THROUGH EVERY ACTION",
+                                    ),
                             ),
                     )
                     .child(

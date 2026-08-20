@@ -87,12 +87,13 @@ GSV_GESTURE_DEBUG=1 cargo run --manifest-path host/apps/desktop/Cargo.toml
 ```
 
 The helper uses tract and checksum-pinned TFLite models, with no Python, Java,
-Bazel, or native MediaPipe dependency. Keep the modifier hand in a closed fist
-while the action hand counts by opening fingers in order: 1 starts or finishes
-transcription, 2 sends and keeps listening, 3 deletes one visible character
-from unsent dictation, 4 clears the unsent dictated text after a one-second
-hold, and 5 mutes or unmutes. Return the action hand to a fist between every
-command. Typed text and attachments survive correction gestures. The active
+Bazel, or native MediaPipe dependency. The physical left hand is the closed-fist
+modifier by default, while the physical right hand counts by opening fingers in
+order: 1 starts or finishes transcription, 2 sends and keeps listening, 3
+deletes one visible character from unsent dictation, 4 clears the unsent
+dictated text after a one-second hold, and 5 mutes or unmutes. Return the action
+hand to a fist between every command. Typed text and attachments survive
+correction gestures. The active
 transcription itself is the gesture authority—there is no separate armed
 bit—and applied mute state survives an utterance send. The dictation shortcut
 remains the equivalent explicit Start/Stop control.

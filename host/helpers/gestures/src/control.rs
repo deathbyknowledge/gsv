@@ -91,9 +91,9 @@ pub enum ControlDiagnostic {
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub enum HandPreference {
-    #[default]
     Auto,
     Left,
+    #[default]
     Right,
 }
 
@@ -159,7 +159,7 @@ impl GestureControl {
     /// Creates a controller synchronized with Desktop's absolute state echo.
     #[must_use]
     pub const fn new(state: ControlState) -> Self {
-        Self::with_preference(state, HandPreference::Auto)
+        Self::with_preference(state, HandPreference::Right)
     }
 
     #[must_use]

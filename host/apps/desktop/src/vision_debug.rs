@@ -44,6 +44,7 @@ const HELPER_ENVIRONMENT: &[&str] = &[
     "TMPDIR",
     "LANG",
     "LC_ALL",
+    "GSV_GESTURE_DOMINANT_HAND",
     "GSV_VISION_NATIVE_MODELS",
     "GSV_VISION_CAMERA",
 ];
@@ -1117,6 +1118,10 @@ mod tests {
                 OsString::from("GSV_VISION_NATIVE_MODELS"),
                 OsString::from("/debug/vision-models"),
             ),
+            (
+                OsString::from("GSV_GESTURE_DOMINANT_HAND"),
+                OsString::from("left"),
+            ),
             (OsString::from("GSV_VISION_CAMERA"), OsString::from("2")),
             (OsString::from("GSV_TOKEN"), OsString::from("secret")),
             (OsString::from(EVENT_FD_MARKER_ENV), OsString::from("3")),
@@ -1126,11 +1131,14 @@ mod tests {
         ];
 
         let allowed = allowed_environment(environment);
-        assert_eq!(allowed.len(), 3);
+        assert_eq!(allowed.len(), 4);
         assert!(allowed.iter().any(|(key, _)| key == "PATH"));
         assert!(allowed
             .iter()
             .any(|(key, _)| key == "GSV_VISION_NATIVE_MODELS"));
+        assert!(allowed
+            .iter()
+            .any(|(key, _)| key == "GSV_GESTURE_DOMINANT_HAND"));
         assert!(allowed.iter().any(|(key, _)| key == "GSV_VISION_CAMERA"));
         assert!(!allowed.iter().any(|(key, _)| key == "GSV_TOKEN"));
         assert!(!allowed.iter().any(|(key, _)| key == EVENT_FD_MARKER_ENV));

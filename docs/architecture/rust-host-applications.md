@@ -91,10 +91,12 @@ listening and its initial mute state are authoritative, Desktop grants an action
 lease for that exact voice request. Active events echo the exact voice request,
 and every helper event echoes the random supervisor session, so stale work
 cannot act on or describe later dictation. Status and progress never invoke an
-action. The helper requires one closed-fist modifier and maps sequentially
-opened action-hand fingers 1 through 5 to start/finish, send, delete, clear, and
-mute/unmute. An action-hand fist is the only positive reset between commands;
-tracking loss cannot rearm one. Desktop remains the owner of starting and
+action. The helper normalizes the selfie-oriented model output to physical
+handedness, uses the left hand as the closed-fist modifier and the right hand as
+the action hand by default, and maps sequentially opened action-hand fingers 1
+through 5 to start/finish, send, delete, clear, and mute/unmute. An action-hand
+fist is the only positive reset between commands; tracking loss cannot rearm
+one. Desktop remains the owner of starting and
 ending the overall voice request, acknowledged microphone mute state, and
 conversation submission; there is no independent persistent gesture-arming
 bit. Within an active request,

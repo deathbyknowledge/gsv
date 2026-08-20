@@ -67,10 +67,12 @@ frames rather than accumulating a private video queue.
 
 ## Gesture grammar
 
-One hand is the closed-fist modifier and the other performs actions; camera
-array order is irrelevant. By default, the helper learns the roles when it
-sees exactly one fist beside one numbered action pose. Set
-`GSV_GESTURE_DOMINANT_HAND=left` or `right` to assign them explicitly. Desktop supplies one
+The physical left hand is the closed-fist modifier and the physical right hand
+performs actions by default; camera array order is irrelevant. The model's
+selfie-oriented handedness is normalized at landmark decoding because inference
+receives the original, unmirrored camera frame. Set
+`GSV_GESTURE_DOMINANT_HAND=left` to swap the roles or `auto` to learn them from
+the first unambiguous fist-and-count pair. Desktop supplies one
 strict absolute context: standby when there is no voice request and the helper
 may propose starting one, disabled while an existing request is preparing,
 stopping, or otherwise not gesture-eligible, or active with the exact listening
@@ -120,7 +122,8 @@ not infer speech silence or implement auto-send.
 - `GSV_VISION_NATIVE_MODELS=/path/to/gesture-recognizer-float16-1` overrides
   the extracted model root; every model is still verified by size and SHA-256.
 - `GSV_GESTURE_DOMINANT_HAND=auto|left|right` selects the action hand. `auto`
-  is the default and assigns roles from the first unambiguous fist-and-count pair.
+  assigns roles from the first unambiguous fist-and-count pair; `right` is the
+  default.
 - `GSV_VISION_HELPER=/path/to/gsv-vision` tells Desktop which helper executable
   to supervise.
 

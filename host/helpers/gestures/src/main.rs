@@ -639,7 +639,7 @@ fn parse_camera_index(value: Option<&OsStr>) -> Result<Option<u32>, VisionError>
 
 fn parse_hand_preference(value: Option<&OsStr>) -> Result<HandPreference, VisionError> {
     match value {
-        None => Ok(HandPreference::Auto),
+        None => Ok(HandPreference::Right),
         Some(value) if value == OsStr::new("auto") => Ok(HandPreference::Auto),
         Some(value) if value == OsStr::new("left") => Ok(HandPreference::Left),
         Some(value) if value == OsStr::new("right") => Ok(HandPreference::Right),
@@ -672,8 +672,8 @@ mod tests {
     }
 
     #[test]
-    fn dominant_hand_is_explicit_and_defaults_to_auto() {
-        assert_eq!(parse_hand_preference(None), Ok(HandPreference::Auto));
+    fn dominant_hand_is_explicit_and_defaults_to_right() {
+        assert_eq!(parse_hand_preference(None), Ok(HandPreference::Right));
         assert_eq!(
             parse_hand_preference(Some(OsStr::new("auto"))),
             Ok(HandPreference::Auto)

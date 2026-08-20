@@ -87,13 +87,7 @@ impl Features {
             return None;
         }
 
-        let thumb_straight = finger_straightness(
-            landmarks[THUMB_CMC],
-            landmarks[THUMB_MCP],
-            landmarks[THUMB_IP],
-            landmarks[THUMB_TIP],
-        );
-        let thumb_spread = distance(landmarks[THUMB_TIP], landmarks[INDEX_MCP]) / scale;
+        let (thumb_straight, thumb_palm_distance, thumb_outward) = thumb_geometry(landmarks, scale);
         Some(Self {
             fingers: [
                 finger_straightness(
@@ -123,9 +117,13 @@ impl Features {
             ],
             thumb_open: minimum(&[
                 high(thumb_straight, 0.62, 0.25),
-                high(thumb_spread, 0.52, 0.20),
+                high(thumb_palm_distance, 0.58, 0.24),
+                high(thumb_outward, 0.35, 0.25),
             ]),
-            thumb_closed: low(thumb_spread, 0.42, 0.22),
+            thumb_closed: minimum(&[
+                low(thumb_palm_distance, 0.48, 0.28),
+                low(thumb_outward, 0.12, 0.28),
+            ]),
         })
     }
 
@@ -144,6 +142,49 @@ impl Features {
             _ => 1.0,
         };
         minimum(&scores)
+    }
+}
+
+fn thumb_geometry(landmarks: &[Landmark; HAND_LANDMARK_COUNT], scale: f32) -> (f32, f32, f32) {
+    let thumb_straight = finger_straightness(
+        landmarks[THUMB_CMC],
+        landmarks[THUMB_MCP],
+        landmarks[THUMB_IP],
+        landmarks[THUMB_TIP],
+    );
+    let palm_center = average(&[
+        landmarks[INDEX_MCP],
+        landmarks[MIDDLE_MCP],
+        landmarks[RING_MCP],
+        landmarks[PINKY_MCP],
+    ]);
+    let thumb_palm_distance = distance(landmarks[THUMB_TIP], palm_center) / scale;
+    let outward_axis = subtract(landmarks[INDEX_MCP], landmarks[PINKY_MCP]);
+    let outward_denominator = dot(outward_axis, outward_axis);
+    let thumb_outward = if outward_denominator <= f32::EPSILON {
+        0.0
+    } else {
+        dot(
+            subtract(landmarks[THUMB_TIP], landmarks[INDEX_MCP]),
+            outward_axis,
+        ) / outward_denominator
+    };
+    (thumb_straight, thumb_palm_distance, thumb_outward)
+}
+
+fn average(values: &[Landmark]) -> Landmark {
+    let count = values.len() as f32;
+    let sum = values
+        .iter()
+        .fold(Landmark::default(), |sum, value| Landmark {
+            x: sum.x + value.x,
+            y: sum.y + value.y,
+            z: sum.z + value.z,
+        });
+    Landmark {
+        x: sum.x / count,
+        y: sum.y / count,
+        z: sum.z / count,
     }
 }
 
@@ -329,5 +370,19 @@ mod tests {
             landmarks[joint] = Landmark { x: 0.2, y, z: 0.0 };
         }
         assert_eq!(recognize(&landmarks).pose, HandPose::Unknown);
+    }
+
+    #[test]
+    fn a_thumb_tucked_across_the_palm_is_four_not_five() {
+        let mut landmarks = finger_count(4);
+        for (joint, x, y) in [
+            (THUMB_CMC, -0.72, 0.0),
+            (THUMB_MCP, -0.45, 0.10),
+            (THUMB_IP, -0.05, 0.15),
+            (THUMB_TIP, 0.35, 0.15),
+        ] {
+            landmarks[joint] = Landmark { x, y, z: 0.0 };
+        }
+        assert_eq!(recognize(&landmarks).pose, HandPose::FourFingers);
     }
 }
