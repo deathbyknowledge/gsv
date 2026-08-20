@@ -16,6 +16,7 @@ sha2 = "0.10"
 rayon = "1"
 tract-linalg = { version = "=0.23.4", features = ["multithread-mm"] }
 tract-tflite = "=0.23.4"
+zune-jpeg = "=0.5.15"
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"

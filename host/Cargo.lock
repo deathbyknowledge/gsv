@@ -2578,6 +2578,7 @@ dependencies = [
  "tempfile",
  "tract-linalg",
  "tract-tflite",
+ "zune-jpeg 0.5.15",
 ]
 
 [[package]]

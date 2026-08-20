@@ -1,5 +1,6 @@
 use std::error::Error;
 use std::fmt::{self, Display, Formatter};
+use std::io::Cursor;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::sync_channel;
 use std::sync::{Arc, Condvar, Mutex, MutexGuard};
@@ -494,8 +495,17 @@ enum CaptureFrameError {
 fn capture_frame(camera: &Camera, sequence: u64) -> Result<FrameView, CaptureFrameError> {
     let frame = cameras::next_frame(camera, CAPTURE_FRAME_TIMEOUT)
         .map_err(|error| capture_frame_error(&error))?;
-    let rgb = cameras::to_rgb8(&frame)
-        .map_err(|error| CaptureFrameError::Failure(CameraFailure::from_backend(&error)))?;
+    let rgb = match cameras::to_rgb8(&frame) {
+        Ok(rgb) => rgb,
+        Err(BackendError::MjpegDecode(_)) if frame.pixel_format == PixelFormat::Mjpeg => {
+            decode_mjpeg(&frame.plane_primary, frame.width, frame.height)?
+        }
+        Err(error) => {
+            return Err(CaptureFrameError::Failure(CameraFailure::from_backend(
+                &error,
+            )));
+        }
+    };
     let expected_length = usize::try_from(frame.width)
         .ok()
         .and_then(|width| {
@@ -515,6 +525,18 @@ fn capture_frame(camera: &Camera, sequence: u64) -> Result<FrameView, CaptureFra
         height: frame.height,
         rgb: Arc::from(rgb.into_boxed_slice()),
     })
+}
+
+fn decode_mjpeg(bytes: &[u8], width: u32, height: u32) -> Result<Vec<u8>, CaptureFrameError> {
+    let mut decoder = zune_jpeg::JpegDecoder::new(Cursor::new(bytes));
+    decoder.set_options(
+        (*decoder.options())
+            .set_max_width(width as usize)
+            .set_max_height(height as usize),
+    );
+    decoder
+        .decode()
+        .map_err(|_| CaptureFrameError::Failure(CameraFailure::Decode))
 }
 
 fn capture_frame_error(error: &BackendError) -> CaptureFrameError {
@@ -662,6 +684,7 @@ fn delivery_after(frame: Option<&Arc<FrameView>>, after_sequence: u64) -> Option
 #[cfg(test)]
 mod tests {
     use super::*;
+    use image::codecs::jpeg::JpegEncoder;
 
     fn frame(sequence: u64) -> FrameView {
         FrameView {
@@ -737,6 +760,19 @@ mod tests {
         let stats = slot.stats();
         assert!(!stats.running);
         assert_eq!(stats.failure, Some(CameraFailure::Decode));
+    }
+
+    #[test]
+    fn compatibility_decoder_produces_packed_rgb() {
+        let mut encoded = Vec::new();
+        JpegEncoder::new(&mut encoded)
+            .encode(&[255, 0, 0], 1, 1, image::ExtendedColorType::Rgb8)
+            .expect("jpeg fixture");
+
+        let decoded = decode_mjpeg(&encoded, 1, 1).expect("decoded jpeg");
+        assert_eq!(decoded.len(), 3);
+        assert!(decoded[0] > decoded[1]);
+        assert!(decoded[0] > decoded[2]);
     }
 
     #[test]
