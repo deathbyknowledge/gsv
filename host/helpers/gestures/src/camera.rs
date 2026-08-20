@@ -420,12 +420,12 @@ fn format_rate_distance(format: &FormatDescriptor, config: &CameraConfig) -> f64
 
 fn pixel_format_preference(format: PixelFormat) -> u8 {
     match format {
-        PixelFormat::Mjpeg => 0,
-        PixelFormat::Nv12 => 1,
-        PixelFormat::Yuyv => 2,
+        PixelFormat::Nv12 => 0,
+        PixelFormat::Yuyv => 1,
+        PixelFormat::Bgra8 => 2,
         PixelFormat::Rgb8 => 3,
         PixelFormat::Rgba8 => 4,
-        PixelFormat::Bgra8 => 5,
+        PixelFormat::Mjpeg => 5,
         _ => 6,
     }
 }
@@ -674,7 +674,7 @@ mod tests {
     }
 
     #[test]
-    fn format_selection_prefers_target_size_rate_and_native_conversion_order() {
+    fn format_selection_prefers_target_size_rate_and_uncompressed_frames() {
         let config = CameraConfig::default();
         assert_eq!(format_size_distance_from(640, 480, &config), 0);
         assert!(format_size_distance_from(1_280, 720, &config) > 0);
@@ -682,12 +682,12 @@ mod tests {
         assert_eq!(closest_frame_rate_in_range(30.0, 60.0, 15), 30);
         assert_eq!(closest_frame_rate_in_range(1.0, 10.0, 15), 10);
         assert!(
-            pixel_format_preference(PixelFormat::Mjpeg)
-                < pixel_format_preference(PixelFormat::Yuyv)
+            pixel_format_preference(PixelFormat::Nv12)
+                < pixel_format_preference(PixelFormat::Mjpeg)
         );
         assert!(
             pixel_format_preference(PixelFormat::Yuyv)
-                < pixel_format_preference(PixelFormat::Bgra8)
+                < pixel_format_preference(PixelFormat::Mjpeg)
         );
     }
 
