@@ -389,6 +389,71 @@ describe("ProcessStore", () => {
         expect(meta.isError).toBe(true);
       });
     });
+
+    it("stores tool result media as message references", async () => {
+      const stub = await getProcessByPid("tool-result-media");
+      await runInDurableObject(stub, (instance: Process) => {
+        const store = (instance as any).store;
+        const media = JSON.stringify([{
+          type: "image",
+          mimeType: "image/png",
+          key: "var/media/0/tool-result-media/image",
+        }]);
+        store.appendToolResult(
+          "call_media",
+          "fs.read",
+          "image metadata",
+          false,
+          "run-tool-media",
+          "completed",
+          media,
+        );
+
+        expect(store.getMessages()[0].media).toBe(media);
+        expect(store.toMessages()[0].content).toEqual([
+          { type: "text", text: "image metadata" },
+          {
+            type: "text",
+            text: "Attached image [image/png]\nPath: /var/media/0/tool-result-media/image",
+          },
+        ]);
+      });
+    });
+
+    it("restores legacy image tool results without presenting base64 as text", async () => {
+      const stub = await getProcessByPid("tool-result-legacy-image");
+      await runInDurableObject(stub, (instance: Process) => {
+        const store = (instance as any).store;
+        store.appendToolResult(
+          "call_legacy_image",
+          "fs.read",
+          JSON.stringify({
+            ok: true,
+            content: [
+              { type: "text", text: "legacy image" },
+              { type: "image", data: "AQID", mimeType: "image/png" },
+            ],
+          }),
+          false,
+        );
+
+        const message = store.toMessages()[0];
+        expect(message.content).toEqual([
+          {
+            type: "text",
+            text: JSON.stringify({
+              ok: true,
+              content: [
+                { type: "text", text: "legacy image" },
+                { type: "image", mimeType: "image/png" },
+              ],
+            }),
+          },
+          { type: "image", data: "AQID", mimeType: "image/png" },
+        ]);
+        expect((message.content as any[])[0].text).not.toContain("AQID");
+      });
+    });
   });
 
   // ---------- toMessages ----------

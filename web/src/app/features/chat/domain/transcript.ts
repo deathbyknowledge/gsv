@@ -91,6 +91,7 @@ type ToolResultHistory = {
   ok: boolean;
   outcome: ChatToolOutcome | null;
   output: unknown;
+  media: unknown[];
   syscall: string | null;
   toolName: string;
 };
@@ -420,6 +421,7 @@ export function transcriptRowsFromHistory(history: ChatHistory): ChatTranscriptR
           toolName: parsed.toolName,
           ...(parsed.outcome ? { toolOutcome: parsed.outcome } : {}),
           toolOutput: parsed.output,
+          ...(parsed.media.length > 0 ? { media: parsed.media } : {}),
           toolSyscall: parsed.syscall,
           isError: !parsed.ok,
           status: parsed.ok ? "done" as const : "error" as const,
@@ -1077,6 +1079,7 @@ function extractToolResultHistory(content: unknown, fallbackText: string): ToolR
     ok: outcome === "completed" || (outcome === null && (record?.ok === true || record?.isError !== true)),
     outcome,
     output: record?.output ?? fallbackText,
+    media: Array.isArray(record?.media) ? record.media : [],
     error: asString(record?.error),
     syscall: inferToolSyscall(toolName, asString(record?.syscall)),
   };

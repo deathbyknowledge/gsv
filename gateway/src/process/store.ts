@@ -43,6 +43,7 @@ import {
   PROCESS_AI_CONFIG_STORE_KEY,
   normalizeProcessAiConfigSnapshot,
 } from "./ai-config";
+import { materializeLegacyToolResultImages } from "./tool-result-media";
 
 const DEFAULT_MESSAGE_READ_LIMIT = 200;
 
@@ -908,11 +909,18 @@ export class ProcessStore {
         case "toolResult": {
           const meta: { toolName?: string; isError?: boolean } =
             r.toolCalls ? JSON.parse(r.toolCalls) : {};
+          const media = parseStoredProcessMedia(r.media);
+          const legacyImageContent = media.length === 0
+            ? materializeLegacyToolResultImages(r.content)
+            : null;
           messages.push({
             role: "toolResult",
             toolCallId: r.toolCallId!,
             toolName: meta.toolName ?? "unknown",
-            content: [{ type: "text", text: r.content }],
+            content: legacyImageContent ?? [
+              { type: "text", text: r.content },
+              ...buildFallbackMediaBlocks(media),
+            ],
             isError: meta.isError ?? false,
             timestamp: r.createdAt,
           } satisfies ToolResultMessage);
@@ -935,11 +943,13 @@ export class ProcessStore {
     isError: boolean,
     runId?: string,
     outcome?: ProcToolResultOutcome,
+    media?: string,
   ): number {
     const toolName = SYSCALL_TOOL_NAMES[syscallName] ?? syscallName;
     return this.appendMessage("toolResult", content, {
       runId,
       toolCallId,
+      media,
       toolCalls: JSON.stringify({
         toolName,
         isError,

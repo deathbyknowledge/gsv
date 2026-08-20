@@ -108,6 +108,7 @@ import type {
   Context,
   Message,
   Tool,
+  ToolResultMessage,
   UserMessage,
   ImageContent,
 } from "@earendil-works/pi-ai";
@@ -206,6 +207,11 @@ import {
   createCodeModeRequest,
 } from "../codemode/request";
 import { formatAgentToolResponse, materializeToolResponse } from "./tool-response";
+import {
+  extractToolResultImages,
+  unwrapStoredToolResult,
+  wrapStoredToolResult,
+} from "./tool-result-media";
 import {
   createProcessAiConfigSnapshot,
   isProcessAiConfigKey,
@@ -2429,12 +2435,14 @@ export class Process extends Host<Env> {
           }
         }
         const isError = meta.isError ?? false;
+        const media = r.media ? this.parseOwnedProcessMedia(r.media) : [];
         const content = {
           toolName: meta.toolName ?? "unknown",
           isError,
           outcome: normalizeToolResultOutcome(meta.outcome, isError, r.content),
           toolCallId: r.toolCallId ?? null,
           output: r.content,
+          ...(media.length > 0 ? { media } : {}),
         } satisfies ProcHistoryToolResultContent;
 
         return {
@@ -3581,6 +3589,9 @@ export class Process extends Host<Env> {
     const metadataPart = message.metadata ? { metadata: message.metadata } : {};
     if (message.role === "toolResult") {
       const isError = message.isError ?? false;
+      const media = message.media === undefined
+        ? []
+        : this.parseOwnedProcessMedia(JSON.stringify(message.media));
       return {
         id: message.id,
         role: message.role,
@@ -3590,6 +3601,7 @@ export class Process extends Host<Env> {
           outcome: normalizeToolResultOutcome(message.outcome, isError, message.content),
           toolCallId: message.toolCallId ?? null,
           output: message.content,
+          ...(media.length > 0 ? { media } : {}),
         },
         timestamp: message.createdAt,
         ...run,
@@ -5837,16 +5849,111 @@ export class Process extends Host<Env> {
     if (!pending || pending.runId !== runId) {
       return false;
     }
-    const wasStarted = pending.status === "pending";
-    const transitioned = this.store.resolve(executionId, result, outcome);
+    const prepared = await this.prepareToolResultForStorage(runId, executionId, result);
+    const current = this.store.getPending(executionId);
+    if (!current || current.runId !== runId) {
+      await this.deletePreparedToolResultMedia(prepared.createdKeys);
+      return false;
+    }
+    const wasStarted = current.status === "pending";
+    const transitioned = this.store.resolve(executionId, prepared.value, outcome);
+    if (!transitioned) {
+      await this.deletePreparedToolResultMedia(prepared.createdKeys);
+      return false;
+    }
     const resumeRun = transitioned && this.store.isRunResolved(runId);
     if (transitioned && wasStarted) {
-      await this.emitToolFinished(runId, executionId, pending.callId, outcome);
+      await this.emitToolFinished(runId, executionId, current.callId, outcome);
     }
     if (resumeRun) {
       await this.resumeResolvedToolRun(runId);
     }
     return transitioned;
+  }
+
+  private async prepareToolResultForStorage(
+    runId: string,
+    executionId: string,
+    result: unknown,
+  ): Promise<{ value: unknown; createdKeys: string[] }> {
+    const lifecycleEpoch = this.lifecycleEpoch;
+    const signal = this.runAbortSignal(runId);
+    const extracted = extractToolResultImages(result, {
+      maxImages: MAX_MESSAGE_MEDIA_ITEMS,
+      maxBytes: MAX_PROCESS_MEDIA_READ_BYTES,
+    });
+    if (extracted.images.length === 0) {
+      return { value: result, createdKeys: [] };
+    }
+    const createdKeys: string[] = [];
+    const media: StoredProcessMedia[] = [];
+
+    try {
+      for (const image of extracted.images) {
+        signal.throwIfAborted();
+        if (
+          this.killed
+          || this.lifecycleEpoch !== lifecycleEpoch
+          || this.store.getPending(executionId)?.runId !== runId
+        ) {
+          throw new Error("Tool result is no longer pending");
+        }
+
+        const key = `${processMediaPrefix(this.identity.uid, this.pid)}tool-result:${crypto.randomUUID()}`;
+        const path = processMediaPath(key);
+        if (!path) {
+          throw new Error("Process identity cannot own tool result media");
+        }
+        createdKeys.push(key);
+        const stored = await this.storage.put(key, image.bytes, {
+          httpMetadata: { contentType: image.mimeType },
+          customMetadata: {
+            uid: String(this.identity.uid),
+            gid: String(this.identity.gid),
+            mode: "400",
+            processId: this.pid,
+            purpose: "tool-result-media",
+          },
+        });
+        if (stored.size !== image.bytes.byteLength) {
+          throw new Error("Stored tool result image length did not match its source");
+        }
+        image.placeholder.path = path;
+        image.placeholder.size = stored.size;
+        media.push({
+          type: "image",
+          mimeType: image.mimeType,
+          key,
+          path,
+          size: stored.size,
+        });
+      }
+
+      signal.throwIfAborted();
+      if (
+        this.killed
+        || this.lifecycleEpoch !== lifecycleEpoch
+        || this.store.getPending(executionId)?.runId !== runId
+      ) {
+        throw new Error("Tool result is no longer pending");
+      }
+      return {
+        value: wrapStoredToolResult(extracted.output, media),
+        createdKeys,
+      };
+    } catch (error) {
+      await this.deletePreparedToolResultMedia(createdKeys);
+      throw error;
+    }
+  }
+
+  private async deletePreparedToolResultMedia(keys: string[]): Promise<void> {
+    if (keys.length === 0) return;
+    try {
+      await this.storage.delete(keys);
+    } catch {
+      console.warn(`[Process] Failed to clean ${keys.length} unreferenced tool result media object(s)`);
+    }
   }
 
   private async failStartedTool(
@@ -6269,16 +6376,26 @@ export class Process extends Host<Env> {
 
     for (let index = 0; index < records.length; index += 1) {
       const record = records[index];
-      if (record.role !== "user" || !record.media) {
+      if (!record.media) {
         continue;
       }
 
-      const content = await this.hydrateUserContent(record.content, record.media, mediaBudget);
-      messages[index] = {
-        role: "user",
-        content,
-        timestamp: record.createdAt,
-      } satisfies UserMessage;
+      const content = await this.hydrateMediaContent(record.content, record.media, mediaBudget);
+      if (record.role === "user") {
+        messages[index] = {
+          role: "user",
+          content,
+          timestamp: record.createdAt,
+        } satisfies UserMessage;
+      } else if (record.role === "toolResult") {
+        const message = messages[index];
+        if (message?.role === "toolResult") {
+          messages[index] = {
+            ...message,
+            content,
+          } satisfies ToolResultMessage;
+        }
+      }
     }
 
     let previousSource: string | null | undefined;
@@ -6329,7 +6446,7 @@ export class Process extends Host<Env> {
     return orderMessagesForProvider(messages);
   }
 
-  private async hydrateUserContent(
+  private async hydrateMediaContent(
     text: string,
     rawMedia: string,
     budget: { remainingBytes: number },
@@ -6659,12 +6776,16 @@ export class Process extends Host<Env> {
         let content: string;
         let isError: boolean;
         let outcome: ProcToolResultOutcome;
+        let media: string | undefined;
 
         if (result.status === "completed") {
+          const stored = unwrapStoredToolResult(result.result);
+          const ownedMedia = this.parseOwnedProcessMedia(JSON.stringify(stored.media));
           content =
-            typeof result.result === "string"
-              ? result.result
-              : JSON.stringify(result.result ?? null);
+            typeof stored.output === "string"
+              ? stored.output
+              : JSON.stringify(stored.output ?? null);
+          media = stringifyStoredProcessMedia(ownedMedia) ?? undefined;
           outcome = result.outcome ?? "completed";
           isError = outcome !== "completed";
         } else if (result.status === "error") {
@@ -6687,6 +6808,7 @@ export class Process extends Host<Env> {
           isError,
           runId,
           outcome,
+          media,
         );
         if (result.status === "pending") {
           finished.push({

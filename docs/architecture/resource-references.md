@@ -98,6 +98,14 @@ implementation behind a resource resolver. The intended end state is:
 - public `proc.media.write/read/delete` calls can be retired once all producers
   use the common reference contract.
 
+The current tool-result bridge accepts inline provider image blocks, extracts
+their bytes into process-scoped R2 media, persists only references in new
+history, and rehydrates bytes while assembling model context. The common
+reference migration must replace that initial inline/base64 boundary rather
+than layering another copy on top. It must also continue resolving existing
+tool-result media references and legacy inline history until an explicit data
+migration or compatibility cutover retires both representations.
+
 ## Suggested implementation order
 
 1. Define and validate the reference and resource-block protocol types.

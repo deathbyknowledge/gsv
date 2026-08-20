@@ -135,6 +135,42 @@ describe("chat transcript rows", () => {
     });
   });
 
+  it("keeps tool result media available to the transcript", () => {
+    const media = [{
+      type: "image",
+      mimeType: "image/jpeg",
+      key: "var/media/0/pid/tool-image",
+      path: "/var/media/0/pid/tool-image",
+    }];
+    const rows = transcriptRowsFromHistory(history([
+      {
+        id: 1,
+        clientId: "1",
+        role: "toolResult",
+        runId: "run-1",
+        content: {
+          toolName: "Read",
+          toolCallId: "call-image",
+          output: { path: "/var/media/0/pid/tool-image" },
+          outcome: "completed",
+          media,
+        },
+        text: "image result",
+        timestamp: 1,
+        origin: undefined,
+        metadata: undefined,
+      },
+    ]));
+
+    expect(rows).toEqual([
+      expect.objectContaining({
+        role: "toolResult",
+        toolCallId: "call-image",
+        media,
+      }),
+    ]);
+  });
+
   it.each([
     ["completed", false],
     ["failed", true],

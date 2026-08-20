@@ -85,7 +85,7 @@ R2 remains the byte store. The current runtime uses these key families:
 | Key Pattern | Written By | Purpose |
 |---|---|---|
 | Any normal filesystem key, for example `home/alice/file.txt` | `R2MountBackend` | Default virtual filesystem storage. |
-| `var/media/{uid}/{pid}/{uuid}` | Process media handling | Uploaded or adapter-provided media attached to process messages and exposed at the matching absolute `/var/media/...` path. |
+| `var/media/{uid}/{pid}/{uuid}` | Process media handling | Uploaded, adapter-provided, or tool-result media attached to process messages and exposed at the matching absolute `/var/media/...` path. |
 | `home/{agent}/.gsv/media/archived-media:{hash}` | Process history archiving | Immutable media retained by archived transcripts and scoped to the run-as agent home. |
 | `home/{agent}/processes/{pid}/history/*.jsonl.gz` | Process reset, kill, compaction, and fork | Gzipped JSONL transcript archives scoped to the owning process. |
 | `process-source-overlays/{pid}/{sourceKey}/manifest.json` | `/src/repos`, `rgit` | Manifest of staged source edits for one process/repo. |

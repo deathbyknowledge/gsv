@@ -6136,6 +6136,109 @@ describe("Process DO — mechanical", () => {
       expect(withBody.data).toEqual({ ok: false, error: "proc.media.delete does not accept a body" });
     });
 
+    it("externalizes tool result images before history and rehydrates model image blocks", async () => {
+      const pid = "mech-tool-result-media";
+      const runId = "run-tool-result-media";
+      const dispatchId = "dispatch-tool-result-media";
+      const stub = await initProcess(pid, ROOT_IDENTITY);
+      let mediaKey = "";
+
+      try {
+        await runInDurableObject(stub, async (instance: Process) => {
+          const process = instance as any;
+          process.currentRun = { runId };
+          process.sendSignal = vi.fn(async () => {});
+          process.store.register(
+            dispatchId,
+            "call-tool-result-media",
+            runId,
+            "fs.read",
+            { path: "/dev/camera/back/snapshot" },
+          );
+          process.store.register(
+            "dispatch-tool-result-blocker",
+            "call-tool-result-blocker",
+            runId,
+            "fs.read",
+            { path: "/tmp/blocker" },
+          );
+
+          await expect(process.resolveStartedTool(runId, dispatchId, {
+            ok: true,
+            path: "/dev/camera/back/snapshot",
+            kind: "image",
+            contentType: "image/png",
+            size: 3,
+            content: [
+              { type: "text", text: "Read image /dev/camera/back/snapshot [image/png, 3 B]" },
+              { type: "image", data: "AQID", mimeType: "image/png" },
+            ],
+          })).resolves.toBe(true);
+
+          const resolved = process.store.getResults(runId)[0];
+          expect(JSON.stringify(resolved.result)).not.toContain("AQID");
+          expect(resolved.result).toMatchObject({
+            __gsvStoredToolResult: 1,
+            output: {
+              content: [
+                { type: "text" },
+                {
+                  type: "image",
+                  mimeType: "image/png",
+                  path: expect.stringMatching(`^/var/media/0/${pid}/`),
+                  size: 3,
+                },
+              ],
+            },
+          });
+
+          await process.ingestToolResults(runId, process.store.getResults(runId), {
+            interruptPending: "test completed",
+          });
+          const record = process.store.getMessages().find(
+            (message: any) => message.toolCallId === "call-tool-result-media",
+          );
+          expect(record.content).not.toContain("AQID");
+          const media = JSON.parse(record.media);
+          expect(media).toHaveLength(1);
+          mediaKey = media[0].key;
+
+          const stored = await env.STORAGE.get(mediaKey);
+          expect(stored && [...new Uint8Array(await stored.arrayBuffer())]).toEqual([1, 2, 3]);
+          expect(stored?.customMetadata).toMatchObject({
+            uid: "0",
+            gid: "0",
+            mode: "400",
+            processId: pid,
+            purpose: "tool-result-media",
+          });
+
+          const messages = await process.buildContextMessages();
+          const result = messages.find(
+            (message: any) => message.role === "toolResult"
+              && message.toolCallId === "call-tool-result-media",
+          );
+          expect(result.content.some((block: any) => block.type === "image" && block.data === "AQID"))
+            .toBe(true);
+
+          const history = await process.handleProcHistory({});
+          const historyResult = history.messages.find(
+            (message: any) => message.content?.toolCallId === "call-tool-result-media",
+          );
+          expect(historyResult.content.media).toEqual([
+            expect.objectContaining({
+              type: "image",
+              mimeType: "image/png",
+              key: mediaKey,
+              path: `/${mediaKey}`,
+            }),
+          ]);
+        });
+      } finally {
+        if (mediaKey) await env.STORAGE.delete(mediaKey);
+      }
+    });
+
     it("reconciles repeated process media writes and drains the repeated body", async () => {
       const pid = "mech-media-write-idempotent";
       const stub = await initProcess(pid, ROOT_IDENTITY);

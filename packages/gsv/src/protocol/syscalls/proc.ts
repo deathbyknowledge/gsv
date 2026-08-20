@@ -220,6 +220,7 @@ export type ProcHistoryToolResultContent = {
   outcome: ProcToolResultOutcome;
   toolCallId: string | null;
   output: unknown;
+  media?: ProcMediaInput[];
 };
 
 export type ProcHistoryMessage = {
