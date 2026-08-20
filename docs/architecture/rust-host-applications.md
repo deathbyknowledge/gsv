@@ -122,6 +122,41 @@ before selection. Each asynchronous result is fenced by connection epoch, PID,
 and operation identity so output from the previous Process cannot mutate the
 new workspace.
 
+## Planned Desktop-managed machine enrollment
+
+Installing Desktop should be sufficient to connect the local computer without
+making a user operate `gsvd` manually. First use presents an explicit “Connect
+this computer” step with an editable suggested name. Desktop then enrolls one
+stable machine identity, installs the per-user background service, and reports
+its connection and capability status. Subsequent launches reuse that identity
+and never create another machine merely because the application restarted.
+
+Desktop is the setup and control UI; `gsvd` remains the machine endpoint and
+owns its persistent driver connection. Closing Desktop does not disconnect the
+machine. Signing out of the user client and explicitly disconnecting the
+computer are separate actions: disconnect revokes the driver credential and
+stops the service. Neither normal enrollment nor background operation requires
+administrator or root access.
+
+The enrollment state machine and local control protocol are platform-neutral.
+OS integration stays behind narrow credential-store, service-manager, local-IPC,
+and permission-manager boundaries:
+
+| Concern | macOS | Linux | Windows |
+| --- | --- | --- | --- |
+| Credential storage | Keychain | Secret Service or an explicit protected-file backend | Credential Manager/DPAPI |
+| Background startup | `SMAppService` | systemd user service with an XDG fallback | per-user Startup Task |
+| Local IPC | Unix socket | Unix socket | named pipe |
+| Permissions | TCC | portals, PipeWire, and device access | Windows privacy APIs |
+
+The shared contract is a persistent machine credential, not any one OS storage
+API. The service owns that credential; Desktop supplies only the short-lived
+authority needed for enrollment. Local IPC is same-user, authenticated,
+versioned, and limited to typed setup, status, lifecycle, helper, and diagnostic
+operations. Camera frames and audio do not cross the control channel. Release
+packages include the matching daemon, helpers, models, and OS integration so a
+single application installation cannot assemble incompatible host components.
+
 ## Distribution and upgrades
 
 Release artifacts install `gsv`, `gsvd`, Desktop, and any Desktop helper as one
