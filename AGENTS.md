@@ -76,6 +76,7 @@ The personal agent account is the user's personal intelligence. One Kernel-marke
 - `host/apps/machine/`: the `gsvd` machine driver, concrete tools, transfer ownership, reconnect, logging, and shutdown.
 - `host/helpers/`: separately supervised local transcription and gesture processes.
 - `host/crates/`: shared gateway transport, host configuration, Desktop IPC, and gesture protocol contracts. `host/` owns their Cargo workspace and build artifacts.
+- `android/`: the native Android machine driver, Wear authority, reconnect supervision, foreground-service lifecycle, and on-demand sensor implementations.
 - `adapters/`: platform-specific messaging workers and identity normalization.
 - `extension/`: browser-backed target and browser integration.
 - `ripgit/`: git-backed repositories and filesystem storage operations.
@@ -162,6 +163,7 @@ gsv/
 │   ├── apps/      # Rust CLI, Desktop, and machine applications
 │   ├── helpers/   # Isolated transcription and gesture processes
 │   └── crates/    # Shared host transport, configuration, and IPC contracts
+├── android/        # Native Android driver and Wear Mode runtime
 ├── adapters/      # WhatsApp, Discord, Telegram, and test channels
 ├── extension/     # Browser target
 ├── ripgit/        # Git-backed repository worker
@@ -196,6 +198,7 @@ Validate only the surfaces affected by the change:
 - Public SDK: `npm run gsv:check && npm test --workspace packages/gsv`
 - CLI: `cd host && cargo fmt --package gsv --check && cargo test --package gsv`
 - Machine: `cd host && cargo fmt --package machine --check && cargo test --package machine`
+- Android: `cd android && ./gradlew testDebugUnitTest lintDebug assembleDebug`; physical sensor changes also require the on-device checklist in `android/README.md`
 - ripgit: `cd ripgit && npm test`
 - Browser extension: `cd extension && npm run check && npm run test:run && npm run build`
 - WhatsApp: `cd adapters/whatsapp && npx tsc --noEmit`
@@ -211,6 +214,7 @@ Protocol or client changes may affect gateway, web, CLI, devices, and adapters e
 - Adapter code: deploy the affected adapter worker.
 - ripgit code: deploy that worker separately.
 - CLI or extension code: build and publish through their release path; a gateway deploy does not update them.
+- Android code: build and distribute the APK or app bundle through its Android release path; a gateway deploy does not update installed phones.
 
 Deployment and CLI command reference lives in `docs/reference/cli-commands.md`.
 
@@ -219,6 +223,8 @@ Deployment and CLI command reference lives in `docs/reference/cli-commands.md`.
 TypeScript uses two-space indentation, double quotes, semicolons, `import type` for type-only imports, and explicit boundary types. Avoid `any` outside tightly constrained interop.
 
 Rust uses `cargo fmt`, non-blocking async code, `Result` with `?`, and contextual errors at I/O and network boundaries.
+
+Android uses Kotlin, structured coroutines, Android Keystore for driver credentials, and foreground-service APIs for user-visible Wear authority. Sensor callbacks must resolve into one cancellable owner and delete temporary raw media at their terminal boundary.
 
 Commit subjects are short, imperative, lowercase, and scoped to one logical change, for example:
 

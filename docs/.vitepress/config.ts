@@ -164,6 +164,7 @@ export default defineConfig({
             { text: "Context and Knowledge", link: "/architecture/context-and-knowledge" },
             { text: "Process Handoffs", link: "/architecture/process-handoffs" },
             { text: "The Adapter Model", link: "/architecture/adapter-model" },
+            { text: "Android Wear Runtime", link: "/architecture/android-wear-runtime" },
             { text: "Security Model", link: "/architecture/security-model" },
           ],
         },

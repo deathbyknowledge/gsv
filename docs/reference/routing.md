@@ -225,6 +225,13 @@ Devices are persistent records in Kernel SQLite. A driver connection registers a
 - The owner uid can use the device.
 - Members of granted groups can use the device.
 
+Driver reachability is eventually connected. A driver may reconnect with the
+same device id after a socket close or network transition, and the new
+connection replaces the old live connection. In-flight routes remain bound to
+the exact driver connection that accepted them: a disconnect fails those
+routes and cancels their bodies instead of replaying an operation with an
+uncertain outcome. Calls made after reconnection use the new connection.
+
 Device routing does not rename syscalls. Agents and clients always see the same syscall names, such as `fs.read` and `shell.exec`; `target` selects whether the initial call runs on `gsv` or a device. For shell continuations, `sessionId` selects the previously started shell session.
 
 ## Failure Behavior

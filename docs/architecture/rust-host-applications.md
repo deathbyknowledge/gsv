@@ -28,6 +28,11 @@ contracts, but they do not embed one another's runtime or state ownership.
 These crates contain contracts and transport primitives. They do not own a
 machine lifecycle, a CLI interaction, or Desktop UI state.
 
+The native Android driver is a separate Gradle application under `android/`.
+It implements the same public WebSocket and syscall/body contracts without
+joining the Rust Cargo workspace or embedding `gsvd`; its lifecycle and sensor
+authority are documented in [Android Wear runtime](./android-wear-runtime.md).
+
 The host applications, helpers, and shared crates form one Cargo workspace
 rooted at `host/`. Its lockfile and build output belong to that boundary;
 `ripgit/` remains an independent Rust project.

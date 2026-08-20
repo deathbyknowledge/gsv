@@ -118,6 +118,11 @@ checks.
 This is the hardware abstraction layer. Devices can be laptops, servers, or any
 CLI-run machine, but agents do not need a different API for each one.
 
+The Android wearable target follows the same device contract while keeping
+camera ownership, Wear Mode authority, and reconnect behavior on the phone.
+See [Android Wear Runtime](./android-wear-runtime.md) for that state machine and
+its virtual hardware paths.
+
 Messaging adapters are deliberately outside this target inventory. They do not
 execute targetable syscalls and therefore do not appear as devices or available
 targets. Agents discover authorized messaging surfaces with
