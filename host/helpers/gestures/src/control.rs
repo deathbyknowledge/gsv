@@ -1,6 +1,6 @@
 //! Pure temporal policy for two-hand voice controls.
 //!
-//! This module consumes only bounded gesture label/score observations. It
+//! This module consumes only bounded authored-pose and handedness observations. It
 //! owns no camera, window, IPC, or application action. Missing tracking clears
 //! temporal evidence but never changes Desktop-owned transcription authority.
 
@@ -10,6 +10,8 @@ use gesture_protocol::VoiceRequestGestureIntent;
 pub use gesture_protocol::{
     GestureContext as ControlState, GestureIntent as ControlIntent, ScrollDirection, ScrollState,
 };
+
+use crate::observation::{HandObservation, HandPose, Handedness};
 
 const START_ENTER_SCORE: f32 = 0.50;
 const ACTION_ENTER_SCORE: f32 = 0.50;
@@ -28,6 +30,9 @@ const MIN_INTENT_SPACING: Duration = Duration::from_millis(750);
 const SCROLL_DWELL: Duration = Duration::from_millis(250);
 const SCROLL_MIN_MATCHES: u16 = 4;
 const SCROLL_TRACKING_GRACE: Duration = Duration::from_millis(180);
+const MIN_HANDEDNESS_SCORE: f32 = 0.72;
+const MIN_POSE_SCORE: f32 = 0.50;
+const SCROLL_VERTICAL_OFFSET: f32 = 0.10;
 
 /// Fixed local-only vocabulary for explaining the temporal controller in the
 /// diagnostic window. Its observation-derived counts, percentages, and
@@ -96,16 +101,84 @@ pub enum ControlDiagnostic {
     },
 }
 
-#[derive(Clone, Copy, Debug)]
-pub struct ControlHand<'a> {
-    pub gesture: &'a str,
-    pub score: f32,
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum HandPreference {
+    #[default]
+    Auto,
+    Left,
+    Right,
 }
 
-impl<'a> ControlHand<'a> {
+#[derive(Clone, Copy, Debug)]
+pub struct ControlHand {
+    pub handedness: Handedness,
+    pub handedness_score: f32,
+    pub pose: HandPose,
+    pub score: f32,
+    pub palm_x: f32,
+    pub palm_y: f32,
+    pub index_tip_x: f32,
+    pub index_tip_y: f32,
+}
+
+impl ControlHand {
     #[must_use]
-    pub const fn new(gesture: &'a str, score: f32) -> Self {
-        Self { gesture, score }
+    pub fn from_observation(hand: &HandObservation) -> Self {
+        const PALM: [usize; 5] = [0, 5, 9, 13, 17];
+        let (palm_x, palm_y) = PALM.iter().fold((0.0, 0.0), |(x, y), index| {
+            (x + hand.landmarks[*index].x, y + hand.landmarks[*index].y)
+        });
+        Self {
+            handedness: hand.handedness,
+            handedness_score: hand.handedness_score,
+            pose: hand.pose,
+            score: hand.pose_score,
+            palm_x: palm_x / PALM.len() as f32,
+            palm_y: palm_y / PALM.len() as f32,
+            index_tip_x: hand.landmarks[8].x,
+            index_tip_y: hand.landmarks[8].y,
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) const fn test(
+        handedness: Handedness,
+        pose: HandPose,
+        score: f32,
+        x: f32,
+        y: f32,
+    ) -> Self {
+        Self {
+            handedness,
+            handedness_score: 0.95,
+            pose,
+            score,
+            palm_x: x,
+            palm_y: y,
+            index_tip_x: x,
+            index_tip_y: y,
+        }
+    }
+
+    #[cfg(test)]
+    const fn test_point(
+        handedness: Handedness,
+        score: f32,
+        palm_x: f32,
+        palm_y: f32,
+        index_tip_x: f32,
+        index_tip_y: f32,
+    ) -> Self {
+        Self {
+            handedness,
+            handedness_score: 0.95,
+            pose: HandPose::Point,
+            score,
+            palm_x,
+            palm_y,
+            index_tip_x,
+            index_tip_y,
+        }
     }
 }
 
@@ -114,7 +187,7 @@ pub struct ControlSample<'a> {
     pub frame_sequence: u64,
     pub captured_at: Instant,
     pub observed_at: Instant,
-    pub hands: &'a [ControlHand<'a>],
+    pub hands: &'a [ControlHand],
 }
 
 /// Independent held-scroll recognizer.
@@ -131,6 +204,8 @@ pub struct ScrollControl {
     last_frame_sequence: Option<u64>,
     last_captured_at: Option<Instant>,
     next_instance_id: u64,
+    preference: HandPreference,
+    roles: Option<RoleAssignment>,
 }
 
 impl Default for ScrollControl {
@@ -142,6 +217,11 @@ impl Default for ScrollControl {
 impl ScrollControl {
     #[must_use]
     pub const fn new() -> Self {
+        Self::with_preference(HandPreference::Auto)
+    }
+
+    #[must_use]
+    pub const fn with_preference(preference: HandPreference) -> Self {
         Self {
             state: ScrollState::Idle,
             candidate: None,
@@ -150,6 +230,8 @@ impl ScrollControl {
             last_frame_sequence: None,
             last_captured_at: None,
             next_instance_id: 1,
+            preference,
+            roles: None,
         }
     }
 
@@ -188,7 +270,7 @@ impl ScrollControl {
         }
 
         let now = sample.captured_at;
-        let reading = classify_scroll(sample.hands);
+        let reading = classify_scroll(sample.hands, self.preference, &mut self.roles);
         if self
             .release_latch
             .is_some_and(|latched| reading.positively_releases(latched))
@@ -297,12 +379,14 @@ impl ScrollControl {
 pub struct GestureControl {
     state: ControlState,
     pending: Option<ControlIntent>,
-    release_latch: Option<Chord>,
+    release_latch: Option<ActionPose>,
     diagnostic: ControlDiagnostic,
     candidate: Option<Candidate>,
     last_frame_sequence: Option<u64>,
     last_captured_at: Option<Instant>,
     last_intent_at: Option<Instant>,
+    preference: HandPreference,
+    roles: Option<RoleAssignment>,
 }
 
 impl Default for GestureControl {
@@ -315,6 +399,11 @@ impl GestureControl {
     /// Creates a controller synchronized with Desktop's absolute state echo.
     #[must_use]
     pub const fn new(state: ControlState) -> Self {
+        Self::with_preference(state, HandPreference::Auto)
+    }
+
+    #[must_use]
+    pub const fn with_preference(state: ControlState, preference: HandPreference) -> Self {
         Self {
             state,
             pending: None,
@@ -324,18 +413,14 @@ impl GestureControl {
             last_frame_sequence: None,
             last_captured_at: None,
             last_intent_at: None,
+            preference,
+            roles: None,
         }
     }
 
     #[must_use]
     pub const fn state(&self) -> ControlState {
         self.state
-    }
-
-    #[cfg(test)]
-    #[must_use]
-    pub const fn pending_intent(&self) -> Option<ControlIntent> {
-        self.pending
     }
 
     #[must_use]
@@ -369,8 +454,9 @@ impl GestureControl {
 
     /// Consumes one inference result and returns at most one semantic edge.
     ///
-    /// Samples must be fresh and strictly ordered. Exactly two hands are
-    /// required, but their array order and anatomical handedness are ignored.
+    /// Samples must be fresh and strictly ordered. Exactly two hands with
+    /// stable, opposite anatomical handedness are required; array order is
+    /// irrelevant.
     pub fn observe(&mut self, sample: ControlSample<'_>) -> Option<ControlIntent> {
         if !self.accept_order(&sample) {
             self.diagnostic = ControlDiagnostic::InvalidOrder;
@@ -408,7 +494,7 @@ impl GestureControl {
         }
 
         let now = sample.captured_at;
-        let reading = match classify_chord(sample.hands) {
+        let physical = match classify_pair(sample.hands, self.preference, &mut self.roles) {
             Ok(reading) => Some(reading),
             Err(failure) => {
                 self.diagnostic = failure.diagnostic();
@@ -418,10 +504,12 @@ impl GestureControl {
 
         if self
             .release_latch
-            .is_some_and(|latched| positively_observes_release(sample.hands, latched))
+            .is_some_and(|latched| physical.is_some_and(|reading| reading.releases(latched)))
         {
             self.release_latch = None;
         }
+
+        let reading = physical.and_then(|reading| reading.chord(self.state));
 
         if let Some(intent) = self.pending {
             self.candidate = None;
@@ -432,10 +520,10 @@ impl GestureControl {
         }
 
         if let (Some(latched), Some(reading)) = (self.release_latch, reading) {
-            if reading.chord == latched {
+            if reading.action == latched {
                 self.candidate = None;
                 self.diagnostic = ControlDiagnostic::AwaitingRelease {
-                    chord: latched.into(),
+                    chord: reading.chord.into(),
                 };
                 return None;
             }
@@ -466,6 +554,7 @@ impl GestureControl {
         let target = reading.and_then(|reading| {
             self.accepted_target(reading.chord).then_some((
                 reading.chord,
+                reading.action,
                 reading.quality,
                 self.entry_score(reading.chord),
             ))
@@ -486,12 +575,14 @@ impl GestureControl {
         let mut discard_candidate = false;
 
         match (self.candidate.as_mut(), target) {
-            (Some(candidate), Some((chord, quality, entry_score))) if candidate.chord == chord => {
+            (Some(candidate), Some((chord, action, quality, entry_score)))
+                if candidate.chord == chord && candidate.action == action =>
+            {
                 let gap = now.saturating_duration_since(candidate.last_match_at);
                 if gap > MAX_EVIDENCE_GAP {
                     evidence_gap = Some(gap);
                     if quality >= entry_score {
-                        *candidate = Candidate::new(chord, now);
+                        *candidate = Candidate::new(chord, action, now);
                     } else {
                         candidate.record_miss();
                     }
@@ -501,12 +592,14 @@ impl GestureControl {
                     candidate.record_miss();
                 }
             }
-            (Some(candidate), Some((chord, quality, entry_score))) if quality >= entry_score => {
-                *candidate = Candidate::new(chord, now);
+            (Some(candidate), Some((chord, action, quality, entry_score)))
+                if quality >= entry_score =>
+            {
+                *candidate = Candidate::new(chord, action, now);
             }
             (Some(_), _) => discard_candidate = true,
-            (None, Some((chord, quality, entry_score))) if quality >= entry_score => {
-                self.candidate = Some(Candidate::new(chord, now));
+            (None, Some((chord, action, quality, entry_score))) if quality >= entry_score => {
+                self.candidate = Some(Candidate::new(chord, action, now));
             }
             (None, _) => {}
         }
@@ -527,7 +620,7 @@ impl GestureControl {
             return None;
         }
 
-        if let Some((chord, quality, entry_score)) = target {
+        if let Some((chord, _, quality, entry_score)) = target {
             self.diagnostic = if let Some(gap) = evidence_gap {
                 ControlDiagnostic::EvidenceGap {
                     gap_ms: bounded_millis(gap),
@@ -550,8 +643,8 @@ impl GestureControl {
         }
 
         let stable = self.candidate.as_ref().is_some_and(|candidate| {
-            let current_is_strong = target.is_some_and(|(chord, quality, entry_score)| {
-                chord == candidate.chord && quality >= entry_score
+            let current_is_strong = target.is_some_and(|(chord, action, quality, entry_score)| {
+                chord == candidate.chord && action == candidate.action && quality >= entry_score
             });
             current_is_strong && candidate.is_stable(now)
         });
@@ -559,7 +652,10 @@ impl GestureControl {
             return None;
         }
 
-        let chord = self.candidate.as_ref().map(|candidate| candidate.chord)?;
+        let (chord, action) = self
+            .candidate
+            .as_ref()
+            .map(|candidate| (candidate.chord, candidate.action))?;
         if !self.cooldown_complete(now) {
             let remaining = self.last_intent_at.map_or(Duration::ZERO, |previous| {
                 MIN_INTENT_SPACING.saturating_sub(now.saturating_duration_since(previous))
@@ -575,7 +671,7 @@ impl GestureControl {
         };
         let intent = control_intent(self.state, chord)?;
         self.pending = Some(intent);
-        self.release_latch = Some(chord);
+        self.release_latch = Some(action);
         self.last_intent_at = Some(now);
         Some(intent)
     }
@@ -622,24 +718,31 @@ impl GestureControl {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum Pose {
-    OpenPalm,
-    ClosedFist,
-    ILoveYou,
-    None,
-    PointingUp,
-    ThumbDown,
-    ThumbUp,
-    Victory,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum Chord {
     StartTranscription,
     StopTranscription,
     Send,
     Mute,
     Unmute,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ActionPose {
+    PrimaryPinch,
+    SendPinch,
+    MuteFist,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct RoleAssignment {
+    modifier: Handedness,
+    action: Handedness,
+}
+
+#[derive(Clone, Copy)]
+struct RoleHands<'a> {
+    modifier: &'a ControlHand,
+    action: &'a ControlHand,
 }
 
 impl From<Chord> for ControlChord {
@@ -718,7 +821,43 @@ impl Chord {
 #[derive(Clone, Copy, Debug)]
 struct ChordReading {
     chord: Chord,
+    action: ActionPose,
     quality: f32,
+}
+
+#[derive(Clone, Copy, Debug)]
+enum PairReading {
+    Action { action: ActionPose, quality: f32 },
+    KnownOther { quality: f32 },
+}
+
+impl PairReading {
+    fn chord(self, state: ControlState) -> Option<ChordReading> {
+        let Self::Action { action, quality } = self else {
+            return None;
+        };
+        let chord = match (state, action) {
+            (ControlState::Standby, ActionPose::PrimaryPinch) => Chord::StartTranscription,
+            (ControlState::Active { .. }, ActionPose::PrimaryPinch) => Chord::StopTranscription,
+            (ControlState::Active { .. }, ActionPose::SendPinch) => Chord::Send,
+            (ControlState::Active { muted: false, .. }, ActionPose::MuteFist) => Chord::Mute,
+            (ControlState::Active { muted: true, .. }, ActionPose::MuteFist) => Chord::Unmute,
+            (ControlState::Disabled, _)
+            | (ControlState::Standby, ActionPose::SendPinch | ActionPose::MuteFist) => return None,
+        };
+        Some(ChordReading {
+            chord,
+            action,
+            quality,
+        })
+    }
+
+    fn releases(self, latched: ActionPose) -> bool {
+        match self {
+            Self::KnownOther { quality } => quality >= CONTINUE_SCORE,
+            Self::Action { action, quality } => action != latched && quality >= CONTINUE_SCORE,
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -775,6 +914,7 @@ impl ScrollCandidate {
 #[derive(Clone, Copy, Debug)]
 struct Candidate {
     chord: Chord,
+    action: ActionPose,
     started_at: Instant,
     last_match_at: Instant,
     samples: u16,
@@ -784,9 +924,10 @@ struct Candidate {
 }
 
 impl Candidate {
-    fn new(chord: Chord, now: Instant) -> Self {
+    fn new(chord: Chord, action: ActionPose, now: Instant) -> Self {
         Self {
             chord,
+            action,
             started_at: now,
             last_match_at: now,
             samples: 1,
@@ -842,6 +983,7 @@ enum ClassificationFailure {
     HandCount(usize),
     InvalidScore,
     UnsupportedPose,
+    AmbiguousHandedness,
 }
 
 impl ClassificationFailure {
@@ -852,101 +994,142 @@ impl ClassificationFailure {
             },
             Self::InvalidScore => ControlDiagnostic::InvalidScore,
             Self::UnsupportedPose => ControlDiagnostic::UnsupportedPose,
+            Self::AmbiguousHandedness => ControlDiagnostic::UnsupportedPose,
         }
     }
 }
 
-fn classify_chord(hands: &[ControlHand<'_>]) -> Result<ChordReading, ClassificationFailure> {
-    let [first, second] = hands else {
-        return Err(ClassificationFailure::HandCount(hands.len()));
-    };
-    if !valid_score(first.score) || !valid_score(second.score) {
-        return Err(ClassificationFailure::InvalidScore);
+fn classify_pair(
+    hands: &[ControlHand],
+    preference: HandPreference,
+    roles: &mut Option<RoleAssignment>,
+) -> Result<PairReading, ClassificationFailure> {
+    let pair = resolve_roles(hands, preference, roles)?;
+    if pair.modifier.pose == HandPose::Unknown || pair.action.pose == HandPose::Unknown {
+        return Err(ClassificationFailure::UnsupportedPose);
     }
-    let first_pose = parse_pose(first.gesture).ok_or(ClassificationFailure::UnsupportedPose)?;
-    let second_pose = parse_pose(second.gesture).ok_or(ClassificationFailure::UnsupportedPose)?;
-    let chord =
-        chord_for_poses(first_pose, second_pose).ok_or(ClassificationFailure::UnsupportedPose)?;
-    Ok(ChordReading {
-        chord,
-        quality: first.score.min(second.score),
-    })
+    let quality = pair
+        .modifier
+        .score
+        .min(pair.action.score)
+        .min(pair.modifier.handedness_score)
+        .min(pair.action.handedness_score);
+    if pair.modifier.pose != HandPose::Anchor || quality < MIN_POSE_SCORE {
+        return Ok(PairReading::KnownOther { quality });
+    }
+    let action = match pair.action.pose {
+        HandPose::IndexPinch => ActionPose::PrimaryPinch,
+        HandPose::MiddlePinch => ActionPose::SendPinch,
+        HandPose::SoftFist => ActionPose::MuteFist,
+        HandPose::Anchor | HandPose::Point | HandPose::GatheredPinch => {
+            return Ok(PairReading::KnownOther { quality });
+        }
+        HandPose::Unknown => return Err(ClassificationFailure::UnsupportedPose),
+    };
+    Ok(PairReading::Action { action, quality })
 }
 
-fn classify_scroll(hands: &[ControlHand<'_>]) -> ScrollReading {
-    let [first, second] = hands else {
+fn classify_scroll(
+    hands: &[ControlHand],
+    preference: HandPreference,
+    roles: &mut Option<RoleAssignment>,
+) -> ScrollReading {
+    let Ok(pair) = resolve_roles(hands, preference, roles) else {
         return ScrollReading::Unknown;
     };
-    if !valid_score(first.score) || !valid_score(second.score) {
+    if pair.modifier.pose == HandPose::Unknown || pair.action.pose == HandPose::Unknown {
         return ScrollReading::Unknown;
     }
-    let (Some(first_pose), Some(second_pose)) =
-        (parse_pose(first.gesture), parse_pose(second.gesture))
-    else {
-        return ScrollReading::Unknown;
-    };
-    let quality = first.score.min(second.score);
-    let direction = match (first_pose, second_pose) {
-        (Pose::ClosedFist, Pose::PointingUp) | (Pose::PointingUp, Pose::ClosedFist) => {
-            ScrollDirection::Up
-        }
-        (Pose::ClosedFist, Pose::ThumbDown) | (Pose::ThumbDown, Pose::ClosedFist) => {
-            ScrollDirection::Down
-        }
-        _ if quality >= ACTION_ENTER_SCORE => return ScrollReading::KnownOther,
-        _ => return ScrollReading::Unknown,
+    let quality = pair
+        .modifier
+        .score
+        .min(pair.action.score)
+        .min(pair.modifier.handedness_score)
+        .min(pair.action.handedness_score);
+    if pair.modifier.pose != HandPose::Anchor || pair.action.pose != HandPose::Point {
+        return if quality >= ACTION_ENTER_SCORE {
+            ScrollReading::KnownOther
+        } else {
+            ScrollReading::Unknown
+        };
+    }
+    let offset = pair.action.index_tip_y - pair.modifier.palm_y;
+    let direction = if offset <= -SCROLL_VERTICAL_OFFSET {
+        ScrollDirection::Up
+    } else if offset >= SCROLL_VERTICAL_OFFSET {
+        ScrollDirection::Down
+    } else {
+        return ScrollReading::KnownOther;
     };
     ScrollReading::Gesture { direction, quality }
 }
 
-fn parse_pose(label: &str) -> Option<Pose> {
-    match label {
-        "Open_Palm" => Some(Pose::OpenPalm),
-        "Closed_Fist" => Some(Pose::ClosedFist),
-        "ILoveYou" => Some(Pose::ILoveYou),
-        "None" => Some(Pose::None),
-        "Pointing_Up" => Some(Pose::PointingUp),
-        "Thumb_Down" => Some(Pose::ThumbDown),
-        "Thumb_Up" => Some(Pose::ThumbUp),
-        "Victory" => Some(Pose::Victory),
-        _ => None,
-    }
-}
-
-fn chord_for_poses(first: Pose, second: Pose) -> Option<Chord> {
-    match (first, second) {
-        (Pose::OpenPalm, Pose::OpenPalm) => Some(Chord::StartTranscription),
-        (Pose::OpenPalm, Pose::Victory) | (Pose::Victory, Pose::OpenPalm) => {
-            Some(Chord::StopTranscription)
-        }
-        (Pose::OpenPalm, Pose::ThumbUp) | (Pose::ThumbUp, Pose::OpenPalm) => Some(Chord::Send),
-        (Pose::OpenPalm, Pose::ThumbDown) | (Pose::ThumbDown, Pose::OpenPalm) => Some(Chord::Mute),
-        (Pose::OpenPalm, Pose::PointingUp) | (Pose::PointingUp, Pose::OpenPalm) => {
-            Some(Chord::Unmute)
-        }
-        _ => None,
-    }
-}
-
-/// A release must be a fresh, confident observation of two known canned
-/// poses which no longer form the emitted chord. Missing, stale, invalid, or
-/// unknown tracking never clears the cross-context rearm latch.
-fn positively_observes_release(hands: &[ControlHand<'_>], latched: Chord) -> bool {
+fn resolve_roles<'a>(
+    hands: &'a [ControlHand],
+    preference: HandPreference,
+    roles: &mut Option<RoleAssignment>,
+) -> Result<RoleHands<'a>, ClassificationFailure> {
     let [first, second] = hands else {
-        return false;
+        return Err(ClassificationFailure::HandCount(hands.len()));
     };
-    if !valid_score(first.score)
-        || !valid_score(second.score)
-        || first.score < CONTINUE_SCORE
-        || second.score < CONTINUE_SCORE
-    {
-        return false;
+    if !valid_hand(first) || !valid_hand(second) {
+        return Err(ClassificationFailure::InvalidScore);
     }
-    let (Some(first), Some(second)) = (parse_pose(first.gesture), parse_pose(second.gesture))
-    else {
-        return false;
+    if first.handedness == Handedness::Unknown
+        || second.handedness == Handedness::Unknown
+        || first.handedness == second.handedness
+        || first.handedness_score < MIN_HANDEDNESS_SCORE
+        || second.handedness_score < MIN_HANDEDNESS_SCORE
+    {
+        return Err(ClassificationFailure::AmbiguousHandedness);
+    }
+
+    let assignment = match preference {
+        HandPreference::Left => RoleAssignment {
+            modifier: Handedness::Right,
+            action: Handedness::Left,
+        },
+        HandPreference::Right => RoleAssignment {
+            modifier: Handedness::Left,
+            action: Handedness::Right,
+        },
+        HandPreference::Auto => match *roles {
+            Some(assignment) => assignment,
+            None => {
+                let (modifier, action) = match (
+                    first.pose == HandPose::Anchor && first.score >= MIN_POSE_SCORE,
+                    second.pose == HandPose::Anchor && second.score >= MIN_POSE_SCORE,
+                ) {
+                    (true, false) => (first, second),
+                    (false, true) => (second, first),
+                    _ => return Err(ClassificationFailure::UnsupportedPose),
+                };
+                let assignment = RoleAssignment {
+                    modifier: modifier.handedness,
+                    action: action.handedness,
+                };
+                *roles = Some(assignment);
+                assignment
+            }
+        },
     };
-    chord_for_poses(first, second) != Some(latched)
+    let modifier = hands
+        .iter()
+        .find(|hand| hand.handedness == assignment.modifier)
+        .ok_or(ClassificationFailure::AmbiguousHandedness)?;
+    let action = hands
+        .iter()
+        .find(|hand| hand.handedness == assignment.action)
+        .ok_or(ClassificationFailure::AmbiguousHandedness)?;
+    Ok(RoleHands { modifier, action })
+}
+
+fn valid_hand(hand: &ControlHand) -> bool {
+    valid_score(hand.score)
+        && valid_score(hand.handedness_score)
+        && [hand.palm_x, hand.palm_y, hand.index_tip_x, hand.index_tip_y]
+            .into_iter()
+            .all(|value| value.is_finite())
 }
 
 fn valid_score(score: f32) -> bool {
@@ -990,22 +1173,35 @@ mod tests {
     use super::*;
 
     const STEP: Duration = Duration::from_millis(50);
-    const DISABLED: ControlState = ControlState::Disabled;
     const STANDBY: ControlState = ControlState::Standby;
     const ACTIVE: ControlState = ControlState::Active {
         voice_request_id: 41,
         muted: false,
     };
-    const ACTIVE_MUTED: ControlState = ControlState::Active {
+    const MUTED: ControlState = ControlState::Active {
         voice_request_id: 41,
         muted: true,
     };
 
-    fn request(voice_request_id: u64, action: VoiceRequestGestureIntent) -> ControlIntent {
+    fn request(action: VoiceRequestGestureIntent) -> ControlIntent {
         ControlIntent::VoiceRequest {
-            voice_request_id,
+            voice_request_id: 41,
             action,
         }
+    }
+
+    fn anchored(action: HandPose, score: f32) -> [ControlHand; 2] {
+        [
+            ControlHand::test(Handedness::Left, HandPose::Anchor, score, 0.35, 0.55),
+            ControlHand::test(Handedness::Right, action, score, 0.65, 0.55),
+        ]
+    }
+
+    fn mirrored(action: HandPose, score: f32) -> [ControlHand; 2] {
+        [
+            ControlHand::test(Handedness::Right, HandPose::Anchor, score, 0.65, 0.55),
+            ControlHand::test(Handedness::Left, action, score, 0.35, 0.55),
+        ]
     }
 
     struct Harness {
@@ -1017,634 +1213,343 @@ mod tests {
 
     impl Harness {
         fn new(state: ControlState) -> Self {
+            Self::with_control(GestureControl::new(state))
+        }
+
+        fn with_control(control: GestureControl) -> Self {
             Self {
-                control: GestureControl::new(state),
+                control,
                 start: Instant::now(),
                 sequence: 0,
                 elapsed: Duration::ZERO,
             }
         }
 
-        fn sample(&mut self, first: (&str, f32), second: (&str, f32)) -> Option<ControlIntent> {
-            self.sample_after(STEP, first, second)
+        fn sample(&mut self, hands: &[ControlHand]) -> Option<ControlIntent> {
+            self.sample_after(STEP, hands)
         }
 
-        fn sample_after(
-            &mut self,
-            step: Duration,
-            first: (&str, f32),
-            second: (&str, f32),
-        ) -> Option<ControlIntent> {
+        fn sample_after(&mut self, step: Duration, hands: &[ControlHand]) -> Option<ControlIntent> {
             self.sequence += 1;
             self.elapsed += step;
             let captured_at = self.start + self.elapsed;
-            let hands = [
-                ControlHand::new(first.0, first.1),
-                ControlHand::new(second.0, second.1),
-            ];
             self.control.observe(ControlSample {
                 frame_sequence: self.sequence,
                 captured_at,
                 observed_at: captured_at + Duration::from_millis(20),
-                hands: &hands,
+                hands,
             })
         }
 
-        fn empty(&mut self) -> Option<ControlIntent> {
+        fn stale(&mut self, hands: &[ControlHand]) -> Option<ControlIntent> {
             self.sequence += 1;
             self.elapsed += STEP;
             let captured_at = self.start + self.elapsed;
-            self.control.observe(ControlSample {
-                frame_sequence: self.sequence,
-                captured_at,
-                observed_at: captured_at + Duration::from_millis(20),
-                hands: &[],
-            })
-        }
-
-        fn stale(&mut self, first: (&str, f32), second: (&str, f32)) -> Option<ControlIntent> {
-            self.sequence += 1;
-            self.elapsed += STEP;
-            let captured_at = self.start + self.elapsed;
-            let hands = [
-                ControlHand::new(first.0, first.1),
-                ControlHand::new(second.0, second.1),
-            ];
             self.control.observe(ControlSample {
                 frame_sequence: self.sequence,
                 captured_at,
                 observed_at: captured_at + MAX_FRAME_AGE + Duration::from_millis(1),
-                hands: &hands,
+                hands,
             })
         }
 
-        fn drive(
-            &mut self,
-            count: usize,
-            first: (&str, f32),
-            second: (&str, f32),
-        ) -> Vec<ControlIntent> {
-            (0..count)
-                .filter_map(|_| self.sample(first, second))
-                .collect()
-        }
-
-        fn drive_empty(&mut self, count: usize) {
-            for _ in 0..count {
-                assert_eq!(self.empty(), None);
-            }
-        }
-
-        fn progress(&self) -> Option<ControlProgress> {
-            self.control.progress(self.start + self.elapsed)
+        fn drive(&mut self, count: usize, hands: &[ControlHand]) -> Vec<ControlIntent> {
+            (0..count).filter_map(|_| self.sample(hands)).collect()
         }
 
         fn synchronize(&mut self, state: ControlState) {
             self.control.synchronize_state(state);
         }
 
-        fn release(&mut self) {
-            assert_eq!(
-                self.sample(("Closed_Fist", 0.9), ("Closed_Fist", 0.9)),
-                None
-            );
+        fn progress(&self) -> Option<ControlProgress> {
+            self.control.progress(self.start + self.elapsed)
         }
     }
 
     #[test]
-    fn exact_unordered_canned_grammar_is_closed() {
-        let cases = [
-            (("Open_Palm", "Open_Palm"), Chord::StartTranscription),
-            (("Open_Palm", "Victory"), Chord::StopTranscription),
-            (("Open_Palm", "Thumb_Up"), Chord::Send),
-            (("Open_Palm", "Thumb_Down"), Chord::Mute),
-            (("Open_Palm", "Pointing_Up"), Chord::Unmute),
-        ];
-        for ((first, second), expected) in cases {
-            for (first, second) in [(first, second), (second, first)] {
-                let hands = [ControlHand::new(first, 0.9), ControlHand::new(second, 0.8)];
-                let reading = classify_chord(&hands).expect("supported chord");
-                assert_eq!(reading.chord, expected);
-                assert_eq!(reading.quality, 0.8);
-            }
-        }
-
-        for (first, second) in [
-            ("Open_Palm", "Closed_Fist"),
-            ("Open_Palm", "ILoveYou"),
-            ("Victory", "Victory"),
-            ("open_palm", "Open_Palm"),
-        ] {
-            let hands = [ControlHand::new(first, 1.0), ControlHand::new(second, 1.0)];
-            assert!(matches!(
-                classify_chord(&hands),
-                Err(ClassificationFailure::UnsupportedPose)
-            ));
-        }
-    }
-
-    #[test]
-    fn confidence_and_dwell_matrix_is_exact() {
+    fn authored_pose_grammar_maps_context_to_semantic_actions() {
         let cases = [
             (
                 STANDBY,
-                ("Open_Palm", "Open_Palm"),
-                8,
+                HandPose::IndexPinch,
                 ControlIntent::StartTranscription,
             ),
             (
                 ACTIVE,
-                ("Open_Palm", "Victory"),
-                8,
-                request(41, VoiceRequestGestureIntent::StopTranscription),
+                HandPose::IndexPinch,
+                request(VoiceRequestGestureIntent::StopTranscription),
             ),
             (
                 ACTIVE,
-                ("Open_Palm", "Thumb_Down"),
-                10,
-                request(41, VoiceRequestGestureIntent::Mute),
+                HandPose::MiddlePinch,
+                request(VoiceRequestGestureIntent::Send),
             ),
             (
                 ACTIVE,
-                ("Open_Palm", "Thumb_Up"),
-                15,
-                request(41, VoiceRequestGestureIntent::Send),
+                HandPose::SoftFist,
+                request(VoiceRequestGestureIntent::Mute),
             ),
             (
-                ACTIVE_MUTED,
-                ("Open_Palm", "Pointing_Up"),
-                15,
-                request(41, VoiceRequestGestureIntent::Unmute),
+                MUTED,
+                HandPose::SoftFist,
+                request(VoiceRequestGestureIntent::Unmute),
             ),
         ];
-
-        for (state, (first, second), samples, expected) in cases {
+        for (state, pose, expected) in cases {
             let mut harness = Harness::new(state);
-            assert!(harness
-                .drive(samples - 1, (first, 0.9), (second, 0.9))
-                .is_empty());
-            assert_eq!(harness.sample((first, 0.9), (second, 0.9)), Some(expected));
-            assert_eq!(harness.control.state(), state);
-            assert_eq!(harness.control.pending_intent(), Some(expected));
-        }
-
-        for (state, second, chord) in [
-            (STANDBY, "Open_Palm", ControlChord::StartTranscription),
-            (ACTIVE, "Victory", ControlChord::StopTranscription),
-            (ACTIVE, "Thumb_Up", ControlChord::Send),
-            (ACTIVE, "Thumb_Down", ControlChord::Mute),
-            (ACTIVE_MUTED, "Pointing_Up", ControlChord::Unmute),
-        ] {
-            let mut below = Harness::new(state);
-            assert!(below
-                .drive(20, ("Open_Palm", 0.499), (second, 0.499))
-                .is_empty());
-            assert_eq!(
-                below.control.diagnostic(),
-                ControlDiagnostic::LowConfidence {
-                    chord,
-                    observed_percent: 49,
-                    required_percent: 50,
-                }
-            );
+            assert_eq!(harness.drive(20, &anchored(pose, 0.95)), vec![expected]);
         }
     }
 
     #[test]
-    fn disabled_standby_and_active_accept_only_their_own_vocabulary() {
-        let chords = [
-            ("Open_Palm", "Open_Palm"),
-            ("Open_Palm", "Victory"),
-            ("Open_Palm", "Thumb_Up"),
-            ("Open_Palm", "Thumb_Down"),
-            ("Open_Palm", "Pointing_Up"),
-        ];
-        let mut disabled = Harness::new(DISABLED);
-        for (first, second) in chords {
-            assert!(disabled.drive(20, (first, 1.0), (second, 1.0)).is_empty());
-        }
-
-        let mut standby = Harness::new(STANDBY);
-        for second in ["Victory", "Thumb_Up", "Thumb_Down", "Pointing_Up"] {
-            assert!(standby
-                .drive(20, ("Open_Palm", 1.0), (second, 1.0))
-                .is_empty());
-        }
-
-        let mut active = Harness::new(ACTIVE);
-        assert!(active
-            .drive(20, ("Open_Palm", 1.0), ("Open_Palm", 1.0))
-            .is_empty());
-        let mut muted = Harness::new(ACTIVE_MUTED);
-        assert!(muted
-            .drive(20, ("Open_Palm", 1.0), ("Thumb_Down", 1.0))
-            .is_empty());
-        let mut unmuted = Harness::new(ACTIVE);
-        assert!(unmuted
-            .drive(20, ("Open_Palm", 1.0), ("Pointing_Up", 1.0))
-            .is_empty());
+    fn modifier_and_action_roles_follow_dominance_not_array_order() {
+        let mut roles = None;
+        let forward = anchored(HandPose::MiddlePinch, 0.9);
+        let reverse = [forward[1], forward[0]];
+        assert!(matches!(
+            classify_pair(&forward, HandPreference::Auto, &mut roles),
+            Ok(PairReading::Action {
+                action: ActionPose::SendPinch,
+                ..
+            })
+        ));
+        assert!(matches!(
+            classify_pair(&reverse, HandPreference::Auto, &mut roles),
+            Ok(PairReading::Action {
+                action: ActionPose::SendPinch,
+                ..
+            })
+        ));
     }
 
     #[test]
-    fn pending_authority_serializes_all_intents_until_a_fresh_echo() {
-        let mut harness = Harness::new(STANDBY);
+    fn explicit_left_dominance_accepts_the_mirrored_grammar() {
+        let control = GestureControl::with_preference(STANDBY, HandPreference::Left);
+        let mut harness = Harness::with_control(control);
         assert_eq!(
-            harness.drive(8, ("Open_Palm", 0.9), ("Open_Palm", 0.9)),
-            [ControlIntent::StartTranscription]
+            harness.drive(20, &mirrored(HandPose::IndexPinch, 0.95)),
+            vec![ControlIntent::StartTranscription]
         );
-
-        for second in [
-            "Open_Palm",
-            "Victory",
-            "Thumb_Up",
-            "Thumb_Down",
-            "Pointing_Up",
-        ] {
-            assert!(harness
-                .drive(20, ("Open_Palm", 1.0), (second, 1.0))
-                .is_empty());
-            assert_eq!(
-                harness.control.diagnostic(),
-                ControlDiagnostic::AwaitingAuthority {
-                    chord: ControlChord::StartTranscription,
-                }
-            );
-            assert_eq!(harness.progress(), None);
-        }
-
-        harness.synchronize(DISABLED);
-        assert_eq!(harness.control.pending_intent(), None);
-        assert_eq!(harness.progress(), None);
     }
 
     #[test]
-    fn rejected_start_requires_positive_release_and_tracking_loss_does_not_rearm() {
-        let mut harness = Harness::new(STANDBY);
-        assert_eq!(
-            harness.drive(8, ("Open_Palm", 0.9), ("Open_Palm", 0.9)),
-            [ControlIntent::StartTranscription]
-        );
-        harness.synchronize(STANDBY);
-
+    fn explicit_right_dominance_rejects_reversed_roles() {
+        let control = GestureControl::with_preference(STANDBY, HandPreference::Right);
+        let mut harness = Harness::with_control(control);
         assert!(harness
-            .drive(20, ("Open_Palm", 0.9), ("Open_Palm", 0.9))
+            .drive(20, &mirrored(HandPose::IndexPinch, 0.95))
             .is_empty());
+    }
+
+    #[test]
+    fn ambiguous_handedness_fails_closed() {
+        let hands = [
+            ControlHand::test(Handedness::Right, HandPose::Anchor, 0.95, 0.3, 0.5),
+            ControlHand::test(Handedness::Right, HandPose::IndexPinch, 0.95, 0.7, 0.5),
+        ];
+        let mut harness = Harness::new(STANDBY);
+        assert!(harness.drive(20, &hands).is_empty());
         assert_eq!(
             harness.control.diagnostic(),
-            ControlDiagnostic::AwaitingRelease {
-                chord: ControlChord::StartTranscription,
-            }
-        );
-
-        harness.drive_empty(20);
-        assert_eq!(harness.stale(("Victory", 1.0), ("Victory", 1.0)), None);
-        assert_eq!(harness.sample(("unknown", 1.0), ("unknown", 1.0)), None);
-        assert!(harness
-            .drive(20, ("Open_Palm", 0.9), ("Open_Palm", 0.9))
-            .is_empty());
-
-        harness.release();
-        assert_eq!(
-            harness.drive(8, ("Open_Palm", 0.9), ("Open_Palm", 0.9)),
-            [ControlIntent::StartTranscription]
+            ControlDiagnostic::UnsupportedPose
         );
     }
 
     #[test]
-    fn held_start_latch_survives_full_request_context_lifetime() {
+    fn held_primary_pinch_cannot_stop_the_request_it_started() {
+        let pinch = anchored(HandPose::IndexPinch, 0.95);
+        let neutral = anchored(HandPose::Point, 0.95);
         let mut harness = Harness::new(STANDBY);
         assert_eq!(
-            harness.drive(8, ("Open_Palm", 0.9), ("Open_Palm", 0.9)),
-            [ControlIntent::StartTranscription]
+            harness.drive(10, &pinch),
+            vec![ControlIntent::StartTranscription]
         );
+        harness.synchronize(ACTIVE);
+        assert!(harness.drive(20, &pinch).is_empty());
+        assert!(matches!(
+            harness.control.diagnostic(),
+            ControlDiagnostic::AwaitingRelease { .. }
+        ));
 
-        for state in [
-            DISABLED,
-            ControlState::Active {
-                voice_request_id: 77,
-                muted: false,
-            },
-            DISABLED,
-            STANDBY,
-        ] {
-            harness.synchronize(state);
-            assert!(harness
-                .drive(20, ("Open_Palm", 0.9), ("Open_Palm", 0.9))
-                .is_empty());
-            assert_eq!(
-                harness.control.diagnostic(),
-                ControlDiagnostic::AwaitingRelease {
-                    chord: ControlChord::StartTranscription,
-                }
-            );
+        assert_eq!(harness.sample(&neutral), None);
+        assert_eq!(
+            harness.drive(20, &pinch),
+            vec![request(VoiceRequestGestureIntent::StopTranscription)]
+        );
+    }
+
+    #[test]
+    fn missing_tracking_does_not_rearm_an_emitted_pose() {
+        let pinch = anchored(HandPose::IndexPinch, 0.95);
+        let mut harness = Harness::new(STANDBY);
+        assert_eq!(
+            harness.drive(10, &pinch),
+            vec![ControlIntent::StartTranscription]
+        );
+        harness.synchronize(ACTIVE);
+        for _ in 0..5 {
+            assert_eq!(harness.sample(&[]), None);
         }
-
-        harness.release();
-        assert_eq!(
-            harness.drive(8, ("Open_Palm", 0.9), ("Open_Palm", 0.9)),
-            [ControlIntent::StartTranscription]
-        );
+        assert!(harness.drive(20, &pinch).is_empty());
     }
 
     #[test]
-    fn held_stop_cannot_loop_after_an_active_authority_echo() {
-        let mut harness = Harness::new(ACTIVE);
-        let stop = request(41, VoiceRequestGestureIntent::StopTranscription);
-        assert_eq!(
-            harness.drive(8, ("Open_Palm", 0.9), ("Victory", 0.9)),
-            [stop]
-        );
-        harness.synchronize(ACTIVE);
-        assert!(harness
-            .drive(20, ("Open_Palm", 0.9), ("Victory", 0.9))
-            .is_empty());
-        harness.drive_empty(20);
-        assert!(harness
-            .drive(20, ("Open_Palm", 0.9), ("Victory", 0.9))
-            .is_empty());
-
-        harness.release();
-        assert_eq!(
-            harness.drive(8, ("Open_Palm", 0.9), ("Victory", 0.9)),
-            [stop]
-        );
-    }
-
-    #[test]
-    fn a_release_observed_while_pending_is_retained_across_the_echo() {
+    fn low_confidence_known_pose_does_not_rearm_an_emitted_pose() {
+        let pinch = anchored(HandPose::IndexPinch, 0.95);
+        let weak_release = anchored(HandPose::Point, 0.49);
+        let strong_release = anchored(HandPose::Point, 0.95);
         let mut harness = Harness::new(STANDBY);
         assert_eq!(
-            harness.drive(8, ("Open_Palm", 0.9), ("Open_Palm", 0.9)),
-            [ControlIntent::StartTranscription]
+            harness.drive(10, &pinch),
+            vec![ControlIntent::StartTranscription]
         );
-        harness.release();
-        harness.synchronize(STANDBY);
-        assert_eq!(
-            harness.drive(14, ("Open_Palm", 0.9), ("Open_Palm", 0.9)),
-            [ControlIntent::StartTranscription]
-        );
-    }
-
-    #[test]
-    fn request_identity_is_captured_from_each_authoritative_active_context() {
-        let mut harness = Harness::new(ControlState::Active {
-            voice_request_id: 10,
-            muted: false,
-        });
-        assert_eq!(
-            harness.drive(15, ("Open_Palm", 0.9), ("Thumb_Up", 0.9)),
-            [request(10, VoiceRequestGestureIntent::Send)]
-        );
-
-        harness.synchronize(ControlState::Active {
-            voice_request_id: 11,
-            muted: false,
-        });
-        harness.release();
-        assert_eq!(
-            harness.drive(15, ("Open_Palm", 0.9), ("Thumb_Up", 0.9)),
-            [request(11, VoiceRequestGestureIntent::Send)]
-        );
-    }
-
-    #[test]
-    fn same_shaped_active_authority_echo_fences_old_evidence() {
-        let mut harness = Harness::new(ACTIVE);
-        assert!(harness
-            .drive(10, ("Open_Palm", 0.9), ("Thumb_Up", 0.9))
-            .is_empty());
-        assert!(harness.progress().is_some());
-
         harness.synchronize(ACTIVE);
+        assert_eq!(harness.sample(&weak_release), None);
+        assert!(harness.drive(20, &pinch).is_empty());
+
+        assert_eq!(harness.sample(&strong_release), None);
+        assert_eq!(
+            harness.drive(20, &pinch),
+            vec![request(VoiceRequestGestureIntent::StopTranscription)]
+        );
+    }
+
+    #[test]
+    fn low_pose_confidence_never_accumulates_evidence() {
+        let mut harness = Harness::new(STANDBY);
+        assert!(harness
+            .drive(20, &anchored(HandPose::IndexPinch, 0.49))
+            .is_empty());
         assert_eq!(harness.progress(), None);
-        assert!(harness
-            .drive(14, ("Open_Palm", 0.9), ("Thumb_Up", 0.9))
-            .is_empty());
-        assert_eq!(
-            harness.sample(("Open_Palm", 0.9), ("Thumb_Up", 0.9)),
-            Some(request(41, VoiceRequestGestureIntent::Send))
-        );
     }
 
     #[test]
-    fn send_is_nonterminal_and_an_unchanged_active_echo_reauthorizes_actions() {
-        let mut harness = Harness::new(ACTIVE);
-        let send = request(41, VoiceRequestGestureIntent::Send);
+    fn stale_frames_clear_in_flight_evidence() {
+        let pinch = anchored(HandPose::IndexPinch, 0.95);
+        let mut harness = Harness::new(STANDBY);
+        assert!(harness.drive(4, &pinch).is_empty());
+        assert_eq!(harness.stale(&pinch), None);
+        assert_eq!(harness.progress(), None);
+        assert!(harness.drive(7, &pinch).is_empty());
         assert_eq!(
-            harness.drive(15, ("Open_Palm", 0.9), ("Thumb_Up", 0.9)),
-            [send]
-        );
-        assert_eq!(harness.control.state(), ACTIVE);
-
-        harness.synchronize(ACTIVE);
-        assert_eq!(harness.control.state(), ACTIVE);
-        harness.release();
-        assert_eq!(
-            harness.drive(15, ("Open_Palm", 0.9), ("Thumb_Up", 0.9)),
-            [send]
-        );
-        assert_eq!(harness.control.state(), ACTIVE);
-    }
-
-    #[test]
-    fn tracking_loss_clears_evidence_but_never_starts_or_stops() {
-        let mut start = Harness::new(STANDBY);
-        assert!(start
-            .drive(5, ("Open_Palm", 0.9), ("Open_Palm", 0.9))
-            .is_empty());
-        assert!(start.progress().is_some());
-        start.drive_empty(50);
-        assert_eq!(start.progress(), None);
-        assert!(start
-            .drive(7, ("Open_Palm", 0.9), ("Open_Palm", 0.9))
-            .is_empty());
-        assert_eq!(
-            start.sample(("Open_Palm", 0.9), ("Open_Palm", 0.9)),
+            harness.sample(&pinch),
             Some(ControlIntent::StartTranscription)
         );
-
-        let mut stop = Harness::new(ACTIVE);
-        assert!(stop
-            .drive(5, ("Open_Palm", 0.9), ("Victory", 0.9))
-            .is_empty());
-        stop.drive_empty(50);
-        assert!(stop
-            .drive(7, ("Open_Palm", 0.9), ("Victory", 0.9))
-            .is_empty());
-        assert_eq!(
-            stop.sample(("Open_Palm", 0.9), ("Victory", 0.9)),
-            Some(request(41, VoiceRequestGestureIntent::StopTranscription))
-        );
     }
 
     #[test]
-    fn gaps_invalid_order_and_unknown_tracking_fail_closed() {
-        let mut harness = Harness::new(ACTIVE);
-        assert!(harness
-            .drive(5, ("Open_Palm", 0.9), ("Thumb_Down", 0.9))
-            .is_empty());
-        assert_eq!(
-            harness.sample_after(
-                Duration::from_millis(251),
-                ("Open_Palm", 0.9),
-                ("Thumb_Down", 0.9),
-            ),
-            None
-        );
-        assert_eq!(
-            harness.control.diagnostic(),
-            ControlDiagnostic::SampleGap { gap_ms: 251 }
-        );
-        assert_eq!(harness.progress(), None);
+    fn progress_is_bounded_below_completion_until_the_intent_edge() {
+        let pinch = anchored(HandPose::IndexPinch, 0.95);
+        let mut harness = Harness::new(STANDBY);
+        assert!(harness.drive(5, &pinch).is_empty());
+        let progress = harness.progress().expect("candidate progress");
+        assert_eq!(progress.chord, ControlChord::StartTranscription);
+        assert!(progress.progress_permille < 1_000);
+    }
 
-        let captured_at = harness.start + harness.elapsed;
-        let hands = [
-            ControlHand::new("Open_Palm", 1.0),
-            ControlHand::new("Thumb_Down", 1.0),
-        ];
-        assert_eq!(
-            harness.control.observe(ControlSample {
-                frame_sequence: harness.sequence,
+    #[test]
+    fn scroll_uses_point_position_relative_to_the_modifier_anchor() {
+        let started = Instant::now();
+        let anchor = ControlHand::test(Handedness::Left, HandPose::Anchor, 0.95, 0.35, 0.55);
+        let up = ControlHand::test_point(Handedness::Right, 0.95, 0.65, 0.35, 0.65, 0.35);
+        let down = ControlHand::test_point(Handedness::Right, 0.95, 0.65, 0.75, 0.65, 0.75);
+        let neutral = ControlHand::test(Handedness::Right, HandPose::MiddlePinch, 0.95, 0.65, 0.55);
+        let mut control = ScrollControl::new();
+        let mut sequence = 0_u64;
+        let mut elapsed = Duration::ZERO;
+        let mut sample = |control: &mut ScrollControl, action: ControlHand| {
+            sequence += 1;
+            elapsed += STEP;
+            let captured_at = started + elapsed;
+            let hands = [anchor, action];
+            control.observe(ControlSample {
+                frame_sequence: sequence,
                 captured_at,
                 observed_at: captured_at + Duration::from_millis(20),
                 hands: &hands,
-            }),
-            None
-        );
-        assert_eq!(
-            harness.control.diagnostic(),
-            ControlDiagnostic::InvalidOrder
-        );
-        assert_eq!(harness.control.state(), ACTIVE);
+            })
+        };
+
+        let transitions: Vec<_> = (0..7).filter_map(|_| sample(&mut control, up)).collect();
+        assert!(matches!(
+            transitions.as_slice(),
+            [ScrollState::Held {
+                direction: ScrollDirection::Up,
+                ..
+            }]
+        ));
+        assert_eq!(sample(&mut control, neutral), Some(ScrollState::Idle));
+
+        let transitions: Vec<_> = (0..7).filter_map(|_| sample(&mut control, down)).collect();
+        assert!(matches!(
+            transitions.as_slice(),
+            [ScrollState::Held {
+                direction: ScrollDirection::Down,
+                ..
+            }]
+        ));
     }
 
     #[test]
-    fn candidate_progress_is_aggregate_bounded_and_never_completes_before_intent() {
+    fn scroll_stops_after_tracking_grace_without_rearming() {
+        let started = Instant::now();
+        let hands = [
+            ControlHand::test(Handedness::Left, HandPose::Anchor, 0.95, 0.35, 0.55),
+            ControlHand::test_point(Handedness::Right, 0.95, 0.65, 0.35, 0.65, 0.35),
+        ];
+        let mut control = ScrollControl::new();
+        let mut sequence = 0_u64;
+        for index in 0..7 {
+            sequence += 1;
+            let captured_at = started + STEP * (index + 1);
+            let _ = control.observe(ControlSample {
+                frame_sequence: sequence,
+                captured_at,
+                observed_at: captured_at + Duration::from_millis(20),
+                hands: &hands,
+            });
+        }
+        assert!(matches!(control.state(), ScrollState::Held { .. }));
+
+        sequence += 1;
+        let captured_at = started + Duration::from_millis(600);
+        assert_eq!(
+            control.observe(ControlSample {
+                frame_sequence: sequence,
+                captured_at,
+                observed_at: captured_at + Duration::from_millis(20),
+                hands: &[],
+            }),
+            Some(ScrollState::Idle)
+        );
+    }
+
+    #[test]
+    fn unordered_and_future_timestamps_fail_closed() {
+        let pinch = anchored(HandPose::IndexPinch, 0.95);
         let now = Instant::now();
         let mut control = GestureControl::new(STANDBY);
-        let hands = [
-            ControlHand::new("Open_Palm", 0.9),
-            ControlHand::new("Open_Palm", 0.9),
-        ];
         assert_eq!(
             control.observe(ControlSample {
-                frame_sequence: 1,
+                frame_sequence: 0,
                 captured_at: now,
-                observed_at: now + Duration::from_millis(20),
-                hands: &hands,
+                observed_at: now,
+                hands: &pinch,
             }),
             None
         );
+        assert_eq!(control.diagnostic(), ControlDiagnostic::InvalidOrder);
+
+        let mut fresh = GestureControl::new(STANDBY);
         assert_eq!(
-            control.progress(now),
-            Some(ControlProgress {
-                chord: ControlChord::StartTranscription,
-                progress_permille: 0,
-            })
+            fresh.observe(ControlSample {
+                frame_sequence: 1,
+                captured_at: now + Duration::from_millis(1),
+                observed_at: now,
+                hands: &pinch,
+            }),
+            None
         );
-        assert!(control
-            .progress(now)
-            .is_some_and(|progress| progress.progress_permille < 1_000));
-    }
-
-    #[test]
-    fn scroll_chords_are_unordered_stable_and_use_fifty_percent_confidence() {
-        let start = Instant::now();
-        let mut control = ScrollControl::new();
-        let mut sequence = 0_u64;
-        let mut elapsed = Duration::ZERO;
-        let mut sample = |control: &mut ScrollControl, first: (&str, f32), second: (&str, f32)| {
-            sequence += 1;
-            elapsed += STEP;
-            let captured_at = start + elapsed;
-            let hands = [
-                ControlHand::new(first.0, first.1),
-                ControlHand::new(second.0, second.1),
-            ];
-            control.observe(ControlSample {
-                frame_sequence: sequence,
-                captured_at,
-                observed_at: captured_at + Duration::from_millis(20),
-                hands: &hands,
-            })
-        };
-
-        for _ in 0..8 {
-            assert_eq!(
-                sample(&mut control, ("Closed_Fist", 0.499), ("Pointing_Up", 0.9),),
-                None
-            );
-        }
-        for _ in 0..5 {
-            assert_eq!(
-                sample(&mut control, ("Pointing_Up", 0.5), ("Closed_Fist", 0.5),),
-                None
-            );
-        }
-        assert_eq!(
-            sample(&mut control, ("Pointing_Up", 0.5), ("Closed_Fist", 0.5),),
-            Some(ScrollState::Held {
-                instance_id: 1,
-                direction: ScrollDirection::Up,
-            })
-        );
-    }
-
-    #[test]
-    fn scroll_tracking_loss_stops_without_rearming_the_same_held_pose() {
-        let start = Instant::now();
-        let mut control = ScrollControl::new();
-        let mut sequence = 0_u64;
-        let mut elapsed = Duration::ZERO;
-        let mut observe = |control: &mut ScrollControl, hands: &[ControlHand<'_>]| {
-            sequence += 1;
-            elapsed += STEP;
-            let captured_at = start + elapsed;
-            control.observe(ControlSample {
-                frame_sequence: sequence,
-                captured_at,
-                observed_at: captured_at + Duration::from_millis(20),
-                hands,
-            })
-        };
-        let down = [
-            ControlHand::new("Closed_Fist", 0.9),
-            ControlHand::new("Thumb_Down", 0.9),
-        ];
-        for _ in 0..5 {
-            assert_eq!(observe(&mut control, &down), None);
-        }
-        assert_eq!(
-            observe(&mut control, &down),
-            Some(ScrollState::Held {
-                instance_id: 1,
-                direction: ScrollDirection::Down,
-            })
-        );
-        assert_eq!(observe(&mut control, &[]), None);
-        assert_eq!(observe(&mut control, &[]), None);
-        assert_eq!(observe(&mut control, &[]), None);
-        assert_eq!(observe(&mut control, &[]), Some(ScrollState::Idle));
-
-        for _ in 0..10 {
-            assert_eq!(observe(&mut control, &down), None);
-        }
-        assert_eq!(control.state(), ScrollState::Idle);
-
-        let released = [
-            ControlHand::new("Open_Palm", 0.9),
-            ControlHand::new("Open_Palm", 0.9),
-        ];
-        assert_eq!(observe(&mut control, &released), None);
-        for _ in 0..5 {
-            assert_eq!(observe(&mut control, &down), None);
-        }
-        assert_eq!(
-            observe(&mut control, &down),
-            Some(ScrollState::Held {
-                instance_id: 2,
-                direction: ScrollDirection::Down,
-            })
-        );
+        assert_eq!(fresh.diagnostic(), ControlDiagnostic::InvalidOrder);
     }
 }

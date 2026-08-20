@@ -15,10 +15,11 @@ the random helper session. Reliable lifecycle, intent, and held-scroll events
 share a strict monotonic sequence, while Desktop applies its bounded local
 freshness policy before acting on received control.
 
-The runtime consists of this Rust executable and four verified TFLite models
-from the pinned Gesture Recognizer bundle. tract executes the complete palm,
-landmark, and gesture pipeline. Python, Java, Bazel, and MediaPipe native code
-are not build or runtime dependencies.
+The runtime consists of this Rust executable and two verified TFLite models
+from the pinned Gesture Recognizer bundle. tract executes palm and hand-landmark
+inference, then GSV's authored Rust recognizer maps landmark geometry into its
+small pose vocabulary. Python, Java, Bazel, and MediaPipe native code are not
+build or runtime dependencies.
 
 ## Build and run locally
 
@@ -41,7 +42,7 @@ format explicitly and converts row-strided frames locally to packed RGB.
 The matching versioned models are discovered automatically from
 `host/target/vision-native/artifact/`. The headless mode above is the real local
 control path. Use the diagnostic
-window against the same classifier with:
+window against the same pose recognizer with:
 
 ```bash
 GSV_GESTURE_DEBUG=1 cargo run --manifest-path host/apps/desktop/Cargo.toml
@@ -54,7 +55,7 @@ camera or inference call is stuck below Rust.
 
 The debug window mirrors presentation, but inference always receives the
 original camera frame. It draws up to two 21-point hand skeletons, handedness,
-canned gesture labels and confidence, a simple two-hand relationship, and
+authored pose labels and confidence, a simple two-hand relationship, and
 capture/inference/render timing. It also shows the semantic controller state:
 DISABLED, STANDBY, TRANSCRIBING, or TRANSCRIBING + MUTED, the fixed-vocabulary
 rejection, and clockwise progress through the complete temporal evidence gate.
@@ -66,7 +67,10 @@ frames rather than accumulating a private video queue.
 
 ## Gesture grammar
 
-Hand order and anatomical handedness do not assign roles. Desktop supplies one
+The non-dominant hand is the modifier and the dominant hand performs actions;
+camera array order is irrelevant. By default, the helper learns the roles when
+it sees exactly one relaxed open/C-shaped `Anchor` hand. Set
+`GSV_GESTURE_DOMINANT_HAND=left` or `right` to assign them explicitly. Desktop supplies one
 strict absolute context: standby when there is no voice request and the helper
 may propose starting one, disabled while an existing request is preparing,
 stopping, or otherwise not gesture-eligible, or active with the exact listening
@@ -74,19 +78,22 @@ request and acknowledged mute state. Desktop still owns final Start admission
 under transient UI policy. Keyboard-started dictation enters the same active
 context; the helper has no separate persistent armed bit.
 
-- While standby, show two open palms for 350 ms to start transcription.
-- While active, show open palm + Victory for 350 ms to stop transcription.
-- Show open palm + thumbs-up for 700 ms to send now.
-- Show open palm + thumbs-down for 450 ms to mute explicitly.
-- Show open palm + pointing-up for 700 ms to unmute explicitly.
-- Show closed fist + pointing-up for 250 ms, then hold to scroll up.
-- Show closed fist + thumbs-down for 250 ms, then hold to scroll down.
+- Keep the modifier in `Anchor`: a relaxed open/C-shaped hand with the thumb
+  comfortably separated from the fingers.
+- Touch the dominant thumb and index fingertip, with the remaining fingers
+  relaxed inward, for 350 ms. In standby this starts transcription; while
+  active the same primary pinch stops it.
+- Touch the dominant thumb and middle fingertip for 700 ms to send now.
+- Make a loose dominant fist, with the thumb resting near the curled fingers,
+  for 450 ms to mute or 700 ms to unmute, depending on current state.
+- Point the dominant index above or below the modifier palm for 250 ms, then
+  hold to scroll in that direction.
 
 Scroll gestures work in either standby or active voice mode. On a long moment,
 holding scrolls only that moment and stops at its edge. A fresh gesture begun at
 an edge moves exactly one moment; the held gesture is then consumed until a
 different known pose is observed, so it cannot skip through multiple moments.
-All other canned combinations are reserved and unassigned.
+All other postures are unassigned.
 Every gesture enters and continues at 0.50 confidence. After emitting any
 intent, the helper blocks further commands until Desktop echoes a fresh
 absolute context; an unchanged echo also resolves a rejected or nonterminal
@@ -112,6 +119,8 @@ not infer speech silence or implement auto-send.
   discovered camera is the fallback.
 - `GSV_VISION_NATIVE_MODELS=/path/to/gesture-recognizer-float16-1` overrides
   the extracted model root; every model is still verified by size and SHA-256.
+- `GSV_GESTURE_DOMINANT_HAND=auto|left|right` selects the action hand. `auto`
+  is the default and assigns roles from the first unambiguous modifier anchor.
 - `GSV_VISION_HELPER=/path/to/gsv-vision` tells Desktop which helper executable
   to supervise.
 

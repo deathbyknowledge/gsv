@@ -20,28 +20,21 @@ const MODEL_LOAD_WARMUP_ITERATIONS: usize = 1;
 const MODEL_LOAD_MEASURED_ITERATIONS: usize = 6;
 
 const FIXTURES: [Fixture; 4] = [
-    Fixture {
-        name: "fist.jpg",
-        expected_gesture: "Closed_Fist",
-    },
+    Fixture { name: "fist.jpg" },
     Fixture {
         name: "pointing_up.jpg",
-        expected_gesture: "Pointing_Up",
     },
     Fixture {
         name: "thumb_up.jpg",
-        expected_gesture: "Thumb_Up",
     },
     Fixture {
         name: "victory.jpg",
-        expected_gesture: "Victory",
     },
 ];
 
 #[derive(Clone, Copy)]
 struct Fixture {
     name: &'static str,
-    expected_gesture: &'static str,
 }
 
 struct LoadedFixture {
@@ -184,8 +177,7 @@ impl RecognitionStage {
             Self::LandmarkPreprocess => "landmarkPreprocess",
             Self::LandmarkInference => "landmarkInference",
             Self::LandmarkPostprocess => "landmarkPostprocess",
-            Self::GestureInference => "gestureInference",
-            Self::GesturePostprocess => "gesturePostprocess",
+            Self::PoseRecognition => "poseRecognition",
         }
     }
 }
@@ -389,11 +381,6 @@ fn recognize_fixture(
         .recognize_profiled(&fixture.frame, *timestamp_ms)
         .expect("fixture inference");
     assert_eq!(observation.hands.len(), 1, "{}", fixture.fixture.name);
-    assert_eq!(
-        observation.hands[0].gesture, fixture.fixture.expected_gesture,
-        "{}",
-        fixture.fixture.name
-    );
     (observation.inference_time, timings)
 }
 

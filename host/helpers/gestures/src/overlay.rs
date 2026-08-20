@@ -148,8 +148,8 @@ fn hand_label(hand: &HandObservation) -> String {
         "{} {:.1}%  {} {:.1}%",
         handedness_name(hand.handedness),
         percent(hand.handedness_score),
-        display_gesture(&hand.gesture),
-        percent(hand.gesture_score),
+        hand.pose.label(),
+        percent(hand.pose_score),
     )
 }
 
@@ -183,9 +183,9 @@ fn draw_pair(
     let pair = format!(
         "PAIR {}:{}  <>  {}:{}  D={distance:.2}",
         handedness_name(first.handedness),
-        display_gesture(&first.gesture),
+        first.pose.label(),
         handedness_name(second.handedness),
-        display_gesture(&second.gesture),
+        second.pose.label(),
     );
     let midpoint = (
         first_center.0.saturating_add(second_center.0) / 2,
@@ -513,14 +513,6 @@ fn percent(score: f32) -> f32 {
     }
 }
 
-fn display_gesture(gesture: &str) -> &str {
-    if gesture.is_empty() {
-        "None"
-    } else {
-        gesture
-    }
-}
-
 fn handedness_name(handedness: Handedness) -> &'static str {
     match handedness {
         Handedness::Left => "L",
@@ -803,7 +795,7 @@ mod tests {
     use std::time::Instant;
 
     use super::*;
-    use crate::observation::HandObservation;
+    use crate::observation::{HandObservation, HandPose};
 
     #[test]
     fn all_skeleton_connections_use_valid_landmark_indices() {
@@ -1014,11 +1006,11 @@ mod tests {
 
     #[test]
     fn two_hands_draw_a_pair_relationship_between_palms() {
-        let hand = |handedness, x, gesture: &str| HandObservation {
+        let hand = |handedness, x, pose| HandObservation {
             handedness,
             handedness_score: 0.9,
-            gesture: gesture.to_string(),
-            gesture_score: 0.8,
+            pose,
+            pose_score: 0.8,
             landmarks: [Landmark { x, y: 0.7, z: 0.0 }; 21],
         };
         let observed_at = Instant::now();
@@ -1026,8 +1018,8 @@ mod tests {
             frame_sequence: 4,
             observed_at,
             hands: vec![
-                hand(Handedness::Left, 0.25, "Thumb_Down"),
-                hand(Handedness::Right, 0.75, "Open_Palm"),
+                hand(Handedness::Left, 0.25, HandPose::Anchor),
+                hand(Handedness::Right, 0.75, HandPose::SoftFist),
             ],
             inference_time: Duration::from_millis(12),
         };
@@ -1115,12 +1107,12 @@ mod tests {
         let hand = HandObservation {
             handedness: Handedness::Left,
             handedness_score: 0.912,
-            gesture: "Open_Palm".to_string(),
-            gesture_score: 0.795,
+            pose: HandPose::Anchor,
+            pose_score: 0.795,
             landmarks: [Landmark::default(); 21],
         };
 
-        assert_eq!(hand_label(&hand), "L 91.2%  Open_Palm 79.5%");
+        assert_eq!(hand_label(&hand), "L 91.2%  Anchor 79.5%");
     }
 
     #[test]

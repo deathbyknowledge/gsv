@@ -60,27 +60,17 @@ trap 'rm -rf "$stage"' EXIT
 mkdir -p "$stage/model"
 
 unzip -p "$bundle" hand_landmarker.task > "$stage/hand_landmarker.task"
-unzip -p "$bundle" hand_gesture_recognizer.task > "$stage/hand_gesture_recognizer.task"
 unzip -p "$stage/hand_landmarker.task" hand_detector.tflite \
   > "$stage/model/hand_detector.tflite"
 unzip -p "$stage/hand_landmarker.task" hand_landmarks_detector.tflite \
   > "$stage/model/hand_landmarks_detector.tflite"
-unzip -p "$stage/hand_gesture_recognizer.task" gesture_embedder.tflite \
-  > "$stage/model/gesture_embedder.tflite"
-unzip -p "$stage/hand_gesture_recognizer.task" canned_gesture_classifier.tflite \
-  > "$stage/model/canned_gesture_classifier.tflite"
 
 verify_file "$stage/model/hand_detector.tflite" 2339878 \
   60d1bf8d70a80aba35b36290bb2a0e52e784ca2e524937d49ea80e8161a8a384
 verify_file "$stage/model/hand_landmarks_detector.tflite" 5478949 \
   6acda74af3fbf40e68265c20c7394b2bad81a16a481dcd79ad7a081887c3d6b9
-verify_file "$stage/model/gesture_embedder.tflite" 546000 \
-  54abe78de1d1cd5e3cdaa0dab01db18e3ec7e09a76e7c3b5fa278572f7a60977
-verify_file "$stage/model/canned_gesture_classifier.tflite" 7773 \
-  62a87ded76da05155f6a59c8babb4c537c138c25138b29450fb030e207a5c0e9
-
 printf '%s\n' "$BUNDLE_SHA256" > "$stage/bundle.sha256"
-rm -f "$stage/hand_landmarker.task" "$stage/hand_gesture_recognizer.task"
+rm -f "$stage/hand_landmarker.task"
 rm -rf "$artifact_root"
 mv "$stage" "$artifact_root"
 trap - EXIT

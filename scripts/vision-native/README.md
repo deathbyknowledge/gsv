@@ -1,8 +1,9 @@
 # Native gesture models
 
-`gsv-vision` implements the complete gesture pipeline in Rust and executes the
-four TFLite models with tract. It does not build or load MediaPipe, TensorFlow,
-Python, Java, or Bazel.
+`gsv-vision` implements the complete gesture pipeline in Rust. tract executes
+the two TFLite palm and hand-landmark models; GSV's authored pose recognizer
+maps their geometry into the local control vocabulary. It does not build or
+load MediaPipe, TensorFlow, Python, Java, or Bazel.
 
 Prepare the checksum-pinned models once, then build the normal host workspace:
 
@@ -14,10 +15,10 @@ cargo build --workspace
 
 The preparation script downloads the official Gesture Recognizer float16 v1
 bundle, verifies its SHA-256, extracts only the palm detector, hand landmark
-detector, gesture embedder, and canned classifier, and verifies every extracted
-file. Intermediate nested task archives are discarded, so the final artifact
-contains one checksum and the four runtime models only. The artifact stays under
-ignored `host/target/vision-native/`; it is not checked into Git.
+detector, and verifies both extracted files. Intermediate nested task archives
+are discarded, so the final artifact contains one checksum and the two runtime
+models only. The artifact stays under ignored `host/target/vision-native/`; it
+is not checked into Git.
 
 Run the reference parity test with:
 
@@ -25,10 +26,12 @@ Run the reference parity test with:
 ./scripts/vision-native/parity.sh
 ```
 
-That test downloads four checksum-pinned official fixture images and compares
-the Rust pipeline's gesture, confidence, handedness, and wrist coordinates with
-the outputs of the same model bundle through MediaPipe Tasks. MediaPipe is the
-golden reference only; it is not installed or executed by the test.
+That test downloads four checksum-pinned official fixture images and checks the
+Rust pipeline's handedness and wrist coordinates against the outputs of the same
+landmark model through MediaPipe Tasks. It also verifies that authored fist and
+point poses remain actionable while legacy thumbs-up and victory poses remain
+unassigned. MediaPipe supplies the landmark golden reference only; it is not
+installed or executed by the test.
 
 Measure the optimized native pipeline with:
 
@@ -66,4 +69,4 @@ the same parity, size, loading, and inference benchmarks before replacing it.
 For a manually assembled distribution, put the extracted artifact beside
 `gsv-vision` as `vision-models/` (including its `model/` child), or set
 `GSV_VISION_NATIVE_MODELS` to the artifact root. Runtime loading always verifies
-all four files before opening the camera.
+both files before opening the camera.

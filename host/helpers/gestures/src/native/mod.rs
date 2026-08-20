@@ -10,6 +10,7 @@ use std::time::Instant;
 use crate::observation::{
     FrameView, HandObservation, Handedness, Landmark, Observation, HAND_LANDMARK_COUNT, MAX_HANDS,
 };
+use crate::pose;
 
 use self::geometry::{
     decode_hand_rects, map_rect_from_crop, next_hand_rect, overlaps_tracked, project_landmarks,
@@ -32,17 +33,6 @@ const LANDMARK_REVALIDATION_INTERVAL_MS: i64 = 100;
 const CROP_SIGNATURE_SIZE: usize = 16;
 const CROP_SIGNATURE_SAMPLES: usize = CROP_SIGNATURE_SIZE * CROP_SIGNATURE_SIZE;
 const CROP_PIXEL_DELTA: u8 = 12;
-const GESTURE_LABELS: [&str; 8] = [
-    "None",
-    "Closed_Fist",
-    "Open_Palm",
-    "Pointing_Up",
-    "Thumb_Down",
-    "Thumb_Up",
-    "Victory",
-    "ILoveYou",
-];
-
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum Error {
     InvalidModel,
@@ -54,7 +44,7 @@ pub(crate) enum Error {
 impl Display for Error {
     fn fmt(&self, formatter: &mut Formatter<'_>) -> fmt::Result {
         formatter.write_str(match self {
-            Self::InvalidModel => "native gesture models are invalid",
+            Self::InvalidModel => "native hand-tracking models are invalid",
             Self::InvalidFrame => "video frame is invalid",
             Self::InvalidTimestamp => "video timestamp is invalid",
             Self::Inference => "native gesture inference failed",
@@ -115,20 +105,18 @@ enum RecognitionStage {
     LandmarkPreprocess,
     LandmarkInference,
     LandmarkPostprocess,
-    GestureInference,
-    GesturePostprocess,
+    PoseRecognition,
 }
 
 #[cfg(test)]
-const RECOGNITION_STAGES: [RecognitionStage; 8] = [
+const RECOGNITION_STAGES: [RecognitionStage; 7] = [
     RecognitionStage::PalmPreprocess,
     RecognitionStage::PalmInference,
     RecognitionStage::PalmPostprocess,
     RecognitionStage::LandmarkPreprocess,
     RecognitionStage::LandmarkInference,
     RecognitionStage::LandmarkPostprocess,
-    RecognitionStage::GestureInference,
-    RecognitionStage::GesturePostprocess,
+    RecognitionStage::PoseRecognition,
 ];
 
 trait RecognitionProfiler: Default + Send {
@@ -505,37 +493,20 @@ impl GestureRecognizer {
             Handedness::Left
         };
         let handedness_score = right_hand_score.max(1.0 - right_hand_score);
-        let normalized_landmarks =
-            normalize_landmarks(&landmarks, Some((frame.width, frame.height)))?;
-        let normalized_world_landmarks = normalize_landmarks(&world_landmarks, None)?;
         profiler.finish(RecognitionStage::LandmarkPostprocess, stage);
         let stage = profiler.start();
-        let classification = self.models.classify_gesture(
-            &normalized_landmarks,
-            right_hand_score,
-            &normalized_world_landmarks,
-        );
-        profiler.finish(RecognitionStage::GestureInference, stage);
-        let scores = classification?;
-        let stage = profiler.start();
-        let (gesture_index, gesture_score) = scores
-            .iter()
-            .copied()
-            .enumerate()
-            .filter(|(_, score)| score.is_finite())
-            .max_by(|left, right| left.1.total_cmp(&right.1))
-            .ok_or(Error::Inference)?;
+        let pose = pose::recognize(&world_landmarks);
         let detected = DetectedHand {
             observation: HandObservation {
                 handedness,
                 handedness_score,
-                gesture: GESTURE_LABELS[gesture_index].to_string(),
-                gesture_score,
+                pose: pose.pose,
+                pose_score: pose.score,
                 landmarks,
             },
             next_rect,
         };
-        profiler.finish(RecognitionStage::GesturePostprocess, stage);
+        profiler.finish(RecognitionStage::PoseRecognition, stage);
         Ok(Some(detected))
     }
 }
@@ -747,60 +718,6 @@ fn decode_landmarks(
     Ok((image, world))
 }
 
-fn normalize_landmarks(
-    landmarks: &[Landmark; HAND_LANDMARK_COUNT],
-    image_size: Option<(u32, u32)>,
-) -> Result<[f32; HAND_LANDMARK_COUNT * 3], Error> {
-    let mut values = [0.0; HAND_LANDMARK_COUNT * 3];
-    let (width_scale, height_scale) = image_size.map_or((1.0, 1.0), |(width, height)| {
-        let max_dimension = width.max(height) as f32;
-        (width as f32 / max_dimension, height as f32 / max_dimension)
-    });
-    let origin = landmarks[0];
-    let origin_x = if image_size.is_some() {
-        (origin.x - 0.5) * width_scale + 0.5
-    } else {
-        origin.x
-    };
-    let origin_y = if image_size.is_some() {
-        (origin.y - 0.5) * height_scale + 0.5
-    } else {
-        origin.y
-    };
-    let mut min_x = f32::MAX;
-    let mut min_y = f32::MAX;
-    let mut max_x = f32::MIN_POSITIVE;
-    let mut max_y = f32::MIN_POSITIVE;
-    for (index, landmark) in landmarks.iter().enumerate() {
-        let x = if image_size.is_some() {
-            (landmark.x - 0.5) * width_scale + 0.5
-        } else {
-            landmark.x
-        } - origin_x;
-        let y = if image_size.is_some() {
-            (landmark.y - 0.5) * height_scale + 0.5
-        } else {
-            landmark.y
-        } - origin_y;
-        let z = landmark.z - origin.z;
-        values[index * 3] = finite(x)?;
-        values[index * 3 + 1] = finite(y)?;
-        values[index * 3 + 2] = finite(z)?;
-        min_x = min_x.min(x);
-        max_x = max_x.max(x);
-        min_y = min_y.min(y);
-        max_y = max_y.max(y);
-    }
-    let scale = (max_x - min_x).max(max_y - min_y) + 1e-5;
-    if !scale.is_finite() || scale <= 0.0 {
-        return Err(Error::Inference);
-    }
-    for value in &mut values {
-        *value /= scale;
-    }
-    Ok(values)
-}
-
 fn finite(value: f32) -> Result<f32, Error> {
     value.is_finite().then_some(value).ok_or(Error::Inference)
 }
@@ -819,26 +736,7 @@ mod tests {
     use std::time::Instant;
 
     use super::*;
-
-    #[test]
-    fn normalizing_landmarks_uses_the_wrist_as_origin() {
-        let wrist = Landmark {
-            x: 0.2,
-            y: 0.3,
-            z: 0.4,
-        };
-        let mut landmarks = [wrist; HAND_LANDMARK_COUNT];
-        landmarks[1] = Landmark {
-            x: 0.4,
-            y: 0.7,
-            z: 0.5,
-        };
-        let normalized = normalize_landmarks(&landmarks, None).expect("valid landmarks");
-        assert_eq!(&normalized[0..3], &[0.0, 0.0, 0.0]);
-        assert!((normalized[3] - 0.5).abs() < 1e-4);
-        assert!((normalized[4] - 1.0).abs() < 1e-4);
-        assert!((normalized[5] - 0.25).abs() < 1e-4);
-    }
+    use crate::observation::HandPose;
 
     #[test]
     fn malformed_probabilities_fail_closed() {
@@ -896,8 +794,8 @@ mod tests {
     }
 
     #[test]
-    fn weak_landmark_frames_retain_the_roi_without_emitting_stale_gestures() {
-        let previous = tracked_test_hand(0.25, "Thumb_Down");
+    fn weak_landmark_frames_retain_the_roi_without_emitting_stale_poses() {
+        let previous = tracked_test_hand(0.25, HandPose::SoftFist);
         let candidate = HandCandidate {
             rect: previous.rect,
             previous: Some(0),
@@ -922,23 +820,23 @@ mod tests {
     }
 
     #[test]
-    fn a_second_hand_does_not_discard_a_recovering_thumb_down_track() {
-        let thumb = tracked_test_hand(0.25, "Thumb_Down");
-        let open = tracked_test_hand(0.75, "Open_Palm");
+    fn a_second_hand_does_not_discard_a_recovering_track() {
+        let fist = tracked_test_hand(0.25, HandPose::SoftFist);
+        let anchor = tracked_test_hand(0.75, HandPose::Anchor);
         let candidates = vec![
             HandCandidate {
-                rect: thumb.rect,
+                rect: fist.rect,
                 previous: Some(0),
             },
             HandCandidate {
-                rect: open.rect,
+                rect: anchor.rect,
                 previous: Some(1),
             },
         ];
-        let detections = vec![None, open.cached.clone()];
-        let (tracked, hands) = reconcile_tracking(vec![thumb, open], candidates, detections, 100);
+        let detections = vec![None, anchor.cached.clone()];
+        let (tracked, hands) = reconcile_tracking(vec![fist, anchor], candidates, detections, 100);
         assert_eq!(hands.len(), 1);
-        assert_eq!(hands[0].gesture, "Open_Palm");
+        assert_eq!(hands[0].pose, HandPose::Anchor);
         assert_eq!(tracked.len(), 2);
         assert_eq!(
             tracked
@@ -951,27 +849,27 @@ mod tests {
 
     #[test]
     fn detected_hands_replace_recovery_slots_before_the_two_hand_limit() {
-        let thumb = tracked_test_hand(0.15, "Thumb_Down");
-        let open = tracked_test_hand(0.5, "Open_Palm");
-        let victory = tracked_test_hand(0.85, "Victory");
+        let fist = tracked_test_hand(0.15, HandPose::SoftFist);
+        let anchor = tracked_test_hand(0.5, HandPose::Anchor);
+        let point = tracked_test_hand(0.85, HandPose::Point);
         let candidates = vec![
             HandCandidate {
-                rect: thumb.rect,
+                rect: fist.rect,
                 previous: Some(0),
             },
             HandCandidate {
-                rect: open.rect,
+                rect: anchor.rect,
                 previous: Some(1),
             },
             HandCandidate {
-                rect: victory.rect,
+                rect: point.rect,
                 previous: None,
             },
         ];
         let (tracked, hands) = reconcile_tracking(
-            vec![thumb, open.clone()],
+            vec![fist, anchor.clone()],
             candidates,
-            vec![None, open.cached.clone(), victory.cached.clone()],
+            vec![None, anchor.cached.clone(), point.cached.clone()],
             100,
         );
         assert_eq!(hands.len(), MAX_HANDS);
@@ -979,7 +877,7 @@ mod tests {
         assert!(tracked.iter().all(|track| track.missed_since_ms.is_none()));
     }
 
-    fn tracked_test_hand(center_x: f32, gesture: &str) -> TrackedHand {
+    fn tracked_test_hand(center_x: f32, pose: HandPose) -> TrackedHand {
         let mut landmarks = [Landmark::default(); HAND_LANDMARK_COUNT];
         for (index, landmark) in landmarks.iter_mut().enumerate() {
             landmark.x = center_x + (index % 5) as f32 * 0.01;
@@ -1001,8 +899,8 @@ mod tests {
                     observation: HandObservation {
                         handedness: Handedness::Right,
                         handedness_score: 1.0,
-                        gesture: gesture.to_string(),
-                        gesture_score: 1.0,
+                        pose,
+                        pose_score: 1.0,
                         landmarks,
                     },
                     next_rect: rect,
@@ -1035,7 +933,7 @@ mod tests {
 
     #[test]
     #[ignore = "run with scripts/vision-native/parity.sh"]
-    fn matches_mediapipe_gesture_fixtures() {
+    fn matches_mediapipe_landmark_fixtures() {
         let fixture_root = PathBuf::from(
             std::env::var_os("GSV_VISION_PARITY_FIXTURES").expect("parity fixture directory"),
         );
@@ -1049,34 +947,34 @@ mod tests {
             runtime::resolve_models(Some(model_root.into_os_string()), None, Path::new("."))
                 .expect("verified native gesture models");
         let mut recognizer = GestureRecognizer::load(&models).expect("native recognizer");
-        for (name, expected_gesture, expected_score, expected_handedness, wrist) in [
+        for (name, expected_pose, actionable, expected_handedness, wrist) in [
             (
                 "fist.jpg",
-                "Closed_Fist",
-                0.900_044_1,
-                0.989_296_1,
-                (0.477_097, 0.661_291),
+                HandPose::SoftFist,
+                true,
+                0.989_296_1_f32,
+                (0.477_097_f32, 0.661_291_f32),
             ),
             (
                 "pointing_up.jpg",
-                "Pointing_Up",
-                0.829_581_9,
-                0.995_088_8,
-                (0.479_238_4, 0.742_612),
+                HandPose::Point,
+                true,
+                0.995_088_8_f32,
+                (0.479_238_4_f32, 0.742_612_f32),
             ),
             (
                 "thumb_up.jpg",
-                "Thumb_Up",
-                0.743_600_6,
-                0.983_551_7,
-                (0.638_752_8, 0.671_340_5),
+                HandPose::Unknown,
+                false,
+                0.983_551_7_f32,
+                (0.638_752_8_f32, 0.671_340_5_f32),
             ),
             (
                 "victory.jpg",
-                "Victory",
-                0.775_318_4,
-                0.995_300_7,
-                (0.516_432_1, 0.804_093_7),
+                HandPose::Unknown,
+                false,
+                0.995_300_7_f32,
+                (0.516_432_1_f32, 0.804_093_7_f32),
             ),
         ] {
             recognizer.clear_tracking();
@@ -1097,11 +995,8 @@ mod tests {
             assert_eq!(observation.hands.len(), 1, "{name}");
             let hand = &observation.hands[0];
             assert_eq!(hand.handedness, Handedness::Right, "{name}");
-            assert_eq!(hand.gesture, expected_gesture, "{name}");
-            assert!(
-                (hand.gesture_score - expected_score).abs() <= 0.08,
-                "{name}"
-            );
+            assert_eq!(hand.pose, expected_pose, "{name}");
+            assert_eq!(hand.pose_score >= 0.50, actionable, "{name}");
             assert!(
                 (hand.handedness_score - expected_handedness).abs() <= 0.03,
                 "{name}"

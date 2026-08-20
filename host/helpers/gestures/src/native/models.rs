@@ -18,8 +18,6 @@ pub(super) struct Models {
     inference_pool: Option<Arc<ThreadPool>>,
     palm_detector: Plan,
     landmark_detector: Plan,
-    gesture_embedder: Plan,
-    gesture_classifier: Plan,
 }
 
 pub(super) struct LandmarkOutputs {
@@ -52,8 +50,6 @@ impl Models {
             inference_pool,
             palm_detector: load(&paths.palm_detector, &executor)?,
             landmark_detector: load(&paths.landmark_detector, &executor)?,
-            gesture_embedder: load(&paths.gesture_embedder, &executor)?,
-            gesture_classifier: load(&paths.gesture_classifier, &executor)?,
         })
     }
 
@@ -83,38 +79,6 @@ impl Models {
             handedness: tensor_scalar(&outputs[2])?,
             world: tensor_array(&outputs[3])?,
         })
-    }
-
-    pub(super) fn classify_gesture(
-        &self,
-        landmarks: &[f32; 63],
-        right_hand_score: f32,
-        world_landmarks: &[f32; 63],
-    ) -> Result<[f32; 8], Error> {
-        let inputs = tvec![
-            Tensor::from_shape(&[1, 21, 3], landmarks)
-                .map_err(|_| Error::Inference)?
-                .into_tvalue(),
-            Tensor::from_shape(&[1, 1], &[right_hand_score])
-                .map_err(|_| Error::Inference)?
-                .into_tvalue(),
-            Tensor::from_shape(&[1, 21, 3], world_landmarks)
-                .map_err(|_| Error::Inference)?
-                .into_tvalue(),
-        ];
-        let embedding = self
-            .gesture_embedder
-            .run(inputs)
-            .map_err(|_| Error::Inference)?;
-        if embedding.len() != 1 {
-            return Err(Error::Inference);
-        }
-        let embedding = tensor_values(&embedding[0], 128)?;
-        let outputs = run_one(&self.gesture_classifier, &[1, 128], &embedding)?;
-        if outputs.len() != 1 {
-            return Err(Error::Inference);
-        }
-        tensor_array(&outputs[0])
     }
 
     #[cfg(test)]

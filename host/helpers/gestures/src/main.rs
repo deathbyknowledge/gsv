@@ -5,6 +5,7 @@ mod debug_window;
 mod native;
 mod observation;
 mod overlay;
+mod pose;
 
 use std::env;
 use std::error::Error as StdError;
@@ -24,7 +25,8 @@ use gesture_protocol::{
 
 use crate::camera::{CameraConfig, CameraError, CameraFailure, CameraStream, FrameReader};
 use crate::control::{
-    ControlDiagnostic, ControlHand, ControlIntent, ControlSample, GestureControl, ScrollControl,
+    ControlDiagnostic, ControlHand, ControlIntent, ControlSample, GestureControl, HandPreference,
+    ScrollControl,
 };
 use crate::control_transport::{ControlContext, HelperControl};
 use crate::debug_window::{DebugWindow, DebugWindowConfig};
@@ -35,6 +37,7 @@ use crate::overlay::ControlPresentationDiagnostic;
 
 const PARENT_STDIN_WATCHDOG: &str = "GSV_VISION_PARENT_STDIN";
 const DEBUG_WINDOW_MARKER: &str = "GSV_VISION_DEBUG_WINDOW";
+const DOMINANT_HAND: &str = "GSV_GESTURE_DOMINANT_HAND";
 const FIRST_FRAME_TIMEOUT: Duration = Duration::from_secs(5);
 const INFERENCE_POLL: Duration = Duration::from_millis(100);
 const CONTROL_STATUS_HEARTBEAT: Duration = Duration::from_millis(500);
@@ -47,6 +50,7 @@ enum VisionError {
     NativeModelsUnavailable,
     InvalidNativeModelsOverride,
     InvalidCamera,
+    InvalidDominantHand,
     CameraPermissionDenied,
     CameraUnavailable(CameraFailure),
     CameraStopped(Option<CameraFailure>),
@@ -73,6 +77,7 @@ impl Display for VisionError {
                 "GSV_VISION_NATIVE_MODELS does not name a verified model artifact"
             }
             Self::InvalidCamera => "GSV_VISION_CAMERA must be a camera index from 0 through 63",
+            Self::InvalidDominantHand => "GSV_GESTURE_DOMINANT_HAND must be auto, left, or right",
             Self::CameraPermissionDenied => "camera permission was not granted",
             Self::CameraUnavailable(_) => "the local camera could not be opened",
             Self::CameraStopped(_) => "the local camera stopped producing frames",
@@ -91,6 +96,11 @@ struct AnnotatedFrame {
     observation: Observation,
     control_status: ControlStatus,
     control_diagnostic: ControlDiagnostic,
+}
+
+struct InferenceWorkerConfig {
+    models: ModelPaths,
+    hand_preference: HandPreference,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -141,6 +151,7 @@ fn run_pipeline(control: Option<HelperControl>, debug_window: bool) -> Result<()
         }
     })?;
     let camera_index = parse_camera_index(env::var_os("GSV_VISION_CAMERA").as_deref())?;
+    let hand_preference = parse_hand_preference(env::var_os(DOMINANT_HAND).as_deref())?;
 
     let camera = CameraStream::open(CameraConfig {
         index: camera_index,
@@ -159,7 +170,10 @@ fn run_pipeline(control: Option<HelperControl>, debug_window: bool) -> Result<()
         .name("gsv-vision-inference".to_string())
         .spawn(move || {
             inference_worker(
-                models,
+                InferenceWorkerConfig {
+                    models,
+                    hand_preference,
+                },
                 worker_reader,
                 worker_stop,
                 annotated_sender,
@@ -310,7 +324,7 @@ fn control_presentation(
 }
 
 fn inference_worker(
-    models: ModelPaths,
+    config: InferenceWorkerConfig,
     reader: FrameReader,
     stop: Arc<AtomicBool>,
     output: Sender<AnnotatedFrame>,
@@ -318,7 +332,7 @@ fn inference_worker(
     failure: Sender<VisionError>,
     control_link: Option<HelperControl>,
 ) {
-    let Ok(mut recognizer) = GestureRecognizer::load(&models) else {
+    let Ok(mut recognizer) = GestureRecognizer::load(&config.models) else {
         let _ = failure.try_send(VisionError::InferenceUnavailable);
         return;
     };
@@ -327,8 +341,9 @@ fn inference_worker(
     let mut ready_published = false;
     let mut first_capture = None;
     let mut last_timestamp = None;
-    let mut gesture_control = GestureControl::default();
-    let mut scroll_control = ScrollControl::default();
+    let mut gesture_control =
+        GestureControl::with_preference(GestureContext::Disabled, config.hand_preference);
+    let mut scroll_control = ScrollControl::with_preference(config.hand_preference);
     let mut control_revision = 0;
     let mut published_control_status = None;
     let mut published_scroll_state = None;
@@ -548,8 +563,8 @@ fn observe_controls(
     match observation.hands.as_slice() {
         [first, second] => {
             let hands = [
-                ControlHand::new(&first.gesture, first.gesture_score),
-                ControlHand::new(&second.gesture, second.gesture_score),
+                ControlHand::from_observation(first),
+                ControlHand::from_observation(second),
             ];
             observe(
                 gesture,
@@ -563,7 +578,7 @@ fn observe_controls(
             )
         }
         [hand] => {
-            let hands = [ControlHand::new(&hand.gesture, hand.gesture_score)];
+            let hands = [ControlHand::from_observation(hand)];
             observe(
                 gesture,
                 scroll,
@@ -597,6 +612,7 @@ impl VisionError {
             Self::InvalidCamera | Self::CameraPermissionDenied | Self::CameraUnavailable(_) => {
                 gesture_protocol::LifecycleState::CameraUnavailable
             }
+            Self::InvalidDominantHand => gesture_protocol::LifecycleState::ProtocolError,
             Self::CameraStopped(_) => gesture_protocol::LifecycleState::CameraStopped,
             Self::WindowUnavailable => gesture_protocol::LifecycleState::WindowUnavailable,
             Self::InferenceUnavailable => gesture_protocol::LifecycleState::InferenceUnavailable,
@@ -662,9 +678,20 @@ fn parse_camera_index(value: Option<&OsStr>) -> Result<Option<u32>, VisionError>
     Ok(Some(parsed))
 }
 
+fn parse_hand_preference(value: Option<&OsStr>) -> Result<HandPreference, VisionError> {
+    match value {
+        None => Ok(HandPreference::Auto),
+        Some(value) if value == OsStr::new("auto") => Ok(HandPreference::Auto),
+        Some(value) if value == OsStr::new("left") => Ok(HandPreference::Left),
+        Some(value) if value == OsStr::new("right") => Ok(HandPreference::Right),
+        Some(_) => Err(VisionError::InvalidDominantHand),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::observation::{HandPose, Handedness};
 
     const ACTIVE: GestureContext = GestureContext::Active {
         voice_request_id: 12,
@@ -682,6 +709,27 @@ mod tests {
         assert_eq!(
             parse_camera_index(Some(OsStr::new("camera 1"))),
             Err(VisionError::InvalidCamera)
+        );
+    }
+
+    #[test]
+    fn dominant_hand_is_explicit_and_defaults_to_auto() {
+        assert_eq!(parse_hand_preference(None), Ok(HandPreference::Auto));
+        assert_eq!(
+            parse_hand_preference(Some(OsStr::new("auto"))),
+            Ok(HandPreference::Auto)
+        );
+        assert_eq!(
+            parse_hand_preference(Some(OsStr::new("left"))),
+            Ok(HandPreference::Left)
+        );
+        assert_eq!(
+            parse_hand_preference(Some(OsStr::new("right"))),
+            Ok(HandPreference::Right)
+        );
+        assert_eq!(
+            parse_hand_preference(Some(OsStr::new("Left"))),
+            Err(VisionError::InvalidDominantHand)
         );
     }
 
@@ -890,8 +938,8 @@ mod tests {
         let now = Instant::now();
         let mut control = GestureControl::new(GestureContext::Standby);
         let hands = [
-            ControlHand::new("Open_Palm", 0.9),
-            ControlHand::new("Open_Palm", 0.9),
+            ControlHand::test(Handedness::Left, HandPose::Anchor, 0.9, 0.25, 0.5),
+            ControlHand::test(Handedness::Right, HandPose::IndexPinch, 0.9, 0.75, 0.5),
         ];
         assert_eq!(
             control.observe(ControlSample {
@@ -977,7 +1025,7 @@ mod tests {
 
     #[test]
     fn one_visible_hand_reaches_the_controller_diagnostic() {
-        use crate::observation::{HandObservation, Handedness, Landmark};
+        use crate::observation::{HandObservation, HandPose, Handedness, Landmark};
 
         let captured_at = Instant::now();
         let observation = Observation {
@@ -986,8 +1034,8 @@ mod tests {
             hands: vec![HandObservation {
                 handedness: Handedness::Left,
                 handedness_score: 0.95,
-                gesture: "Open_Palm".to_string(),
-                gesture_score: 0.95,
+                pose: HandPose::Anchor,
+                pose_score: 0.95,
                 landmarks: [Landmark::default(); 21],
             }],
             inference_time: Duration::from_millis(20),

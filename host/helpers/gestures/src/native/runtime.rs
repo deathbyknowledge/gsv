@@ -12,8 +12,6 @@ const MODEL_DIRECTORY: &str = "model";
 pub(crate) struct ModelPaths {
     pub(crate) palm_detector: PathBuf,
     pub(crate) landmark_detector: PathBuf,
-    pub(crate) gesture_embedder: PathBuf,
-    pub(crate) gesture_classifier: PathBuf,
 }
 
 #[derive(Clone, Copy)]
@@ -23,7 +21,7 @@ struct ModelContract {
     sha256: &'static str,
 }
 
-const MODELS: [ModelContract; 4] = [
+const MODELS: [ModelContract; 2] = [
     ModelContract {
         name: "hand_detector.tflite",
         bytes: 2_339_878,
@@ -33,16 +31,6 @@ const MODELS: [ModelContract; 4] = [
         name: "hand_landmarks_detector.tflite",
         bytes: 5_478_949,
         sha256: "6acda74af3fbf40e68265c20c7394b2bad81a16a481dcd79ad7a081887c3d6b9",
-    },
-    ModelContract {
-        name: "gesture_embedder.tflite",
-        bytes: 546_000,
-        sha256: "54abe78de1d1cd5e3cdaa0dab01db18e3ec7e09a76e7c3b5fa278572f7a60977",
-    },
-    ModelContract {
-        name: "canned_gesture_classifier.tflite",
-        bytes: 7_773,
-        sha256: "62a87ded76da05155f6a59c8babb4c537c138c25138b29450fb030e207a5c0e9",
     },
 ];
 
@@ -102,13 +90,10 @@ fn verify_models(root: &Path) -> Result<ModelPaths, ()> {
         }
         verified.push(path);
     }
-    let [palm_detector, landmark_detector, gesture_embedder, gesture_classifier] =
-        verified.try_into().map_err(|_| ())?;
+    let [palm_detector, landmark_detector] = verified.try_into().map_err(|_| ())?;
     Ok(ModelPaths {
         palm_detector,
         landmark_detector,
-        gesture_embedder,
-        gesture_classifier,
     })
 }
 

@@ -28,12 +28,39 @@ pub enum Handedness {
     Unknown,
 }
 
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum HandPose {
+    Anchor,
+    IndexPinch,
+    MiddlePinch,
+    SoftFist,
+    Point,
+    GatheredPinch,
+    #[default]
+    Unknown,
+}
+
+impl HandPose {
+    #[must_use]
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Anchor => "Anchor",
+            Self::IndexPinch => "Index pinch",
+            Self::MiddlePinch => "Middle pinch",
+            Self::SoftFist => "Soft fist",
+            Self::Point => "Point",
+            Self::GatheredPinch => "Gathered pinch",
+            Self::Unknown => "Unknown",
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct HandObservation {
     pub handedness: Handedness,
     pub handedness_score: f32,
-    pub gesture: String,
-    pub gesture_score: f32,
+    pub pose: HandPose,
+    pub pose_score: f32,
     pub landmarks: [Landmark; HAND_LANDMARK_COUNT],
 }
 
