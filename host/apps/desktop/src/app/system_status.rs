@@ -1,11 +1,12 @@
 use gesture_protocol::LifecycleState;
-use gpui::{Context, Focusable as _, Window};
+use gpui::{Context, Window};
 use tokio::sync::mpsc::UnboundedReceiver;
 
 use crate::model::ConnectionState;
 use crate::system_status::{
-    GatewayStatus, GestureStatus, SystemStatusAction, SystemStatusSnapshot,
+    GatewayStatus, GestureStatus, MachineStatus, SystemStatusAction, SystemStatusSnapshot,
 };
+use crate::{client::ClientCommand, machine_setup::MachineRuntimeStatus};
 
 use super::{GsvApp, ToggleDictation, ToggleGestureGuide};
 
@@ -49,7 +50,19 @@ impl GsvApp {
         };
         SystemStatusSnapshot {
             gateway,
-            machine_ready: self.machine_ready,
+            machine: if self.machine_configured {
+                match self.machine_runtime_status {
+                    MachineRuntimeStatus::NotRunning => MachineStatus::NotRunning,
+                    MachineRuntimeStatus::Starting => MachineStatus::Starting,
+                    MachineRuntimeStatus::Connecting => MachineStatus::Connecting,
+                    MachineRuntimeStatus::Connected => MachineStatus::Connected,
+                    MachineRuntimeStatus::Reconnecting => MachineStatus::Reconnecting,
+                    MachineRuntimeStatus::Reloading => MachineStatus::Reloading,
+                    MachineRuntimeStatus::ShuttingDown => MachineStatus::ShuttingDown,
+                }
+            } else {
+                MachineStatus::NotSetUp
+            },
             voice_active: self.voice_draft.is_some(),
             voice_available: self.voice_draft.is_some() || self.dictation_start_is_safe(),
             gestures,
@@ -66,7 +79,59 @@ impl GsvApp {
             SystemStatusAction::Open => {
                 cx.activate(true);
                 window.activate_window();
-                self.input.focus_handle(cx).focus(window);
+                self.focus_active_input(window, cx);
+            }
+            SystemStatusAction::Gateway => {
+                cx.activate(true);
+                window.activate_window();
+                self.focus_active_input(window, cx);
+                if self.login.is_none() {
+                    let _ = self.commands.send(ClientCommand::ReconnectGateway);
+                }
+            }
+            SystemStatusAction::MachinePrimary => {
+                cx.activate(true);
+                window.activate_window();
+                if !self.machine_configured {
+                    self.machine_setup_dismissed = false;
+                    self.begin_machine_management(
+                        false,
+                        crate::machine_setup::suggested_machine_name(),
+                        window,
+                        cx,
+                    );
+                } else {
+                    let command = match self.machine_runtime_status {
+                        MachineRuntimeStatus::NotRunning => {
+                            self.machine_runtime_status = MachineRuntimeStatus::Starting;
+                            Some(ClientCommand::StartMachine)
+                        }
+                        MachineRuntimeStatus::Connecting
+                        | MachineRuntimeStatus::Connected
+                        | MachineRuntimeStatus::Reconnecting
+                        | MachineRuntimeStatus::Reloading => {
+                            self.machine_runtime_status = MachineRuntimeStatus::Reconnecting;
+                            Some(ClientCommand::ReconnectMachine)
+                        }
+                        MachineRuntimeStatus::Starting | MachineRuntimeStatus::ShuttingDown => None,
+                    };
+                    if let Some(command) = command {
+                        let _ = self.commands.send(command);
+                    }
+                    self.focus_active_input(window, cx);
+                }
+                cx.notify();
+            }
+            SystemStatusAction::MachineRestart => {
+                self.machine_runtime_status = MachineRuntimeStatus::Starting;
+                let _ = self.commands.send(ClientCommand::RestartMachine);
+                cx.notify();
+            }
+            SystemStatusAction::MachineDiagnostics => {
+                cx.activate(true);
+                window.activate_window();
+                self.focus_active_input(window, cx);
+                let _ = self.commands.send(ClientCommand::DiagnoseMachine);
             }
             SystemStatusAction::ToggleVoice => {
                 self.toggle_dictation_action(&ToggleDictation, window, cx);
@@ -119,7 +184,7 @@ mod tests {
                 app.read(cx).system_status_snapshot(),
                 SystemStatusSnapshot {
                     gateway: GatewayStatus::Connecting,
-                    machine_ready: true,
+                    machine: MachineStatus::Connected,
                     voice_active: false,
                     voice_available: true,
                     gestures: GestureStatus::Disabled,

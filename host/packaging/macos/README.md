@@ -11,7 +11,9 @@ remains local and gesture control starts disarmed. Voice input is available
 from the visible **VOICE** control or `Command+Shift+Space`. Both features ask
 for their macOS privacy permission when first used. The same white ship appears
 as a monochrome menu-bar item with connection, machine, voice, and gesture
-state. Closing the window keeps Desktop available there. **Quit GSV** or
+state. The menu can retry or reconnect the Gateway, start or restart `gsvd`,
+ask the machine to reconnect, and display its bounded diagnostics. Closing the
+window keeps Desktop available there. **Quit GSV** or
 `Command+Q` shuts down Desktop and its voice/gesture helpers without stopping
 the independently installed `gsvd` service.
 

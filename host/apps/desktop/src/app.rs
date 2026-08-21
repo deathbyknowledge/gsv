@@ -21,7 +21,7 @@ use crate::content::MediaAttachment;
 use crate::desktop_control::DesktopControlRequest;
 use crate::history::{HistoryPreparationCandidate, HistoryRevision};
 use crate::interaction::{CanvasInteraction, CanvasLayer, SubmissionFailure};
-use crate::machine_setup::{MachineSetupFlow, MachineSetupPhase};
+use crate::machine_setup::{MachineRuntimeStatus, MachineSetupFlow, MachineSetupPhase};
 use crate::media_files::{MaterializedMedia, MediaFileStore};
 use crate::model::{Conversation, MomentIdentityAdoption, SurfaceMode};
 use crate::prepared::PreparedContent;
@@ -237,6 +237,8 @@ pub struct GsvApp {
     next_machine_request_id: u64,
     active_machine_request_id: Option<u64>,
     machine_setup_dismissed: bool,
+    machine_configured: bool,
+    machine_runtime_status: MachineRuntimeStatus,
     machine_ready: bool,
     commands: tokio::sync::mpsc::UnboundedSender<ClientCommand>,
     audio: TypingAudio,
@@ -811,6 +813,12 @@ impl GsvApp {
             next_machine_request_id: 1,
             active_machine_request_id: None,
             machine_setup_dismissed: demo,
+            machine_configured: demo,
+            machine_runtime_status: if demo {
+                MachineRuntimeStatus::Connected
+            } else {
+                MachineRuntimeStatus::NotRunning
+            },
             machine_ready: demo,
             commands,
             audio: TypingAudio::new(sound_enabled),

@@ -7,7 +7,9 @@ use gpui_component::input::{Input, InputEvent};
 
 use crate::audio::KeySound;
 use crate::client::ClientCommand;
-use crate::machine_setup::{MachineActivation, MachineSetupFlow, MachineSetupPhase};
+use crate::machine_setup::{
+    MachineActivation, MachineRuntimeStatus, MachineSetupFlow, MachineSetupPhase,
+};
 use crate::theme;
 
 use super::{new_machine_input, GsvApp};
@@ -20,6 +22,7 @@ impl GsvApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.machine_configured = configured;
         if self.machine_ready
             || self.machine_setup_dismissed
             || self.machine_setup.is_some()
@@ -82,6 +85,7 @@ impl GsvApp {
             }
         };
         self.active_machine_request_id = Some(request_id);
+        self.machine_runtime_status = MachineRuntimeStatus::Starting;
         self.refresh_machine_input(window, cx);
         if self
             .commands
@@ -119,6 +123,12 @@ impl GsvApp {
             }
         }
         self.active_machine_request_id = None;
+        self.machine_configured = true;
+        self.machine_runtime_status = if activation.connected {
+            MachineRuntimeStatus::Connected
+        } else {
+            MachineRuntimeStatus::Connecting
+        };
         self.machine_ready = true;
         self.machine_setup = None;
         self.refresh_machine_input(window, cx);
@@ -146,6 +156,8 @@ impl GsvApp {
         }
         self.active_machine_request_id = None;
         if automatic {
+            self.machine_configured = true;
+            self.machine_runtime_status = MachineRuntimeStatus::NotRunning;
             self.conversation.show_error(format!(
                 "This computer could not be connected in the background: {message}"
             ));

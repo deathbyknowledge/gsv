@@ -27,7 +27,7 @@ use tokio::task::{AbortHandle, JoinSet};
 use crate::content::{MediaAttachment, MediaKind};
 use crate::desktop_control::{DesktopControlRequest, NativeDesktopControlHandler};
 use crate::history::{normalize_history, HistorySnapshot, MAX_FETCHED_HISTORY_MESSAGES};
-use crate::machine_setup::{self, MachineActivation};
+use crate::machine_setup::{self, DaemonServiceControl, MachineActivation, MachineRuntimeStatus};
 use crate::startup::{
     resolve_startup, ConnectionSettings, Credential, LoginDefaults, LoginStep, StartupResolution,
     StartupSources,
@@ -38,6 +38,7 @@ const RPC_TIMEOUT: Duration = Duration::from_secs(45);
 const RPC_ENVELOPE_TIMEOUT: Duration = Duration::from_secs(46);
 const CONNECTION_CHECK_INTERVAL: Duration = Duration::from_secs(1);
 const HISTORY_POLL_INTERVAL: Duration = Duration::from_secs(5);
+const MACHINE_STATUS_INTERVAL: Duration = Duration::from_secs(3);
 const HISTORY_FETCH_ATTEMPTS: usize = 3;
 const HISTORY_FETCH_RETRY_DELAY: Duration = Duration::from_millis(150);
 const INITIAL_RECONNECT_DELAY: Duration = Duration::from_millis(250);
@@ -88,6 +89,7 @@ pub struct MediaTransferLease {
 
 pub enum ClientCommand {
     Connect(ConnectionSettings),
+    ReconnectGateway,
     CancelConnect {
         attempt_id: u64,
     },
@@ -131,6 +133,10 @@ pub enum ClientCommand {
         name: String,
         automatic: bool,
     },
+    StartMachine,
+    RestartMachine,
+    ReconnectMachine,
+    DiagnoseMachine,
     Shell(String),
     Shutdown,
 }
@@ -174,6 +180,15 @@ pub enum ClientEvent {
         request_id: u64,
         automatic: bool,
         message: String,
+    },
+    MachineStatusChanged {
+        status: MachineRuntimeStatus,
+    },
+    MachineControlFailed {
+        message: String,
+    },
+    MachineDiagnostics {
+        diagnostics: daemon_protocol::Diagnostics,
     },
     History {
         session_id: u64,
@@ -311,7 +326,7 @@ pub fn start_desktop(demo: bool) -> DesktopStartup {
                 let server_task = tokio::spawn(server.run_until(async move {
                     let _ = shutdown_rx.await;
                 }));
-                run_live(commands, events, initial_connection).await;
+                run_client_runtime(commands, events, initial_connection, false).await;
                 let _ = shutdown_tx.send(());
                 let _ = server_task.await;
             });
@@ -374,11 +389,12 @@ pub fn start(demo: bool) -> ClientHandle {
         command_rx,
         event_tx.clone(),
         move |runtime, command_rx, thread_events| {
-            if demo {
-                runtime.block_on(run_demo(command_rx, thread_events));
-            } else {
-                runtime.block_on(run_live(command_rx, thread_events, initial_connection));
-            }
+            runtime.block_on(run_client_runtime(
+                command_rx,
+                thread_events,
+                initial_connection,
+                demo,
+            ));
         },
     );
 
@@ -428,6 +444,166 @@ where
         return Err(error.to_string());
     }
     Ok(())
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum MachineControlCommand {
+    Start,
+    Restart,
+    Reconnect,
+    Diagnostics,
+    Shutdown,
+}
+
+async fn run_client_runtime(
+    mut commands: tokio_mpsc::UnboundedReceiver<ClientCommand>,
+    events: tokio_mpsc::UnboundedSender<ClientEvent>,
+    initial_connection: Option<ConnectionSettings>,
+    demo: bool,
+) {
+    let (gateway_tx, gateway_rx) = tokio_mpsc::unbounded_channel();
+    let (machine_tx, machine_rx) = tokio_mpsc::unbounded_channel();
+    let gateway_events = events.clone();
+    let gateway_task = tokio::spawn(async move {
+        if demo {
+            run_demo(gateway_rx, gateway_events).await;
+        } else {
+            run_live(gateway_rx, gateway_events, initial_connection).await;
+        }
+    });
+    let machine_task = tokio::spawn(run_machine_control(machine_rx, events, demo));
+
+    while let Some(command) = commands.recv().await {
+        let target = match command {
+            ClientCommand::StartMachine => Some(MachineControlCommand::Start),
+            ClientCommand::RestartMachine => Some(MachineControlCommand::Restart),
+            ClientCommand::ReconnectMachine => Some(MachineControlCommand::Reconnect),
+            ClientCommand::DiagnoseMachine => Some(MachineControlCommand::Diagnostics),
+            ClientCommand::Shutdown => {
+                let _ = gateway_tx.send(ClientCommand::Shutdown);
+                let _ = machine_tx.send(MachineControlCommand::Shutdown);
+                break;
+            }
+            command => {
+                if gateway_tx.send(command).is_err() {
+                    break;
+                }
+                None
+            }
+        };
+        if let Some(target) = target {
+            let _ = machine_tx.send(target);
+        }
+    }
+
+    drop(gateway_tx);
+    drop(machine_tx);
+    let _ = gateway_task.await;
+    let _ = machine_task.await;
+}
+
+async fn run_machine_control(
+    mut commands: tokio_mpsc::UnboundedReceiver<MachineControlCommand>,
+    events: tokio_mpsc::UnboundedSender<ClientEvent>,
+    demo: bool,
+) {
+    if demo {
+        let _ = events.send(ClientEvent::MachineStatusChanged {
+            status: MachineRuntimeStatus::Connected,
+        });
+        while let Some(command) = commands.recv().await {
+            if command == MachineControlCommand::Shutdown {
+                return;
+            }
+        }
+        return;
+    }
+
+    let mut observed = None;
+    let mut interval = tokio::time::interval(MACHINE_STATUS_INTERVAL);
+    interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    loop {
+        tokio::select! {
+            _ = interval.tick() => {
+                publish_machine_status(&events, &mut observed).await;
+            }
+            command = commands.recv() => {
+                let Some(command) = command else {
+                    return;
+                };
+                match command {
+                    MachineControlCommand::Start => {
+                        emit_machine_status(
+                            &events,
+                            &mut observed,
+                            MachineRuntimeStatus::Starting,
+                        );
+                        if let Err(message) = machine_setup::control_daemon_service(
+                            DaemonServiceControl::Start,
+                        ).await {
+                            let _ = events.send(ClientEvent::MachineControlFailed { message });
+                        }
+                        publish_machine_status(&events, &mut observed).await;
+                    }
+                    MachineControlCommand::Restart => {
+                        emit_machine_status(
+                            &events,
+                            &mut observed,
+                            MachineRuntimeStatus::Starting,
+                        );
+                        if let Err(message) = machine_setup::control_daemon_service(
+                            DaemonServiceControl::Restart,
+                        ).await {
+                            let _ = events.send(ClientEvent::MachineControlFailed { message });
+                        }
+                        publish_machine_status(&events, &mut observed).await;
+                    }
+                    MachineControlCommand::Reconnect => {
+                        emit_machine_status(
+                            &events,
+                            &mut observed,
+                            MachineRuntimeStatus::Reconnecting,
+                        );
+                        if let Err(message) = machine_setup::reconnect_daemon().await {
+                            let _ = events.send(ClientEvent::MachineControlFailed { message });
+                        }
+                        publish_machine_status(&events, &mut observed).await;
+                    }
+                    MachineControlCommand::Diagnostics => {
+                        match machine_setup::daemon_diagnostics().await {
+                            Ok(diagnostics) => {
+                                let _ = events.send(ClientEvent::MachineDiagnostics { diagnostics });
+                            }
+                            Err(message) => {
+                                let _ = events.send(ClientEvent::MachineControlFailed { message });
+                            }
+                        }
+                    }
+                    MachineControlCommand::Shutdown => return,
+                }
+            }
+        }
+    }
+}
+
+async fn publish_machine_status(
+    events: &tokio_mpsc::UnboundedSender<ClientEvent>,
+    observed: &mut Option<MachineRuntimeStatus>,
+) {
+    let status = machine_setup::daemon_runtime_status().await;
+    emit_machine_status(events, observed, status);
+}
+
+fn emit_machine_status(
+    events: &tokio_mpsc::UnboundedSender<ClientEvent>,
+    observed: &mut Option<MachineRuntimeStatus>,
+    status: MachineRuntimeStatus,
+) {
+    if *observed == Some(status) {
+        return;
+    }
+    *observed = Some(status);
+    let _ = events.send(ClientEvent::MachineStatusChanged { status });
 }
 
 async fn run_live(
@@ -508,6 +684,14 @@ async fn run_live(
                             preferred_pid = None;
                             reconnect_attempt = 0;
                             connection = Some(next);
+                            continue 'connection;
+                        }
+                        ClientCommand::ReconnectGateway => {
+                            let _ = events.send(ClientEvent::Reconnecting {
+                                attempt: 1,
+                                message: "Reconnecting to your GSV now.".to_string(),
+                            });
+                            connection = Some(settings);
                             continue 'connection;
                         }
                         ClientCommand::CancelConnect { attempt_id }
@@ -626,6 +810,14 @@ async fn run_live(
                     connection = Some(next);
                     continue 'connection;
                 }
+                Ok(ClientCommand::ReconnectGateway) => {
+                    let _ = events.send(ClientEvent::Reconnecting {
+                        attempt: 1,
+                        message: "Reconnecting to your GSV now.".to_string(),
+                    });
+                    connection = Some(settings);
+                    continue 'connection;
+                }
                 Ok(ClientCommand::CancelConnect { attempt_id })
                     if attempt_id == settings.attempt_id =>
                 {
@@ -729,6 +921,13 @@ async fn run_live(
         .await
         {
             ConnectedSessionOutcome::Shutdown => return,
+            ConnectedSessionOutcome::ReconnectNow => {
+                let _ = events.send(ClientEvent::Reconnecting {
+                    attempt: 1,
+                    message: "Reconnecting to your GSV now.".to_string(),
+                });
+                connection = Some(settings);
+            }
             ConnectedSessionOutcome::Reconnect(message) => {
                 reconnect_attempt = 1;
                 let _ = events.send(ClientEvent::Reconnecting {
@@ -1016,6 +1215,7 @@ impl Drop for SessionSignalLease {
 
 enum ConnectedSessionOutcome {
     Reconnect(String),
+    ReconnectNow,
     Replace(ConnectionSettings),
     Switch {
         pid: String,
@@ -1780,11 +1980,16 @@ fn spawn_connected_command(context: ConnectedCommandContext<'_>, command: Client
             });
         }
         ClientCommand::Connect(_)
+        | ClientCommand::ReconnectGateway
         | ClientCommand::CancelConnect { .. }
         | ClientCommand::DesktopNew { .. }
         | ClientCommand::DesktopUse { .. }
         | ClientCommand::RefreshHistory
         | ClientCommand::CancelMedia { .. }
+        | ClientCommand::StartMachine
+        | ClientCommand::RestartMachine
+        | ClientCommand::ReconnectMachine
+        | ClientCommand::DiagnoseMachine
         | ClientCommand::Shutdown => {}
     }
 }
@@ -2410,6 +2615,22 @@ async fn run_connected_session(
                         ).await;
                         return ConnectedSessionOutcome::Replace(next);
                     }
+                    ClientCommand::ReconnectGateway => {
+                        signal_lease.deactivate();
+                        reconcile_interrupted_tasks(
+                            &mut tasks,
+                            &mut pending,
+                            events,
+                            &signal_lease,
+                            MediaCleanupRuntime {
+                                client: &client,
+                                journal: &cleanup_journal,
+                                scope: &cleanup_scope,
+                            },
+                            "The connection was restarted before GSV confirmed the operation.",
+                        ).await;
+                        return ConnectedSessionOutcome::ReconnectNow;
+                    }
                     ClientCommand::CancelConnect { attempt_id }
                         if attempt_id == session_attempt_id =>
                     {
@@ -2636,7 +2857,13 @@ fn handle_unavailable_command(
     events: &tokio_mpsc::UnboundedSender<ClientEvent>,
 ) -> bool {
     match command {
-        ClientCommand::Connect(_) | ClientCommand::CancelConnect { .. } => {}
+        ClientCommand::Connect(_)
+        | ClientCommand::ReconnectGateway
+        | ClientCommand::CancelConnect { .. }
+        | ClientCommand::StartMachine
+        | ClientCommand::RestartMachine
+        | ClientCommand::ReconnectMachine
+        | ClientCommand::DiagnoseMachine => {}
         ClientCommand::DesktopNew { response, .. } | ClientCommand::DesktopUse { response, .. } => {
             let _ = response.send(Err(OperationError::Unavailable));
             let _ = events.send(ClientEvent::DesktopControlSettled);
@@ -2731,6 +2958,9 @@ async fn wait_to_reconnect(
                 match command {
                     ClientCommand::Connect(next) => {
                         return ReconnectWaitOutcome::Replace(next);
+                    }
+                    ClientCommand::ReconnectGateway => {
+                        return ReconnectWaitOutcome::Retry;
                     }
                     ClientCommand::CancelConnect { attempt_id }
                         if attempt_id == active_attempt_id =>
@@ -3893,7 +4123,13 @@ async fn run_demo(
                     return;
                 };
                 match command {
-            ClientCommand::Connect(_) | ClientCommand::CancelConnect { .. } => {}
+            ClientCommand::Connect(_)
+            | ClientCommand::ReconnectGateway
+            | ClientCommand::CancelConnect { .. }
+            | ClientCommand::StartMachine
+            | ClientCommand::RestartMachine
+            | ClientCommand::ReconnectMachine
+            | ClientCommand::DiagnoseMachine => {}
             ClientCommand::Send {
                 submission_id,
                 message,
@@ -4229,6 +4465,15 @@ mod tests {
         assert!(matches!(
             runtime.block_on(wait_to_reconnect(1, 7, &mut replace_rx, &events)),
             ReconnectWaitOutcome::Replace(ConnectionSettings { attempt_id: 8, .. })
+        ));
+
+        let (retry_tx, mut retry_rx) = tokio_mpsc::unbounded_channel();
+        retry_tx
+            .send(ClientCommand::ReconnectGateway)
+            .map_err(|_| "retry channel closed".to_string())?;
+        assert!(matches!(
+            runtime.block_on(wait_to_reconnect(1, 7, &mut retry_rx, &events)),
+            ReconnectWaitOutcome::Retry
         ));
         Ok(())
     }

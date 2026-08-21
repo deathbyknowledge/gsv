@@ -11,6 +11,14 @@ use tray_icon::{Icon, TrayIcon, TrayIconBuilder};
 #[cfg(any(target_os = "macos", target_os = "windows"))]
 const OPEN_ID: &str = "gsv.open";
 #[cfg(any(target_os = "macos", target_os = "windows"))]
+const GATEWAY_ID: &str = "gsv.gateway";
+#[cfg(any(target_os = "macos", target_os = "windows"))]
+const MACHINE_PRIMARY_ID: &str = "gsv.machine.primary";
+#[cfg(any(target_os = "macos", target_os = "windows"))]
+const MACHINE_RESTART_ID: &str = "gsv.machine.restart";
+#[cfg(any(target_os = "macos", target_os = "windows"))]
+const MACHINE_DIAGNOSTICS_ID: &str = "gsv.machine.diagnostics";
+#[cfg(any(target_os = "macos", target_os = "windows"))]
 const VOICE_ID: &str = "gsv.voice";
 #[cfg(any(target_os = "macos", target_os = "windows"))]
 const GESTURES_ID: &str = "gsv.gestures";
@@ -23,6 +31,10 @@ actions!(desktop_lifecycle, [QuitDesktop]);
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum SystemStatusAction {
     Open,
+    Gateway,
+    MachinePrimary,
+    MachineRestart,
+    MachineDiagnostics,
     ToggleVoice,
     OpenGestureGuide,
     Quit,
@@ -42,6 +54,68 @@ impl GatewayStatus {
             Self::Connecting => "Gateway: Connecting",
             Self::Connected => "Gateway: Connected",
         }
+    }
+
+    fn action_label(self) -> &'static str {
+        match self {
+            Self::SignedOut => "Open sign in…",
+            Self::Connecting => "Retry Gateway now",
+            Self::Connected => "Reconnect Gateway",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum MachineStatus {
+    NotSetUp,
+    NotRunning,
+    Starting,
+    Connecting,
+    Connected,
+    Reconnecting,
+    Reloading,
+    ShuttingDown,
+}
+
+impl MachineStatus {
+    fn label(self) -> &'static str {
+        match self {
+            Self::NotSetUp => "Machine: Not set up",
+            Self::NotRunning => "Machine: Not running",
+            Self::Starting => "Machine: Starting",
+            Self::Connecting => "Machine: Connecting",
+            Self::Connected => "Machine: Connected",
+            Self::Reconnecting => "Machine: Reconnecting",
+            Self::Reloading => "Machine: Reloading",
+            Self::ShuttingDown => "Machine: Shutting down",
+        }
+    }
+
+    fn primary_label(self) -> &'static str {
+        match self {
+            Self::NotSetUp => "Connect this computer…",
+            Self::NotRunning => "Start machine",
+            Self::Starting => "Starting machine…",
+            Self::Connecting | Self::Connected | Self::Reconnecting | Self::Reloading => {
+                "Reconnect machine"
+            }
+            Self::ShuttingDown => "Machine is shutting down…",
+        }
+    }
+
+    fn primary_enabled(self) -> bool {
+        !matches!(self, Self::Starting | Self::ShuttingDown)
+    }
+
+    fn restart_enabled(self) -> bool {
+        !matches!(self, Self::NotSetUp | Self::Starting | Self::ShuttingDown)
+    }
+
+    fn diagnostics_enabled(self) -> bool {
+        matches!(
+            self,
+            Self::Connecting | Self::Connected | Self::Reconnecting | Self::Reloading
+        )
     }
 }
 
@@ -73,7 +147,7 @@ impl GestureStatus {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct SystemStatusSnapshot {
     pub(crate) gateway: GatewayStatus,
-    pub(crate) machine_ready: bool,
+    pub(crate) machine: MachineStatus,
     pub(crate) voice_active: bool,
     pub(crate) voice_available: bool,
     pub(crate) gestures: GestureStatus,
@@ -93,6 +167,10 @@ impl SystemStatusItem {
             MenuEvent::set_event_handler(Some(move |event: MenuEvent| {
                 let action = match event.id().as_ref() {
                     OPEN_ID => Some(SystemStatusAction::Open),
+                    GATEWAY_ID => Some(SystemStatusAction::Gateway),
+                    MACHINE_PRIMARY_ID => Some(SystemStatusAction::MachinePrimary),
+                    MACHINE_RESTART_ID => Some(SystemStatusAction::MachineRestart),
+                    MACHINE_DIAGNOSTICS_ID => Some(SystemStatusAction::MachineDiagnostics),
                     VOICE_ID => Some(SystemStatusAction::ToggleVoice),
                     GESTURES_ID => Some(SystemStatusAction::OpenGestureGuide),
                     QUIT_ID => Some(SystemStatusAction::Quit),
@@ -274,7 +352,11 @@ struct NativeStatusItem {
     _tray: TrayIcon,
     _menu: TrayMenu,
     gateway: MenuItem,
+    gateway_action: MenuItem,
     machine: MenuItem,
+    machine_primary: MenuItem,
+    machine_restart: MenuItem,
+    machine_diagnostics: MenuItem,
     voice: MenuItem,
     gestures: MenuItem,
     gesture_guide: MenuItem,
@@ -286,7 +368,13 @@ impl NativeStatusItem {
         let menu = TrayMenu::new();
         let open = MenuItem::with_id(OPEN_ID, "Open GSV", true, None);
         let gateway = MenuItem::new("Gateway: Connecting", false, None);
+        let gateway_action = MenuItem::with_id(GATEWAY_ID, "Retry Gateway now", true, None);
         let machine = MenuItem::new("Machine: Not set up", false, None);
+        let machine_primary =
+            MenuItem::with_id(MACHINE_PRIMARY_ID, "Connect this computer…", true, None);
+        let machine_restart = MenuItem::with_id(MACHINE_RESTART_ID, "Restart machine", false, None);
+        let machine_diagnostics =
+            MenuItem::with_id(MACHINE_DIAGNOSTICS_ID, "Machine diagnostics…", false, None);
         let first_separator = PredefinedMenuItem::separator();
         let voice = MenuItem::with_id(VOICE_ID, "Start Voice", false, None);
         let gestures = MenuItem::new("Gestures: Disabled", false, None);
@@ -296,7 +384,11 @@ impl NativeStatusItem {
         menu.append_items(&[
             &open,
             &gateway,
+            &gateway_action,
             &machine,
+            &machine_primary,
+            &machine_restart,
+            &machine_diagnostics,
             &first_separator,
             &voice,
             &gestures,
@@ -317,7 +409,11 @@ impl NativeStatusItem {
             _tray: tray,
             _menu: menu,
             gateway,
+            gateway_action,
             machine,
+            machine_primary,
+            machine_restart,
+            machine_diagnostics,
             voice,
             gestures,
             gesture_guide,
@@ -326,11 +422,17 @@ impl NativeStatusItem {
 
     fn update(&mut self, snapshot: SystemStatusSnapshot) {
         self.gateway.set_text(snapshot.gateway.label());
-        self.machine.set_text(if snapshot.machine_ready {
-            "Machine: Set up"
-        } else {
-            "Machine: Not set up"
-        });
+        self.gateway_action
+            .set_text(snapshot.gateway.action_label());
+        self.machine.set_text(snapshot.machine.label());
+        self.machine_primary
+            .set_text(snapshot.machine.primary_label());
+        self.machine_primary
+            .set_enabled(snapshot.machine.primary_enabled());
+        self.machine_restart
+            .set_enabled(snapshot.machine.restart_enabled());
+        self.machine_diagnostics
+            .set_enabled(snapshot.machine.diagnostics_enabled());
         self.voice.set_text(if snapshot.voice_active {
             "Finish Voice"
         } else {
@@ -378,7 +480,7 @@ impl StatusItemBackend {
         let handle = LinuxStatusItem {
             snapshot: SystemStatusSnapshot {
                 gateway: GatewayStatus::Connecting,
-                machine_ready: false,
+                machine: MachineStatus::NotSetUp,
                 voice_active: false,
                 voice_available: false,
                 gestures: GestureStatus::Disabled,
@@ -466,13 +568,43 @@ impl ksni::Tray for LinuxStatusItem {
             }
             .into(),
             StandardItem {
-                label: if self.snapshot.machine_ready {
-                    "Machine: Set up"
-                } else {
-                    "Machine: Not set up"
-                }
-                .to_string(),
+                label: self.snapshot.gateway.action_label().to_string(),
+                activate: Box::new(|item: &mut LinuxStatusItem| {
+                    item.send(SystemStatusAction::Gateway);
+                }),
+                ..Default::default()
+            }
+            .into(),
+            StandardItem {
+                label: self.snapshot.machine.label().to_string(),
                 enabled: false,
+                ..Default::default()
+            }
+            .into(),
+            StandardItem {
+                label: self.snapshot.machine.primary_label().to_string(),
+                enabled: self.snapshot.machine.primary_enabled(),
+                activate: Box::new(|item: &mut LinuxStatusItem| {
+                    item.send(SystemStatusAction::MachinePrimary);
+                }),
+                ..Default::default()
+            }
+            .into(),
+            StandardItem {
+                label: "Restart machine".to_string(),
+                enabled: self.snapshot.machine.restart_enabled(),
+                activate: Box::new(|item: &mut LinuxStatusItem| {
+                    item.send(SystemStatusAction::MachineRestart);
+                }),
+                ..Default::default()
+            }
+            .into(),
+            StandardItem {
+                label: "Machine diagnostics…".to_string(),
+                enabled: self.snapshot.machine.diagnostics_enabled(),
+                activate: Box::new(|item: &mut LinuxStatusItem| {
+                    item.send(SystemStatusAction::MachineDiagnostics);
+                }),
                 ..Default::default()
             }
             .into(),
@@ -575,6 +707,20 @@ mod tests {
     #[test]
     fn status_labels_distinguish_ready_controls() {
         assert_eq!(GatewayStatus::Connected.label(), "Gateway: Connected");
+        assert_eq!(
+            GatewayStatus::Connecting.action_label(),
+            "Retry Gateway now"
+        );
+        assert_eq!(MachineStatus::NotRunning.label(), "Machine: Not running");
+        assert_eq!(
+            MachineStatus::NotSetUp.primary_label(),
+            "Connect this computer…"
+        );
+        assert!(MachineStatus::Connected.primary_enabled());
+        assert!(MachineStatus::Connected.restart_enabled());
+        assert!(MachineStatus::Connected.diagnostics_enabled());
+        assert!(!MachineStatus::Starting.primary_enabled());
+        assert!(!MachineStatus::NotRunning.diagnostics_enabled());
         assert_eq!(GestureStatus::Armed.label(), "Gestures: Armed");
         assert!(GestureStatus::Disarmed.guide_available());
         assert!(!GestureStatus::Unavailable.guide_available());

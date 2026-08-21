@@ -103,6 +103,7 @@ impl GsvApp {
                 self.conversation.connection = ConnectionState::Connected;
                 self.conversation.activity = None;
                 self.conversation.clear_live_activity(None);
+                self.machine_configured = machine_configured;
                 self.begin_machine_management(
                     machine_configured,
                     suggested_machine_name,
@@ -123,6 +124,16 @@ impl GsvApp {
                 message,
             } => {
                 self.handle_machine_setup_failure(request_id, automatic, message, window, cx);
+            }
+            ClientEvent::MachineStatusChanged { status } => {
+                self.machine_runtime_status = status;
+            }
+            ClientEvent::MachineControlFailed { message } => {
+                self.conversation.show_error(message);
+            }
+            ClientEvent::MachineDiagnostics { diagnostics } => {
+                self.conversation
+                    .show_error(format_machine_diagnostics(&diagnostics));
             }
             ClientEvent::History {
                 session_id,
@@ -587,6 +598,43 @@ impl GsvApp {
     }
 }
 
+fn format_machine_diagnostics(diagnostics: &daemon_protocol::Diagnostics) -> String {
+    let phase = match diagnostics.status.phase {
+        daemon_protocol::DaemonPhase::Starting => "starting",
+        daemon_protocol::DaemonPhase::Connecting => "connecting",
+        daemon_protocol::DaemonPhase::Connected => "connected",
+        daemon_protocol::DaemonPhase::Reconnecting => "reconnecting",
+        daemon_protocol::DaemonPhase::Reloading => "reloading",
+        daemon_protocol::DaemonPhase::ShuttingDown => "shutting down",
+    };
+    if diagnostics.notices.is_empty() {
+        return format!("Machine diagnostics found no problems. gsvd is {phase}.");
+    }
+    let mut notices = diagnostics
+        .notices
+        .iter()
+        .take(3)
+        .map(|notice| {
+            let level = match notice.level {
+                daemon_protocol::DiagnosticLevel::Info => "info",
+                daemon_protocol::DiagnosticLevel::Warning => "warning",
+                daemon_protocol::DiagnosticLevel::Error => "error",
+            };
+            format!("{level} {}: {}", notice.code, notice.message)
+        })
+        .collect::<Vec<_>>();
+    if diagnostics.notices.len() > notices.len() {
+        notices.push(format!(
+            "{} more diagnostic notices",
+            diagnostics.notices.len() - notices.len()
+        ));
+    }
+    format!(
+        "Machine diagnostics · gsvd is {phase} · {}",
+        notices.join(" · ")
+    )
+}
+
 fn stream_partial_text(event: &Value) -> Option<String> {
     let content = event.get("partial")?.get("content")?.as_array()?;
     let text = content
@@ -644,6 +692,34 @@ mod tests {
         assert!(history_was_superseded(7, 8));
         assert!(!history_was_superseded(8, 8));
         assert!(!history_was_superseded(9, 8));
+    }
+
+    #[test]
+    fn machine_diagnostics_are_bounded_for_the_desktop_surface() {
+        let diagnostics = daemon_protocol::Diagnostics::new(
+            daemon_protocol::DaemonStatus {
+                version: "test".to_string(),
+                process_id: 1,
+                machine_id: "studio".to_string(),
+                phase: daemon_protocol::DaemonPhase::Connected,
+                connected: true,
+                uptime_seconds: 5,
+                reconnect_attempt: 0,
+            },
+            (0..5)
+                .map(|index| daemon_protocol::DiagnosticNotice {
+                    level: daemon_protocol::DiagnosticLevel::Warning,
+                    code: format!("notice-{index}"),
+                    message: "check it".to_string(),
+                })
+                .collect(),
+        )
+        .expect("bounded diagnostics");
+        let message = format_machine_diagnostics(&diagnostics);
+        assert!(message.contains("gsvd is connected"));
+        assert!(message.contains("warning notice-0: check it"));
+        assert!(message.contains("2 more diagnostic notices"));
+        assert!(!message.contains("notice-3"));
     }
 
     #[gpui::test]

@@ -4,7 +4,10 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::Duration;
 
-use daemon_protocol::{ClientOptions, DaemonControlClient, DaemonControlEndpoint};
+use daemon_protocol::{
+    ClientOptions, DaemonControlClient, DaemonControlEndpoint, DaemonPhase, DaemonStatus,
+    Diagnostics,
+};
 use host_config::CliConfig;
 
 const MAX_MACHINE_NAME_CHARS: usize = 80;
@@ -25,6 +28,45 @@ pub struct MachineActivation {
     pub machine_id: String,
     pub name: String,
     pub connected: bool,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum MachineRuntimeStatus {
+    NotRunning,
+    Starting,
+    Connecting,
+    Connected,
+    Reconnecting,
+    Reloading,
+    ShuttingDown,
+}
+
+impl MachineRuntimeStatus {
+    fn from_daemon(status: &DaemonStatus) -> Self {
+        match status.phase {
+            DaemonPhase::Starting => Self::Starting,
+            DaemonPhase::Connecting => Self::Connecting,
+            DaemonPhase::Connected => Self::Connected,
+            DaemonPhase::Reconnecting => Self::Reconnecting,
+            DaemonPhase::Reloading => Self::Reloading,
+            DaemonPhase::ShuttingDown => Self::ShuttingDown,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum DaemonServiceControl {
+    Start,
+    Restart,
+}
+
+impl DaemonServiceControl {
+    fn argument(self) -> &'static str {
+        match self {
+            Self::Start => "start",
+            Self::Restart => "restart",
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -228,13 +270,7 @@ pub fn save_machine(
 }
 
 pub async fn activate_machine(machine: &ConfiguredMachine) -> Result<MachineActivation, String> {
-    let client = DaemonControlClient::new(
-        DaemonControlEndpoint::current_user()
-            .map_err(|error| format!("The local daemon endpoint is unavailable: {error}"))?,
-        ClientOptions::default()
-            .with_connect_timeout(Duration::from_millis(500))
-            .with_io_timeout(Duration::from_secs(2)),
-    );
+    let client = daemon_client()?;
     if client
         .status()
         .await
@@ -288,6 +324,65 @@ pub async fn activate_machine(machine: &ConfiguredMachine) -> Result<MachineActi
         });
     }
     Err("The background service was installed, but gsvd did not become reachable.".to_string())
+}
+
+pub async fn daemon_runtime_status() -> MachineRuntimeStatus {
+    let Ok(client) = daemon_client() else {
+        return MachineRuntimeStatus::NotRunning;
+    };
+    client
+        .status()
+        .await
+        .map(|status| MachineRuntimeStatus::from_daemon(&status))
+        .unwrap_or(MachineRuntimeStatus::NotRunning)
+}
+
+pub async fn reconnect_daemon() -> Result<(), String> {
+    daemon_client()?
+        .reconnect()
+        .await
+        .map_err(|error| format!("The local machine could not reconnect: {error}"))
+}
+
+pub async fn daemon_diagnostics() -> Result<Diagnostics, String> {
+    daemon_client()?
+        .diagnostics()
+        .await
+        .map_err(|error| format!("Machine diagnostics are unavailable: {error}"))
+}
+
+pub async fn control_daemon_service(control: DaemonServiceControl) -> Result<(), String> {
+    tokio::task::spawn_blocking(move || control_daemon_service_sync(control))
+        .await
+        .map_err(|_| "The background service controller stopped unexpectedly.".to_string())?
+}
+
+fn daemon_client() -> Result<DaemonControlClient, String> {
+    Ok(DaemonControlClient::new(
+        DaemonControlEndpoint::current_user()
+            .map_err(|error| format!("The local daemon endpoint is unavailable: {error}"))?,
+        ClientOptions::default()
+            .with_connect_timeout(Duration::from_millis(500))
+            .with_io_timeout(Duration::from_secs(2)),
+    ))
+}
+
+fn control_daemon_service_sync(control: DaemonServiceControl) -> Result<(), String> {
+    let executable = resolve_gsv_cli()?;
+    let output = Command::new(&executable)
+        .arg("daemon")
+        .arg(control.argument())
+        .output()
+        .map_err(|error| format!("The background service controller could not start: {error}"))?;
+    if output.status.success() {
+        return Ok(());
+    }
+    let detail = bounded_process_detail(&output.stderr)
+        .or_else(|| bounded_process_detail(&output.stdout))
+        .unwrap_or_else(|| output.status.to_string());
+    Err(format!(
+        "The background service could not be controlled: {detail}"
+    ))
 }
 
 fn install_daemon(machine: &ConfiguredMachine) -> Result<(), String> {
@@ -424,6 +519,31 @@ mod tests {
         assert!(flow.fail(7, "try again".to_string()));
         assert_eq!(flow.phase(), MachineSetupPhase::Naming);
         assert_eq!(flow.error(), Some("try again"));
+    }
+
+    #[test]
+    fn daemon_phases_map_to_live_machine_status() {
+        let status = |phase| DaemonStatus {
+            version: "test".to_string(),
+            process_id: 1,
+            machine_id: "studio".to_string(),
+            phase,
+            connected: phase == DaemonPhase::Connected,
+            uptime_seconds: 1,
+            reconnect_attempt: 0,
+        };
+        assert_eq!(
+            MachineRuntimeStatus::from_daemon(&status(DaemonPhase::Starting)),
+            MachineRuntimeStatus::Starting
+        );
+        assert_eq!(
+            MachineRuntimeStatus::from_daemon(&status(DaemonPhase::Connected)),
+            MachineRuntimeStatus::Connected
+        );
+        assert_eq!(
+            MachineRuntimeStatus::from_daemon(&status(DaemonPhase::Reloading)),
+            MachineRuntimeStatus::Reloading
+        );
     }
 
     #[test]

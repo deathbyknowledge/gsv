@@ -201,7 +201,12 @@ local GSV experience: machine connectivity, voice state, gesture state, and
 their explicit controls. That is a Desktop surface in the macOS menu bar,
 Windows notification area, or a best-effort Linux StatusNotifier integration.
 `gsvd` remains a headless per-user service and never creates a second tray
-icon. The CLI and Desktop control it through the same typed local protocol.
+icon. The status item observes live daemon state through that typed local
+protocol. Reconnect and diagnostics use it directly; start and restart delegate
+to the bundled CLI's cross-platform per-user service manager. Gateway reconnect
+remains owned by Desktop's existing Gateway connection loop. The CLI and
+Desktop therefore share the same daemon and service-control boundaries instead
+of implementing platform commands in the menu layer.
 
 ## Distribution and upgrades
 
