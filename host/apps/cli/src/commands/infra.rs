@@ -6,8 +6,8 @@ use gsv::deploy;
 use gsv::device_service;
 
 use crate::auth_flow::{can_prompt_interactively, prompt_secret, prompt_yes_no};
-use crate::cli::{DeviceServiceAction, InfraAction};
-use crate::device::run_device_service;
+use crate::cli::{DaemonServiceAction, InfraAction};
+use crate::device::run_daemon_service;
 
 struct DeployCommandOptions {
     version: String,
@@ -372,8 +372,8 @@ async fn run_destroy_command(
     }
 
     let refreshed_cfg = CliConfig::load();
-    run_device_service(
-        DeviceServiceAction::Uninstall,
+    run_daemon_service(
+        DaemonServiceAction::Uninstall,
         &refreshed_cfg,
         None,
         None,

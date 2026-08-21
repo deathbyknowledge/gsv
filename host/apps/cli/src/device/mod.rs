@@ -2,6 +2,7 @@ use std::io;
 use std::path::PathBuf;
 use std::process::Command;
 
+use daemon_protocol::{ClientOptions, DaemonControlClient, DaemonControlEndpoint, Diagnostics};
 use gsv::config::CliConfig;
 use gsv::device_service;
 use gsv::kernel_client::{cli_client_identity, BinaryBodyLimits, GatewayAuth, KernelClient};
@@ -9,7 +10,7 @@ use gsv::protocol::Frame;
 use host_config::ConfigFile;
 use serde_json::json;
 
-use crate::cli::DeviceServiceAction;
+use crate::cli::DaemonServiceAction;
 
 pub(crate) fn resolve_device_id(cli_device_id: Option<String>, cfg: &CliConfig) -> String {
     cli_device_id
@@ -147,15 +148,15 @@ fn build_gsvd_command(
     command
 }
 
-pub(crate) fn run_device_service(
-    action: DeviceServiceAction,
+pub(crate) fn run_daemon_service(
+    action: DaemonServiceAction,
     cfg: &CliConfig,
     gateway_url_override: Option<&str>,
     gateway_username_override: Option<&str>,
     gateway_token_override: Option<&str>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     match action {
-        DeviceServiceAction::Install { id, workspace } => {
+        DaemonServiceAction::Install { id, workspace } => {
             let gateway_changed = persist_gateway_overrides(
                 gateway_url_override,
                 gateway_username_override,
@@ -169,7 +170,7 @@ pub(crate) fn run_device_service(
                 device_service::restart_device_service()?;
             }
 
-            println!("Device daemon installed and started.");
+            println!("gsvd installed and started.");
             if was_legacy {
                 println!("Migrated the service from `gsv device run` to the `gsvd` executable.");
             }
@@ -181,14 +182,14 @@ pub(crate) fn run_device_service(
                 device_id,
                 workspace.display()
             );
-            println!("\nCheck status: gsv device status");
-            println!("View logs: gsv device logs --follow");
+            println!("\nCheck status: gsv daemon status");
+            println!("View logs: gsv daemon logs --follow");
         }
-        DeviceServiceAction::Uninstall => {
+        DaemonServiceAction::Uninstall => {
             device_service::uninstall_device_service()?;
-            println!("Device daemon uninstalled.");
+            println!("gsvd uninstalled.");
         }
-        DeviceServiceAction::Start => {
+        DaemonServiceAction::Start => {
             let gateway_changed = persist_gateway_overrides(
                 gateway_url_override,
                 gateway_username_override,
@@ -205,9 +206,9 @@ pub(crate) fn run_device_service(
             if gateway_changed {
                 println!("Saved gateway connection overrides to local config.");
             }
-            println!("Device daemon started.");
+            println!("gsvd started.");
         }
-        DeviceServiceAction::Restart => {
+        DaemonServiceAction::Restart => {
             let gateway_changed = persist_gateway_overrides(
                 gateway_url_override,
                 gateway_username_override,
@@ -222,20 +223,87 @@ pub(crate) fn run_device_service(
             if gateway_changed {
                 println!("Saved gateway connection overrides to local config.");
             }
-            println!("Device daemon restarted.");
+            println!("gsvd restarted.");
         }
-        DeviceServiceAction::Stop => {
+        DaemonServiceAction::Stop => {
             device_service::stop_device_service()?;
-            println!("Device daemon stopped.");
+            println!("gsvd stopped.");
         }
-        DeviceServiceAction::Status => device_service::status_device_service()?,
-        DeviceServiceAction::Doctor => device_service::doctor_device_service()?,
-        DeviceServiceAction::Logs { lines, follow } => {
+        DaemonServiceAction::Status => device_service::status_device_service()?,
+        DaemonServiceAction::Doctor => device_service::doctor_device_service()?,
+        DaemonServiceAction::Logs { lines, follow } => {
             device_service::show_device_service_logs(lines, follow)?;
         }
     }
 
     Ok(())
+}
+
+fn daemon_control_client() -> Result<DaemonControlClient, Box<dyn std::error::Error>> {
+    Ok(DaemonControlClient::new(
+        DaemonControlEndpoint::current_user()?,
+        ClientOptions::default(),
+    ))
+}
+
+pub(crate) async fn show_daemon_live_status() -> Result<(), Box<dyn std::error::Error>> {
+    let client = daemon_control_client()?;
+    let status = match client.status().await {
+        Ok(status) => status,
+        Err(error) => {
+            println!("gsvd runtime: unavailable ({error})");
+            return Ok(());
+        }
+    };
+    println!("gsvd runtime:");
+    println!("  version: {}", status.version);
+    println!("  pid: {}", status.process_id);
+    println!("  machine: {}", status.machine_id);
+    println!("  phase: {:?}", status.phase);
+    println!(
+        "  connected: {}",
+        if status.connected { "yes" } else { "no" }
+    );
+    println!("  uptime: {}s", status.uptime_seconds);
+    println!("  reconnect attempt: {}", status.reconnect_attempt);
+    Ok(())
+}
+
+pub(crate) async fn reload_daemon() -> Result<(), Box<dyn std::error::Error>> {
+    daemon_control_client()?.reload().await?;
+    println!("gsvd accepted the configuration reload.");
+    Ok(())
+}
+
+pub(crate) async fn reconnect_daemon() -> Result<(), Box<dyn std::error::Error>> {
+    daemon_control_client()?.reconnect().await?;
+    println!("gsvd is reconnecting.");
+    Ok(())
+}
+
+pub(crate) async fn show_daemon_diagnostics(json: bool) -> Result<(), Box<dyn std::error::Error>> {
+    let diagnostics = daemon_control_client()?.diagnostics().await?;
+    if json {
+        println!("{}", serde_json::to_string_pretty(&diagnostics)?);
+    } else {
+        print_diagnostics(&diagnostics);
+    }
+    Ok(())
+}
+
+fn print_diagnostics(diagnostics: &Diagnostics) {
+    let status = &diagnostics.status;
+    println!(
+        "gsvd {} (pid {}) · {:?} · machine {}",
+        status.version, status.process_id, status.phase, status.machine_id
+    );
+    if diagnostics.notices.is_empty() {
+        println!("No diagnostic notices.");
+        return;
+    }
+    for notice in &diagnostics.notices {
+        println!("- {:?} {}: {}", notice.level, notice.code, notice.message);
+    }
 }
 
 pub(crate) async fn run_shell(

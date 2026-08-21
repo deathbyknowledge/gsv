@@ -282,27 +282,30 @@ commands and are never included in the general redacted Desktop status. Desktop
 remains the owner of gateway authentication, process selection, microphone
 preference, and process-switch fencing.
 
-## Device Commands
+## Daemon Commands
 
 ```bash
-gsv device run [--id ID] [--workspace PATH]
-gsv device install [--id ID] [--workspace PATH]
-gsv device start
-gsv device restart
-gsv device stop
-gsv device uninstall
-gsv device status
-gsv device doctor
-gsv device logs [-l N] [--follow]
+gsv daemon install [--id ID] [--workspace PATH]
+gsv daemon start
+gsv daemon restart
+gsv daemon stop
+gsv daemon uninstall
+gsv daemon status
+gsv daemon doctor
+gsv daemon reload
+gsv daemon reconnect
+gsv daemon diagnostics [--json]
+gsv daemon logs [-l N] [--follow]
 ```
 
 The device daemon exposes local hardware-style capabilities to the Kernel:
 `fs.*`, `shell.exec`, and `net.fetch`. The gateway always sees the same syscall/tool surface;
 the device ID selects which implementation receives a driver request.
 
-The driver runtime is the separate `gsvd` executable. `run` is a compatibility
-launcher that transfers process ownership to the sibling `gsvd --foreground`;
-the CLI never embeds the driver. `install` creates and starts a launchd agent on
+The driver runtime is the separate `gsvd` executable. The hidden legacy command
+`gsv device run` transfers process ownership to the sibling
+`gsvd --foreground`; the CLI never embeds the driver. `install` creates and
+starts a launchd agent on
 macOS, a systemd user unit on Linux, or a scheduled task on Windows. Reinstalling
 or starting an old definition migrates `gsv device run` to the direct `gsvd`
 entrypoint without changing the existing service identity. `doctor` checks the
@@ -310,6 +313,14 @@ installed executable and definition. The daemon writes daily rotated JSONL logs
 under `~/.gsv/logs/device.log*`; `logs` tails the latest file with `-l, --lines`
 defaulting to `100`. Foreground logs use compact text by default; set
 `GSV_DEVICE_CONSOLE_FORMAT=json` or `GSV_DEVICE_CONSOLE_FORMAT=quiet` to change that.
+
+`reload` rereads `config.toml` and reconnects, while `reconnect` keeps the
+current settings. `diagnostics` reports bounded, redacted runtime notices.
+`status` combines the operating-system service state with the live daemon's
+version, PID, machine id, connection phase, uptime, and reconnect count. These
+live operations use a versioned same-user Unix socket on macOS/Linux and a
+current-user Windows named pipe. They do not expose credentials or gateway
+traffic.
 
 Device identity resolves as `--id`, then local `device.id`, then
 `device-<hostname>`. Workspace resolves as `--workspace`, then
@@ -319,7 +330,7 @@ Device identity resolves as `--id`, then local `device.id`, then
 `gsv auth token create --kind device --device ...` followed by
 `gsv config --local set device.token ...`.
 Because the compatibility launcher replaces itself with `gsvd`, gateway setup
-must be completed before `gsv device run`; use `gsv auth setup` when connecting
+must be completed before starting `gsvd`; use `gsv auth setup` when connecting
 to a new deployment.
 
 `gsv`, `gsvd`, and the Desktop application share protocol and configuration
@@ -482,7 +493,7 @@ Both accept `--bundle-dir PATH` for local bundles, `--api-token` or
 `destroy` tears down Workers. If no component or `--all` is supplied, it targets
 all components. `--delete-bucket` removes the shared R2 bucket; `--purge-bucket`
 must be combined with it. Unless `--keep-device` is passed, `destroy` also
-attempts to uninstall the local device service. A full teardown also removes the
+attempts to uninstall the local gsvd service. A full teardown also removes the
 legacy assembler Worker when it exists; assembler remains unavailable as a
 deployable component. Cloudflare removes service bindings associated with a
 destroyed adapter worker, and later gateway upgrades also omit bindings whose

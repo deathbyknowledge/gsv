@@ -62,10 +62,17 @@ pub(crate) enum Commands {
         action: AuthAction,
     },
 
-    /// Run and manage the device daemon
-    Device {
+    /// Install, inspect, and control the local gsvd service
+    Daemon {
         #[command(subcommand)]
-        action: DeviceAction,
+        action: DaemonAction,
+    },
+
+    /// Compatibility command for already-installed legacy service definitions
+    #[command(name = "device", hide = true)]
+    LegacyDevice {
+        #[command(subcommand)]
+        action: LegacyDeviceAction,
     },
 
     /// Launch, focus, or control the local GSV Desktop application
@@ -135,7 +142,7 @@ pub(crate) enum MicrophoneAction {
 }
 
 #[derive(Subcommand)]
-pub(crate) enum DeviceAction {
+pub(crate) enum LegacyDeviceAction {
     /// Run gsvd in the foreground (compatibility launcher)
     Run {
         /// Device ID (default: device-<hostname>)
@@ -146,10 +153,13 @@ pub(crate) enum DeviceAction {
         #[arg(long)]
         workspace: Option<PathBuf>,
     },
+}
 
-    /// Install and start device daemon service
+#[derive(Subcommand)]
+pub(crate) enum DaemonAction {
+    /// Install and start the gsvd service
     Install {
-        /// Device ID (saved to local config during install)
+        /// Machine ID (saved to local config during install)
         #[arg(long)]
         id: Option<String>,
 
@@ -158,25 +168,38 @@ pub(crate) enum DeviceAction {
         workspace: Option<PathBuf>,
     },
 
-    /// Start device daemon service
+    /// Start the gsvd service
     Start,
 
-    /// Restart device daemon service
+    /// Restart the gsvd service
     Restart,
 
-    /// Stop device daemon service
+    /// Stop the gsvd service
     Stop,
 
-    /// Uninstall and stop device daemon service
+    /// Uninstall and stop the gsvd service
     Uninstall,
 
-    /// Show device daemon service status
+    /// Show service state and live daemon status
     Status,
 
     /// Check the daemon executable and installed service definition
     Doctor,
 
-    /// Show device daemon service logs
+    /// Ask the running daemon to reload config.toml and reconnect
+    Reload,
+
+    /// Reconnect the running daemon without changing configuration
+    Reconnect,
+
+    /// Show bounded, redacted live diagnostics
+    Diagnostics {
+        /// Print machine-readable JSON
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// Show gsvd service logs
     Logs {
         /// Number of lines to show
         #[arg(short, long, default_value = "100")]
@@ -325,8 +348,8 @@ pub(crate) enum InfraAction {
 }
 
 #[derive(Subcommand)]
-pub(crate) enum DeviceServiceAction {
-    /// Install and start device daemon service
+pub(crate) enum DaemonServiceAction {
+    /// Install and start the gsvd service
     Install {
         /// Device ID (saved to local config during install)
         #[arg(long)]
@@ -337,25 +360,25 @@ pub(crate) enum DeviceServiceAction {
         workspace: Option<PathBuf>,
     },
 
-    /// Uninstall and stop device daemon service
+    /// Uninstall and stop the gsvd service
     Uninstall,
 
-    /// Start device daemon service
+    /// Start the gsvd service
     Start,
 
-    /// Restart device daemon service
+    /// Restart the gsvd service
     Restart,
 
-    /// Stop device daemon service
+    /// Stop the gsvd service
     Stop,
 
-    /// Show device daemon service status
+    /// Show gsvd service status
     Status,
 
     /// Check the daemon executable and installed service definition
     Doctor,
 
-    /// Show device daemon service logs
+    /// Show gsvd service logs
     Logs {
         /// Number of lines to show
         #[arg(short, long, default_value = "100")]
@@ -790,5 +813,40 @@ mod tests {
         assert!(
             Cli::try_parse_from(["gsv", "desktop", "microphone", "use", "one", "two"]).is_err()
         );
+    }
+
+    #[test]
+    fn daemon_owns_local_service_and_live_control_commands() {
+        let status =
+            Cli::try_parse_from(["gsv", "daemon", "status"]).expect("daemon status parses");
+        assert!(matches!(
+            status.command,
+            Commands::Daemon {
+                action: DaemonAction::Status
+            }
+        ));
+
+        let reload =
+            Cli::try_parse_from(["gsv", "daemon", "reload"]).expect("daemon reload parses");
+        assert!(matches!(
+            reload.command,
+            Commands::Daemon {
+                action: DaemonAction::Reload
+            }
+        ));
+        Cli::try_parse_from(["gsv", "daemon", "run"])
+            .err()
+            .expect("daemon run must not be public");
+    }
+
+    #[test]
+    fn legacy_device_namespace_retains_only_the_installed_service_launcher() {
+        Cli::try_parse_from(["gsv", "device", "run"]).expect("legacy device run still parses");
+        Cli::try_parse_from(["gsv", "device", "status"])
+            .err()
+            .expect("legacy device status must be removed");
+        Cli::try_parse_from(["gsv", "device", "install"])
+            .err()
+            .expect("legacy device install must be removed");
     }
 }

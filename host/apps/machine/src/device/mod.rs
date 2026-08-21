@@ -17,6 +17,7 @@ use serde_json::json;
 use tokio_util::sync::CancellationToken;
 use tracing::{error, info, info_span, warn, Instrument};
 
+use crate::control::DaemonRuntime;
 use crate::logger;
 use crate::tools::{all_tools_with_workspace_for_device, subscribe_exec_events, Tool, ToolOutput};
 
@@ -216,25 +217,6 @@ async fn send_driver_error(conn: &Connection, request: &RequestFrame, message: S
             );
         }
     }
-}
-
-#[cfg(unix)]
-async fn wait_for_shutdown_signal() -> &'static str {
-    let mut sigterm = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
-        .expect("Failed to subscribe to SIGTERM");
-
-    tokio::select! {
-        _ = tokio::signal::ctrl_c() => "SIGINT",
-        _ = sigterm.recv() => "SIGTERM",
-    }
-}
-
-#[cfg(not(unix))]
-async fn wait_for_shutdown_signal() -> &'static str {
-    tokio::signal::ctrl_c()
-        .await
-        .expect("Failed to subscribe to Ctrl+C");
-    "SIGINT"
 }
 
 fn exec_event_outbox_len(outbox: &Arc<Mutex<VecDeque<DeviceExecEventParams>>>) -> usize {
@@ -583,8 +565,9 @@ pub async fn run(
     auth: GatewayAuth,
     device_id: String,
     workspace: PathBuf,
+    shutdown: CancellationToken,
+    runtime: DaemonRuntime,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let _logging_guard = logger::init_device_logging()?;
     let workspace_label = workspace.display().to_string();
     let gateway_label = redact_url_for_log(url);
     let device_span = info_span!("device", device_id = %device_id, workspace = %workspace_label);
@@ -597,9 +580,6 @@ pub async fn run(
             log_path = %log_pattern,
             log_rotation = "daily",
         );
-
-        let shutdown = wait_for_shutdown_signal();
-        tokio::pin!(shutdown);
 
         let exec_event_outbox: Arc<Mutex<VecDeque<DeviceExecEventParams>>> =
             Arc::new(Mutex::new(VecDeque::new()));
@@ -628,6 +608,7 @@ pub async fn run(
         macro_rules! shutdown_device {
             ($signal:expr) => {{
                 exec_event_collector.abort();
+                runtime.set_phase(daemon_protocol::DaemonPhase::ShuttingDown);
                 info!(event = "shutdown", signal = %$signal);
                 return Ok(());
             }};
@@ -637,8 +618,10 @@ pub async fn run(
         const INITIAL_RETRY_DELAY: tokio::time::Duration = tokio::time::Duration::from_secs(3);
         const MAX_RETRY_DELAY: tokio::time::Duration = tokio::time::Duration::from_secs(300);
         let mut retry_delay = INITIAL_RETRY_DELAY;
+        let mut reconnect_attempt = 0_u32;
 
         loop {
+            runtime.set_phase(daemon_protocol::DaemonPhase::Connecting);
             info!(event = "connect.attempt", url = %gateway_label);
 
             let tools_for_handler: Arc<Vec<Box<dyn Tool>>> = Arc::new(
@@ -667,13 +650,14 @@ pub async fn run(
                 ),
             );
             let conn_attempt = tokio::select! {
-                signal = &mut shutdown => shutdown_device!(signal),
+                () = shutdown.cancelled() => shutdown_device!("control"),
                 result = conn_attempt => result,
             };
 
             let conn = match conn_attempt {
                 Ok(Ok(c)) => {
                     retry_delay = INITIAL_RETRY_DELAY;
+                    reconnect_attempt = 0;
                     c
                 }
                 Ok(Err(e)) => {
@@ -686,26 +670,36 @@ pub async fn run(
                             return Err(e);
                         }
                     }
+                    reconnect_attempt = reconnect_attempt.saturating_add(1);
+                    runtime.reconnecting(reconnect_attempt, e.to_string());
                     error!(
                         event = "connect.failed",
                         error = %e,
                         retry_seconds = retry_delay.as_secs(),
                     );
                     tokio::select! {
-                        signal = &mut shutdown => shutdown_device!(signal),
+                        () = shutdown.cancelled() => shutdown_device!("control"),
                         _ = tokio::time::sleep(retry_delay) => {}
                     }
                     retry_delay = (retry_delay * 2).min(MAX_RETRY_DELAY);
                     continue;
                 }
                 Err(_) => {
+                    reconnect_attempt = reconnect_attempt.saturating_add(1);
+                    runtime.reconnecting(
+                        reconnect_attempt,
+                        format!(
+                            "Gateway connection timed out after {} seconds",
+                            CONNECT_TIMEOUT.as_secs()
+                        ),
+                    );
                     error!(
                         event = "connect.timeout",
                         timeout_seconds = CONNECT_TIMEOUT.as_secs(),
                         retry_seconds = retry_delay.as_secs(),
                     );
                     tokio::select! {
-                        signal = &mut shutdown => shutdown_device!(signal),
+                        () = shutdown.cancelled() => shutdown_device!("control"),
                         _ = tokio::time::sleep(retry_delay) => {}
                     }
                     retry_delay = (retry_delay * 2).min(MAX_RETRY_DELAY);
@@ -713,6 +707,7 @@ pub async fn run(
                 }
             };
 
+            runtime.set_phase(daemon_protocol::DaemonPhase::Connected);
             info!(event = "connect.ok", implements = ?DEVICE_DRIVER_IMPLEMENTS);
 
             let conn = Arc::new(conn);
@@ -797,10 +792,10 @@ pub async fn run(
             // Monitor for disconnection or Ctrl+C
             loop {
                 tokio::select! {
-                    signal = &mut shutdown => {
+                    () = shutdown.cancelled() => {
                         active_requests.cancel_all("Device shutting down");
                         conn.close();
-                        shutdown_device!(signal);
+                        shutdown_device!("control");
                     }
                     _ = tokio::time::sleep(tokio::time::Duration::from_secs(1)) => {
                         if conn.is_disconnected() {
@@ -810,8 +805,9 @@ pub async fn run(
                                 event = "connect.lost",
                                 retry_seconds = 3,
                             );
+                            runtime.reconnecting(1, "The gateway connection closed.");
                             tokio::select! {
-                                signal = &mut shutdown => shutdown_device!(signal),
+                                () = shutdown.cancelled() => shutdown_device!("control"),
                                 _ = tokio::time::sleep(tokio::time::Duration::from_secs(3)) => {}
                             }
                             break; // Break inner loop to reconnect
@@ -829,10 +825,10 @@ pub async fn run(
                         if tokio::time::Instant::now() >= next_keepalive_at {
                             let payload = b"gsv-keepalive".to_vec();
                             let keepalive = tokio::select! {
-                                signal = &mut shutdown => {
+                                () = shutdown.cancelled() => {
                                     active_requests.cancel_all("Device shutting down");
                                     conn.close();
-                                    shutdown_device!(signal)
+                                    shutdown_device!("control")
                                 },
                                 result = tokio::time::timeout(keepalive_timeout, conn.send_ping(payload)) => result,
                             };
@@ -849,8 +845,9 @@ pub async fn run(
                                         error = %e,
                                         retry_seconds = 3,
                                     );
+                                    runtime.reconnecting(1, e.to_string());
                                     tokio::select! {
-                                        signal = &mut shutdown => shutdown_device!(signal),
+                                        () = shutdown.cancelled() => shutdown_device!("control"),
                                         _ = tokio::time::sleep(tokio::time::Duration::from_secs(3)) => {}
                                     }
                                     break;
@@ -863,8 +860,9 @@ pub async fn run(
                                         timeout_seconds = 10,
                                         retry_seconds = 3,
                                     );
+                                    runtime.reconnecting(1, "The gateway keepalive timed out.");
                                     tokio::select! {
-                                        signal = &mut shutdown => shutdown_device!(signal),
+                                        () = shutdown.cancelled() => shutdown_device!("control"),
                                         _ = tokio::time::sleep(tokio::time::Duration::from_secs(3)) => {}
                                     }
                                     break;

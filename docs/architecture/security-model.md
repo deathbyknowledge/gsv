@@ -139,7 +139,7 @@ and other mode bits where the backend supports them.
 
 Device file tools and shell tools are not a sandbox. Relative paths resolve
 against the device workspace, but absolute paths are used as-is on the device.
-`shell.exec` runs with the OS permissions of the user running `gsv device`.
+`shell.exec` runs with the OS permissions of the user running `gsvd`.
 Run device daemons as an unprivileged account and point their workspace at the
 smallest useful directory.
 
@@ -242,7 +242,7 @@ Security depends on operational discipline:
 - Use strong passwords and prefer scoped, expiring tokens for automation.
 - Bind device tokens to the expected device id.
 - Revoke unused tokens with `gsv auth token revoke`.
-- Run `gsv device` as an unprivileged OS user.
+- Run `gsvd` as an unprivileged OS user.
 - Link adapter actors intentionally and use HIL policies for destructive or
   remote work.
 

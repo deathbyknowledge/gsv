@@ -207,7 +207,7 @@ pub fn doctor_device_service() -> Result<(), DynError> {
     println!(
         "service definition: {}",
         if migration_required {
-            "legacy (`gsv device run`); run `gsv device install` to migrate"
+            "legacy (`gsv device run`); run `gsv daemon install` to migrate"
         } else if installed {
             "current"
         } else {
@@ -217,7 +217,7 @@ pub fn doctor_device_service() -> Result<(), DynError> {
     println!("logs: {}", logger::device_log_pattern().display());
 
     if migration_required {
-        return Err("The installed device service uses the legacy CLI launcher".into());
+        return Err("The installed gsvd service uses the legacy CLI launcher".into());
     }
     Ok(())
 }
@@ -694,7 +694,7 @@ impl DeviceServiceManager for SystemdUserServiceManager {
                 .arg("enable")
                 .arg("--now")
                 .arg(DEVICE_SYSTEMD_UNIT_NAME),
-            "Failed to enable/start device service",
+            "Failed to enable/start gsvd service",
         )?;
 
         println!("Installed systemd unit: {}", unit_path.display());
@@ -733,7 +733,7 @@ impl DeviceServiceManager for SystemdUserServiceManager {
                 .arg("disable")
                 .arg("--now")
                 .arg(DEVICE_SYSTEMD_UNIT_NAME),
-            "Failed to disable/stop device service",
+            "Failed to disable/stop gsvd service",
         );
 
         let unit_path = systemd_user_unit_path()?;
@@ -753,7 +753,7 @@ impl DeviceServiceManager for SystemdUserServiceManager {
                 .arg("--user")
                 .arg("start")
                 .arg(DEVICE_SYSTEMD_UNIT_NAME),
-            "Failed to start device service",
+            "Failed to start gsvd service",
         )
     }
 
@@ -763,7 +763,7 @@ impl DeviceServiceManager for SystemdUserServiceManager {
                 .arg("--user")
                 .arg("restart")
                 .arg(DEVICE_SYSTEMD_UNIT_NAME),
-            "Failed to restart device service",
+            "Failed to restart gsvd service",
         )
     }
 
@@ -773,7 +773,7 @@ impl DeviceServiceManager for SystemdUserServiceManager {
                 .arg("--user")
                 .arg("stop")
                 .arg(DEVICE_SYSTEMD_UNIT_NAME),
-            "Failed to stop device service",
+            "Failed to stop gsvd service",
         )
     }
 
@@ -784,7 +784,7 @@ impl DeviceServiceManager for SystemdUserServiceManager {
                 .arg("status")
                 .arg("--no-pager")
                 .arg(DEVICE_SYSTEMD_UNIT_NAME),
-            "Failed to read device service status",
+            "Failed to read gsvd service status",
         )
     }
 
@@ -911,7 +911,7 @@ impl DeviceServiceManager for LaunchdUserServiceManager {
         let plist_path = launchd_plist_path()?;
         if !plist_path.exists() {
             return Err(format!(
-                "Service not installed. Run 'gsv device install' first ({})",
+                "Service not installed. Run 'gsv daemon install' first ({})",
                 plist_path.display()
             )
             .into());

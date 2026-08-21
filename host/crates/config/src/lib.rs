@@ -58,7 +58,7 @@ pub struct CliConfig {
     #[serde(default)]
     pub r2: R2Config,
 
-    /// Device defaults (for `gsv device` and daemon service)
+    /// Machine daemon defaults (stored under the compatible `[device]` table)
     #[serde(default, alias = "node")]
     pub device: DeviceConfig,
 
@@ -683,7 +683,7 @@ token = "your-token-here"
 default_key = "agent:main:cli:dm:main"
 
 [device]
-# Optional defaults used by 'gsv device'
+# Optional machine defaults used by 'gsv daemon'
 # id = "device-macbook"
 # token = "your-device-token"
 # workspace = "/Users/you/projects"

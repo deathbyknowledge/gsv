@@ -55,7 +55,7 @@ When the `gsvd` user service already exists, the installer:
 
 If migration or the health check fails, the previous executable and service
 definition are restored. A machine without an existing service is not silently
-enrolled; run `gsv device install` after configuring a driver credential.
+enrolled; run `gsv daemon install` after configuring a driver credential.
 
 ## Desktop
 
@@ -84,9 +84,9 @@ asset before installation, for example:
 sha256sum -c checksums.txt --ignore-missing
 ```
 
-After installing the device service, inspect it with:
+After installing the daemon service, inspect it with:
 
 ```bash
-gsv device doctor
-gsv device status
+gsv daemon doctor
+gsv daemon status
 ```

@@ -78,11 +78,11 @@ gsv infra destroy --all --delete-bucket --purge-bucket
 ```
 
 This deletes the GSV Workers and, when requested, the shared R2 data. It also
-uninstalls the local device service unless `--keep-device` is supplied. Review
+uninstalls the local gsvd service unless `--keep-device` is supplied. Review
 the teardown prompt carefully because purged storage cannot be recovered.
 
 To remove only the WhatsApp worker and its gateway binding while keeping GSV and
-the local device service:
+the local gsvd service:
 
 ```bash
 gsv infra destroy -c channel-whatsapp --keep-device

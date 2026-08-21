@@ -1675,6 +1675,22 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e2931af7e13dc045d8e9d26afccc6fa115d64e115c9c84b1166288b46f6782c2"
 
 [[package]]
+name = "daemon-protocol"
+version = "0.4.1"
+dependencies = [
+ "async-trait",
+ "libc",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.20",
+ "tokio",
+ "tokio-util",
+ "uuid",
+ "windows-sys 0.61.2",
+]
+
+[[package]]
 name = "dasp_sample"
 version = "0.11.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3072,6 +3088,7 @@ dependencies = [
  "chrono",
  "clap",
  "cliclack",
+ "daemon-protocol",
  "desktop-protocol",
  "dirs 5.0.1",
  "flate2",
@@ -4149,6 +4166,7 @@ version = "0.4.1"
 dependencies = [
  "async-trait",
  "clap",
+ "daemon-protocol",
  "dirs 5.0.1",
  "futures-util",
  "gateway-client",

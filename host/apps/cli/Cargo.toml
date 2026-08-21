@@ -4,6 +4,7 @@ version.workspace = true
 edition = "2021"
 
 [dependencies]
+daemon-protocol = { path = "../../crates/daemon-protocol" }
 desktop-protocol = { path = "../../crates/desktop-protocol" }
 gateway-client = { path = "../../crates/gateway-client", default-features = false }
 host-config = { path = "../../crates/config" }

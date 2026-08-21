@@ -6,12 +6,15 @@ use crate::auth_flow::{
     run_with_auto_setup_and_login_retry, run_with_auto_setup_retry, AuthSetupOptions,
 };
 use crate::cli::{
-    AuthAction, Cli, Commands, ConfigAction, DeviceAction, DeviceServiceAction, LocalConfigAction,
+    AuthAction, Cli, Commands, ConfigAction, DaemonAction, DaemonServiceAction, LegacyDeviceAction,
+    LocalConfigAction,
 };
 use crate::commands;
 use crate::desktop::run_desktop;
 use crate::device::{
-    resolve_device_id, resolve_device_workspace, run_device_daemon, run_device_service, run_shell,
+    reconnect_daemon, reload_daemon, resolve_device_id, resolve_device_workspace,
+    run_daemon_service, run_device_daemon, run_shell, show_daemon_diagnostics,
+    show_daemon_live_status,
 };
 use crate::local_config::run_local_config;
 use crate::version::run_version;
@@ -163,8 +166,8 @@ pub(crate) async fn run() -> Result<(), Box<dyn std::error::Error>> {
                 .await
             }
         },
-        Commands::Device { action } => match action {
-            DeviceAction::Run { id, workspace } => {
+        Commands::LegacyDevice { action } => match action {
+            LegacyDeviceAction::Run { id, workspace } => {
                 let device_id = resolve_device_id(id.clone(), &cfg);
                 let workspace = resolve_device_workspace(workspace.clone(), &cfg);
                 let attempt_cfg = CliConfig::load();
@@ -175,57 +178,65 @@ pub(crate) async fn run() -> Result<(), Box<dyn std::error::Error>> {
                 )?;
                 run_device_daemon(&url, auth, device_id, workspace)
             }
-            DeviceAction::Install { id, workspace } => run_device_service(
-                DeviceServiceAction::Install { id, workspace },
+        },
+        Commands::Daemon { action } => match action {
+            DaemonAction::Install { id, workspace } => run_daemon_service(
+                DaemonServiceAction::Install { id, workspace },
                 &cfg,
                 cli_url_override.as_deref(),
                 cli_user_override.as_deref(),
                 cli_token_override.as_deref(),
             ),
-            DeviceAction::Start => run_device_service(
-                DeviceServiceAction::Start,
+            DaemonAction::Start => run_daemon_service(
+                DaemonServiceAction::Start,
                 &cfg,
                 cli_url_override.as_deref(),
                 cli_user_override.as_deref(),
                 cli_token_override.as_deref(),
             ),
-            DeviceAction::Restart => run_device_service(
-                DeviceServiceAction::Restart,
+            DaemonAction::Restart => run_daemon_service(
+                DaemonServiceAction::Restart,
                 &cfg,
                 cli_url_override.as_deref(),
                 cli_user_override.as_deref(),
                 cli_token_override.as_deref(),
             ),
-            DeviceAction::Stop => run_device_service(
-                DeviceServiceAction::Stop,
+            DaemonAction::Stop => run_daemon_service(
+                DaemonServiceAction::Stop,
                 &cfg,
                 cli_url_override.as_deref(),
                 cli_user_override.as_deref(),
                 cli_token_override.as_deref(),
             ),
-            DeviceAction::Uninstall => run_device_service(
-                DeviceServiceAction::Uninstall,
+            DaemonAction::Uninstall => run_daemon_service(
+                DaemonServiceAction::Uninstall,
                 &cfg,
                 cli_url_override.as_deref(),
                 cli_user_override.as_deref(),
                 cli_token_override.as_deref(),
             ),
-            DeviceAction::Status => run_device_service(
-                DeviceServiceAction::Status,
+            DaemonAction::Status => {
+                run_daemon_service(
+                    DaemonServiceAction::Status,
+                    &cfg,
+                    cli_url_override.as_deref(),
+                    cli_user_override.as_deref(),
+                    cli_token_override.as_deref(),
+                )?;
+                show_daemon_live_status().await
+            }
+            DaemonAction::Doctor => run_daemon_service(
+                DaemonServiceAction::Doctor,
                 &cfg,
                 cli_url_override.as_deref(),
                 cli_user_override.as_deref(),
                 cli_token_override.as_deref(),
             ),
-            DeviceAction::Doctor => run_device_service(
-                DeviceServiceAction::Doctor,
-                &cfg,
-                cli_url_override.as_deref(),
-                cli_user_override.as_deref(),
-                cli_token_override.as_deref(),
-            ),
-            DeviceAction::Logs { lines, follow } => run_device_service(
-                DeviceServiceAction::Logs { lines, follow },
+            DaemonAction::Reload => reload_daemon().await,
+            DaemonAction::Reconnect => reconnect_daemon().await,
+            DaemonAction::Diagnostics { json } => show_daemon_diagnostics(json).await,
+            DaemonAction::Logs { lines, follow } => run_daemon_service(
+                DaemonServiceAction::Logs { lines, follow },
                 &cfg,
                 cli_url_override.as_deref(),
                 cli_user_override.as_deref(),

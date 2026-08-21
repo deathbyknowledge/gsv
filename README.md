@@ -71,8 +71,8 @@ Connected devices are reachable by your agents from anywhere — outbound-only, 
 ```bash
 gsv auth token create --kind device --device macbook --label Macbook  # note the token
 gsv config --local set device.token <token>
-gsv device install --id macbook --workspace ~/  # background service
-gsv device status
+gsv daemon install --id macbook --workspace ~/  # background service
+gsv daemon status
 ```
 
 Now GSV can use the shell and read/write files on that machine. Set up adapters under **GSV > Integrations**.

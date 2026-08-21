@@ -22,6 +22,8 @@ contracts, but they do not embed one another's runtime or state ownership.
 - `host/crates/config/` owns compatible local configuration and atomic updates.
 - `host/crates/desktop-protocol/` owns the versioned, local Desktop control
   protocol.
+- `host/crates/daemon-protocol/` owns the versioned, same-user `gsvd` control
+  protocol.
 - `host/crates/gesture-protocol/` owns the private, versioned contract between
   Desktop and its gesture helper.
 
@@ -47,7 +49,14 @@ credential and runs as an unprivileged OS user.
 
 `gsv` is an operator client. It owns gateway administration, authentication,
 chat and process commands, deployment, OS service installation/control for
-`gsvd`, and the client side of local Desktop control.
+`gsvd`, and the client sides of local Desktop and daemon control.
+
+`gsv daemon install|start|restart|stop|uninstall` controls the per-user OS
+service. `gsv daemon status|reload|reconnect|diagnostics` talks to the running
+daemon over `daemon-protocol`; status also reports the OS service state. The
+protocol deliberately carries only bounded, redacted lifecycle information.
+Gateway frames, credentials, file content, and media remain on their owning
+channels.
 
 `gsv desktop` launches or activates the installed Desktop. Its `status`, `new`,
 `use`, and `microphone` subcommands are clients of `desktop-protocol`, not
@@ -180,8 +189,8 @@ single application installation cannot assemble incompatible host components.
 Release artifacts install `gsv`, `gsvd`, Desktop, and any Desktop helper as one
 versioned distribution. The service definition points directly at `gsvd` while
 retaining the established `gsvd` systemd, launchd, or Windows task identity.
-Service installation detects and replaces legacy definitions that invoke
-`gsv device run`.
+Service installation detects and replaces legacy definitions that invoke the
+hidden compatibility launcher `gsv device run`.
 
 CLI, Desktop, and driver credentials stay separate. Daemon upgrades replace the
 binary transactionally and restart only after the replacement is complete; a
