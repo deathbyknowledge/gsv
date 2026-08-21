@@ -1,26 +1,23 @@
+import {
+  extractTelegramInboundContent,
+  type TelegramInboundMediaSource,
+} from "./telegram-inbound-media";
+
 const MAX_TEXT_LENGTH = 16_384;
 const MAX_DISPLAY_NAME_LENGTH = 160;
 const MAX_HANDLE_LENGTH = 64;
 
 const UNSUPPORTED_CONTENT_FIELDS = [
-  "animation",
-  "audio",
   "contact",
   "dice",
-  "document",
   "game",
   "invoice",
   "location",
   "paid_media",
-  "photo",
   "poll",
-  "sticker",
   "story",
   "successful_payment",
   "venue",
-  "video",
-  "video_note",
-  "voice",
 ] as const;
 
 export type ManagedTelegramInbound = {
@@ -32,6 +29,7 @@ export type ManagedTelegramInbound = {
   actorName?: string;
   actorHandle?: string;
   text: string;
+  media?: TelegramInboundMediaSource[];
   replyToId?: string;
   timestamp?: number;
   unsupportedContent: boolean;
@@ -63,7 +61,8 @@ export function normalizeManagedTelegramUpdate(
     return { kind: "ignored" };
   }
 
-  const text = normalizedText(message.text ?? message.caption);
+  const content = extractTelegramInboundContent(message, messageId);
+  const text = normalizedText(content.text);
   const unsupportedContent = UNSUPPORTED_CONTENT_FIELDS.some(
     (field) => message[field] !== undefined,
   ) || !text;
@@ -84,6 +83,7 @@ export function normalizeManagedTelegramUpdate(
       ...(actorName ? { actorName } : {}),
       ...(actorHandle ? { actorHandle } : {}),
       text: text || "",
+      ...(content.media.length > 0 ? { media: content.media } : {}),
       ...(replyToId ? { replyToId } : {}),
       ...(timestamp !== undefined ? { timestamp } : {}),
       unsupportedContent,

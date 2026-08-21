@@ -17,18 +17,13 @@ import {
   resolveAdapterAccountDurableObjectIdentity,
 } from "../../shared/src/installation";
 import {
-  bundleAdapterMedia,
   cancelResponseBody,
   cancelBinaryBody,
   readAdapterMediaBody,
   responseBodyToBinaryBody,
-  validateAdapterMediaBody,
   SAFE_MATERIALIZED_MEDIA_PART_BYTES,
   SAFE_MATERIALIZED_MEDIA_TOTAL_BYTES,
-} from "../../shared/src/media-body";
-import type {
-  AdapterMediaBundle,
-  AdapterMediaPart,
+  validateAdapterMediaBody,
 } from "../../shared/src/media-body";
 import type {
   AdapterAccountStatus,
@@ -48,6 +43,11 @@ import {
   sendTelegramMarkdownMessage,
 } from "./telegram-formatting";
 import { planTelegramMediaDeliveries } from "./telegram-media";
+import {
+  extractTelegramInboundContent,
+  loadTelegramInboundMedia,
+  type TelegramInboundMediaSource,
+} from "./telegram-inbound-media";
 import { buildTelegramWebhookPath } from "./webhook-route";
 
 interface Env {
@@ -170,15 +170,6 @@ type TelegramFile = {
   file_unique_id?: string;
   file_size?: number;
   file_path?: string;
-};
-
-type TelegramInboundMediaSource = {
-  type: AdapterMedia["type"];
-  fileId: string;
-  mimeType: string;
-  filename?: string;
-  size?: number;
-  duration?: number;
 };
 
 type TelegramInboundTransfer = {
@@ -1178,8 +1169,8 @@ export class TelegramAccount extends DurableObject<Env> {
       return null;
     }
 
-    const text = this.extractText(message);
-    if (!text) {
+    const content = extractTelegramInboundContent(message, String(message.message_id));
+    if (!content.text) {
       return null;
     }
 
@@ -1187,8 +1178,8 @@ export class TelegramAccount extends DurableObject<Env> {
     const surfaceKind = this.mapSurfaceKind(message.chat.type);
     const surfaceName = this.getChatDisplayName(message.chat);
 
-    const wasMentioned = this.computeWasMentioned(message, text);
-    const media = await this.extractMediaAttachments(message);
+    const wasMentioned = this.computeWasMentioned(message, content.text);
+    const media = await this.extractMediaAttachments(content.media);
 
     return {
       message: {
@@ -1200,7 +1191,7 @@ export class TelegramAccount extends DurableObject<Env> {
           handle: message.chat.username ? `@${message.chat.username}` : undefined,
         },
         actor,
-        text,
+        text: content.text,
         replyToId: message.reply_to_message
           ? String(message.reply_to_message.message_id)
           : undefined,
@@ -1216,272 +1207,27 @@ export class TelegramAccount extends DurableObject<Env> {
     };
   }
 
-  private extractText(message: TelegramMessage): string | null {
-    if (message.text && message.text.trim()) {
-      return message.text.trim();
-    }
-
-    if (message.caption && message.caption.trim()) {
-      return message.caption.trim();
-    }
-
-    if (message.photo) return "[Photo]";
-    if (message.video) return "[Video]";
-    if (message.video_note) return "[Video note]";
-    if (message.audio) return "[Audio]";
-    if (message.voice) return "[Voice note]";
-    if (message.document) return "[Document]";
-    if (message.animation) return "[Animation]";
-    if (message.sticker) return "[Sticker]";
-
-    return null;
-  }
-
   private async extractMediaAttachments(
-    message: TelegramMessage,
-  ): Promise<AdapterMediaBundle> {
-    const sources = this.getTelegramMediaSources(message);
-    const media: AdapterMediaPart[] = [];
-    let bodyBytes = 0;
-
-    for (const source of sources) {
-      const part = await this.sourceToAdapterMedia(
-        source,
-        MAX_MEDIA_TOTAL_BODY_BYTES - bodyBytes,
-      );
-      if (part) {
-        media.push(part);
-        bodyBytes += part.body?.length ?? 0;
-      }
-    }
-
-    return await bundleAdapterMedia(media);
-  }
-
-  private getTelegramMediaSources(
-    message: TelegramMessage,
-  ): TelegramInboundMediaSource[] {
-    const sources: TelegramInboundMediaSource[] = [];
-    const messageId = String(message.message_id);
-
-    const photo = this.pickLargestPhoto(message.photo);
-    if (photo) {
-      sources.push({
-        type: "image",
-        fileId: photo.file_id,
-        mimeType: "image/jpeg",
-        filename: `telegram-photo-${messageId}.jpg`,
-        size: photo.file_size,
-      });
-    }
-
-    const video = this.sourceFromTelegramFile(
-      message.video,
-      "video",
-      "video/mp4",
-      `telegram-video-${messageId}.mp4`,
-    );
-    if (video) sources.push(video);
-
-    const videoNote = this.sourceFromTelegramFile(
-      message.video_note,
-      "video",
-      "video/mp4",
-      `telegram-video-note-${messageId}.mp4`,
-    );
-    if (videoNote) sources.push(videoNote);
-
-    const audio = this.sourceFromTelegramFile(
-      message.audio,
-      "audio",
-      "audio/mpeg",
-      `telegram-audio-${messageId}.mp3`,
-    );
-    if (audio) sources.push(audio);
-
-    const voice = this.sourceFromTelegramFile(
-      message.voice,
-      "audio",
-      "audio/ogg",
-      `telegram-voice-${messageId}.ogg`,
-    );
-    if (voice) sources.push(voice);
-
-    const document = this.sourceFromTelegramFile(
-      message.document,
-      "document",
-      "application/octet-stream",
-      `telegram-document-${messageId}.bin`,
-    );
-    if (document) sources.push(document);
-
-    const animationMime = message.animation?.mime_type || "video/mp4";
-    const animation = this.sourceFromTelegramFile(
-      message.animation,
-      this.inferMediaTypeFromMime(animationMime),
-      animationMime,
-      `telegram-animation-${messageId}.${this.getExtensionFromMime(
-        animationMime,
-        this.inferMediaTypeFromMime(animationMime),
-      )}`,
-    );
-    if (animation) sources.push(animation);
-
-    const sticker = this.sourceFromTelegramSticker(message.sticker, messageId);
-    if (sticker) sources.push(sticker);
-
-    return sources;
-  }
-
-  private pickLargestPhoto(
-    photos: TelegramPhotoSize[] | undefined,
-  ): TelegramPhotoSize | null {
-    if (!photos || photos.length === 0) {
-      return null;
-    }
-
-    return photos.reduce((largest, photo) => {
-      const largestSize = largest.file_size ?? 0;
-      const nextSize = photo.file_size ?? 0;
-      if (nextSize > largestSize) return photo;
-
-      const largestPixels = (largest.width ?? 0) * (largest.height ?? 0);
-      const nextPixels = (photo.width ?? 0) * (photo.height ?? 0);
-      return nextPixels > largestPixels ? photo : largest;
+    sources: readonly TelegramInboundMediaSource[],
+  ) {
+    return await loadTelegramInboundMedia(sources, {
+      getFile: async (fileId) => await this.callTelegramApi<TelegramFile>("getFile", {
+        file_id: fileId,
+      }),
+      downloadFile: async (filePath, expectedSize, maxBytes) =>
+        await this.downloadTelegramFile(filePath, expectedSize, maxBytes),
+      skipFailures: true,
+      onFailure: (error) => {
+        console.warn(`[TelegramAccount:${this.getAccountId()}] Failed to download media`, error);
+      },
     });
-  }
-
-  private sourceFromTelegramFile(
-    file: TelegramFileAttachment | undefined,
-    type: AdapterMedia["type"],
-    defaultMimeType: string,
-    defaultFilename: string,
-  ): TelegramInboundMediaSource | null {
-    if (!file?.file_id) {
-      return null;
-    }
-
-    const mimeType = file.mime_type || defaultMimeType;
-    return {
-      type,
-      fileId: file.file_id,
-      mimeType,
-      filename: file.file_name || defaultFilename,
-      size: file.file_size,
-      duration: file.duration,
-    };
-  }
-
-  private sourceFromTelegramSticker(
-    sticker: TelegramStickerAttachment | undefined,
-    messageId: string,
-  ): TelegramInboundMediaSource | null {
-    if (!sticker?.file_id) {
-      return null;
-    }
-
-    const mimeType =
-      sticker.mime_type ||
-      (sticker.is_video
-        ? "video/webm"
-        : sticker.is_animated
-          ? "application/x-tgsticker"
-          : "image/webp");
-    const type = sticker.is_video
-      ? "video"
-      : sticker.is_animated
-        ? "document"
-        : "image";
-
-    return {
-      type,
-      fileId: sticker.file_id,
-      mimeType,
-      filename:
-        sticker.file_name ||
-        `telegram-sticker-${messageId}.${this.getExtensionFromMime(mimeType, type)}`,
-      size: sticker.file_size,
-    };
-  }
-
-  private async sourceToAdapterMedia(
-    source: TelegramInboundMediaSource,
-    remainingBodyBytes: number,
-  ): Promise<AdapterMediaPart | null> {
-    const base: Omit<AdapterMedia, "body"> = {
-      type: source.type,
-      mimeType: source.mimeType,
-      filename: source.filename,
-      size: source.size,
-      duration: source.duration,
-    };
-
-    if (remainingBodyBytes <= 0) {
-      return null;
-    }
-    if (
-      source.size !== undefined
-      && (!Number.isSafeInteger(source.size) || source.size < 0)
-    ) {
-      console.log(
-        `[TelegramAccount:${this.getAccountId()}] Media ${source.fileId} has an invalid size`,
-      );
-      return null;
-    }
-    const maxBytes = Math.min(MAX_MEDIA_BODY_BYTES, remainingBodyBytes);
-    if (typeof source.size === "number" && source.size > maxBytes) {
-      console.log(
-        `[TelegramAccount:${this.getAccountId()}] Media ${source.fileId} exceeds transfer limit (${source.size} bytes)`,
-      );
-      return null;
-    }
-
-    try {
-      const file = await this.callTelegramApi<TelegramFile>("getFile", {
-        file_id: source.fileId,
-      });
-      const size = file.file_size ?? source.size;
-      const withSize: Omit<AdapterMedia, "body"> = { ...base, size };
-
-      if (!file.file_path) {
-        return null;
-      }
-      if (
-        size !== undefined
-        && (!Number.isSafeInteger(size) || size < 0)
-      ) {
-        return null;
-      }
-      if (typeof size === "number" && size > maxBytes) {
-        console.log(
-          `[TelegramAccount:${this.getAccountId()}] Media ${source.fileId} exceeds transfer limit (${size} bytes)`,
-        );
-        return null;
-      }
-
-      const body = await this.downloadTelegramFile(file.file_path, size, maxBytes);
-      if (!body) {
-        return null;
-      }
-
-      return {
-        media: { ...withSize, size: body.length },
-        body,
-      };
-    } catch (error) {
-      console.warn(
-        `[TelegramAccount:${this.getAccountId()}] Failed to download media ${source.fileId}:`,
-        error,
-      );
-      return null;
-    }
   }
 
   private async downloadTelegramFile(
     filePath: string,
-    expectedSize?: number,
-    maxBytes = MAX_MEDIA_BODY_BYTES,
-  ): Promise<BinaryBody | null> {
+    expectedSize: number | undefined,
+    maxBytes: number,
+  ): Promise<(BinaryBody & { length: number }) | null> {
     if (!this.state.botToken) {
       return null;
     }
@@ -1503,14 +1249,6 @@ export class TelegramAccount extends DurableObject<Env> {
       expectedBytes: expectedSize,
       label: "Telegram media",
     });
-  }
-
-  private inferMediaTypeFromMime(mimeType: string): AdapterMedia["type"] {
-    const normalized = mimeType.split(";")[0].trim().toLowerCase();
-    if (normalized.startsWith("image/")) return "image";
-    if (normalized.startsWith("audio/")) return "audio";
-    if (normalized.startsWith("video/")) return "video";
-    return "document";
   }
 
   private mapSurfaceKind(chatType: TelegramChatType): "dm" | "group" | "channel" {

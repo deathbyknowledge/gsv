@@ -47,10 +47,40 @@ describe("managed Telegram update normalization", () => {
   it("marks rich or empty messages unsupported without exposing provider shapes", () => {
     const message = (update().message as Record<string, unknown>);
     expect(normalizeManagedTelegramUpdate(update({
-      message: { ...message, text: undefined, photo: [{ file_id: "secret" }] },
+      message: { ...message, text: undefined, contact: { phone_number: "secret" } },
     }))).toMatchObject({
       kind: "accepted",
       inbound: { text: "", unsupportedContent: true },
+    });
+  });
+
+  it("normalizes a voice note as binary-backed inbound audio", () => {
+    const message = update().message as Record<string, unknown>;
+    expect(normalizeManagedTelegramUpdate(update({
+      message: {
+        ...message,
+        text: undefined,
+        voice: {
+          file_id: "voice_file_123",
+          file_size: 4,
+          duration: 2,
+          mime_type: "audio/ogg",
+        },
+      },
+    }))).toMatchObject({
+      kind: "accepted",
+      inbound: {
+        text: "[Voice note]",
+        unsupportedContent: false,
+        media: [{
+          type: "audio",
+          fileId: "voice_file_123",
+          mimeType: "audio/ogg",
+          filename: "telegram-voice-7.ogg",
+          size: 4,
+          duration: 2,
+        }],
+      },
     });
   });
 

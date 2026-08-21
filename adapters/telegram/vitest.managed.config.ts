@@ -15,7 +15,10 @@ export default defineConfig({
               const calls = [];
               export class GatewayEntrypoint extends WorkerEntrypoint {
                 async serviceFrame(installation, frame) {
-                  calls.push({ installation, call: frame.call, args: frame.args });
+                  const bodyBytes = frame.body
+                    ? Array.from(new Uint8Array(await new Response(frame.body.stream).arrayBuffer()))
+                    : undefined;
+                  calls.push({ installation, call: frame.call, args: frame.args, bodyBytes });
                   return {
                     type: "res",
                     id: frame.id,
@@ -52,8 +55,24 @@ export default defineConfig({
                   if (request.method === "GET" && url.pathname === "/messages") {
                     return Response.json(messages);
                   }
+                  if (request.method === "GET" && url.pathname.includes("/file/")) {
+                    const bytes = new Uint8Array([1, 2, 3, 4]);
+                    return new Response(bytes, {
+                      headers: { "content-length": String(bytes.byteLength) },
+                    });
+                  }
                   const method = url.pathname.split("/").at(-1);
                   const body = await request.json();
+                  if (method === "getFile") {
+                    return Response.json({
+                      ok: true,
+                      result: {
+                        file_id: body.file_id,
+                        file_size: 4,
+                        file_path: "voice/test.ogg",
+                      },
+                    });
+                  }
                   if (method === "sendMessage" || method === "sendRichMessage") {
                     const result = { message_id: nextMessageId++ };
                     messages.push({

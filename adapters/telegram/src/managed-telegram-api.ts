@@ -2,9 +2,16 @@ import {
   classifyNonIdempotentProviderStatus,
   type DeliveryFailureKind,
 } from "../../shared/src/delivery-ledger";
+import {
+  cancelResponseBody,
+  responseBodyToBinaryBody,
+} from "../../shared/src/media-body";
+import type { BinaryBody } from "./types";
+import type { TelegramInboundFile } from "./telegram-inbound-media";
 import { sendTelegramMarkdownMessage } from "./telegram-formatting";
 
 const TELEGRAM_API_BASE = "https://api.telegram.org";
+const TELEGRAM_FILE_BASE = "https://api.telegram.org/file";
 
 type TelegramApiSuccess<T> = { ok: true; result: T };
 type TelegramApiFailure = { ok: false; description?: string; error_code?: number };
@@ -55,6 +62,46 @@ export async function setManagedTelegramTyping(
     chat_id: chatId,
     action: "typing",
   }, fetcher);
+}
+
+export async function getManagedTelegramFile(
+  botToken: string,
+  fileId: string,
+  fetcher: ManagedTelegramFetch = fetch,
+): Promise<TelegramInboundFile> {
+  return await callManagedTelegramApi<TelegramInboundFile>(
+    botToken,
+    "getFile",
+    { file_id: fileId },
+    fetcher,
+  );
+}
+
+export async function downloadManagedTelegramFile(
+  botToken: string,
+  filePath: string,
+  expectedSize: number | undefined,
+  maxBytes: number,
+  fetcher: ManagedTelegramFetch = fetch,
+): Promise<BinaryBody & { length: number }> {
+  const token = botToken.trim();
+  if (!token) throw new Error("Managed Telegram bot token is not configured");
+  const encodedPath = filePath.split("/").map(encodeURIComponent).join("/");
+  let response: Response;
+  try {
+    response = await fetcher(`${TELEGRAM_FILE_BASE}/bot${token}/${encodedPath}`);
+  } catch {
+    throw new Error("Telegram media download transport failed");
+  }
+  if (!response.ok) {
+    await cancelResponseBody(response, "Telegram media download failed");
+    throw new Error(`Telegram media download failed (HTTP ${response.status})`);
+  }
+  return await responseBodyToBinaryBody(response, {
+    maxBytes,
+    expectedBytes: expectedSize,
+    label: "Telegram media",
+  });
 }
 
 async function callManagedTelegramApi<T>(

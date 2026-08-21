@@ -35,6 +35,14 @@ type ManagedPairingStub = {
 };
 
 function update(updateId: number, messageId: number, text: string): Request {
+  return messageUpdate(updateId, messageId, { text });
+}
+
+function messageUpdate(
+  updateId: number,
+  messageId: number,
+  content: Record<string, unknown>,
+): Request {
   return new Request("https://telegram.test/webhook", {
     method: "POST",
     headers: {
@@ -46,7 +54,7 @@ function update(updateId: number, messageId: number, text: string): Request {
       message: {
         message_id: messageId,
         date: 1_700_000_000 + updateId,
-        text,
+        ...content,
         chat: { id: 12345, type: "private" },
         from: {
           id: 12345,
@@ -118,6 +126,35 @@ describe("managed Telegram clean-instance flow", () => {
       }));
       expect(await telegramMessages()).toContainEqual(expect.objectContaining({
         body: expect.objectContaining({ text: expect.stringContaining("Personal received") }),
+      }));
+    });
+
+    expect((await SELF.fetch(messageUpdate(3, 3, {
+      voice: {
+        file_id: "voice_file_123",
+        file_size: 4,
+        duration: 2,
+        mime_type: "audio/ogg",
+      },
+    }))).status).toBe(200);
+    await vi.waitFor(async () => {
+      expect(await gatewayCalls()).toContainEqual(expect.objectContaining({
+        installation: { installationId: "installation_test" },
+        call: "adapter.inbound",
+        args: expect.objectContaining({
+          message: expect.objectContaining({
+            text: "[Voice note]",
+            media: [{
+              type: "audio",
+              mimeType: "audio/ogg",
+              filename: "telegram-voice-3.ogg",
+              size: 4,
+              duration: 2,
+              body: { offset: 0, length: 4 },
+            }],
+          }),
+        }),
+        bodyBytes: [1, 2, 3, 4],
       }));
     });
   });

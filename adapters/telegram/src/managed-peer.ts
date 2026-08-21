@@ -14,6 +14,7 @@ import {
   type InboundDeliveryDisposition,
 } from "../../shared/src/inbound-delivery";
 import { callAdapterGateway, type AdapterGatewayBinding } from "../../shared/src/gateway-rpc";
+import { cancelBinaryBody } from "../../shared/src/media-body";
 import type {
   AdapterOutboundMessage,
   AdapterPairingActivateInput,
@@ -40,11 +41,14 @@ import {
   type ManagedTelegramPeerState,
 } from "./managed-peer-state";
 import {
+  downloadManagedTelegramFile,
+  getManagedTelegramFile,
   ManagedTelegramDeliveryError,
   sendManagedTelegramText,
   setManagedTelegramTyping,
   type ManagedTelegramFetch,
 } from "./managed-telegram-api";
+import { loadTelegramInboundMedia } from "./telegram-inbound-media";
 import {
   isManagedTelegramPairCommand,
   type ManagedTelegramInbound,
@@ -79,7 +83,9 @@ const INBOUND_MAX_RECORDS = 4_096;
 const PAIRING_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
 const PAIRING_CHARACTERS = 12;
 const UNSUPPORTED_TEXT =
-  "GSV Telegram currently accepts text messages only. Please send your request as text.";
+  "GSV Telegram could not receive that message type. Please send text or a supported attachment.";
+const MEDIA_UNAVAILABLE_TEXT =
+  "GSV Telegram could not receive that attachment. Please send a smaller file or try again.";
 
 export class ManagedTelegramPeer extends DurableObject<ManagedTelegramPeerEnv> {
   private readonly deliveries: DeliveryLedger;
@@ -326,6 +332,40 @@ export class ManagedTelegramPeer extends DurableObject<ManagedTelegramPeerEnv> {
       return { terminal: true };
     }
 
+    const transfer = await loadTelegramInboundMedia(inbound.media ?? [], {
+      getFile: async (fileId) => await getManagedTelegramFile(
+        this.botToken(),
+        fileId,
+        this.telegramFetch(),
+      ),
+      downloadFile: async (filePath, expectedSize, maxBytes) =>
+        await downloadManagedTelegramFile(
+          this.botToken(),
+          filePath,
+          expectedSize,
+          maxBytes,
+          this.telegramFetch(),
+        ),
+    });
+    if (inbound.media?.length && transfer.media.length === 0) {
+      return platformResponse(
+        inbound,
+        `managed-media-unavailable:${inbound.deliveryId}`,
+        MEDIA_UNAVAILABLE_TEXT,
+      );
+    }
+
+    const current = await this.requireState();
+    const currentRoute = current.activeRoute;
+    if (
+      !currentRoute
+      || currentRoute.installationId !== route.installationId
+      || currentRoute.generation !== route.generation
+    ) {
+      await cancelBinaryBody(transfer.body, "Telegram route changed before media delivery");
+      return { terminal: true };
+    }
+
     const result = await callAdapterGateway<AdapterInboundResult>(
       this.env.GATEWAY,
       { installationId: route.installationId },
@@ -339,20 +379,22 @@ export class ManagedTelegramPeer extends DurableObject<ManagedTelegramPeerEnv> {
           surface: {
             kind: "dm",
             id: inbound.surfaceId,
-            ...(state.actorName ? { name: state.actorName } : {}),
-            ...(state.actorHandle ? { handle: state.actorHandle } : {}),
+            ...(current.actorName ? { name: current.actorName } : {}),
+            ...(current.actorHandle ? { handle: current.actorHandle } : {}),
           },
           actor: {
             id: inbound.actorId,
-            ...(state.actorName ? { name: state.actorName } : {}),
-            ...(state.actorHandle ? { handle: state.actorHandle } : {}),
+            ...(current.actorName ? { name: current.actorName } : {}),
+            ...(current.actorHandle ? { handle: current.actorHandle } : {}),
           },
           text: inbound.text,
+          ...(transfer.media.length > 0 ? { media: transfer.media } : {}),
           ...(inbound.replyToId ? { replyToId: inbound.replyToId } : {}),
           ...(inbound.timestamp ? { timestamp: inbound.timestamp } : {}),
           wasMentioned: true,
         },
       },
+      transfer.body,
     );
     if (result.challenge) return await this.pairingResponse(inbound);
     const disposition = adapterInboundResultDisposition(result, {
