@@ -3720,6 +3720,25 @@ struct MachineTokenCreateResult {
 }
 
 #[derive(Deserialize)]
+struct MachineListResult {
+    devices: Vec<KnownMachine>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct KnownMachine {
+    device_id: String,
+    label: String,
+}
+
+fn machine_identity_conflicts(machines: &[KnownMachine], machine_id: &str, name: &str) -> bool {
+    let normalized_name = name.trim().to_lowercase();
+    machines.iter().any(|machine| {
+        machine.device_id == machine_id || machine.label.trim().to_lowercase() == normalized_name
+    })
+}
+
+#[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct MachineToken {
     token_id: String,
@@ -3751,7 +3770,21 @@ async fn configure_local_machine(
             }
         }
         None => {
-            let machine_id = machine_setup::new_machine_id();
+            let machine_id = machine_setup::machine_id_from_name(&name);
+            let response = request_ok(
+                client,
+                "sys.device.list",
+                Some(json!({ "includeOffline": true })),
+            )
+            .await?;
+            let known = serde_json::from_value::<MachineListResult>(response).map_err(|_| {
+                RequestFailure::transport("GSV returned an invalid machine list response.")
+            })?;
+            if machine_identity_conflicts(&known.devices, &machine_id, &name) {
+                return Err(RequestFailure::rejected(
+                    "A machine with this name already exists. Choose a different name.",
+                ));
+            }
             let response = request_ok(
                 client,
                 "sys.token.create",
@@ -4073,6 +4106,29 @@ fn word_fragments(text: &str) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn machine_enrollment_rejects_existing_ids_and_display_names() {
+        let machines = vec![KnownMachine {
+            device_id: "studio-mac".to_string(),
+            label: "Editing laptop".to_string(),
+        }];
+        assert!(machine_identity_conflicts(
+            &machines,
+            "studio-mac",
+            "Another label"
+        ));
+        assert!(machine_identity_conflicts(
+            &machines,
+            "another-id",
+            "  EDITING LAPTOP "
+        ));
+        assert!(!machine_identity_conflicts(
+            &machines,
+            "travel-mac",
+            "Travel Mac"
+        ));
+    }
 
     fn prepared_history(generation: u64, payload: Value) -> PreparedHistory {
         PreparedHistory {

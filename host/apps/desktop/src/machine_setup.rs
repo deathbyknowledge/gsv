@@ -8,6 +8,7 @@ use daemon_protocol::{ClientOptions, DaemonControlClient, DaemonControlEndpoint}
 use host_config::CliConfig;
 
 const MAX_MACHINE_NAME_CHARS: usize = 80;
+const MACHINE_ID_MAX_CHARS: usize = 48;
 const DAEMON_READY_ATTEMPTS: usize = 32;
 const DAEMON_READY_INTERVAL: Duration = Duration::from_millis(250);
 
@@ -165,8 +166,33 @@ pub fn validate_machine_name(value: &str) -> Result<String, String> {
     Ok(name.to_string())
 }
 
-pub fn new_machine_id() -> String {
-    format!("machine-{}", uuid::Uuid::new_v4().simple())
+pub fn machine_id_from_name(name: &str) -> String {
+    let lowercase = name.trim().to_lowercase();
+    let mut normalized = String::with_capacity(lowercase.len());
+    let mut replacing = false;
+    for character in lowercase.chars() {
+        if character.is_ascii_lowercase()
+            || character.is_ascii_digit()
+            || character == '_'
+            || character == '-'
+        {
+            normalized.push(character);
+            replacing = false;
+        } else if !replacing {
+            normalized.push('-');
+            replacing = true;
+        }
+    }
+    let machine_id = normalized
+        .trim_matches(['-', '_'])
+        .chars()
+        .take(MACHINE_ID_MAX_CHARS)
+        .collect::<String>();
+    if machine_id.is_empty() {
+        "machine".to_string()
+    } else {
+        machine_id
+    }
 }
 
 pub fn save_machine(
@@ -374,11 +400,17 @@ mod tests {
     }
 
     #[test]
-    fn machine_ids_are_opaque_and_unique() {
-        let first = new_machine_id();
-        let second = new_machine_id();
-        assert!(first.starts_with("machine-"));
-        assert_ne!(first, second);
+    fn machine_ids_match_web_name_normalization() {
+        assert_eq!(
+            machine_id_from_name("Studio MacBook Pro"),
+            "studio-macbook-pro"
+        );
+        assert_eq!(machine_id_from_name("  Server_01  "), "server_01");
+        assert_eq!(machine_id_from_name("!!!"), "machine");
+        assert_eq!(
+            machine_id_from_name(&"a".repeat(MACHINE_ID_MAX_CHARS + 10)),
+            "a".repeat(MACHINE_ID_MAX_CHARS)
+        );
     }
 
     #[test]

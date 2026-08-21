@@ -154,8 +154,11 @@ new workspace.
 Installing Desktop is sufficient to connect the local computer without making
 a user operate `gsvd` manually. After the first authenticated session, Desktop
 presents an explicit “Connect this computer” step with an editable suggested
-name. It creates one opaque, driver-bound machine identity, saves the credential
-and its issuing gateway/account atomically in `config.toml`, asks the bundled
+name. It derives the stable machine ID from that name with the same lowercase,
+48-character normalization as the Web Machines flow, keeps the original name as
+the display label, and rejects an existing ID or label. It saves the
+driver-bound credential and its issuing gateway/account atomically in
+`config.toml`, asks the bundled
 `gsv` executable to install the per-user service, then verifies and reloads
 `gsvd` through `daemon-protocol`. The credential never appears in process
 arguments. A failed install can be retried without minting another identity,
