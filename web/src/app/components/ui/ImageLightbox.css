@@ -109,6 +109,33 @@
   outline: none;
 }
 
+/* Shown only when a remote host refuses the download fetch. The link is the
+   fallback the reader clicks themselves: a popup opened from the failed fetch
+   has already lost the click's user activation, but this click carries its
+   own. */
+.gsv-lightbox-notice {
+  flex: none;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+  margin: 0;
+  padding: 8px 14px;
+  border-bottom: 1px solid var(--rule-inner);
+  color: var(--meta);
+  font-size: 0.75rem; /* 12px */
+}
+
+.gsv-lightbox-notice-link {
+  color: var(--link);
+  letter-spacing: 0.14em;
+}
+
+.gsv-lightbox-notice-link:hover,
+.gsv-lightbox-notice-link:focus-visible {
+  color: var(--link-hover);
+}
+
 /* ── Stage ────────────────────────────────────────────────────────────────── */
 .gsv-lightbox-stage {
   flex: 1;

@@ -42,6 +42,8 @@ export function ImageLightbox({ src, alt, filename, meta, caption, onClose }: Im
   const imageRef = useRef<HTMLImageElement>(null);
   const closeRef = useRef<HTMLButtonElement>(null);
   const [scale, setScale] = useState(MIN_ZOOM);
+  /** Set when a cross-origin host refuses the download fetch — see onDownload. */
+  const [downloadBlocked, setDownloadBlocked] = useState(false);
   const [offset, setOffset] = useState<Point>(ORIGIN);
   /** Live pointers, so two of them can drive a pinch. */
   const pointersRef = useRef(new Map<number, Point>());
@@ -175,6 +177,9 @@ export function ImageLightbox({ src, alt, filename, meta, caption, onClose }: Im
     return () => previous?.focus?.();
   }, []);
 
+  // A different image is a fresh download attempt.
+  useEffect(() => setDownloadBlocked(false), [src]);
+
   // The page behind must not scroll while the viewer owns the screen.
   useEffect(() => {
     const previous = document.body.style.overflow;
@@ -288,17 +293,17 @@ export function ImageLightbox({ src, alt, filename, meta, caption, onClose }: Im
 
   /** A remote image ignores the anchor's download attribute and would navigate
    *  this tab — taking the whole shell with it — so fetch it into a blob
-   *  instead. If the host refuses the fetch, open it in its own tab: not a
-   *  download, but the chat behind stays up. */
+   *  instead. A host that serves the image but no CORS headers refuses that
+   *  fetch, and by the time it does the click's user activation is gone, so
+   *  opening a tab from here would be swallowed by the popup blocker: offer a
+   *  link the reader can click instead, which carries its own activation. */
   const onDownload = (event: MouseEvent) => {
     if (isDirectDownloadSource(src, window.location.href)) {
       return;
     }
     event.preventDefault();
     void downloadViaBlob(src, downloadName).then((downloaded) => {
-      if (!downloaded) {
-        window.open(src, "_blank", "noopener,noreferrer");
-      }
+      setDownloadBlocked(!downloaded);
     });
   };
 
@@ -366,6 +371,21 @@ export function ImageLightbox({ src, alt, filename, meta, caption, onClose }: Im
           </button>
         </span>
       </div>
+
+      {downloadBlocked ? (
+        <p class="gsv-lightbox-notice" role="status">
+          <span>This image is hosted elsewhere and cannot be saved directly.</span>
+          <a
+            class="gsv-lightbox-notice-link"
+            href={src}
+            download={downloadName}
+            target="_blank"
+            rel="noopener noreferrer"
+          >
+            OPEN IN A NEW TAB
+          </a>
+        </p>
+      ) : null}
 
       <div
         ref={stageRef}

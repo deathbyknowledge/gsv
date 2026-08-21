@@ -27,8 +27,9 @@ export function isDirectDownloadSource(source: string, pageUrl: string): boolean
 
 /** Fetch a cross-origin image and hand it to the browser as a local blob, so
  *  the download attribute applies and the current page survives. Resolves
- *  false when the fetch is refused (no CORS headers, network error) and the
- *  caller should fall back to opening the image in its own tab. */
+ *  false when the fetch is refused (no CORS headers, network error) — which a
+ *  host is entitled to do while still serving the <img> — leaving the caller
+ *  to offer the reader another way to the file. */
 export async function downloadViaBlob(source: string, filename: string): Promise<boolean> {
   let objectUrl = "";
   try {
