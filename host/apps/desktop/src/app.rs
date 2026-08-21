@@ -43,6 +43,7 @@ mod presence;
 mod rich;
 mod selection;
 mod session;
+mod system_status;
 mod view;
 
 use media::{release_assets, MediaCache, MediaPreparation, PreparedMedia};
@@ -327,6 +328,7 @@ pub struct GsvApp {
     _media_file_task: Task<()>,
     _voice_task: Task<()>,
     _vision_task: Option<Task<()>>,
+    _system_status_task: Option<Task<()>>,
 }
 
 impl GsvApp {
@@ -900,6 +902,7 @@ impl GsvApp {
             _media_file_task: media_file_task,
             _voice_task: voice_task,
             _vision_task: vision_task,
+            _system_status_task: None,
         };
         app.initialize_vision_context();
         app

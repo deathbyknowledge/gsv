@@ -65,7 +65,7 @@ output_dir="${output_override:-$target_root/package/macos/$architecture/$profile
 binary_dir="$target_root/$profile"
 model_root="$target_root/vision-native/artifact/gesture-recognizer-float16-1"
 plist_template="$host_root/packaging/macos/Info.plist"
-icon_source="$repository_root/extension/assets/gsv-mark-white@4x.png"
+icon_source="$repository_root/web/public/brand/gsv-mark-white.svg"
 version="$(awk -F '"' '/^version = "/ { print $2; exit }' "$host_root/Cargo.toml")"
 [[ -n "$version" ]] || die "could not read the workspace version"
 
@@ -116,16 +116,15 @@ install -m 0644 "$host_root/helpers/transcriber/THIRD_PARTY.md" \
   "$macos_dir/THIRD_PARTY.md"
 ditto "$model_root" "$resources_dir/vision-models"
 
+icon_artwork="$stage/GSV-app-icon-1024.png"
+"$binary_dir/gsv-desktop" --render-macos-icon "$icon_artwork"
+[[ -f "$icon_artwork" ]] || die "application icon renderer produced no output"
 iconset="$stage/GSV.iconset"
 mkdir -p "$iconset"
 render_icon() {
   local canvas_size="$1"
   local output="$2"
-  local artwork_size=$(((canvas_size * 103 + 64) / 128))
-  local artwork="$stage/GSV-artwork-$canvas_size.png"
-  sips -z "$artwork_size" "$artwork_size" "$icon_source" \
-    --out "$artwork" >/dev/null
-  sips -p "$canvas_size" "$canvas_size" "$artwork" \
+  sips -z "$canvas_size" "$canvas_size" "$icon_artwork" \
     --out "$output" >/dev/null
 }
 for size in 16 32 128 256 512; do

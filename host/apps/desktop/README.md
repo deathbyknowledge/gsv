@@ -72,7 +72,15 @@ cargo run --manifest-path host/apps/desktop/Cargo.toml
 The app reuses the CLI’s cached login when one exists; otherwise enter the local URL and account in
 the Desktop connection flow. It reconnects without replaying commands, restores history before
 applying live deltas, and preserves an unsent or ambiguously delivered thought visibly. Wayland is
-selected automatically when `WAYLAND_DISPLAY` is present; no Cargo feature is needed.
+selected automatically when `WAYLAND_DISPLAY` is present; no Cargo feature is needed. Desktop owns
+one operating-system status item for connection, machine, voice, and gesture state. Closing the
+window hides it on macOS or minimizes it on Windows/Linux; use the status menu or app launcher to
+open it again. `Cmd/Ctrl+Q` and **Quit GSV** stop Desktop and its local helpers, while the installed
+`gsvd` service keeps the computer connected.
+
+Linux uses the freedesktop StatusNotifier protocol directly and adds no native tray build
+dependency. Desktops without a StatusNotifier host can still run GSV normally; showing the status
+item is best effort.
 
 ### Run experimental local gesture controls
 

@@ -136,7 +136,7 @@ jobs:
               - 'host/crates/config/**'
               - 'host/crates/desktop-protocol/**'
               - 'host/crates/gesture-protocol/**'
-              - 'extension/assets/gsv-mark-white@4x.png'
+              - 'web/public/brand/gsv-mark-white.svg'
               - 'web/public/fonts/**'
             host_crates:
               - '.github/workflows/ci.yml'

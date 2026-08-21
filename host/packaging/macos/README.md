@@ -2,13 +2,18 @@
 
 `package-macos.sh` assembles one self-contained `GSV.app` for technical
 dogfooding. The bundle contains Desktop, the CLI, `gsvd`, both local helpers,
-the pinned gesture models, an inset macOS rendition of the existing white-ship
-mark, and the required camera and microphone permission descriptions.
+the pinned gesture models, a dark rounded-square application icon built from
+the canonical white-ship SVG, and the required camera and microphone
+permission descriptions.
 
 The packaged application starts gesture recognition automatically; the camera
 remains local and gesture control starts disarmed. Voice input is available
 from the visible **VOICE** control or `Command+Shift+Space`. Both features ask
-for their macOS privacy permission when first used.
+for their macOS privacy permission when first used. The same white ship appears
+as a monochrome menu-bar item with connection, machine, voice, and gesture
+state. Closing the window keeps Desktop available there. **Quit GSV** or
+`Command+Q` shuts down Desktop and its voice/gesture helpers without stopping
+the independently installed `gsvd` service.
 
 From the repository root on an Apple Silicon or Intel Mac:
 

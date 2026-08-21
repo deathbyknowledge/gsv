@@ -11,6 +11,7 @@ mod media_files;
 mod model;
 mod prepared;
 mod startup;
+mod system_status;
 mod theme;
 mod transcription;
 mod typography;
@@ -18,6 +19,8 @@ mod vision_debug;
 
 use std::borrow::Cow;
 use std::env;
+use std::path::Path;
+use std::{cell::RefCell, rc::Rc};
 
 use gpui::{
     px, size, App, AppContext, Application, Bounds, TitlebarOptions, WindowBounds, WindowOptions,
@@ -27,12 +30,26 @@ use gpui_component::{Root, Theme, ThemeMode};
 use crate::app::{GsvApp, VisionStartup};
 
 fn main() {
+    let arguments = env::args().collect::<Vec<_>>();
+    if arguments
+        .get(1)
+        .is_some_and(|argument| argument == "--render-macos-icon")
+    {
+        let Some(path) = arguments.get(2).filter(|_| arguments.len() == 3) else {
+            eprintln!("Usage: gsv-desktop --render-macos-icon OUTPUT.png");
+            std::process::exit(2);
+        };
+        if let Err(error) = system_status::write_macos_app_icon(Path::new(path)) {
+            eprintln!("GSV Desktop could not render its application icon: {error}");
+            std::process::exit(1);
+        }
+        return;
+    }
     if !graphical_session_available() {
         eprintln!("GSV native needs a graphical session (DISPLAY or WAYLAND_DISPLAY).");
         return;
     }
 
-    let arguments = env::args().collect::<Vec<_>>();
     let demo = arguments.iter().any(|argument| argument == "--demo");
     let sound_enabled = !arguments.iter().any(|argument| argument == "--mute");
     let reduced_motion = arguments
@@ -58,9 +75,17 @@ fn main() {
 
     Application::new().run(move |cx: &mut App| {
         gpui_component::init(cx);
+        system_status::configure_application(cx);
         app::bind_keys(cx);
         register_fonts(cx);
         configure_theme(cx);
+        let (status_item, status_actions) = match system_status::SystemStatusItem::start() {
+            Ok((item, actions)) => (Some(Rc::new(RefCell::new(item))), Some(actions)),
+            Err(error) => {
+                eprintln!("GSV Desktop status item is unavailable: {error}");
+                (None, None)
+            }
+        };
 
         let bounds = Bounds::centered(None, size(px(1_280.0), px(820.0)), cx);
         let window = cx.open_window(
@@ -76,8 +101,9 @@ fn main() {
                 ..Default::default()
             },
             move |window, cx| {
+                system_status::keep_running_on_close(window, cx);
                 let view = cx.new(|cx| {
-                    GsvApp::new_with_vision(
+                    let mut app = GsvApp::new_with_vision(
                         window,
                         cx,
                         client,
@@ -85,8 +111,22 @@ fn main() {
                         sound_enabled,
                         reduced_motion,
                         vision_startup,
-                    )
+                    );
+                    if let Some(actions) = status_actions {
+                        app.attach_system_status_actions(actions, window, cx);
+                    }
+                    app
                 });
+                if let Some(status_item) = status_item {
+                    status_item
+                        .borrow_mut()
+                        .update(view.read(cx).system_status_snapshot());
+                    cx.observe(&view, move |view, cx| {
+                        let snapshot = view.read(cx).system_status_snapshot();
+                        status_item.borrow_mut().update(snapshot);
+                    })
+                    .detach();
+                }
                 cx.new(|cx| Root::new(view, window, cx))
             },
         );
