@@ -14,7 +14,13 @@ import {
   type InboundDeliveryDisposition,
 } from "../../shared/src/inbound-delivery";
 import { callAdapterGateway, type AdapterGatewayBinding } from "../../shared/src/gateway-rpc";
-import { cancelBinaryBody } from "../../shared/src/media-body";
+import {
+  cancelBinaryBody,
+  readAdapterMediaBody,
+  SAFE_MATERIALIZED_MEDIA_PART_BYTES,
+  SAFE_MATERIALIZED_MEDIA_TOTAL_BYTES,
+  validateAdapterMediaBody,
+} from "../../shared/src/media-body";
 import type {
   AdapterOutboundMessage,
   AdapterPairingActivateInput,
@@ -25,6 +31,7 @@ import type {
   AdapterPairingRoute,
   AdapterSendResult,
   AdapterSurface,
+  BinaryBody,
 } from "./types";
 import type {
   ManagedTelegramPairingEnv,
@@ -41,6 +48,7 @@ import {
   type ManagedTelegramPeerState,
 } from "./managed-peer-state";
 import {
+  callManagedTelegramApi,
   downloadManagedTelegramFile,
   getManagedTelegramFile,
   ManagedTelegramDeliveryError,
@@ -49,6 +57,11 @@ import {
   type ManagedTelegramFetch,
 } from "./managed-telegram-api";
 import { loadTelegramInboundMedia } from "./telegram-inbound-media";
+import { planTelegramMediaDeliveries } from "./telegram-media";
+import {
+  sendTelegramMediaGroupMessage,
+  sendTelegramMediaMessage,
+} from "./telegram-outbound-media";
 import {
   isManagedTelegramPairCommand,
   type ManagedTelegramInbound,
@@ -133,17 +146,25 @@ export class ManagedTelegramPeer extends DurableObject<ManagedTelegramPeerEnv> {
   async sendMessage(
     installationId: string,
     message: AdapterOutboundMessage,
+    body?: BinaryBody,
   ): Promise<AdapterSendResult> {
-    const state = await this.requireState();
+    let state: ManagedTelegramPeerState;
+    try {
+      state = await this.requireState();
+    } catch (error) {
+      await cancelBinaryBody(body, error);
+      throw error;
+    }
     const route = state.activeRoute;
     if (!route || route.installationId !== installationId) {
+      await cancelBinaryBody(body, "Telegram identity is not linked to this GSV");
       return { ok: false, error: "Telegram identity is not linked to this GSV" };
     }
     return await this.deliverMessage(message, {
       kind: "installation",
       installationId,
       generation: route.generation,
-    });
+    }, body);
   }
 
   async setTyping(
@@ -499,20 +520,57 @@ export class ManagedTelegramPeer extends DurableObject<ManagedTelegramPeerEnv> {
   private async deliverMessage(
     message: AdapterOutboundMessage,
     context: ResponseContext,
+    body?: BinaryBody,
   ): Promise<AdapterSendResult> {
-    const state = await this.requireState();
-    this.assertPeerDestination(state, message.surface, message.actorId);
-    this.assertDeliveryContext(state, context);
-    if (message.media?.length) return { ok: false, error: "Managed Telegram does not support media yet" };
-    if (!message.text.trim()) return { ok: false, error: "Managed Telegram requires text" };
+    try {
+      const state = await this.requireState();
+      this.assertPeerDestination(state, message.surface, message.actorId);
+      this.assertDeliveryContext(state, context);
+    } catch (error) {
+      await cancelBinaryBody(body, error);
+      throw error;
+    }
+    const text = message.text.trim();
+    const media = message.media ?? [];
+    if (!text && media.length === 0) {
+      await cancelBinaryBody(body, "Managed Telegram requires text or media");
+      return { ok: false, error: "Managed Telegram requires text or media" };
+    }
+    try {
+      validateAdapterMediaBody(media, body, {
+        maxBytes: SAFE_MATERIALIZED_MEDIA_TOTAL_BYTES,
+        maxPartBytes: SAFE_MATERIALIZED_MEDIA_PART_BYTES,
+      });
+    } catch (error) {
+      await cancelBinaryBody(body, error);
+      return {
+        ok: false,
+        error: error instanceof Error ? error.message : "Telegram media body is invalid",
+      };
+    }
+
+    let mediaBytes: Array<Uint8Array | undefined>;
+    try {
+      mediaBytes = await readAdapterMediaBody(media, body, {
+        maxBytes: SAFE_MATERIALIZED_MEDIA_TOTAL_BYTES,
+        maxPartBytes: SAFE_MATERIALIZED_MEDIA_PART_BYTES,
+      });
+    } catch {
+      return { ok: false, error: "Could not read Telegram media body", retryable: true };
+    }
 
     let fingerprint: string;
     try {
-      fingerprint = await fingerprintOutboundDelivery(message);
+      fingerprint = await fingerprintOutboundDelivery(message, mediaBytes);
     } catch {
       return { ok: false, error: "Could not fingerprint Telegram delivery", retryable: true };
     }
-    const claim = await this.deliveries.claim(message.deliveryId, fingerprint);
+    let claim;
+    try {
+      claim = await this.deliveries.claim(message.deliveryId, fingerprint);
+    } catch {
+      return { ok: false, error: "Telegram delivery ledger unavailable", retryable: true };
+    }
     if (!claim.claimed) return claim.result;
 
     const fail = async (kind: DeliveryFailureKind): Promise<AdapterSendResult> => {
@@ -529,22 +587,61 @@ export class ManagedTelegramPeer extends DurableObject<ManagedTelegramPeerEnv> {
       return { ok: false, error };
     };
 
+    let acceptedProviderDeliveries = 0;
     try {
       const current = await this.requireState();
       this.assertPeerDestination(current, message.surface, message.actorId);
       this.assertDeliveryContext(current, context);
-      const sent = await sendManagedTelegramText(
-        this.botToken(),
-        current.surfaceId,
-        message.text,
-        parseTelegramMessageId(message.replyToId),
-        this.telegramFetch(),
-      );
-      const messageId = String(sent.message_id);
+      const token = this.botToken();
+      const fetcher = this.telegramFetch();
+      const replyToMessageId = parseTelegramMessageId(message.replyToId);
+      let messageId: string | undefined;
+      if (media.length === 0) {
+        const sent = await sendManagedTelegramText(
+          token,
+          current.surfaceId,
+          text,
+          replyToMessageId,
+          fetcher,
+        );
+        acceptedProviderDeliveries = 1;
+        messageId = String(sent.message_id);
+      } else {
+        const callApi = <T>(method: string, payload: Record<string, unknown> | FormData) =>
+          callManagedTelegramApi<T>(token, method, payload, fetcher);
+        const deliveries = planTelegramMediaDeliveries(media);
+        let mediaOffset = 0;
+        for (const [index, delivery] of deliveries.entries()) {
+          const caption = index === 0 ? text : "";
+          const deliveryBytes = mediaBytes.slice(mediaOffset, mediaOffset + delivery.length);
+          const firstSent = delivery.length === 1
+            ? await sendTelegramMediaMessage(
+                callApi,
+                current.surfaceId,
+                delivery[0],
+                deliveryBytes[0],
+                caption,
+                replyToMessageId,
+              )
+            : (await sendTelegramMediaGroupMessage(
+                callApi,
+                current.surfaceId,
+                delivery,
+                deliveryBytes,
+                caption,
+                replyToMessageId,
+              ))[0];
+          acceptedProviderDeliveries += 1;
+          mediaOffset += delivery.length;
+          if (!messageId && firstSent) messageId = String(firstSent.message_id);
+        }
+      }
       await this.deliveries.succeed(message.deliveryId, claim.attemptId, messageId);
       return { ok: true, messageId };
     } catch (error) {
-      const kind = error instanceof ManagedTelegramDeliveryError ? error.kind : "permanent";
+      const kind = acceptedProviderDeliveries > 0
+        ? "ambiguous"
+        : error instanceof ManagedTelegramDeliveryError ? error.kind : "permanent";
       return await fail(kind);
     }
   }

@@ -46,7 +46,11 @@ interface Env extends ManagedTelegramPeerEnv {
 }
 
 type ManagedTelegramPeerStub = {
-  sendMessage(installationId: string, message: AdapterOutboundMessage): Promise<AdapterSendResult>;
+  sendMessage(
+    installationId: string,
+    message: AdapterOutboundMessage,
+    body?: BinaryBody,
+  ): Promise<AdapterSendResult>;
   setTyping(
     installationId: string,
     surface: AdapterSurface,
@@ -96,13 +100,14 @@ export class ManagedTelegramChannel extends WorkerEntrypoint<Env> {
       if (accountId !== MANAGED_TELEGRAM_ACCOUNT_ID) {
         throw new Error("Managed Telegram account ID is invalid");
       }
-      if (body || message.media?.length) {
-        throw new Error("Managed Telegram does not support media yet");
-      }
       if (message.surface.kind !== "dm" || !message.actorId) {
         throw new Error("Managed Telegram supports direct messages only");
       }
-      return await this.peer(message.surface.id).sendMessage(parsed.installationId, message);
+      return await this.peer(message.surface.id).sendMessage(
+        parsed.installationId,
+        message,
+        body,
+      );
     } catch (error) {
       await cancelBinaryBody(body, error);
       return { ok: false, error: safeError(error) };

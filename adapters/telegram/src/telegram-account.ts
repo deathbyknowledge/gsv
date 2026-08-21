@@ -38,11 +38,13 @@ import type {
   BinaryBody,
 } from "./types";
 import {
-  buildTelegramReplyParameters,
-  callTelegramApiWithMarkdownCaption,
   sendTelegramMarkdownMessage,
 } from "./telegram-formatting";
 import { planTelegramMediaDeliveries } from "./telegram-media";
+import {
+  sendTelegramMediaGroupMessage,
+  sendTelegramMediaMessage,
+} from "./telegram-outbound-media";
 import {
   extractTelegramInboundContent,
   loadTelegramInboundMedia,
@@ -175,15 +177,6 @@ type TelegramFile = {
 type TelegramInboundTransfer = {
   message: AdapterInboundMessage;
   body?: BinaryBody;
-};
-
-type TelegramInputMediaType = "photo" | "video" | "audio" | "document";
-
-type TelegramInputMedia = {
-  type: TelegramInputMediaType;
-  media: string;
-  caption?: string;
-  parse_mode?: "HTML";
 };
 
 type TelegramAccountState = {
@@ -679,6 +672,8 @@ export class TelegramAccount extends DurableObject<Env> {
       } else {
         const deliveries = planTelegramMediaDeliveries(media);
         let mediaOffset = 0;
+        const callApi = <T>(method: string, payload: Record<string, unknown> | FormData) =>
+          this.callTelegramApi<T>(method, payload);
         for (const [index, delivery] of deliveries.entries()) {
           const caption = index === 0 ? trimmedText : "";
           const deliveryBytes = mediaBytes.slice(
@@ -686,14 +681,16 @@ export class TelegramAccount extends DurableObject<Env> {
             mediaOffset + delivery.length,
           );
           const firstSentMessage = delivery.length === 1
-            ? await this.sendMediaMessage(
+            ? await sendTelegramMediaMessage(
+                callApi,
                 message.surface.id,
                 delivery[0],
                 deliveryBytes[0],
                 caption,
                 replyToMessageId,
               )
-            : (await this.sendMediaGroupMessage(
+            : (await sendTelegramMediaGroupMessage(
+                callApi,
                 message.surface.id,
                 delivery,
                 deliveryBytes,
@@ -752,236 +749,6 @@ export class TelegramAccount extends DurableObject<Env> {
       text,
       replyToMessageId,
     );
-  }
-
-  private async sendMediaMessage(
-    chatId: string,
-    media: AdapterMedia,
-    bytes: Uint8Array | undefined,
-    text: string,
-    replyToMessageId?: number,
-  ): Promise<TelegramMessage> {
-    const { method, mediaField } = this.getTelegramSendMethod(media.type);
-    const caption = text.trim() || undefined;
-    const replyParameters = buildTelegramReplyParameters(replyToMessageId);
-
-    if (media.url) {
-      return callTelegramApiWithMarkdownCaption(
-        (apiMethod, payload) =>
-          this.callTelegramApi<TelegramMessage>(apiMethod, payload),
-        method,
-        caption,
-        (formattedCaption, parseMode) => ({
-          chat_id: chatId,
-          [mediaField]: media.url,
-          ...(formattedCaption ? { caption: formattedCaption } : {}),
-          ...(parseMode ? { parse_mode: parseMode } : {}),
-          ...(replyParameters ? { reply_parameters: replyParameters } : {}),
-        }),
-      );
-    }
-
-    if (bytes) {
-      const filename = this.buildMediaFilename(media);
-      const blob = new Blob([bytes], { type: media.mimeType });
-
-      return callTelegramApiWithMarkdownCaption(
-        (apiMethod, payload) =>
-          this.callTelegramApi<TelegramMessage>(apiMethod, payload),
-        method,
-        caption,
-        (formattedCaption, parseMode) => {
-          const form = new FormData();
-          form.set("chat_id", chatId);
-          if (formattedCaption) {
-            form.set("caption", formattedCaption);
-          }
-          if (parseMode) {
-            form.set("parse_mode", parseMode);
-          }
-          if (replyParameters) {
-            form.set("reply_parameters", JSON.stringify(replyParameters));
-          }
-          form.set(mediaField, blob, filename);
-          return form;
-        },
-      );
-    }
-
-    throw new Error(
-      "Telegram media attachment must include either a binary body or a URL",
-    );
-  }
-
-  private async sendMediaGroupMessage(
-    chatId: string,
-    mediaItems: AdapterMedia[],
-    mediaBytes: Array<Uint8Array | undefined>,
-    text: string,
-    replyToMessageId?: number,
-  ): Promise<TelegramMessage[]> {
-    if (mediaItems.length < 2 || mediaItems.length > 10) {
-      throw new Error(
-        "Telegram media groups require 2-10 attachments",
-      );
-    }
-
-    this.validateMediaGroupTypes(mediaItems);
-
-    const caption = text.trim() || undefined;
-    const replyParameters = buildTelegramReplyParameters(replyToMessageId);
-    const preparedMedia: Array<Pick<TelegramInputMedia, "type" | "media">> = [];
-    const uploadEntries: Array<{ field: string; blob: Blob; filename: string }> = [];
-
-    for (const [index, media] of mediaItems.entries()) {
-      const inputType = this.toTelegramInputMediaType(media.type);
-      const item: Pick<TelegramInputMedia, "type" | "media"> = {
-        type: inputType,
-        media: "",
-      };
-
-      if (media.url) {
-        item.media = media.url;
-      } else if (mediaBytes[index]) {
-        const field = `file${index + 1}`;
-        item.media = `attach://${field}`;
-        uploadEntries.push({
-          field,
-          blob: new Blob([mediaBytes[index]], { type: media.mimeType }),
-          filename: this.buildMediaFilename(media),
-        });
-      } else {
-        throw new Error(
-          "Telegram media attachment must include either a binary body or a URL",
-        );
-      }
-
-      preparedMedia.push(item);
-    }
-
-    return callTelegramApiWithMarkdownCaption(
-      (method, payload) =>
-        this.callTelegramApi<TelegramMessage[]>(method, payload),
-      "sendMediaGroup",
-      caption,
-      (formattedCaption, parseMode) => {
-        const inputMedia = preparedMedia.map<TelegramInputMedia>((media, index) => ({
-          ...media,
-          ...(index === 0 && formattedCaption
-            ? { caption: formattedCaption }
-            : {}),
-          ...(index === 0 && parseMode ? { parse_mode: parseMode } : {}),
-        }));
-
-        if (uploadEntries.length === 0) {
-          return {
-            chat_id: chatId,
-            media: inputMedia,
-            ...(replyParameters ? { reply_parameters: replyParameters } : {}),
-          };
-        }
-
-        const form = new FormData();
-        form.set("chat_id", chatId);
-        form.set("media", JSON.stringify(inputMedia));
-        if (replyParameters) {
-          form.set("reply_parameters", JSON.stringify(replyParameters));
-        }
-        for (const upload of uploadEntries) {
-          form.set(upload.field, upload.blob, upload.filename);
-        }
-
-        return form;
-      },
-    );
-  }
-
-  private validateMediaGroupTypes(mediaItems: AdapterMedia[]): void {
-    const types = mediaItems.map((item) =>
-      this.toTelegramInputMediaType(item.type),
-    );
-
-    const hasAudio = types.includes("audio");
-    const hasDocument = types.includes("document");
-
-    if (hasAudio && !types.every((type) => type === "audio")) {
-      throw new Error(
-        "Telegram media groups that include audio must contain only audio attachments",
-      );
-    }
-
-    if (hasDocument && !types.every((type) => type === "document")) {
-      throw new Error(
-        "Telegram media groups that include documents must contain only document attachments",
-      );
-    }
-  }
-
-  private getTelegramSendMethod(
-    mediaType: AdapterMedia["type"],
-  ): { method: string; mediaField: string } {
-    switch (this.toTelegramInputMediaType(mediaType)) {
-      case "photo":
-        return { method: "sendPhoto", mediaField: "photo" };
-      case "video":
-        return { method: "sendVideo", mediaField: "video" };
-      case "audio":
-        return { method: "sendAudio", mediaField: "audio" };
-      case "document":
-      default:
-        return { method: "sendDocument", mediaField: "document" };
-    }
-  }
-
-  private toTelegramInputMediaType(
-    mediaType: AdapterMedia["type"],
-  ): TelegramInputMediaType {
-    switch (mediaType) {
-      case "image":
-        return "photo";
-      case "video":
-        return "video";
-      case "audio":
-        return "audio";
-      case "document":
-      default:
-        return "document";
-    }
-  }
-
-  private buildMediaFilename(media: AdapterMedia): string {
-    const provided = media.filename?.trim();
-    if (provided) {
-      return provided;
-    }
-
-    const ext = this.getExtensionFromMime(media.mimeType, media.type);
-    return `attachment.${ext}`;
-  }
-
-  private getExtensionFromMime(
-    mimeType: string,
-    mediaType: AdapterMedia["type"],
-  ): string {
-    const normalized = mimeType.split(";")[0].trim().toLowerCase();
-    const mapping: Record<string, string> = {
-      "image/jpeg": "jpg",
-      "image/png": "png",
-      "image/webp": "webp",
-      "image/gif": "gif",
-      "video/mp4": "mp4",
-      "video/webm": "webm",
-      "audio/mpeg": "mp3",
-      "audio/mp3": "mp3",
-      "audio/ogg": "ogg",
-      "audio/wav": "wav",
-      "application/pdf": "pdf",
-      "application/zip": "zip",
-      "text/plain": "txt",
-      "application/json": "json",
-    };
-
-    return mapping[normalized] || (mediaType === "document" ? "bin" : mediaType);
   }
 
   async setTyping(surface: AdapterSurface, typing: boolean): Promise<void> {

@@ -27,6 +27,8 @@ export class ManagedTelegramDeliveryError extends Error {
   constructor(
     message: string,
     readonly kind: DeliveryFailureKind,
+    readonly telegramStatus?: number,
+    readonly telegramDescription?: string,
   ) {
     super(message);
     this.name = "ManagedTelegramDeliveryError";
@@ -104,7 +106,7 @@ export async function downloadManagedTelegramFile(
   });
 }
 
-async function callManagedTelegramApi<T>(
+export async function callManagedTelegramApi<T>(
   botToken: string,
   method: string,
   payload: Record<string, unknown> | FormData,
@@ -150,11 +152,14 @@ async function callManagedTelegramApi<T>(
     const providerStatus = parsed && !parsed.ok && Number.isFinite(parsed.error_code)
       ? parsed.error_code as number
       : response.status;
+    const description = parsed && !parsed.ok ? parsed.description : undefined;
     throw new ManagedTelegramDeliveryError(
       `Telegram API ${method} rejected the request`,
       response.ok && !parsed
         ? "ambiguous"
         : classifyNonIdempotentProviderStatus(providerStatus),
+      providerStatus,
+      description,
     );
   }
   return parsed.result;

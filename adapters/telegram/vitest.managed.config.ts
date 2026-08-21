@@ -62,7 +62,24 @@ export default defineConfig({
                     });
                   }
                   const method = url.pathname.split("/").at(-1);
-                  const body = await request.json();
+                  let body;
+                  if (request.headers.get("content-type")?.startsWith("multipart/form-data")) {
+                    body = {};
+                    for (const [key, value] of await request.formData()) {
+                      body[key] = typeof value === "string"
+                        ? ["photo", "video", "audio", "document"].includes(key)
+                          ? { bytes: Array.from(value, (character) => character.charCodeAt(0)) }
+                          : value
+                        : {
+                            name: value.name,
+                            type: value.type,
+                            size: value.size,
+                            bytes: Array.from(new Uint8Array(await value.arrayBuffer())),
+                          };
+                    }
+                  } else {
+                    body = await request.json();
+                  }
                   if (method === "getFile") {
                     return Response.json({
                       ok: true,
@@ -83,6 +100,16 @@ export default defineConfig({
                       },
                       result,
                     });
+                    return Response.json({ ok: true, result });
+                  }
+                  if (["sendPhoto", "sendVideo", "sendAudio", "sendDocument"].includes(method)) {
+                    const result = { message_id: nextMessageId++ };
+                    messages.push({ method, body, result });
+                    return Response.json({ ok: true, result });
+                  }
+                  if (method === "sendMediaGroup") {
+                    const result = [{ message_id: nextMessageId++ }];
+                    messages.push({ method, body, result });
                     return Response.json({ ok: true, result });
                   }
                   if (method === "sendChatAction") {
