@@ -28,7 +28,10 @@ use super::presence::{
 };
 use super::rich::{media_descriptors, render_document, RichRenderContext};
 use super::selection::{SelectableText, SelectionSurface, SelectionTopology, TextSelection};
-use super::{type_content_hash, AddAttachment, CachedTypeLayout, GsvApp, RichPresentationPhase};
+use super::{
+    type_content_hash, AddAttachment, CachedTypeLayout, GsvApp, RichPresentationPhase,
+    ToggleDictation,
+};
 
 fn format_compact_bytes(bytes: u64) -> String {
     if bytes >= 1024 * 1024 {
@@ -552,6 +555,36 @@ fn markdown_media_is_authoritative(
 }
 
 impl GsvApp {
+    fn render_voice_toggle(&self, cx: &mut Context<Self>) -> AnyElement {
+        let label = if self.voice_draft.is_some() {
+            "FINISH VOICE · ⌘⇧SPACE"
+        } else {
+            "VOICE · ⌘⇧SPACE"
+        };
+        div()
+            .id("voice-toggle")
+            .absolute()
+            .right(px(252.0))
+            .bottom(px(27.0))
+            .px(px(4.0))
+            .py(px(3.0))
+            .cursor_pointer()
+            .font_family(theme::MONO_FONT)
+            .text_size(px(9.0))
+            .text_color(theme::color(theme::TEXT_FAINT))
+            .hover(|this| this.text_color(theme::color(theme::ACCENT)))
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|_, _, _, cx| cx.stop_propagation()),
+            )
+            .on_click(cx.listener(|this, _, window, cx| {
+                cx.stop_propagation();
+                this.toggle_dictation_action(&ToggleDictation, window, cx);
+            }))
+            .child(label)
+            .into_any_element()
+    }
+
     fn capture_message_scroll_anchor(&self) -> super::MessageScrollAnchor {
         let maximum = f32::from(self.message_scroll.max_offset().height).max(0.0);
         let offset = f32::from(self.message_scroll.offset().y).clamp(-maximum, 0.0);
@@ -2305,6 +2338,13 @@ impl Render for GsvApp {
                     && !microphone_visible
                     && self.gesture_guide_available(),
                 |this| this.child(self.render_gesture_guide_toggle(cx)),
+            )
+            .when(
+                !login_visible
+                    && !machine_visible
+                    && !microphone_visible
+                    && self.conversation.mode == SurfaceMode::Conversation,
+                |this| this.child(self.render_voice_toggle(cx)),
             )
             .when(self.gesture_guide_open, |this| {
                 this.child(self.render_gesture_guide(cx))

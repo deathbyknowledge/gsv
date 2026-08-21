@@ -47,7 +47,7 @@ fn main() {
             return;
         }
     };
-    let vision_startup = match vision_debug::start_from_env() {
+    let vision_startup = match vision_debug::start_for_desktop() {
         Ok(Some(helper)) => VisionStartup::Started(helper),
         Ok(None) => VisionStartup::Disabled,
         Err(error) => {

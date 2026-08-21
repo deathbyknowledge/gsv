@@ -398,10 +398,12 @@ enum LaunchMode {
     Debug,
 }
 
-pub(crate) fn start_from_env() -> Result<Option<VisionHandle>, VisionDebugError> {
+pub(crate) fn start_for_desktop() -> Result<Option<VisionHandle>, VisionDebugError> {
+    let current_executable = env::current_exe().ok();
     let Some(mode) = launch_mode(
         env::var_os("GSV_GESTURES").as_deref(),
         env::var_os("GSV_GESTURE_DEBUG").as_deref(),
+        is_macos_application_executable(current_executable.as_deref()),
     ) else {
         return Ok(None);
     };
@@ -413,15 +415,18 @@ pub(crate) fn start_from_env() -> Result<Option<VisionHandle>, VisionDebugError>
 
     #[cfg(unix)]
     {
-        start_supported(mode).map(Some)
+        start_supported(mode, current_executable).map(Some)
     }
 }
 
 #[cfg(unix)]
-fn start_supported(mode: LaunchMode) -> Result<VisionHandle, VisionDebugError> {
+fn start_supported(
+    mode: LaunchMode,
+    current_executable: Option<PathBuf>,
+) -> Result<VisionHandle, VisionDebugError> {
     let executable = resolve_helper(
         env::var_os("GSV_VISION_HELPER").map(PathBuf::from),
-        env::current_exe().ok(),
+        current_executable,
         Path::new(env!("CARGO_MANIFEST_DIR")),
         env::var_os("CARGO_TARGET_DIR").map(PathBuf::from),
         cfg!(debug_assertions),
@@ -963,14 +968,33 @@ fn debug_enabled(value: Option<&OsStr>) -> bool {
     value == Some(OsStr::new("1"))
 }
 
-fn launch_mode(gestures: Option<&OsStr>, debug: Option<&OsStr>) -> Option<LaunchMode> {
+fn launch_mode(
+    gestures: Option<&OsStr>,
+    debug: Option<&OsStr>,
+    packaged_application: bool,
+) -> Option<LaunchMode> {
     if debug_enabled(debug) {
         Some(LaunchMode::Debug)
-    } else if debug_enabled(gestures) {
-        Some(LaunchMode::Headless)
     } else {
-        None
+        match gestures {
+            Some(value) if debug_enabled(Some(value)) => Some(LaunchMode::Headless),
+            Some(_) => None,
+            None if packaged_application => Some(LaunchMode::Headless),
+            None => None,
+        }
     }
+}
+
+fn is_macos_application_executable(executable: Option<&Path>) -> bool {
+    executable
+        .and_then(Path::parent)
+        .filter(|path| path.file_name().and_then(|name| name.to_str()) == Some("MacOS"))
+        .and_then(Path::parent)
+        .filter(|path| path.file_name().and_then(|name| name.to_str()) == Some("Contents"))
+        .and_then(Path::parent)
+        .is_some_and(|path| {
+            path.extension().and_then(|extension| extension.to_str()) == Some("app")
+        })
 }
 
 fn resolve_helper(
@@ -1081,21 +1105,44 @@ mod tests {
     #[test]
     fn launch_mode_accepts_production_or_debug_opt_in_exactly() {
         assert_eq!(
-            launch_mode(Some(OsStr::new("1")), None),
+            launch_mode(Some(OsStr::new("1")), None, false),
             Some(LaunchMode::Headless)
         );
         assert_eq!(
-            launch_mode(None, Some(OsStr::new("1"))),
+            launch_mode(None, Some(OsStr::new("1")), false),
             Some(LaunchMode::Debug)
         );
         assert_eq!(
-            launch_mode(Some(OsStr::new("1")), Some(OsStr::new("1"))),
+            launch_mode(Some(OsStr::new("1")), Some(OsStr::new("1")), false),
             Some(LaunchMode::Debug)
         );
-        assert_eq!(launch_mode(Some(OsStr::new("true")), None), None);
-        assert_eq!(launch_mode(None, Some(OsStr::new("0"))), None);
+        assert_eq!(launch_mode(Some(OsStr::new("true")), None, false), None);
+        assert_eq!(launch_mode(None, Some(OsStr::new("0")), false), None);
         assert_eq!(ENABLED_MARKER, "1");
         assert_ne!(EVENT_CHANNEL_CONTRACT_MARKER, ENABLED_MARKER);
+    }
+
+    #[test]
+    fn packaged_application_enables_gestures_unless_explicitly_disabled() {
+        assert_eq!(launch_mode(None, None, true), Some(LaunchMode::Headless));
+        assert_eq!(launch_mode(Some(OsStr::new("0")), None, true), None);
+        assert_eq!(
+            launch_mode(Some(OsStr::new("0")), Some(OsStr::new("1")), true),
+            Some(LaunchMode::Debug)
+        );
+    }
+
+    #[test]
+    fn macos_application_detection_requires_the_canonical_bundle_layout() {
+        assert!(is_macos_application_executable(Some(Path::new(
+            "/Applications/GSV.app/Contents/MacOS/gsv-desktop"
+        ))));
+        assert!(!is_macos_application_executable(Some(Path::new(
+            "/repo/host/target/debug/gsv-desktop"
+        ))));
+        assert!(!is_macos_application_executable(Some(Path::new(
+            "/Applications/GSV/Contents/MacOS/gsv-desktop"
+        ))));
     }
 
     #[test]

@@ -65,7 +65,7 @@ output_dir="${output_override:-$target_root/package/macos/$architecture/$profile
 binary_dir="$target_root/$profile"
 model_root="$target_root/vision-native/artifact/gesture-recognizer-float16-1"
 plist_template="$host_root/packaging/macos/Info.plist"
-icon_source="$repository_root/web/public/icons/gsv-512.png"
+icon_source="$repository_root/extension/assets/gsv-mark-white@4x.png"
 version="$(awk -F '"' '/^version = "/ { print $2; exit }' "$host_root/Cargo.toml")"
 [[ -n "$version" ]] || die "could not read the workspace version"
 
@@ -118,12 +118,20 @@ ditto "$model_root" "$resources_dir/vision-models"
 
 iconset="$stage/GSV.iconset"
 mkdir -p "$iconset"
+render_icon() {
+  local canvas_size="$1"
+  local output="$2"
+  local artwork_size=$(((canvas_size * 103 + 64) / 128))
+  local artwork="$stage/GSV-artwork-$canvas_size.png"
+  sips -z "$artwork_size" "$artwork_size" "$icon_source" \
+    --out "$artwork" >/dev/null
+  sips -p "$canvas_size" "$canvas_size" "$artwork" \
+    --out "$output" >/dev/null
+}
 for size in 16 32 128 256 512; do
-  sips -z "$size" "$size" "$icon_source" \
-    --out "$iconset/icon_${size}x${size}.png" >/dev/null
+  render_icon "$size" "$iconset/icon_${size}x${size}.png"
   double_size=$((size * 2))
-  sips -z "$double_size" "$double_size" "$icon_source" \
-    --out "$iconset/icon_${size}x${size}@2x.png" >/dev/null
+  render_icon "$double_size" "$iconset/icon_${size}x${size}@2x.png"
 done
 iconutil -c icns "$iconset" -o "$resources_dir/GSV.icns"
 

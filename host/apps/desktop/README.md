@@ -76,10 +76,10 @@ selected automatically when `WAYLAND_DISPLAY` is present; no Cargo feature is ne
 
 ### Run experimental local gesture controls
 
-The optional gesture helper is a separate Rust process. It owns the camera,
-native Rust/tract inference, and temporal gesture recognition; it never sends frames or
-landmarks to Desktop or the gateway. Build the pinned runtime for the native
-host and the helper, then opt in explicitly. Headless controls use:
+The gesture helper is a separate Rust process. It owns the camera, native
+Rust/tract inference, and temporal gesture recognition; it never sends frames
+or landmarks to Desktop or the gateway. The packaged macOS application starts
+it automatically. Source-tree development remains an explicit opt-in:
 
 ```bash
 ./scripts/vision-native/prepare.sh

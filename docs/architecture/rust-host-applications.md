@@ -131,9 +131,11 @@ plus two checksum-pinned palm and hand-landmark TFLite models executed by tract;
 the command vocabulary is owned by Rust rather than the upstream canned gesture
 classifier. It has no Python, Java, Bazel, or native MediaPipe build/runtime
 dependency. The unsigned macOS development application includes `gsv-vision`
-and the pinned models for technical dogfooding. Public distribution waits for
-Developer ID signing, notarization, and deliberate acceptance of the model
-redistribution policy.
+and the pinned models for technical dogfooding. It starts the helper in a
+disarmed state and provides visible Voice and Gestures affordances rather than
+depending on shell environment variables that Finder does not provide. Public
+distribution waits for Developer ID signing, notarization, and deliberate
+acceptance of the model redistribution policy.
 
 The local protocol exposes `activate`, redacted `status`, `new`, `use`, and the
 narrow `microphone list/use/default` operations. Its endpoint must be accessible
