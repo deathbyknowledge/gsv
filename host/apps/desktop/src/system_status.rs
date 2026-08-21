@@ -161,7 +161,7 @@ pub(crate) fn write_macos_app_icon(path: &Path) -> Result<(), String> {
         Transform::identity(),
         None,
     );
-    render_white_ship(&mut pixmap, 532.0)?;
+    render_ship(&mut pixmap, 532.0, false)?;
     pixmap
         .save_png(path)
         .map_err(|error| format!("could not write the macOS icon: {error}"))
@@ -221,18 +221,23 @@ fn rounded_rectangle(
         .ok_or_else(|| "could not construct the macOS icon mask".to_string())
 }
 
-fn white_ship_tree() -> Result<usvg::Tree, String> {
-    let white = SHIP_SVG
-        .replace("#cfd3f2", "#ffffff")
-        .replace("#eef1f8", "#ffffff")
-        .replace("#a9a4ff", "#ffffff")
-        .replace("#d6d3ff", "#ffffff");
-    usvg::Tree::from_data(white.as_bytes(), &usvg::Options::default())
-        .map_err(|error| format!("could not parse the white ship mark: {error}"))
+fn ship_tree(monochrome: bool) -> Result<usvg::Tree, String> {
+    let source = monochrome.then(|| {
+        SHIP_SVG
+            .replace("#cfd3f2", "#ffffff")
+            .replace("#eef1f8", "#ffffff")
+            .replace("#a9a4ff", "#ffffff")
+            .replace("#d6d3ff", "#ffffff")
+    });
+    usvg::Tree::from_data(
+        source.as_deref().unwrap_or(SHIP_SVG).as_bytes(),
+        &usvg::Options::default(),
+    )
+    .map_err(|error| format!("could not parse the ship mark: {error}"))
 }
 
-fn render_white_ship(pixmap: &mut Pixmap, target_height: f32) -> Result<(), String> {
-    let tree = white_ship_tree()?;
+fn render_ship(pixmap: &mut Pixmap, target_height: f32, monochrome: bool) -> Result<(), String> {
+    let tree = ship_tree(monochrome)?;
     let source = tree.size();
     let scale = target_height / source.height();
     let width = source.width() * scale;
@@ -252,7 +257,7 @@ fn tray_icon() -> Result<Icon, String> {
 fn tray_icon_rgba() -> Result<Vec<u8>, String> {
     let mut pixmap = Pixmap::new(32, 32)
         .ok_or_else(|| "could not allocate the status icon canvas".to_string())?;
-    render_white_ship(&mut pixmap, 26.0)?;
+    render_ship(&mut pixmap, 26.0, true)?;
     let mut rgba = pixmap.data().to_vec();
     for pixel in rgba.chunks_exact_mut(4) {
         if pixel[3] != 0 {
@@ -546,7 +551,7 @@ mod tests {
     }
 
     #[test]
-    fn macos_icon_uses_a_transparent_margin_and_dark_rounded_square() {
+    fn macos_icon_uses_the_canonical_ship_palette_on_a_rounded_square() {
         let directory = tempdir().expect("temporary icon directory");
         let path = directory.path().join("GSV.png");
         write_macos_app_icon(&path).expect("the embedded app icon should render");
@@ -559,6 +564,12 @@ mod tests {
         assert!(image
             .pixels()
             .any(|pixel| pixel.0 == [0xff, 0xff, 0xff, 0xff]));
+        assert!(image
+            .pixels()
+            .any(|pixel| pixel.0 == [0xa9, 0xa4, 0xff, 0xff]));
+        assert!(image
+            .pixels()
+            .any(|pixel| pixel.0 == [0xd6, 0xd3, 0xff, 0xff]));
     }
 
     #[test]

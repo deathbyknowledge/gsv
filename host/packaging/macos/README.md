@@ -3,8 +3,8 @@
 `package-macos.sh` assembles one self-contained `GSV.app` for technical
 dogfooding. The bundle contains Desktop, the CLI, `gsvd`, both local helpers,
 the pinned gesture models, a dark rounded-square application icon built from
-the canonical white-ship SVG, and the required camera and microphone
-permission descriptions.
+the canonical white-and-lavender ship SVG, and the required camera and
+microphone permission descriptions.
 
 The packaged application starts gesture recognition automatically; the camera
 remains local and gesture control starts disarmed. Voice input is available
