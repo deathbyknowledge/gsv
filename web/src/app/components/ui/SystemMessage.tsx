@@ -6,6 +6,7 @@ export interface SystemMessageProps {
   children?: ComponentChildren;
   text?: string;
   time?: string;
+  timeTitle?: string;
   copyAriaLabel?: string;
   copyDisabled?: boolean;
   copyLabel?: string;
@@ -27,6 +28,7 @@ export function SystemMessage({
   meta,
   text = "",
   time = "",
+  timeTitle,
   onCopy,
 }: SystemMessageProps) {
   return (
@@ -36,6 +38,7 @@ export function SystemMessage({
         <MessageMeta
           mirror
           time={time}
+          timeTitle={timeTitle}
           actions={meta}
           copyLabel={copyLabel}
           copyAriaLabel={copyAriaLabel ?? copyTitle}

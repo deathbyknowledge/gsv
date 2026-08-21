@@ -299,6 +299,9 @@ describe("Process DO — mechanical", () => {
     });
   });
 
+  // Proving the bound needs one notice past the limit, and every one of them
+  // awaits a real proc.changed signal — a couple of seconds of honest work here,
+  // which overruns the 5s default on a loaded CI runner.
   it("bounds terminal adapter delivery notice tombstones", async () => {
     const stub = await initProcess("mech-delivery-notice-bounds", ROOT_IDENTITY);
 
@@ -319,7 +322,7 @@ describe("Process DO — mechanical", () => {
       expect(process.store.getValue("deliveryNotice:notice:bounded:256")).not.toBeNull();
       expect(JSON.parse(process.store.getValue("deliveryNoticeIds"))).toHaveLength(256);
     });
-  });
+  }, 30_000);
 
   it("projects proc.run signals into kernel process activity", async () => {
     const pid = "mech-kernel-process-activity";

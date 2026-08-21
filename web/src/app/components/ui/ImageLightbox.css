@@ -1,0 +1,197 @@
+/* ImageLightbox — full-screen image viewer portaled to <body>. Sits above the
+   chat dock (80) and below the dialog/confirm layer (95), so a confirm can
+   still open over it. */
+
+.gsv-lightbox {
+  position: fixed;
+  inset: 0;
+  z-index: 90;
+  display: flex;
+  flex-direction: column;
+  background: rgba(4, 3, 16, 0.92);
+  font-family: var(--gsv-font-mono);
+}
+
+/* ── Toolbar ──────────────────────────────────────────────────────────────── */
+.gsv-lightbox-bar {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--border);
+  background: var(--header-bar);
+}
+
+.gsv-lightbox-name {
+  min-width: 0;
+  flex: 0 1 auto;
+  overflow: hidden;
+  color: var(--text-title);
+  letter-spacing: 0.16em;
+  text-overflow: ellipsis;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+/* When the image was sent. Sits next to the name but reads as secondary: the
+   quiet meta colour, no uppercasing, and it gives up width to the name. The
+   auto margin keeps the controls in the right corner. */
+.gsv-lightbox-meta {
+  min-width: 0;
+  flex: 1 1 auto;
+  margin-right: auto;
+  overflow: hidden;
+  color: var(--meta);
+  letter-spacing: 0.06em;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.gsv-lightbox-controls {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* Odd 23px box: a 1px glyph stroke only lands on a whole pixel when the box
+   centring it is odd. Bigger than the dock's 19px meta buttons because these
+   are full-screen touch targets. */
+.gsv-lightbox-btn {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  width: 23px;
+  height: 23px;
+  padding: 0;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--link);
+  cursor: pointer;
+  transition: border-color 0.12s, color 0.12s;
+}
+
+.gsv-lightbox-btn:not(:disabled):hover,
+.gsv-lightbox-btn:not(:disabled):focus-visible {
+  border-color: var(--link-hover);
+  color: var(--link-hover);
+  outline: none;
+}
+
+.gsv-lightbox-btn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.gsv-lightbox-btn svg {
+  display: block;
+  shape-rendering: crispEdges;
+}
+
+.gsv-lightbox-zoom {
+  min-width: 46px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--meta);
+  cursor: pointer;
+  letter-spacing: 0.14em;
+  text-align: center;
+}
+
+.gsv-lightbox-zoom:hover,
+.gsv-lightbox-zoom:focus-visible {
+  color: var(--link-hover);
+  outline: none;
+}
+
+/* Shown only when a remote host refuses the download fetch. The link is the
+   fallback the reader clicks themselves: a popup opened from the failed fetch
+   has already lost the click's user activation, but this click carries its
+   own. */
+.gsv-lightbox-notice {
+  flex: none;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+  margin: 0;
+  padding: 8px 14px;
+  border-bottom: 1px solid var(--rule-inner);
+  color: var(--meta);
+  font-size: 0.75rem; /* 12px */
+}
+
+.gsv-lightbox-notice-link {
+  color: var(--link);
+  letter-spacing: 0.14em;
+}
+
+.gsv-lightbox-notice-link:hover,
+.gsv-lightbox-notice-link:focus-visible {
+  color: var(--link-hover);
+}
+
+/* ── Stage ────────────────────────────────────────────────────────────────── */
+.gsv-lightbox-stage {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  padding: 18px;
+  /* The viewer owns every gesture here: the browser's own pan/pinch would
+     fight the pointer handlers. */
+  touch-action: none;
+}
+
+.gsv-lightbox-stage.is-zoomed img {
+  cursor: grab;
+}
+
+.gsv-lightbox-stage.is-zoomed:active img {
+  cursor: grabbing;
+}
+
+/* The cursor tracks what a click does: zoom on the photo, dismiss on the
+   backdrop around it. */
+.gsv-lightbox-stage img {
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+  cursor: zoom-in;
+  /* Transform is set inline (translate + scale); the transition covers the
+     button and click zooms without lagging a drag, which sets it per frame. */
+  transition: transform 0.08s linear;
+  user-select: none;
+  -webkit-user-drag: none;
+}
+
+/* A model's image description can run long. It may shrink (min-height: 0
+   overrides the flex default of auto) and never takes more than a third of the
+   screen, so the photo it describes always stays visible; the rest scrolls
+   here, since the page behind is locked while the viewer is open. */
+.gsv-lightbox-caption {
+  flex: 0 1 auto;
+  min-height: 0;
+  max-height: 33vh;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  margin: 0;
+  padding: 10px 14px 16px;
+  border-top: 1px solid var(--rule-inner);
+  color: var(--meta);
+  font-size: 0.75rem; /* 12px */
+  line-height: 1.5;
+}
+
+@media (max-width: 640px) {
+  .gsv-lightbox-stage {
+    padding: 8px;
+  }
+}

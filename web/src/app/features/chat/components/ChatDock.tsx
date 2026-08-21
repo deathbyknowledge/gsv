@@ -590,7 +590,7 @@ export function ChatDock({
       : hilDecision.isError
         ? errorMessage(hilDecision.error, "Tool approval could not be applied.")
         : forkProcess.isError
-          ? errorMessage(forkProcess.error, "Task could not be branched.")
+          ? errorMessage(forkProcess.error, "Chat could not be branched.")
           : setProcessAiConfig.isError
             ? errorMessage(setProcessAiConfig.error, "Process model settings could not be updated.")
             : attachmentError;
@@ -647,7 +647,7 @@ export function ChatDock({
     setStoppingRun(requestedStop);
     const target = displayedTargetRef.current;
     const stillDisplayed = () => displayedTargetRef.current.pid === target.pid;
-    feedback.begin("abort", "Stopping task");
+    feedback.begin("abort", "Stopping chat");
     abortProcess.mutate({
       pid: activeProcessId,
       ...(runId ? { runId } : {}),
@@ -656,7 +656,7 @@ export function ChatDock({
         // A switch mid-flight already cleared the line; resolving would
         // upsert it into the newly displayed transcript.
         if (stillDisplayed()) {
-          feedback.resolve("abort", "attention", "Task interrupted");
+          feedback.resolve("abort", "attention", "Chat interrupted");
         }
       },
       onError: () => {
@@ -666,7 +666,7 @@ export function ChatDock({
             : current
         ));
         if (stillDisplayed()) {
-          feedback.resolve("abort", "error", "Error trying to stop task");
+          feedback.resolve("abort", "error", "Error trying to stop chat");
         }
       },
     });
@@ -996,7 +996,7 @@ export function ChatDock({
             >
               <Counter
                 label="KEEP MESSAGES"
-                description={`Choose how many recent messages stay live. Current task has ${compactMessageTotal}.`}
+                description={`Choose how many recent messages stay live. Current chat has ${compactMessageTotal}.`}
                 min={1}
                 max={compactKeepMax}
                 step={1}
@@ -1014,6 +1014,7 @@ export function ChatDock({
         agentPanelOpen={bodyState === "agent"}
         atMax={atMax}
         canAbortRun={canAbortRun}
+        canStartNewTask={canStartNewTask}
         contextTone={contextTone}
         contextPercent={contextPercent}
         contextTitle={contextTitle}
@@ -1028,6 +1029,7 @@ export function ChatDock({
         speechStatus={replySpeech.speechStatus}
         onAbortRun={abortActiveRun}
         onOpenAgentPanel={toggleAgentPanel}
+        onStartNewTask={prepareNewTask}
         onStartProcess={startProcess}
         onToggleSpeakReplies={() => replySpeech.setSpeakReplies(!replySpeech.speakReplies)}
         onToggleMax={onToggleMax}
@@ -1217,7 +1219,7 @@ export function ChatDock({
             {" "}to continue.
           </>
         ) : (
-          "Wait for context compression to continue this task."
+          "Wait for context compression to continue this chat."
         )}
       </div>
       </div>}

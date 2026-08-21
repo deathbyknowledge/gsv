@@ -4,7 +4,7 @@ import type { Story } from "../story";
 const story: Story = {
   title: "AgentCard",
   group: "Composite",
-  blurb: "crew card · Avatar + Select + Segmented · inline tasks dropdown",
+  blurb: "crew card · Avatar + Select + Segmented · inline chats dropdown",
   render: () => (
     <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: "24px", alignItems: "start" }}>
       <div class="ds-cell">

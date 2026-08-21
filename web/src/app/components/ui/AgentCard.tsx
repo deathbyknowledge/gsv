@@ -41,7 +41,7 @@ const PERMS = ["auto", "ask", "deny"];
 
 const DEFAULT_MODELS = ["Gateway Default", "Fast Model", "Deep Model"];
 const DEFAULT_TASKS: AgentTask[] = [
-  { name: "No active tasks", status: "idle" },
+  { name: "No active chats", status: "idle" },
 ];
 
 const MONO = "var(--gsv-font-mono)";
@@ -335,7 +335,7 @@ export function AgentCard(props: AgentCardProps) {
         {/* tasks */}
         <div>
           <div class="gsv-sublabel" style={{ marginBottom: "9px", letterSpacing: ".18em", color: "var(--label)" }}>
-            TASKS ({resolvedTasksTotal})
+            CHATS ({resolvedTasksTotal})
           </div>
           <div style={{ position: "relative" }}>
             <div

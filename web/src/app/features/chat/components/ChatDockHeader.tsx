@@ -4,7 +4,7 @@ import { Icon } from "../../../components/ui/Icon";
 import { IconButton } from "../../../components/ui/IconButton";
 import { Progress } from "../../../components/ui/Progress";
 import { StatusDot } from "../../../components/ui/StatusDot";
-import { ArrowLeftGlyph, MoreVerticalGlyph, SpeakerOnGlyph, SpeakerOffGlyph } from "../../../components/ui/lineGlyphs";
+import { ArrowLeftGlyph, MoreVerticalGlyph, PlusGlyph, SpeakerOnGlyph, SpeakerOffGlyph, TaskListGlyph } from "../../../components/ui/lineGlyphs";
 import { Hint } from "../../../components/ui/Tooltip";
 import type { StatusTone } from "../../../components/ui/StatusDot";
 import type { ChatAgentViewModel } from "../domain/agent";
@@ -15,6 +15,7 @@ type ChatDockHeaderProps = {
   agentPanelOpen: boolean;
   atMax: boolean;
   canAbortRun: boolean;
+  canStartNewTask: boolean;
   contextTone: "default" | "attention" | "error";
   contextPercent: number | null;
   contextTitle: string;
@@ -32,6 +33,7 @@ type ChatDockHeaderProps = {
   speechStatus: string;
   onAbortRun: () => void;
   onOpenAgentPanel: () => void;
+  onStartNewTask: () => void;
   onStartProcess: () => void;
   onToggleSpeakReplies: () => void;
   onToggleMax: () => void;
@@ -55,6 +57,7 @@ export function ChatDockHeader({
   agentPanelOpen,
   atMax,
   canAbortRun,
+  canStartNewTask,
   contextTone,
   contextPercent,
   contextTitle,
@@ -70,6 +73,7 @@ export function ChatDockHeader({
   speechStatus,
   onAbortRun,
   onOpenAgentPanel,
+  onStartNewTask,
   onStartProcess,
   onToggleSpeakReplies,
   onToggleMax,
@@ -94,8 +98,12 @@ export function ChatDockHeader({
   // Shared bare elements — the single source of truth for every class,
   // data-chat-popover-trigger and aria attribute. The desktop branch wraps
   // them in its Hints; the mobile branch places them in the two-view grid.
-  // Either/or rendering keeps each trigger attribute unique in the DOM (the
-  // dock positioner locates triggers by querySelector).
+  // Either/or rendering keeps each trigger attribute to one element per view.
+  // The one exception is `tasks`: desktop gives it both the activity label and
+  // the list button. They sit side by side on the meta row, so the dock
+  // positioner's querySelector picking the first (the label) anchors the
+  // popover where it has always dropped; the attribute on the second keeps the
+  // outside-click guard from swallowing its toggle-closed click.
   const agentMain = (nameVisible: boolean) => (
     <button
       type="button"
@@ -130,6 +138,32 @@ export function ChatDockHeader({
       <span>{activeAgent.activity}</span>
       <i aria-hidden="true" />
       {triggerChevron}
+    </button>
+  );
+
+  const openTasksButton = () => (
+    <button
+      type="button"
+      class="gsv-chat-agent-metabtn"
+      data-chat-popover-trigger="tasks"
+      onClick={() => onTogglePopover("tasks")}
+      aria-haspopup="menu"
+      aria-expanded={openPopover === "tasks"}
+      aria-label="Open chats"
+    >
+      <TaskListGlyph size={12} />
+    </button>
+  );
+
+  const newTaskButton = () => (
+    <button
+      type="button"
+      class="gsv-chat-agent-metabtn"
+      disabled={!canStartNewTask}
+      onClick={onStartNewTask}
+      aria-label="Start a new chat"
+    >
+      <PlusGlyph size={12} />
     </button>
   );
 
@@ -239,7 +273,7 @@ export function ChatDockHeader({
             <button
               type="button"
               class="gsv-chat-m-toggle"
-              aria-label={mobileView === "primary" ? "Show more controls" : "Back to task and model"}
+              aria-label={mobileView === "primary" ? "Show more controls" : "Back to chat and model"}
               onClick={onToggleMobileView}
             >
               {mobileView === "primary" ? <MoreVerticalGlyph size={18} /> : <ArrowLeftGlyph size={18} />}
@@ -258,8 +292,14 @@ export function ChatDockHeader({
           {agentMain(true)}
         </Hint>
         <div class="gsv-chat-agent-meta-row">
-          <Hint text="View activity & tasks" position="bottom-start">
+          <Hint text="View activity & chats" position="bottom-start">
             {tasksTrigger()}
+          </Hint>
+          <Hint text="Open chats" position="bottom-start">
+            {openTasksButton()}
+          </Hint>
+          <Hint text="Start a new chat" position="bottom-start">
+            {newTaskButton()}
           </Hint>
         </div>
         <Hint text="Change model & reasoning effort" position="bottom-start">
@@ -282,10 +322,10 @@ export function ChatDockHeader({
             </Hint>
           ) : null}
           <Hint text={atMax ? "Sidepanel view" : "Full width"} position="bottom-end">
-            <IconButton glyph={atMax ? "sidepanel" : "max"} size="medium" ariaLabel={atMax ? "Sidepanel view" : "Expand chat"} onClick={onToggleMax} />
+            <IconButton glyph={atMax ? "sidepanel" : "max"} size={27} ariaLabel={atMax ? "Sidepanel view" : "Expand chat"} onClick={onToggleMax} />
           </Hint>
           <Hint text="Minimize" position="bottom-end">
-            <IconButton glyph="min" size="medium" ariaLabel="Minimize chat" onClick={onToggleOpen} />
+            <IconButton glyph="min" size={27} ariaLabel="Minimize chat" onClick={onToggleOpen} />
           </Hint>
         </div>
         <Hint text={contextTitle} position="left">

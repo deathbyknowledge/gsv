@@ -162,13 +162,21 @@ function accountStatus(account: ConsoleAccount, processes: readonly ConsoleProce
   const running = ownedProcesses.some(isRunningProcess);
   const queuedCount = ownedProcesses.filter(isQueuedProcess).length;
   const unknown = ownedProcesses.some((process) => process.state === "unknown");
-  const openCount = ownedProcesses.length;
+  // proc.list carries every process the account owns, not just the ones someone
+  // is talking to. Counting a scheduled spawn as an open chat would claim a
+  // conversation that never happened, so the two are counted apart and the
+  // label follows whichever the account actually has running. Same rule as
+  // processNoun on the runtime pages.
+  const openCount = ownedProcesses.filter((process) => process.interactive).length;
+  const backgroundCount = ownedProcesses.length - openCount;
 
   if (queuedCount > 0) {
     return { meta: `${queuedCount} queued`, statusLabel: "QUEUED", tone: "update" };
   }
   if (running) {
-    const openLabel = openCount === 1 ? "1 open task" : `${openCount} open tasks`;
+    const openLabel = openCount > 0
+      ? (openCount === 1 ? "1 open chat" : `${openCount} open chats`)
+      : (backgroundCount === 1 ? "1 background process" : `${backgroundCount} background processes`);
     return { meta: openLabel, statusLabel: "RUNNING", tone: "live" };
   }
   if (unknown) {
@@ -378,7 +386,7 @@ function ShipStage({ onOpenTerminal }: { onOpenTerminal?: () => void }) {
 }
 
 // ---------------------------------------------------------------------------
-// CREW + TASKS list cards
+// CREW + CHATS list cards
 // ---------------------------------------------------------------------------
 
 function CrewListCard({
@@ -446,7 +454,7 @@ function TasksListCard({
     ),
   );
   const taskMeta = processes.length === 0
-    ? "NO TASKS"
+    ? "NO CHATS"
     : joinMeta([
         running > 0 ? `${running} RUNNING` : undefined,
         queued > 0 ? `${queued} QUEUED` : undefined,
@@ -458,11 +466,11 @@ function TasksListCard({
     <ListCard
       className="gsv-settings-listcard"
       collapse={{ id: "tasks", at: "mobile" }}
-      title="TASKS"
+      title="CHATS"
       meta={taskMeta}
       onOpen={openTasks}
       rows={rows}
-      emptyLabel="NO TASKS"
+      emptyLabel="NO CHATS"
       onViewAll={openTasks}
     />
   );

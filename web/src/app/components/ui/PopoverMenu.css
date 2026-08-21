@@ -69,6 +69,55 @@
   text-transform: uppercase;
 }
 
+/* With a corner action the bar becomes three parts, so the count stops being
+   the right-hand item: it hugs the title as one left-hand group and the
+   auto margin pushes the button to the corner. */
+.gsv-popover-head--action .gsv-popover-head-count {
+  margin-right: auto;
+}
+.gsv-popover-head--action .gsv-popover-head-title:last-of-type {
+  margin-right: auto;
+}
+
+/* Icon-only corner button. Odd 19px box for the same reason as the chat
+   dock's meta buttons: a 1px stroke only lands on whole pixels when the box
+   centring it is odd. */
+.gsv-popover-head-action {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  width: 19px;
+  height: 19px;
+  padding: 0;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--link);
+  cursor: pointer;
+  transition: background 0.12s, border-color 0.12s, color 0.12s;
+}
+.gsv-popover-head-action:not(:disabled):hover,
+.gsv-popover-head-action:not(:disabled):focus-visible {
+  border-color: var(--link-hover);
+  color: var(--link-hover);
+  outline: none;
+}
+.gsv-popover-head-action:disabled {
+  opacity: 0.46;
+  cursor: not-allowed;
+}
+/* The glyph wrapper is a flex item, so it blockifies: an inline <svg> inside
+   it would sit on a text baseline and leave descender space below, pushing the
+   glyph visibly high in the box. Both boxes go display-level instead. */
+.gsv-popover-head-action > span {
+  display: inline-flex;
+}
+.gsv-popover-head-action svg {
+  display: block;
+  shape-rendering: crispEdges;
+}
+
 /* Echo variant — reflects the current value with a trailing caret. */
 .gsv-popover-head-echo {
   min-width: 0;

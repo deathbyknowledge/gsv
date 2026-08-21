@@ -4,7 +4,7 @@ import type { Story } from "../story";
 const story: Story = {
   title: "Agent Editor",
   group: "Composite",
-  blurb: "agent authoring surface · GENERAL/FILES/TASKS tabs · composes TextInput/TextArea/Select/Segmented/Button",
+  blurb: "agent authoring surface · GENERAL/FILES/CHATS tabs · composes TextInput/TextArea/Select/Segmented/Button",
   render: () => (
     <div class="ds-col">
       <div class="ds-cell">

@@ -27,7 +27,7 @@ const story: Story = {
               <WireBox label="crew tile" h={64} tone="muted" />
               <WireBox label="+ add" h={64} tone="dashed" />
             </WireRow>
-            <WireBox label="models & tasks · header" h={24} tone="muted" />
+            <WireBox label="models & chats · header" h={24} tone="muted" />
             <WireRepeat count={3} h={30} label="row" />
           </WireCol>
           <WireCol grow={1} gap={8}>

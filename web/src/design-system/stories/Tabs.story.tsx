@@ -10,13 +10,13 @@ const story: Story = {
       <div class="ds-cell">
         <div class="ds-label">Default (first selected)</div>
         <div style={{ width: 540 }}>
-          <Tabs tabs={["GENERAL", "FILES", "TASKS"]} value={0} />
+          <Tabs tabs={["GENERAL", "FILES", "CHATS"]} value={0} />
         </div>
       </div>
       <div class="ds-cell">
         <div class="ds-label">Middle selected</div>
         <div style={{ width: 540 }}>
-          <Tabs tabs={["GENERAL", "FILES", "TASKS"]} value={1} />
+          <Tabs tabs={["GENERAL", "FILES", "CHATS"]} value={1} />
         </div>
       </div>
       <div class="ds-cell">
@@ -28,13 +28,13 @@ const story: Story = {
       <div class="ds-cell">
         <div class="ds-label">Narrow (&lt; 720px)</div>
         <div style={{ width: 420 }}>
-          <Tabs tabs={["GENERAL", "FILES", "TASKS"]} value={0} width={420} />
+          <Tabs tabs={["GENERAL", "FILES", "CHATS"]} value={0} width={420} />
         </div>
       </div>
       <div class="ds-cell">
         <div class="ds-label">Uncontrolled (click to switch)</div>
         <div style={{ width: 540 }}>
-          <Tabs tabs={["GENERAL", "FILES", "TASKS"]} />
+          <Tabs tabs={["GENERAL", "FILES", "CHATS"]} />
         </div>
       </div>
       <div class="ds-cell">

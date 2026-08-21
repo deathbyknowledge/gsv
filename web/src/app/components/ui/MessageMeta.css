@@ -14,6 +14,12 @@
   color: var(--text-dim);
 }
 
+/* The timestamp may be wrapped in a Hint (full date/time on hover); the
+   wrapper is the flex item then, so it has to shrink like the span does. */
+.gsv-mm > .gsv-tt {
+  min-width: 0;
+}
+
 .gsv-mm-time {
   min-width: 0;
   overflow: hidden;

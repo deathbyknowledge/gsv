@@ -2,7 +2,7 @@ import type { Story } from "../../story";
 import { Wire, WireRow, WireCol, WireBox, PreviewLink } from "../../wireframe";
 
 /** EDITOR archetype — an authoring surface: page header (name + status), a
- *  folder tab strip (GENERAL / CONTEXT / TASKS), then a form column beside an
+ *  folder tab strip (GENERAL / CONTEXT / CHATS), then a form column beside an
  *  identity/meta column, closing on a save/reset action row. Use for creating or
  *  managing a configurable object: Agent editor. */
 const story: Story = {
@@ -13,7 +13,7 @@ const story: Story = {
     <div class="ds-tpl-stack">
       <p class="ds-tpl-blurb">
         An authoring surface: page header (name + status), a folder tab strip
-        (GENERAL / CONTEXT / TASKS), then a form column beside an identity/meta
+        (GENERAL / CONTEXT / CHATS), then a form column beside an identity/meta
         column, closing on a save/reset action row. Reach for it when creating or
         managing a configurable object with grouped fields — the Agent editor.
       </p>

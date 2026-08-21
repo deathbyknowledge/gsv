@@ -272,7 +272,7 @@ function defaults(mode: AgentEditorMode, props: AgentEditorProps): Defaults {
         },
       ],
       tasks: tasks ?? [
-        { name: "No active task data", status: "idle" },
+        { name: "No active chat data", status: "idle" },
       ],
     };
   }
@@ -305,7 +305,7 @@ function defaults(mode: AgentEditorMode, props: AgentEditorProps): Defaults {
 }
 
 /** AgentEditor — composite ported from Agent Editor.dc.html. A full agent
- *  authoring surface with GENERAL / CONTEXT / TASKS folder tabs. GENERAL composes
+ *  authoring surface with GENERAL / CONTEXT / CHATS folder tabs. GENERAL composes
  *  TextInput/TextArea/Select/Segmented/Button atoms; CONTEXT has a markdown
  *  editor + delete-confirm modal. */
 export function AgentEditor(props: AgentEditorProps) {
@@ -763,11 +763,11 @@ export function AgentEditor(props: AgentEditorProps) {
               </div>
             ) : null}
 
-            {/* ---------- TASKS ---------- */}
+            {/* ---------- CHATS ---------- */}
             {tab === "tasks" ? (
               <div style={secPad}>
                 <div class="gsv-sublabel" style="letter-spacing:.2em;color:var(--label);margin-bottom:18px;">
-                  TASKS ({TASKS.length})
+                  CHATS ({TASKS.length})
                 </div>
                 <div style="border:1px solid var(--border);background:var(--panel-2);">
                   {TASKS.map((t, i) => (

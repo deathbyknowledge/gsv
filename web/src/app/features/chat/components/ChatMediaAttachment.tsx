@@ -14,11 +14,15 @@ import {
   formatChatMediaSize,
 } from "../domain/media";
 import { Hint } from "../../../components/ui/Tooltip";
+import { ImageLightbox } from "../../../components/ui/ImageLightbox";
 import { useChatProcessMedia } from "../hooks";
+import { formatTranscriptTimestamp } from "../domain/transcript";
 
 type ChatMediaAttachmentProps = {
   media: unknown;
   processId: string;
+  /** When the message carrying this attachment was sent. */
+  timestamp?: number | null;
 };
 
 function mediaIconName(kind: string): string {
@@ -125,7 +129,7 @@ function AudioPlayer({
   );
 }
 
-export function ChatMediaAttachment({ media, processId }: ChatMediaAttachmentProps) {
+export function ChatMediaAttachment({ media, processId, timestamp }: ChatMediaAttachmentProps) {
   const key = chatMediaKey(media);
   const inlineSource = chatMediaSource(media);
   const mediaQuery = useChatProcessMedia({
@@ -133,6 +137,7 @@ export function ChatMediaAttachment({ media, processId }: ChatMediaAttachmentPro
     enabled: !inlineSource && key.length > 0 && processId.length > 0,
   });
   const [storedSource, setStoredSource] = useState("");
+  const [viewerOpen, setViewerOpen] = useState(false);
   const storedBlob = mediaQuery.data?.blob;
   useEffect(() => {
     if (!storedBlob) {
@@ -167,9 +172,30 @@ export function ChatMediaAttachment({ media, processId }: ChatMediaAttachmentPro
   if (kind === "image") {
     return (
       <figure class="gsv-chat-media gsv-chat-media-image">
-        {source ? <img src={source} alt={filename} loading="lazy" /> : <div class="gsv-chat-media-loading">Loading image...</div>}
+        {source ? (
+          <button
+            type="button"
+            class="gsv-chat-media-image-open"
+            aria-label={`View ${filename || "image"}`}
+            onClick={() => setViewerOpen(true)}
+          >
+            <img src={source} alt={filename} loading="lazy" />
+          </button>
+        ) : (
+          <div class="gsv-chat-media-loading">Loading image...</div>
+        )}
         <figcaption>{filename}</figcaption>
         {description ? <p>{description}</p> : null}
+        {viewerOpen && source ? (
+          <ImageLightbox
+            src={source}
+            alt={filename || "Image"}
+            filename={filename}
+            meta={formatTranscriptTimestamp(timestamp)}
+            caption={description}
+            onClose={() => setViewerOpen(false)}
+          />
+        ) : null}
       </figure>
     );
   }

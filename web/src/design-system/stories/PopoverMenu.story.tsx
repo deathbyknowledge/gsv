@@ -64,11 +64,15 @@ function TasksVariation() {
   return (
     <PopoverMenu
       className="ds-popover-static"
-      ariaLabel="Current tasks"
-      header={{ kind: "titled", title: "CURRENT TASKS", count: 3 }}
+      ariaLabel="Current chats"
+      header={{
+        kind: "titled",
+        title: "CURRENT CHATS",
+        count: 3,
+        action: { label: "Start a new chat", onClick: () => {}, glyph: <PlusGlyph size={12} /> },
+      }}
       actions={[
-        { label: "NEW TASK", onClick: () => {}, glyph: <PlusGlyph size={13} /> },
-        { label: "OPEN TASKS", onClick: () => {}, glyph: <TaskListGlyph size={13} /> },
+        { label: "VIEW ALL", onClick: () => {}, glyph: <TaskListGlyph size={13} /> },
       ]}
     >
       <div class="gsv-popover-list" style={{ maxHeight: "228px" }}>
@@ -119,7 +123,7 @@ function ConversationsVariation() {
   return (
     <PopoverMenu
       className="ds-popover-static"
-      ariaLabel="Task branches"
+      ariaLabel="Chat branches"
       header={{ kind: "titled", title: "BRANCHES", count: branches.length }}
     >
       <div class="gsv-popover-list" role="list" style={{ maxHeight: "min(288px, 44vh)" }}>
@@ -155,7 +159,7 @@ const story: Story = {
         </DockBox>
       </div>
       <div class="ds-cell">
-        <div class="ds-label">Tasks — titled + count · compact rows · icon actions (arrow / Home / End rove)</div>
+        <div class="ds-label">Chats — titled + count + corner action · compact rows · icon actions (arrow / Home / End rove)</div>
         <DockBox>
           <TasksVariation />
         </DockBox>

@@ -8,9 +8,9 @@ const machines: ListCardRow[] = [
 ];
 
 const crew: ListCardRow[] = [
-  { id: "1", label: "XANADU", sub: "2 open tasks", avatarSrc: "/img/agent-1.png", status: "live", statusLabel: "RUNNING", onClick: () => {} },
+  { id: "1", label: "XANADU", sub: "2 open chats", avatarSrc: "/img/agent-1.png", status: "live", statusLabel: "RUNNING", onClick: () => {} },
   { id: "2", label: "LIGER", sub: "idle", avatarSrc: "/img/agent-2.png", status: "idle", statusLabel: "IDLE", onClick: () => {} },
-  { id: "3", label: "BOB", sub: "task interrupted", avatarSrc: "/img/agent-3.png", status: "error", statusLabel: "STOPPED", onClick: () => {} },
+  { id: "3", label: "BOB", sub: "chat interrupted", avatarSrc: "/img/agent-3.png", status: "error", statusLabel: "STOPPED", onClick: () => {} },
 ];
 
 const many: ListCardRow[] = Array.from({ length: 12 }, (_, i) => ({
@@ -53,7 +53,7 @@ const story: Story = {
       <div class="ds-cell">
         <div class="ds-label">Show-more / view-all footer (&gt; 6 rows)</div>
         <div class="ds-col" style={{ maxWidth: "460px" }}>
-          <ListCard title="TASKS" meta="12 RUNNING" rows={many} onOpen={() => {}} onViewAll={() => {}} />
+          <ListCard title="CHATS" meta="12 RUNNING" rows={many} onOpen={() => {}} onViewAll={() => {}} />
         </div>
       </div>
       <div class="ds-cell">

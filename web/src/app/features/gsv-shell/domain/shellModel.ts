@@ -128,7 +128,7 @@ export const SYSTEM_DOCK_ITEMS: SystemDockItem[] = [
     id: "crew",
     label: "CREW",
     icon: "chat",
-    description: "Agents, models, task ownership, and permissions.",
+    description: "Agents, models, chat ownership, and permissions.",
   },
 ];
 

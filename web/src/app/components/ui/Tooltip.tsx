@@ -378,12 +378,14 @@ function TooltipBubble({
   placement,
   bubbleRef,
   text,
+  nowrap = false,
 }: {
   open: boolean;
   shown: boolean;
   placement: Placement | null;
   bubbleRef: RefObject<HTMLSpanElement>;
   text: string;
+  nowrap?: boolean;
 }) {
   if (!open) return null;
   const sideClass = placement ? SIDE_CLASS[placement.side] : "";
@@ -397,7 +399,7 @@ function TooltipBubble({
   return createPortal(
     <span
       ref={bubbleRef}
-      class={`gsv-tt-bub gsv-tt-portal gsv-sublabel ${sideClass}${shown ? " is-open" : ""}`}
+      class={`gsv-tt-bub gsv-tt-portal gsv-sublabel ${sideClass}${nowrap ? " gsv-tt-nowrap" : ""}${shown ? " is-open" : ""}`}
       aria-hidden="true"
       style={style}
     >
@@ -447,6 +449,9 @@ export interface HintProps {
   text: string;
   /** Which side the bubble opens on (default "top"). */
   position?: TooltipPosition;
+  /** Keep the bubble on one line, past the default 220px cap — for short,
+   *  unbreakable values (a timestamp) that read wrong when wrapped. */
+  nowrap?: boolean;
   /** The interactive control to attach the tooltip to. Rendered as-is (no extra
    *  wrapper button) so it stays a single focusable element. */
   children: ComponentChildren;
@@ -460,7 +465,7 @@ export interface HintProps {
  *  description span, so the description exists the moment focus lands. Use this
  *  to give icon buttons a styled, explanatory tooltip in place of native
  *  `title`. */
-export function Hint({ text, position = "top", children }: HintProps) {
+export function Hint({ text, position = "top", nowrap = false, children }: HintProps) {
   const bubbleId = useId();
   const { wrapRef, bubbleRef, open, shown, placement } = useTooltipReveal(position);
   const child = isValidElement(children)
@@ -478,6 +483,7 @@ export function Hint({ text, position = "top", children }: HintProps) {
         placement={placement}
         bubbleRef={bubbleRef}
         text={text}
+        nowrap={nowrap}
       />
     </span>
   );

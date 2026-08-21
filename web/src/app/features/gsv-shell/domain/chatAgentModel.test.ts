@@ -220,7 +220,7 @@ describe("shell chat agent model", () => {
   });
 
   it("keeps the active chat task when console overview is stale", () => {
-    const activeProcess = process({ pid: "proc:new", uid: 7, username: "scout", title: "New task" });
+    const activeProcess = process({ pid: "proc:new", uid: 7, username: "scout", title: "New chat" });
     const agent = buildShellChatAgent({
       activeProcess,
       accounts: [account({ uid: 7, username: "scout", relation: "agent", displayName: "Scout" })],
@@ -233,7 +233,7 @@ describe("shell chat agent model", () => {
     });
 
     expect(taskSummary(agent?.tasks ?? [])).toEqual([
-      { name: "New task", processId: "proc:new", status: "idle" },
+      { name: "New chat", processId: "proc:new", status: "idle" },
       { name: "Older task", processId: "proc:old", status: "idle" },
     ]);
     expect(agent?.tasks?.[1]?.process).toMatchObject({

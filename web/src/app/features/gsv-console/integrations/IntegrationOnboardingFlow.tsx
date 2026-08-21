@@ -235,7 +235,7 @@ export function IntegrationOnboardingFlow({
                 status={nameTaken ? "error" : "none"}
                 message={nameTaken ? "That name is already in use" : ""}
                 value={name}
-                placeholder="GitHub"
+                placeholder="Linear"
                 clearable
                 onChange={setName}
                 inputProps={{ required: true, name: "name" }}
