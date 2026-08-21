@@ -15,7 +15,7 @@ the random helper session. Reliable lifecycle and intent events
 share a strict monotonic sequence, while Desktop applies its bounded local
 freshness policy before acting on received control.
 
-The runtime consists of this Rust executable and two verified TFLite models
+The runtime is one Rust executable with two verified TFLite models embedded
 from the pinned Gesture Recognizer bundle. tract executes palm and hand-landmark
 inference, then GSV's authored Rust recognizer maps landmark geometry into its
 small pose vocabulary. Python, Java, Bazel, and MediaPipe native code are not
@@ -26,9 +26,8 @@ build or runtime dependencies.
 From the repository root:
 
 ```bash
-./scripts/vision-native/prepare.sh
-cargo build --manifest-path host/Cargo.toml --package gestures
-GSV_GESTURES=1 cargo run --manifest-path host/apps/desktop/Cargo.toml
+cargo build --manifest-path host/Cargo.toml --package gestures --package desktop
+cargo run --manifest-path host/Cargo.toml --package desktop
 ```
 
 On macOS, the first camera start requests access before enumerating devices.
@@ -39,10 +38,9 @@ open a device without authorization. The default selection prefers the built-in
 camera and opens it by its stable platform identifier. Capture requests a native
 format explicitly and converts row-strided frames locally to packed RGB.
 
-The matching versioned models are discovered automatically from
-`host/target/vision-native/artifact/`. The headless mode above is the real local
-control path. Use the diagnostic
-window against the same pose recognizer with:
+The helper embeds the matching versioned models, and Desktop starts it
+headlessly by default. Use the diagnostic window against the same pose
+recognizer with:
 
 ```bash
 GSV_GESTURE_DEBUG=1 cargo run --manifest-path host/apps/desktop/Cargo.toml
@@ -144,17 +142,16 @@ not infer speech silence or implement auto-send.
 - `GSV_VISION_CAMERA=1` selects a numeric camera from the current discovery
   order. Without an override, the built-in camera is preferred and the first
   discovered camera is the fallback.
-- `GSV_VISION_NATIVE_MODELS=/path/to/gesture-recognizer-float16-1` overrides
-  the extracted model root; every model is still verified by size and SHA-256.
+- `GSV_GESTURES=0` disables the automatically supervised gesture helper.
 - `GSV_GESTURE_DOMINANT_HAND=auto|left|right` selects the action hand. `auto`
   learns the first unambiguous action hand after arming; `right` is the default.
 - `GSV_VISION_HELPER=/path/to/gsv-vision` tells Desktop which helper executable
   to supervise.
 
-An explicit missing override fails closed instead of silently falling back.
-The model must always match the pinned size and SHA-256 before the camera opens.
+The build fails unless the embedded models match their pinned size and SHA-256.
 Library/model/backend paths and native diagnostics are not printed.
 
 The artifact and parity contract lives in
 [`scripts/vision-native/README.md`](../../../scripts/vision-native/README.md).
-The proof is not part of release packaging yet.
+The macOS development bundle carries the model license and provenance beside
+the executable.

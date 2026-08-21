@@ -205,14 +205,7 @@ fn benchmarks_native_pipeline() {
     let fixture_root = PathBuf::from(
         std::env::var_os("GSV_VISION_BENCHMARK_FIXTURES").expect("benchmark fixture directory"),
     );
-    let model_root = std::env::var_os("GSV_VISION_NATIVE_MODELS")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| {
-            PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-                .join("../../target/vision-native/artifact/gesture-recognizer-float16-1")
-        });
-    let models = runtime::resolve_models(Some(model_root.into_os_string()), None, Path::new("."))
-        .expect("verified native gesture models");
+    let models = runtime::embedded_models();
     let fixtures: Vec<_> = FIXTURES
         .into_iter()
         .enumerate()
@@ -281,7 +274,7 @@ fn benchmarks_native_pipeline() {
     }
 }
 
-fn benchmark_model_load(models: &runtime::ModelPaths) -> Statistics {
+fn benchmark_model_load(models: &runtime::ModelData) -> Statistics {
     for _ in 0..MODEL_LOAD_WARMUP_ITERATIONS {
         Models::load(models).expect("native model load warmup");
     }
@@ -296,7 +289,7 @@ fn benchmark_model_load(models: &runtime::ModelPaths) -> Statistics {
 }
 
 fn benchmark_detection(
-    models: &runtime::ModelPaths,
+    models: &runtime::ModelData,
     fixtures: &[LoadedFixture],
     timestamp_ms: &mut i64,
 ) -> ScenarioReport {
@@ -326,7 +319,7 @@ fn benchmark_detection(
 }
 
 fn benchmark_tracking(
-    models: &runtime::ModelPaths,
+    models: &runtime::ModelData,
     fixture: &LoadedFixture,
     timestamp_ms: &mut i64,
 ) -> ScenarioReport {
@@ -346,7 +339,7 @@ fn benchmark_tracking(
 }
 
 fn benchmark_two_hand_tracking(
-    models: &runtime::ModelPaths,
+    models: &runtime::ModelData,
     frame: &FrameView,
     tracked_rects: &[Rect],
     timestamp_ms: &mut i64,
@@ -415,7 +408,7 @@ fn load_frame(path: &Path, sequence: u64) -> FrameView {
 }
 
 fn compose_tracked_frames(
-    models: &runtime::ModelPaths,
+    models: &runtime::ModelData,
     left: &FrameView,
     right: &FrameView,
 ) -> (FrameView, Vec<Rect>) {
@@ -473,7 +466,7 @@ fn copy_frame(source: &FrameView, target: &mut [u8], target_width: u32, x: u32, 
     }
 }
 
-fn tracked_rect(models: &runtime::ModelPaths, frame: &FrameView) -> Rect {
+fn tracked_rect(models: &runtime::ModelData, frame: &FrameView) -> Rect {
     let mut recognizer = GestureRecognizer::load(models).expect("native recognizer");
     let observation = recognizer.recognize(frame, 0).expect("fixture inference");
     assert_eq!(observation.hands.len(), 1, "tracked fixture");

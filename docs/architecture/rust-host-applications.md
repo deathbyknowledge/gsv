@@ -83,8 +83,9 @@ Platform-native, high-cost Desktop work runs in separately supervised helpers.
 experimental `gsv-vision` helper owns camera capture, native Rust/tract model
 inference, authored landmark-to-pose recognition, and temporal gesture policy;
 camera frames and landmarks never
-enter GPUI or the gateway. `GSV_GESTURES=1` starts it headlessly, while the exact
-`GSV_GESTURE_DEBUG=1` opt-in adds its local diagnostic window. A private,
+enter GPUI or the gateway. Desktop starts it headlessly unless
+`GSV_GESTURES=0`; the exact `GSV_GESTURE_DEBUG=1` opt-in adds its local
+diagnostic window. A private,
 bounded parent-child protocol carries reliable typed semantic intents plus
 replace-latest absolute scroll-control velocity and control status with bounded
 semantic candidate progress for presentation. In standby, the helper may
@@ -130,8 +131,9 @@ masquerade as terminal transcription events. Its runtime is the Rust helper
 plus two checksum-pinned palm and hand-landmark TFLite models executed by tract;
 the command vocabulary is owned by Rust rather than the upstream canned gesture
 classifier. It has no Python, Java, Bazel, or native MediaPipe build/runtime
-dependency. The unsigned macOS development application includes `gsv-vision`
-and the pinned models for technical dogfooding. It starts the helper in a
+dependency. The unsigned macOS development application includes `gsv-vision`,
+whose two checksum-verified TFLite models are embedded directly in the
+executable for offline, self-contained builds. It starts the helper in a
 disarmed state and provides visible Voice and Gestures affordances rather than
 depending on shell environment variables that Finder does not provide. Public
 distribution waits for Developer ID signing, notarization, and deliberate

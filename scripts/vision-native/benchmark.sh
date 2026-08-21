@@ -20,7 +20,6 @@ else
   readonly output="$PWD/$requested_output"
 fi
 
-"$script_dir/prepare.sh" >/dev/null
 readonly fixtures="$($script_dir/fixtures.sh)"
 readonly revision="$(git -C "$repository_root" rev-parse HEAD)"
 readonly rustc_version="$(rustc --version)"

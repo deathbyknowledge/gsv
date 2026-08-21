@@ -5,20 +5,31 @@ the two TFLite palm and hand-landmark models; GSV's authored pose recognizer
 maps their geometry into the local control vocabulary. It does not build or
 load MediaPipe, TensorFlow, Python, Java, or Bazel.
 
-Prepare the checksum-pinned models once, then build the normal host workspace:
+The checksum-pinned models live in normal Git under
+`host/helpers/gestures/models/` and are embedded in `gsv-vision`. Build the
+normal host workspace without a model preparation step or network access:
 
 ```bash
-./scripts/vision-native/prepare.sh
 cd host
 cargo build --workspace
 ```
 
-The preparation script downloads the official Gesture Recognizer float16 v1
-bundle, verifies its SHA-256, extracts only the palm detector, hand landmark
-detector, and verifies both extracted files. Intermediate nested task archives
-are discarded, so the final artifact contains one checksum and the two runtime
-models only. The artifact stays under ignored `host/target/vision-native/`; it
-is not checked into Git.
+The gesture crate's build script verifies both files by size and SHA-256 before
+the compiler embeds them. They add roughly 7.8 MB to the helper and do not need
+to be copied beside it at runtime. Their Apache 2.0 license and exact source,
+bundle checksum, extracted checksums, and update procedure live beside the
+weights.
+
+Maintainers can reproduce or deliberately update the vendored files with:
+
+```bash
+./scripts/vision-native/update-models.sh
+```
+
+That script downloads the official Gesture Recognizer float16 v1 bundle,
+verifies its SHA-256, extracts only the palm and hand-landmark detectors, and
+verifies both outputs before replacing the checked-in files. Ordinary builds,
+tests, benchmarks, and packages never invoke it.
 
 Run the reference parity test with:
 
@@ -62,11 +73,6 @@ Eligible float32 NHWC depthwise convolutions use the native channel-SIMD
 kernel; all other operations remain in tract. The report records the selected
 depthwise kernel. Set `GSV_VISION_BENCHMARK_DEPTHWISE=tract` when running the
 benchmark to produce a stock-tract comparison without changing production.
-The upstream TFLite graph is intentionally retained at runtime because it
+The upstream TFLite graph is intentionally embedded because it
 preserves this NHWC execution shape; alternative deployment formats must clear
 the same parity, size, loading, and inference benchmarks before replacing it.
-
-For a manually assembled distribution, put the extracted artifact beside
-`gsv-vision` as `vision-models/` (including its `model/` child), or set
-`GSV_VISION_NATIVE_MODELS` to the artifact root. Runtime loading always verifies
-both files before opening the camera.

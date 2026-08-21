@@ -90,14 +90,16 @@ GSV normally; showing the status item is best effort.
 
 The gesture helper is a separate Rust process. It owns the camera, native
 Rust/tract inference, and temporal gesture recognition; it never sends frames
-or landmarks to Desktop or the gateway. The packaged macOS application starts
-it automatically. Source-tree development remains an explicit opt-in:
+or landmarks to Desktop or the gateway. Desktop starts it automatically when
+the helper is available. Build both from the host workspace; no separate model
+download is required:
 
 ```bash
-./scripts/vision-native/prepare.sh
-cargo build --manifest-path host/Cargo.toml --package gestures
-GSV_GESTURES=1 cargo run --manifest-path host/apps/desktop/Cargo.toml
+cargo build --manifest-path host/Cargo.toml --package gestures --package desktop
+cargo run --manifest-path host/Cargo.toml --package desktop
 ```
+
+Set `GSV_GESTURES=0` to disable the helper explicitly.
 
 To see the camera, landmarks, scores, and the same live recognizer while testing:
 
@@ -105,8 +107,8 @@ To see the camera, landmarks, scores, and the same live recognizer while testing
 GSV_GESTURE_DEBUG=1 cargo run --manifest-path host/apps/desktop/Cargo.toml
 ```
 
-The helper uses tract and checksum-pinned TFLite models, with no Python, Java,
-Bazel, or native MediaPipe dependency. Gesture control starts disarmed. Hold
+The helper embeds checksum-pinned TFLite models and uses tract, with no Python,
+Java, Bazel, or native MediaPipe dependency. Gesture control starts disarmed. Hold
 both hands in fists for 700 ms to arm or disarm it. Once armed, the physical
 right hand acts alone by opening fingers in order: 1 starts or finishes
 transcription, 2 sends and keeps listening, 3 deletes one visible character

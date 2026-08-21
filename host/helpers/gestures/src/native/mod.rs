@@ -17,7 +17,7 @@ use self::geometry::{
     rotate_world_landmarks, same_projected_hand, sample_rgb, Rect,
 };
 use self::models::{LandmarkOutputs, Models};
-use self::runtime::ModelPaths;
+use self::runtime::ModelData;
 
 const MAX_FRAME_WIDTH: u32 = 1_920;
 const MAX_FRAME_HEIGHT: u32 = 1_080;
@@ -193,9 +193,9 @@ impl RecognitionProfiler for RecognitionTimings {
 }
 
 impl GestureRecognizer {
-    pub(crate) fn load(paths: &ModelPaths) -> Result<Self, Error> {
+    pub(crate) fn load(models: &ModelData) -> Result<Self, Error> {
         Ok(Self {
-            models: Models::load(paths)?,
+            models: Models::load(models)?,
             tracked_hands: Vec::new(),
             last_timestamp_ms: None,
             last_palm_detection_ms: None,
@@ -731,7 +731,7 @@ fn finite_probability(value: f32) -> Result<f32, Error> {
 
 #[cfg(test)]
 mod tests {
-    use std::path::{Path, PathBuf};
+    use std::path::PathBuf;
     use std::sync::Arc;
     use std::time::Instant;
 
@@ -937,15 +937,7 @@ mod tests {
         let fixture_root = PathBuf::from(
             std::env::var_os("GSV_VISION_PARITY_FIXTURES").expect("parity fixture directory"),
         );
-        let model_root = std::env::var_os("GSV_VISION_NATIVE_MODELS")
-            .map(PathBuf::from)
-            .unwrap_or_else(|| {
-                PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-                    .join("../../target/vision-native/artifact/gesture-recognizer-float16-1")
-            });
-        let models =
-            runtime::resolve_models(Some(model_root.into_os_string()), None, Path::new("."))
-                .expect("verified native gesture models");
+        let models = runtime::embedded_models();
         let mut recognizer = GestureRecognizer::load(&models).expect("native recognizer");
         for (name, expected_pose, actionable, expected_handedness, wrist) in [
             (

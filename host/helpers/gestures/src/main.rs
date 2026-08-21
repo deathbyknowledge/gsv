@@ -11,7 +11,6 @@ use std::env;
 use std::error::Error as StdError;
 use std::ffi::OsStr;
 use std::fmt::{self, Display, Formatter};
-use std::path::Path;
 use std::process::ExitCode;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -30,7 +29,7 @@ use crate::control::{
 };
 use crate::control_transport::{ControlContext, HelperControl};
 use crate::debug_window::{DebugWindow, DebugWindowConfig};
-use crate::native::runtime::ModelPaths;
+use crate::native::runtime::ModelData;
 use crate::native::GestureRecognizer;
 use crate::observation::{FrameView, Observation};
 use crate::overlay::ControlPresentationDiagnostic;
@@ -46,8 +45,6 @@ const MAX_CAMERA_INDEX: u32 = 63;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum VisionError {
-    NativeModelsUnavailable,
-    InvalidNativeModelsOverride,
     InvalidCamera,
     InvalidDominantHand,
     CameraPermissionDenied,
@@ -71,10 +68,6 @@ impl Display for VisionError {
             );
         }
         formatter.write_str(match self {
-            Self::NativeModelsUnavailable => "the pinned native gesture models are unavailable",
-            Self::InvalidNativeModelsOverride => {
-                "GSV_VISION_NATIVE_MODELS does not name a verified model artifact"
-            }
             Self::InvalidCamera => "GSV_VISION_CAMERA must be a camera index from 0 through 63",
             Self::InvalidDominantHand => "GSV_GESTURE_DOMINANT_HAND must be auto, left, or right",
             Self::CameraPermissionDenied => "camera permission was not granted",
@@ -99,7 +92,7 @@ struct AnnotatedFrame {
 }
 
 struct InferenceWorkerConfig {
-    models: ModelPaths,
+    models: ModelData,
     hand_preference: HandPreference,
 }
 
@@ -136,20 +129,7 @@ fn run() -> Result<(), VisionError> {
 }
 
 fn run_pipeline(control: Option<HelperControl>, debug_window: bool) -> Result<(), VisionError> {
-    let model_override = env::var_os("GSV_VISION_NATIVE_MODELS");
-    let explicit_model_override = model_override.is_some();
-    let models = native::runtime::resolve_models(
-        model_override,
-        env::current_exe().ok(),
-        Path::new(env!("CARGO_MANIFEST_DIR")),
-    )
-    .map_err(|()| {
-        if explicit_model_override {
-            VisionError::InvalidNativeModelsOverride
-        } else {
-            VisionError::NativeModelsUnavailable
-        }
-    })?;
+    let models = native::runtime::embedded_models();
     let camera_index = parse_camera_index(env::var_os("GSV_VISION_CAMERA").as_deref())?;
     let hand_preference = parse_hand_preference(env::var_os(DOMINANT_HAND).as_deref())?;
 
@@ -625,9 +605,6 @@ fn observe_controls(
 impl VisionError {
     fn lifecycle_state(self) -> gesture_protocol::LifecycleState {
         match self {
-            Self::NativeModelsUnavailable | Self::InvalidNativeModelsOverride => {
-                gesture_protocol::LifecycleState::AssetsUnavailable
-            }
             Self::InvalidCamera | Self::CameraPermissionDenied | Self::CameraUnavailable(_) => {
                 gesture_protocol::LifecycleState::CameraUnavailable
             }

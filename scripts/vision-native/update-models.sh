@@ -3,10 +3,9 @@ set -euo pipefail
 
 readonly BUNDLE_URL="https://storage.googleapis.com/mediapipe-models/gesture_recognizer/gesture_recognizer/float16/1/gesture_recognizer.task"
 readonly BUNDLE_SHA256="97952348cf6a6a4915c2ea1496b4b37ebabc50cbbf80571435643c455f2b0482"
-readonly ARTIFACT_NAME="gesture-recognizer-float16-1"
 
 die() {
-  printf 'vision-native: %s\n' "$1" >&2
+  printf 'vision-native-models: %s\n' "$1" >&2
   exit 1
 }
 
@@ -33,19 +32,20 @@ verify_file() {
     || die "unexpected checksum for $(basename "$path")"
 }
 
-command -v curl >/dev/null 2>&1 || die "curl is required"
-command -v unzip >/dev/null 2>&1 || die "unzip is required"
+for command in curl install unzip; do
+  command -v "$command" >/dev/null 2>&1 || die "$command is required"
+done
 
 readonly script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 readonly repository_root="$(cd "$script_dir/../.." && pwd)"
 readonly work_root="${GSV_VISION_NATIVE_WORK_DIR:-$repository_root/host/target/vision-native}"
 readonly downloads_dir="$work_root/downloads"
-readonly artifact_root="$work_root/artifact/$ARTIFACT_NAME"
+readonly model_root="$repository_root/host/helpers/gestures/models"
 readonly bundle="$downloads_dir/gesture_recognizer.task"
 
-mkdir -p "$downloads_dir" "$(dirname "$artifact_root")"
+mkdir -p "$downloads_dir" "$model_root"
 if [[ ! -f "$bundle" ]] || [[ "$(sha256 "$bundle")" != "$BUNDLE_SHA256" ]]; then
-  readonly bundle_tmp="$downloads_dir/.gesture_recognizer.task.$$"
+  bundle_tmp="$downloads_dir/.gesture_recognizer.task.$$"
   trap 'rm -f "${bundle_tmp:-}"' EXIT
   printf 'Fetching pinned gesture models...\n'
   curl --fail --location --silent --show-error "$BUNDLE_URL" --output "$bundle_tmp"
@@ -55,23 +55,19 @@ if [[ ! -f "$bundle" ]] || [[ "$(sha256 "$bundle")" != "$BUNDLE_SHA256" ]]; then
   trap - EXIT
 fi
 
-readonly stage="$(mktemp -d "${TMPDIR:-/tmp}/gsv-vision-native.XXXXXX")"
+stage="$(mktemp -d "${TMPDIR:-/tmp}/gsv-vision-native.XXXXXX")"
 trap 'rm -rf "$stage"' EXIT
-mkdir -p "$stage/model"
-
 unzip -p "$bundle" hand_landmarker.task > "$stage/hand_landmarker.task"
 unzip -p "$stage/hand_landmarker.task" hand_detector.tflite \
-  > "$stage/model/hand_detector.tflite"
+  > "$stage/hand_detector.tflite"
 unzip -p "$stage/hand_landmarker.task" hand_landmarks_detector.tflite \
-  > "$stage/model/hand_landmarks_detector.tflite"
+  > "$stage/hand_landmarks_detector.tflite"
 
-verify_file "$stage/model/hand_detector.tflite" 2339878 \
+verify_file "$stage/hand_detector.tflite" 2339878 \
   60d1bf8d70a80aba35b36290bb2a0e52e784ca2e524937d49ea80e8161a8a384
-verify_file "$stage/model/hand_landmarks_detector.tflite" 5478949 \
+verify_file "$stage/hand_landmarks_detector.tflite" 5478949 \
   6acda74af3fbf40e68265c20c7394b2bad81a16a481dcd79ad7a081887c3d6b9
-printf '%s\n' "$BUNDLE_SHA256" > "$stage/bundle.sha256"
-rm -f "$stage/hand_landmarker.task"
-rm -rf "$artifact_root"
-mv "$stage" "$artifact_root"
-trap - EXIT
-printf 'Native gesture models are ready at %s\n' "$artifact_root"
+install -m 0644 "$stage/hand_detector.tflite" "$model_root/hand_detector.tflite"
+install -m 0644 "$stage/hand_landmarks_detector.tflite" \
+  "$model_root/hand_landmarks_detector.tflite"
+printf 'Updated vendored gesture models in %s\n' "$model_root"

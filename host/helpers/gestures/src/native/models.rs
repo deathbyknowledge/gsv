@@ -1,4 +1,4 @@
-use std::path::Path;
+use std::io::Cursor;
 use std::sync::Arc;
 
 #[cfg(test)]
@@ -9,7 +9,7 @@ use tract_linalg::multithread::Executor;
 use tract_tflite::prelude::*;
 
 use super::depthwise::replace_depthwise_convolutions;
-use super::runtime::ModelPaths;
+use super::runtime::ModelData;
 use super::Error;
 
 type Plan = Arc<TypedRunnableModel>;
@@ -44,12 +44,12 @@ pub(super) struct NodeProfileSamples {
 }
 
 impl Models {
-    pub(super) fn load(paths: &ModelPaths) -> Result<Self, Error> {
+    pub(super) fn load(models: &ModelData) -> Result<Self, Error> {
         let (executor, inference_pool) = inference_executor()?;
         Ok(Self {
             inference_pool,
-            palm_detector: load(&paths.palm_detector, &executor)?,
-            landmark_detector: load(&paths.landmark_detector, &executor)?,
+            palm_detector: load(models.palm_detector, &executor)?,
+            landmark_detector: load(models.landmark_detector, &executor)?,
         })
     }
 
@@ -116,9 +116,10 @@ impl Models {
     }
 }
 
-fn load(path: &Path, executor: &Executor) -> Result<Plan, Error> {
+fn load(bytes: &[u8], executor: &Executor) -> Result<Plan, Error> {
+    let mut reader = Cursor::new(bytes);
     tract_tflite::tflite()
-        .model_for_path(path)
+        .model_for_read(&mut reader)
         .and_then(|mut model| {
             if channel_depthwise_enabled() {
                 replace_depthwise_convolutions(&mut model)?;
@@ -286,7 +287,13 @@ fn tensor_array<const N: usize>(value: &TValue) -> Result<[f32; N], Error> {
 
 #[cfg(test)]
 mod tests {
-    use super::selected_inference_threads;
+    use super::{selected_inference_threads, Models};
+    use crate::native::runtime::embedded_models;
+
+    #[test]
+    fn embedded_models_load_from_memory() {
+        Models::load(&embedded_models()).expect("embedded models");
+    }
 
     #[test]
     fn inference_threads_default_to_four_and_stay_within_hardware_bounds() {

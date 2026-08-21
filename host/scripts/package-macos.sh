@@ -10,7 +10,7 @@ Build and assemble an unsigned GSV.app for the current Mac architecture.
 Options:
   --debug       Package optimized development-profile binaries (default).
   --release     Package release-profile binaries.
-  --skip-build  Reuse existing binaries and prepared gesture models.
+  --skip-build  Reuse existing binaries.
   --output DIR  Write GSV.app and its ZIP to DIR.
   -h, --help    Show this help.
 EOF
@@ -52,7 +52,7 @@ while (($# > 0)); do
 done
 
 [[ "$(uname -s)" == "Darwin" ]] || die "run this script on macOS"
-for command in awk cargo curl ditto file iconutil install plutil sed sips unzip; do
+for command in awk cargo ditto file iconutil install plutil sed sips; do
   command -v "$command" >/dev/null 2>&1 || die "$command is required"
 done
 
@@ -63,14 +63,12 @@ target_root="$host_root/target"
 architecture="$(uname -m)"
 output_dir="${output_override:-$target_root/package/macos/$architecture/$profile}"
 binary_dir="$target_root/$profile"
-model_root="$target_root/vision-native/artifact/gesture-recognizer-float16-1"
 plist_template="$host_root/packaging/macos/Info.plist"
 icon_source="$repository_root/web/public/brand/gsv-mark-white.svg"
 version="$(awk -F '"' '/^version = "/ { print $2; exit }' "$host_root/Cargo.toml")"
 [[ -n "$version" ]] || die "could not read the workspace version"
 
 if ((skip_build == 0)); then
-  "$repository_root/scripts/vision-native/prepare.sh"
   cargo_args=(
     --locked
     --manifest-path "$host_root/Cargo.toml"
@@ -92,9 +90,6 @@ for binary in "${binaries[@]}"; do
   [[ -x "$path" ]] || die "missing executable $path"
   file "$path" | grep -q 'Mach-O' || die "$path is not a macOS executable"
 done
-for model in hand_detector.tflite hand_landmarks_detector.tflite; do
-  [[ -f "$model_root/model/$model" ]] || die "missing prepared gesture model $model"
-done
 [[ -f "$plist_template" ]] || die "missing Info.plist template"
 [[ -f "$icon_source" ]] || die "missing application icon"
 
@@ -114,7 +109,12 @@ done
 install -m 0644 "$repository_root/LICENSE" "$resources_dir/LICENSE"
 install -m 0644 "$host_root/helpers/transcriber/THIRD_PARTY.md" \
   "$macos_dir/THIRD_PARTY.md"
-ditto "$model_root" "$resources_dir/vision-models"
+gesture_license_dir="$resources_dir/licenses/gesture-models"
+mkdir -p "$gesture_license_dir"
+install -m 0644 "$host_root/helpers/gestures/models/LICENSE.apache-2.0" \
+  "$gesture_license_dir/LICENSE.apache-2.0"
+install -m 0644 "$host_root/helpers/gestures/models/PROVENANCE.md" \
+  "$gesture_license_dir/PROVENANCE.md"
 
 icon_artwork="$stage/GSV-app-icon-1024.png"
 "$binary_dir/gsv-desktop" --render-macos-icon "$icon_artwork"
@@ -137,8 +137,8 @@ iconutil -c icns "$iconset" -o "$resources_dir/GSV.icns"
 plutil -lint "$app/Contents/Info.plist" >/dev/null
 [[ -x "$macos_dir/gsv-desktop" ]] || die "bundle validation failed"
 [[ -f "$resources_dir/GSV.icns" ]] || die "bundle icon generation failed"
-[[ -f "$resources_dir/vision-models/model/hand_detector.tflite" ]] \
-  || die "bundle model staging failed"
+[[ -f "$gesture_license_dir/LICENSE.apache-2.0" ]] \
+  || die "bundle gesture-model license staging failed"
 
 app_path="$output_dir/GSV.app"
 zip_path="$output_dir/GSV-$version-$architecture-$profile.zip"
