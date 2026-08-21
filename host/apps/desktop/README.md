@@ -130,7 +130,24 @@ loss never starts, stops, sends, edits, mutes, or unmutes a session. Press
 Desktop. See
 `host/helpers/gestures/README.md` for thresholds, artifacts, and the override
 contract. Gesture controls remain experimental and are not packaged in a
-release yet.
+public release yet. The unsigned macOS development bundle includes the helper
+and its pinned models for technical dogfooding.
+
+### Package the macOS development application
+
+On a Mac, build and assemble Desktop, `gsv`, `gsvd`, both local helpers, the
+gesture models, the icon, and camera/microphone permission metadata into one
+application:
+
+```bash
+./host/scripts/package-macos.sh --debug
+open "host/target/package/macos/$(uname -m)/debug/GSV.app"
+```
+
+Use `--release` for optimized binaries. This produces an unsigned `GSV.app`
+and ZIP for internal testing; public distribution still requires Developer ID
+signing and Apple notarization. The transcription model remains a verified
+first-use download rather than adding roughly 534 MiB to every application.
 
 ## Interaction grammar
 

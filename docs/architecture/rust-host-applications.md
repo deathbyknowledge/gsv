@@ -130,9 +130,10 @@ masquerade as terminal transcription events. Its runtime is the Rust helper
 plus two checksum-pinned palm and hand-landmark TFLite models executed by tract;
 the command vocabulary is owned by Rust rather than the upstream canned gesture
 classifier. It has no Python, Java, Bazel, or native MediaPipe build/runtime
-dependency. `gsv-vision` is not part of the
-release distribution until signed macOS application packaging, camera
-permissions, and the model-redistribution policy are accepted deliberately.
+dependency. The unsigned macOS development application includes `gsv-vision`
+and the pinned models for technical dogfooding. Public distribution waits for
+Developer ID signing, notarization, and deliberate acceptance of the model
+redistribution policy.
 
 The local protocol exposes `activate`, redacted `status`, `new`, `use`, and the
 narrow `microphone list/use/default` operations. Its endpoint must be accessible
@@ -193,6 +194,13 @@ operations. Camera frames and audio do not cross the control channel. Release
 packages include the matching daemon, helpers, models, and OS integration so a
 single application installation cannot assemble incompatible host components.
 
+Desktop may expose one optional operating-system status item for the complete
+local GSV experience: machine connectivity, voice state, gesture state, and
+their explicit controls. That is a Desktop surface in the macOS menu bar,
+Windows notification area, or a best-effort Linux StatusNotifier integration.
+`gsvd` remains a headless per-user service and never creates a second tray
+icon. The CLI and Desktop control it through the same typed local protocol.
+
 ## Distribution and upgrades
 
 Release artifacts install `gsv`, `gsvd`, Desktop, and any Desktop helper as one
@@ -207,7 +215,11 @@ failed health check restores the previous executable. Desktop updates do not
 silently alter a running agent Process.
 
 Published host artifacts currently cover Linux x64/ARM64 and macOS
-Intel/Apple Silicon for all four host executables, plus Windows x64 for `gsv`
-and `gsvd`. Checksums cover every release asset. The macOS Desktop executable
-is not yet a signed or notarized `.app`; signing and notarization require
-release credentials that are not configured in the repository.
+Intel/Apple Silicon for the existing host executables, plus Windows x64 for
+`gsv` and `gsvd`. Checksums cover every release asset. On macOS,
+`host/scripts/package-macos.sh` assembles an architecture-native development
+`GSV.app` and ZIP containing Desktop, CLI, daemon, helpers, application
+metadata, and local gesture models. The result is intentionally unsigned and
+unnotarized. Public distribution additionally requires Developer ID signing,
+hardened-runtime entitlements, Apple notarization, and stapling; those release
+credentials are not configured in the repository.

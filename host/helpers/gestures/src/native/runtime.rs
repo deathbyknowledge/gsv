@@ -53,6 +53,14 @@ pub(crate) fn resolve_models(
 fn model_candidates(current_executable: Option<PathBuf>, manifest_dir: &Path) -> Vec<PathBuf> {
     let mut candidates = Vec::new();
     if let Some(parent) = current_executable.as_deref().and_then(Path::parent) {
+        if parent.file_name().and_then(|name| name.to_str()) == Some("MacOS") {
+            if let Some(contents) = parent
+                .parent()
+                .filter(|path| path.file_name().and_then(|name| name.to_str()) == Some("Contents"))
+            {
+                candidates.push(contents.join("Resources/vision-models"));
+            }
+        }
         candidates.push(parent.join("vision-models"));
     }
     if let Some(host_root) = manifest_dir.ancestors().nth(2) {
@@ -120,6 +128,19 @@ mod tests {
                 Path::new("/ignored")
             )[0],
             PathBuf::from("/app/bin/vision-models")
+        );
+    }
+
+    #[test]
+    fn macos_application_candidate_is_in_resources() {
+        assert_eq!(
+            model_candidates(
+                Some(PathBuf::from(
+                    "/Applications/GSV.app/Contents/MacOS/gsv-vision"
+                )),
+                Path::new("/ignored")
+            )[0],
+            PathBuf::from("/Applications/GSV.app/Contents/Resources/vision-models")
         );
     }
 }

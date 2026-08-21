@@ -35,3 +35,14 @@ cargo build --workspace
 
 Build artifacts are written to `host/target/`. `ripgit/` is a separate Rust
 project with its own manifest and lockfile.
+
+On macOS, assemble all host executables, the application metadata, the icon,
+and the local gesture models into one unsigned development application:
+
+```bash
+./host/scripts/package-macos.sh --debug
+open "host/target/package/macos/$(uname -m)/debug/GSV.app"
+```
+
+See [`packaging/macos/README.md`](packaging/macos/README.md) for the bundle
+layout and the remaining signing and notarization boundary.

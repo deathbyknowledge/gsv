@@ -129,11 +129,14 @@ jobs:
               - 'host/Cargo.lock'
               - 'host/apps/desktop/**'
               - 'host/helpers/**'
-              - 'scripts/vision-mediapipe/**'
+              - 'host/packaging/**'
+              - 'host/scripts/**'
+              - 'scripts/vision-native/**'
               - 'host/crates/gateway-client/**'
               - 'host/crates/config/**'
               - 'host/crates/desktop-protocol/**'
               - 'host/crates/gesture-protocol/**'
+              - 'web/public/icons/gsv-512.png'
               - 'web/public/fonts/**'
             host_crates:
               - '.github/workflows/ci.yml'
@@ -463,7 +466,10 @@ jobs:
             pkg-config
 
       - name: Check vision artifact scripts
-        run: bash -n scripts/vision-mediapipe/build-linux.sh scripts/vision-mediapipe/build-macos.sh
+        run: >-
+          bash -n host/scripts/package-macos.sh
+          scripts/vision-native/benchmark.sh scripts/vision-native/fixtures.sh
+          scripts/vision-native/parity.sh scripts/vision-native/prepare.sh
 
       - name: Check Desktop and helpers
         working-directory: host
