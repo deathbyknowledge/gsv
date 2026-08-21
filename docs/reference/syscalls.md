@@ -87,17 +87,17 @@ type MessageAttachment = ResourceBlock | LegacyMediaInput;
 
 ## Filesystem: `fs.*`
 
-Native `gsv` filesystem paths are Linux-like virtual paths such as `/home`, `/workspaces`, `/etc`, `/sys`, `/proc`, and `/dev`. Device targets use the target device's filesystem semantics.
+Native `gsv` filesystem paths are Linux-like virtual paths such as `/home`, `/workspaces`, `/etc`, `/sys`, `/proc`, and `/dev`. Device targets use the target device's filesystem semantics. The Android wear target exposes persistent `/home/android`, service-temporary `/tmp`, read-only runtime nodes under `/proc` and `/dev`, and a camera event node at `/dev/camera/back/snapshot`; it does not expose the Android OS filesystem.
 
 Runtime behavior:
 
 | Syscall | Handler | Behavior |
 |---|---|---|
-| `fs.read` | `handleFsRead`; CLI `Read` | Resolves paths against process `cwd` and home. Direct directory results are JSON. Text reads attach raw UTF-8 in the response body. Image reads attach raw bytes by default; `representation: "resource"` instead returns a revision-bound file reference with no body. Process-dispatched reads select resources automatically, retain the exact revision in the run-as agent's immutable archive, and add provider image bytes only while assembling model context. Text decoding is strict across native and device implementations, so invalid UTF-8 returns a binary-file error. Direct syscalls default `offset` to `0` and `limit` to all lines. Agent Read defaults to 2,000 lines and always caps returned text at 64 KiB; truncated results expose `nextOffset` when another line-based Read can continue. Agent tool results add line numbers when presenting text to the model. Retained process image reads are capped at 25 MiB. |
+| `fs.read` | `handleFsRead`; CLI `Read` | Resolves paths against process `cwd` and home. Direct directory results are JSON. Text reads attach raw UTF-8 in the response body. Image reads attach raw bytes by default; `representation: "resource"` instead returns a revision-bound file reference with no body. Process-dispatched reads select resources automatically, retain the exact revision in the run-as agent's immutable archive, and add provider image bytes only while assembling model context. Text decoding is strict across native and device implementations, so invalid UTF-8 returns a binary-file error. Direct syscalls default `offset` to `0` and `limit` to all lines. Agent Read defaults to 2,000 lines and always caps returned text at 64 KiB; truncated results expose `nextOffset` when another line-based Read can continue. Agent tool results add line numbers when presenting text to the model. Android caps files at 64 MiB and direct text reads at 8 MiB. Retained process image reads are capped at 25 MiB. |
 | `fs.write` | `handleFsWrite`; CLI `Write` | Creates or replaces a complete file. Native writes through `GsvFs.writeFile`; CLI creates parent directories explicitly. Returns written path and size. |
 | `fs.edit` | `handleFsEdit`; CLI `Edit` | Performs exact string replacement in a text file. `replaceAll` defaults to `false`; if multiple matches exist and `replaceAll` is false, the handler asks for a more specific edit. |
 | `fs.delete` | `handleFsDelete`; CLI `Delete` | Deletes the path. Native checks existence then calls `rm` with force; CLI deletes files or directories recursively. This is destructive. |
-| `fs.search` | `handleFsSearch`; CLI `Grep` | Plain-text search by public contract. Native uses backend search; CLI uses regex grep, but the bridge escapes `query` into a literal pattern. `path` defaults to process `cwd`; empty queries return an operation error. |
+| `fs.search` | `handleFsSearch`; CLI `Grep` | Plain-text search by public contract. Native uses backend search; CLI uses regex grep, but the bridge escapes `query` into a literal pattern. `path` defaults to process `cwd`; a target without process cwd semantics may use its home (`/home/android` on the Android wear target). Empty queries return an operation error. |
 
 Device routing errors are frame-level errors: `403` for access denied, `503` for offline or missing connection, `400` for unsupported syscall, and `504` for route timeout.
 
@@ -187,7 +187,7 @@ type NetworkSyscalls = {
 
 ## Shell: `shell.exec`
 
-`shell.exec` starts, polls, or writes to a shell command on the selected target. Use `gsv` for the Worker sandbox shell, or a device id for local source trees, private networks, OS packages, credentials, or hardware.
+`shell.exec` starts, polls, or writes to a shell command on the selected target. Use `gsv` for the Worker sandbox shell. A standard machine-driver target exposes its local host shell for source trees, private networks, OS packages, credentials, and hardware. A constrained hardware target may instead expose a bounded shell over its own virtual filesystem.
 
 The native `gsv` shell exposes the immutable installation identity as
 `GSV_INSTALLATION_ID` and its persisted canonical HTTP(S) origin as `GSV_URL`.
@@ -203,7 +203,7 @@ as a transport timeout.
 
 | Syscall | Handler | Behavior |
 |---|---|---|
-| `shell.exec` | `handleShellExec`; CLI `Bash` | Native runs `just-bash` over `GsvFs` with process identity env and built-in commands such as `codemode`, `mail`, `mcp`, and `wiki`. Device targets run a real local shell through the CLI. Device start calls return within a runtime-owned wait budget. If the command is still running, the result includes a `sessionId`; later calls with that `sessionId` poll or write stdin. |
+| `shell.exec` | `handleShellExec`; CLI `Bash` | Native runs `just-bash` over `GsvFs` with process identity env and built-in commands such as `codemode`, `mail`, `mcp`, and `wiki`. Standard machine-driver targets run a real local shell through the CLI. Their start calls return within a runtime-owned wait budget and may return a `sessionId` for later polling or stdin. The Android wear target runs a bounded, non-POSIX virtual shell over its target filesystem; calls complete in one request and sessions are unsupported. Its discoverable custom commands expose camera, microphone, IMU, gesture, orientation, location, device context, notifications, app/deep-link/share/clipboard actions, user output, and local checks without granting `/system/bin/sh`. |
 
 ```ts
 type ShellSyscalls = {
