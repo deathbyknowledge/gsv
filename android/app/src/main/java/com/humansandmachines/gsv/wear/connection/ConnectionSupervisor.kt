@@ -6,6 +6,7 @@ import android.net.Network
 import com.humansandmachines.gsv.wear.config.DriverConfig
 import com.humansandmachines.gsv.wear.protocol.ConnectFailure
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicBoolean
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.channels.Channel
@@ -40,6 +41,7 @@ class ConnectionSupervisor(
     private val connectivity = context.getSystemService(ConnectivityManager::class.java)
     private val events = Channel<Event>(Channel.UNLIMITED)
     private val epochs = ConnectionEpoch()
+    private val stopped = AtomicBoolean(false)
     private var actor: Job? = null
     private var retry: Job? = null
     private var activeNetwork: Network? = null
@@ -65,7 +67,17 @@ class ConnectionSupervisor(
     }
 
     fun stop() {
-        events.trySend(Event.Stop)
+        if (!stopped.compareAndSet(false, true)) return
+        retry?.cancel()
+        retry = null
+        epochs.invalidate()
+        session?.close()
+        session = null
+        runCatching { connectivity.unregisterNetworkCallback(networkCallback) }
+        events.close()
+        actor?.cancel()
+        actor = null
+        onStatus(ConnectionStatus(ConnectionState.DISCONNECTED))
     }
 
     private suspend fun eventLoop() {
@@ -114,21 +126,12 @@ class ConnectionSupervisor(
                         connectNow(ConnectionState.RECONNECTING)
                     }
                 }
-                Event.Stop -> {
-                    retry?.cancel()
-                    retry = null
-                    epochs.invalidate()
-                    session?.close()
-                    session = null
-                    runCatching { connectivity.unregisterNetworkCallback(networkCallback) }
-                    onStatus(ConnectionStatus(ConnectionState.DISCONNECTED))
-                    events.close()
-                }
             }
         }
     }
 
     private fun connectNow(state: ConnectionState) {
+        if (stopped.get()) return
         retry?.cancel()
         retry = null
         epochs.invalidate()
@@ -165,6 +168,5 @@ class ConnectionSupervisor(
         data class Ready(val epoch: Long) : Event
         data class Terminated(val epoch: Long, val reason: ConnectFailure) : Event
         data class Retry(val epoch: Long) : Event
-        data object Stop : Event
     }
 }

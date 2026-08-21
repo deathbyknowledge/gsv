@@ -3,6 +3,10 @@ node_modules/
 target/
 !extension/src/target/
 !extension/src/target/**
+!android/app/src/main/java/com/humansandmachines/gsv/wear/target/
+!android/app/src/main/java/com/humansandmachines/gsv/wear/target/**
+!android/app/src/test/java/com/humansandmachines/gsv/wear/target/
+!android/app/src/test/java/com/humansandmachines/gsv/wear/target/**
 .wrangler/
 .gradle/
 android/local.properties

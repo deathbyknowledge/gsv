@@ -8,6 +8,8 @@ interface DriverTransport {
     fun sendText(text: String): Boolean
 
     fun sendBinary(bytes: ByteArray): Boolean
+
+    fun queuedBytes(): Long = 0
 }
 
 interface DriverRequestDispatcher {

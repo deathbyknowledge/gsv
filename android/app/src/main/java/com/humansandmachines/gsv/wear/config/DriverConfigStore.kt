@@ -15,6 +15,15 @@ class DriverConfigStore(context: Context) {
 
     fun hasToken(): Boolean = credentials.hasToken()
 
+    fun hasVoiceToken(): Boolean = credentials.hasVoiceToken()
+
+    fun saveVoiceToken(token: String) {
+        require(token.isNotBlank() && token.length <= 4096 && token.none(Char::isISOControl)) {
+            "Voice token is invalid"
+        }
+        credentials.saveVoiceToken(token)
+    }
+
     fun save(
         fields: ConnectionFields,
         replacementToken: String?,
@@ -41,6 +50,20 @@ class DriverConfigStore(context: Context) {
             gatewayUrl = fields.gatewayUrl,
             username = fields.username,
             deviceId = fields.deviceId,
+            token = token,
+        )
+    }
+
+    fun loadVoice(allowCleartext: Boolean): VoiceClientConfig? {
+        val fields = loadFields() ?: return null
+        val driverToken = credentials.loadToken() ?: return null
+        if (DriverConfig.validate(fields, driverToken, allowCleartext) != null) return null
+        val token = credentials.loadVoiceToken() ?: return null
+        if (token.isBlank() || token.length > 4096 || token.any(Char::isISOControl)) return null
+        return VoiceClientConfig(
+            gatewayUrl = fields.gatewayUrl,
+            username = fields.username,
+            clientId = "${fields.deviceId}-voice",
             token = token,
         )
     }

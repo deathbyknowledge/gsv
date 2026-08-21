@@ -87,7 +87,7 @@ CLI devices register with the Gateway as driver connections. A device descriptor
   "platform": "darwin",
   "version": "0.1.0",
   "online": true,
-  "implements": ["fs.*", "shell.exec"]
+  "implements": ["fs.*", "shell.exec", "net.fetch"]
 }
 ```
 
@@ -216,10 +216,49 @@ Use a device target for local source trees, private networks, machine-local cred
 
 ## Android Wear Targets
 
-The Android application registers as an ordinary driver target and initially
-advertises only `fs.read`. It represents on-demand physical sensors as
-standardized virtual device files, so agents continue to use the fixed `Read`
-tool instead of receiving a camera-specific model tool:
+The Android application registers as an ordinary driver target with:
+
+```json
+{
+  "implements": ["fs.*", "shell.exec", "net.fetch"]
+}
+```
+
+It presents app-private Android storage, runtime inspection, and physical
+sensors through one bounded virtual target. Filesystem tools use the same
+public syscall shapes as other targets:
+
+- `/home/android` is persistent across runtime restarts and app upgrades.
+- `/tmp` lasts for one service runtime and is cleared on startup and shutdown.
+- `/proc/device.json`, `/proc/capabilities.json`, and `/proc/runtime.json`
+  describe the phone and target runtime.
+- `/proc/wear/status.json` and `/dev/wear/status` report Wear authority and
+  sensor state.
+- `/dev/camera/back/snapshot` is an event-producing image file.
+
+Only `/home/android` and `/tmp` are writable. A file is limited to 64 MiB,
+persistent target storage to 256 MiB, temporary storage to 128 MiB, and each
+mount to 4,096 entries. Direct text reads and edits are limited to 8 MiB;
+larger files remain transferable as binary bodies. These are target policy
+limits, not access to the phone's shared storage or Android filesystem.
+
+The shell uses that same virtual filesystem. Run `help` or `commands --json`
+to discover its bounded commands. It supports quoting, pipelines, sequential
+statements, input/output redirection, common file and text commands, and the
+Android-specific `wear`, camera, microphone, IMU, gesture, orientation,
+location, device-context, notification, app/deep-link, share, clipboard,
+text-to-speech, vibration, and local-check commands. It does not invoke
+`/system/bin/sh` or Android system binaries. Shell sessions and background
+commands are not supported.
+
+`net.fetch` executes an HTTP(S) request on the phone and streams the response
+through the ordinary target body protocol. Request and response bodies are
+limited to 32 MiB. Redirect policy, timeout, cancellation, body-length checks,
+and response-temp cleanup are owned by the Android network handler.
+
+Wear status and one-shot camera capture remain standardized virtual files, so
+agents use the fixed `Read` tool instead of receiving a camera-specific model
+tool. Timed sensor sessions compose beneath the fixed `Shell` tool:
 
 ```json
 {
@@ -241,16 +280,51 @@ available only during a locally created, currently armed Wear authority
 session. Reading it opens CameraX for one bounded capture, returns an ordinary
 `fs.read` image body, closes the camera, and deletes the temporary JPEG after
 the body reaches a terminal outcome. Offset and limit arguments are rejected
-for these event-producing virtual files.
+for event-producing virtual files.
+
+To retain or transfer a capture, materialize it once inside the target:
+
+```bash
+camera snapshot /tmp/current-context.jpg
+```
+
+The resulting ordinary file can be read repeatedly or copied between `gsv`,
+Android, and another device using the standard `fs.copy` transfer path. Binary
+request and response bodies are streamed through protocol frames, checked
+against their declared length, bounded to 64 MiB, and removed from the Android
+incoming spool at every terminal outcome.
+
+Timed physical-context commands are bounded to two minutes. Camera observation
+materializes JPEG frames and a manifest. Microphone capture materializes WAV
+audio and JSON analysis; its on-device primitive detector recognizes
+speech-or-voice, loud sound, and sustained tone, and labels other requested
+events as requiring semantic inference. IMU and gesture sessions summarize
+motion, shake events, and orientation without exposing Android sensor APIs as
+a second protocol.
+
+Device commands expose battery, active network, thermal/power, target storage,
+granted runtime permissions, location, launcher apps, and optional notification
+listener data. Agent output commands can show notifications, speak, and
+vibrate. App opening, deep links, and sharing obey Android's background-activity
+rules: a screen-off/background request returns `requiresUserTap: true` and
+posts an actionable notification. Clipboard reads report unavailable unless
+GSV Wear is visible.
+
+`checks` persists up to 32 bounded sensor/context commands and schedules them
+inside the armed foreground runtime. Checks continue across temporary Gateway
+disconnects, journal results beneath `/home/android/checks`, and are cancelled
+by pause, disarm, removal, or service teardown. They do not constitute an
+offline agent runtime or replay remote requests.
 
 Disarming removes sensor authority but deliberately leaves the driver
-connection running. Disconnecting the Android runtime is a separate local
-action. Reboot, force-stop, process death, or permission loss cannot recreate
-Wear authority remotely.
+connection, filesystem, and bounded shell running. Disconnecting the Android
+runtime is a separate local action. Reboot, force-stop, process death, or
+permission loss cannot recreate Wear authority remotely.
 
 ## Routing
 
-For `fs.*` and `shell.exec`, the Gateway reads `target` at dispatch time.
+For `fs.*`, `shell.exec`, and `net.fetch`, the Gateway reads `target` at
+dispatch time.
 
 - `target: "gsv"` runs the native handler.
 - `target: "<deviceId>"` verifies access, online state, and `implements`, then forwards the same syscall to the device.
@@ -260,9 +334,8 @@ For `fs.*` and `shell.exec`, the Gateway reads `target` at dispatch time.
 Other syscall domains such as `proc.*`, `repo.*`, `sys.*`, `signal.*`, and `adapter.*` are kernel/control-plane interfaces and are not hardware-routed.
 
 `CodeMode` is process-local. It is not device-routed itself; code running inside
-the sandbox calls `shell(...)` and `fs.*(...)`, and those nested calls use the
-same `target` and `sessionId` routing rules as the direct `Shell`, `Read`,
-`Write`, `Edit`, `Delete`, and `Search` tools.
+the sandbox calls `shell(...)`, `fs.*(...)`, and `fetch(...)`; those nested
+calls use the same target-routing rules as direct model tools.
 
 ## Implementation References
 

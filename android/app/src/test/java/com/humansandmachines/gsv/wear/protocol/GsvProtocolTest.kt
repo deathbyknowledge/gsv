@@ -9,7 +9,7 @@ import org.junit.Test
 
 class GsvProtocolTest {
     @Test
-    fun connectFrameRegistersOnlyRead() {
+    fun connectFrameRegistersTheAndroidFilesystemShellAndNetwork() {
         val frame = JSONObject(
             GsvProtocol.connectFrame(
                 "connect-1",
@@ -21,7 +21,7 @@ class GsvProtocolTest {
         assertEquals(2, args.getInt("protocol"))
         assertEquals("driver", args.getJSONObject("client").getString("role"))
         assertEquals(
-            listOf("fs.read"),
+            listOf("fs.*", "shell.exec", "net.fetch"),
             args.getJSONObject("driver").getJSONArray("implements").let { array ->
                 List(array.length()) { array.getString(it) }
             },

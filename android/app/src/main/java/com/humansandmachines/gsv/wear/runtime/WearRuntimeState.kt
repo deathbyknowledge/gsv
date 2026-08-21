@@ -4,6 +4,7 @@ import com.humansandmachines.gsv.wear.authority.AuthorityState
 import com.humansandmachines.gsv.wear.connection.ConnectionState
 import com.humansandmachines.gsv.wear.connection.ConnectionStatus
 import com.humansandmachines.gsv.wear.protocol.ConnectFailure
+import com.humansandmachines.gsv.wear.voice.VoiceTurnState
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -16,11 +17,21 @@ enum class CameraState {
     CLOSING,
 }
 
+enum class MicrophoneState {
+    CLOSED,
+    OPENING,
+    ACTIVE,
+    CLOSING,
+}
+
 data class RuntimeSnapshot(
     val connection: ConnectionState = ConnectionState.DISCONNECTED,
     val connectionFailure: ConnectFailure? = null,
     val authority: AuthorityState = AuthorityState.DISARMED,
     val camera: CameraState = CameraState.CLOSED,
+    val microphone: MicrophoneState = MicrophoneState.CLOSED,
+    val voiceConnection: ConnectionState = ConnectionState.DISCONNECTED,
+    val voiceTurn: VoiceTurnState = VoiceTurnState.IDLE,
 )
 
 object WearRuntimeState {
@@ -39,6 +50,18 @@ object WearRuntimeState {
 
     fun setCamera(state: CameraState) {
         mutableSnapshot.update { it.copy(camera = state) }
+    }
+
+    fun setMicrophone(state: MicrophoneState) {
+        mutableSnapshot.update { it.copy(microphone = state) }
+    }
+
+    fun setVoiceConnection(state: ConnectionState) {
+        mutableSnapshot.update { it.copy(voiceConnection = state) }
+    }
+
+    fun setVoiceTurn(state: VoiceTurnState) {
+        mutableSnapshot.update { it.copy(voiceTurn = state) }
     }
 
     fun reset() {

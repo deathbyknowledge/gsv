@@ -59,3 +59,13 @@ class DriverConfig(
         private fun String.hasControlCharacter(): Boolean = any(Char::isISOControl)
     }
 }
+
+class VoiceClientConfig(
+    val gatewayUrl: String,
+    val username: String,
+    val clientId: String,
+    val token: String,
+) {
+    override fun toString(): String =
+        "VoiceClientConfig(gatewayUrl=<redacted>, username=$username, clientId=$clientId, token=<redacted>)"
+}

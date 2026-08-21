@@ -26,6 +26,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -35,7 +36,10 @@ import kotlin.coroutines.coroutineContext
 
 class CameraCaptureFailure(message: String) : Exception(message)
 
-class CapturedSnapshot internal constructor(val file: File) : Closeable {
+class CapturedSnapshot internal constructor(
+    val file: File,
+    val capturedAtMillis: Long = System.currentTimeMillis(),
+) : Closeable {
     private val closed = AtomicBoolean(false)
 
     val length: Long
@@ -50,12 +54,33 @@ fun interface SnapshotCamera {
     suspend fun capture(lease: AuthorityLease): CapturedSnapshot
 }
 
+class CapturedObservation internal constructor(
+    val snapshots: List<CapturedSnapshot>,
+    val startedAtMillis: Long,
+    val completedAtMillis: Long,
+) : Closeable {
+    private val closed = AtomicBoolean(false)
+
+    override fun close() {
+        if (closed.compareAndSet(false, true)) snapshots.forEach(CapturedSnapshot::close)
+    }
+}
+
+interface ObservingCamera : SnapshotCamera {
+    suspend fun observe(
+        lease: AuthorityLease,
+        durationMillis: Long,
+        intervalMillis: Long,
+        maximumFrames: Int,
+    ): CapturedObservation
+}
+
 class CameraController(
     private val context: Context,
     private val lifecycleOwner: LifecycleOwner,
     private val authority: WearAuthority,
     private val onState: (CameraState) -> Unit,
-) : SnapshotCamera, Closeable {
+) : ObservingCamera, Closeable {
     private val captureMutex = Mutex()
     private val cameraExecutor: ExecutorService = Executors.newSingleThreadExecutor()
     private var provider: ProcessCameraProvider? = null
@@ -67,6 +92,49 @@ class CameraController(
             }
         } catch (_: TimeoutCancellationException) {
             throw CameraCaptureFailure("Camera capture timed out")
+        }
+    }
+
+    override suspend fun observe(
+        lease: AuthorityLease,
+        durationMillis: Long,
+        intervalMillis: Long,
+        maximumFrames: Int,
+    ): CapturedObservation {
+        if (durationMillis !in MIN_OBSERVE_MILLIS..MAX_OBSERVE_MILLIS) {
+            throw CameraCaptureFailure("Camera observation duration is out of range")
+        }
+        if (intervalMillis !in MIN_FRAME_INTERVAL_MILLIS..durationMillis) {
+            throw CameraCaptureFailure("Camera observation interval is out of range")
+        }
+        if (maximumFrames !in 1..MAX_OBSERVATION_FRAMES) {
+            throw CameraCaptureFailure("Camera observation frame limit is out of range")
+        }
+
+        val started = System.currentTimeMillis()
+        val deadline = android.os.SystemClock.elapsedRealtime() + durationMillis
+        val snapshots = mutableListOf<CapturedSnapshot>()
+        var capturedBytes = 0L
+        try {
+            while (snapshots.size < maximumFrames) {
+                if (!authority.isCurrent(lease)) {
+                    throw CameraCaptureFailure("Wear Mode authority changed during observation")
+                }
+                val snapshot = capture(lease)
+                capturedBytes += snapshot.length
+                if (capturedBytes > MAX_OBSERVATION_BYTES) {
+                    snapshot.close()
+                    throw CameraCaptureFailure("Camera observation exceeds the size limit")
+                }
+                snapshots += snapshot
+                val remaining = deadline - android.os.SystemClock.elapsedRealtime()
+                if (remaining <= 0 || snapshots.size >= maximumFrames) break
+                delay(intervalMillis.coerceAtMost(remaining))
+            }
+            return CapturedObservation(snapshots, started, System.currentTimeMillis())
+        } catch (error: Exception) {
+            snapshots.forEach(CapturedSnapshot::close)
+            throw error
         }
     }
 
@@ -209,5 +277,10 @@ class CameraController(
     companion object {
         const val MAX_SNAPSHOT_BYTES = 24L * 1024 * 1024
         private const val CAPTURE_TIMEOUT_MILLIS = 5_000L
+        const val MAX_OBSERVE_MILLIS = 120_000L
+        const val MAX_OBSERVATION_FRAMES = 32
+        private const val MAX_OBSERVATION_BYTES = 64L * 1024 * 1024
+        private const val MIN_OBSERVE_MILLIS = 500L
+        private const val MIN_FRAME_INTERVAL_MILLIS = 500L
     }
 }

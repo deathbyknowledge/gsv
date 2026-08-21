@@ -1,42 +1,57 @@
 package com.humansandmachines.gsv.wear.runtime
 
-import com.humansandmachines.gsv.wear.authority.AuthorityState
-import com.humansandmachines.gsv.wear.authority.WearAuthority
 import com.humansandmachines.gsv.wear.camera.CameraCaptureFailure
-import com.humansandmachines.gsv.wear.camera.CapturedSnapshot
-import com.humansandmachines.gsv.wear.camera.SnapshotCamera
 import com.humansandmachines.gsv.wear.connection.DriverRequestDispatcher
 import com.humansandmachines.gsv.wear.connection.DriverRequestDispatcherFactory
 import com.humansandmachines.gsv.wear.connection.DriverTransport
+import com.humansandmachines.gsv.wear.protocol.BinaryFrame
 import com.humansandmachines.gsv.wear.protocol.BinaryFrameCodec
 import com.humansandmachines.gsv.wear.protocol.BodyDescriptor
 import com.humansandmachines.gsv.wear.protocol.GsvProtocol
 import com.humansandmachines.gsv.wear.protocol.IncomingRequest
-import java.io.ByteArrayInputStream
+import com.humansandmachines.gsv.wear.target.AndroidTargetFileSystem
+import com.humansandmachines.gsv.wear.target.TargetFileSystem
+import com.humansandmachines.gsv.wear.target.TargetFsException
+import com.humansandmachines.gsv.wear.target.TargetFsHandler
+import com.humansandmachines.gsv.wear.target.TargetHandlerResponse
+import com.humansandmachines.gsv.wear.target.TargetNetHandler
+import com.humansandmachines.gsv.wear.target.TargetReadHandle
+import com.humansandmachines.gsv.wear.target.TargetRequestBody
+import com.humansandmachines.gsv.wear.target.TargetShell
+import com.humansandmachines.gsv.wear.target.WearTargetRuntimeFiles
+import java.io.File
 import java.io.FileInputStream
+import java.io.FileOutputStream
 import java.io.InputStream
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeout
 import org.json.JSONObject
 
 class WearRequestDispatcherFactory(
     private val parentScope: CoroutineScope,
-    private val authority: WearAuthority,
-    private val camera: SnapshotCamera,
+    fileSystem: TargetFileSystem,
+    private val incomingDirectory: File,
+    private val shell: TargetShell = TargetShell(fileSystem),
+    private val netHandler: TargetNetHandler = TargetNetHandler(File(incomingDirectory, "net")),
 ) : DriverRequestDispatcherFactory {
+    private val fsHandler = TargetFsHandler(fileSystem)
     private val dispatchers = ConcurrentHashMap<Long, WearRequestDispatcher>()
 
     override fun create(transport: DriverTransport): DriverRequestDispatcher {
@@ -44,8 +59,10 @@ class WearRequestDispatcherFactory(
         dispatcher = WearRequestDispatcher(
             transport = transport,
             parentScope = parentScope,
-            authority = authority,
-            camera = camera,
+            fsHandler = fsHandler,
+            shell = shell,
+            netHandler = netHandler,
+            incomingDirectory = incomingDirectory,
             onClosed = { dispatchers.remove(transport.epoch, dispatcher) },
         )
         dispatchers[transport.epoch] = dispatcher
@@ -60,145 +77,159 @@ class WearRequestDispatcherFactory(
 private class WearRequestDispatcher(
     private val transport: DriverTransport,
     parentScope: CoroutineScope,
-    private val authority: WearAuthority,
-    private val camera: SnapshotCamera,
+    private val fsHandler: TargetFsHandler,
+    private val shell: TargetShell,
+    private val netHandler: TargetNetHandler,
+    private val incomingDirectory: File,
     private val onClosed: () -> Unit,
 ) : DriverRequestDispatcher {
     private val scope = CoroutineScope(
         parentScope.coroutineContext + SupervisorJob(parentScope.coroutineContext[Job]),
     )
     private val activeRequests = ConcurrentHashMap<String, Job>()
+    private val requestBodies = ConcurrentHashMap<String, IncomingRequestBody>()
+    private val incomingBodies = ConcurrentHashMap<Long, IncomingRequestBody>()
     private val outgoingBodies = ConcurrentHashMap<Long, OutgoingBody>()
     private val nextStreamId = AtomicLong(1)
     private val closed = AtomicBoolean(false)
 
     override fun onRequest(request: IncomingRequest) {
         if (closed.get()) return
+        if (activeRequests.containsKey(request.id)) {
+            request.body?.let { cancelBodyDescriptor(it, "Duplicate request id") }
+            return
+        }
+        if (activeRequests.size >= MAX_ACTIVE_REQUESTS) {
+            request.body?.let { cancelBodyDescriptor(it, "Android target is busy") }
+            transport.sendText(GsvProtocol.errorResponse(request.id, 429, "Android target is busy"))
+            return
+        }
+
+        val requestBody = request.body?.let { descriptor ->
+            val reservedBytes = descriptor.length ?: AndroidTargetFileSystem.MAX_TARGET_FILE_BYTES
+            val currentReservedBytes = incomingBodies.values.sumOf(IncomingRequestBody::reservedBytes)
+            if (
+                incomingBodies.size >= MAX_ACTIVE_INCOMING_BODIES ||
+                currentReservedBytes + reservedBytes > MAX_INCOMING_SPOOL_BYTES
+            ) {
+                rejectBeforeDispatch(request, descriptor, "Too many active request bodies")
+                return
+            }
+            val body = try {
+                IncomingRequestBody(descriptor, incomingDirectory, transport)
+            } catch (error: Exception) {
+                rejectBeforeDispatch(request, descriptor, error.message ?: "Unable to receive request body")
+                return
+            }
+            if (incomingBodies.putIfAbsent(descriptor.streamId, body) != null) {
+                body.cancel("Binary request stream is already pending")
+                body.close()
+                transport.sendText(
+                    GsvProtocol.successfulResponse(
+                        request.id,
+                        JSONObject().put("ok", false).put("error", "Binary request stream is already pending"),
+                    ),
+                )
+                return
+            }
+            requestBodies[request.id] = body
+            body
+        }
+
         val job = scope.launch(start = CoroutineStart.LAZY) {
             try {
-                handleRequest(request)
+                handleRequest(request, requestBody)
             } finally {
+                requestBody?.let { body ->
+                    requestBodies.remove(request.id, body)
+                    incomingBodies.remove(body.streamId, body)
+                    body.close()
+                }
                 activeRequests.remove(request.id, currentCoroutineContext().job)
             }
         }
         if (activeRequests.putIfAbsent(request.id, job) == null) {
             job.start()
         } else {
+            requestBody?.cancel("Duplicate request id")
+            requestBody?.close()
             job.cancel()
         }
     }
 
     override fun onRequestCancel(id: String) {
         activeRequests[id]?.cancel(CancellationException("Request cancelled"))
+        requestBodies[id]?.cancel("Request cancelled")
     }
 
     override fun onBinary(bytes: ByteArray) {
         val frame = BinaryFrameCodec.decode(bytes) ?: return
-        if (frame.flags and (BinaryFrameCodec.CANCEL or BinaryFrameCodec.ERROR) == 0) return
-        outgoingBodies[frame.streamId]?.cancelFromPeer()
+        if (frame.flags and BinaryFrameCodec.CANCEL != 0) {
+            outgoingBodies[frame.streamId]?.let { outgoing ->
+                outgoing.cancelFromPeer()
+                return
+            }
+        }
+        incomingBodies[frame.streamId]?.accept(frame)
     }
 
     fun cancelAll() {
-        activeRequests.values.forEach { it.cancel(CancellationException("Wear authority changed")) }
+        activeRequests.values.forEach { it.cancel(CancellationException("Wear runtime changed")) }
+        requestBodies.values.forEach { it.cancel("Wear runtime changed") }
     }
 
     override fun close() {
         if (!closed.compareAndSet(false, true)) return
         cancelAll()
+        incomingBodies.values.forEach(IncomingRequestBody::close)
         scope.cancel(CancellationException("Driver connection closed"))
         onClosed()
     }
 
-    private suspend fun handleRequest(request: IncomingRequest) {
+    private suspend fun handleRequest(request: IncomingRequest, body: TargetRequestBody?) {
         val responder = RequestResponder(request.id, transport)
         try {
-            if (request.body != null) {
-                cancelIncomingBody(request.body)
-                responder.error("Android fs.read does not accept a request body")
-                return
+            val response = when {
+                request.call in FS_CALLS -> fsHandler.handle(request.call, request.args, body)
+                request.call == "shell.exec" -> {
+                    if (body != null) {
+                        body.cancel("shell.exec does not accept a request body")
+                        TargetHandlerResponse.Data(
+                            JSONObject()
+                                .put("status", "failed")
+                                .put("output", "")
+                                .put("error", "shell.exec does not accept a request body"),
+                        )
+                    } else {
+                        TargetHandlerResponse.Data(shell.execute(request.args))
+                    }
+                }
+                request.call == "net.fetch" -> netHandler.handle(request.args, body)
+                else -> {
+                    body?.cancel("Unsupported Android driver syscall")
+                    responder.protocolError("Unsupported Android driver syscall: ${request.call}")
+                    return
+                }
             }
-            if (request.call != "fs.read") {
-                responder.protocolError("Unsupported Android driver syscall")
-                return
-            }
-            if (request.args.has("offset") || request.args.has("limit")) {
-                responder.error("Virtual wearable files do not support offset or limit")
-                return
-            }
-            when (request.args.optString("path")) {
-                WearVirtualFiles.STATUS -> sendStatus(responder)
-                WearVirtualFiles.CAMERA_SNAPSHOT -> sendSnapshot(responder)
-                else -> responder.error("Virtual wearable path not found")
+            when (response) {
+                is TargetHandlerResponse.Data -> responder.data(response.data)
+                is TargetHandlerResponse.Body -> sendBody(responder, response.data, response.body)
             }
         } catch (error: CameraCaptureFailure) {
-            responder.error(error.message ?: "Camera capture failed")
+            responder.data(failure(error.message ?: "Camera capture failed"))
+        } catch (error: TargetFsException) {
+            responder.data(failure(error.message ?: "Android target operation failed"))
         } catch (_: CancellationException) {
             // Cancellation owns cleanup and intentionally suppresses late responses.
         } catch (_: Exception) {
-            responder.error("Wear request failed")
+            responder.data(failure("Android target request failed"))
         }
-    }
-
-    private suspend fun sendStatus(responder: RequestResponder) {
-        val snapshot = WearRuntimeState.snapshot.value
-        val text = JSONObject()
-            .put("wearAuthority", snapshot.authority.name.lowercase())
-            .put("connection", snapshot.connection.name.lowercase())
-            .put("camera", snapshot.camera.name.lowercase())
-            .put("microphone", "closed")
-            .put(
-                "capabilities",
-                JSONObject().put(
-                    "camera.snapshot",
-                    JSONObject()
-                        .put("authorized", snapshot.authority == AuthorityState.ARMED)
-                        .put("path", WearVirtualFiles.CAMERA_SNAPSHOT)
-                        .put("timeoutMs", 5_000),
-                ),
-            )
-            .put("rawMediaRetained", false)
-            .toString(2) + "\n"
-        val bytes = text.toByteArray(Charsets.UTF_8)
-        val data = JSONObject()
-            .put("ok", true)
-            .put("path", WearVirtualFiles.STATUS)
-            .put("kind", "text")
-            .put("contentType", "application/json; charset=utf-8")
-            .put("lines", text.count { it == '\n' })
-            .put("size", bytes.size)
-        sendBody(responder, data, OwnedBody.fromBytes(bytes))
-    }
-
-    private suspend fun sendSnapshot(responder: RequestResponder) {
-        val lease = authority.acquire() ?: run {
-            responder.error(
-                if (authority.state() == AuthorityState.PAUSED) {
-                    "Wear Mode is paused"
-                } else {
-                    "Wear Mode is not armed"
-                },
-            )
-            return
-        }
-        val snapshot = camera.capture(lease)
-        if (!authority.isCurrent(lease)) {
-            snapshot.close()
-            throw CameraCaptureFailure("Wear Mode authority changed during capture")
-        }
-        currentCoroutineContext().ensureActive()
-        val data = JSONObject()
-            .put("ok", true)
-            .put("path", WearVirtualFiles.CAMERA_SNAPSHOT)
-            .put("kind", "image")
-            .put("contentType", "image/jpeg")
-            .put("size", snapshot.length)
-        sendBody(responder, data, OwnedBody.fromSnapshot(snapshot))
     }
 
     private suspend fun sendBody(
         responder: RequestResponder,
         data: JSONObject,
-        body: OwnedBody,
+        body: TargetReadHandle,
     ) {
         currentCoroutineContext().ensureActive()
         val streamId = allocateStreamId()
@@ -207,8 +238,11 @@ private class WearRequestDispatcher(
         outgoingBodies[streamId] = outgoing
         try {
             if (!responder.body(data, BodyDescriptor(streamId, body.length))) return
-            withContext(Dispatchers.IO) {
+            val sent = withContext(Dispatchers.IO) {
                 body.open().use { input -> sendChunks(streamId, input) }
+            }
+            if (sent != body.length) {
+                throw TargetFsException("Body length $sent did not match ${body.length}")
             }
             currentCoroutineContext().ensureActive()
             if (!transport.sendBinary(BinaryFrameCodec.encode(streamId, BinaryFrameCodec.END))) {
@@ -226,26 +260,42 @@ private class WearRequestDispatcher(
         }
     }
 
-    private suspend fun sendChunks(streamId: Long, input: InputStream) {
+    private suspend fun sendChunks(streamId: Long, input: InputStream): Long {
         val buffer = ByteArray(BODY_CHUNK_BYTES)
+        var sent = 0L
         while (true) {
             currentCoroutineContext().ensureActive()
             val count = input.read(buffer)
-            if (count < 0) return
+            if (count < 0) return sent
             if (count == 0) continue
+            sent += count
             val payload = if (count == buffer.size) buffer else buffer.copyOf(count)
+            while (transport.queuedBytes() > MAX_OUTBOUND_QUEUE_BYTES) {
+                currentCoroutineContext().ensureActive()
+                delay(OUTBOUND_QUEUE_POLL_MS)
+            }
             if (!transport.sendBinary(BinaryFrameCodec.encode(streamId, BinaryFrameCodec.DATA, payload))) {
                 throw IllegalStateException("Driver connection closed")
             }
         }
     }
 
-    private fun cancelIncomingBody(body: BodyDescriptor) {
+    private fun rejectBeforeDispatch(request: IncomingRequest, body: BodyDescriptor, message: String) {
+        cancelBodyDescriptor(body, message)
+        transport.sendText(
+            GsvProtocol.successfulResponse(
+                request.id,
+                JSONObject().put("ok", false).put("error", message),
+            ),
+        )
+    }
+
+    private fun cancelBodyDescriptor(body: BodyDescriptor, reason: String) {
         transport.sendBinary(
             BinaryFrameCodec.encode(
                 body.streamId,
                 BinaryFrameCodec.CANCEL or BinaryFrameCodec.END,
-                "Request body is unsupported".toByteArray(Charsets.UTF_8),
+                reason.toByteArray(Charsets.UTF_8),
             ),
         )
     }
@@ -265,9 +315,13 @@ private class WearRequestDispatcher(
             val candidate = nextStreamId.getAndUpdate {
                 if (it == BinaryFrameCodec.MAX_STREAM_ID) 1L else it + 1
             }
-            if (!outgoingBodies.containsKey(candidate)) return candidate
+            if (!outgoingBodies.containsKey(candidate) && !incomingBodies.containsKey(candidate)) return candidate
         }
     }
+
+    private fun failure(message: String): JSONObject = JSONObject()
+        .put("ok", false)
+        .put("error", message)
 
     private class OutgoingBody(val job: Job) {
         val peerCancelled = AtomicBoolean(false)
@@ -284,14 +338,9 @@ private class WearRequestDispatcher(
     ) {
         private val committed = AtomicBoolean(false)
 
-        fun error(message: String) {
+        fun data(data: JSONObject) {
             if (!committed.compareAndSet(false, true)) return
-            transport.sendText(
-                GsvProtocol.successfulResponse(
-                    id,
-                    JSONObject().put("ok", false).put("error", message),
-                ),
-            )
+            transport.sendText(GsvProtocol.successfulResponse(id, data))
         }
 
         fun protocolError(message: String) {
@@ -305,34 +354,153 @@ private class WearRequestDispatcher(
         }
     }
 
-    private class OwnedBody(
-        val length: Long,
-        val open: () -> InputStream,
-        private val cleanup: () -> Unit,
-    ) {
-        fun close() = cleanup()
+    companion object {
+        private const val BODY_CHUNK_BYTES = 64 * 1024
+        private const val MAX_OUTBOUND_QUEUE_BYTES = 4L * 1024 * 1024
+        private const val OUTBOUND_QUEUE_POLL_MS = 10L
+        private const val MAX_ACTIVE_REQUESTS = 32
+        private const val MAX_ACTIVE_INCOMING_BODIES = 8
+        private const val MAX_INCOMING_SPOOL_BYTES = 128L * 1024 * 1024
+        private val FS_CALLS = setOf(
+            "fs.read",
+            "fs.write",
+            "fs.edit",
+            "fs.delete",
+            "fs.search",
+            "fs.copy",
+            "fs.transfer.stat",
+            "fs.transfer.send",
+            "fs.transfer.receive",
+        )
+    }
+}
 
-        companion object {
-            fun fromBytes(bytes: ByteArray): OwnedBody = OwnedBody(
-                length = bytes.size.toLong(),
-                open = { ByteArrayInputStream(bytes) },
-                cleanup = {},
-            )
+private class IncomingRequestBody(
+    descriptor: BodyDescriptor,
+    directory: File,
+    private val transport: DriverTransport,
+) : TargetRequestBody {
+    override val length: Long? = descriptor.length
+    val streamId: Long = descriptor.streamId
+    val reservedBytes: Long = length ?: AndroidTargetFileSystem.MAX_TARGET_FILE_BYTES
 
-            fun fromSnapshot(snapshot: CapturedSnapshot): OwnedBody = OwnedBody(
-                length = snapshot.length,
-                open = { FileInputStream(snapshot.file) },
-                cleanup = snapshot::close,
+    private val lock = Any()
+    private val completed = CompletableDeferred<Unit>()
+    private val file: File
+    private val output: FileOutputStream
+    private var received = 0L
+    private var terminal = false
+    private var closed = false
+
+    init {
+        if (length != null && length > AndroidTargetFileSystem.MAX_TARGET_FILE_BYTES) {
+            throw TargetFsException(
+                "Request body exceeds ${AndroidTargetFileSystem.MAX_TARGET_FILE_BYTES} bytes",
             )
         }
+        if (!directory.mkdirs() && !directory.isDirectory) {
+            throw TargetFsException("Unable to create incoming transfer directory")
+        }
+        file = File.createTempFile("gsv-body-", ".tmp", directory)
+        output = FileOutputStream(file)
+    }
+
+    fun accept(frame: BinaryFrame) {
+        var notifyReason: String? = null
+        try {
+            synchronized(lock) {
+                if (terminal || closed) return
+                if (frame.flags and (BinaryFrameCodec.ERROR or BinaryFrameCodec.CANCEL) != 0) {
+                    val message = frame.payload.toString(Charsets.UTF_8).take(MAX_ERROR_CHARS)
+                        .ifBlank { "Binary request body was cancelled by sender" }
+                    failLocked(message)
+                    return
+                }
+                if (frame.flags and BinaryFrameCodec.DATA != 0 && frame.payload.isNotEmpty()) {
+                    val next = received + frame.payload.size
+                    val maximum = length ?: AndroidTargetFileSystem.MAX_TARGET_FILE_BYTES
+                    if (next > maximum || next > AndroidTargetFileSystem.MAX_TARGET_FILE_BYTES) {
+                        notifyReason = "Body exceeded declared or maximum length"
+                        failLocked(notifyReason!!)
+                    } else {
+                        output.write(frame.payload)
+                        received = next
+                    }
+                }
+                if (!terminal && frame.flags and BinaryFrameCodec.END != 0) {
+                    if (length != null && received != length) {
+                        notifyReason = "Body length $received did not match $length"
+                        failLocked(notifyReason!!)
+                    } else {
+                        output.close()
+                        terminal = true
+                        completed.complete(Unit)
+                    }
+                }
+            }
+        } catch (_: Exception) {
+            notifyReason = "Unable to spool binary request body"
+            synchronized(lock) {
+                if (!terminal && !closed) failLocked(notifyReason!!)
+            }
+        }
+        notifyReason?.let(::sendCancel)
+    }
+
+    override suspend fun open(): InputStream {
+        try {
+            withTimeout(BODY_IDLE_TIMEOUT_MS) { completed.await() }
+        } catch (_: TimeoutCancellationException) {
+            cancel("Binary request body timed out")
+            throw TargetFsException("Binary request body timed out")
+        }
+        synchronized(lock) {
+            if (closed) throw TargetFsException("Binary request body is closed")
+        }
+        return FileInputStream(file)
+    }
+
+    override fun cancel(reason: String) {
+        val notify = synchronized(lock) {
+            if (terminal || closed) {
+                false
+            } else {
+                failLocked(reason)
+                true
+            }
+        }
+        if (notify) sendCancel(reason)
+    }
+
+    override fun close() {
+        cancel("Binary request body closed")
+        synchronized(lock) { closed = true }
+        file.delete()
+    }
+
+    private fun failLocked(message: String) {
+        runCatching { output.close() }
+        terminal = true
+        completed.completeExceptionally(TargetFsException(message))
+    }
+
+    private fun sendCancel(reason: String) {
+        transport.sendBinary(
+            BinaryFrameCodec.encode(
+                streamId,
+                BinaryFrameCodec.CANCEL or BinaryFrameCodec.END,
+                reason.take(MAX_ERROR_CHARS).toByteArray(Charsets.UTF_8),
+            ),
+        )
     }
 
     companion object {
-        private const val BODY_CHUNK_BYTES = 64 * 1024
+        private const val BODY_IDLE_TIMEOUT_MS = 120_000L
+        private const val MAX_ERROR_CHARS = 512
     }
 }
 
 object WearVirtualFiles {
-    const val STATUS = "/dev/wear/status"
-    const val CAMERA_SNAPSHOT = "/dev/camera/back/snapshot"
+    const val STATUS = WearTargetRuntimeFiles.STATUS
+    const val CAMERA_SNAPSHOT = WearTargetRuntimeFiles.CAMERA_SNAPSHOT
 }

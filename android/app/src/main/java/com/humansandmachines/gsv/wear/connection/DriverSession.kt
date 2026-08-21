@@ -115,6 +115,8 @@ class DriverSession(
     override fun sendBinary(bytes: ByteArray): Boolean =
         !terminal.get() && webSocket?.send(bytes.toByteString()) == true
 
+    override fun queuedBytes(): Long = webSocket?.queueSize() ?: 0
+
     fun close() {
         terminate(ConnectFailure.CLOSED)
     }

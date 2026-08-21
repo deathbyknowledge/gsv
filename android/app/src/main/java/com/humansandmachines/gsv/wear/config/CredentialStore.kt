@@ -15,20 +15,38 @@ class CredentialStore(context: Context) {
 
     @Synchronized
     fun saveToken(token: String) {
-        val cipher = Cipher.getInstance(TRANSFORMATION)
-        cipher.init(Cipher.ENCRYPT_MODE, getOrCreateKey())
-        val ciphertext = cipher.doFinal(token.toByteArray(Charsets.UTF_8))
-        val saved = preferences.edit()
-            .putString(KEY_IV, Base64.encodeToString(cipher.iv, Base64.NO_WRAP))
-            .putString(KEY_CIPHERTEXT, Base64.encodeToString(ciphertext, Base64.NO_WRAP))
-            .commit()
-        check(saved) { "Could not persist the device credential" }
+        saveSecret(DRIVER_TOKEN_SLOT, token)
     }
 
     @Synchronized
-    fun loadToken(): String? {
-        val encodedIv = preferences.getString(KEY_IV, null) ?: return null
-        val encodedCiphertext = preferences.getString(KEY_CIPHERTEXT, null) ?: return null
+    fun saveVoiceToken(token: String) {
+        saveSecret(VOICE_TOKEN_SLOT, token)
+    }
+
+    @Synchronized
+    fun loadToken(): String? = loadSecret(DRIVER_TOKEN_SLOT)
+
+    @Synchronized
+    fun loadVoiceToken(): String? = loadSecret(VOICE_TOKEN_SLOT)
+
+    fun hasToken(): Boolean = hasSecret(DRIVER_TOKEN_SLOT)
+
+    fun hasVoiceToken(): Boolean = hasSecret(VOICE_TOKEN_SLOT)
+
+    private fun saveSecret(slot: SecretSlot, value: String) {
+        val cipher = Cipher.getInstance(TRANSFORMATION)
+        cipher.init(Cipher.ENCRYPT_MODE, getOrCreateKey())
+        val ciphertext = cipher.doFinal(value.toByteArray(Charsets.UTF_8))
+        val saved = preferences.edit()
+            .putString(slot.ivKey, Base64.encodeToString(cipher.iv, Base64.NO_WRAP))
+            .putString(slot.ciphertextKey, Base64.encodeToString(ciphertext, Base64.NO_WRAP))
+            .commit()
+        check(saved) { "Could not persist the credential" }
+    }
+
+    private fun loadSecret(slot: SecretSlot): String? {
+        val encodedIv = preferences.getString(slot.ivKey, null) ?: return null
+        val encodedCiphertext = preferences.getString(slot.ciphertextKey, null) ?: return null
         val cipher = Cipher.getInstance(TRANSFORMATION)
         val iv = Base64.decode(encodedIv, Base64.NO_WRAP)
         cipher.init(Cipher.DECRYPT_MODE, getOrCreateKey(), GCMParameterSpec(128, iv))
@@ -36,8 +54,8 @@ class CredentialStore(context: Context) {
         return plaintext.toString(Charsets.UTF_8)
     }
 
-    fun hasToken(): Boolean =
-        preferences.contains(KEY_IV) && preferences.contains(KEY_CIPHERTEXT)
+    private fun hasSecret(slot: SecretSlot): Boolean =
+        preferences.contains(slot.ivKey) && preferences.contains(slot.ciphertextKey)
 
     private fun getOrCreateKey(): SecretKey {
         val keyStore = KeyStore.getInstance(KEYSTORE).apply { load(null) }
@@ -61,8 +79,13 @@ class CredentialStore(context: Context) {
         private const val PREFERENCES = "gsv_wear_credentials"
         private const val KEYSTORE = "AndroidKeyStore"
         private const val KEY_ALIAS = "gsv_wear_driver_token"
-        private const val KEY_IV = "driver_token_iv"
-        private const val KEY_CIPHERTEXT = "driver_token_ciphertext"
+        private val DRIVER_TOKEN_SLOT = SecretSlot("driver_token_iv", "driver_token_ciphertext")
+        private val VOICE_TOKEN_SLOT = SecretSlot("voice_token_iv", "voice_token_ciphertext")
         private const val TRANSFORMATION = "AES/GCM/NoPadding"
     }
+
+    private data class SecretSlot(
+        val ivKey: String,
+        val ciphertextKey: String,
+    )
 }

@@ -76,7 +76,7 @@ The personal agent account is the user's personal intelligence. One Kernel-marke
 - `host/apps/machine/`: the `gsvd` machine driver, concrete tools, transfer ownership, reconnect, logging, and shutdown.
 - `host/helpers/`: separately supervised local transcription and gesture processes.
 - `host/crates/`: shared gateway transport, host configuration, Desktop IPC, and gesture protocol contracts. `host/` owns their Cargo workspace and build artifacts.
-- `android/`: the native Android machine driver, Wear authority, reconnect supervision, foreground-service lifecycle, and on-demand sensor implementations.
+- `android/`: the native Android machine driver, bounded filesystem/shell/network target, Wear authority, reconnect supervision, foreground-service lifecycle, on-demand sensors, Android actions and notification access, and offline local checks.
 - `adapters/`: platform-specific messaging workers and identity normalization.
 - `extension/`: browser-backed target and browser integration.
 - `ripgit/`: git-backed repositories and filesystem storage operations.
@@ -224,7 +224,7 @@ TypeScript uses two-space indentation, double quotes, semicolons, `import type` 
 
 Rust uses `cargo fmt`, non-blocking async code, `Result` with `?`, and contextual errors at I/O and network boundaries.
 
-Android uses Kotlin, structured coroutines, Android Keystore for driver credentials, and foreground-service APIs for user-visible Wear authority. Sensor callbacks must resolve into one cancellable owner and delete temporary raw media at their terminal boundary.
+Android uses Kotlin, structured coroutines, Android Keystore for driver credentials, and foreground-service APIs for user-visible Wear authority. Its virtual target must stay app-private and bounded. Sensor callbacks, target-side network requests, platform actions, scheduled checks, and binary bodies must each resolve into one cancellable lifecycle owner and delete temporary data at their terminal boundary.
 
 Commit subjects are short, imperative, lowercase, and scoped to one logical change, for example:
 

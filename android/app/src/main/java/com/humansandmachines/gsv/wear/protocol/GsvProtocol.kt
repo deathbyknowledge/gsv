@@ -26,7 +26,7 @@ object GsvProtocol {
     const val REQUEST_CANCEL_SIGNAL = "request.cancel"
     const val DEVICE_PING_SIGNAL = "device.ping"
     const val DEVICE_PONG_SIGNAL = "device.pong"
-    val DRIVER_IMPLEMENTS: List<String> = listOf("fs.read")
+    val DRIVER_IMPLEMENTS: List<String> = listOf("fs.*", "shell.exec", "net.fetch")
 
     fun connectFrame(id: String, config: DriverConfig): String = JSONObject()
         .put("type", "req")
