@@ -485,6 +485,65 @@
   white-space: nowrap;
 }
 
+/* Meta-row buttons — open tasks (list) and new chat (+), beside the activity
+   trigger. Sized to the sublabel line so they read as part of the row rather
+   than as action-column buttons, and carried at accent-bright so they stay
+   legible against the label they sit next to. */
+.gsv-shell-root .gsv-chat-agent-metabtn {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  /* Odd box on purpose: the glyphs draw 1px strokes, and a 1px stroke can only
+     sit on whole pixels when the box it centres in has an odd width. At an even
+     19 - 1 = 18px the plus's crossing landed on x.5 and snapped off-centre. With
+     19px (border-box: 1px border + 17px content around a 12px glyph) every
+     stroke centre falls on a .5 coordinate, so its 1px of ink covers one whole
+     pixel column, centred. */
+  box-sizing: border-box;
+  width: 19px;
+  height: 19px;
+  padding: 0;
+  border: 1px solid #6b62c4;
+  background: #0a0820;
+  color: var(--accent-bright);
+  cursor: pointer;
+  transition: background 0.12s, border-color 0.12s, color 0.12s;
+}
+
+.gsv-shell-root .gsv-chat-agent-metabtn:hover,
+.gsv-shell-root .gsv-chat-agent-metabtn:focus-visible,
+.gsv-shell-root .gsv-chat-agent-metabtn[aria-expanded="true"] {
+  background: #171441;
+  border-color: #b3aeff;
+  color: #e6e4ff;
+  outline: none;
+}
+
+.gsv-shell-root .gsv-chat-agent-metabtn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+/* Both glyphs are purely axis-aligned, and at 12px their stroke lands on a
+   whole CSS pixel — which straddles two device pixels on a 1x display and
+   greys out. Dropping antialiasing snaps every edge to the pixel grid. */
+.gsv-shell-root .gsv-chat-agent-metabtn svg {
+  shape-rendering: crispEdges;
+}
+
+/* The Hint wrappers are the meta row's real flex items: let the activity
+   trigger shrink (it ellipsizes) and pin the two buttons at intrinsic size,
+   tucked closer to each other than the row's 14px gap. */
+.gsv-shell-root .gsv-chat-agent-meta-row > .gsv-tt {
+  min-width: 0;
+}
+
+.gsv-shell-root .gsv-chat-agent-meta-row > .gsv-tt:not(:first-child) {
+  flex: none;
+  margin-left: -6px;
+}
+
 .gsv-shell-root .gsv-chat-agent-activity i {
   display: inline-block;
   width: 5px;
@@ -1570,6 +1629,22 @@
   gap: 6px;
   max-width: 100%;
   padding: 7px;
+}
+
+/* The thumbnail is a button so the viewer opens from the keyboard too; it
+   carries no chrome of its own and lays out exactly as the bare <img> did. */
+.gsv-chat-media-image-open {
+  display: block;
+  max-width: 100%;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  cursor: zoom-in;
+}
+
+.gsv-chat-media-image-open:focus-visible {
+  outline: 1px solid var(--accent-bright);
+  outline-offset: 2px;
 }
 
 .gsv-chat-media-image img {

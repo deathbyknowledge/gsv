@@ -110,23 +110,23 @@ export function ChatAgentPanel({
   };
 
   return (
-    <div class="gsv-chat-agent-panel" role="region" aria-label={`${agent.name} tasks`}>
+    <div class="gsv-chat-agent-panel" role="region" aria-label={`${agent.name} chats`}>
       <div class="gsv-chat-agent-tasks">
         <SectionHeader
-          title="TASKS"
+          title="CHATS"
           meta={`${activeCount}/${agent.tasks.length} ACTIVE`}
           divider
         />
         <div class="gsv-chat-agent-tasks-bar">
           <Search
             value={query}
-            placeholder="Search tasks…"
+            placeholder="Search chats…"
             size="small"
             block
             onChange={setQuery}
           />
           <Button
-            label="NEW TASK"
+            label="NEW CHAT"
             disabled={!canStartNewTask}
             onClick={() => {
               onStartNewTask();
@@ -137,8 +137,8 @@ export function ChatAgentPanel({
         <div class="gsv-chat-agent-tasks-list">
           {tasks.length === 0 ? (
             <ListRow
-              label={query.trim() ? "No matching tasks" : "No tasks yet"}
-              sub={query.trim() ? "" : "Start a new task to begin."}
+              label={query.trim() ? "No matching chats" : "No chats yet"}
+              sub={query.trim() ? "" : "Start a new chat to begin."}
               status="none"
             />
           ) : tasks.map((task) => {

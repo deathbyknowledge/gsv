@@ -51,9 +51,9 @@ const MOCK_SURFACES: readonly MockSurface[] = [
   },
   {
     key: "tasks",
-    listTitle: "TASKS",
-    emptyObject: "TASKS",
-    connectLabel: "NEW TASK",
+    listTitle: "CHATS",
+    emptyObject: "CHATS",
+    connectLabel: "NEW CHAT",
     connect: { kind: "chat" },
     state: "ACTIVE",
     rows: [
@@ -114,7 +114,7 @@ export function ListTemplateMockPage({
           size="small"
           l0="MACHINES"
           l1="INTEGRATIONS"
-          l2="TASKS"
+          l2="CHATS"
           value={surfaceIndex}
           onChange={setSurfaceIndex}
         />

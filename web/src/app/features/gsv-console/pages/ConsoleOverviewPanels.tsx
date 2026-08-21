@@ -168,7 +168,7 @@ function accountStatus(account: ConsoleAccount, processes: readonly ConsoleProce
     return { meta: `${queuedCount} queued`, statusLabel: "QUEUED", tone: "update" };
   }
   if (running) {
-    const openLabel = openCount === 1 ? "1 open task" : `${openCount} open tasks`;
+    const openLabel = openCount === 1 ? "1 open chat" : `${openCount} open chats`;
     return { meta: openLabel, statusLabel: "RUNNING", tone: "live" };
   }
   if (unknown) {
@@ -378,7 +378,7 @@ function ShipStage({ onOpenTerminal }: { onOpenTerminal?: () => void }) {
 }
 
 // ---------------------------------------------------------------------------
-// CREW + TASKS list cards
+// CREW + CHATS list cards
 // ---------------------------------------------------------------------------
 
 function CrewListCard({
@@ -446,7 +446,7 @@ function TasksListCard({
     ),
   );
   const taskMeta = processes.length === 0
-    ? "NO TASKS"
+    ? "NO CHATS"
     : joinMeta([
         running > 0 ? `${running} RUNNING` : undefined,
         queued > 0 ? `${queued} QUEUED` : undefined,
@@ -458,11 +458,11 @@ function TasksListCard({
     <ListCard
       className="gsv-settings-listcard"
       collapse={{ id: "tasks", at: "mobile" }}
-      title="TASKS"
+      title="CHATS"
       meta={taskMeta}
       onOpen={openTasks}
       rows={rows}
-      emptyLabel="NO TASKS"
+      emptyLabel="NO CHATS"
       onViewAll={openTasks}
     />
   );

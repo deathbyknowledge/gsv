@@ -167,7 +167,7 @@ export function GsvShell({
   const [selectedChatPid, setSelectedChatPid] = useState<string | null>(null);
   const [selectedChatAgentId, setSelectedChatAgentId] = useState<string | null>(null);
   const [pendingChatProcess, setPendingChatProcess] = useState<ChatProcessSummary | null>(null);
-  // Bumped by NEW TASK actions to ask the chat dock for a fresh task (rather than
+  // Bumped by NEW CHAT actions to ask the chat dock for a fresh chat (rather than
   // just reopening the dock on whatever was last selected).
   const [newTaskSignal, setNewTaskSignal] = useState(0);
   const requestNewTask = () => {
@@ -281,7 +281,7 @@ export function GsvShell({
       queuedCount: 0,
       lastActiveAt: now,
       label: process.label ?? null,
-      title: process.label?.trim() || "New task",
+      title: process.label?.trim() || "New chat",
       createdAt: now,
       cwd: process.cwd || activeChatProcess?.cwd || "",
     });

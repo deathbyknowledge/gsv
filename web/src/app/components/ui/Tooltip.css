@@ -91,6 +91,12 @@
 .gsv-tt-bub.gsv-tt-portal.is-open {
   opacity: 1;
 }
+/* Single-line bubble — a value like a full timestamp reads wrong broken across
+   lines, so it opts out of the 220px cap and keeps only the viewport bound. */
+.gsv-tt-bub.gsv-tt-nowrap {
+  max-width: calc(100vw - 40px);
+  white-space: nowrap;
+}
 /* Portaled bubble arrow — driven entirely by the resolved-side class + the
    inline `--gsv-tt-arrow-offset` (px along the shared edge, set from placement).
    Scoped to `.gsv-tt-portal` so any non-portaled, wrapper-anchored arrows above

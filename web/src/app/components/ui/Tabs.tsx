@@ -42,7 +42,7 @@ export function Tabs({ tabs, value, onChange, onClose, className = "", width, st
     return () => window.removeEventListener("resize", onResize);
   }, []);
 
-  const tabList = Array.isArray(tabs) && tabs.length ? tabs : ["GENERAL", "FILES", "TASKS"];
+  const tabList = Array.isArray(tabs) && tabs.length ? tabs : ["GENERAL", "FILES", "CHATS"];
   const controlled = value != null;
   const val = Math.max(0, Math.min(controlled ? (value as number) | 0 : sel | 0, tabList.length - 1));
   const emit = onChange || (() => {});

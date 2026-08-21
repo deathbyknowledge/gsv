@@ -174,17 +174,21 @@ export function ChatDockPopovers({
 
       {openPopover === "tasks" ? (
         <PopoverMenu
-          ariaLabel="Current tasks"
+          ariaLabel="Current chats"
           className="gsv-popover-tasks"
-          header={{ kind: "titled", title: "CURRENT TASKS", count: taskCount }}
-          actions={[
-            {
-              label: "NEW TASK",
+          header={{
+            kind: "titled",
+            title: "CURRENT CHATS",
+            count: taskCount,
+            action: {
+              label: "Start a new chat",
               onClick: onStartNewTask,
-              glyph: <PlusGlyph size={13} />,
+              glyph: <PlusGlyph size={12} />,
               disabled: !canStartNewTask,
             },
-            { label: "OPEN TASKS", onClick: onOpenTasks, glyph: <TaskListGlyph size={13} /> },
+          }}
+          actions={[
+            { label: "VIEW ALL", onClick: onOpenTasks, glyph: <TaskListGlyph size={13} /> },
           ]}
         >
           <div class="gsv-popover-list">

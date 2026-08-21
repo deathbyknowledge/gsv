@@ -497,6 +497,18 @@ export function formatTranscriptTime(timestamp: number | null | undefined): stri
   }).format(new Date(timestamp));
 }
 
+/** Full date + time for the timestamp's hover tooltip. The transcript shows
+ *  only hours and minutes, so the tooltip carries the day and the seconds. */
+export function formatTranscriptTimestamp(timestamp: number | null | undefined): string {
+  if (typeof timestamp !== "number" || !Number.isFinite(timestamp)) {
+    return "";
+  }
+  return new Intl.DateTimeFormat(undefined, {
+    dateStyle: "medium",
+    timeStyle: "medium",
+  }).format(new Date(timestamp));
+}
+
 function applyProcChanged(state: ChatRuntimeState, payload: unknown): ChatSignalReduction {
   const record = asRecord(payload);
   const changes = Array.isArray(record?.changes)

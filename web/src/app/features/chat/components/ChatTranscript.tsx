@@ -13,6 +13,7 @@ import type {
   ChatTranscriptRow,
   ChatTranscriptRowRole,
 } from "../domain/transcript";
+import { formatTranscriptTimestamp } from "../domain/transcript";
 import {
   useVirtualTranscript,
   type VirtualTranscriptItem,
@@ -1047,11 +1048,11 @@ function UserMessage({
   // Built once, routed by breakpoint: desktop puts them in the meta row,
   // mobile in the swipe rail — never both (no duplicate controls for AT).
   const branchAction = message.messageId && onBranch ? (
-    <Hint text="Branch a new task from this message">
+    <Hint text="Branch a new chat from this message">
       <button
         type="button"
         class="gsv-mm-btn"
-        aria-label="Branch a new task from this message"
+        aria-label="Branch a new chat from this message"
         onClick={() => onBranch(message.messageId as number)}
       >
         <svg width="13" height="13" viewBox="0 0 16 16" aria-hidden="true">
@@ -1091,15 +1092,21 @@ function UserMessage({
           {message.media?.length ? (
             <div class="gsv-chat-media-list">
               {message.media.map((media, index) => (
-                <ChatMediaAttachment key={`${message.id}:media:${index}`} media={media} processId={processId} />
+                <ChatMediaAttachment
+                  key={`${message.id}:media:${index}`}
+                  media={media}
+                  processId={processId}
+                  timestamp={message.timestamp}
+                />
               ))}
             </div>
           ) : null}
           {mobile ? (
-            <MessageMeta time={message.time} />
+            <MessageMeta time={message.time} timeTitle={formatTranscriptTimestamp(message.timestamp)} />
           ) : (
             <MessageMeta
               time={message.time}
+              timeTitle={formatTranscriptTimestamp(message.timestamp)}
               copyLabel={copyButtonLabel(copied, failed)}
               copyAriaLabel={copied ? "Copied user message" : "Copy user message"}
               copyDisabled={!message.text.trim()}
@@ -1185,6 +1192,7 @@ function SystemSurfaceMessage({
         <MessageMeta
           mirror
           time={message.time}
+          timeTitle={formatTranscriptTimestamp(message.timestamp)}
           copyLabel={copyButtonLabel(copied, failed)}
           copyAriaLabel={copied ? "Copied system message" : "Copy system message"}
           copyDisabled={!message.text.trim()}
@@ -1265,6 +1273,7 @@ function SystemErrorLine({
         <MessageMeta
           mirror
           time={message.time}
+          timeTitle={formatTranscriptTimestamp(message.timestamp)}
           copyLabel={copyButtonLabel(copied, failed)}
           copyAriaLabel={copied ? "Copied system message" : "Copy system message"}
           copyDisabled={!message.text.trim()}
@@ -1554,6 +1563,7 @@ function AssistantProcessMessage({
       <SystemMessage
         text={assistantText}
         time={message.time}
+        timeTitle={formatTranscriptTimestamp(message.timestamp)}
         meta={inlineMeta}
         copyLabel={copyButtonLabel(copied, failed)}
         copyDisabled={!assistantText.trim()}
@@ -1567,7 +1577,12 @@ function AssistantProcessMessage({
       {message.media?.length ? (
         <div class="gsv-chat-media-list is-assistant">
           {message.media.map((media, index) => (
-            <ChatMediaAttachment key={`${message.id}:media:${index}`} media={media} processId={processId} />
+            <ChatMediaAttachment
+              key={`${message.id}:media:${index}`}
+              media={media}
+              processId={processId}
+              timestamp={message.timestamp}
+            />
           ))}
         </div>
       ) : null}
@@ -1665,7 +1680,12 @@ function ProcessMessage({
         {message.media?.length ? (
           <div class="gsv-chat-media-list">
             {message.media.map((media, index) => (
-              <ChatMediaAttachment key={`${message.id}:media:${index}`} media={media} processId={processId} />
+              <ChatMediaAttachment
+                key={`${message.id}:media:${index}`}
+                media={media}
+                processId={processId}
+                timestamp={message.timestamp}
+              />
             ))}
           </div>
         ) : null}
@@ -1801,8 +1821,8 @@ function nestedScrollerCanScrollUp(target: EventTarget | null, boundary: HTMLEle
 export function ChatTranscript({
   action,
   activeRunId = null,
-  emptyDescription = "Process history will appear here when a task is available.",
-  emptyTitle = "No active task",
+  emptyDescription = "Process history will appear here when a chat is available.",
+  emptyTitle = "No active chat",
   errorMessage = "Process history could not be loaded.",
   feedback = [],
   hasOlderMessages = false,

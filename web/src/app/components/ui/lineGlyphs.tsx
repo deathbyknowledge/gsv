@@ -60,16 +60,51 @@ export function PlusGlyph({ size = 14 }: LineGlyphProps) {
   );
 }
 
-/** Bulleted list — the open-tasks overview. */
+/** Bulleted list — the open-chats overview. The bullets are rects rather than
+ *  zero-length round-cap strokes: those drop out entirely under
+ *  `shape-rendering: crispEdges` (which the chat dock's meta buttons set),
+ *  leaving three bare rules that read as a hamburger pushed right of centre.
+ *  Rects always paint, and at 12px each lands on a whole pixel beside its
+ *  rule. */
 export function TaskListGlyph({ size = 14 }: LineGlyphProps) {
   return (
     <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
       <path d="M9 6 H20" />
       <path d="M9 12 H20" />
       <path d="M9 18 H20" />
-      <path d="M4 6 H4.01" />
-      <path d="M4 12 H4.01" />
-      <path d="M4 18 H4.01" />
+      <rect x="3" y="5" width="2" height="2" fill="currentColor" stroke="none" />
+      <rect x="3" y="11" width="2" height="2" fill="currentColor" stroke="none" />
+      <rect x="3" y="17" width="2" height="2" fill="currentColor" stroke="none" />
+    </svg>
+  );
+}
+
+/** Minus — the image viewer's zoom-out control, paired with PlusGlyph. */
+export function MinusGlyph({ size = 14 }: LineGlyphProps) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M5 12 H19" />
+    </svg>
+  );
+}
+
+/** Download — arrow dropping into a tray. */
+export function DownloadGlyph({ size = 14 }: LineGlyphProps) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M12 4 V15" />
+      <path d="M7 10 L12 15 L17 10" />
+      <path d="M5 19 H19" />
+    </svg>
+  );
+}
+
+/** Close (✕) — dismisses the image viewer. */
+export function CloseGlyph({ size = 14 }: LineGlyphProps) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M6 6 L18 18" />
+      <path d="M18 6 L6 18" />
     </svg>
   );
 }

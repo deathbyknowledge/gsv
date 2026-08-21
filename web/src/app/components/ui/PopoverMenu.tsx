@@ -6,10 +6,19 @@ import "./PopoverMenu.css";
 
 /** Header variants for the popover's top bar. */
 export type PopoverHeader =
-  /** Titled bar: uppercase title on the left, optional count on the right. */
-  | { kind: "titled"; title: string; count?: ComponentChildren }
+  /** Titled bar: uppercase title and its count on the left, optional
+   *  icon-only action pinned to the right corner. */
+  | { kind: "titled"; title: string; count?: ComponentChildren; action?: PopoverHeadActionProps }
   /** Echo bar: reflects the current value with a trailing caret (e.g. model). */
   | { kind: "echo"; label: string };
+
+export interface PopoverHeadActionProps {
+  /** Accessible name — the bar shows the glyph alone. */
+  label: string;
+  onClick: () => void;
+  glyph: ComponentChildren;
+  disabled?: boolean;
+}
 
 export interface PopoverActionProps {
   label: string;
@@ -89,12 +98,23 @@ export function PopoverMenu({
       aria-label={ariaLabel}
       onKeyDown={onKeyDown}
     >
-      <div class="gsv-popover-head">
+      <div class={`gsv-popover-head${header.kind === "titled" && header.action ? " gsv-popover-head--action" : ""}`}>
         {header.kind === "titled" ? (
           <>
             <span class="gsv-popover-head-title">{header.title}</span>
             {header.count !== undefined && header.count !== null ? (
               <span class="gsv-popover-head-count">{header.count}</span>
+            ) : null}
+            {header.action ? (
+              <button
+                type="button"
+                class="gsv-popover-head-action"
+                disabled={header.action.disabled}
+                aria-label={header.action.label}
+                onClick={header.action.onClick}
+              >
+                <span aria-hidden="true">{header.action.glyph}</span>
+              </button>
             ) : null}
           </>
         ) : (

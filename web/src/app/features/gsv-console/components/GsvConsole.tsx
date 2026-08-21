@@ -37,7 +37,7 @@ type GsvConsoleProps = {
   onOpenSurface?: (surface: Exclude<ShellSurfaceId, "desktop">) => void;
   onOpenSectionCreate?: (kind: DesktopObjectId) => void;
   onOpenChat?: () => void;
-  /** Start a fresh task (Tasks list NEW TASK) — opens the dock AND spawns a new
+  /** Start a fresh chat (Chats list NEW CHAT) — opens the dock AND spawns a new
    *  process, unlike onOpenChat which only reveals the dock. */
   onNewTask?: () => void;
   onSettingsRouteChange?: (route: SettingsRoute) => void;
@@ -120,11 +120,11 @@ function settingsRouteLabel(route: SettingsRoute): string {
   if (route.detailLabel) {
     return route.detailLabel;
   }
-  return route.kind === "tasks" ? "TASKS" : shellSurfaceLabel(route.kind);
+  return route.kind === "tasks" ? "CHATS" : shellSurfaceLabel(route.kind);
 }
 
 function settingsListRouteLabel(kind: ConsoleListKind): string {
-  return kind === "tasks" ? "TASKS" : shellSurfaceLabel(kind);
+  return kind === "tasks" ? "CHATS" : shellSurfaceLabel(kind);
 }
 
 function settingsListDetailLabel(route: Extract<SettingsRoute, { view: "list" }>): string {
@@ -133,7 +133,7 @@ function settingsListDetailLabel(route: Extract<SettingsRoute, { view: "list" }>
     if (route.kind === "integrations") return "NEW INTEGRATION";
     if (route.kind === "messengers") return "NEW MESSENGER";
     if (route.kind === "library") return "NEW PAGE";
-    return "NEW TASK";
+    return "NEW CHAT";
   }
   return route.detailLabel ?? route.detailId ?? settingsListRouteLabel(route.kind);
 }
@@ -169,7 +169,7 @@ function settingsRouteTail(route: SettingsRoute): string {
     return route.kind === "models" ? "GSV · MODELS" : "GSV · RUNTIME";
   }
   if (route.kind === "tasks") {
-    return "GSV · TASKS";
+    return "GSV · CHATS";
   }
   return surfaceTail(route.kind);
 }

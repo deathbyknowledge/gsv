@@ -20,11 +20,11 @@ function process(label: string | null): ProcListEntry {
 }
 
 describe("normalizeProcessSummary", () => {
-  it("shows a neutral placeholder until an unnamed task receives its title", () => {
-    expect(normalizeProcessSummary(process(null)).title).toBe("New task");
+  it("shows a neutral placeholder until an unnamed chat receives its title", () => {
+    expect(normalizeProcessSummary(process(null)).title).toBe("New chat");
   });
 
-  it("uses the generated process label as the task title", () => {
+  it("uses the generated process label as the chat title", () => {
     expect(normalizeProcessSummary(process("Review migration plan")).title)
       .toBe("Review migration plan");
   });

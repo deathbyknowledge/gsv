@@ -8,6 +8,8 @@ export interface MessageMetaProps {
    *  icon actions. Consumers may widen the reveal to the whole message via
    *  `<ancestor>:hover .gsv-mm-time, <ancestor>:hover .gsv-mm-actions`. */
   time?: string;
+  /** Full date + time, shown as a tooltip on the short timestamp. */
+  timeTitle?: string;
   /** Leading icon actions rendered before the copy button (branch,
    *  reasoning, badges). Use `.gsv-mm-btn` for consistent icon buttons. */
   actions?: ComponentChildren;
@@ -60,6 +62,7 @@ export function CopyIconButton({
  *  message's aligned edge. */
 export function MessageMeta({
   time = "",
+  timeTitle,
   actions,
   mirror = false,
   copyLabel = "Copy message",
@@ -70,7 +73,15 @@ export function MessageMeta({
 }: MessageMetaProps) {
   return (
     <div class={`gsv-mm gsv-sublabel${mirror ? " gsv-mm--mirror" : ""}`}>
-      {time ? <span class="gsv-mm-time">{time}</span> : null}
+      {time ? (
+        timeTitle ? (
+          <Hint position="top" text={timeTitle} nowrap>
+            <span class="gsv-mm-time">{time}</span>
+          </Hint>
+        ) : (
+          <span class="gsv-mm-time">{time}</span>
+        )
+      ) : null}
       <span class="gsv-mm-actions">
         {actions}
         {onCopy ? (

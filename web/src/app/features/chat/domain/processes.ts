@@ -215,7 +215,7 @@ export function normalizeRunState(input: {
 }
 
 export function normalizeProcessSummary(process: ProcListEntry): ChatProcessSummary {
-  const title = process.label?.trim() || "New task";
+  const title = process.label?.trim() || "New chat";
 
   return {
     pid: process.pid,

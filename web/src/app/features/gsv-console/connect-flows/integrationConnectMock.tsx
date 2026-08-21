@@ -57,7 +57,7 @@ export const integrationConnectFlow: ConnectFlowDef = {
               info="Display name agents will see."
               requirement="required"
               value="GitHub"
-              placeholder="GitHub"
+              placeholder="Linear"
               clearable
             />
             <TextInput

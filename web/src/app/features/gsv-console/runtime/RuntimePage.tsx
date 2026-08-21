@@ -59,13 +59,13 @@ function RuntimeConsoleSection({
 
   return (
     <ListTemplate
-      listTitle="TASKS"
+      listTitle="CHATS"
       listMeta={refreshing ? "REFRESHING" : `${processes.filter(isActiveProcess).length}/${processes.length} ACTIVE`}
-      emptyObject="TASKS"
+      emptyObject="CHATS"
       rows={rows}
-      connectLabel="NEW TASK"
+      connectLabel="NEW CHAT"
       onConnect={onNewTask}
-      search={{ value: query, placeholder: "Search tasks…", onChange: setQuery }}
+      search={{ value: query, placeholder: "Search chats…", onChange: setQuery }}
     />
   );
 }
@@ -99,8 +99,8 @@ export function RuntimePage({
     <ConsolePage flush>
       <ConsoleResourceBoundary
         resource={resourceWithLocalEmptyState(processes.resource)}
-        emptyLabel="NO TASKS"
-        errorLabel="TASKS"
+        emptyLabel="NO CHATS"
+        errorLabel="CHATS"
         render={(data) => (
           selectedDetail?.kind === "tasks"
             ? renderRuntimeDetail(data, selectedDetail.id, () => selectDetail(null)) ?? (
