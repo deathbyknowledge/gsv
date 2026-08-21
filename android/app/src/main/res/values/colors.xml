@@ -1,0 +1,7 @@
+<resources>
+    <color name="gsv_background">#101417</color>
+    <color name="gsv_surface">#192126</color>
+    <color name="gsv_primary">#7BDCB5</color>
+    <color name="gsv_text">#EFF5F2</color>
+    <color name="gsv_muted">#A9B8B1</color>
+</resources>

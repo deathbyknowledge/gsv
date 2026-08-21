@@ -1,0 +1,294 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:fillViewport="true">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:padding="24dp">
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="@string/setup_title"
+            android:textColor="@color/gsv_text"
+            android:textSize="28sp"
+            android:textStyle="bold" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="12dp"
+            android:text="@string/setup_explanation"
+            android:textColor="@color/gsv_muted"
+            android:textSize="15sp" />
+
+        <EditText
+            android:id="@+id/gatewayUrl"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="28dp"
+            android:autofillHints="url"
+            android:hint="@string/gateway_url"
+            android:inputType="textUri"
+            android:maxLines="1"
+            android:textColor="@color/gsv_text"
+            android:textColorHint="@color/gsv_muted" />
+
+        <EditText
+            android:id="@+id/username"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="12dp"
+            android:autofillHints="username"
+            android:hint="@string/username"
+            android:inputType="textNoSuggestions"
+            android:maxLines="1"
+            android:textColor="@color/gsv_text"
+            android:textColorHint="@color/gsv_muted" />
+
+        <EditText
+            android:id="@+id/deviceId"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="12dp"
+            android:hint="@string/device_id"
+            android:importantForAutofill="no"
+            android:inputType="textNoSuggestions"
+            android:maxLines="1"
+            android:textColor="@color/gsv_text"
+            android:textColorHint="@color/gsv_muted" />
+
+        <EditText
+            android:id="@+id/deviceToken"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="12dp"
+            android:autofillHints="password"
+            android:hint="@string/device_token"
+            android:inputType="textPassword"
+            android:maxLines="1"
+            android:textColor="@color/gsv_text"
+            android:textColorHint="@color/gsv_muted" />
+
+        <Button
+            android:id="@+id/saveConnection"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="20dp"
+            android:text="@string/save" />
+
+        <TextView
+            android:id="@+id/setupStatus"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="12dp"
+            android:accessibilityLiveRegion="polite"
+            android:textColor="@color/gsv_primary"
+            android:textSize="14sp" />
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="28dp"
+            android:background="@color/gsv_surface"
+            android:orientation="vertical"
+            android:padding="20dp">
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="@string/runtime_title"
+                android:textColor="@color/gsv_text"
+                android:textSize="20sp"
+                android:textStyle="bold" />
+
+            <TextView
+                android:id="@+id/connectionState"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="14dp"
+                android:textColor="@color/gsv_text"
+                android:textSize="15sp" />
+
+            <TextView
+                android:id="@+id/authorityState"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="6dp"
+                android:textColor="@color/gsv_text"
+                android:textSize="15sp" />
+
+            <TextView
+                android:id="@+id/cameraState"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="6dp"
+                android:textColor="@color/gsv_text"
+                android:textSize="15sp" />
+
+            <TextView
+                android:id="@+id/microphoneState"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="6dp"
+                android:textColor="@color/gsv_text"
+                android:textSize="15sp" />
+
+            <Button
+                android:id="@+id/armWear"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="18dp"
+                android:text="@string/arm_wear" />
+
+            <Button
+                android:id="@+id/pauseWear"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                android:text="@string/pause_wear" />
+
+            <Button
+                android:id="@+id/disarmWear"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                android:text="@string/disarm_wear" />
+
+            <Button
+                android:id="@+id/disconnectRuntime"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                android:text="@string/disconnect_runtime" />
+        </LinearLayout>
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="24dp"
+            android:background="@color/gsv_surface"
+            android:orientation="vertical"
+            android:padding="20dp">
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="@string/voice_title"
+                android:textColor="@color/gsv_text"
+                android:textSize="20sp"
+                android:textStyle="bold" />
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                android:text="@string/voice_explanation"
+                android:textColor="@color/gsv_muted"
+                android:textSize="14sp" />
+
+            <EditText
+                android:id="@+id/voicePassword"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="12dp"
+                android:autofillHints="password"
+                android:hint="@string/gsv_password"
+                android:inputType="textPassword"
+                android:maxLines="1"
+                android:textColor="@color/gsv_text"
+                android:textColorHint="@color/gsv_muted" />
+
+            <Button
+                android:id="@+id/provisionVoiceClient"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="12dp"
+                android:text="@string/enable_voice_client" />
+
+            <TextView
+                android:id="@+id/voiceClientState"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="10dp"
+                android:accessibilityLiveRegion="polite"
+                android:textColor="@color/gsv_text"
+                android:textSize="14sp" />
+
+            <TextView
+                android:id="@+id/assistantState"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="6dp"
+                android:accessibilityLiveRegion="polite"
+                android:textColor="@color/gsv_text"
+                android:textSize="14sp" />
+
+            <TextView
+                android:id="@+id/voiceTurnState"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="6dp"
+                android:accessibilityLiveRegion="polite"
+                android:textColor="@color/gsv_text"
+                android:textSize="14sp" />
+
+            <Button
+                android:id="@+id/assistantSettings"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="12dp"
+                android:text="@string/choose_assistant" />
+
+            <Button
+                android:id="@+id/testVoiceAssistant"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                android:text="@string/test_voice" />
+        </LinearLayout>
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="24dp"
+            android:text="@string/battery_explanation"
+            android:textColor="@color/gsv_muted"
+            android:textSize="14sp" />
+
+        <Button
+            android:id="@+id/batterySettings"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:text="@string/battery_settings" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="20dp"
+            android:text="@string/notification_access_explanation"
+            android:textColor="@color/gsv_muted"
+            android:textSize="14sp" />
+
+        <TextView
+            android:id="@+id/notificationAccessState"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:textColor="@color/gsv_text"
+            android:textSize="14sp" />
+
+        <Button
+            android:id="@+id/notificationAccessSettings"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:text="@string/notification_access_settings" />
+
+    </LinearLayout>
+</ScrollView>
