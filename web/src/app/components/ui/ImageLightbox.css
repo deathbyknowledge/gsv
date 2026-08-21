@@ -145,8 +145,16 @@
   -webkit-user-drag: none;
 }
 
+/* A model's image description can run long. It may shrink (min-height: 0
+   overrides the flex default of auto) and never takes more than a third of the
+   screen, so the photo it describes always stays visible; the rest scrolls
+   here, since the page behind is locked while the viewer is open. */
 .gsv-lightbox-caption {
-  flex: none;
+  flex: 0 1 auto;
+  min-height: 0;
+  max-height: 33vh;
+  overflow-y: auto;
+  overscroll-behavior: contain;
   margin: 0;
   padding: 10px 14px 16px;
   border-top: 1px solid var(--rule-inner);

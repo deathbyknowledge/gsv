@@ -36,6 +36,7 @@ const ORIGIN: Point = { x: 0, y: 0 };
  *  Portaled to <body> so no transcript ancestor's overflow or transform can
  *  clip it, and so the scrim covers the whole shell rather than the dock. */
 export function ImageLightbox({ src, alt, filename, meta, caption, onClose }: ImageLightboxProps) {
+  const rootRef = useRef<HTMLDivElement>(null);
   const stageRef = useRef<HTMLDivElement>(null);
   const imageRef = useRef<HTMLImageElement>(null);
   const closeRef = useRef<HTMLButtonElement>(null);
@@ -112,6 +113,37 @@ export function ImageLightbox({ src, alt, filename, meta, caption, onClose }: Im
       if (event.key === "0") {
         event.preventDefault();
         resetView();
+        return;
+      }
+      if (event.key === "Tab") {
+        // Same trap as Dialog/ConfirmModal: the viewer is aria-modal, so Tab
+        // must not reach the transcript behind it, where a control would be
+        // invisible but still clickable. Disabled controls (zoom out at fit)
+        // are not Tab stops, so wrapping to them would let focus escape.
+        const root = rootRef.current;
+        if (!root) {
+          return;
+        }
+        const focusable = Array.from(
+          root.querySelectorAll<HTMLElement>(
+            'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])',
+          ),
+        ).filter((el) => !(el as HTMLButtonElement).disabled && el.offsetParent !== null);
+        if (focusable.length === 0) {
+          return;
+        }
+        const first = focusable[0];
+        const last = focusable[focusable.length - 1];
+        const active = document.activeElement;
+        if (event.shiftKey) {
+          if (active === first || !root.contains(active)) {
+            event.preventDefault();
+            last.focus();
+          }
+        } else if (active === last || !root.contains(active)) {
+          event.preventDefault();
+          first.focus();
+        }
       }
     };
     document.addEventListener("keydown", onKeyDown);
@@ -253,7 +285,14 @@ export function ImageLightbox({ src, alt, filename, meta, caption, onClose }: Im
   const label = filename || alt || "Image";
 
   return createPortal(
-    <div class="gsv-lightbox" role="dialog" aria-modal="true" aria-label={`${label} — image viewer`}>
+    <div
+      ref={rootRef}
+      class="gsv-lightbox"
+      role="dialog"
+      aria-modal="true"
+      aria-label={`${label} — image viewer`}
+      tabIndex={-1}
+    >
       <div class="gsv-lightbox-bar">
         <span class="gsv-lightbox-name gsv-sublabel">{label}</span>
         {meta ? <span class="gsv-lightbox-meta gsv-sublabel">{meta}</span> : null}
