@@ -724,6 +724,7 @@ impl GsvApp {
         cx: &mut Context<Self>,
     ) {
         if self.login.is_some()
+            || self.machine_setup.is_some()
             || self.desktop_switch_pending
             || self.interaction.is_approval()
             || self.interaction.is_approval_submitting()

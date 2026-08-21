@@ -61,9 +61,12 @@ pub(crate) fn run_local_config(
                 "r2.bucket" => cfg.r2.bucket,
                 "session.default_key" => cfg.session.default_key,
                 "device.id" | "node.id" => cfg.device.id,
+                "device.label" | "node.label" => cfg.device.label,
                 "device.token" | "node.token" => {
                     cfg.device.token.map(|s| mask_secret_edges(&s, 4, 4))
                 }
+                "device.gateway_url" | "node.gateway_url" => cfg.device.gateway_url,
+                "device.gateway_username" | "node.gateway_username" => cfg.device.gateway_username,
                 "device.workspace" | "node.workspace" => {
                     cfg.device.workspace.map(|path| path.display().to_string())
                 }
@@ -76,7 +79,8 @@ pub(crate) fn run_local_config(
                     eprintln!("  release.channel");
                     eprintln!("  r2.account_id, r2.access_key_id, r2.bucket");
                     eprintln!("  session.default_key");
-                    eprintln!("  device.id, device.token, device.workspace");
+                    eprintln!("  device.id, device.label, device.token, device.workspace");
+                    eprintln!("  device.gateway_url, device.gateway_username");
                     return Ok(());
                 }
             };
@@ -107,8 +111,14 @@ pub(crate) fn run_local_config(
                     | "session.default_key"
                     | "device.id"
                     | "node.id"
+                    | "device.label"
+                    | "node.label"
                     | "device.token"
                     | "node.token"
+                    | "device.gateway_url"
+                    | "node.gateway_url"
+                    | "device.gateway_username"
+                    | "node.gateway_username"
                     | "device.workspace"
                     | "node.workspace"
             ) {
@@ -158,7 +168,14 @@ pub(crate) fn run_local_config(
                     cfg.session.default_key = Some(config::normalize_session_key(&value))
                 }
                 "device.id" | "node.id" => cfg.device.id = Some(value.clone()),
+                "device.label" | "node.label" => cfg.device.label = Some(value.clone()),
                 "device.token" | "node.token" => cfg.device.token = Some(value.clone()),
+                "device.gateway_url" | "node.gateway_url" => {
+                    cfg.device.gateway_url = Some(value.clone())
+                }
+                "device.gateway_username" | "node.gateway_username" => {
+                    cfg.device.gateway_username = Some(value.clone())
+                }
                 "device.workspace" | "node.workspace" => {
                     cfg.device.workspace = Some(PathBuf::from(value.clone()))
                 }

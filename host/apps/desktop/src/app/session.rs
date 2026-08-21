@@ -75,6 +75,8 @@ impl GsvApp {
                 attempt_id,
                 session_id,
                 pid,
+                machine_configured,
+                suggested_machine_name,
             } => {
                 if let Some(login) = &mut self.login {
                     if !login.accept_connection(attempt_id) {
@@ -101,6 +103,26 @@ impl GsvApp {
                 self.conversation.connection = ConnectionState::Connected;
                 self.conversation.activity = None;
                 self.conversation.clear_live_activity(None);
+                self.begin_machine_management(
+                    machine_configured,
+                    suggested_machine_name,
+                    window,
+                    cx,
+                );
+            }
+            ClientEvent::MachineSetupFinished {
+                request_id,
+                activation,
+                ..
+            } => {
+                self.handle_machine_setup_success(request_id, activation, window, cx);
+            }
+            ClientEvent::MachineSetupFailed {
+                request_id,
+                automatic,
+                message,
+            } => {
+                self.handle_machine_setup_failure(request_id, automatic, message, window, cx);
             }
             ClientEvent::History {
                 session_id,
@@ -667,6 +689,8 @@ mod tests {
                 attempt_id: 0,
                 session_id: 7,
                 pid: "pid-1".to_string(),
+                machine_configured: true,
+                suggested_machine_name: "Test computer".to_string(),
             })
             .expect("the app should connect");
         send_signal(

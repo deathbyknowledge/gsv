@@ -21,6 +21,7 @@ use crate::content::MediaAttachment;
 use crate::desktop_control::DesktopControlRequest;
 use crate::history::{HistoryPreparationCandidate, HistoryRevision};
 use crate::interaction::{CanvasInteraction, CanvasLayer, SubmissionFailure};
+use crate::machine_setup::{MachineSetupFlow, MachineSetupPhase};
 use crate::media_files::{MaterializedMedia, MediaFileStore};
 use crate::model::{Conversation, MomentIdentityAdoption, SurfaceMode};
 use crate::prepared::PreparedContent;
@@ -34,6 +35,7 @@ use host_config::MicrophonePreference;
 mod gesture;
 mod gesture_guide;
 mod login;
+mod machine;
 mod media;
 mod microphone;
 mod preparation;
@@ -204,6 +206,21 @@ fn new_login_input(
     Some(input)
 }
 
+fn new_machine_input(
+    setup: &MachineSetupFlow,
+    window: &mut Window,
+    cx: &mut Context<GsvApp>,
+) -> Option<Entity<InputState>> {
+    if setup.phase() != MachineSetupPhase::Naming {
+        return None;
+    }
+    let input = cx.new(|cx| InputState::new(window, cx).placeholder("My computer"));
+    input.update(cx, |input, cx| {
+        input.set_value(setup.name().to_string(), window, cx)
+    });
+    Some(input)
+}
+
 pub struct GsvApp {
     conversation: Conversation,
     interaction: CanvasInteraction,
@@ -212,6 +229,14 @@ pub struct GsvApp {
     login_input: Option<Entity<InputState>>,
     login_input_len: usize,
     login_focus: FocusHandle,
+    machine_setup: Option<MachineSetupFlow>,
+    machine_input: Option<Entity<InputState>>,
+    machine_input_len: usize,
+    machine_focus: FocusHandle,
+    next_machine_request_id: u64,
+    active_machine_request_id: Option<u64>,
+    machine_setup_dismissed: bool,
+    machine_ready: bool,
     commands: tokio::sync::mpsc::UnboundedSender<ClientCommand>,
     audio: TypingAudio,
     terminal_draft: String,
@@ -293,6 +318,7 @@ pub struct GsvApp {
     gesture_guide_open: bool,
     _input_subscription: Subscription,
     _login_subscription: Option<Subscription>,
+    _machine_subscription: Option<Subscription>,
     _event_task: Task<()>,
     _preparation_worker: Task<()>,
     _preparation_task: Task<()>,
@@ -441,6 +467,7 @@ impl GsvApp {
         !context.is_cancelled()
             && !response_closed
             && self.login.is_none()
+            && self.machine_setup.is_none()
             && self.client_session_id.is_some()
             && !self.desktop_switch_pending
             && self.conversation.mode == SurfaceMode::Conversation
@@ -591,6 +618,7 @@ impl GsvApp {
         } = crate::transcription::start();
         let input = cx.new(|cx| InputState::new(window, cx).auto_grow(1, 12).soft_wrap(true));
         let login_focus = cx.focus_handle();
+        let machine_focus = cx.focus_handle();
         let microphone_focus = cx.focus_handle();
         let presence_lane = cx.new(|_| PresenceLane::new(Vec::new(), false, reduced_motion));
         let input_subscription = cx.subscribe_in(&input, window, |this, _, event, window, cx| {
@@ -774,6 +802,14 @@ impl GsvApp {
             login_input,
             login_input_len,
             login_focus,
+            machine_setup: None,
+            machine_input: None,
+            machine_input_len: 0,
+            machine_focus,
+            next_machine_request_id: 1,
+            active_machine_request_id: None,
+            machine_setup_dismissed: demo,
+            machine_ready: demo,
             commands,
             audio: TypingAudio::new(sound_enabled),
             terminal_draft: String::new(),
@@ -855,6 +891,7 @@ impl GsvApp {
             gesture_guide_open: false,
             _input_subscription: input_subscription,
             _login_subscription: login_subscription,
+            _machine_subscription: None,
             _event_task: event_task,
             _preparation_worker: preparation_worker,
             _preparation_task: preparation_task,
@@ -902,6 +939,7 @@ impl GsvApp {
         cx: &mut Context<Self>,
     ) {
         if self.login.is_some()
+            || self.machine_setup.is_some()
             || self.desktop_switch_pending
             || self.microphone_chooser.is_some()
             || self.conversation.mode != SurfaceMode::Conversation
@@ -1403,7 +1441,11 @@ impl GsvApp {
     }
 
     fn focus_active_input(&self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.microphone_chooser.is_some() {
+        if let Some(input) = &self.machine_input {
+            input.focus_handle(cx).focus(window);
+        } else if self.machine_setup.is_some() {
+            self.machine_focus.focus(window);
+        } else if self.microphone_chooser.is_some() {
             self.microphone_focus.focus(window);
         } else if let Some(input) = &self.login_input {
             input.focus_handle(cx).focus(window);
@@ -1424,6 +1466,10 @@ impl GsvApp {
         }
         if self.login.is_some() {
             self.submit_login(window, cx);
+            return;
+        }
+        if self.machine_setup.is_some() {
+            self.submit_machine_setup(window, cx);
             return;
         }
         if self.voice_draft.is_some() {
@@ -1743,6 +1789,9 @@ impl GsvApp {
             self.back_login(window, cx);
             return;
         }
+        if self.dismiss_machine_setup(window, cx) {
+            return;
+        }
         if self.voice_draft.is_some() {
             self.cancel_dictation(true, window, cx);
         }
@@ -1776,7 +1825,7 @@ impl GsvApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if self.login.is_some() {
+        if self.login.is_some() || self.machine_setup.is_some() {
             cx.stop_propagation();
             return;
         }
@@ -1785,7 +1834,7 @@ impl GsvApp {
     }
 
     fn abort_run(&mut self, _: &AbortRun, _: &mut Window, _: &mut Context<Self>) {
-        if self.login.is_some() {
+        if self.login.is_some() || self.machine_setup.is_some() {
             return;
         }
         if let Some(run_id) = self.conversation.request_abort() {
@@ -1820,7 +1869,10 @@ impl GsvApp {
     }
 
     fn toggle_terminal(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.login.is_some() || self.desktop_switch_pending || self.microphone_chooser.is_some()
+        if self.login.is_some()
+            || self.machine_setup.is_some()
+            || self.desktop_switch_pending
+            || self.microphone_chooser.is_some()
         {
             return;
         }
@@ -1857,6 +1909,7 @@ impl GsvApp {
 
     fn move_moment(&mut self, direction: i8, window: &mut Window, cx: &mut Context<Self>) {
         if self.login.is_some()
+            || self.machine_setup.is_some()
             || self.microphone_chooser.is_some()
             || self.conversation.mode != SurfaceMode::Conversation
             || self.interaction.is_approval()
@@ -1883,6 +1936,7 @@ impl GsvApp {
 
     fn select_moment(&mut self, index: usize, window: &mut Window, cx: &mut Context<Self>) {
         if self.login.is_some()
+            || self.machine_setup.is_some()
             || self.microphone_chooser.is_some()
             || self.interaction.is_approval()
             || self.conversation.moments.is_empty()
@@ -1905,6 +1959,7 @@ impl GsvApp {
 
     fn show_held_draft(&mut self, cx: &mut Context<Self>) {
         if self.login.is_some()
+            || self.machine_setup.is_some()
             || self.microphone_chooser.is_some()
             || self.interaction.is_approval()
         {
@@ -2384,6 +2439,8 @@ mod tests {
             attempt_id,
             session_id: 9,
             pid: "stale-login".to_string(),
+            machine_configured: true,
+            suggested_machine_name: "Test computer".to_string(),
         });
         cx.run_until_parked();
         cx.update(|cx| {
@@ -2417,6 +2474,100 @@ mod tests {
                 app.read(cx).login.as_ref().map(LoginFlow::step),
                 Some(LoginStep::Url)
             );
+        });
+    }
+
+    #[gpui::test]
+    fn first_connection_names_the_machine_and_can_retry_or_skip(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            gpui_component::init(cx);
+            bind_keys(cx);
+            crate::register_fonts(cx);
+            crate::configure_theme(cx);
+        });
+
+        let (command_tx, mut command_rx) = tokio::sync::mpsc::unbounded_channel();
+        let (event_tx, event_rx) = tokio::sync::mpsc::unbounded_channel();
+        let client = crate::client::ClientHandle {
+            commands: command_tx,
+            events: event_rx,
+            login: None,
+        };
+        let app = Rc::new(RefCell::new(None));
+        let app_for_window = app.clone();
+        let window = cx.update(|cx| {
+            cx.open_window(WindowOptions::default(), move |window, cx| {
+                let view = cx.new(|cx| GsvApp::new(window, cx, client, false, false, true));
+                *app_for_window.borrow_mut() = Some(view.clone());
+                cx.new(|cx| Root::new(view, window, cx))
+            })
+            .expect("the GPUI surface should open")
+        });
+
+        event_tx
+            .send(crate::client::ClientEvent::Connected {
+                attempt_id: 0,
+                session_id: 11,
+                pid: "proc-personal".to_string(),
+                machine_configured: false,
+                suggested_machine_name: "Laptop".to_string(),
+            })
+            .expect("connected event");
+        cx.run_until_parked();
+
+        let app = app.borrow().clone().expect("app entity should be retained");
+        cx.update(|cx| {
+            let app = app.read(cx);
+            assert_eq!(
+                app.machine_setup.as_ref().map(MachineSetupFlow::phase),
+                Some(MachineSetupPhase::Naming)
+            );
+            assert!(app.machine_input.is_some());
+        });
+        cx.simulate_keystrokes(window.into(), "ctrl-a");
+        cx.simulate_input(window.into(), "Studio Mac");
+        cx.simulate_keystrokes(window.into(), "enter");
+        cx.run_until_parked();
+
+        let setup_command = command_rx.try_recv().expect("setup command");
+        assert!(matches!(
+            setup_command,
+            ClientCommand::SetupMachine {
+                automatic: false,
+                ..
+            }
+        ));
+        let ClientCommand::SetupMachine {
+            request_id,
+            name,
+            automatic: false,
+        } = setup_command
+        else {
+            return;
+        };
+        assert_eq!(name, "Studio Mac");
+        event_tx
+            .send(crate::client::ClientEvent::MachineSetupFailed {
+                request_id,
+                automatic: false,
+                message: "try again".to_string(),
+            })
+            .expect("failure event");
+        cx.run_until_parked();
+        cx.update(|cx| {
+            let app = app.read(cx);
+            assert_eq!(
+                app.machine_setup.as_ref().and_then(MachineSetupFlow::error),
+                Some("try again")
+            );
+        });
+
+        cx.simulate_keystrokes(window.into(), "escape");
+        cx.run_until_parked();
+        cx.update(|cx| {
+            let app = app.read(cx);
+            assert!(app.machine_setup.is_none());
+            assert_eq!(app.pid.as_deref(), Some("proc-personal"));
         });
     }
 
@@ -2619,6 +2770,8 @@ mod tests {
             attempt_id: 0,
             session_id: 7,
             pid: "pid-1".to_string(),
+            machine_configured: true,
+            suggested_machine_name: "Test computer".to_string(),
         });
         let _ = event_tx.send(crate::client::ClientEvent::Signal {
             session_id: 7,

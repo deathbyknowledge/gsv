@@ -1690,6 +1690,7 @@ impl GsvApp {
             || velocity_units == 0.0
             || elapsed.is_zero()
             || self.login.is_some()
+            || self.machine_setup.is_some()
             || self.microphone_chooser.is_some()
             || self.gesture_guide_open
             || self.conversation.mode != SurfaceMode::Conversation
@@ -2241,7 +2242,9 @@ impl GsvApp {
 impl Render for GsvApp {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let login_visible = self.login.is_some();
-        let microphone_visible = !login_visible && self.microphone_chooser.is_some();
+        let machine_visible = !login_visible && self.machine_setup.is_some();
+        let microphone_visible =
+            !login_visible && !machine_visible && self.microphone_chooser.is_some();
         div()
             .id("gsv-desktop")
             .key_context("GsvNative")
@@ -2273,11 +2276,15 @@ impl Render for GsvApp {
             .when(login_visible, |this| {
                 this.child(self.render_login(window, cx))
             })
+            .when(machine_visible, |this| {
+                this.child(self.render_machine_setup(window, cx))
+            })
             .when(microphone_visible, |this| {
                 this.child(self.render_microphone_chooser(cx))
             })
             .when(
                 !login_visible
+                    && !machine_visible
                     && !microphone_visible
                     && self.conversation.mode == SurfaceMode::Conversation,
                 |this| {
@@ -2287,12 +2294,16 @@ impl Render for GsvApp {
             )
             .when(
                 !login_visible
+                    && !machine_visible
                     && !microphone_visible
                     && self.conversation.mode == SurfaceMode::Terminal,
                 |this| this.child(self.render_terminal(cx)),
             )
             .when(
-                !login_visible && !microphone_visible && self.gesture_guide_available(),
+                !login_visible
+                    && !machine_visible
+                    && !microphone_visible
+                    && self.gesture_guide_available(),
                 |this| this.child(self.render_gesture_guide_toggle(cx)),
             )
             .when(self.gesture_guide_open, |this| {

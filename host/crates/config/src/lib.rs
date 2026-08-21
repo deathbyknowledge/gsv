@@ -143,8 +143,17 @@ pub struct DeviceConfig {
     /// Device ID
     pub id: Option<String>,
 
+    /// Human-readable machine name
+    pub label: Option<String>,
+
     /// Device gateway token
     pub token: Option<String>,
+
+    /// Gateway that issued the device token
+    pub gateway_url: Option<String>,
+
+    /// Gateway account that owns the device token
+    pub gateway_username: Option<String>,
 
     /// Workspace directory for file tools
     pub workspace: Option<PathBuf>,
@@ -685,7 +694,10 @@ default_key = "agent:main:cli:dm:main"
 [device]
 # Optional machine defaults used by 'gsv daemon'
 # id = "device-macbook"
+# label = "Hank's MacBook"
 # token = "your-device-token"
+# gateway_url = "wss://gateway.example/ws"
+# gateway_username = "hank"
 # workspace = "/Users/you/projects"
 
 "#
@@ -728,6 +740,31 @@ selected_pid = "proc-7"
         assert_eq!(value["gateway"]["future_gateway"].as_integer(), Some(42));
         assert_eq!(value["desktop"]["selected_pid"].as_str(), Some("proc-7"));
         assert_eq!(value["gateway"]["username"].as_str(), Some("root"));
+    }
+
+    #[test]
+    fn machine_identity_retains_its_issuing_gateway_and_human_name() {
+        let temp = tempfile::tempdir().expect("temporary config directory");
+        let path = temp.path().join("config.toml");
+        let store = ConfigFile::<CliConfig>::new(&path);
+        store
+            .update(|config| {
+                config.device.id = Some("machine-123".to_string());
+                config.device.label = Some("Studio Mac".to_string());
+                config.device.token = Some("secret".to_string());
+                config.device.gateway_url = Some("wss://hank.example/ws".to_string());
+                config.device.gateway_username = Some("hank".to_string());
+                Ok(())
+            })
+            .expect("save machine identity");
+
+        let loaded = store.load().expect("load machine identity");
+        assert_eq!(loaded.device.label.as_deref(), Some("Studio Mac"));
+        assert_eq!(
+            loaded.device.gateway_url.as_deref(),
+            Some("wss://hank.example/ws")
+        );
+        assert_eq!(loaded.device.gateway_username.as_deref(), Some("hank"));
     }
 
     #[test]

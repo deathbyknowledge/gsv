@@ -14,6 +14,7 @@ host/
 │   └── transcriber/ # isolated microphone and speech process
 └── crates/
     ├── config/
+    ├── daemon-protocol/
     ├── desktop-protocol/
     ├── gateway-client/
     └── gesture-protocol/

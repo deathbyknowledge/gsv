@@ -149,13 +149,17 @@ before selection. Each asynchronous result is fenced by connection epoch, PID,
 and operation identity so output from the previous Process cannot mutate the
 new workspace.
 
-## Planned Desktop-managed machine enrollment
+## Desktop-managed machine enrollment
 
-Installing Desktop should be sufficient to connect the local computer without
-making a user operate `gsvd` manually. First use presents an explicit “Connect
-this computer” step with an editable suggested name. Desktop then enrolls one
-stable machine identity, installs the per-user background service, and reports
-its connection and capability status. Subsequent launches reuse that identity
+Installing Desktop is sufficient to connect the local computer without making
+a user operate `gsvd` manually. After the first authenticated session, Desktop
+presents an explicit “Connect this computer” step with an editable suggested
+name. It creates one opaque, driver-bound machine identity, saves the credential
+and its issuing gateway/account atomically in `config.toml`, asks the bundled
+`gsv` executable to install the per-user service, then verifies and reloads
+`gsvd` through `daemon-protocol`. The credential never appears in process
+arguments. A failed install can be retried without minting another identity,
+and “not now” leaves chat available. Subsequent launches reuse that identity
 and never create another machine merely because the application restarted.
 
 Desktop is the setup and control UI; `gsvd` remains the machine endpoint and
@@ -177,8 +181,10 @@ and permission-manager boundaries:
 | Permissions | TCC | portals, PipeWire, and device access | Windows privacy APIs |
 
 The shared contract is a persistent machine credential, not any one OS storage
-API. The service owns that credential; Desktop supplies only the short-lived
-authority needed for enrollment. Local IPC is same-user, authenticated,
+API. The current host configuration stores it in the private, atomically
+replaced `config.toml`; the credential-store boundary remains available for a
+later packaging hardening without changing enrollment or daemon IPC. Local IPC
+is same-user, authenticated,
 versioned, and limited to typed setup, status, lifecycle, helper, and diagnostic
 operations. Camera frames and audio do not cross the control channel. Release
 packages include the matching daemon, helpers, models, and OS integration so a

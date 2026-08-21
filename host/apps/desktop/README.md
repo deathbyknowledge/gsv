@@ -30,6 +30,13 @@ entirely. A successful interactive connection remembers the URL and username in 
 the password is never saved. `ws://` is accepted only for localhost development, while remote
 gateways require `wss://`.
 
+After the first authenticated connection, Desktop asks what to call the local computer. Choosing
+`CONNECT COMPUTER` creates one driver-bound machine credential, saves it in the shared private
+`config.toml`, and installs/starts the sibling `gsvd` as a per-user background service through the
+bundled `gsv` executable. Desktop verifies the daemon through its same-user local control protocol;
+the credential is never passed in command-line arguments. `NOT NOW` keeps Desktop usable without a
+machine target. A retry reuses any already-saved identity instead of creating another machine.
+
 These environment variables remain optional overrides for automation and development:
 
 - `GSV_URL`

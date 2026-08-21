@@ -19,6 +19,7 @@ use gateway_client::protocol::Frame;
 use gateway_client::{BinaryBody, BinaryBodyLimits};
 use host_config::{CliConfig, ConfigError, ConfigFile};
 use reqwest::header::{CONTENT_LENGTH, CONTENT_TYPE};
+use serde::Deserialize;
 use serde_json::{json, Value};
 use tokio::sync::{mpsc as tokio_mpsc, oneshot, OwnedSemaphorePermit, Semaphore};
 use tokio::task::{AbortHandle, JoinSet};
@@ -26,6 +27,7 @@ use tokio::task::{AbortHandle, JoinSet};
 use crate::content::{MediaAttachment, MediaKind};
 use crate::desktop_control::{DesktopControlRequest, NativeDesktopControlHandler};
 use crate::history::{normalize_history, HistorySnapshot, MAX_FETCHED_HISTORY_MESSAGES};
+use crate::machine_setup::{self, MachineActivation};
 use crate::startup::{
     resolve_startup, ConnectionSettings, Credential, LoginDefaults, LoginStep, StartupResolution,
     StartupSources,
@@ -124,6 +126,11 @@ pub enum ClientCommand {
         process_id: ProcessId,
         response: oneshot::Sender<Result<ProcessId, OperationError>>,
     },
+    SetupMachine {
+        request_id: u64,
+        name: String,
+        automatic: bool,
+    },
     Shell(String),
     Shutdown,
 }
@@ -156,6 +163,17 @@ pub enum ClientEvent {
         attempt_id: u64,
         session_id: u64,
         pid: String,
+        machine_configured: bool,
+        suggested_machine_name: String,
+    },
+    MachineSetupFinished {
+        request_id: u64,
+        activation: MachineActivation,
+    },
+    MachineSetupFailed {
+        request_id: u64,
+        automatic: bool,
+        message: String,
     },
     History {
         session_id: u64,
@@ -254,6 +272,7 @@ pub fn start_desktop(demo: bool) -> DesktopStartup {
     };
     let (command_tx, command_rx) = tokio_mpsc::unbounded_channel();
     let (event_tx, event_rx) = tokio_mpsc::unbounded_channel();
+    machine_setup::migrate_legacy_machine_binding();
     let (initial_connection, login) = match startup_resolution() {
         StartupResolution::Connect(settings) => (Some(settings), None),
         StartupResolution::Login(defaults) => (None, Some(defaults)),
@@ -659,10 +678,18 @@ async fn run_live(
         if settings.remember_identity {
             remember_connection_identity(&settings);
         }
+        let configured_machine =
+            machine_setup::configured_machine(&settings.url, &settings.username);
+        let suggested_machine_name = configured_machine
+            .as_ref()
+            .map(|machine| machine.name.clone())
+            .unwrap_or_else(machine_setup::suggested_machine_name);
         let _ = events.send(ClientEvent::Connected {
             attempt_id: settings.attempt_id,
             session_id,
             pid: pid.clone(),
+            machine_configured: configured_machine.is_some(),
+            suggested_machine_name,
         });
         let initial_history_superseded = matches!(
             signal_lease.handoff_history(history_request_signal_id, history, &events),
@@ -691,6 +718,8 @@ async fn run_live(
                 process_exit,
                 signal_lease,
                 attempt_id: settings.attempt_id,
+                gateway_url: settings.url.clone(),
+                gateway_username: settings.username.clone(),
                 cleanup_scope: MediaCleanupScope::from_settings(&settings),
             },
             &mut commands,
@@ -795,6 +824,8 @@ struct ActiveClientSession {
     process_exit: Arc<tokio::sync::Notify>,
     signal_lease: SessionSignalLease,
     attempt_id: u64,
+    gateway_url: String,
+    gateway_username: String,
     cleanup_scope: MediaCleanupScope,
 }
 
@@ -1076,6 +1107,7 @@ enum ConnectedTaskOutcome {
     Shell(Result<ShellResponse, RequestFailure>),
     Media(Result<(MediaResponse, MediaTransferLease), RequestFailure>),
     MediaFile(Result<(MediaResponse, MediaTransferLease), RequestFailure>),
+    Machine(Result<MachineActivation, RequestFailure>),
 }
 
 struct ConnectedTaskCompletion {
@@ -1108,6 +1140,10 @@ enum PendingOperation {
         filename: Option<String>,
         mime_type: Option<String>,
         action: MediaFileAction,
+    },
+    Machine {
+        request_id: u64,
+        automatic: bool,
     },
 }
 
@@ -1436,6 +1472,8 @@ struct ConnectedCommandContext<'a> {
     cleanup_journal: Arc<MediaCleanupJournal>,
     cleanup_scope: MediaCleanupScope,
     pid: String,
+    gateway_url: String,
+    gateway_username: String,
 }
 
 #[derive(Default)]
@@ -1544,6 +1582,8 @@ fn spawn_connected_command(context: ConnectedCommandContext<'_>, command: Client
         cleanup_journal,
         cleanup_scope,
         pid,
+        gateway_url,
+        gateway_username,
     } = context;
     match command {
         ClientCommand::Send {
@@ -1630,6 +1670,28 @@ fn spawn_connected_command(context: ConnectedCommandContext<'_>, command: Client
                 ConnectedTaskCompletion {
                     operation_id,
                     outcome: ConnectedTaskOutcome::Approval(result),
+                }
+            });
+        }
+        ClientCommand::SetupMachine {
+            request_id,
+            name,
+            automatic,
+        } => {
+            let operation_id = reserve_operation(
+                next_operation_id,
+                pending,
+                PendingOperation::Machine {
+                    request_id,
+                    automatic,
+                },
+            );
+            tasks.spawn(async move {
+                let result =
+                    configure_local_machine(&client, &gateway_url, &gateway_username, &name).await;
+                ConnectedTaskCompletion {
+                    operation_id,
+                    outcome: ConnectedTaskOutcome::Machine(result),
                 }
             });
         }
@@ -1953,6 +2015,27 @@ fn emit_connected_completion(
                 });
             }
         },
+        (
+            PendingOperation::Machine {
+                request_id,
+                automatic,
+            },
+            ConnectedTaskOutcome::Machine(result),
+        ) => match result {
+            Ok(activation) => {
+                let _ = events.send(ClientEvent::MachineSetupFinished {
+                    request_id,
+                    activation,
+                });
+            }
+            Err(error) => {
+                let _ = events.send(ClientEvent::MachineSetupFailed {
+                    request_id,
+                    automatic,
+                    message: error.to_string(),
+                });
+            }
+        },
         _ => {
             let _ = events.send(ClientEvent::Error(
                 "The native client mismatched an operation result.".to_string(),
@@ -2030,6 +2113,16 @@ async fn reconcile_interrupted_tasks(
             }
             PendingOperation::MediaFile { .. } => {
                 let _ = events.send(ClientEvent::MediaFileFailed {
+                    message: reason.to_string(),
+                });
+            }
+            PendingOperation::Machine {
+                request_id,
+                automatic,
+            } => {
+                let _ = events.send(ClientEvent::MachineSetupFailed {
+                    request_id,
+                    automatic,
                     message: reason.to_string(),
                 });
             }
@@ -2200,6 +2293,8 @@ async fn run_connected_session(
         process_exit,
         signal_lease,
         attempt_id: session_attempt_id,
+        gateway_url,
+        gateway_username,
         cleanup_scope,
     } = session;
     let mut connection_check = tokio::time::interval(CONNECTION_CHECK_INTERVAL);
@@ -2442,6 +2537,8 @@ async fn run_connected_session(
                             cleanup_journal: cleanup_journal.clone(),
                             cleanup_scope: cleanup_scope.clone(),
                             pid: pid.clone(),
+                            gateway_url: gateway_url.clone(),
+                            gateway_username: gateway_username.clone(),
                         },
                         command,
                     ),
@@ -2576,6 +2673,18 @@ fn handle_unavailable_command(
             });
         }
         ClientCommand::CancelMedia { .. } => {}
+        ClientCommand::SetupMachine {
+            request_id,
+            automatic,
+            ..
+        } => {
+            let _ = events.send(ClientEvent::MachineSetupFailed {
+                request_id,
+                automatic,
+                message: "This computer could not be connected while GSV is reconnecting."
+                    .to_string(),
+            });
+        }
         ClientCommand::Shell(command) => {
             let _ = events.send(ClientEvent::ShellResult {
                 command,
@@ -3605,6 +3714,125 @@ async fn execute_shell(
     })
 }
 
+#[derive(Deserialize)]
+struct MachineTokenCreateResult {
+    token: MachineToken,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct MachineToken {
+    token_id: String,
+    token: String,
+    allowed_device_id: Option<String>,
+}
+
+async fn configure_local_machine(
+    client: &KernelClient,
+    gateway_url: &str,
+    gateway_username: &str,
+    requested_name: &str,
+) -> Result<MachineActivation, RequestFailure> {
+    let name =
+        machine_setup::validate_machine_name(requested_name).map_err(RequestFailure::rejected)?;
+    let machine = match machine_setup::configured_machine(gateway_url, gateway_username) {
+        Some(machine) => {
+            if machine.name == name {
+                machine
+            } else {
+                machine_setup::save_machine(
+                    gateway_url,
+                    gateway_username,
+                    &machine.machine_id,
+                    &name,
+                    &machine.token,
+                )
+                .map_err(RequestFailure::transport)?
+            }
+        }
+        None => {
+            let machine_id = machine_setup::new_machine_id();
+            let response = request_ok(
+                client,
+                "sys.token.create",
+                Some(json!({
+                    "kind": "node",
+                    "label": &name,
+                    "allowedRole": "driver",
+                    "allowedDeviceId": &machine_id,
+                })),
+            )
+            .await?;
+            let issued = serde_json::from_value::<MachineTokenCreateResult>(response)
+                .map_err(|_| {
+                    RequestFailure::transport(
+                        "GSV returned an invalid machine credential response.",
+                    )
+                })?
+                .token;
+            if issued.allowed_device_id.as_deref() != Some(machine_id.as_str())
+                || issued.token.is_empty()
+            {
+                let _ = revoke_machine_token(client, &issued.token_id).await;
+                return Err(RequestFailure::transport(
+                    "GSV returned a credential for a different machine.",
+                ));
+            }
+            match machine_setup::save_machine(
+                gateway_url,
+                gateway_username,
+                &machine_id,
+                &name,
+                &issued.token,
+            ) {
+                Ok(machine) => machine,
+                Err(error) => {
+                    let _ = revoke_machine_token(client, &issued.token_id).await;
+                    return Err(RequestFailure::transport(error));
+                }
+            }
+        }
+    };
+    let activation = machine_setup::activate_machine(&machine)
+        .await
+        .map_err(RequestFailure::transport)?;
+    if activation.connected {
+        let response = request_ok(
+            client,
+            "sys.device.update",
+            Some(json!({
+                "deviceId": &activation.machine_id,
+                "label": &activation.name,
+            })),
+        )
+        .await?;
+        if response
+            .get("device")
+            .and_then(|device| device.get("label"))
+            .and_then(Value::as_str)
+            != Some(activation.name.as_str())
+        {
+            return Err(RequestFailure::transport(
+                "GSV did not confirm this computer's name.",
+            ));
+        }
+    }
+    Ok(activation)
+}
+
+async fn revoke_machine_token(client: &KernelClient, token_id: &str) -> Result<(), RequestFailure> {
+    request_ok(
+        client,
+        "sys.token.revoke",
+        Some(json!({
+            "tokenId": token_id,
+            "reason": "desktop machine enrollment did not complete",
+        })),
+    )
+    .await
+    .map(|_| ())
+}
+
 async fn run_demo(
     mut commands: tokio_mpsc::UnboundedReceiver<ClientCommand>,
     events: tokio_mpsc::UnboundedSender<ClientEvent>,
@@ -3613,6 +3841,8 @@ async fn run_demo(
         attempt_id: 0,
         session_id: DEMO_SESSION_ID,
         pid: "demo:native".to_string(),
+        machine_configured: true,
+        suggested_machine_name: "Demo computer".to_string(),
     });
     let generation = Arc::new(AtomicU64::new(0));
     let http_client = reqwest::Client::new();
@@ -3712,6 +3942,19 @@ async fn run_demo(
             ClientCommand::MaterializeMedia { .. } => {
                 let _ = events.send(ClientEvent::MediaFileFailed {
                     message: "Demo media cannot be opened outside the app.".to_string(),
+                });
+            }
+            ClientCommand::SetupMachine {
+                request_id,
+                ..
+            } => {
+                let _ = events.send(ClientEvent::MachineSetupFinished {
+                    request_id,
+                    activation: MachineActivation {
+                        machine_id: "demo-machine".to_string(),
+                        name: "Demo computer".to_string(),
+                        connected: true,
+                    },
                 });
             }
             ClientCommand::DesktopNew { response, .. }

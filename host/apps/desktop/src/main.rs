@@ -6,6 +6,7 @@ mod content;
 mod desktop_control;
 mod history;
 mod interaction;
+mod machine_setup;
 mod media_files;
 mod model;
 mod prepared;

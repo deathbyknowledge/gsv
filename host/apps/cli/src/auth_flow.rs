@@ -742,6 +742,20 @@ pub(crate) async fn run_auth_setup(
                     saved_fields.push("device.id");
                 }
             }
+            if let Some(label) = device_token.label.as_deref() {
+                if local_cfg.device.label.as_deref() != Some(label) {
+                    local_cfg.device.label = Some(label.to_string());
+                    saved_fields.push("device.label");
+                }
+            }
+            if local_cfg.device.gateway_url.as_deref() != Some(url) {
+                local_cfg.device.gateway_url = Some(url.to_string());
+                saved_fields.push("device.gateway_url");
+            }
+            if local_cfg.device.gateway_username.as_deref() != Some(setup.user.username.as_str()) {
+                local_cfg.device.gateway_username = Some(setup.user.username.clone());
+                saved_fields.push("device.gateway_username");
+            }
         }
         saved_fields
     })?;
@@ -865,6 +879,7 @@ struct SysSetupDeviceToken {
     token_id: String,
     token: String,
     token_prefix: String,
+    label: Option<String>,
     allowed_device_id: Option<String>,
     expires_at: Option<i64>,
 }
