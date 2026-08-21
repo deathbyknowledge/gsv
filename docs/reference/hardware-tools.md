@@ -9,7 +9,7 @@ This is the important rule for agents: choose `target: "gsv"` for Gateway-native
 | Target | Description |
 |---|---|
 | `gsv` | Native Gateway target running in the Cloudflare Worker sandbox. |
-| `<deviceId>` | A registered machine driver, such as a laptop, server, or Android phone; routable while online. |
+| `<deviceId>` | A registered CLI device, such as `macbook` or `server`; routable while online. |
 
 The Gateway includes accessible online devices in `ai.tools` context and, by default, in `sys.device.list`. Those inventories advertise devices that can accept work immediately. The agent-facing `targets list` command includes every visible registered device by default and labels each one `online` or `offline`; use `targets list --online` to restrict it to reachable targets. Device notes are included too, so processes can identify machines using the user's own descriptions. Registered devices also appear in the native filesystem under `/sys/devices`.
 
@@ -213,40 +213,6 @@ Device shell semantics:
 - `Shell` with `sessionId` and non-empty `input` writes stdin, then returns new output.
 
 Use a device target for local source trees, private networks, machine-local credentials, OS packages, hardware access, or commands that must run on that machine.
-
-## Android Wear Targets
-
-The Android application registers as an ordinary driver target and initially
-advertises only `fs.read`. It represents on-demand physical sensors as
-standardized virtual device files, so agents continue to use the fixed `Read`
-tool instead of receiving a camera-specific model tool:
-
-```json
-{
-  "target": "pixel-10",
-  "path": "/dev/wear/status"
-}
-```
-
-```json
-{
-  "target": "pixel-10",
-  "path": "/dev/camera/back/snapshot"
-}
-```
-
-`/dev/wear/status` is readable whenever the Android runtime is connected and
-returns the connection, authority, and sensor states. The snapshot node is
-available only during a locally created, currently armed Wear authority
-session. Reading it opens CameraX for one bounded capture, returns an ordinary
-`fs.read` image body, closes the camera, and deletes the temporary JPEG after
-the body reaches a terminal outcome. Offset and limit arguments are rejected
-for these event-producing virtual files.
-
-Disarming removes sensor authority but deliberately leaves the driver
-connection running. Disconnecting the Android runtime is a separate local
-action. Reboot, force-stop, process death, or permission loss cannot recreate
-Wear authority remotely.
 
 ## Routing
 
