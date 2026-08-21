@@ -49,13 +49,33 @@ export function FreeContextGlyph({ size = 14 }: LineGlyphProps) {
   );
 }
 
-/** Plus — start a new task. Solid-stroke twin of the masked "plus" doticon,
- *  which reads dimmer than the label at popover sizes. */
+/** Geometry for the plus/minus pair. The bars are filled rects on whole-pixel
+ *  coordinates rather than strokes: a stroke is centred on its path, so a 1px
+ *  bar in a 24-unit viewBox always lands half on one pixel and half on the
+ *  next, and the renderer either blurs it or snaps it a whole pixel off centre
+ *  — which is what made the plus read as a lopsided cross. Both the box and the
+ *  bar are odd, so the same number of pixels sits on either side of the bar and
+ *  the arms are equal by construction. */
+function barGeometry(size: number) {
+  const box = Math.max(5, Math.round(size) | 1);
+  // A hairline at the sizes these buttons use, thicker only once the glyph is
+  // big enough that 1px would look starved. Even thicknesses are out: they
+  // cannot centre in an odd box.
+  const bar = box >= 21 ? 3 : 1;
+  // Inset two pixels on every side: full-bleed arms made the plus read larger
+  // than TaskListGlyph beside it, whose rules and bullets sit well inside their
+  // own box. Symmetric, so the centring holds.
+  return { box, bar, offset: (box - bar) / 2, inset: 2, length: box - 4 };
+}
+
+/** Plus — start a new task. Solid twin of the masked "plus" doticon, which
+ *  reads dimmer than the label at popover sizes. */
 export function PlusGlyph({ size = 14 }: LineGlyphProps) {
+  const { box, bar, offset, inset, length } = barGeometry(size);
   return (
-    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-      <path d="M12 5 V19" />
-      <path d="M5 12 H19" />
+    <svg width={box} height={box} viewBox={`0 0 ${box} ${box}`} fill="currentColor" stroke="none">
+      <rect x={offset} y={inset} width={bar} height={length} />
+      <rect x={inset} y={offset} width={length} height={bar} />
     </svg>
   );
 }
@@ -79,11 +99,13 @@ export function TaskListGlyph({ size = 14 }: LineGlyphProps) {
   );
 }
 
-/** Minus — the image viewer's zoom-out control, paired with PlusGlyph. */
+/** Minus — the image viewer's zoom-out control. Same bar as PlusGlyph's, so the
+ *  pair matches in weight and length. */
 export function MinusGlyph({ size = 14 }: LineGlyphProps) {
+  const { box, bar, offset, inset, length } = barGeometry(size);
   return (
-    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-      <path d="M5 12 H19" />
+    <svg width={box} height={box} viewBox={`0 0 ${box} ${box}`} fill="currentColor" stroke="none">
+      <rect x={inset} y={offset} width={length} height={bar} />
     </svg>
   );
 }
