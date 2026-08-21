@@ -3,3 +3,4 @@ export * from "./compaction";
 export * from "./persona";
 export * from "./setup-assist";
 export * from "./system";
+export * from "./task-title";

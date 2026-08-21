@@ -12,6 +12,7 @@ import {
   type Point,
   type Size,
 } from "./imageLightboxGeometry";
+import { downloadViaBlob, isDirectDownloadSource } from "./imageDownload";
 import "./ImageLightbox.css";
 
 export interface ImageLightboxProps {
@@ -283,6 +284,23 @@ export function ImageLightbox({ src, alt, filename, meta, caption, onClose }: Im
 
   const zoomedIn = scale > MIN_ZOOM;
   const label = filename || alt || "Image";
+  const downloadName = filename || alt || "image";
+
+  /** A remote image ignores the anchor's download attribute and would navigate
+   *  this tab — taking the whole shell with it — so fetch it into a blob
+   *  instead. If the host refuses the fetch, open it in its own tab: not a
+   *  download, but the chat behind stays up. */
+  const onDownload = (event: MouseEvent) => {
+    if (isDirectDownloadSource(src, window.location.href)) {
+      return;
+    }
+    event.preventDefault();
+    void downloadViaBlob(src, downloadName).then((downloaded) => {
+      if (!downloaded) {
+        window.open(src, "_blank", "noopener,noreferrer");
+      }
+    });
+  };
 
   return createPortal(
     <div
@@ -328,9 +346,11 @@ export function ImageLightbox({ src, alt, filename, meta, caption, onClose }: Im
           <a
             class="gsv-lightbox-btn"
             href={src}
-            download={filename || alt || "image"}
+            download={downloadName}
+            rel="noopener"
             title="Download"
             aria-label="Download image"
+            onClick={onDownload}
           >
             <DownloadGlyph size={12} />
           </a>
