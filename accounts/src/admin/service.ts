@@ -1,6 +1,10 @@
 import type { ManagedInstallationState } from "@humansandmachines/gsv/protocol";
+import type { ManagedInferenceRouting } from "@humansandmachines/gsv/protocol";
 import { parseOpaqueId } from "../domain";
-import type { ManagedInferencePolicyStore } from "../inference-policy";
+import type {
+  ManagedInferencePolicyStore,
+  ManagedInferenceRoutingUpdate,
+} from "../inference-policy";
 import type { IssuedInstallationOnboarding } from "../onboarding";
 import { InstallationOnboardingStore } from "../onboarding";
 import {
@@ -90,6 +94,7 @@ export type AdminInferencePurposeUsage = {
 
 export type AdminInferenceOverview = {
   enabled: boolean;
+  routing: ManagedInferenceRouting;
   period: string;
   requests: number;
   tokens: number;
@@ -244,8 +249,9 @@ export class InstallationAdminService {
 
   async inferenceOverview(): Promise<AdminInferenceOverview> {
     const period = currentInferencePeriod();
-    const [control, usage] = await Promise.all([
+    const [control, routing, usage] = await Promise.all([
       this.inferencePolicies.control(),
+      this.inferencePolicies.routing(),
       this.db.prepare(
         `SELECT
            COUNT(*) AS requests,
@@ -269,6 +275,7 @@ export class InstallationAdminService {
     ]);
     return {
       enabled: control.enabled,
+      routing,
       period,
       requests: usage?.requests ?? 0,
       tokens: usage?.tokens ?? 0,
@@ -286,6 +293,12 @@ export class InstallationAdminService {
 
   async setInferenceControl(enabled: boolean): Promise<void> {
     await this.inferencePolicies.setControl(enabled);
+  }
+
+  async setInferenceRouting(
+    input: ManagedInferenceRoutingUpdate,
+  ): Promise<ManagedInferenceRouting> {
+    return await this.inferencePolicies.setRouting(input);
   }
 
   async setInstallationInferencePolicy(

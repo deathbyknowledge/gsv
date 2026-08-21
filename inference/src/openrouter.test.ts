@@ -1,5 +1,8 @@
 import { GSV_INFERENCE_PRODUCT_MODEL } from "@humansandmachines/gsv/protocol";
-import type { ManagedInferenceRequest } from "@humansandmachines/gsv/protocol";
+import type {
+  ManagedInferenceRequest,
+  ManagedInferenceRouting,
+} from "@humansandmachines/gsv/protocol";
 import { describe, expect, it, vi } from "vitest";
 import { createOpenRouterGeneration } from "./openrouter";
 
@@ -25,8 +28,35 @@ const REQUEST: ManagedInferenceRequest = {
   timeoutMs: 1_000,
 };
 
+const ROUTING: ManagedInferenceRouting = {
+  version: 1,
+  modelId: "deepseek/deepseek-v4-flash-0731",
+  displayName: "DeepSeek: DeepSeek V4 Flash 0731",
+  contextWindow: 1_048_576,
+  maxOutputTokens: 384_000,
+  reasoning: true,
+  inputNanoUsdPerToken: 80,
+  outputNanoUsdPerToken: 180,
+  cacheReadNanoUsdPerToken: 16,
+  cacheWriteNanoUsdPerToken: 0,
+  provider: {
+    allowFallbacks: true,
+    requireParameters: true,
+    dataCollection: "deny",
+    zdr: true,
+    order: ["Fireworks"],
+    only: ["Fireworks", "DeepInfra"],
+    ignore: [],
+    quantizations: ["fp16", "bf16", "fp8"],
+    sort: "throughput",
+    preferredMinThroughput: 30,
+    preferredMaxLatency: 2.5,
+  },
+  updatedAt: 1,
+};
+
 describe("OpenRouter managed inference", () => {
-  it("uses the fixed DeepSeek model and returns the GSV product model", async () => {
+  it("uses the operator route while returning the stable GSV product model", async () => {
     const fetchMock = vi.fn<typeof fetch>(async () => new Response([
       sse({
         id: "gen_test",
@@ -48,8 +78,8 @@ describe("OpenRouter managed inference", () => {
 
     const generation = createOpenRouterGeneration(REQUEST, "test-key", fetchMock);
     const [first, second] = await Promise.all([
-      generation.result(),
-      generation.result(),
+      generation.result(ROUTING),
+      generation.result(ROUTING),
     ]);
     const [url, init] = fetchMock.mock.calls[0] ?? [];
     const headers = new Headers((init as RequestInit | undefined)?.headers);
@@ -67,6 +97,18 @@ describe("OpenRouter managed inference", () => {
       max_completion_tokens: 32,
       reasoning: { effort: "high" },
       stream: true,
+      provider: {
+        allow_fallbacks: true,
+        require_parameters: true,
+        data_collection: "deny",
+        zdr: true,
+        order: ["Fireworks"],
+        only: ["Fireworks", "DeepInfra"],
+        quantizations: ["fp16", "bf16", "fp8"],
+        sort: "throughput",
+        preferred_min_throughput: 30,
+        preferred_max_latency: 2.5,
+      },
     });
     expect(JSON.stringify(payload)).not.toContain(REQUEST.installationId);
     expect(JSON.stringify(payload)).not.toContain(REQUEST.logicalRequestId);
@@ -99,7 +141,7 @@ describe("OpenRouter managed inference", () => {
       });
     });
     const generation = createOpenRouterGeneration(REQUEST, "test-key", fetchMock);
-    const resultPromise = generation.result();
+    const resultPromise = generation.result(ROUTING);
 
     await started;
     await generation.abort();

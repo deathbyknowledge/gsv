@@ -2,10 +2,12 @@ import { DurableObject } from "cloudflare:workers";
 import {
   GSV_INFERENCE_PRODUCT_MODEL,
   GSV_INFERENCE_PROVIDER,
+  MANAGED_INFERENCE_QUANTIZATIONS,
   type ManagedInferencePolicy,
   type ManagedInferencePurpose,
   type ManagedInferenceRequest,
   type ManagedInferenceResult,
+  type ManagedInferenceRouting,
   type ManagedInferenceUsageEvent,
   type ManagedInferenceUsageOutcome,
   type ManagedMailSummary,
@@ -292,8 +294,9 @@ export class InferenceInstallation extends DurableObject<InferenceEnv> {
       this.installationId,
       this.deploymentMonthlyLimitNanoUsd,
     );
+    const routing = requireManagedInferenceRouting(policy.routing);
     const startedAt = Date.now();
-    const reservedNanoUsd = reservationNanoUsd(input);
+    const reservedNanoUsd = reservationNanoUsd(input, routing);
     this.reserve(
       input,
       startedAt,
@@ -305,8 +308,8 @@ export class InferenceInstallation extends DurableObject<InferenceEnv> {
     await this.scheduleNextAlarm();
 
     try {
-      const result = await generation.result();
-      this.settleResult(input.logicalRequestId, result, Date.now());
+      const result = await generation.result(routing);
+      this.settleResult(input.logicalRequestId, result, routing, Date.now());
       await this.scheduleNextAlarm();
       return result;
     } catch (error) {
@@ -329,8 +332,9 @@ export class InferenceInstallation extends DurableObject<InferenceEnv> {
       this.installationId,
       this.deploymentMonthlyLimitNanoUsd,
     );
+    const routing = requireManagedInferenceRouting(policy.routing);
     const startedAt = Date.now();
-    const reservedNanoUsd = reservationNanoUsd(input);
+    const reservedNanoUsd = reservationNanoUsd(input, routing);
     this.reserve(
       input,
       startedAt,
@@ -343,7 +347,7 @@ export class InferenceInstallation extends DurableObject<InferenceEnv> {
 
     let result: ManagedInferenceResult;
     try {
-      result = await generation.result();
+      result = await generation.result(routing);
     } catch (error) {
       this.settleFailure(input.logicalRequestId, Date.now());
       await this.scheduleNextAlarm();
@@ -354,7 +358,7 @@ export class InferenceInstallation extends DurableObject<InferenceEnv> {
       summary = parseManagedMailSummaryResult(result);
     } catch (error) {
       try {
-        this.settleResult(input.logicalRequestId, result, Date.now(), {
+        this.settleResult(input.logicalRequestId, result, routing, Date.now(), {
           outcome: failedOutcomeForResult(result),
           resultJson: null,
         });
@@ -365,7 +369,7 @@ export class InferenceInstallation extends DurableObject<InferenceEnv> {
       throw error;
     }
     try {
-      this.settleResult(input.logicalRequestId, result, Date.now(), {
+      this.settleResult(input.logicalRequestId, result, routing, Date.now(), {
         outcome: "completed",
         resultJson: JSON.stringify(summary),
       });
@@ -454,6 +458,7 @@ export class InferenceInstallation extends DurableObject<InferenceEnv> {
   private settleResult(
     logicalRequestId: string,
     result: ManagedInferenceResult,
+    routing: ManagedInferenceRouting,
     completedAt: number,
     options?: {
       outcome?: Exclude<ManagedInferenceUsageOutcome, "abandoned">;
@@ -462,7 +467,7 @@ export class InferenceInstallation extends DurableObject<InferenceEnv> {
   ): void {
     const outcome = options?.outcome ?? outcomeForResult(result);
     const usage = normalizedUsage(result);
-    const costNanoUsd = usageNanoUsd(result.usage);
+    const costNanoUsd = usageNanoUsd(result.usage, routing);
     this.settle(logicalRequestId, {
       outcome,
       costNanoUsd,
@@ -885,6 +890,83 @@ function effectiveMonthlyLimit(
   return deploymentLimitNanoUsd === 0
     ? policy.monthlyLimitNanoUsd
     : Math.min(policy.monthlyLimitNanoUsd, deploymentLimitNanoUsd);
+}
+
+function requireManagedInferenceRouting(
+  value: ManagedInferenceRouting,
+): ManagedInferenceRouting {
+  if (
+    !value
+    || value.version !== 1
+    || typeof value.modelId !== "string"
+    || !/^[A-Za-z0-9][A-Za-z0-9._:/-]{0,199}$/.test(value.modelId)
+    || typeof value.displayName !== "string"
+    || value.displayName.length < 1
+    || value.displayName.length > 200
+    || value.displayName.trim() !== value.displayName
+    || !positiveInteger(value.contextWindow)
+    || !positiveInteger(value.maxOutputTokens)
+    || value.maxOutputTokens > value.contextWindow
+    || typeof value.reasoning !== "boolean"
+    || !price(value.inputNanoUsdPerToken)
+    || !price(value.outputNanoUsdPerToken)
+    || !price(value.cacheReadNanoUsdPerToken)
+    || !price(value.cacheWriteNanoUsdPerToken)
+    || !Number.isSafeInteger(value.updatedAt)
+    || value.updatedAt < 0
+  ) {
+    throw new Error("Managed inference routing is invalid");
+  }
+  const provider = value.provider;
+  if (
+    !provider
+    || typeof provider.allowFallbacks !== "boolean"
+    || typeof provider.requireParameters !== "boolean"
+    || (provider.dataCollection !== "allow" && provider.dataCollection !== "deny")
+    || typeof provider.zdr !== "boolean"
+    || !providerList(provider.order)
+    || !providerList(provider.only)
+    || !providerList(provider.ignore)
+    || provider.only.some((name) => provider.ignore.includes(name))
+    || !Array.isArray(provider.quantizations)
+    || provider.quantizations.length > MANAGED_INFERENCE_QUANTIZATIONS.length
+    || new Set(provider.quantizations).size !== provider.quantizations.length
+    || provider.quantizations.some((item) =>
+      !MANAGED_INFERENCE_QUANTIZATIONS.includes(item)
+    )
+    || !["default", "price", "throughput", "latency"].includes(provider.sort)
+    || !optionalPositive(provider.preferredMinThroughput)
+    || !optionalPositive(provider.preferredMaxLatency)
+  ) {
+    throw new Error("Managed inference routing is invalid");
+  }
+  return value;
+}
+
+function positiveInteger(value: number): boolean {
+  return Number.isSafeInteger(value) && value > 0;
+}
+
+function price(value: number): boolean {
+  return Number.isSafeInteger(value) && value >= 0 && value <= 1_000_000;
+}
+
+function providerList(value: string[]): boolean {
+  return Array.isArray(value)
+    && value.length <= 32
+    && new Set(value).size === value.length
+    && value.every((item) =>
+      typeof item === "string"
+      && item.length >= 1
+      && item.length <= 80
+      && item.trim() === item
+      && !/[\u0000-\u001f\u007f,]/.test(item)
+    );
+}
+
+function optionalPositive(value: number | undefined): boolean {
+  return value === undefined
+    || (typeof value === "number" && Number.isFinite(value) && value > 0);
 }
 
 function inferencePeriod(timestamp: number): string {

@@ -1,26 +1,13 @@
 import type {
   ManagedInferenceRequest,
   ManagedInferenceResult,
+  ManagedInferenceRouting,
 } from "@humansandmachines/gsv/protocol";
 
-export const MANAGED_INFERENCE_CONTEXT_WINDOW = 1_048_576;
-export const MANAGED_INFERENCE_MAX_OUTPUT_TOKENS = 384_000;
-
-export const MANAGED_INFERENCE_MODEL_COST = {
-  input: 0.08,
-  output: 0.18,
-  cacheRead: 0.016,
-  cacheWrite: 0,
-} as const;
-
-const NANO_USD_PER_TOKEN = {
-  input: 80,
-  output: 180,
-  cacheRead: 16,
-  cacheWrite: 0,
-} as const;
-
-export function reservationNanoUsd(input: ManagedInferenceRequest): number {
+export function reservationNanoUsd(
+  input: ManagedInferenceRequest,
+  routing: ManagedInferenceRouting,
+): number {
   const encodedContext = new TextEncoder().encode(JSON.stringify({
     systemPrompt: input.systemPrompt ?? "",
     messages: input.messages,
@@ -30,21 +17,25 @@ export function reservationNanoUsd(input: ManagedInferenceRequest): number {
     + input.messages.length * 16
     + (input.tools?.length ?? 0) * 16;
   const inputTokens = Math.min(
-    MANAGED_INFERENCE_CONTEXT_WINDOW,
+    routing.contextWindow,
     encodedContext.byteLength + contextOverhead,
   );
   return checkedNanoUsd(
-    inputTokens * NANO_USD_PER_TOKEN.input
-      + input.maxOutputTokens * NANO_USD_PER_TOKEN.output,
+    inputTokens * routing.inputNanoUsdPerToken
+      + Math.min(input.maxOutputTokens, routing.maxOutputTokens)
+        * routing.outputNanoUsdPerToken,
   );
 }
 
-export function usageNanoUsd(usage: ManagedInferenceResult["usage"]): number {
+export function usageNanoUsd(
+  usage: ManagedInferenceResult["usage"],
+  routing: ManagedInferenceRouting,
+): number {
   return checkedNanoUsd(
-    usage.input * NANO_USD_PER_TOKEN.input
-      + usage.output * NANO_USD_PER_TOKEN.output
-      + usage.cacheRead * NANO_USD_PER_TOKEN.cacheRead
-      + usage.cacheWrite * NANO_USD_PER_TOKEN.cacheWrite,
+    usage.input * routing.inputNanoUsdPerToken
+      + usage.output * routing.outputNanoUsdPerToken
+      + usage.cacheRead * routing.cacheReadNanoUsdPerToken
+      + usage.cacheWrite * routing.cacheWriteNanoUsdPerToken,
   );
 }
 

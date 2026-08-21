@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { AccountsAdminHttp } from "./http";
+import type { ManagedInferenceRoutingUpdate } from "../inference-policy";
 import type {
   AdminInferenceOverview,
   AdminInstallation,
@@ -71,6 +72,30 @@ function installationList(
 function inferenceOverview(): AdminInferenceOverview {
   return {
     enabled: false,
+    routing: {
+      version: 1,
+      modelId: "deepseek/deepseek-v4-flash-0731",
+      displayName: "DeepSeek V4 Flash",
+      contextWindow: 1_048_576,
+      maxOutputTokens: 384_000,
+      reasoning: true,
+      inputNanoUsdPerToken: 80,
+      outputNanoUsdPerToken: 180,
+      cacheReadNanoUsdPerToken: 16,
+      cacheWriteNanoUsdPerToken: 0,
+      provider: {
+        allowFallbacks: true,
+        requireParameters: false,
+        dataCollection: "allow",
+        zdr: false,
+        order: [],
+        only: [],
+        ignore: [],
+        quantizations: [],
+        sort: "default",
+      },
+      updatedAt: 0,
+    },
     period: "2026-08",
     requests: 10,
     tokens: 50,
@@ -130,6 +155,11 @@ function service(
     reissueOnboarding: vi.fn(async () => issued()),
     resetInstallation: vi.fn(async () => resetIssued()),
     setInferenceControl: vi.fn(async () => {}),
+    setInferenceRouting: vi.fn(async (input: ManagedInferenceRoutingUpdate) => ({
+      version: 1 as const,
+      ...input,
+      updatedAt: 2_000_000,
+    })),
     setInstallationInferencePolicy: vi.fn(async () => {}),
     setInstallationState: vi.fn(async () => {}),
   };
@@ -257,6 +287,60 @@ describe("accounts admin HTTP", () => {
     expect(body).toContain("$2.00");
     expect(body).toContain("Mail intake");
     expect(body).toContain("$0.50");
+    expect(body).toContain("deepseek/deepseek-v4-flash-0731");
+    expect(body).toContain("Allowed quantizations");
+  });
+
+  it("updates the private gsv default route without exposing it to users", async () => {
+    const adminService = service();
+    const http = new AccountsAdminHttp(
+      adminService,
+      { allows: vi.fn(async () => true) },
+      ACCOUNT_ORIGIN,
+    );
+    const response = await http.handle(new Request(
+      `${ACCOUNT_ORIGIN}/admin/inference/routing`,
+      {
+        method: "POST",
+        headers: { origin: ACCOUNT_ORIGIN },
+        body: new URLSearchParams({
+          modelId: "deepseek/deepseek-r1",
+          displayName: "DeepSeek R1",
+          contextWindow: "131072",
+          maxOutputTokens: "32768",
+          reasoning: "true",
+          inputUsdPerMillion: "0.40",
+          outputUsdPerMillion: "1.20",
+          cacheReadUsdPerMillion: "0.10",
+          cacheWriteUsdPerMillion: "0",
+          allowFallbacks: "false",
+          requireParameters: "true",
+          dataCollection: "deny",
+          zdr: "true",
+          sort: "throughput",
+          preferredMinThroughput: "30",
+          preferredMaxLatency: "2.5",
+          order: "Fireworks, DeepInfra",
+          only: "Fireworks, DeepInfra",
+          ignore: "",
+          quantizations: "fp16, bf16, fp8",
+        }),
+      },
+    ));
+
+    expect(response?.status).toBe(303);
+    expect(adminService.setInferenceRouting).toHaveBeenCalledWith(
+      expect.objectContaining({
+        modelId: "deepseek/deepseek-r1",
+        inputNanoUsdPerToken: 400,
+        outputNanoUsdPerToken: 1_200,
+        provider: expect.objectContaining({
+          sort: "throughput",
+          order: ["Fireworks", "DeepInfra"],
+          quantizations: ["fp16", "bf16", "fp8"],
+        }),
+      }),
+    );
   });
 
   it("creates through the canonical form and shows the capability once", async () => {

@@ -4,10 +4,9 @@ import {
   type ManagedInferenceAbortRequest,
   type ManagedInferenceRequest,
 } from "@humansandmachines/gsv/protocol";
-import { MANAGED_INFERENCE_MAX_OUTPUT_TOKENS } from "./pricing";
-
 const OPAQUE_ID_PATTERN = /^[A-Za-z0-9](?:[A-Za-z0-9._:-]{0,126}[A-Za-z0-9])?$/;
 export const MAX_MANAGED_INFERENCE_TIMEOUT_MS = 15 * 60 * 1000;
+const MAX_MANAGED_INFERENCE_OUTPUT_TOKENS = 1_048_576;
 
 export function validateManagedInferenceRequest(
   input: ManagedInferenceRequest,
@@ -27,7 +26,7 @@ export function validateManagedInferenceRequest(
   if (
     !Number.isSafeInteger(input.maxOutputTokens)
     || input.maxOutputTokens < 1
-    || input.maxOutputTokens > MANAGED_INFERENCE_MAX_OUTPUT_TOKENS
+    || input.maxOutputTokens > MAX_MANAGED_INFERENCE_OUTPUT_TOKENS
   ) {
     throw new Error("Managed inference output limit is invalid");
   }

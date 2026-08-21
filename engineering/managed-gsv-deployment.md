@@ -171,6 +171,15 @@ allowance. A positive deployment ceiling may be added as an additional hard
 cap, in which case the effective allowance is the lower of the deployment and
 installation limits.
 
+The Access-protected `/admin/inference` page owns the private route behind the
+public `gsv/default` model. Operators can change the OpenRouter model, provider
+allow/deny/order lists, quantizations, privacy requirements, provider sorting,
+and the prices used for allowance accounting without exposing those choices to
+installations. Migration `0007_managed_inference_routing.sql` preserves the
+previous model and fallback behavior as its initial route. Apply Accounts D1
+migrations before deploying an Inference Worker that expects the routing field,
+and keep the OpenRouter credential solely in the Inference Worker secret.
+
 Managed outbound email follows the same fail-closed release discipline. Queue
 and Email Sending bindings may be deployed while its boolean and daily quotas
 remain zero. Provision `gsv-managed-mail-outbound` and its

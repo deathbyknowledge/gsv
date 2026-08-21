@@ -6,6 +6,7 @@ import {
   requireString,
 } from "../http";
 import type { AccountsAdminAccess } from "./access";
+import type { ManagedInferenceRoutingUpdate } from "../inference-policy";
 import { adminInferencePage } from "./inference-page";
 import {
   adminInstallationPage,
@@ -20,7 +21,7 @@ import {
   type InstallationAdminService,
 } from "./service";
 
-const MAX_FORM_BODY_BYTES = 4 * 1024;
+const MAX_FORM_BODY_BYTES = 16 * 1024;
 const MAX_ADMIN_PAGE = 1_000_000;
 
 type AdminCreateFormInput = {
@@ -37,6 +38,7 @@ type AdminService = Pick<
   | "reissueOnboarding"
   | "resetInstallation"
   | "setInferenceControl"
+  | "setInferenceRouting"
   | "setInstallationInferencePolicy"
   | "setInstallationState"
 >;
@@ -162,6 +164,20 @@ export class AccountsAdminHttp {
         return api
           ? json({ inference: { enabled } })
           : redirect("/admin/inference");
+      }
+
+      if (
+        (url.pathname === "/admin/inference/routing"
+          || url.pathname === "/admin/api/inference/routing")
+        && request.method === "POST"
+      ) {
+        this.requireMutationOrigin(request);
+        const api = isAdminApiPath(url.pathname);
+        const routing = api
+          ? readJsonInferenceRouting(await readJsonObject(request))
+          : readFormInferenceRouting(await readForm(request));
+        const result = await this.service.setInferenceRouting(routing);
+        return api ? json({ routing: result }) : redirect("/admin/inference");
       }
 
       if (installationRoute && request.method === "POST") {
@@ -293,7 +309,13 @@ export class AccountsAdminHttp {
         createFormInput,
       );
     }
-    if (request.method === "POST" && url.pathname === "/admin/inference") {
+    if (
+      request.method === "POST"
+      && (
+        url.pathname === "/admin/inference"
+        || url.pathname === "/admin/inference/routing"
+      )
+    ) {
       const inference = await this.service.inferenceOverview().catch(() => null);
       if (inference) {
         return adminInferencePage(
@@ -450,9 +472,235 @@ function readFormInferencePolicy(form: URLSearchParams): {
   };
 }
 
+function readJsonInferenceRouting(
+  body: Record<string, unknown>,
+): ManagedInferenceRoutingUpdate {
+  const provider = readJsonObjectField(body.provider, "provider");
+  return {
+    modelId: requireString(body.modelId, "modelId"),
+    displayName: requireString(body.displayName, "displayName"),
+    contextWindow: requirePositiveInteger(body.contextWindow, "contextWindow"),
+    maxOutputTokens: requirePositiveInteger(
+      body.maxOutputTokens,
+      "maxOutputTokens",
+    ),
+    reasoning: requireBoolean(body.reasoning, "reasoning"),
+    inputNanoUsdPerToken: requireNanoUsd(
+      body.inputNanoUsdPerToken,
+      "inputNanoUsdPerToken",
+    ),
+    outputNanoUsdPerToken: requireNanoUsd(
+      body.outputNanoUsdPerToken,
+      "outputNanoUsdPerToken",
+    ),
+    cacheReadNanoUsdPerToken: requireNanoUsd(
+      body.cacheReadNanoUsdPerToken,
+      "cacheReadNanoUsdPerToken",
+    ),
+    cacheWriteNanoUsdPerToken: requireNanoUsd(
+      body.cacheWriteNanoUsdPerToken,
+      "cacheWriteNanoUsdPerToken",
+    ),
+    provider: {
+      allowFallbacks: requireBoolean(
+        provider.allowFallbacks,
+        "provider.allowFallbacks",
+      ),
+      requireParameters: requireBoolean(
+        provider.requireParameters,
+        "provider.requireParameters",
+      ),
+      dataCollection: requireDataCollection(provider.dataCollection),
+      zdr: requireBoolean(provider.zdr, "provider.zdr"),
+      order: requireStringArray(provider.order, "provider.order"),
+      only: requireStringArray(provider.only, "provider.only"),
+      ignore: requireStringArray(provider.ignore, "provider.ignore"),
+      quantizations: requireQuantizations(provider.quantizations),
+      sort: requireProviderSort(provider.sort),
+      ...optionalJsonNumber(
+        provider.preferredMinThroughput,
+        "preferredMinThroughput",
+      ),
+      ...optionalJsonNumber(
+        provider.preferredMaxLatency,
+        "preferredMaxLatency",
+      ),
+    },
+  };
+}
+
+function readFormInferenceRouting(
+  form: URLSearchParams,
+): ManagedInferenceRoutingUpdate {
+  return {
+    modelId: requireString(form.get("modelId"), "modelId"),
+    displayName: requireString(form.get("displayName"), "displayName"),
+    contextWindow: parsePositiveInteger(form.get("contextWindow"), "contextWindow"),
+    maxOutputTokens: parsePositiveInteger(
+      form.get("maxOutputTokens"),
+      "maxOutputTokens",
+    ),
+    reasoning: readFormBoolean(form.get("reasoning"), "reasoning"),
+    inputNanoUsdPerToken: parseUsdPerMillionToNanoUsd(
+      form.get("inputUsdPerMillion"),
+      "inputUsdPerMillion",
+    ),
+    outputNanoUsdPerToken: parseUsdPerMillionToNanoUsd(
+      form.get("outputUsdPerMillion"),
+      "outputUsdPerMillion",
+    ),
+    cacheReadNanoUsdPerToken: parseUsdPerMillionToNanoUsd(
+      form.get("cacheReadUsdPerMillion"),
+      "cacheReadUsdPerMillion",
+    ),
+    cacheWriteNanoUsdPerToken: parseUsdPerMillionToNanoUsd(
+      form.get("cacheWriteUsdPerMillion"),
+      "cacheWriteUsdPerMillion",
+    ),
+    provider: {
+      allowFallbacks: readFormBoolean(
+        form.get("allowFallbacks"),
+        "allowFallbacks",
+      ),
+      requireParameters: readFormBoolean(
+        form.get("requireParameters"),
+        "requireParameters",
+      ),
+      dataCollection: requireDataCollection(form.get("dataCollection")),
+      zdr: readFormBoolean(form.get("zdr"), "zdr"),
+      order: parseCommaList(form.get("order"), "order"),
+      only: parseCommaList(form.get("only"), "only"),
+      ignore: parseCommaList(form.get("ignore"), "ignore"),
+      quantizations: requireQuantizations(
+        parseCommaList(form.get("quantizations"), "quantizations"),
+      ),
+      sort: requireProviderSort(form.get("sort")),
+      ...optionalFormNumber(
+        form.get("preferredMinThroughput"),
+        "preferredMinThroughput",
+      ),
+      ...optionalFormNumber(
+        form.get("preferredMaxLatency"),
+        "preferredMaxLatency",
+      ),
+    },
+  };
+}
+
 function requireBoolean(value: unknown, field: string): boolean {
   if (typeof value !== "boolean") throw new Error(`${field} is invalid`);
   return value;
+}
+
+function readJsonObjectField(
+  value: unknown,
+  field: string,
+): Record<string, unknown> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error(`${field} is invalid`);
+  }
+  return value as Record<string, unknown>;
+}
+
+function requirePositiveInteger(value: unknown, field: string): number {
+  if (!Number.isSafeInteger(value) || (value as number) <= 0) {
+    throw new Error(`${field} is invalid`);
+  }
+  return value as number;
+}
+
+function parsePositiveInteger(value: string | null, field: string): number {
+  if (!value || !/^[1-9]\d*$/.test(value)) {
+    throw new Error(`${field} is invalid`);
+  }
+  return requirePositiveInteger(Number(value), field);
+}
+
+function requireStringArray(value: unknown, field: string): string[] {
+  if (!Array.isArray(value) || value.some((item) => typeof item !== "string")) {
+    throw new Error(`${field} is invalid`);
+  }
+  return value as string[];
+}
+
+function requireQuantizations(
+  value: unknown,
+): ManagedInferenceRoutingUpdate["provider"]["quantizations"] {
+  return requireStringArray(value, "quantizations") as
+    ManagedInferenceRoutingUpdate["provider"]["quantizations"];
+}
+
+function requireProviderSort(
+  value: unknown,
+): ManagedInferenceRoutingUpdate["provider"]["sort"] {
+  if (
+    value !== "default"
+    && value !== "price"
+    && value !== "throughput"
+    && value !== "latency"
+  ) {
+    throw new Error("sort is invalid");
+  }
+  return value;
+}
+
+function requireDataCollection(
+  value: unknown,
+): ManagedInferenceRoutingUpdate["provider"]["dataCollection"] {
+  if (value !== "allow" && value !== "deny") {
+    throw new Error("dataCollection is invalid");
+  }
+  return value;
+}
+
+function parseCommaList(value: string | null, field: string): string[] {
+  if (value === null) throw new Error(`${field} is invalid`);
+  if (!value.trim()) return [];
+  return value.split(",").map((item) => item.trim());
+}
+
+function parseUsdPerMillionToNanoUsd(
+  value: string | null,
+  field: string,
+): number {
+  if (!value || !/^(0|[1-9]\d{0,3})(?:\.(\d{1,3}))?$/.test(value)) {
+    throw new Error(`${field} is invalid`);
+  }
+  const [whole = "0", fraction = ""] = value.split(".");
+  return Number(whole) * 1_000 + Number(fraction.padEnd(3, "0"));
+}
+
+function optionalFormNumber(
+  value: string | null,
+  field: "preferredMinThroughput" | "preferredMaxLatency",
+): Partial<Pick<
+  ManagedInferenceRoutingUpdate["provider"],
+  "preferredMinThroughput" | "preferredMaxLatency"
+>> {
+  if (value === null || value.trim() === "") return {};
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    throw new Error(`${field} is invalid`);
+  }
+  return field === "preferredMinThroughput"
+    ? { preferredMinThroughput: parsed }
+    : { preferredMaxLatency: parsed };
+}
+
+function optionalJsonNumber(
+  value: unknown,
+  field: "preferredMinThroughput" | "preferredMaxLatency",
+): Partial<Pick<
+  ManagedInferenceRoutingUpdate["provider"],
+  "preferredMinThroughput" | "preferredMaxLatency"
+>> {
+  if (value === undefined) return {};
+  if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) {
+    throw new Error(`${field} is invalid`);
+  }
+  return field === "preferredMinThroughput"
+    ? { preferredMinThroughput: value }
+    : { preferredMaxLatency: value };
 }
 
 function requireOperationalState(value: unknown): "active" | "restricted" {
@@ -518,6 +766,22 @@ function publicAdminFailure(error: unknown): { message: string; status: number }
     || message.startsWith("form ")
     || message.startsWith("enabled ")
     || message.startsWith("monthlyLimit")
+    || message.startsWith("modelId ")
+    || message.startsWith("displayName ")
+    || message.startsWith("contextWindow ")
+    || message.startsWith("maxOutputTokens ")
+    || message.startsWith("reasoning ")
+    || message.startsWith("inputNanoUsdPerToken ")
+    || message.startsWith("outputNanoUsdPerToken ")
+    || message.startsWith("cacheReadNanoUsdPerToken ")
+    || message.startsWith("cacheWriteNanoUsdPerToken ")
+    || message.startsWith("provider")
+    || message.startsWith("sort ")
+    || message.startsWith("dataCollection ")
+    || message.startsWith("inputUsdPerMillion ")
+    || message.startsWith("outputUsdPerMillion ")
+    || message.startsWith("cacheReadUsdPerMillion ")
+    || message.startsWith("cacheWriteUsdPerMillion ")
     || message.startsWith("managed inference ")
     || message.startsWith("query ")
     || message.startsWith("state ")

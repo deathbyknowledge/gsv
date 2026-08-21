@@ -3,6 +3,7 @@ import {
   type AssistantMessage,
   type Context,
   type Model,
+  type OpenRouterRouting,
 } from "@earendil-works/pi-ai";
 import { openAICompletionsApi } from "@earendil-works/pi-ai/api/openai-completions.lazy";
 import {
@@ -10,49 +11,17 @@ import {
   GSV_INFERENCE_PROVIDER,
   type ManagedInferenceRequest,
   type ManagedInferenceResult,
+  type ManagedInferenceRouting,
 } from "@humansandmachines/gsv/protocol";
-import {
-  MANAGED_INFERENCE_CONTEXT_WINDOW,
-  MANAGED_INFERENCE_MAX_OUTPUT_TOKENS,
-  MANAGED_INFERENCE_MODEL_COST,
-} from "./pricing";
 
 const GSV_INFERENCE_API = "gsv-inference";
 const OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1";
-const OPENROUTER_MODEL_ID = "deepseek/deepseek-v4-flash-0731";
-
-const OPENROUTER_MODEL: Model<"openai-completions"> = {
-  id: OPENROUTER_MODEL_ID,
-  name: "DeepSeek: DeepSeek V4 Flash 0731",
-  api: "openai-completions",
-  provider: "openrouter",
-  baseUrl: OPENROUTER_BASE_URL,
-  reasoning: true,
-  thinkingLevelMap: {
-    off: "none",
-    minimal: "low",
-    low: "low",
-    medium: "high",
-    high: "high",
-    xhigh: "max",
-    max: "max",
-  },
-  input: ["text"],
-  cost: MANAGED_INFERENCE_MODEL_COST,
-  contextWindow: MANAGED_INFERENCE_CONTEXT_WINDOW,
-  maxTokens: MANAGED_INFERENCE_MAX_OUTPUT_TOKENS,
-  compat: {
-    supportsDeveloperRole: false,
-    thinkingFormat: "openrouter",
-  },
-};
-
 type OpenRouterGeneration = {
-  result: () => Promise<ManagedInferenceResult>;
+  result: (routing: ManagedInferenceRouting) => Promise<ManagedInferenceResult>;
   abort: () => Promise<void>;
 };
 
-const openRouter = createProvider({
+const openRouter = createProvider<"openai-completions">({
   id: "openrouter",
   name: "OpenRouter",
   baseUrl: OPENROUTER_BASE_URL,
@@ -62,7 +31,7 @@ const openRouter = createProvider({
       resolve: async () => ({ auth: {}, source: "inference service secret" }),
     },
   },
-  models: [OPENROUTER_MODEL],
+  models: [],
   api: openAICompletionsApi(),
 });
 
@@ -81,9 +50,10 @@ export function createOpenRouterGeneration(
   const abortController = new AbortController();
   let resultPromise: Promise<ManagedInferenceResult> | undefined;
   return {
-    result: () => {
+    result: (routing) => {
       resultPromise ??= completeOpenRouterGeneration(
         input,
+        routing,
         apiKey,
         abortController.signal,
         fetchImpl,
@@ -98,10 +68,12 @@ export function createOpenRouterGeneration(
 
 async function completeOpenRouterGeneration(
   input: ManagedInferenceRequest,
+  routing: ManagedInferenceRouting,
   apiKey: string,
   signal: AbortSignal,
   fetchImpl: typeof fetch,
 ): Promise<ManagedInferenceResult> {
+  const model = openRouterModel(routing);
   const context: Context = {
     ...(input.systemPrompt ? { systemPrompt: input.systemPrompt } : {}),
     messages: input.messages as Context["messages"],
@@ -109,11 +81,11 @@ async function completeOpenRouterGeneration(
       ? { tools: input.tools as Context["tools"] }
       : {}),
   };
-  const message = await openRouter.streamSimple(OPENROUTER_MODEL, context, {
+  const message = await openRouter.streamSimple(model, context, {
     apiKey,
     fetch: fetchImpl,
     signal,
-    maxTokens: input.maxOutputTokens,
+    maxTokens: Math.min(input.maxOutputTokens, routing.maxOutputTokens),
     ...(input.reasoning ? { reasoning: input.reasoning } : {}),
     timeoutMs: input.timeoutMs,
     maxRetries: 0,
@@ -123,6 +95,70 @@ async function completeOpenRouterGeneration(
     },
   }).result();
   return toManagedInferenceResult(message);
+}
+
+function openRouterModel(
+  routing: ManagedInferenceRouting,
+): Model<"openai-completions"> {
+  const providerRouting = toOpenRouterRouting(routing);
+  return {
+    id: routing.modelId,
+    name: routing.displayName,
+    api: "openai-completions",
+    provider: "openrouter",
+    baseUrl: OPENROUTER_BASE_URL,
+    reasoning: routing.reasoning,
+    thinkingLevelMap: {
+      off: "none",
+      minimal: "low",
+      low: "low",
+      medium: "high",
+      high: "high",
+      xhigh: "max",
+      max: "max",
+    },
+    input: ["text"],
+    cost: {
+      input: routing.inputNanoUsdPerToken / 1_000,
+      output: routing.outputNanoUsdPerToken / 1_000,
+      cacheRead: routing.cacheReadNanoUsdPerToken / 1_000,
+      cacheWrite: routing.cacheWriteNanoUsdPerToken / 1_000,
+    },
+    contextWindow: routing.contextWindow,
+    maxTokens: routing.maxOutputTokens,
+    compat: {
+      supportsDeveloperRole: false,
+      thinkingFormat: "openrouter",
+      ...(Object.keys(providerRouting).length > 0
+        ? { openRouterRouting: providerRouting }
+        : {}),
+    },
+  };
+}
+
+function toOpenRouterRouting(
+  routing: ManagedInferenceRouting,
+): OpenRouterRouting {
+  const provider = routing.provider;
+  return {
+    allow_fallbacks: provider.allowFallbacks,
+    require_parameters: provider.requireParameters,
+    data_collection: provider.dataCollection,
+    zdr: provider.zdr,
+    ...(provider.order.length > 0 ? { order: provider.order } : {}),
+    ...(provider.only.length > 0 ? { only: provider.only } : {}),
+    ...(provider.ignore.length > 0 ? { ignore: provider.ignore } : {}),
+    ...(provider.quantizations.length > 0
+      ? { quantizations: provider.quantizations }
+      : {}),
+    ...(provider.sort === "default" ? {} : { sort: provider.sort }),
+    ...(provider.preferredMinThroughput === undefined
+      ? {}
+      : { preferred_min_throughput: provider.preferredMinThroughput }),
+    ...(provider.preferredMaxLatency === undefined
+      ? {}
+      : { preferred_max_latency: provider.preferredMaxLatency }),
+  };
 }
 
 function toManagedInferenceResult(
