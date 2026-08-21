@@ -1,8 +1,11 @@
 import type {
   AiAssistantMessage,
   AiStopReason,
+  AiTextContent,
+  AiThinkingContent,
   AiTextMessage,
   AiTextTool,
+  AiToolCall,
 } from "./syscalls/ai";
 
 export const GSV_INFERENCE_PROVIDER = "gsv";
@@ -39,6 +42,48 @@ export type ManagedInferenceResult = Omit<
   timestamp: number;
 };
 
+export type ManagedInferencePartial = Omit<
+  ManagedInferenceResult,
+  "stopReason"
+> & {
+  stopReason: AiStopReason | "pending";
+};
+
+export type ManagedInferenceStreamEvent =
+  | { type: "start"; partial: ManagedInferencePartial }
+  | { type: "text_start"; contentIndex: number; content: AiTextContent }
+  | { type: "text_delta"; contentIndex: number; delta: string }
+  | { type: "text_end"; contentIndex: number; content: AiTextContent }
+  | {
+      type: "thinking_start";
+      contentIndex: number;
+      content: AiThinkingContent;
+    }
+  | { type: "thinking_delta"; contentIndex: number; delta: string }
+  | {
+      type: "thinking_end";
+      contentIndex: number;
+      content: AiThinkingContent;
+    }
+  | { type: "toolcall_start"; contentIndex: number; toolCall: AiToolCall }
+  | {
+      type: "toolcall_delta";
+      contentIndex: number;
+      delta: string;
+      toolCall: AiToolCall;
+    }
+  | { type: "toolcall_end"; contentIndex: number; toolCall: AiToolCall }
+  | {
+      type: "done";
+      reason: Extract<AiStopReason, "stop" | "length" | "toolUse">;
+      message: ManagedInferenceResult;
+    }
+  | {
+      type: "error";
+      reason: Extract<AiStopReason, "aborted" | "error">;
+      error: ManagedInferenceResult;
+    };
+
 export type ManagedInferenceAbortRequest = {
   version: 1;
   installationId: string;
@@ -47,6 +92,9 @@ export type ManagedInferenceAbortRequest = {
 
 export interface ManagedInferenceService {
   generate(input: ManagedInferenceRequest): Promise<ManagedInferenceResult>;
+  generateStream(
+    input: ManagedInferenceRequest,
+  ): Promise<ReadableStream<Uint8Array>>;
   abort(input: ManagedInferenceAbortRequest): Promise<void>;
 }
 

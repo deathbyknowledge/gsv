@@ -1,5 +1,6 @@
 import { DurableObject } from "cloudflare:workers";
 import {
+  encodeManagedInferenceStreamEvent,
   GSV_INFERENCE_PRODUCT_MODEL,
   GSV_INFERENCE_PROVIDER,
   MANAGED_INFERENCE_QUANTIZATIONS,
@@ -8,6 +9,7 @@ import {
   type ManagedInferenceRequest,
   type ManagedInferenceResult,
   type ManagedInferenceRouting,
+  type ManagedInferenceStreamEvent,
   type ManagedInferenceUsageEvent,
   type ManagedInferenceUsageOutcome,
   type ManagedMailSummary,
@@ -22,7 +24,10 @@ import {
   validateManagedMailSummary,
   validateManagedMailSummaryRequest,
 } from "./mail-summary";
-import { createOpenRouterGeneration } from "./openrouter";
+import {
+  createOpenRouterGeneration,
+  toManagedInferenceStreamEvent,
+} from "./openrouter";
 import { reservationNanoUsd, usageNanoUsd } from "./pricing";
 import { runInferenceSqlMigrations } from "./schema/migrations";
 import {
@@ -163,6 +168,40 @@ export class InferenceInstallation extends DurableObject<InferenceEnv> {
         this.activeGenerations.delete(input.logicalRequestId);
       }
     }
+  }
+
+  async generateStream(
+    inputValue: ManagedInferenceRequest,
+  ): Promise<ReadableStream<Uint8Array>> {
+    const input = validateManagedInferenceRequest(inputValue);
+    this.requireOwnedRequest(input);
+    if (this.activeMailSummaries.has(input.logicalRequestId)) {
+      throw new Error("Managed inference request conflicts with mail intake");
+    }
+    if (this.activeGenerations.has(input.logicalRequestId)) {
+      throw new Error("Managed inference request is already active");
+    }
+    if (this.isCancelled(input.logicalRequestId, Date.now())) {
+      return streamFromEvent(resultEvent(abortedResult()));
+    }
+
+    const generation = createOpenRouterGeneration(
+      input,
+      this.env.OPENROUTER_API_KEY,
+    );
+    const channel = new TransformStream<Uint8Array, Uint8Array>();
+    const writer = channel.writable.getWriter();
+    const active: ActiveGeneration = {
+      promise: this.completeGenerationStream(input, generation, writer),
+      abort: generation.abort,
+    };
+    this.activeGenerations.set(input.logicalRequestId, active);
+    void active.promise.finally(() => {
+      if (this.activeGenerations.get(input.logicalRequestId) === active) {
+        this.activeGenerations.delete(input.logicalRequestId);
+      }
+    }).catch(() => {});
+    return channel.readable;
   }
 
   async summarizeMail(
@@ -309,12 +348,123 @@ export class InferenceInstallation extends DurableObject<InferenceEnv> {
 
     try {
       const result = await generation.result(routing);
-      this.settleResult(input.logicalRequestId, result, routing, Date.now());
+      this.settleResult(input.logicalRequestId, result, routing, Date.now(), {
+        minimumCostNanoUsd: acceptedFailureCost(
+          generation,
+          result,
+          reservedNanoUsd,
+        ),
+      });
       await this.scheduleNextAlarm();
       return result;
     } catch (error) {
-      this.settleFailure(input.logicalRequestId, Date.now());
+      this.settleFailure(
+        input.logicalRequestId,
+        Date.now(),
+        generation.accepted() ? reservedNanoUsd : 0,
+      );
       await this.scheduleNextAlarm();
+      throw error;
+    }
+  }
+
+  private async completeGenerationStream(
+    input: ManagedInferenceRequest,
+    generation: ReturnType<typeof createOpenRouterGeneration>,
+    writer: WritableStreamDefaultWriter<Uint8Array>,
+  ): Promise<ManagedInferenceResult> {
+    let reserved = false;
+    let reservedNanoUsd = 0;
+    try {
+      const policy = await this.env.ACCOUNTS.getManagedInferencePolicy(
+        this.installationId,
+      );
+      if (this.isCancelled(input.logicalRequestId, Date.now())) {
+        const result = abortedResult();
+        await writeTerminalEvent(writer, resultEvent(result));
+        return result;
+      }
+      const monthlyLimitNanoUsd = effectiveMonthlyLimit(
+        policy,
+        this.installationId,
+        this.deploymentMonthlyLimitNanoUsd,
+      );
+      const routing = requireManagedInferenceRouting(policy.routing);
+      const startedAt = Date.now();
+      reservedNanoUsd = reservationNanoUsd(input, routing);
+      this.reserve(
+        input,
+        startedAt,
+        reservedNanoUsd,
+        monthlyLimitNanoUsd,
+        "agent",
+        null,
+      );
+      reserved = true;
+      await this.scheduleNextAlarm();
+
+      const source = generation.stream(routing);
+      let result: ManagedInferenceResult | undefined;
+      let terminal: Extract<
+        ManagedInferenceStreamEvent,
+        { type: "done" | "error" }
+      > | undefined;
+      let consumerClosed = false;
+      for await (const event of source) {
+        const wireEvent = toManagedInferenceStreamEvent(event);
+        if (wireEvent.type === "done") {
+          result = wireEvent.message;
+          terminal = wireEvent;
+          break;
+        }
+        if (wireEvent.type === "error") {
+          result = wireEvent.error;
+          terminal = wireEvent;
+          break;
+        }
+        try {
+          await writer.write(encodeManagedInferenceStreamEvent(wireEvent));
+        } catch {
+          consumerClosed = true;
+          await generation.abort();
+          break;
+        }
+      }
+      if (consumerClosed) {
+        result = await generation.result(routing);
+        terminal = resultEvent(result);
+      }
+      if (!result || !terminal) {
+        throw new Error("Managed inference stream ended without a result");
+      }
+
+      this.settleResult(input.logicalRequestId, result, routing, Date.now(), {
+        minimumCostNanoUsd: acceptedFailureCost(
+          generation,
+          result,
+          reservedNanoUsd,
+        ),
+      });
+      await this.scheduleNextAlarm();
+      if (consumerClosed) {
+        await writer.abort().catch(() => {});
+      } else {
+        await writeTerminalEvent(writer, terminal).catch(() => {});
+      }
+      return result;
+    } catch (error) {
+      await generation.abort();
+      if (reserved) {
+        this.settleFailure(
+          input.logicalRequestId,
+          Date.now(),
+          generation.accepted() ? reservedNanoUsd : 0,
+        );
+        await this.scheduleNextAlarm();
+      }
+      await writer.abort(new Error("Managed inference stream failed")).catch(
+        () => {},
+      );
       throw error;
     }
   }
@@ -349,7 +499,11 @@ export class InferenceInstallation extends DurableObject<InferenceEnv> {
     try {
       result = await generation.result(routing);
     } catch (error) {
-      this.settleFailure(input.logicalRequestId, Date.now());
+      this.settleFailure(
+        input.logicalRequestId,
+        Date.now(),
+        generation.accepted() ? reservedNanoUsd : 0,
+      );
       await this.scheduleNextAlarm();
       throw error;
     }
@@ -360,10 +514,19 @@ export class InferenceInstallation extends DurableObject<InferenceEnv> {
       try {
         this.settleResult(input.logicalRequestId, result, routing, Date.now(), {
           outcome: failedOutcomeForResult(result),
+          minimumCostNanoUsd: acceptedFailureCost(
+            generation,
+            result,
+            reservedNanoUsd,
+          ),
           resultJson: null,
         });
       } catch {
-        this.settleFailure(input.logicalRequestId, Date.now());
+        this.settleFailure(
+          input.logicalRequestId,
+          Date.now(),
+          generation.accepted() ? reservedNanoUsd : 0,
+        );
       }
       await this.scheduleNextAlarm();
       throw error;
@@ -374,7 +537,11 @@ export class InferenceInstallation extends DurableObject<InferenceEnv> {
         resultJson: JSON.stringify(summary),
       });
     } catch (error) {
-      this.settleFailure(input.logicalRequestId, Date.now());
+      this.settleFailure(
+        input.logicalRequestId,
+        Date.now(),
+        generation.accepted() ? reservedNanoUsd : 0,
+      );
       await this.scheduleNextAlarm();
       throw error;
     }
@@ -462,12 +629,16 @@ export class InferenceInstallation extends DurableObject<InferenceEnv> {
     completedAt: number,
     options?: {
       outcome?: Exclude<ManagedInferenceUsageOutcome, "abandoned">;
+      minimumCostNanoUsd?: number;
       resultJson?: string | null;
     },
   ): void {
     const outcome = options?.outcome ?? outcomeForResult(result);
     const usage = normalizedUsage(result);
-    const costNanoUsd = usageNanoUsd(result.usage, routing);
+    const costNanoUsd = Math.max(
+      usageNanoUsd(result.usage, routing),
+      options?.minimumCostNanoUsd ?? 0,
+    );
     this.settle(logicalRequestId, {
       outcome,
       costNanoUsd,
@@ -484,12 +655,16 @@ export class InferenceInstallation extends DurableObject<InferenceEnv> {
     });
   }
 
-  private settleFailure(logicalRequestId: string, completedAt: number): void {
+  private settleFailure(
+    logicalRequestId: string,
+    completedAt: number,
+    costNanoUsd = 0,
+  ): void {
     const request = this.requestState(logicalRequestId);
     if (!request || request.state !== "reserved") return;
     this.settle(logicalRequestId, {
       outcome: "failed",
-      costNanoUsd: 0,
+      costNanoUsd,
       inputTokens: 0,
       outputTokens: 0,
       cacheReadTokens: 0,
@@ -583,11 +758,12 @@ export class InferenceInstallation extends DurableObject<InferenceEnv> {
       for (const request of expired) {
         this.ctx.storage.sql.exec(
           `UPDATE inference_requests
-           SET state = 'abandoned', cost_nano_usd = 0,
+           SET state = 'abandoned', cost_nano_usd = ?,
                input_tokens = 0, output_tokens = 0,
                cache_read_tokens = 0, cache_write_tokens = 0,
                total_tokens = 0, completed_at = ?, next_export_at = ?
            WHERE logical_request_id = ? AND state = 'reserved'`,
+          request.reserved_nano_usd,
           now,
           now + EXPORT_DELAY_MS,
           request.logical_request_id,
@@ -595,8 +771,10 @@ export class InferenceInstallation extends DurableObject<InferenceEnv> {
         this.ctx.storage.sql.exec(
           `UPDATE inference_periods
            SET reserved_nano_usd = MAX(0, reserved_nano_usd - ?),
+               spent_nano_usd = spent_nano_usd + ?,
                abandoned_requests = abandoned_requests + 1
            WHERE period = ?`,
+          request.reserved_nano_usd,
           request.reserved_nano_usd,
           request.period,
         );
@@ -838,6 +1016,34 @@ function abortedResult(): ManagedInferenceResult {
   };
 }
 
+function resultEvent(
+  result: ManagedInferenceResult,
+): Extract<ManagedInferenceStreamEvent, { type: "done" | "error" }> {
+  if (result.stopReason === "error" || result.stopReason === "aborted") {
+    return { type: "error", reason: result.stopReason, error: result };
+  }
+  return { type: "done", reason: result.stopReason, message: result };
+}
+
+function streamFromEvent(
+  event: Extract<ManagedInferenceStreamEvent, { type: "done" | "error" }>,
+): ReadableStream<Uint8Array> {
+  return new ReadableStream({
+    start(controller) {
+      controller.enqueue(encodeManagedInferenceStreamEvent(event));
+      controller.close();
+    },
+  });
+}
+
+async function writeTerminalEvent(
+  writer: WritableStreamDefaultWriter<Uint8Array>,
+  event: Extract<ManagedInferenceStreamEvent, { type: "done" | "error" }>,
+): Promise<void> {
+  await writer.write(encodeManagedInferenceStreamEvent(event));
+  await writer.close();
+}
+
 function tokenCount(value: number): number {
   if (!Number.isSafeInteger(value) || value < 0) {
     throw new Error("Managed inference usage is invalid");
@@ -851,6 +1057,17 @@ function outcomeForResult(
   if (result.stopReason === "aborted") return "aborted";
   if (result.stopReason === "error") return "failed";
   return "completed";
+}
+
+function acceptedFailureCost(
+  generation: ReturnType<typeof createOpenRouterGeneration>,
+  result: ManagedInferenceResult,
+  reservedNanoUsd: number,
+): number {
+  return generation.accepted()
+      && (result.stopReason === "error" || result.stopReason === "aborted")
+    ? reservedNanoUsd
+    : 0;
 }
 
 function failedOutcomeForResult(

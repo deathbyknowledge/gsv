@@ -1,5 +1,6 @@
 import { DurableObject, WorkerEntrypoint } from "cloudflare:workers";
 import {
+  encodeManagedInferenceStreamEvent,
   GSV_INFERENCE_PRODUCT_MODEL,
   GSV_INFERENCE_PROVIDER,
 } from "@humansandmachines/gsv/protocol";
@@ -154,6 +155,47 @@ export class ManagedInferenceFixture
       timestamp: Date.now(),
     };
     return result;
+  }
+
+  async generateStream(
+    input: ManagedInferenceRequest,
+  ): Promise<ReadableStream<Uint8Array>> {
+    const result = this.generate(input);
+    return new ReadableStream({
+      async start(controller) {
+        const message = await result;
+        const content = message.content[0];
+        if (!content || content.type !== "text") {
+          throw new Error("managed inference fixture expected text");
+        }
+        controller.enqueue(encodeManagedInferenceStreamEvent({
+          type: "start",
+          partial: { ...message, content: [], stopReason: "pending" },
+        }));
+        controller.enqueue(encodeManagedInferenceStreamEvent({
+          type: "text_start",
+          contentIndex: 0,
+          content: { type: "text", text: "" },
+        }));
+        controller.enqueue(encodeManagedInferenceStreamEvent({
+          type: "text_delta",
+          contentIndex: 0,
+          delta: content.text,
+        }));
+        await scheduler.wait(10);
+        controller.enqueue(encodeManagedInferenceStreamEvent({
+          type: "text_end",
+          contentIndex: 0,
+          content,
+        }));
+        controller.enqueue(encodeManagedInferenceStreamEvent({
+          type: "done",
+          reason: "stop",
+          message,
+        }));
+        controller.close();
+      },
+    });
   }
 
   async abort(input: ManagedInferenceAbortRequest): Promise<void> {

@@ -1,14 +1,13 @@
+import { createModels, type Context } from "@earendil-works/pi-ai";
 import {
-  createModels,
-  type Context,
-} from "@earendil-works/pi-ai";
-import {
+  encodeManagedInferenceStreamEvent,
   GSV_INFERENCE_FEATURE,
   GSV_INFERENCE_MODEL,
   GSV_INFERENCE_PRODUCT_MODEL,
   GSV_INFERENCE_PROVIDER,
   type ManagedInferenceResult,
   type ManagedInferenceService,
+  type ManagedInferenceStreamEvent,
 } from "@humansandmachines/gsv/protocol";
 import { describe, expect, it, vi } from "vitest";
 import {
@@ -49,6 +48,7 @@ describe("GSV inference provider", () => {
   it("registers only when its service binding is present", () => {
     const service: ManagedInferenceService = {
       generate: vi.fn(),
+      generateStream: vi.fn(),
       abort: vi.fn(),
     };
 
@@ -62,24 +62,80 @@ describe("GSV inference provider", () => {
     expect(gsvInferenceFeaturesFromEnv({} as Env)).toEqual([]);
   });
 
-  it("aborts a generation that completes after request cancellation", async () => {
-    let releaseGenerate: (result: ManagedInferenceResult) => void = () => {};
-    let markGenerateStarted: () => void = () => {};
-    const generateStarted = new Promise<void>((resolve) => {
-      markGenerateStarted = resolve;
+  it("forwards deltas before the managed result completes", async () => {
+    let bodyController: ReadableStreamDefaultController<Uint8Array> | undefined;
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        bodyController = controller;
+      },
     });
-    const generate = vi.fn<ManagedInferenceService["generate"]>(() => new Promise((resolve) => {
-      releaseGenerate = resolve;
-      markGenerateStarted();
+    const service = managedService(vi.fn(async () => body));
+    const stream = providerStream(service, new AbortController().signal);
+    const events = stream[Symbol.asyncIterator]();
+
+    bodyController?.enqueue(encoded({
+      type: "start",
+      partial: { ...RESULT, content: [], stopReason: "pending" },
     }));
+    bodyController?.enqueue(encoded({
+      type: "text_start",
+      contentIndex: 0,
+      content: { type: "text", text: "" },
+    }));
+    bodyController?.enqueue(encoded({
+      type: "text_delta",
+      contentIndex: 0,
+      delta: "pong",
+    }));
+
+    await expect(events.next()).resolves.toMatchObject({
+      value: { type: "start" },
+    });
+    await expect(events.next()).resolves.toMatchObject({
+      value: { type: "text_start" },
+    });
+    await expect(events.next()).resolves.toMatchObject({
+      value: { type: "text_delta", delta: "pong" },
+    });
+
+    bodyController?.enqueue(encoded({
+      type: "text_end",
+      contentIndex: 0,
+      content: { type: "text", text: "pong" },
+    }));
+    bodyController?.enqueue(encoded({ type: "done", reason: "stop", message: RESULT }));
+    bodyController?.close();
+    await expect(stream.result()).resolves.toMatchObject({
+      content: [{ type: "text", text: "pong" }],
+      stopReason: "stop",
+    });
+    expect(service.generateStream).toHaveBeenCalledOnce();
+    expect(service.generate).not.toHaveBeenCalled();
+  });
+
+  it("aborts an active byte stream on request cancellation", async () => {
+    let markStarted: () => void = () => {};
+    const started = new Promise<void>((resolve) => {
+      markStarted = resolve;
+    });
+    const generateStream = vi.fn<ManagedInferenceService["generateStream"]>(
+      async () => new ReadableStream({
+        start() {
+          markStarted();
+        },
+      }),
+    );
     const controller = new AbortController();
     const abort = vi.fn(async () => {});
-    const stream = providerStream({ generate, abort }, controller.signal);
+    const stream = providerStream({
+      generate: vi.fn(),
+      generateStream,
+      abort,
+    }, controller.signal);
     const completion = stream.result();
 
-    await generateStarted;
+    await started;
     controller.abort(new Error("test cancellation"));
-    releaseGenerate(RESULT);
 
     await expect(completion).resolves.toMatchObject({
       stopReason: "aborted",
@@ -93,25 +149,30 @@ describe("GSV inference provider", () => {
     });
   });
 
-  it("aborts the active result", async () => {
+  it("aborts when cancellation overtakes the stream RPC", async () => {
     let markStarted: () => void = () => {};
     const started = new Promise<void>((resolve) => {
       markStarted = resolve;
     });
     const controller = new AbortController();
     const reason = new Error("test cancellation");
-    let rejectGenerate: (reason?: unknown) => void = () => {};
-    const generate = vi.fn<ManagedInferenceService["generate"]>(() => new Promise(
-      (_resolve, reject) => {
-        rejectGenerate = reject;
+    let releaseStream: (value: ReadableStream<Uint8Array>) => void = () => {};
+    const generateStream = vi.fn<ManagedInferenceService["generateStream"]>(
+      () => new Promise((resolve) => {
+        releaseStream = resolve;
         markStarted();
-      },
-    ));
-    const abort = vi.fn(async () => rejectGenerate(reason));
+      }),
+    );
+    const abort = vi.fn(async () => {});
 
-    const stream = providerStream({ generate, abort }, controller.signal);
+    const stream = providerStream({
+      generate: vi.fn(),
+      generateStream,
+      abort,
+    }, controller.signal);
     await started;
     controller.abort(reason);
+    releaseStream(eventStream({ type: "done", reason: "stop", message: RESULT }));
 
     await expect(stream.result()).resolves.toMatchObject({
       stopReason: "aborted",
@@ -133,5 +194,26 @@ function providerStream(
     maxTokens: 128,
     timeoutMs: 1_000,
     signal,
+  });
+}
+
+function managedService(
+  generateStream: ManagedInferenceService["generateStream"],
+): ManagedInferenceService {
+  return { generate: vi.fn(), generateStream, abort: vi.fn() };
+}
+
+function encoded(event: ManagedInferenceStreamEvent): Uint8Array {
+  return encodeManagedInferenceStreamEvent(event);
+}
+
+function eventStream(
+  ...events: ManagedInferenceStreamEvent[]
+): ReadableStream<Uint8Array> {
+  return new ReadableStream({
+    start(controller) {
+      for (const event of events) controller.enqueue(encoded(event));
+      controller.close();
+    },
   });
 }

@@ -180,6 +180,16 @@ previous model and fallback behavior as its initial route. Apply Accounts D1
 migrations before deploying an Inference Worker that expects the routing field,
 and keep the OpenRouter credential solely in the Inference Worker secret.
 
+Agent generations return a compact framed byte stream over the Inference
+service binding. The Inference Durable Object owns the OpenRouter stream,
+reservation, cancellation, and final settlement; the Gateway validates each
+event and reconstructs the normal model event stream without buffering the
+answer. Deploy Inference before Gateway when rolling this contract forward.
+Mail intake remains a bounded non-streaming call. If an accepted provider
+request ends without trustworthy usage, including cancellation after the HTTP
+response or reservation expiry, allowance accounting charges the full reserved
+amount rather than reopening a quota bypass.
+
 Managed outbound email follows the same fail-closed release discipline. Queue
 and Email Sending bindings may be deployed while its boolean and daily quotas
 remain zero. Provision `gsv-managed-mail-outbound` and its

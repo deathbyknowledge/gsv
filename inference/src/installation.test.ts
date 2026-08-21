@@ -339,6 +339,51 @@ describe("installation managed inference", () => {
     });
   });
 
+  it("retains the reservation when an accepted provider stream is aborted", async () => {
+    const installationId = "installation_accepted_abort";
+    const logicalRequestId = "request_accepted_abort";
+    const stub = env.INFERENCE_INSTALLATIONS.getByName(installationId);
+    let failBody: (reason: unknown) => void = () => {};
+    let markReading: () => void = () => {};
+    const reading = new Promise<void>((resolve) => {
+      markReading = resolve;
+    });
+    vi.stubGlobal("fetch", vi.fn<typeof fetch>(async (_url, init) => {
+      const body = new ReadableStream<Uint8Array>({
+        start(controller) {
+          failBody = (reason) => controller.error(reason);
+        },
+        pull() {
+          markReading();
+          return new Promise<void>(() => {});
+        },
+      });
+      init?.signal?.addEventListener("abort", () => {
+        failBody(init.signal?.reason);
+      }, { once: true });
+      return new Response(body, {
+        headers: { "content-type": "text/event-stream" },
+      });
+    }));
+
+    const outcome = await runInDurableObject(stub, async (instance) => {
+      const installation = instance as InferenceInstallation;
+      const generation = installation.generate(request(
+        installationId,
+        logicalRequestId,
+      ));
+      await reading;
+      await installation.abort(logicalRequestId);
+      return { result: await generation, usage: await installation.usage() };
+    });
+    expect(outcome.result).toMatchObject({ stopReason: "aborted" });
+    expect(outcome.usage).toMatchObject({
+      reservedNanoUsd: 0,
+      abortedRequests: 1,
+    });
+    expect(outcome.usage.spentNanoUsd).toBeGreaterThan(0);
+  });
+
   it("does not let a late abort replace terminal replay behavior", async () => {
     const installationId = "installation_late_abort";
     const logicalRequestId = "request_late_abort";
@@ -661,7 +706,7 @@ describe("installation managed inference", () => {
     expect(exportedAt).not.toBeNull();
   });
 
-  it("abandons expired durable reservations and releases their allowance", async () => {
+  it("charges expired reservations conservatively before releasing them", async () => {
     const installationId = "installation_abandoned";
     const stub = env.INFERENCE_INSTALLATIONS.getByName(installationId);
     const snapshot = await runInDurableObject(stub, async (instance, state) => {
@@ -703,6 +748,7 @@ describe("installation managed inference", () => {
 
     expect(snapshot.usage).toMatchObject({
       reservedNanoUsd: 0,
+      spentNanoUsd: 100,
       abandonedRequests: 1,
     });
     expect(snapshot.tombstones).toBe(0);

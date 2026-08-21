@@ -27,6 +27,7 @@ import {
   resolveGenerationTimeoutMs,
 } from "./service";
 import {
+  encodeManagedInferenceStreamEvent,
   GSV_INFERENCE_MODEL,
   GSV_INFERENCE_PRODUCT_MODEL,
   GSV_INFERENCE_PROVIDER,
@@ -36,6 +37,21 @@ import {
 } from "@humansandmachines/gsv/protocol";
 import type { AssistantMessage, Context } from "@earendil-works/pi-ai";
 import { createGsvInferenceProviderFactory } from "./gsv-provider";
+
+function managedResultStream(
+  message: ManagedInferenceResult,
+): ReadableStream<Uint8Array> {
+  return new ReadableStream({
+    start(controller) {
+      controller.enqueue(encodeManagedInferenceStreamEvent({
+        type: "done",
+        reason: "stop",
+        message,
+      }));
+      controller.close();
+    },
+  });
+}
 
 function assistantMessage(content: AssistantMessage["content"]): AssistantMessage {
   return {
@@ -169,9 +185,12 @@ describe("createGenerationService", () => {
       stopReason: "stop",
       timestamp: 1,
     };
-    const generate = vi.fn<ManagedInferenceService["generate"]>(async () => managedResult);
+    const generateStream = vi.fn<ManagedInferenceService["generateStream"]>(
+      async () => managedResultStream(managedResult),
+    );
     const managedInference: ManagedInferenceService = {
-      generate,
+      generate: vi.fn(),
+      generateStream,
       abort: vi.fn(),
     };
     completePiAiSimpleMock.mockImplementationOnce((model, context, options, models) =>
@@ -202,7 +221,7 @@ describe("createGenerationService", () => {
     });
 
     expect(result.content).toEqual([{ type: "text", text: "managed pong" }]);
-    expect(generate).toHaveBeenCalledWith(expect.objectContaining({
+    expect(generateStream).toHaveBeenCalledWith(expect.objectContaining({
       installationId: "inst_test",
       logicalRequestId: "request_test",
       actor: { localUid: 1000, processId: "proc_test", runId: "run_test" },
@@ -240,6 +259,7 @@ describe("createGenerationService", () => {
   it("requires trusted attribution for a registered provider", async () => {
     const managedInference: ManagedInferenceService = {
       generate: vi.fn(),
+      generateStream: vi.fn(),
       abort: vi.fn(),
     };
 
@@ -254,7 +274,7 @@ describe("createGenerationService", () => {
       },
       context: CONTEXT,
     })).rejects.toThrow("Inference attribution is unavailable for provider: gsv");
-    expect(managedInference.generate).not.toHaveBeenCalled();
+    expect(managedInference.generateStream).not.toHaveBeenCalled();
   });
 
   it("passes a routed fetch to built-in provider completions", async () => {

@@ -1,5 +1,6 @@
 import { env, exports } from "cloudflare:workers";
 import {
+  decodeManagedInferenceStream,
   GSV_INFERENCE_PRODUCT_MODEL,
   type ManagedInferenceRequest,
   type ManagedMailSummaryRequest,
@@ -47,6 +48,38 @@ describe("managed inference service RPC", () => {
     );
     await expect(installation.usage()).resolves.toMatchObject({
       installationId: REQUEST.installationId,
+      spentNanoUsd: 340,
+      reservedNanoUsd: 0,
+      completedRequests: 1,
+    });
+  });
+
+  it("streams provider deltas through the service binding before settlement", async () => {
+    const input = {
+      ...REQUEST,
+      installationId: "installation_service_stream_rpc",
+      logicalRequestId: "request_service_stream_rpc",
+    };
+    const body = await exports.default.generateStream(input);
+    const events = [];
+    for await (const event of decodeManagedInferenceStream(body)) {
+      events.push(event);
+    }
+
+    expect(events.map((event) => (
+      event && typeof event === "object" && "type" in event
+        ? event.type
+        : null
+    ))).toEqual([
+      "start",
+      "text_start",
+      "text_delta",
+      "text_end",
+      "done",
+    ]);
+    await expect(env.INFERENCE_INSTALLATIONS.getByName(
+      input.installationId,
+    ).usage()).resolves.toMatchObject({
       spentNanoUsd: 340,
       reservedNanoUsd: 0,
       completedRequests: 1,

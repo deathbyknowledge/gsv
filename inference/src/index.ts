@@ -38,6 +38,18 @@ export class InferenceService
     ).generate(input);
   }
 
+  async generateStream(
+    inputValue: ManagedInferenceRequest,
+  ): Promise<ReadableStream<Uint8Array>> {
+    if (!this.env.MANAGED_INFERENCE_ENABLED) {
+      throw new Error("Managed inference is disabled");
+    }
+    const input = validateManagedInferenceRequest(inputValue);
+    return await this.env.INFERENCE_INSTALLATIONS.getByName(
+      input.installationId,
+    ).generateStream(input);
+  }
+
   async abort(inputValue: ManagedInferenceAbortRequest): Promise<void> {
     const input = validateManagedInferenceAbortRequest(inputValue);
     await this.env.INFERENCE_INSTALLATIONS.getByName(
