@@ -162,13 +162,21 @@ function accountStatus(account: ConsoleAccount, processes: readonly ConsoleProce
   const running = ownedProcesses.some(isRunningProcess);
   const queuedCount = ownedProcesses.filter(isQueuedProcess).length;
   const unknown = ownedProcesses.some((process) => process.state === "unknown");
-  const openCount = ownedProcesses.length;
+  // proc.list carries every process the account owns, not just the ones someone
+  // is talking to. Counting a scheduled spawn as an open chat would claim a
+  // conversation that never happened, so the two are counted apart and the
+  // label follows whichever the account actually has running. Same rule as
+  // processNoun on the runtime pages.
+  const openCount = ownedProcesses.filter((process) => process.interactive).length;
+  const backgroundCount = ownedProcesses.length - openCount;
 
   if (queuedCount > 0) {
     return { meta: `${queuedCount} queued`, statusLabel: "QUEUED", tone: "update" };
   }
   if (running) {
-    const openLabel = openCount === 1 ? "1 open chat" : `${openCount} open chats`;
+    const openLabel = openCount > 0
+      ? (openCount === 1 ? "1 open chat" : `${openCount} open chats`)
+      : (backgroundCount === 1 ? "1 background process" : `${backgroundCount} background processes`);
     return { meta: openLabel, statusLabel: "RUNNING", tone: "live" };
   }
   if (unknown) {
