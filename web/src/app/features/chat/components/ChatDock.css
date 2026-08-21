@@ -344,7 +344,9 @@
   position: relative;
   z-index: 55;
   min-height: 108px;
-  align-items: flex-start;
+  /* Stretch, so the action column spans the agent column's full height and the
+     context reading can sit on the same line as the model below. */
+  align-items: stretch;
   gap: 10px;
   padding: 14px 12px 12px;
   background: var(--node-bg);
@@ -558,10 +560,11 @@
   flex: none;
   display: flex;
   flex-direction: column;
-  /* Stretch so the context bar below matches the icon-button row width exactly.
-     The row's intrinsic width (its buttons) drives the column width; the context
-     control fills it via min-width:100% without widening the column itself. */
-  align-items: stretch;
+  /* Buttons at the top, context reading at the bottom: the column is as tall as
+     the agent block opposite it, whose last line is the model, so pushing the
+     context down lands it on that same line. */
+  justify-content: space-between;
+  align-items: flex-end;
   gap: 9px;
 }
 
@@ -573,8 +576,8 @@
 }
 
 .gsv-shell-root .gsv-chat-actions button {
-  width: 30px;
-  height: 30px;
+  width: 27px;
+  height: 27px;
   padding: 0;
   border: 1px solid var(--border);
   background: #0a0820;
@@ -591,33 +594,32 @@
   outline: none;
 }
 
+/* Bare reading rather than a control-shaped box: meter, percentage, nothing
+   around them. The 1.2 line-height is the model row's, so the two lines share a
+   baseline once the column bottom-aligns them. */
 .gsv-shell-root .gsv-chat-actions .gsv-chat-context-control {
-  /* Fill the stretched column (= icon-button row width) without contributing its
-     own intrinsic width, so it can never make the column wider than the row. */
   box-sizing: border-box;
-  width: 0;
-  min-width: 100%;
+  width: auto;
+  max-width: 100%;
   height: auto;
-  min-height: 27px;
   overflow: hidden;
   display: inline-flex;
   align-items: center;
   gap: 7px;
-  padding: 4px 11px;
-  border: 1px solid var(--border);
-  background: #0c0a22;
+  padding: 0;
+  border: 0;
+  background: transparent;
   color: #b6b1ff;
   cursor: pointer;
   font-family: var(--gsv-font-mono);
   font-size: 0.75rem; /* size from .gsv-sublabel (12px) */
   letter-spacing: 0.08em;
+  line-height: 1.2;
   text-transform: uppercase;
 }
 
 .gsv-shell-root .gsv-chat-actions .gsv-chat-context-control:hover,
 .gsv-shell-root .gsv-chat-actions .gsv-chat-context-control:focus-visible {
-  border-color: var(--dashed);
-  background: #100e2a;
   color: #e6e4ff;
   outline: none;
 }
@@ -2294,10 +2296,6 @@
     font-size: 0.75rem; /* size from .gsv-sublabel (12px) */
   }
 
-  .gsv-shell-root .gsv-chat-actions .gsv-chat-context-control {
-    padding-inline: 6px;
-  }
-
   .gsv-shell-root .gsv-chat-actions .gsv-chat-context-control .gsv-pr {
     display: none;
   }
@@ -2417,6 +2415,9 @@
 
 .gsv-shell-viewport.is-mobile .gsv-chat-actions {
   flex: none;
+  /* Mobile packs the cluster and the context cell together under each other;
+     only the desktop header spreads them to opposite ends. */
+  justify-content: flex-start;
   align-items: flex-end;
   gap: 6px;
 }
@@ -2443,6 +2444,11 @@
   min-height: 44px;
   align-self: stretch;
   justify-content: center;
+  /* Here it is a tap target of its own, so it keeps the box the desktop
+     header drops. */
+  padding: 4px 11px;
+  border: 1px solid var(--border);
+  background: #0c0a22;
 }
 
 .gsv-shell-viewport.is-mobile .gsv-chat-actions .gsv-chat-context-control .gsv-pr {

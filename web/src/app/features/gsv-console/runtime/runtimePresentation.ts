@@ -38,6 +38,16 @@ export function iconForProcess(process: ConsoleProcess): string {
   return process.interactive ? "chat" : "list";
 }
 
+/** What to call one process on screen. proc.list carries every process, not
+ *  just the ones a person talks to: a scheduled spawn or another
+ *  `interactive: false` entry is a background process and calling it a chat
+ *  would misdescribe it — and offer actions like "RESET CHAT" for something
+ *  that was never one. Collection labels (the CHATS list) are not this: they
+ *  name the surface, not a single row. */
+export function processNoun(process: ConsoleProcess): "chat" | "process" {
+  return process.interactive ? "chat" : "process";
+}
+
 export function processSub(process: ConsoleProcess): string {
   return compactText(
     [process.username || uidLabel(process.uid), process.cwd],
@@ -47,9 +57,10 @@ export function processSub(process: ConsoleProcess): string {
 
 export function processBlurb(process: ConsoleProcess): string {
   const owner = process.username || uidLabel(process.uid) || "unknown owner";
+  const noun = processNoun(process);
   return compactText(
-    [`${statusForProcess(process).toLowerCase()} chat`, owner, process.profile, process.cwd],
-    "Process-backed chat with durable history and runtime controls.",
+    [`${statusForProcess(process).toLowerCase()} ${noun}`, owner, process.profile, process.cwd],
+    `Process-backed ${noun} with durable history and runtime controls.`,
   );
 }
 
@@ -77,7 +88,7 @@ export function processDetailSections(process: ConsoleProcess): ConsoleDetailSec
         detailRow("owner", "RUN AS", process.username || uidLabel(process.uid)),
         detailRow("profile", "PROFILE", process.profile),
         detailRow("interactive", "HIL APPROVALS", process.interactive),
-        detailRow("parent", "PARENT CHAT", process.parentPid),
+        detailRow("parent", `PARENT ${processNoun(process).toUpperCase()}`, process.parentPid),
       ]),
     },
     {

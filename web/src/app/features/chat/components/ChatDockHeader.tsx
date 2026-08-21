@@ -322,10 +322,10 @@ export function ChatDockHeader({
             </Hint>
           ) : null}
           <Hint text={atMax ? "Sidepanel view" : "Full width"} position="bottom-end">
-            <IconButton glyph={atMax ? "sidepanel" : "max"} size="medium" ariaLabel={atMax ? "Sidepanel view" : "Expand chat"} onClick={onToggleMax} />
+            <IconButton glyph={atMax ? "sidepanel" : "max"} size={27} ariaLabel={atMax ? "Sidepanel view" : "Expand chat"} onClick={onToggleMax} />
           </Hint>
           <Hint text="Minimize" position="bottom-end">
-            <IconButton glyph="min" size="medium" ariaLabel="Minimize chat" onClick={onToggleOpen} />
+            <IconButton glyph="min" size={27} ariaLabel="Minimize chat" onClick={onToggleOpen} />
           </Hint>
         </div>
         <Hint text={contextTitle} position="left">

@@ -9,6 +9,7 @@ import {
   iconForProcess,
   processBlurb,
   processDetailSections,
+  processNoun,
   statusForProcess,
   toneForProcess,
 } from "./runtimePresentation";
@@ -36,6 +37,10 @@ export function RuntimeDetailPage({ onBack, process }: RuntimeDetailPageProps) {
     dispatchTargetChatProcess({ pid: process.pid });
   };
   const confirm = confirmAction ? taskActionConfirmation(confirmAction, process) : null;
+  // Only an interactive process is a chat; everything else on this page is a
+  // background process and says so. See processNoun.
+  const noun = processNoun(process);
+  const NOUN = noun.toUpperCase();
 
   return (
     <>
@@ -50,7 +55,7 @@ export function RuntimeDetailPage({ onBack, process }: RuntimeDetailPageProps) {
             />
             <Button
               variant="secondary"
-              label={pending && action.variables?.action === "reset" ? "RESETTING" : "RESET CHAT"}
+              label={pending && action.variables?.action === "reset" ? "RESETTING" : `RESET ${NOUN}`}
               disabled={pending}
               onClick={() => setConfirmAction("reset")}
             />
@@ -60,19 +65,19 @@ export function RuntimeDetailPage({ onBack, process }: RuntimeDetailPageProps) {
         dangerAction={(
           <Button
             variant="dangerGhost"
-            label={pending && action.variables?.action === "kill" ? "KILLING" : "KILL CHAT"}
+            label={pending && action.variables?.action === "kill" ? "KILLING" : `KILL ${NOUN}`}
             disabled={pending}
             onClick={() => setConfirmAction("kill")}
           />
         )}
         icon={iconForProcess(process)}
         title={process.label}
-        typeLabel="GSV · CHAT"
+        typeLabel={`GSV · ${NOUN}`}
         statusLabel={statusForProcess(process)}
         tone={toneForProcess(process)}
         blurb={processBlurb(process)}
         parentLabel="CHATS"
-        primaryLabel="OPEN CHAT"
+        primaryLabel={`OPEN ${NOUN}`}
         onPrimary={openChat}
         sections={processDetailSections(process)}
         onBack={onBack}
@@ -105,6 +110,8 @@ function taskActionConfirmation(action: TaskAction, process: ConsoleProcess): {
   note: string;
   title: string;
 } {
+  const noun = processNoun(process);
+  const NOUN = noun.toUpperCase();
   if (action === "abort") {
     return {
       action,
@@ -117,17 +124,17 @@ function taskActionConfirmation(action: TaskAction, process: ConsoleProcess): {
   if (action === "reset") {
     return {
       action,
-      confirmLabel: "RESET CHAT",
+      confirmLabel: `RESET ${NOUN}`,
       title: "CONFIRM RESET",
-      message: `Reset chat "${process.label}"?`,
-      note: "The current history is archived and the chat returns to a clean state.",
+      message: `Reset ${noun} "${process.label}"?`,
+      note: `The current history is archived and the ${noun} returns to a clean state.`,
     };
   }
   return {
     action,
-    confirmLabel: "KILL CHAT",
+    confirmLabel: `KILL ${NOUN}`,
     title: "CONFIRM KILL",
-    message: `Kill chat "${process.label}"?`,
+    message: `Kill ${noun} "${process.label}"?`,
     note: "The process is archived and removed from runtime.",
   };
 }
