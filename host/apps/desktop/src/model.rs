@@ -1623,49 +1623,7 @@ pub fn parse_history(payload: &Value) -> Vec<Moment> {
 }
 
 pub fn parse_media(value: &Value) -> Vec<MediaAttachment> {
-    let Some(items) = value.as_array() else {
-        return Vec::new();
-    };
-
-    items
-        .iter()
-        .filter_map(|item| {
-            let item = item.as_object()?;
-            let kind = match item.get("type").and_then(Value::as_str)? {
-                "image" => MediaKind::Image,
-                "audio" => MediaKind::Audio,
-                "video" => MediaKind::Video,
-                "document" => MediaKind::Document,
-                _ => return None,
-            };
-            let mime_type = item.get("mimeType")?.as_str()?.trim();
-            if mime_type.is_empty() {
-                return None;
-            }
-
-            Some(MediaAttachment {
-                kind,
-                mime_type: mime_type.to_string(),
-                key: optional_string(item.get("key")),
-                conversation_id: optional_string(item.get("conversationId")),
-                path: optional_string(item.get("path")),
-                url: optional_string(item.get("url")),
-                filename: optional_string(item.get("filename")),
-                size: item.get("size").and_then(Value::as_u64),
-                duration: item.get("duration").and_then(Value::as_f64),
-                transcription: optional_string(item.get("transcription")),
-                description: optional_string(item.get("description")),
-            })
-        })
-        .collect()
-}
-
-fn optional_string(value: Option<&Value>) -> Option<String> {
-    value
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(str::to_string)
+    crate::content::parse_media_attachments(value)
 }
 
 pub fn parse_pending_approval(value: &Value) -> Option<PendingApproval> {
@@ -2922,6 +2880,7 @@ mod tests {
             duration: None,
             transcription: None,
             description: None,
+            resource: None,
         };
         let mut conversation = Conversation::connecting();
         let local_id = conversation.append_user_with_media("review", vec![media.clone()]);

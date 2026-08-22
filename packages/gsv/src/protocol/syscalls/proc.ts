@@ -9,6 +9,7 @@
 import type { ProcessIdentity } from "./system";
 import type { InteractionOrigin } from "./interaction-origin";
 import type { JsonObject } from "../json";
+import type { ResourceBlock } from "../resource";
 
 export type ProcMediaInput = {
   type: "image" | "audio" | "video" | "document";
@@ -230,6 +231,7 @@ export type ProcHistoryToolResultContent = {
   toolCallId: string | null;
   output: unknown;
   media?: ProcMediaInput[];
+  resources?: ResourceBlock[];
 };
 
 export type ProcHistoryMessage = {

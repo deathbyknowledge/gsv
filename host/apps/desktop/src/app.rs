@@ -2035,6 +2035,7 @@ fn draft_attachment_media(attachment: &DraftAttachment) -> MediaAttachment {
         duration: None,
         transcription: None,
         description: None,
+        resource: None,
     }
 }
 

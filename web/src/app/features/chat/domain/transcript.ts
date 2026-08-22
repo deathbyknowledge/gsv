@@ -1178,7 +1178,10 @@ function extractToolResultHistory(content: TranscriptRpcPayload, fallbackText: s
     ok: outcome === "completed" || (outcome === null && (record?.ok === true || record?.isError !== true)),
     outcome,
     output: record?.output ?? fallbackText,
-    media: Array.isArray(record?.media) ? record.media : [],
+    media: [
+      ...(Array.isArray(record?.media) ? record.media : []),
+      ...(Array.isArray(record?.resources) ? record.resources : []),
+    ],
     error: asString(record?.error),
     syscall: inferToolSyscall(toolName, asString(record?.syscall)),
   };

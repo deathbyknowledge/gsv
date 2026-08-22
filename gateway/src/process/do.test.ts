@@ -7340,6 +7340,23 @@ describe("Process DO — mechanical", () => {
           await process.ingestToolResults(runId, process.store.getResults(runId), {
             interruptPending: "test completed",
           });
+          const history = await process.handleProcHistory({});
+          expect(history.messages.find((message: any) => message.role === "toolResult"))
+            .toMatchObject({
+              content: {
+                resources: [{
+                  type: "resource",
+                  ref: {
+                    type: "file",
+                    target: "gsv",
+                    path: expect.stringMatching(/^\/root\/\.gsv\/media\/archived-media:/),
+                    revision: expect.any(String),
+                    contentType: "image/png",
+                    size: bytes.byteLength,
+                  },
+                }],
+              },
+            });
           const messages = await process.buildContextMessages();
           const result = messages.find(
             (message: any) => message.role === "toolResult"

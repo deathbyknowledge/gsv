@@ -189,6 +189,45 @@ describe("chat transcript rows", () => {
     ]);
   });
 
+  it("keeps retained resource blocks available to the transcript", () => {
+    const resources = [{
+      type: "resource",
+      ref: {
+        type: "file",
+        target: "gsv",
+        path: "/root/.gsv/media/archived-media:one",
+        revision: '"revision-one"',
+        contentType: "image/png",
+        size: 3,
+      },
+    }];
+    const rows = transcriptRowsFromHistory(history([{
+      id: 1,
+      clientId: "1",
+      role: "toolResult",
+      runId: "run-1",
+      content: {
+        toolName: "Read",
+        toolCallId: "call-resource",
+        output: { kind: "image" },
+        outcome: "completed",
+        resources,
+      },
+      text: "image result",
+      timestamp: 1,
+      origin: undefined,
+      metadata: undefined,
+    }]));
+
+    expect(rows).toEqual([
+      expect.objectContaining({
+        role: "toolResult",
+        toolCallId: "call-resource",
+        media: resources,
+      }),
+    ]);
+  });
+
   it.each([
     ["completed", false],
     ["failed", true],

@@ -4,6 +4,7 @@ use markdown::{
     mdast::{self, Node},
     ParseOptions,
 };
+use serde_json::Value;
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct RichDocument {
@@ -134,6 +135,136 @@ pub struct MediaAttachment {
     pub duration: Option<f64>,
     pub transcription: Option<String>,
     pub description: Option<String>,
+    pub resource: Option<FileResourceReference>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct FileResourceReference {
+    pub target: String,
+    pub path: String,
+    pub revision: String,
+    pub content_type: String,
+    pub size: u64,
+    pub expires_at: Option<u64>,
+}
+
+pub fn parse_media_attachments(value: &Value) -> Vec<MediaAttachment> {
+    let Some(items) = value.as_array() else {
+        return Vec::new();
+    };
+    items.iter().filter_map(parse_media_attachment).collect()
+}
+
+fn parse_media_attachment(item: &Value) -> Option<MediaAttachment> {
+    let item = item.as_object()?;
+    if item.get("type").and_then(Value::as_str) == Some("resource") {
+        return parse_resource_attachment(item);
+    }
+    let kind = match item.get("type").and_then(Value::as_str)? {
+        "image" => MediaKind::Image,
+        "audio" => MediaKind::Audio,
+        "video" => MediaKind::Video,
+        "document" => MediaKind::Document,
+        _ => return None,
+    };
+    let mime_type = nonempty_string(item.get("mimeType"))?;
+    Some(MediaAttachment {
+        kind,
+        mime_type,
+        key: nonempty_string(item.get("key")),
+        conversation_id: nonempty_string(item.get("conversationId")),
+        path: nonempty_string(item.get("path")),
+        url: nonempty_string(item.get("url")),
+        filename: nonempty_string(item.get("filename")),
+        size: item.get("size").and_then(Value::as_u64),
+        duration: item.get("duration").and_then(Value::as_f64),
+        transcription: nonempty_string(item.get("transcription")),
+        description: nonempty_string(item.get("description")),
+        resource: None,
+    })
+}
+
+fn parse_resource_attachment(block: &serde_json::Map<String, Value>) -> Option<MediaAttachment> {
+    const MAX_SAFE_INTEGER: u64 = 9_007_199_254_740_991;
+    if block.len() != 2 {
+        return None;
+    }
+    let resource = block.get("ref")?.as_object()?;
+    if !matches!(resource.len(), 6 | 7)
+        || resource.get("type").and_then(Value::as_str) != Some("file")
+    {
+        return None;
+    }
+    let target = bounded_resource_string(resource.get("target"), 256)?;
+    let path = bounded_resource_string(resource.get("path"), 8_192)?;
+    let revision = bounded_resource_string(resource.get("revision"), 1_024)?;
+    let content_type = bounded_resource_string(resource.get("contentType"), 256)?;
+    let size = resource.get("size")?.as_u64()?;
+    if size > MAX_SAFE_INTEGER {
+        return None;
+    }
+    let expires_at = match resource.get("expiresAt") {
+        Some(value) => {
+            let expires_at = value.as_u64()?;
+            if expires_at > MAX_SAFE_INTEGER {
+                return None;
+            }
+            Some(expires_at)
+        }
+        None => None,
+    };
+    let kind = media_kind_from_content_type(&content_type);
+    let filename = path
+        .split('/')
+        .rfind(|part| !part.is_empty())
+        .map(str::to_string);
+    Some(MediaAttachment {
+        kind,
+        mime_type: content_type.clone(),
+        key: None,
+        conversation_id: None,
+        path: None,
+        url: None,
+        filename,
+        size: Some(size),
+        duration: None,
+        transcription: None,
+        description: None,
+        resource: Some(FileResourceReference {
+            target,
+            path,
+            revision,
+            content_type,
+            size,
+            expires_at,
+        }),
+    })
+}
+
+fn bounded_resource_string(value: Option<&Value>, max_chars: usize) -> Option<String> {
+    let value = nonempty_string(value)?;
+    (value.chars().count() <= max_chars).then_some(value)
+}
+
+fn nonempty_string(value: Option<&Value>) -> Option<String> {
+    value?
+        .as_str()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+}
+
+fn media_kind_from_content_type(content_type: &str) -> MediaKind {
+    let normalized = content_type.to_ascii_lowercase();
+    if normalized.starts_with("image/") {
+        MediaKind::Image
+    } else if normalized.starts_with("audio/") {
+        MediaKind::Audio
+    } else if normalized.starts_with("video/") {
+        MediaKind::Video
+    } else {
+        MediaKind::Document
+    }
 }
 
 pub fn parse_markdown(source: &str) -> RichDocument {
@@ -556,5 +687,37 @@ mod tests {
             [RichBlock::Image(MarkdownImage { url, .. })]
                 if url == "https://example.com/plot.png"
         ));
+    }
+
+    #[test]
+    fn resource_blocks_are_validated_once_at_history_ingress() {
+        let resource = serde_json::json!([{
+            "type": "resource",
+            "ref": {
+                "type": "file",
+                "target": "gsv",
+                "path": "/root/.gsv/media/archived-media:one",
+                "revision": "revision-one",
+                "contentType": "image/png",
+                "size": 3
+            }
+        }]);
+
+        let media = parse_media_attachments(&resource);
+
+        assert_eq!(media.len(), 1);
+        assert_eq!(media[0].kind, MediaKind::Image);
+        assert_eq!(media[0].filename.as_deref(), Some("archived-media:one"));
+        assert_eq!(
+            media[0].resource,
+            Some(FileResourceReference {
+                target: "gsv".to_string(),
+                path: "/root/.gsv/media/archived-media:one".to_string(),
+                revision: "revision-one".to_string(),
+                content_type: "image/png".to_string(),
+                size: 3,
+                expires_at: None,
+            })
+        );
     }
 }

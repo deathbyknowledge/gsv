@@ -8,6 +8,7 @@ import {
   chatMediaKey,
   chatMediaKind,
   chatMediaMimeType,
+  chatMediaResource,
   chatMediaSize,
   chatMediaSource,
   chatMediaTranscription,
@@ -15,7 +16,7 @@ import {
   formatChatMediaSize,
 } from "../domain/media";
 import { Hint } from "../../../components/ui/Tooltip";
-import { useChatProcessMedia } from "../hooks";
+import { useChatProcessMedia, useChatResource } from "../hooks";
 
 type ChatMediaAttachmentProps = {
   media: unknown;
@@ -130,14 +131,16 @@ export function ChatMediaAttachment({ media, processId }: ChatMediaAttachmentPro
   const key = chatMediaKey(media);
   const conversationId = chatMediaConversationId(media);
   const inlineSource = chatMediaSource(media);
+  const resource = chatMediaResource(media);
   const mediaQuery = useChatProcessMedia({
     args: conversationId
       ? { conversationId, key }
       : { key, ...(processId ? { pid: processId } : undefined) },
-    enabled: !inlineSource && key.length > 0 && (conversationId.length > 0 || processId.length > 0),
+    enabled: !resource && !inlineSource && key.length > 0 && (conversationId.length > 0 || processId.length > 0),
   });
+  const resourceQuery = useChatResource({ ref: resource, enabled: Boolean(resource) });
   const [storedSource, setStoredSource] = useState("");
-  const storedBlob = mediaQuery.data?.blob;
+  const storedBlob = resourceQuery.data?.blob ?? mediaQuery.data?.blob;
   useEffect(() => {
     if (!storedBlob) {
       setStoredSource("");
@@ -158,12 +161,12 @@ export function ChatMediaAttachment({ media, processId }: ChatMediaAttachmentPro
   const description = chatMediaDescription(media);
   const meta = [mimeType, size, durationLabel].filter(Boolean).join(" · ");
 
-  if (mediaQuery.isError) {
+  if (mediaQuery.isError || resourceQuery.isError) {
     return (
       <div class="gsv-chat-media is-error">
         <Icon name={mediaIconName(kind)} family="doticons" size={15} />
         <span>{mediaLabel(kind)} failed to load</span>
-        <button type="button" onClick={() => void mediaQuery.refetch()}>RETRY</button>
+        <button type="button" onClick={() => void (resource ? resourceQuery.refetch() : mediaQuery.refetch())}>RETRY</button>
       </div>
     );
   }

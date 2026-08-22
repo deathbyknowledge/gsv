@@ -118,10 +118,12 @@ For a file result, `size` is the original file size; the body descriptor length
 is the transmitted payload size and can differ when `offset` or `limit` selects
 only part of the file. Text results are materialized back into `content`; only
 direct agent tool results add line numbers. Image-bearing agent tool results are
-externalized into process media before history is written, retain a path in the
-structured output, and are hydrated as typed image blocks only while building
-model context. CodeMode may inspect a materialized image during execution; if
-that image is returned as its result, the same externalization boundary applies.
+retained at the exact source revision before history is written, expose a typed
+resource block to clients, and are hydrated as typed image blocks only while
+building model context. Web and Desktop resolve the resource lazily through
+`fs.transfer.send`; the reference itself is not a bearer capability. CodeMode
+may inspect a materialized image during execution; if that image is returned as
+its result, the compatibility externalization boundary still applies.
 
 ## Network: `net.fetch`
 

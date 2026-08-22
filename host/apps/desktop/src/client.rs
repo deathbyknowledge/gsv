@@ -6,7 +6,7 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc as std_mpsc;
 use std::sync::{Arc, Mutex};
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use desktop_protocol::{
     ClientOptions as DesktopClientOptions, DesktopControlClient, DesktopControlEndpoint,
@@ -24,7 +24,7 @@ use serde_json::{json, Value};
 use tokio::sync::{mpsc as tokio_mpsc, oneshot, OwnedSemaphorePermit, Semaphore};
 use tokio::task::{AbortHandle, JoinSet};
 
-use crate::content::{MediaAttachment, MediaKind};
+use crate::content::{FileResourceReference, MediaAttachment, MediaKind};
 use crate::desktop_control::{DesktopControlRequest, NativeDesktopControlHandler};
 #[cfg(test)]
 use crate::history::normalize_history;
@@ -58,6 +58,14 @@ const DEMO_SESSION_ID: u64 = 0;
 
 static NEXT_LIVE_SESSION_ID: AtomicU64 = AtomicU64::new(1);
 
+fn now_millis() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis()
+        .min(u64::MAX as u128) as u64
+}
+
 #[derive(Clone, Debug)]
 pub enum ApprovalDecision {
     Approve { remember: bool },
@@ -75,6 +83,9 @@ pub enum MediaSource {
     },
     Remote {
         url: String,
+    },
+    Resource {
+        reference: FileResourceReference,
     },
 }
 
@@ -3323,7 +3334,88 @@ async fn load_media(
                 .await
                 .map_err(|_| RequestFailure::transport("The remote media fetch timed out."))?
         }
+        MediaSource::Resource { reference } => fetch_file_resource(client, reference).await,
     }
+}
+
+async fn fetch_file_resource(
+    client: &KernelClient,
+    reference: FileResourceReference,
+) -> Result<MediaResponse, RequestFailure> {
+    if reference
+        .expires_at
+        .is_some_and(|expires_at| expires_at <= now_millis())
+    {
+        return Err(RequestFailure::rejected(
+            "The resource reference has expired.",
+        ));
+    }
+    if reference.size > MAX_MEDIA_BYTES as u64 {
+        return Err(RequestFailure::rejected(format!(
+            "Media exceeds the {MAX_MEDIA_BYTES}-byte transfer limit."
+        )));
+    }
+    let request = client.connection().request_response(
+        "fs.transfer.send",
+        Some(json!({
+            "target": reference.target,
+            "path": reference.path,
+            "revision": reference.revision,
+        })),
+        RPC_TIMEOUT,
+    );
+    let response = tokio::time::timeout(RPC_ENVELOPE_TIMEOUT, request)
+        .await
+        .map_err(|_| RequestFailure::transport("fs.transfer.send timed out"))?
+        .map_err(|error| RequestFailure::transport(error.to_string()))?;
+    let data = response.data;
+    if data.get("ok").and_then(Value::as_bool) == Some(false) {
+        if let Some(mut body) = response.body {
+            body.cancel("Resource read was rejected");
+        }
+        return Err(RequestFailure::rejected(
+            data.get("error")
+                .and_then(Value::as_str)
+                .unwrap_or("The gateway rejected the resource read"),
+        ));
+    }
+    let matches = data.get("path").and_then(Value::as_str) == Some(reference.path.as_str())
+        && data.get("revision").and_then(Value::as_str) == Some(reference.revision.as_str())
+        && data.get("contentType").and_then(Value::as_str) == Some(reference.content_type.as_str())
+        && data.get("size").and_then(Value::as_u64) == Some(reference.size);
+    if !matches {
+        if let Some(mut body) = response.body {
+            body.cancel("Resource metadata did not match its reference");
+        }
+        return Err(RequestFailure::transport(
+            "GSV returned a different resource revision than requested.",
+        ));
+    }
+    let Some(mut body) = response.body else {
+        return Err(RequestFailure::transport(
+            "GSV returned resource metadata without its body.",
+        ));
+    };
+    if body.length().is_some_and(|length| length != reference.size) {
+        body.cancel("Resource body length did not match its reference");
+        return Err(RequestFailure::transport(
+            "GSV returned an inconsistent resource body length.",
+        ));
+    }
+    let bytes: Arc<[u8]> = Arc::from(
+        body.read_all(MAX_MEDIA_BYTES)
+            .await
+            .map_err(|error| RequestFailure::transport(error.to_string()))?,
+    );
+    if bytes.len() as u64 != reference.size {
+        return Err(RequestFailure::transport(
+            "The resource bytes did not match the declared size.",
+        ));
+    }
+    Ok(MediaResponse {
+        bytes,
+        mime_type: Some(reference.content_type),
+    })
 }
 
 async fn fetch_conversation_media(
@@ -3848,6 +3940,7 @@ fn media_from_json(value: &Value) -> Option<MediaAttachment> {
             .and_then(Value::as_str)
             .map(str::to_string),
         description: None,
+        resource: None,
     })
 }
 
@@ -3875,6 +3968,7 @@ mod outgoing_media_tests {
             duration: None,
             transcription: None,
             description: None,
+            resource: None,
         }
     }
 
@@ -4426,7 +4520,9 @@ async fn load_demo_media(
                 .await
                 .map_err(|_| RequestFailure::transport("The remote media fetch timed out."))??
         }
-        MediaSource::Process { .. } | MediaSource::Conversation { .. } => {
+        MediaSource::Process { .. }
+        | MediaSource::Conversation { .. }
+        | MediaSource::Resource { .. } => {
             return Err(RequestFailure::rejected(
                 "Stored media is not available in the demo session.",
             ));

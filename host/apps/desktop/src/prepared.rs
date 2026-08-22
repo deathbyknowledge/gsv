@@ -4,7 +4,8 @@ use std::ops::Range;
 use std::sync::Arc;
 
 use crate::content::{
-    parse_markdown, MarkdownImage, MediaAttachment, MediaKind, RichBlock, RichDocument, RichInline,
+    parse_markdown, FileResourceReference, MarkdownImage, MediaAttachment, MediaKind, RichBlock,
+    RichDocument, RichInline,
 };
 
 /// Content-domain output that can be prepared away from GPUI's event thread and cheaply shared
@@ -76,6 +77,9 @@ pub(crate) enum PreparedMediaSource {
     },
     Remote {
         url: Arc<str>,
+    },
+    Resource {
+        reference: FileResourceReference,
     },
 }
 
@@ -395,6 +399,19 @@ fn markdown_image_descriptor(image: &MarkdownImage) -> Option<PreparedMediaDescr
 }
 
 fn attachment_descriptor(attachment: &MediaAttachment) -> Option<PreparedMediaDescriptor> {
+    if let Some(reference) = &attachment.resource {
+        return Some(PreparedMediaDescriptor {
+            cache_key: Arc::from(format!(
+                "resource:{}:{}:{}",
+                reference.target, reference.path, reference.revision
+            )),
+            source: PreparedMediaSource::Resource {
+                reference: reference.clone(),
+            },
+            mime_type: Some(Arc::from(reference.content_type.as_str())),
+            origin: PreparedMediaOrigin::Attachment,
+        });
+    }
     if let Some(key) = attachment
         .key
         .as_deref()
@@ -489,6 +506,7 @@ mod tests {
             duration: None,
             transcription: None,
             description: None,
+            resource: None,
         }
     }
 
@@ -513,6 +531,26 @@ mod tests {
         assert_ne!(original, content_revision("changed", &[image.clone()]));
         image.description = Some("A plot".to_string());
         assert_ne!(original, content_revision("result", &[image]));
+    }
+
+    #[test]
+    fn resource_cache_identity_includes_the_immutable_revision() {
+        let mut first = attachment(MediaKind::Image);
+        first.resource = Some(FileResourceReference {
+            target: "gsv".to_string(),
+            path: "/root/image.png".to_string(),
+            revision: "revision-one".to_string(),
+            content_type: "image/png".to_string(),
+            size: 3,
+            expires_at: None,
+        });
+        let mut second = first.clone();
+        second.resource.as_mut().expect("resource fixture").revision = "revision-two".to_string();
+
+        let first = prepare_completed_assistant(String::new(), vec![first]);
+        let second = prepare_completed_assistant(String::new(), vec![second]);
+
+        assert_ne!(first.media()[0].cache_key, second.media()[0].cache_key);
     }
 
     #[test]

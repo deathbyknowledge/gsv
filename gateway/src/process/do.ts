@@ -225,6 +225,7 @@ import {
 } from "../codemode/request";
 import { formatAgentToolResponse, materializeToolResponse } from "./tool-response";
 import {
+  extractStoredFsReadResource,
   extractFsReadResource,
   extractToolResultImages,
   replaceFsReadResource,
@@ -2988,6 +2989,10 @@ export class Process extends DurableObject<ProcessEnv> {
         if (media.length > 0) {
           content.media = media;
         }
+        const resource = extractStoredFsReadResource(r.content);
+        if (resource) {
+          content.resources = [{ type: "resource", ref: resource }];
+        }
         const projected: ProcHistoryMessage = {
           id: r.id,
           role: r.role,
@@ -4157,6 +4162,10 @@ export class Process extends DurableObject<ProcessEnv> {
       };
       if (media.length > 0) {
         content.media = media;
+      }
+      const resource = extractStoredFsReadResource(message.content);
+      if (resource) {
+        content.resources = [{ type: "resource", ref: resource }];
       }
       const projected: ProcHistoryMessage = {
         id: message.id,

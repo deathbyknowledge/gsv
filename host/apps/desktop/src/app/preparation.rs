@@ -784,6 +784,7 @@ mod tests {
             duration: None,
             transcription: None,
             description: None,
+            resource: None,
         }]
     }
 

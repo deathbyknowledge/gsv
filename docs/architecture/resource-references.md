@@ -1,8 +1,9 @@
 # Resource References and Lazy Binary Resolution
 
 Status: staged implementation. The common reference contract, revision-aware
-filesystem transfer, and image-bearing `fs.read` retention are implemented.
-Client uploads, adapter media, and the public process-media cutover remain.
+filesystem transfer, image-bearing `fs.read` retention, and lazy Web/Desktop
+resolution are implemented. Client uploads, adapter media, and the public
+process-media cutover remain.
 
 GSV should represent files and media once, as authorized resource references,
 and move their bytes only when a consumer resolves those references. Structured
@@ -115,7 +116,8 @@ migration or compatibility cutover retires both representations.
 3. Done for image reads: Process resolves the exact source revision through
    `fs.transfer.send`, retains it in the run-as agent's immutable archive, and
    projects provider image content only while assembling model context.
-4. Let Web and Desktop resolve the same reference lazily and cache by revision.
+4. Done: Web and Desktop resolve the same reference lazily over
+   `fs.transfer.send`, reject a mismatched revision, and cache by revision.
 5. Move client uploads and adapter media onto references while preserving their
    current authorization and replay fences.
 6. Remove the superseded public process-media orchestration after a deliberate

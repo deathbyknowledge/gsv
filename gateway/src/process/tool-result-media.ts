@@ -108,6 +108,20 @@ export function replaceFsReadResource(
   });
 }
 
+export function extractStoredFsReadResource(content: string): FileResourceReference | null {
+  let parsed: JsonValue;
+  try {
+    parsed = jsonValueSchema.parse(JSON.parse(content));
+  } catch {
+    return null;
+  }
+  try {
+    return extractFsReadResource(parsed);
+  } catch {
+    return null;
+  }
+}
+
 export function extractToolResultImages(
   value: ToolResultValue,
   limits: { maxImages: number; maxBytes: number },

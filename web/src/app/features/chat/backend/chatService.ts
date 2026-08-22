@@ -31,12 +31,25 @@ import type {
   ConversationMediaReadArgs,
   ConversationMediaReadResult,
   ConversationSendResult,
+  FileResourceReference,
+  FsTransferSendResult,
 } from "@humansandmachines/gsv/protocol";
+import { fileResourceReferenceSchema } from "@humansandmachines/gsv/protocol";
 import { frameBodyFromBlob, frameBodyToBlob } from "../../../services/gateway/frameBody";
 import { z } from "zod";
 
 const mediaReadDataSchema = z.union([
   z.object({ ok: z.literal(true), key: z.string(), path: z.string().optional(), mimeType: z.string(), size: z.number(), conversationId: z.string().optional() }),
+  z.object({ ok: z.literal(false), error: z.string() }),
+]);
+const resourceTransferDataSchema = z.union([
+  z.object({
+    ok: z.literal(true),
+    path: z.string(),
+    size: z.number().int().nonnegative(),
+    contentType: z.string().optional(),
+    revision: z.string().optional(),
+  }),
   z.object({ ok: z.literal(false), error: z.string() }),
 ]);
 import {
@@ -65,6 +78,11 @@ export type ChatProcessMedia = (
   | Extract<ConversationMediaReadResult, { ok: true }>
 ) & {
   blob: Blob;
+};
+
+export type ChatResource = {
+  blob: Blob;
+  ref: FileResourceReference;
 };
 
 function throwIfFailed<T extends { ok: true }>(result: T | FailureResult): T {
@@ -216,6 +234,47 @@ export async function readChatProcessMedia(
     ...data,
     path: data.path ?? args.key,
     blob,
+  };
+}
+
+export async function readChatResource(
+  client: ChatMediaGsvClient,
+  reference: FileResourceReference,
+): Promise<ChatResource> {
+  const ref = fileResourceReferenceSchema.parse(reference);
+  if (ref.expiresAt !== undefined && ref.expiresAt <= Date.now()) {
+    throw new Error("Resource reference has expired");
+  }
+  const response = await client.request("fs.transfer.send", {
+    target: ref.target,
+    path: ref.path,
+    revision: ref.revision,
+  });
+  const data = resourceTransferDataSchema.parse(response.data) satisfies FsTransferSendResult;
+  if (!data.ok) {
+    await response.body?.stream.cancel(data.error).catch(() => {});
+    throw new Error(data.error || "GSV resource request failed");
+  }
+  if (
+    data.path !== ref.path
+    || data.size !== ref.size
+    || data.revision !== ref.revision
+    || data.contentType !== ref.contentType
+  ) {
+    const error = new Error("Resource response does not match its reference");
+    await response.body?.stream.cancel(error).catch(() => {});
+    throw error;
+  }
+  if (!response.body) {
+    throw new Error("Resource response did not include a body");
+  }
+  return {
+    ref,
+    blob: await frameBodyToBlob(response.body, {
+      mimeType: ref.contentType,
+      expectedLength: ref.size,
+      label: "Resource",
+    }),
   };
 }
 

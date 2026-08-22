@@ -44,6 +44,9 @@ pub(super) fn media_descriptors(
                 PreparedMediaSource::Remote { url } => MediaSource::Remote {
                     url: url.to_string(),
                 },
+                PreparedMediaSource::Resource { reference } => MediaSource::Resource {
+                    reference: reference.clone(),
+                },
             },
             mime_type: descriptor.mime_type.as_deref().map(str::to_string),
         })
@@ -791,6 +794,11 @@ fn render_attachment_card(
 }
 
 fn attachment_source(attachment: &MediaAttachment) -> Option<MediaSource> {
+    if let Some(reference) = &attachment.resource {
+        return Some(MediaSource::Resource {
+            reference: reference.clone(),
+        });
+    }
     if let Some(key) = attachment
         .key
         .as_deref()
@@ -828,6 +836,18 @@ fn markdown_image_descriptor(image: &MarkdownImage) -> Option<MediaDescriptor> {
 }
 
 fn attachment_descriptor(attachment: &MediaAttachment) -> Option<MediaDescriptor> {
+    if let Some(reference) = &attachment.resource {
+        return Some(MediaDescriptor {
+            cache_key: format!(
+                "resource:{}:{}:{}",
+                reference.target, reference.path, reference.revision
+            ),
+            source: MediaSource::Resource {
+                reference: reference.clone(),
+            },
+            mime_type: Some(reference.content_type.clone()),
+        });
+    }
     if let Some(key) = attachment
         .key
         .as_deref()
@@ -945,6 +965,7 @@ mod tests {
             duration: None,
             transcription: None,
             description: None,
+            resource: None,
         };
         let content = prepare_completed_assistant(
             "![changing](https://example.com/provisional.png)".to_string(),

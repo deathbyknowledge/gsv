@@ -1,3 +1,7 @@
+import {
+  resourceBlockSchema,
+  type FileResourceReference,
+} from "@humansandmachines/gsv/protocol";
 import { z } from "zod";
 
 const mediaKindSchema = z.enum(["audio", "document", "image", "video"]);
@@ -15,11 +19,29 @@ const chatMediaObjectSchema = z.object({
   duration: optionalMediaNumberSchema,
   transcription: optionalMediaStringSchema,
   description: optionalMediaStringSchema,
+  resource: z.undefined().optional(),
 });
 
-const chatMediaWireSchema = z.unknown().pipe(chatMediaObjectSchema);
+const chatResourceMediaSchema = resourceBlockSchema.transform(({ ref }) => ({
+  type: mediaKindFromContentType(ref.contentType),
+  mimeType: ref.contentType,
+  key: undefined,
+  conversationId: undefined,
+  url: undefined,
+  filename: resourceFilename(ref.path),
+  size: ref.size,
+  duration: undefined,
+  transcription: undefined,
+  description: undefined,
+  resource: ref,
+}));
 
-export type ChatMediaDescriptor = z.output<typeof chatMediaObjectSchema>;
+const chatMediaWireSchema = z.unknown().pipe(z.union([
+  chatResourceMediaSchema,
+  chatMediaObjectSchema,
+]));
+
+export type ChatMediaDescriptor = z.output<typeof chatMediaWireSchema>;
 type ChatMediaWireValue = z.input<typeof chatMediaWireSchema>;
 
 export function parseChatMedia(value: ChatMediaWireValue): ChatMediaDescriptor {
@@ -72,6 +94,10 @@ export function chatMediaDescription(media: ChatMediaWireValue): string {
   return parsedMedia(media).description ?? "";
 }
 
+export function chatMediaResource(media: ChatMediaWireValue): FileResourceReference | null {
+  return parsedMedia(media).resource ?? null;
+}
+
 export function chatMediaSource(media: ChatMediaWireValue, storedSource = ""): string {
   const parsed = parsedMedia(media);
   if (parsed.url) return safeMediaSourceUrl(parsed.url, ["https:", "http:"]);
@@ -105,4 +131,17 @@ function safeMediaSourceUrl(value: string, allowedProtocols: string[]): string {
   } catch {
     return "";
   }
+}
+
+function mediaKindFromContentType(contentType: string): "audio" | "document" | "image" | "video" {
+  const normalized = contentType.toLowerCase();
+  if (normalized.startsWith("image/")) return "image";
+  if (normalized.startsWith("audio/")) return "audio";
+  if (normalized.startsWith("video/")) return "video";
+  return "document";
+}
+
+function resourceFilename(path: string): string {
+  const filename = path.split("/").filter(Boolean).at(-1)?.trim();
+  return filename || "resource";
 }

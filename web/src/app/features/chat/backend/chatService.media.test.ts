@@ -1,7 +1,7 @@
 import type { GSVClient } from "@humansandmachines/gsv/client";
 import { describe, expect, it, vi } from "vitest";
 import { frameBodyFromBlob } from "../../../services/gateway/frameBody";
-import { readChatProcessMedia, sendChatMessage } from "./chatService";
+import { readChatProcessMedia, readChatResource, sendChatMessage } from "./chatService";
 
 type UploadRequestArgs = { pid?: string; type?: string; filename?: string };
 type ClientFixture = { request: unknown; proc?: unknown; conversation?: unknown };
@@ -238,6 +238,69 @@ describe("chat process media", () => {
     await expect(readChatProcessMedia(client, {
       key: "var/media/1000/proc/example.png",
     })).rejects.toThrow("Process media response did not include a body");
+  });
+
+  it("resolves the exact resource revision over the binary body channel", async () => {
+    const ref = {
+      type: "file" as const,
+      target: "gsv",
+      path: "/root/.gsv/media/archived-media:one",
+      revision: '"revision-one"',
+      contentType: "image/png",
+      size: 3,
+    };
+    const request = vi.fn(async () => ({
+      data: {
+        ok: true as const,
+        path: ref.path,
+        revision: ref.revision,
+        contentType: ref.contentType,
+        size: ref.size,
+      },
+      body: frameBodyFromBlob(new Blob([new Uint8Array([4, 5, 6])])),
+    }));
+    const client = clientFixture({ request });
+
+    const result = await readChatResource(client, ref);
+
+    expect(request).toHaveBeenCalledWith("fs.transfer.send", {
+      target: "gsv",
+      path: ref.path,
+      revision: ref.revision,
+    });
+    expect(result.ref).toEqual(ref);
+    expect(Array.from(new Uint8Array(await result.blob.arrayBuffer()))).toEqual([4, 5, 6]);
+  });
+
+  it("cancels a resource body whose revision does not match", async () => {
+    let cancelled = false;
+    const ref = {
+      type: "file" as const,
+      target: "gsv",
+      path: "/root/image.png",
+      revision: '"expected"',
+      contentType: "image/png",
+      size: 3,
+    };
+    const request = vi.fn(async () => ({
+      data: {
+        ok: true as const,
+        path: ref.path,
+        revision: '"newer"',
+        contentType: ref.contentType,
+        size: ref.size,
+      },
+      body: {
+        stream: new ReadableStream<Uint8Array>({ cancel: () => { cancelled = true; } }),
+        length: ref.size,
+      },
+    }));
+    const client = clientFixture({ request });
+
+    await expect(readChatResource(client, ref)).rejects.toThrow(
+      "Resource response does not match its reference",
+    );
+    expect(cancelled).toBe(true);
   });
 
   it("cancels process media above the eager display limit", async () => {

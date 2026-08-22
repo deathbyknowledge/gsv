@@ -12,6 +12,7 @@ import type {
   ProcMediaReadArgs,
   ProcSpawnArgs,
   ConversationMediaReadArgs,
+  FileResourceReference,
 } from "@humansandmachines/gsv/protocol";
 import { useGateway } from "../../../services/gateway/GatewayProvider";
 import {
@@ -24,6 +25,7 @@ import {
   listChatHistorySegments,
   listChatProcesses,
   readChatProcessMedia,
+  readChatResource,
   readChatHistorySegment,
   sendChatMessage,
   setChatProcessAiConfig,
@@ -51,6 +53,15 @@ export const chatProcessMediaQueryKey = (args: ProcMediaReadArgs | ConversationM
   "chat",
   "media",
   args,
+] as const;
+
+export const chatResourceQueryKey = (ref: FileResourceReference) => [
+  "resource",
+  ref.target,
+  ref.path,
+  ref.revision,
+  ref.contentType,
+  ref.size,
 ] as const;
 
 export const chatHistorySegmentsQueryKey = (args: ProcHistorySegmentsArgs = {}) => [
@@ -90,6 +101,10 @@ type UseChatProcessMediaOptions = ChatQueryOptions & {
   args: ProcMediaReadArgs | ConversationMediaReadArgs;
 };
 
+type UseChatResourceOptions = ChatQueryOptions & {
+  ref: FileResourceReference | null;
+};
+
 function hasHistoryTarget(args: ProcHistoryArgs): boolean {
   return !args.pid || args.pid.trim().length > 0;
 }
@@ -123,6 +138,21 @@ export function useChatProcessMedia(options: UseChatProcessMediaOptions) {
     queryKey: chatProcessMediaQueryKey(options.args),
     enabled: connected && options.enabled !== false && options.args.key.trim().length > 0,
     queryFn: () => readChatProcessMedia(client, options.args),
+    staleTime: Infinity,
+  });
+}
+
+export function useChatResource(options: UseChatResourceOptions) {
+  const { client, connected } = useGateway();
+  const ref = options.ref;
+
+  return useQuery({
+    queryKey: ref ? chatResourceQueryKey(ref) : ["resource", "unavailable"],
+    enabled: connected && options.enabled !== false && ref !== null,
+    queryFn: () => {
+      if (!ref) throw new Error("Resource reference is unavailable");
+      return readChatResource(client, ref);
+    },
     staleTime: Infinity,
   });
 }
