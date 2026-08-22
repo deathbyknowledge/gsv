@@ -15,6 +15,16 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { InferenceEnv } from "./env";
 import type { InferenceInstallation } from "./installation";
 
+function inferenceInstallation(
+  installationId: string,
+): DurableObjectStub<undefined> & InferenceInstallation {
+  const stub: unknown = env.INFERENCE_INSTALLATIONS.getByName(installationId);
+  // SAFETY: the test binding is generated from the exported
+  // InferenceInstallation class; this narrows only Cloudflare's recursively
+  // mapped RPC stub type.
+  return stub as DurableObjectStub<undefined> & InferenceInstallation;
+}
+
 const DEFAULT_ROUTING: ManagedInferenceRouting = {
   version: 1,
   modelId: "deepseek/deepseek-v4-flash-0731",
@@ -105,7 +115,7 @@ describe("installation managed inference", () => {
   it("persists and replays a validated mail summary without another charge", async () => {
     const installationId = "installation_mail_replay";
     const logicalRequestId = "mail_replay";
-    const stub = env.INFERENCE_INSTALLATIONS.getByName(installationId);
+    const stub = inferenceInstallation(installationId);
     const expected = {
       summary: "Mike asked to arrange a meeting tomorrow.",
       category: "work",
@@ -229,7 +239,7 @@ describe("installation managed inference", () => {
 
   it("rejects reuse of a mail replay key for different parsed content", async () => {
     const installationId = "installation_mail_conflict";
-    const stub = env.INFERENCE_INSTALLATIONS.getByName(installationId);
+    const stub = inferenceInstallation(installationId);
     const fetchMock = vi.fn<typeof fetch>(async () => completion(
       "gen_mail_conflict",
       JSON.stringify({
@@ -271,7 +281,7 @@ describe("installation managed inference", () => {
 
   it("settles an invalid mail summary once and never retries its key", async () => {
     const installationId = "installation_mail_invalid_result";
-    const stub = env.INFERENCE_INSTALLATIONS.getByName(installationId);
+    const stub = inferenceInstallation(installationId);
     const fetchMock = vi.fn<typeof fetch>(async () => completion(
       "gen_mail_invalid_result",
       JSON.stringify({
@@ -354,7 +364,7 @@ describe("installation managed inference", () => {
   it("settles provider usage into its installation period", async () => {
     expect(env.OPENROUTER_API_KEY === "test-key").toBe(true);
     const installationId = "installation_settlement";
-    const stub = env.INFERENCE_INSTALLATIONS.getByName(installationId);
+    const stub = inferenceInstallation(installationId);
     const fetchMock = vi.fn<typeof fetch>(async () => completion("gen_settlement"));
     vi.stubGlobal("fetch", fetchMock);
 
@@ -377,7 +387,7 @@ describe("installation managed inference", () => {
   it("honors a durable cancellation that arrives before generation", async () => {
     const installationId = "installation_cancelled_before_generate";
     const logicalRequestId = "request_cancelled_before_generate";
-    const stub = env.INFERENCE_INSTALLATIONS.getByName(installationId);
+    const stub = inferenceInstallation(installationId);
     const fetchMock = vi.fn<typeof fetch>(async () => completion("unexpected"));
     vi.stubGlobal("fetch", fetchMock);
 
@@ -409,7 +419,7 @@ describe("installation managed inference", () => {
   it("retains the reservation when an accepted provider stream is aborted", async () => {
     const installationId = "installation_accepted_abort";
     const logicalRequestId = "request_accepted_abort";
-    const stub = env.INFERENCE_INSTALLATIONS.getByName(installationId);
+    const stub = inferenceInstallation(installationId);
     let failBody: (reason: Error | string | null | undefined) => void = () => {};
     let markReading: () => void = () => {};
     const reading = new Promise<void>((resolve) => {
@@ -484,7 +494,7 @@ describe("installation managed inference", () => {
   it("does not let a late abort replace terminal replay behavior", async () => {
     const installationId = "installation_late_abort";
     const logicalRequestId = "request_late_abort";
-    const stub = env.INFERENCE_INSTALLATIONS.getByName(installationId);
+    const stub = inferenceInstallation(installationId);
     const fetchMock = vi.fn<typeof fetch>(async () => completion("gen_late_abort"));
     vi.stubGlobal("fetch", fetchMock);
 
@@ -520,7 +530,7 @@ describe("installation managed inference", () => {
   it("keeps terminal settlement authoritative over an overtaking cancellation", async () => {
     const installationId = "installation_settlement_cancellation_race";
     const logicalRequestId = "request_settlement_cancellation_race";
-    const stub = env.INFERENCE_INSTALLATIONS.getByName(installationId);
+    const stub = inferenceInstallation(installationId);
     let respond: (response: Response) => void = () => {};
     let markStarted: () => void = () => {};
     const started = new Promise<void>((resolve) => {
@@ -593,7 +603,7 @@ describe("installation managed inference", () => {
   it("removes expired cancellation tombstones from its alarm", async () => {
     const installationId = "installation_cancel_cleanup";
     const logicalRequestId = "request_cancel_cleanup";
-    const stub = env.INFERENCE_INSTALLATIONS.getByName(installationId);
+    const stub = inferenceInstallation(installationId);
     await stub.abort(logicalRequestId);
 
     const remaining = await runInDurableObject(stub, async (instance, state) => {
@@ -658,7 +668,7 @@ describe("installation managed inference", () => {
 
   it("keeps parallel generations in flight without a concurrency cap", async () => {
     const installationId = "installation_parallel";
-    const stub = env.INFERENCE_INSTALLATIONS.getByName(installationId);
+    const stub = inferenceInstallation(installationId);
     const responders: Array<(response: Response) => void> = [];
     let markBothStarted: () => void = () => {};
     const bothStarted = new Promise<void>((resolve) => {
@@ -714,7 +724,7 @@ describe("installation managed inference", () => {
 
   it("coalesces duplicate in-flight logical requests", async () => {
     const installationId = "installation_duplicate";
-    const stub = env.INFERENCE_INSTALLATIONS.getByName(installationId);
+    const stub = inferenceInstallation(installationId);
     let respond: (response: Response) => void = () => {};
     let markStarted: () => void = () => {};
     const started = new Promise<void>((resolve) => {
@@ -754,7 +764,7 @@ describe("installation managed inference", () => {
 
   it("counts pending reservations when enforcing the allowance", async () => {
     const installationId = "installation_allowance";
-    const stub = env.INFERENCE_INSTALLATIONS.getByName(installationId);
+    const stub = inferenceInstallation(installationId);
     let respond: (response: Response) => void = () => {};
     let markStarted: () => void = () => {};
     const started = new Promise<void>((resolve) => {
@@ -796,7 +806,7 @@ describe("installation managed inference", () => {
 
   it("rejects a disabled installation before contacting the provider", async () => {
     const installationId = "installation_policy_disabled";
-    const stub = env.INFERENCE_INSTALLATIONS.getByName(installationId);
+    const stub = inferenceInstallation(installationId);
     const fetchMock = vi.fn<typeof fetch>(async () => completion("unexpected"));
     vi.stubGlobal("fetch", fetchMock);
 
@@ -866,7 +876,7 @@ describe("installation managed inference", () => {
 
   it("enforces the installation policy below the deployment ceiling", async () => {
     const installationId = "installation_policy_limited";
-    const stub = env.INFERENCE_INSTALLATIONS.getByName(installationId);
+    const stub = inferenceInstallation(installationId);
     const fetchMock = vi.fn<typeof fetch>(async () => completion("unexpected"));
     vi.stubGlobal("fetch", fetchMock);
 
@@ -889,7 +899,7 @@ describe("installation managed inference", () => {
 
   it("exports completed rows from an alarm and marks them delivered", async () => {
     const installationId = "installation_export";
-    const stub = env.INFERENCE_INSTALLATIONS.getByName(installationId);
+    const stub = inferenceInstallation(installationId);
     vi.stubGlobal("fetch", vi.fn<typeof fetch>(async () => completion("gen_export")));
     await stub.generate(request(installationId, "request_export"));
     await runInDurableObject(stub, async (_instance, state) => {
@@ -914,7 +924,7 @@ describe("installation managed inference", () => {
 
   it("charges expired reservations conservatively before releasing them", async () => {
     const installationId = "installation_abandoned";
-    const stub = env.INFERENCE_INSTALLATIONS.getByName(installationId);
+    const stub = inferenceInstallation(installationId);
     const snapshot = await runInDurableObject(stub, async (instance, state) => {
 // SAFETY: This assertion follows boundary validation or a test fixture with the declared owner contract.
       await (instance as InferenceInstallation).usage();
@@ -965,7 +975,7 @@ describe("installation managed inference", () => {
 
   it("retains usage and rearms export after an Accounts failure", async () => {
     const installationId = "installation_export_retry";
-    const stub = env.INFERENCE_INSTALLATIONS.getByName(installationId);
+    const stub = inferenceInstallation(installationId);
     vi.stubGlobal("fetch", vi.fn<typeof fetch>(async () => completion("gen_retry")));
     await stub.generate(request(installationId, "request_export_retry"));
 
@@ -1020,7 +1030,7 @@ describe("installation managed inference", () => {
   });
 
   it("does not let a request address another installation", async () => {
-    const stub = env.INFERENCE_INSTALLATIONS.getByName("installation_owner");
+    const stub = inferenceInstallation("installation_owner");
     const fetchMock = vi.fn<typeof fetch>(async () => new Response());
     vi.stubGlobal("fetch", fetchMock);
 

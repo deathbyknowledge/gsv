@@ -29,8 +29,8 @@ export const isWebSocketRequest = (request: Request) =>
   request.method === "GET" && request.headers.get("upgrade") === "websocket";
 
 // don't break the ✨illusion✨
-type ProcessPtr = DurableObjectStub<Process>;
-type KernelPtr = DurableObjectStub<Kernel>;
+type ProcessPtr = DurableObjectStub<undefined> & Process;
+type KernelPtr = DurableObjectStub<undefined> & Kernel;
 
 export type RequestProcessNetFetchOptions = {
   ttlMs?: number;
@@ -42,14 +42,25 @@ export type RequestProcessNetFetchOptions = {
 export async function getKernelPtr(
   installationId: string = SINGLETON_INSTALLATION_ID,
 ): Promise<KernelPtr> {
-  return await getKernelByInstallationId(env.KERNEL, installationId);
+  const stub: unknown = await getKernelByInstallationId(
+    env.KERNEL,
+    installationId,
+  );
+  // SAFETY: the namespace is generated from the exported Kernel class; this
+  // narrows only Cloudflare's recursively mapped RPC stub type.
+  return stub as KernelPtr;
 }
 
 export async function getProcessByPid(
   pid: string,
   installationId: string = SINGLETON_INSTALLATION_ID,
 ): Promise<ProcessPtr> {
-  return env.PROCESS.getByName(processDurableObjectName(installationId, pid));
+  const stub: unknown = env.PROCESS.getByName(
+    processDurableObjectName(installationId, pid),
+  );
+  // SAFETY: the namespace is generated from the exported Process class; this
+  // narrows only Cloudflare's recursively mapped RPC stub type.
+  return stub as ProcessPtr;
 }
 
 export function sendFrameToKernel(

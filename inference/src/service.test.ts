@@ -6,6 +6,24 @@ import {
   type ManagedMailSummaryRequest,
 } from "@humansandmachines/gsv/protocol";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import type { InferenceInstallation } from "./installation";
+import type { InferenceService } from "./index";
+
+function inferenceService(): InferenceService {
+  const service: unknown = exports.default;
+  // SAFETY: the test service binding is generated from the exported
+  // InferenceService class; this narrows only Cloudflare's recursively mapped
+  // RPC service type.
+  return service as InferenceService;
+}
+
+function inferenceInstallation(installationId: string): InferenceInstallation {
+  const stub: unknown = env.INFERENCE_INSTALLATIONS.getByName(installationId);
+  // SAFETY: the test binding is generated from the exported
+  // InferenceInstallation class; this narrows only Cloudflare's recursively
+  // mapped RPC stub type.
+  return stub as InferenceInstallation;
+}
 
 const REQUEST: ManagedInferenceRequest = {
   version: 1,
@@ -38,14 +56,12 @@ afterEach(() => {
 
 describe("managed inference service RPC", () => {
   it("routes a trusted installation request through its Durable Object", async () => {
-    await expect(exports.default.generate(REQUEST)).resolves.toMatchObject({
+    await expect(inferenceService().generate(REQUEST)).resolves.toMatchObject({
       responseId: "generation_service_rpc",
       usage: { input: 2, output: 1, totalTokens: 3 },
     });
 
-    const installation = env.INFERENCE_INSTALLATIONS.getByName(
-      REQUEST.installationId,
-    );
+    const installation = inferenceInstallation(REQUEST.installationId);
     await expect(installation.usage()).resolves.toMatchObject({
       installationId: REQUEST.installationId,
       spentNanoUsd: 340,
@@ -60,7 +76,7 @@ describe("managed inference service RPC", () => {
       installationId: "installation_service_stream_rpc",
       logicalRequestId: "request_service_stream_rpc",
     };
-    const body = await exports.default.generateStream(input);
+    const body = await inferenceService().generateStream(input);
     const events = [];
     for await (const event of decodeManagedInferenceStream(body)) {
       events.push(event);
@@ -77,9 +93,7 @@ describe("managed inference service RPC", () => {
       "text_end",
       "done",
     ]);
-    await expect(env.INFERENCE_INSTALLATIONS.getByName(
-      input.installationId,
-    ).usage()).resolves.toMatchObject({
+    await expect(inferenceInstallation(input.installationId).usage()).resolves.toMatchObject({
       spentNanoUsd: 340,
       reservedNanoUsd: 0,
       completedRequests: 1,
@@ -95,12 +109,12 @@ describe("managed inference service RPC", () => {
       logicalRequestId: "request_service_abort_rpc",
     };
 
-    await exports.default.abort({
+    await inferenceService().abort({
       version: 1,
       installationId: request.installationId,
       logicalRequestId: request.logicalRequestId,
     });
-    const result = exports.default.generate(request);
+    const result = inferenceService().generate(request);
 
     await expect(result).resolves.toMatchObject({ stopReason: "aborted" });
     expect(fetchMock).not.toHaveBeenCalled();
@@ -114,16 +128,14 @@ describe("managed inference service RPC", () => {
       confidence: 0.9,
     } as const;
 
-    await expect(exports.default.summarizeMail(MAIL_REQUEST)).resolves.toEqual(
+    await expect(inferenceService().summarizeMail(MAIL_REQUEST)).resolves.toEqual(
       expected,
     );
-    await expect(exports.default.summarizeMail(MAIL_REQUEST)).resolves.toEqual(
+    await expect(inferenceService().summarizeMail(MAIL_REQUEST)).resolves.toEqual(
       expected,
     );
 
-    const installation = env.INFERENCE_INSTALLATIONS.getByName(
-      MAIL_REQUEST.installationId,
-    );
+    const installation = inferenceInstallation(MAIL_REQUEST.installationId);
     await expect(installation.usage()).resolves.toMatchObject({
       startedRequests: 1,
       completedRequests: 1,
