@@ -4,8 +4,9 @@ import type {
   ProcHilRequest,
   ProcToolResultOutcome,
 } from "@humansandmachines/gsv/protocol";
-import type { ChatHistory, ChatHistoryMessage, ChatRunState } from "./processes";
+import type { ChatHistory, ChatRunState } from "./processes";
 import { normalizeHilRequest } from "./hil";
+import { z } from "zod";
 
 export type ChatTranscriptRowRole = "assistant" | "system" | "tool" | "toolResult" | "user";
 
@@ -18,6 +19,104 @@ export type ChatTranscriptRowStatus =
   | "thinking";
 
 export type ChatToolOutcome = ProcToolResultOutcome;
+
+type TranscriptWireValue = string | number | boolean | null | TranscriptWireValue[] | TranscriptWireRecord;
+interface TranscriptWireRecord { [key: string]: TranscriptWireValue }
+const transcriptWireValueSchema: z.ZodType<TranscriptWireValue> = z.lazy(() => z.union([
+  z.string(), z.number(), z.boolean(), z.null(),
+  z.array(transcriptWireValueSchema),
+  z.record(z.string(), transcriptWireValueSchema),
+]));
+const transcriptPayloadSchema = transcriptWireValueSchema;
+type TranscriptRpcPayload = z.input<typeof transcriptPayloadSchema>;
+
+const usageCostSchema = z.object({
+  input: z.number(),
+  output: z.number(),
+  cacheRead: z.number(),
+  cacheWrite: z.number(),
+  total: z.number(),
+  currency: z.literal("USD"),
+  source: z.enum(["provider", "model-pricing", "mixed"]),
+});
+const usageStateSchema = z.object({
+  inputTokens: z.number(),
+  outputTokens: z.number(),
+  cacheReadTokens: z.number(),
+  cacheWriteTokens: z.number(),
+  totalTokens: z.number(),
+  cost: usageCostSchema.nullable(),
+  generations: z.number().optional(),
+  costIncomplete: z.boolean().optional(),
+  updatedAt: z.number().optional(),
+});
+const contextStateSchema: z.ZodType<ProcContextState> = z.object({
+  runId: z.string().optional(),
+  messageCount: z.number().optional(),
+  lastMessageId: z.number().nullable().optional(),
+  provider: z.string(),
+  model: z.string(),
+  reasoning: z.string().optional(),
+  contextWindowTokens: z.number().nullable(),
+  maxOutputTokens: z.number(),
+  estimatedInputTokens: z.number(),
+  inputTokens: z.number(),
+  outputTokens: z.number().optional(),
+  totalTokens: z.number().optional(),
+  usage: usageStateSchema.optional(),
+  historyUsage: usageStateSchema.optional(),
+  availableInputTokens: z.number().nullable(),
+  pressure: z.number().nullable(),
+  level: z.enum(["unknown", "ok", "warn", "critical", "full"]),
+  source: z.enum(["estimate", "provider"]),
+  updatedAt: z.number(),
+});
+const adapterSurfaceSchema = z.object({
+  kind: z.enum(["dm", "group", "channel", "thread"]),
+  id: z.string(),
+  name: z.string().optional(),
+  handle: z.string().optional(),
+  threadId: z.string().optional(),
+});
+const adapterDestinationSchema = z.object({
+  kind: z.literal("adapter"),
+  adapter: z.string(),
+  accountId: z.string(),
+  surface: adapterSurfaceSchema,
+  actorId: z.string(),
+});
+const interactionOriginSchema: z.ZodType<InteractionOrigin> = z.discriminatedUnion("kind", [
+  z.object({
+    kind: z.literal("client"),
+    connectionId: z.string(),
+    clientId: z.string().optional(),
+    platform: z.string().optional(),
+  }),
+  z.object({
+    kind: z.literal("adapter"),
+    adapter: z.string(),
+    accountId: z.string(),
+    surface: adapterSurfaceSchema,
+    actorId: z.string(),
+    actorLabel: z.string().optional(),
+    messageId: z.string().optional(),
+  }),
+  z.object({
+    kind: z.literal("device"),
+    deviceId: z.string(),
+    cwd: z.string().optional(),
+  }),
+  z.object({
+    kind: z.literal("process"),
+    sourcePid: z.string(),
+    uid: z.number().optional(),
+  }),
+  z.object({
+    kind: z.literal("scheduler"),
+    scheduleId: z.string(),
+    replyTo: adapterDestinationSchema.optional(),
+  }),
+]);
 
 export type ChatBackupModelInfo = {
   from?: {
@@ -159,18 +258,20 @@ export function addOptimisticUserMessage(
 export function applyChatSignal(
   state: ChatRuntimeState,
   signal: string,
-  payload: unknown,
+  payload: TranscriptRpcPayload,
   target: ChatSignalTarget,
 ): ChatSignalReduction {
-  if (!target.pid || !signalMatchesTarget(payload, target)) {
+  const parsedPayload = transcriptPayloadSchema.parse(payload);
+  const payloadValue = parsedPayload;
+  if (!target.pid || !signalMatchesTarget(payloadValue, target)) {
     return { matched: false, refreshHistory: false, state };
   }
 
   if (signal === "proc.changed") {
-    return applyProcChanged(state, payload);
+    return applyProcChanged(state, payloadValue);
   }
 
-  const signalRunId = asString(asRecord(payload)?.runId);
+  const signalRunId = asString(asRecord(payloadValue)?.runId);
   if (
     signalRunId
     && state.activeRunId
@@ -186,7 +287,7 @@ export function applyChatSignal(
   }
 
   if (signal === "proc.run.started") {
-    const record = asRecord(payload);
+    const record = asRecord(payloadValue);
     const runId = asString(record?.runId);
     return {
       matched: true,
@@ -201,7 +302,7 @@ export function applyChatSignal(
   }
 
   if (signal === "proc.run.stream") {
-    const record = asRecord(payload);
+    const record = asRecord(payloadValue);
     const runId = asString(record?.runId);
     const event = asRecord(record?.event);
     if (!runId || !event) {
@@ -220,7 +321,7 @@ export function applyChatSignal(
   }
 
   if (signal === "proc.run.retrying") {
-    const record = asRecord(payload);
+    const record = asRecord(payloadValue);
     const runId = asString(record?.runId);
     const fallback = normalizeBackupModelInfo(record?.fallback);
     return {
@@ -241,7 +342,7 @@ export function applyChatSignal(
   }
 
   if (signal === "proc.run.output") {
-    const record = asRecord(payload);
+    const record = asRecord(payloadValue);
     const runId = asString(record?.runId);
     return {
       matched: true,
@@ -257,7 +358,7 @@ export function applyChatSignal(
   }
 
   if (signal === "proc.run.tool.started") {
-    const record = asRecord(payload);
+    const record = asRecord(payloadValue);
     const runId = asString(record?.runId);
     return {
       matched: true,
@@ -294,7 +395,7 @@ export function applyChatSignal(
   }
 
   if (signal === "proc.run.finished") {
-    const record = asRecord(payload);
+    const record = asRecord(payloadValue);
     const runId = asString(record?.runId);
     const queuedCount = asNumber(record?.queuedCount) ?? 0;
     return {
@@ -368,8 +469,8 @@ export function transcriptRowsFromHistory(history: ChatHistory): ChatTranscriptR
           timestamp: message.timestamp,
           time: formatTranscriptTime(message.timestamp),
           runId: message.runId ?? undefined,
-          ...(media.length > 0 ? { media } : {}),
-          ...(backupModel ? { backupModel } : {}),
+          ...(media.length > 0 ? { media } : undefined),
+          ...(backupModel ? { backupModel } : undefined),
           status: "done",
         });
       } else if (backupModel) {
@@ -422,9 +523,9 @@ export function transcriptRowsFromHistory(history: ChatHistory): ChatTranscriptR
           runId: message.runId ?? undefined,
           toolCallId: parsed.callId,
           toolName: parsed.toolName,
-          ...(parsed.outcome ? { toolOutcome: parsed.outcome } : {}),
+          ...(parsed.outcome ? { toolOutcome: parsed.outcome } : undefined),
           toolOutput: parsed.output,
-          ...(parsed.media.length > 0 ? { media: parsed.media } : {}),
+          ...(parsed.media.length > 0 ? { media: parsed.media } : undefined),
           toolSyscall: parsed.syscall,
           isError: !parsed.ok,
           status: parsed.ok ? "done" as const : "error" as const,
@@ -452,8 +553,8 @@ export function transcriptRowsFromHistory(history: ChatHistory): ChatTranscriptR
       id: `message:${message.clientId || index}`,
       role,
       text: message.text,
-      ...(role === "system" && classifySystemError(message.text) ? { isError: true } : {}),
-      ...(media.length > 0 ? { media } : {}),
+      ...(role === "system" && classifySystemError(message.text) ? { isError: true } : undefined),
+      ...(media.length > 0 ? { media } : undefined),
       messageId: message.id,
       origin: message.origin,
       timestamp: message.timestamp,
@@ -471,12 +572,10 @@ function compareTranscriptRows(left: ChatTranscriptRow, right: ChatTranscriptRow
 }
 
 function transcriptRowSortValue(row: ChatTranscriptRow): number {
-  if (typeof row.timestamp === "number" && Number.isFinite(row.timestamp)) {
-    return row.timestamp;
-  }
-  if (typeof row.messageId === "number") {
-    return row.messageId;
-  }
+  const timestamp = asNumber(row.timestamp);
+  if (timestamp !== null) return timestamp;
+  const messageId = asNumber(row.messageId);
+  if (messageId !== null) return messageId;
   return Number.MAX_SAFE_INTEGER;
 }
 
@@ -501,7 +600,7 @@ function sameToolActivityRow(
 }
 
 export function formatTranscriptTime(timestamp: number | null | undefined): string {
-  if (typeof timestamp !== "number" || !Number.isFinite(timestamp)) {
+  if (timestamp === null || timestamp === undefined || !Number.isFinite(timestamp)) {
     return "";
   }
   return new Intl.DateTimeFormat(undefined, {
@@ -510,7 +609,7 @@ export function formatTranscriptTime(timestamp: number | null | undefined): stri
   }).format(new Date(timestamp));
 }
 
-function applyProcChanged(state: ChatRuntimeState, payload: unknown): ChatSignalReduction {
+function applyProcChanged(state: ChatRuntimeState, payload: TranscriptRpcPayload): ChatSignalReduction {
   const record = asRecord(payload);
   const changes = Array.isArray(record?.changes)
     ? record.changes.map((entry) => asString(entry)).filter((entry): entry is string => Boolean(entry))
@@ -542,14 +641,15 @@ function applyProcChanged(state: ChatRuntimeState, payload: unknown): ChatSignal
     }
   }
 
-  if (typeof record?.queuedCount === "number" && record.queuedCount > 0 && next.runState === "idle") {
+  const queuedCount = asNumber(record?.queuedCount);
+  if (queuedCount !== null && queuedCount > 0 && next.runState === "idle") {
     next = { ...next, runState: "queued" };
   }
 
   return { matched: true, refreshHistory, state: next };
 }
 
-function rowFromProcChangedMessage(record: Record<string, unknown> | null): ChatTranscriptRow | null {
+function rowFromProcChangedMessage(record: TranscriptWireRecord | null): ChatTranscriptRow | null {
   if (!record) {
     return null;
   }
@@ -571,13 +671,13 @@ function rowFromProcChangedMessage(record: Record<string, unknown> | null): Chat
     id: messageId !== null ? `message:${messageId}` : `live:${role}:${timestamp}`,
     role,
     text,
-    ...(role === "system" && classifySystemError(text) ? { isError: true } : {}),
-    ...(media.length > 0 ? { media } : {}),
+    ...(role === "system" && classifySystemError(text) ? { isError: true } : undefined),
+    ...(media.length > 0 ? { media } : undefined),
     messageId,
     origin: normalizeInteractionOrigin(record.origin),
     timestamp,
     time: formatTranscriptTime(timestamp),
-    ...(runId ? { runId } : {}),
+    ...(runId ? { runId } : undefined),
     status: "done",
   };
 }
@@ -619,20 +719,17 @@ function mediaCount(row: ChatTranscriptRow): number {
 }
 
 function timestampCloseEnough(left: number | null | undefined, right: number | null | undefined): boolean {
-  if (
-    typeof left !== "number"
-    || !Number.isFinite(left)
-    || typeof right !== "number"
-    || !Number.isFinite(right)
-  ) {
+  const leftValue = asNumber(left);
+  const rightValue = asNumber(right);
+  if (leftValue === null || rightValue === null) {
     return true;
   }
-  return Math.abs(left - right) <= OPTIMISTIC_USER_MATCH_WINDOW_MS;
+  return Math.abs(leftValue - rightValue) <= OPTIMISTIC_USER_MATCH_WINDOW_MS;
 }
 
 function applyAssistantOutput(
   rows: ChatTranscriptRow[],
-  record: Record<string, unknown> | null,
+  record: TranscriptWireRecord | null,
   runId: string | null,
 ): ChatTranscriptRow[] {
   const text = asString(record?.text) ?? "";
@@ -648,11 +745,11 @@ function applyAssistantOutput(
     role: "assistant",
     text,
     thinking,
-    ...(media.length > 0 ? { media } : {}),
+    ...(media.length > 0 ? { media } : undefined),
     timestamp,
     time: formatTranscriptTime(timestamp),
-    ...(runId ? { runId } : {}),
-    ...(backupModel ? { backupModel } : {}),
+    ...(runId ? { runId } : undefined),
+    ...(backupModel ? { backupModel } : undefined),
     status: "done",
     streaming: false,
   };
@@ -676,7 +773,7 @@ function applyAssistantOutput(
 function applyStreamEvent(
   rows: ChatTranscriptRow[],
   runId: string,
-  event: Record<string, unknown>,
+  event: TranscriptWireRecord,
 ): ChatTranscriptRow[] {
   const eventType = asString(event.type);
   if (eventType === "thinking_start") {
@@ -735,7 +832,7 @@ function appendAssistantDelta(rows: ChatTranscriptRow[], runId: string, delta: s
     next[index] = {
       ...next[index],
       text: `${next[index].text}${delta}`,
-      ...(backupModel && !next[index].backupModel ? { backupModel } : {}),
+      ...(backupModel && !next[index].backupModel ? { backupModel } : undefined),
       status: "streaming",
       streaming: true,
     };
@@ -748,7 +845,7 @@ function appendAssistantDelta(rows: ChatTranscriptRow[], runId: string, delta: s
     timestamp: now,
     time: formatTranscriptTime(now),
     runId,
-    ...(backupModel ? { backupModel } : {}),
+    ...(backupModel ? { backupModel } : undefined),
     status: "streaming",
     streaming: true,
   });
@@ -764,7 +861,7 @@ function setAssistantStreamText(rows: ChatTranscriptRow[], runId: string, text: 
     next[index] = {
       ...next[index],
       text,
-      ...(backupModel && !next[index].backupModel ? { backupModel } : {}),
+      ...(backupModel && !next[index].backupModel ? { backupModel } : undefined),
       status: "streaming",
       streaming: true,
     };
@@ -777,14 +874,14 @@ function setAssistantStreamText(rows: ChatTranscriptRow[], runId: string, text: 
     timestamp: now,
     time: formatTranscriptTime(now),
     runId,
-    ...(backupModel ? { backupModel } : {}),
+    ...(backupModel ? { backupModel } : undefined),
     status: "streaming",
     streaming: true,
   });
   return next;
 }
 
-function extractStreamPartialText(event: Record<string, unknown>): string | null {
+function extractStreamPartialText(event: TranscriptWireRecord): string | null {
   const partial = asRecord(event.partial);
   const content = Array.isArray(partial?.content) ? partial.content : [];
   const textBlocks = content.flatMap((block) => {
@@ -794,9 +891,9 @@ function extractStreamPartialText(event: Record<string, unknown>): string | null
   return textBlocks.length > 0 ? textBlocks.join("") : null;
 }
 
-function extractTextContent(value: unknown): string | null {
+function extractTextContent(value: TranscriptRpcPayload): string | null {
   const record = asRecord(value);
-  return record?.type === "text" && typeof record.text === "string" ? record.text : null;
+  return record?.type === "text" ? asString(record.text) : null;
 }
 
 function appendAssistantThinkingDelta(rows: ChatTranscriptRow[], runId: string, delta: string): ChatTranscriptRow[] {
@@ -923,7 +1020,7 @@ function upsertBackupModelRow(
   return next;
 }
 
-function toolRowFromStarted(record: Record<string, unknown> | null): ChatTranscriptRow {
+function toolRowFromStarted(record: TranscriptWireRecord | null): ChatTranscriptRow {
   const now = Date.now();
   const callId = asString(record?.callId) ?? `tool:${now}`;
   const toolName = asString(record?.name) ?? "Tool";
@@ -944,7 +1041,7 @@ function toolRowFromStarted(record: Record<string, unknown> | null): ChatTranscr
   };
 }
 
-function toolRowFromStreamEvent(event: Record<string, unknown>, runId: string): ChatTranscriptRow | null {
+function toolRowFromStreamEvent(event: TranscriptWireRecord, runId: string): ChatTranscriptRow | null {
   const contentIndex = asNumber(event.contentIndex);
   const rawToolCall = asRecord(event.toolCall) ?? streamToolCallBlock(event);
   if (!rawToolCall) {
@@ -975,7 +1072,7 @@ function toolRowFromStreamEvent(event: Record<string, unknown>, runId: string): 
   };
 }
 
-function streamToolCallBlock(event: Record<string, unknown>): Record<string, unknown> | null {
+function streamToolCallBlock(event: TranscriptWireRecord): TranscriptWireRecord | null {
   const contentIndex = asNumber(event.contentIndex);
   if (contentIndex === null) {
     return null;
@@ -1028,11 +1125,11 @@ function isStreamFallbackToolCallId(runId: string, toolCallId: string): boolean 
   return toolCallId.startsWith(`${runId}:tool:`);
 }
 
-function extractAssistantHistory(content: unknown, fallbackText: string): AssistantHistory {
+function extractAssistantHistory(content: TranscriptRpcPayload, fallbackText: string): AssistantHistory {
   const record = asRecord(content);
   if (!record) {
     return {
-      text: typeof content === "string" ? content : fallbackText,
+      text: asString(content) ?? fallbackText,
       thinking: [],
       toolCalls: [],
     };
@@ -1041,9 +1138,8 @@ function extractAssistantHistory(content: unknown, fallbackText: string): Assist
   const text = asString(record.text) ?? fallbackText;
   const thinking = (Array.isArray(record.thinking) ? record.thinking : [])
     .map((item) => {
-      if (typeof item === "string") {
-        return item.trim();
-      }
+      const text = asString(item);
+      if (text) return text.trim();
       const block = asRecord(item);
       return (asString(block?.thinking) ?? asString(block?.text) ?? "").trim();
     })
@@ -1059,7 +1155,7 @@ function extractAssistantHistory(content: unknown, fallbackText: string): Assist
       return {
         toolName,
         callId,
-        args: (call.arguments ?? call.args ?? {}) as unknown,
+        args: call.arguments ?? call.args ?? {},
         syscall: inferToolSyscall(toolName, asString(call.syscall)),
       };
     })
@@ -1068,7 +1164,7 @@ function extractAssistantHistory(content: unknown, fallbackText: string): Assist
   return { text, thinking, toolCalls };
 }
 
-function extractToolResultHistory(content: unknown, fallbackText: string): ToolResultHistory | null {
+function extractToolResultHistory(content: TranscriptRpcPayload, fallbackText: string): ToolResultHistory | null {
   const record = asRecord(content);
   const toolName = asString(record?.toolName) ?? asString(record?.name);
   if (!toolName) {
@@ -1088,38 +1184,35 @@ function extractToolResultHistory(content: unknown, fallbackText: string): ToolR
   };
 }
 
-function normalizeToolOutcome(value: unknown): ChatToolOutcome | null {
+function normalizeToolOutcome(value: TranscriptRpcPayload): ChatToolOutcome | null {
+  // SAFETY: the preceding literal comparison establishes the protocol outcome union.
   return value === "cancelled"
       || value === "completed"
       || value === "denied"
       || value === "failed"
-    ? value
+    ? (value as ChatToolOutcome)
     : null;
 }
 
-function extractThinkingBlocks(value: unknown): string[] {
+function extractThinkingBlocks(value: TranscriptRpcPayload): string[] {
   const record = asRecord(value);
   const raw = Array.isArray(record?.thinking) ? record.thinking : [];
   return raw
     .map((item) => {
-      if (typeof item === "string") {
-        return item.trim();
-      }
+      const text = asString(item);
+      if (text) return text.trim();
       const block = asRecord(item);
       return (asString(block?.thinking) ?? asString(block?.text) ?? "").trim();
     })
     .filter(Boolean);
 }
 
-function normalizeContextState(value: unknown): ProcContextState | null {
-  const record = asRecord(value);
-  if (!record) {
-    return null;
-  }
-  return record as ProcContextState;
+function normalizeContextState(value: TranscriptRpcPayload): ProcContextState | null {
+  const parsed = contextStateSchema.safeParse(value);
+  return parsed.success ? parsed.data : null;
 }
 
-function signalMatchesTarget(payload: unknown, target: ChatSignalTarget): boolean {
+function signalMatchesTarget(payload: TranscriptRpcPayload, target: ChatSignalTarget): boolean {
   const record = asRecord(payload);
   if (!record) {
     return false;
@@ -1131,7 +1224,7 @@ function signalMatchesTarget(payload: unknown, target: ChatSignalTarget): boolea
   return true;
 }
 
-function formatMessageContent(value: unknown): string {
+function formatMessageContent(value: TranscriptRpcPayload): string {
   const record = asRecord(value);
   if (record && "text" in record) {
     const text = asString(record.text);
@@ -1139,23 +1232,22 @@ function formatMessageContent(value: unknown): string {
       return text;
     }
   }
-  if (typeof value === "string") {
-    return value;
-  }
+  const text = asString(value);
+  if (text) return text;
   return prettyJson(value);
 }
 
-function extractMessageMedia(value: unknown): unknown[] {
+function extractMessageMedia(value: TranscriptRpcPayload): unknown[] {
   const record = asRecord(value);
   return Array.isArray(record?.media) ? record.media : [];
 }
 
-function normalizeInteractionOrigin(value: unknown): InteractionOrigin | undefined {
-  const record = asRecord(value);
-  return typeof record?.kind === "string" ? record as unknown as InteractionOrigin : undefined;
+function normalizeInteractionOrigin(value: TranscriptRpcPayload): InteractionOrigin | undefined {
+  const parsed = interactionOriginSchema.safeParse(value);
+  return parsed.success ? parsed.data : undefined;
 }
 
-function normalizeBackupModelInfo(value: unknown): ChatBackupModelInfo | null {
+function normalizeBackupModelInfo(value: TranscriptRpcPayload): ChatBackupModelInfo | null {
   const record = asRecord(value);
   if (!record) {
     return null;
@@ -1167,13 +1259,13 @@ function normalizeBackupModelInfo(value: unknown): ChatBackupModelInfo | null {
     return null;
   }
   return {
-    ...(from ? { from } : {}),
-    ...(to ? { to } : {}),
-    ...(reason ? { reason } : {}),
+    ...(from ? { from } : undefined),
+    ...(to ? { to } : undefined),
+    ...(reason ? { reason } : undefined),
   };
 }
 
-function normalizeBackupModelRef(value: unknown): ChatBackupModelInfo["from"] | null {
+function normalizeBackupModelRef(value: TranscriptRpcPayload): ChatBackupModelInfo["from"] | null {
   const record = asRecord(value);
   if (!record) {
     return null;
@@ -1184,26 +1276,25 @@ function normalizeBackupModelRef(value: unknown): ChatBackupModelInfo["from"] | 
     return null;
   }
   return {
-    ...(provider ? { provider } : {}),
-    ...(model ? { model } : {}),
+    ...(provider ? { provider } : undefined),
+    ...(model ? { model } : undefined),
   };
 }
 
-function formatToolInput(value: unknown): string {
+function formatToolInput(value: TranscriptRpcPayload): string {
   const text = prettyJson(value);
   return text === "{}" ? "Waiting for tool input." : text;
 }
 
-function formatToolOutput(output: unknown, error: string | null | undefined, fallback: string): string {
+function formatToolOutput(output: TranscriptRpcPayload, error: string | null | undefined, fallback: string): string {
   if (error) {
     return error;
   }
   if (output === undefined || output === null) {
     return fallback || "Tool completed.";
   }
-  if (typeof output === "string") {
-    return output;
-  }
+  const text = asString(output);
+  if (text) return text;
   return prettyJson(output);
 }
 
@@ -1231,7 +1322,7 @@ function inferToolSyscall(toolName: string, syscall?: string | null): string | n
   }
 }
 
-function prettyJson(value: unknown): string {
+function prettyJson(value: TranscriptRpcPayload): string {
   try {
     return JSON.stringify(value, null, 2) ?? String(value);
   } catch {
@@ -1239,18 +1330,19 @@ function prettyJson(value: unknown): string {
   }
 }
 
-function asRecord(value: unknown): Record<string, unknown> | null {
-  return value && typeof value === "object" && !Array.isArray(value)
-    ? value as Record<string, unknown>
-    : null;
+function asRecord(value: TranscriptRpcPayload): TranscriptWireRecord | null {
+  const parsed = z.record(z.string(), transcriptWireValueSchema).safeParse(value);
+  return parsed.success ? parsed.data : null;
 }
 
-function asString(value: unknown): string | null {
-  return typeof value === "string" && value.trim() ? value : null;
+function asString(value: TranscriptRpcPayload): string | null {
+  const parsed = z.string().safeParse(value);
+  return parsed.success && parsed.data.trim() ? parsed.data : null;
 }
 
-function asNumber(value: unknown): number | null {
-  return typeof value === "number" && Number.isFinite(value) ? value : null;
+function asNumber(value: TranscriptRpcPayload): number | null {
+  const parsed = z.number().finite().safeParse(value);
+  return parsed.success ? parsed.data : null;
 }
 
 function findLastIndex<T>(items: T[], predicate: (item: T) => boolean): number {

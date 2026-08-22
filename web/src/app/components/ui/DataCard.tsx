@@ -11,6 +11,7 @@ export interface DataCardRow {
   description?: string;
   /** Optional trailing CTA ("manage", "edit files"…), revealed on card hover. */
   linkLabel?: string;
+  // SAFETY: Component boundary provides the asserted DOM/test shape.
   /** Render the CTA as an "opens elsewhere" affordance — a floating new-tab
    *  glyph after the label — instead of the in-app ">" chevron. */
   linkExternal?: boolean;

@@ -1,4 +1,5 @@
 import type { AdapterConnectChallenge } from "@humansandmachines/gsv/protocol";
+import { z } from "zod";
 import { useCallback, useEffect, useMemo, useRef, useState } from "preact/hooks";
 import type { ConnectConsoleAdapterResult } from "../backend/consoleService";
 import type { ConsoleAdapterAccount } from "../domain/consoleModels";
@@ -21,7 +22,19 @@ export type WhatsAppPairingOutcome = "paired" | "challenge" | "error" | "superse
 
 const STATUS_POLL_INTERVAL_MS = 2_000;
 
-function errorText(error: unknown): string {
+export type WhatsAppPairingDependencies = {
+  useConnectConsoleAdapter: () => Pick<ReturnType<typeof useConnectConsoleAdapter>, "isPending" | "mutateAsync">;
+  useConsoleAdapters: (
+    options?: Parameters<typeof useConsoleAdapters>[0],
+  ) => Pick<ReturnType<typeof useConsoleAdapters>, "adapters" | "dataUpdatedAt">;
+};
+
+const defaultDependencies: WhatsAppPairingDependencies = {
+  useConnectConsoleAdapter: () => useConnectConsoleAdapter(),
+  useConsoleAdapters: (options) => useConsoleAdapters(options),
+};
+
+function errorText<T>(error: T): string {
   return error instanceof Error ? error.message : error ? String(error) : "";
 }
 
@@ -45,8 +58,8 @@ export function useWhatsAppPairing({
   forceRelink: boolean;
   pairScreenActive: boolean;
   reconnectExisting: boolean;
-}) {
-  const connect = useConnectConsoleAdapter();
+}, dependencies: WhatsAppPairingDependencies = defaultDependencies) {
+  const connect = dependencies.useConnectConsoleAdapter();
   const normalizedAccountId = accountId.trim();
   const accountScopeRef = useRef({ accountId: normalizedAccountId, version: 0 });
   if (accountScopeRef.current.accountId !== normalizedAccountId) {
@@ -95,7 +108,7 @@ export function useWhatsAppPairing({
     setError("");
   }, [forceRelink, normalizedAccountId]);
 
-  const accountStatuses = useConsoleAdapters({
+  const accountStatuses = dependencies.useConsoleAdapters({
     accountId: normalizedAccountId,
     adapters: ["whatsapp"],
     enabled: pairingStarted && normalizedAccountId.length > 0,
@@ -183,7 +196,7 @@ export function useWhatsAppPairing({
       const next = await connect.mutateAsync({
         adapter: "whatsapp",
         accountId: requestAccountId,
-        ...(useForce ? { config: { force: true } } : {}),
+        ...(useForce ? { config: { force: true } } : undefined),
       });
       if (!requestIsCurrent()) {
         return "superseded";
@@ -219,9 +232,9 @@ export function useWhatsAppPairing({
     }
   }, [connect, normalizedAccountId]);
 
-  const autoRefreshKey = challenge && typeof challenge.expiresAt === "number"
-    && Number.isFinite(challenge.expiresAt)
-    ? challenge.expiresAt
+  const parsedExpiry = challenge ? z.number().finite().safeParse(challenge.expiresAt) : null;
+  const autoRefreshKey = parsedExpiry?.success
+    ? parsedExpiry.data
     : challengeIssuedAt;
 
   useEffect(() => {

@@ -15,12 +15,12 @@ export interface AvatarProps {
   cover?: boolean;
 }
 
-const DOT_COLOR: Record<AvatarStatus, string> = {
+const DOT_COLOR = {
   online: "var(--online)",
   idle: "var(--idle)",
   error: "var(--error)",
   live: "var(--live)",
-};
+} satisfies Record<AvatarStatus, string>;
 
 /** Avatar — ported from Avatar.dc.html. Wraps AgentImage and overlays a
  *  status corner-dot. */

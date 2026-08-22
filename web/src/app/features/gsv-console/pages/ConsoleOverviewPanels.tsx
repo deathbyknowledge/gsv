@@ -93,8 +93,11 @@ function isQueuedProcess(process: ConsoleProcess): boolean {
 
 function joinMeta(parts: readonly (number | string | null | undefined | false)[]): string {
   return parts
-    .map((part) => typeof part === "number" ? String(part) : part)
-    .filter((part): part is string => typeof part === "string" && part.trim().length > 0)
+    .map((part) => z.number().safeParse(part).success ? String(part) : part)
+    .filter((part) => {
+      const parsed = z.string().safeParse(part);
+      return parsed.success && parsed.data.trim().length > 0;
+    })
     .join(" · ");
 }
 
@@ -632,3 +635,4 @@ export function SettingsOverviewDashboard({
     </div>
   );
 }
+import { z } from "zod";

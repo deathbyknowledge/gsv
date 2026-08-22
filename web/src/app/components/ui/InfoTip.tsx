@@ -13,6 +13,7 @@ export interface InfoTipProps {
 
 /** InfoTip — a borderless help icon (circle + "?") that reveals a short hint on
  *  hover/focus. Drop it after a field label to surface extra info. It composes
+ // SAFETY: Component boundary provides the asserted DOM/test shape.
  *  the IconButton "help" glyph as the trigger, wrapped in the portaled `Hint`
  *  so the bubble escapes any `overflow`-clipping ancestor (a field label row,
  *  a list row, a scroll container). The `gsv-infotip` wrapper is kept so

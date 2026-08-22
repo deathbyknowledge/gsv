@@ -22,7 +22,7 @@ export interface ObjectCardProps {
   onClick?: () => void;
 }
 
-const STATUS_VAR: Record<ObjectCardStatus, string> = {
+const STATUS_VAR = {
   online: "var(--online)",
   error: "var(--error)",
   idle: "var(--idle)",
@@ -48,7 +48,7 @@ export function ObjectCard({
 
   const dotStyle: JSX.CSSProperties = {
     background: dc,
-    ...(status === "idle" ? {} : { boxShadow: `0 0 7px ${dc}` }),
+    ...(status === "idle" ? undefined : { boxShadow: `0 0 7px ${dc}` }),
   };
 
   return (

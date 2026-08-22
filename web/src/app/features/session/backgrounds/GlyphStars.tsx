@@ -27,7 +27,7 @@ function makeRandom(seed: number): () => number {
   };
 }
 
-function gridSize(element: HTMLElement): { cols: number; rows: number } {
+function gridSize(element: HTMLElement) {
   const width = element.clientWidth || window.innerWidth || 1440;
   const height = element.clientHeight || window.innerHeight || 900;
   return {
@@ -57,7 +57,7 @@ function buildGrid(cols: number, rows: number): StarGrid {
     cols,
     rows,
     stars,
-    buffer: new Array(total),
+    buffer: Array.from({ length: total }),
   };
 }
 
@@ -155,7 +155,7 @@ export function GlyphStars() {
       raf = window.requestAnimationFrame(loop);
     };
 
-    const observer = typeof ResizeObserver === "function" ? new ResizeObserver(resize) : null;
+    const observer = globalThis.ResizeObserver ? new ResizeObserver(resize) : null;
     observer?.observe(root);
     resize();
     draw(0);

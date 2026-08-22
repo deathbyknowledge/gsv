@@ -1,6 +1,6 @@
 import type { ComponentChildren } from "preact";
 import { Button } from "../../../components/ui/Button";
-import { ListRow, type ListRowStatus } from "../../../components/ui/ListRow";
+import { ListRow } from "../../../components/ui/ListRow";
 import { Search } from "../../../components/ui/Search";
 import { SectionHeader } from "../../../components/ui/SectionHeader";
 import type { StatusTone } from "../../../components/ui/StatusDot";
@@ -65,7 +65,7 @@ function ListTemplateRowView({ row }: { row: ListTemplateRow }) {
         leading={row.leading}
         label={row.label}
         sub={row.sub}
-        status={listRowStatusForTone(row.tone) as ListRowStatus}
+        status={listRowStatusForTone(row.tone)}
         statusDotPlacement="trailing"
         statusLabel={row.statusLabel}
         tag={row.tag?.label}

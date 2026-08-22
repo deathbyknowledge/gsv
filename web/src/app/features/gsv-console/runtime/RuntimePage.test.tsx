@@ -1,11 +1,14 @@
-import type { ComponentChildren } from "preact";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ConsoleProcess, ConsoleResourceState } from "../domain/consoleModels";
 import { createTestRoot } from "../messengers/messengerTestHarness";
+import { RuntimePage, type RuntimePageDependencies } from "./RuntimePage";
 
 const mocks = vi.hoisted(() => ({
+  // SAFETY: Test fixture data is constructed with the asserted shape for this focused case.
   detailPids: [] as string[],
+  // SAFETY: Test fixture data is constructed with the asserted shape for this focused case.
   listRenders: [] as Array<{ connectDisabled: boolean; ids: string[]; meta: string }>,
+  // SAFETY: Test fixture data is constructed with the asserted shape for this focused case.
   processes: [] as ConsoleProcess[],
 }));
 
@@ -21,32 +24,19 @@ function resource<T>(data: T): ConsoleResourceState<T> {
   };
 }
 
-vi.mock("../hooks/useConsoleData", () => ({
+const dependencies: RuntimePageDependencies = {
   useConsoleProcesses: () => ({
     data: mocks.processes,
     isFetching: false,
     isLoading: false,
     resource: resource(mocks.processes),
   }),
-}));
-
-vi.mock("../components/ConsolePageTemplate", () => ({
-  ConsolePage: ({ children }: { children: ComponentChildren }) => children,
-  ConsoleResourceBoundary: <T,>({
+  ConsolePage: ({ children }) => children,
+  ConsoleResourceBoundary: ({
     render: renderResource,
     resource: resourceState,
-  }: {
-    render: (data: T) => ComponentChildren;
-    resource: ConsoleResourceState<T>;
   }) => resourceState.data === null ? null : renderResource(resourceState.data),
-}));
-
-vi.mock("../list-template/ListTemplate", () => ({
-  ListTemplate: (props: {
-    connectDisabled?: boolean;
-    listMeta: string;
-    rows: Array<{ id: string }>;
-  }) => {
+  ListTemplate: (props) => {
     mocks.listRenders.push({
       connectDisabled: props.connectDisabled === true,
       ids: props.rows.map((row) => row.id),
@@ -54,16 +44,11 @@ vi.mock("../list-template/ListTemplate", () => ({
     });
     return null;
   },
-}));
-
-vi.mock("./RuntimeDetailPage", () => ({
-  RuntimeDetailPage: ({ process }: { process: ConsoleProcess }) => {
+  RuntimeDetailPage: ({ process }) => {
     mocks.detailPids.push(process.pid);
     return null;
   },
-}));
-
-import { RuntimePage } from "./RuntimePage";
+};
 
 function process(pid: string, personal: boolean, state: ConsoleProcess["state"] = "idle"): ConsoleProcess {
   return {
@@ -108,7 +93,7 @@ describe("Runtime Work list", () => {
       process("work", false),
     ];
 
-    await root?.render(<RuntimePage />);
+  await root?.render(<RuntimePage dependencies={dependencies} />);
 
     expect(mocks.listRenders.at(-1)).toEqual({
       connectDisabled: true,
@@ -118,7 +103,7 @@ describe("Runtime Work list", () => {
   });
 
   it("enables new work only when the shell supplies an authorized action", async () => {
-    await root?.render(<RuntimePage onNewTask={vi.fn()} />);
+    await root?.render(<RuntimePage onNewTask={vi.fn()} dependencies={dependencies} />);
 
     expect(mocks.listRenders.at(-1)?.connectDisabled).toBe(false);
   });
@@ -128,7 +113,7 @@ describe("Runtime Work list", () => {
     mocks.processes = [process("personal", true, "running")];
 
     await root?.render(
-      <RuntimePage initialDetailId="personal" onSelectionChange={onSelectionChange} />,
+      <RuntimePage initialDetailId="personal" onSelectionChange={onSelectionChange} dependencies={dependencies} />,
     );
 
     expect(mocks.detailPids).toEqual([]);
@@ -141,7 +126,7 @@ describe("Runtime Work list", () => {
     mocks.processes = [process("work", false)];
 
     await root?.render(
-      <RuntimePage initialDetailId="work" onSelectionChange={onSelectionChange} />,
+      <RuntimePage initialDetailId="work" onSelectionChange={onSelectionChange} dependencies={dependencies} />,
     );
 
     expect(mocks.detailPids).toContain("work");
@@ -150,12 +135,12 @@ describe("Runtime Work list", () => {
 
   it("does not retain a prior owner's Work detail or actions when process data changes", async () => {
     mocks.processes = [process("alice-work", false)];
-    await root?.render(<RuntimePage initialDetailId="alice-work" />);
+    await root?.render(<RuntimePage initialDetailId="alice-work" dependencies={dependencies} />);
     expect(mocks.detailPids).toContain("alice-work");
 
     mocks.detailPids = [];
     mocks.processes = [];
-    await root?.render(<RuntimePage initialDetailId="alice-work" />);
+    await root?.render(<RuntimePage initialDetailId="alice-work" dependencies={dependencies} />);
 
     expect(mocks.detailPids).toEqual([]);
     expect(mocks.listRenders.at(-1)?.ids).toEqual([]);

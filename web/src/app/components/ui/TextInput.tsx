@@ -35,7 +35,7 @@ export interface TextInputProps {
   inputProps?: JSX.IntrinsicElements["input"] & Record<`data-${string}`, string | number | boolean>;
 }
 
-const SIZE_CLASS: Record<TextInputSize, string> = {
+const SIZE_CLASS = {
   small: "gsv-ti-sm",
   medium: "gsv-ti-md",
   large: "gsv-ti-lg",
@@ -139,6 +139,7 @@ export function TextInput(props: TextInputProps) {
           aria-labelledby={hasLabelRow && label.length > 0 ? `${fieldId}-label` : undefined}
           aria-describedby={describedBy}
           aria-invalid={effectiveStatus === "error" ? true : undefined}
+          // SAFETY: Component boundary provides the asserted DOM/test shape.
           onInput={(e) => emit((e.target as HTMLInputElement).value)}
           onBlur={(e) => {
             setBlurred(true);

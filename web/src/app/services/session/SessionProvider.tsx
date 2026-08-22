@@ -13,11 +13,15 @@ const SessionContext = createContext<SessionContextValue | null>(null);
 
 type SessionProviderProps = {
   children: ComponentChildren;
+  createService?: typeof createSessionService;
 };
 
-export function SessionProvider({ children }: SessionProviderProps) {
+export function SessionProvider({
+  children,
+  createService = createSessionService,
+}: SessionProviderProps) {
   const { client } = useGateway();
-  const [service] = useState(() => createSessionService(client));
+  const [service] = useState(() => createService(client));
   const [snapshot, setSnapshot] = useState<SessionSnapshot>(() => service.snapshot());
 
   useEffect(() => {

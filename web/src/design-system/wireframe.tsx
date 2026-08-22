@@ -1,4 +1,5 @@
 import type { ComponentChildren, JSX } from "preact";
+import { z } from "zod";
 import "./wireframe.css";
 
 /** Schematic wireframe primitives — rectangles-only, no real content. Used by the
@@ -8,7 +9,10 @@ import "./wireframe.css";
 
 function toDim(value: number | string | undefined): string | undefined {
   if (value == null) return undefined;
-  return typeof value === "number" ? `${value}px` : value;
+  const parsed = z.number().safeParse(value);
+  if (parsed.success) return `${parsed.data}px`;
+  const text = z.string().safeParse(value);
+  return text.success ? text.data : undefined;
 }
 
 /** Outer page frame — a bordered void-backed schematic. */

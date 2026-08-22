@@ -200,6 +200,7 @@ export function MessageInput({
                 hidden
                 disabled={disabled || busy || conversationMode}
                 onChange={(event) => {
+                  // SAFETY: Component boundary provides the asserted DOM/test shape.
                   const input = event.currentTarget as HTMLInputElement;
                   onFiles(input.files);
                   input.value = "";

@@ -7,30 +7,30 @@ import type {
   ShellSurfaceId,
 } from "../domain/shellModel";
 
-const TOP_LEVEL_SURFACES: Record<string, Exclude<ShellSurfaceId, "desktop" | "settings">> = {
-  agent: "agent",
-  crew: "crew",
-  files: "files",
-  integrations: "integrations",
-  "card-template": "card-template",
-  "connect-flows": "connect-flows",
-  library: "library",
-  "list-template": "list-template",
-  machines: "machines",
-  messengers: "messengers",
-  repositories: "repositories",
-  repos: "repositories",
-  tasks: "runtime",
-  terminal: "terminal",
-};
-
-const SETTINGS_LIST_KINDS = new Set<ShellSettingsListKind>([
-  "integrations",
-  "library",
-  "machines",
-  "messengers",
-  "tasks",
+const TOP_LEVEL_SURFACES = new Map<string, Exclude<ShellSurfaceId, "desktop" | "settings">>([
+  ["agent", "agent"],
+  ["crew", "crew"],
+  ["files", "files"],
+  ["integrations", "integrations"],
+  ["card-template", "card-template"],
+  ["connect-flows", "connect-flows"],
+  ["library", "library"],
+  ["list-template", "list-template"],
+  ["machines", "machines"],
+  ["messengers", "messengers"],
+  ["repositories", "repositories"],
+  ["repos", "repositories"],
+  ["tasks", "runtime"],
+  ["terminal", "terminal"],
 ]);
+
+function isSettingsListKind(value: string): value is ShellSettingsListKind {
+  return value === "integrations"
+    || value === "library"
+    || value === "machines"
+    || value === "messengers"
+    || value === "tasks";
+}
 
 const WORKER_OWNED_PREFIXES = [
   "/downloads",
@@ -93,23 +93,25 @@ function settingsRouteFromParts(parts: readonly string[]): ShellSettingsRoute {
   }
 
   const kind = section === "runtime" ? "tasks" : section;
-  if (!SETTINGS_LIST_KINDS.has(kind as ShellSettingsListKind)) {
+  if (!isSettingsListKind(kind)) {
     return { view: "overview" };
   }
 
   if (parts[2] === "new") {
-    return { view: "list", kind: kind as ShellSettingsListKind, createNew: true };
+    return { view: "list", kind, createNew: true };
   }
 
   const detailId = parts[2] ? decodeSegment(parts[2]) : null;
   return detailId
-    ? { view: "list", kind: kind as ShellSettingsListKind, detailId }
-    : { view: "list", kind: kind as ShellSettingsListKind };
+    ? { view: "list", kind, detailId }
+    : { view: "list", kind };
 }
 
 function decodedParts(parts: readonly string[]): string[] | null {
   const decoded = parts.map(decodeSegment);
-  return decoded.some((part) => part === null) ? null : decoded as string[];
+  return decoded.every((part): part is string => part !== null)
+    ? decoded
+    : null;
 }
 
 function libraryRouteFromParts(parts: readonly string[], search: string): ShellLibraryRoute {
@@ -123,13 +125,13 @@ function libraryRouteFromParts(parts: readonly string[], search: string): ShellL
   const [db, actionOrPath, ...rest] = decoded;
 
   if (!db) {
-    return { view: "index", ...(q ? { q } : {}) };
+    return { view: "index", ...(q ? { q } : undefined) };
   }
   if (db === "build") {
     return { view: "build" };
   }
   if (!actionOrPath) {
-    return { view: "index", db, ...(q ? { q } : {}) };
+    return { view: "index", db, ...(q ? { q } : undefined) };
   }
   if (actionOrPath === "new") {
     return { view: "editor", db };
@@ -187,7 +189,7 @@ export function shellRouteFromLocation(location: Pick<Location, "hash" | "pathna
     return filesRoute ? { surface: "files", filesRoute } : { surface: "files" };
   }
 
-  const surface = TOP_LEVEL_SURFACES[parts[0]];
+  const surface = TOP_LEVEL_SURFACES.get(parts[0]);
   return surface ? { surface } : { surface: "desktop" };
 }
 

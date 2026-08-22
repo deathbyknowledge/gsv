@@ -67,6 +67,7 @@ export interface PopoverMenuProps {
 /** PopoverMenu — the shared shell for the chat header's popover family. Owns the
  *  chrome (panel background, border, shadow, entry animation), a header bar with
  *  two content variants (titled / echo), a body slot, and an optional footer of
+ // SAFETY: Component boundary provides the asserted DOM/test shape.
  *  PopoverActions. Keeps `gsv-chat-popover` as an extra class so the host
  *  positioner keeps finding it. Roving arrow-key focus spans every enabled
  *  button inside. */

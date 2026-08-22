@@ -9,10 +9,6 @@ import {
 } from "../features/gsv-console/messengers/messengerTestHarness";
 import type { SessionPhase, SessionSnapshot } from "../services/session/sessionService";
 
-vi.mock("../services/query/GatewaySignalInvalidator", () => ({
-  GatewaySignalInvalidator: () => null,
-}));
-
 import {
   resolveScopedWebQueryClient,
   SessionScopedQueryProvider,
@@ -28,10 +24,13 @@ type QueryProbeProps = {
   load: () => Promise<PrivateQueryData>;
   observations: string[];
   owner: string;
-  setRefetch: (refetch: () => Promise<unknown>) => void;
+  setRefetch: (refetch: () => Promise<QueryRefetchResult>) => void;
 };
+type QueryRefetchResult = Awaited<ReturnType<ReturnType<typeof useQuery<PrivateQueryData>>["refetch"]>>;
+type QueryControl = { refetch?: () => Promise<QueryRefetchResult> };
 
 const PRIVATE_QUERY_KEY = ["processes", "gsv-console"] as const;
+const NoopInvalidator = () => null;
 
 function QueryProbe({
   lifecycle,
@@ -141,8 +140,8 @@ describe("authenticated query isolation", () => {
       .mockReturnValueOnce(lateAlice.promise);
     const loadLocked = vi.fn(() => locked.promise);
     const loadBob = vi.fn(async () => ({ owner: "bob" }));
-    const queryControl: { refetch?: () => Promise<unknown> } = {};
-    const setRefetch = (next: () => Promise<unknown>) => {
+    const queryControl: QueryControl = {};
+    const setRefetch = (next: () => Promise<QueryRefetchResult>) => {
       queryControl.refetch = next;
     };
     const renderScope = async (
@@ -154,6 +153,7 @@ describe("authenticated query isolation", () => {
         SessionScopedQueryProvider,
         {
           scope,
+          QueryInvalidator: NoopInvalidator,
           children: createElement(QueryProbe, {
             lifecycle,
             load,

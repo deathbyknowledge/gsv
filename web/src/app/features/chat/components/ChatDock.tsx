@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "preact/hooks";
+import { z } from "zod";
 import type { ProcContextState, ProcMediaInput, ProcUsageState } from "@humansandmachines/gsv/protocol";
 import { AgentImage } from "../../../components/ui/AgentImage";
 import { Alert } from "../../../components/ui/Alert";
@@ -60,7 +61,6 @@ import { ChatDockPopovers, type ChatPopoverId } from "./ChatDockPopovers";
 import {
   ChatTranscript,
   type ChatBranchPoint,
-  type ChatDockMessage,
 } from "./ChatTranscript";
 import {
   ChatWorkSessionAnnouncement,
@@ -68,7 +68,7 @@ import {
   focusChatSessionTarget,
   type ChatWorkSession,
 } from "./ChatWorkSessionBanner";
-import { formatCount, formatCurrencyCost, shortId } from "./chatUiFormat";
+import { formatCount, formatCurrencyCost } from "./chatUiFormat";
 import "./ChatDock.css";
 
 export type { ChatDockMessage } from "./ChatTranscript";
@@ -104,6 +104,22 @@ export function requestChatBranch({
     ...branch,
   });
   return true;
+}
+
+type ChatBranchAvailability = Pick<
+  ChatBranchRequest,
+  "canStartNewTask" | "forkPending" | "hasActiveProcess"
+>;
+
+export function availableChatBranchHandler(
+  availability: ChatBranchAvailability,
+  handler: (branch: ChatBranchPoint) => void,
+): ((branch: ChatBranchPoint) => void) | undefined {
+  return availability.canStartNewTask
+    && availability.hasActiveProcess
+    && !availability.forkPending
+    ? handler
+    : undefined;
 }
 
 /** What fills the dock below the (always-present) header: the chat itself, the
@@ -146,18 +162,19 @@ function agentStatusTone(status: ChatAgentStatus | undefined): StatusTone | null
   return null;
 }
 
-function errorMessage(error: unknown, fallback: string): string {
+function errorMessage<T>(error: T, fallback: string): string {
   if (error instanceof Error && error.message.trim()) {
     return error.message;
   }
-  if (typeof error === "string" && error.trim()) {
-    return error;
+  const text = z.string().safeParse(error);
+  if (text.success && text.data.trim()) {
+    return text.data;
   }
   return fallback;
 }
 
 function contextPressurePercent(pressure: number | null | undefined): number | null {
-  if (typeof pressure !== "number" || !Number.isFinite(pressure)) {
+  if (pressure === null || pressure === undefined || !Number.isFinite(pressure)) {
     return null;
   }
   return Math.max(0, Math.min(100, Math.round(pressure * 100)));
@@ -241,8 +258,9 @@ function fileToDraftAttachment(file: File): DraftAttachment {
   const type = inferAttachmentType(file);
   const sizeLabel = formatAttachmentSize(file.size);
   const label = file.name || (type === "image" ? "pasted image" : "attachment");
-  const randomId = typeof crypto !== "undefined" && "randomUUID" in crypto
-    ? crypto.randomUUID()
+  const randomUuid = globalThis.crypto?.randomUUID;
+  const randomId = randomUuid
+    ? randomUuid.call(globalThis.crypto)
     : Math.random().toString(36).slice(2);
   return {
     id: `${file.name}:${file.size}:${file.lastModified}:${randomId}`,
@@ -455,7 +473,7 @@ export function ChatDock({
   });
   const historySegments = useChatHistorySegments({
     enabled: open && hasActiveProcess,
-    args: hasActiveProcess ? { pid: activeProcessId } : {},
+    args: hasActiveProcess ? { pid: activeProcessId } : undefined,
   });
   const hasArchivedMessages = (historySegments.data?.length ?? 0) > 0;
   const contextPercent = contextPressurePercent(context?.pressure);
@@ -538,10 +556,10 @@ export function ChatDock({
       chatConversation.appendOptimistic(outgoingMessage, media.map((item): ProcMediaInput => ({
         type: item.type,
         mimeType: item.mimeType,
-        ...(item.filename ? { filename: item.filename } : {}),
+        ...(item.filename ? { filename: item.filename } : undefined),
         size: item.body.size,
-        ...(item.duration !== undefined ? { duration: item.duration } : {}),
-        ...(item.transcription ? { transcription: item.transcription } : {}),
+        ...(item.duration !== undefined ? { duration: item.duration } : undefined),
+        ...(item.transcription ? { transcription: item.transcription } : undefined),
       })));
     }
     setAttachmentError("");
@@ -551,8 +569,8 @@ export function ChatDock({
       pid: targetPid,
       ...(targetPid === activeProcessId && chatConversation.conversation
         ? { conversationId: chatConversation.conversation.id }
-        : {}),
-      ...(media.length > 0 ? { media } : {}),
+        : undefined),
+      ...(media.length > 0 ? { media } : undefined),
     });
     return { processId: targetPid };
   }, [
@@ -718,7 +736,7 @@ export function ChatDock({
     feedback.begin("abort", "Stopping work");
     abortProcess.mutate({
       pid: activeProcessId,
-      ...(runId ? { runId } : {}),
+      ...(runId ? { runId } : undefined),
     }, {
       onSuccess: () => {
         // A switch mid-flight already cleared the line; resolving would
@@ -748,7 +766,7 @@ export function ChatDock({
       pid: activeProcessId,
       requestId: pendingHil.requestId,
       decision,
-      ...(remember ? { remember } : {}),
+      ...(remember ? { remember } : undefined),
     });
   };
 
@@ -775,9 +793,9 @@ export function ChatDock({
       type: attachment.type,
       mimeType: attachment.mimeType,
       body: attachment.body,
-      ...(attachment.filename ? { filename: attachment.filename } : {}),
-      ...(attachment.duration ? { duration: attachment.duration } : {}),
-      ...(attachment.transcription ? { transcription: attachment.transcription } : {}),
+      ...(attachment.filename ? { filename: attachment.filename } : undefined),
+      ...(attachment.duration ? { duration: attachment.duration } : undefined),
+      ...(attachment.transcription ? { transcription: attachment.transcription } : undefined),
     }));
     if (sentAttachments.length > 0) {
       setAttachmentError("");
@@ -1230,9 +1248,11 @@ export function ChatDock({
         mobile={mobileLayout}
         loadingOlderMessages={chatConversation.loadingOlder}
         onLoadOlder={chatConversation.loadOlder}
-        onBranch={canStartNewTask && hasActiveProcess && !forkProcess.isPending
-          ? branchFromMessage
-          : undefined}
+        onBranch={availableChatBranchHandler({
+          canStartNewTask,
+          forkPending: forkProcess.isPending,
+          hasActiveProcess,
+        }, branchFromMessage)}
         onOpenReasoning={openReasoning}
         processId={activeProcessId}
         state={transcriptState}

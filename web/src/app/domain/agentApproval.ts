@@ -1,8 +1,11 @@
-export function approvalTargetFromValue(value: unknown): string | undefined {
-  if (typeof value !== "string") {
+import { z } from "zod";
+
+export function approvalTargetFromValue<T>(value: T): string | undefined {
+  const parsed = z.string().safeParse(value);
+  if (!parsed.success) {
     return undefined;
   }
-  const trimmed = value.trim();
+  const trimmed = parsed.data.trim();
   if (!trimmed || trimmed === "*" || trimmed.toLowerCase() === "any") {
     return undefined;
   }

@@ -3,12 +3,12 @@ import { Tag, type TagTone } from "../../../components/ui/Tag";
 
 export type ChatFeedbackStatus = "running" | "success" | "error" | "attention";
 
-const STATUS_TONE: Record<ChatFeedbackStatus, TagTone> = {
+const STATUS_TONE = {
   running: "info",
   success: "online",
   error: "error",
   attention: "update",
-};
+} satisfies Record<ChatFeedbackStatus, TagTone>;
 
 type ChatFeedbackMessageProps = {
   label: string;

@@ -1,15 +1,15 @@
 // External documentation per adapter (GSV docs site).
-export const ADAPTER_DOC_URLS: Record<string, string> = {
+export const ADAPTER_DOC_URLS = {
   telegram: "https://docs.gsv.space/how-to/messengers#telegram",
   discord: "https://docs.gsv.space/how-to/messengers#discord",
   whatsapp: "https://docs.gsv.space/how-to/messengers#whatsapp",
-};
+} satisfies Record<string, string>;
 
 const ADAPTERS_ROOT_URL = "https://docs.gsv.space/how-to/messengers";
 
 // Returns the doc URL for an adapter, falling back to the adapters root.
 export function adapterDocUrl(adapter: string): string {
-  return ADAPTER_DOC_URLS[adapter.toLowerCase()] ?? ADAPTERS_ROOT_URL;
+  return Object.entries(ADAPTER_DOC_URLS).find(([key]) => key === adapter.toLowerCase())?.[1] ?? ADAPTERS_ROOT_URL;
 }
 
 // Telegram BotFather (where users create a bot + get a token).

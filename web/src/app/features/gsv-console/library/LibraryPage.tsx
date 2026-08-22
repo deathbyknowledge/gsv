@@ -70,7 +70,7 @@ export function LibraryPage({ route = { view: "index" }, onRouteChange }: Librar
     }
     const measure = () => setNarrow(node.getBoundingClientRect().width < LIBRARY_NARROW_WIDTH);
     measure();
-    if (typeof ResizeObserver !== "undefined") {
+    if (globalThis.ResizeObserver) {
       const observer = new ResizeObserver(measure);
       observer.observe(node);
       narrowObserverRef.current = observer;
@@ -574,7 +574,11 @@ function LibraryReader({ library, narrow }: { library: LibraryRuntime; narrow: b
             <details
               class="gsv-library-outline-dd"
               open={outlineOpen}
-              onToggle={(event) => setOutlineOpen((event.currentTarget as HTMLDetailsElement).open)}
+              onToggle={(event) => {
+                if (event.currentTarget instanceof HTMLDetailsElement) {
+                  setOutlineOpen(event.currentTarget.open);
+                }
+              }}
             >
               <summary class="gsv-library-outline-summary gsv-listitem">
                 <span class="gsv-library-outline-dot" aria-hidden="true" />
@@ -913,6 +917,6 @@ function previewRequestKey(request: LibraryPreviewRequest): string {
   return `source:${request.target}:${request.path}:${request.title || ""}`;
 }
 
-function previewErrorMessage(error: unknown): string {
+function previewErrorMessage<T>(error: T): string {
   return error instanceof Error ? error.message : String(error || "Preview unavailable.");
 }

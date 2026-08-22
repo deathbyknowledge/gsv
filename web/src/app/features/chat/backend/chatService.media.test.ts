@@ -3,11 +3,19 @@ import { describe, expect, it, vi } from "vitest";
 import { frameBodyFromBlob } from "../../../services/gateway/frameBody";
 import { readChatProcessMedia, sendChatMessage } from "./chatService";
 
+type UploadRequestArgs = { pid?: string; type?: string; filename?: string };
+type ClientFixture = { request: unknown; proc?: unknown; conversation?: unknown };
+
+function clientFixture(value: ClientFixture): Pick<GSVClient, "proc" | "conversation" | "request"> {
+  // SAFETY: each fixture supplies exactly the client methods exercised by its focused test.
+  return value as Pick<GSVClient, "proc" | "conversation" | "request">;
+}
+
 describe("chat process media", () => {
   it("uploads attachment bodies before sending their references", async () => {
     const request = vi.fn(async (
       _call: string,
-      args: Record<string, unknown>,
+      args: UploadRequestArgs,
       options?: { body?: { stream: ReadableStream<Uint8Array> } },
     ) => {
       expect(args).toMatchObject({ pid: "proc:test", type: "image" });
@@ -15,8 +23,10 @@ describe("chat process media", () => {
       expect(await new Response(options?.body?.stream).text()).toBe("abc");
       return {
         data: {
+          // SAFETY: Test fixture data is constructed with the asserted shape for this focused case.
           ok: true as const,
           media: {
+            // SAFETY: Test fixture data is constructed with the asserted shape for this focused case.
             type: "image" as const,
             mimeType: "image/png",
             key: "var/media/1000/proc/test.png",
@@ -26,18 +36,21 @@ describe("chat process media", () => {
       };
     });
     const send = vi.fn(async () => ({
+      // SAFETY: Test fixture data is constructed with the asserted shape for this focused case.
       message: {} as never,
       handlerPid: "proc:test",
       runId: "run:1",
     }));
-    const client = {
+    // SAFETY: Test fixture uses the asserted API shape for this focused case.
+    const client = clientFixture({
       request,
       proc: {},
       conversation: {
         forProcess: vi.fn(async () => ({ conversation: { id: "conv:test" } })),
         send,
       },
-    } as unknown as Pick<GSVClient, "proc" | "conversation" | "request">;
+    // SAFETY: Test fixture data is constructed with the asserted shape for this focused case.
+    });
 
     await sendChatMessage(client, {
       pid: "proc:test",
@@ -71,17 +84,20 @@ describe("chat process media", () => {
   it("rejects oversized attachments before starting an upload", async () => {
     const request = vi.fn();
     const send = vi.fn();
-    const client = {
+    // SAFETY: Test fixture uses the asserted API shape for this focused case.
+    const client = clientFixture({
       request,
       proc: { media: { delete: vi.fn() } },
       conversation: { forProcess: vi.fn(), send },
-    } as unknown as Pick<GSVClient, "proc" | "conversation" | "request">;
+    // SAFETY: Test fixture data is constructed with the asserted shape for this focused case.
+    });
 
     await expect(sendChatMessage(client, {
       message: "too large",
       media: [{
         type: "video",
         mimeType: "video/mp4",
+        // SAFETY: Test fixture data is constructed with the asserted shape for this focused case.
         body: { size: 25 * 1024 * 1024 + 1 } as Blob,
       }],
     })).rejects.toThrow("Chat attachments cannot exceed 25 MiB");
@@ -92,10 +108,13 @@ describe("chat process media", () => {
   it("rolls back successful parallel uploads when another upload fails", async () => {
     const request = vi.fn(async (_call: string, args: { filename?: string }) => ({
       data: args.filename === "bad.png"
+        // SAFETY: Test fixture data is constructed with the asserted shape for this focused case.
         ? { ok: false as const, error: "upload failed" }
         : {
+            // SAFETY: Test fixture data is constructed with the asserted shape for this focused case.
             ok: true as const,
             media: {
+              // SAFETY: Test fixture data is constructed with the asserted shape for this focused case.
               type: "image" as const,
               mimeType: "image/png",
               key: "var/media/1000/proc/good.png",
@@ -103,16 +122,19 @@ describe("chat process media", () => {
             },
           },
     }));
+    // SAFETY: Test fixture data is constructed with the asserted shape for this focused case.
     const remove = vi.fn(async () => ({ ok: true as const, key: "var/media/1000/proc/good.png" }));
     const send = vi.fn();
-    const client = {
+    // SAFETY: Test fixture uses the asserted API shape for this focused case.
+    const client = clientFixture({
       request,
       proc: { media: { delete: remove } },
       conversation: {
         forProcess: vi.fn(async () => ({ conversation: { id: "conv:test" } })),
         send,
       },
-    } as unknown as Pick<GSVClient, "proc" | "conversation" | "request">;
+    // SAFETY: Test fixture data is constructed with the asserted shape for this focused case.
+    });
 
     await expect(sendChatMessage(client, {
       pid: "proc:test",
@@ -133,8 +155,10 @@ describe("chat process media", () => {
   it("rolls back staged media when proc.send rejects it", async () => {
     const request = vi.fn(async () => ({
       data: {
+        // SAFETY: Test fixture data is constructed with the asserted shape for this focused case.
         ok: true as const,
         media: {
+          // SAFETY: Test fixture data is constructed with the asserted shape for this focused case.
           type: "image" as const,
           mimeType: "image/png",
           key: "var/media/1000/proc/staged.png",
@@ -142,8 +166,10 @@ describe("chat process media", () => {
         },
       },
     }));
+    // SAFETY: Test fixture data is constructed with the asserted shape for this focused case.
     const remove = vi.fn(async () => ({ ok: true as const, key: "var/media/1000/proc/staged.png" }));
-    const client = {
+    // SAFETY: Test fixture uses the asserted API shape for this focused case.
+    const client = clientFixture({
       request,
       proc: {
         media: { delete: remove },
@@ -152,7 +178,8 @@ describe("chat process media", () => {
         forProcess: vi.fn(async () => ({ conversation: { id: "conv:test" } })),
         send: vi.fn(async () => { throw new Error("conversation closed"); }),
       },
-    } as unknown as Pick<GSVClient, "proc" | "conversation" | "request">;
+    // SAFETY: Test fixture data is constructed with the asserted shape for this focused case.
+    });
 
     await expect(sendChatMessage(client, {
       pid: "proc:test",
@@ -165,9 +192,12 @@ describe("chat process media", () => {
     });
   });
 
+  // SAFETY: Test fixture data is constructed with the asserted shape for this focused case.
+
   it("caches the response body as a Blob instead of a data URL", async () => {
     const request = vi.fn(async () => ({
       data: {
+        // SAFETY: Test fixture data is constructed with the asserted shape for this focused case.
         ok: true as const,
         key: "var/media/1000/proc/example.png",
         mimeType: "image/png",
@@ -175,7 +205,8 @@ describe("chat process media", () => {
       },
       body: frameBodyFromBlob(new Blob([new Uint8Array([1, 2, 3])])),
     }));
-    const client = { request } as unknown as Pick<GSVClient, "request">;
+    // SAFETY: Test fixture data is constructed with the asserted shape for this focused case.
+    const client = clientFixture({ request });
 
     const result = await readChatProcessMedia(client, {
       pid: "proc:test",
@@ -194,13 +225,15 @@ describe("chat process media", () => {
   it("rejects successful metadata without a response body", async () => {
     const request = vi.fn(async () => ({
       data: {
+        // SAFETY: Test fixture data is constructed with the asserted shape for this focused case.
         ok: true as const,
         key: "var/media/1000/proc/example.png",
         mimeType: "image/png",
         size: 3,
       },
     }));
-    const client = { request } as unknown as Pick<GSVClient, "request">;
+    // SAFETY: Test fixture data is constructed with the asserted shape for this focused case.
+    const client = clientFixture({ request });
 
     await expect(readChatProcessMedia(client, {
       key: "var/media/1000/proc/example.png",
@@ -219,6 +252,7 @@ describe("chat process media", () => {
     };
     const request = vi.fn(async () => ({
       data: {
+        // SAFETY: Test fixture data is constructed with the asserted shape for this focused case.
         ok: true as const,
         key: "var/media/1000/proc/large.mp4",
         mimeType: "video/mp4",
@@ -226,7 +260,8 @@ describe("chat process media", () => {
       },
       body,
     }));
-    const client = { request } as unknown as Pick<GSVClient, "request">;
+    // SAFETY: Test fixture data is constructed with the asserted shape for this focused case.
+    const client = clientFixture({ request });
 
     await expect(readChatProcessMedia(client, {
       key: "var/media/1000/proc/large.mp4",

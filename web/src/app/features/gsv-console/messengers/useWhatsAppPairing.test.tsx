@@ -3,33 +3,35 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ConnectConsoleAdapterResult } from "../backend/consoleService";
 import type { ConsoleAdapterAccount } from "../domain/consoleModels";
 import { createTestRoot, deferred } from "./messengerTestHarness";
+import {
+  type WhatsAppPairingDependencies,
+  type WhatsAppPairingOutcome,
+  useWhatsAppPairing,
+} from "./useWhatsAppPairing";
 
 const mocks = vi.hoisted(() => ({
   connectPending: false,
   dataUpdatedAt: 0,
-  lastStatusOptions: null as Record<string, unknown> | null,
+  // SAFETY: Test fixture data is constructed with the asserted shape for this focused case.
+  lastStatusOptions: null as Parameters<WhatsAppPairingDependencies["useConsoleAdapters"]>[0] | null,
   mutateAsync: vi.fn(),
+  // SAFETY: Test fixture data is constructed with the asserted shape for this focused case.
   statuses: [] as ConsoleAdapterAccount[],
 }));
 
-vi.mock("../hooks/useConsoleData", () => ({
+const pairingDependencies: WhatsAppPairingDependencies = {
   useConnectConsoleAdapter: () => ({
     isPending: mocks.connectPending,
     mutateAsync: mocks.mutateAsync,
   }),
-  useConsoleAdapters: (options: Record<string, unknown>) => {
+  useConsoleAdapters: (options) => {
     mocks.lastStatusOptions = options;
     return {
       adapters: mocks.statuses,
       dataUpdatedAt: mocks.dataUpdatedAt,
     };
   },
-}));
-
-import {
-  type WhatsAppPairingOutcome,
-  useWhatsAppPairing,
-} from "./useWhatsAppPairing";
+};
 
 const NOW = 1_800_000_000_000;
 
@@ -73,7 +75,7 @@ let root: ReturnType<typeof createTestRoot> | null = null;
 let pairing: PairingResult | null = null;
 
 function Harness(props: PairingProps) {
-  pairing = useWhatsAppPairing(props);
+  pairing = useWhatsAppPairing(props, pairingDependencies);
   return null;
 }
 
@@ -185,6 +187,8 @@ describe("useWhatsAppPairing", () => {
       accountId: "default",
     });
   });
+
+  // SAFETY: Test fixture data is constructed with the asserted shape for this focused case.
 
   it("accepts a fresh polled status as pairing confirmation", async () => {
     mocks.mutateAsync.mockResolvedValueOnce(challengeResult("default", "pairing-qr"));

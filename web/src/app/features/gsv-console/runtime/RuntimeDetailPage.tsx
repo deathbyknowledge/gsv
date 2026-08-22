@@ -29,7 +29,7 @@ export function RuntimeDetailPage({ onBack, process }: RuntimeDetailPageProps) {
     action.mutate({
       pid: process.pid,
       action: kind,
-      ...(kind === "abort" && process.activeRunId ? { runId: process.activeRunId } : {}),
+      ...(kind === "abort" && process.activeRunId ? { runId: process.activeRunId } : undefined),
     });
   };
   const openChat = () => {
@@ -98,13 +98,15 @@ export function RuntimeDetailPage({ onBack, process }: RuntimeDetailPageProps) {
   );
 }
 
-function taskActionConfirmation(action: TaskAction, process: ConsoleProcess): {
+type TaskActionConfirmation = {
   action: TaskAction;
   confirmLabel: string;
   message: string;
   note: string;
   title: string;
-} {
+};
+
+function taskActionConfirmation(action: TaskAction, process: ConsoleProcess): TaskActionConfirmation {
   if (action === "abort") {
     return {
       action,

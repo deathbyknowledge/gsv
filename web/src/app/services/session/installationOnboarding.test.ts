@@ -1,11 +1,10 @@
 import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
-import type { GSVClient } from "@humansandmachines/gsv/client";
 import {
   clearInstallationOnboardingToken,
   readInstallationOnboardingToken,
 } from "./installationOnboarding";
-import { createOnboardingService } from "./onboardingService";
-import { createSessionService } from "./sessionService";
+import { createOnboardingService, type OnboardingClient } from "./onboardingService";
+import { createSessionService, type SessionClient } from "./sessionService";
 
 const TOKEN = `onboard_${"a".repeat(43)}`;
 
@@ -19,7 +18,7 @@ describe("installation onboarding capability", () => {
       },
       history: {
         state: null,
-        replaceState(_state: unknown, _unused: string, url: string) {
+        replaceState<T>(_state: T, _unused: string, url: string) {
           location = new URL(url, location);
         },
       },
@@ -76,9 +75,13 @@ describe("installation onboarding capability", () => {
       rootLocked: false,
     }));
     const client = {
+      connect: vi.fn(),
+      disconnect: vi.fn(),
+      isConnected: () => false,
       onStatus: vi.fn(),
       requestOnce,
-    } as unknown as GSVClient;
+      sys: { token: { create: vi.fn(), revoke: vi.fn(), list: vi.fn() } },
+    } satisfies SessionClient;
     const session = createSessionService(client);
 
     await session.start();
@@ -110,7 +113,7 @@ describe("installation onboarding capability", () => {
     }));
     const onboarding = createOnboardingService({
       requestOnce,
-    } as unknown as GSVClient);
+    } satisfies OnboardingClient);
 
     await onboarding.assist("Help me configure this.");
     expect(requestOnce).toHaveBeenCalledWith(

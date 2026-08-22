@@ -1,4 +1,5 @@
 import type { JSX, RefObject } from "preact";
+import { z } from "zod";
 import { useEffect, useRef, useState } from "preact/hooks";
 import {
   getDesktopObject,
@@ -60,19 +61,14 @@ function upsertTab(tabs: readonly ShellPageTab[], tab: ShellPageTab): ShellPageT
   return tabs.map((candidate, candidateIndex) => candidateIndex === index ? tab : candidate);
 }
 
-function isShellPageTab(value: unknown): value is ShellPageTab {
-  if (!value || typeof value !== "object") {
-    return false;
-  }
-
-  const tab = value as Record<string, unknown>;
-  return typeof tab.key === "string"
-    && typeof tab.surface === "string"
-    && typeof tab.title === "string"
-    && typeof tab.kind === "string"
-    && typeof tab.icon === "string"
-    && typeof tab.type === "string";
-}
+const shellPageTabSchema = z.object({
+  key: z.string(),
+  surface: z.string(),
+  title: z.string(),
+  kind: z.string(),
+  icon: z.string(),
+  type: z.string(),
+}).passthrough();
 
 function readPersistedTabs(): ShellPageTab[] {
   try {
@@ -80,11 +76,11 @@ function readPersistedTabs(): ShellPageTab[] {
     if (!raw) {
       return [];
     }
-    const parsed = JSON.parse(raw) as { version?: unknown; tabs?: unknown };
-    if (parsed.version !== 1 || !Array.isArray(parsed.tabs)) {
+    const parsed = z.object({ version: z.literal(1), tabs: z.array(z.unknown()) }).safeParse(JSON.parse(raw));
+    if (!parsed.success) {
       return [];
     }
-    return parsed.tabs.filter(isShellPageTab);
+    return parsed.data.tabs.filter((tab): tab is ShellPageTab => shellPageTabSchema.safeParse(tab).success);
   } catch {
     return [];
   }
@@ -106,7 +102,7 @@ function isListDetailRoute(route: ShellSettingsRoute): route is Extract<ShellSet
 }
 
 function readInitialRoute(): ShellRoute {
-  return typeof window === "undefined"
+  return !globalThis.window
     ? { surface: "desktop" }
     : shellRouteFromLocation(window.location);
 }
@@ -159,7 +155,7 @@ export function useGsvShellState({
     };
     update();
 
-    if (typeof ResizeObserver === "undefined") {
+    if (!globalThis.ResizeObserver) {
       window.addEventListener("resize", update);
       return () => window.removeEventListener("resize", update);
     }

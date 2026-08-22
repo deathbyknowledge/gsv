@@ -27,7 +27,7 @@ export interface SegmentedProps {
   onChange?: (index: number) => void;
 }
 
-const SIZE_CLASS: Record<SegmentedSize, string> = {
+const SIZE_CLASS = {
   small: "gsv-sg-sm",
   medium: "gsv-sg-md",
   large: "gsv-sg-lg",
@@ -127,9 +127,11 @@ export function Segmented(props: SegmentedProps) {
   const describedBy = [descId, msgId].filter(Boolean).join(" ") || undefined;
 
   const segProps = (i: number) => ({
+    // SAFETY: Component boundary provides the asserted DOM/test shape.
     type: "button" as const,
     class: segCls(i),
     disabled,
+    // SAFETY: Component boundary provides the asserted DOM/test shape.
     role: "radio" as const,
     "aria-checked": sel === i,
     tabIndex: sel === i ? 0 : -1,

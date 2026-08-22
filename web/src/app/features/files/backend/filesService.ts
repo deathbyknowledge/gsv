@@ -16,6 +16,10 @@ import {
 } from "../domain/normalization";
 import { detectPathStyle, normalizePath, normalizeTarget, targetArgs } from "../domain/paths";
 import { requestFsRead } from "../../../services/gateway/fsRead";
+import { z } from "zod";
+
+const gatewayPayloadSchema = z.unknown();
+type GatewayPayload = z.input<typeof gatewayPayloadSchema>;
 
 export type FilesClient = Pick<GSVClient, "call" | "request">;
 
@@ -49,8 +53,9 @@ export async function listFilesTargets(client: FilesClient): Promise<FilesTarget
   return normalizeFilesTargets(payload);
 }
 
-function isOkPayload(payload: unknown): boolean {
-  return Boolean(payload && typeof payload === "object" && (payload as { ok?: unknown }).ok === true);
+function isOkPayload(payload: GatewayPayload): boolean {
+  const parsed = z.object({ ok: z.literal(true) }).passthrough().safeParse(gatewayPayloadSchema.parse(payload));
+  return parsed.success;
 }
 
 async function readRawPathWithFallback(client: FilesClient, target: string, path: string): Promise<{ path: string; payload: unknown }> {

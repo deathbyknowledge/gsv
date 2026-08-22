@@ -1,4 +1,5 @@
 import type { ConsoleConfigEntry } from "./consoleModels";
+import { z } from "zod";
 import { fixedAiProviderModel } from "../../../domain/aiProviders";
 import {
   modelDisplayName,
@@ -10,10 +11,12 @@ export const DEFAULT_MODEL_LABEL = "GATEWAY DEFAULT";
 export type ConsoleModelProfile = {
   id: string;
   name: string;
-  values: Record<string, string>;
+  values: ConsoleProfileValues;
   createdAt: number;
   updatedAt: number;
 };
+
+type ConsoleProfileValues = Record<string, string>;
 
 export type ConsoleModelOption = {
   value: string;
@@ -27,6 +30,20 @@ const PRIMARY_MODEL_KEY_RE = /^(?:config\/ai|users\/\d+\/ai)\/model$/;
 const AGENT_BEHAVIOR_CONFIG_KEY_RE = /^users\/[^/]+\/ai\//i;
 const MODEL_PROFILES_KEY_RE = /^users\/(\d+)\/ai\/model_profiles$/;
 const SENSITIVE_PROFILE_VALUE_KEY_RE = /(?:^|\/|_)(?:api[_-]?key|password|secret|token|credential)(?:$|\/|_)/i;
+
+const profileScalarSchema = z.union([z.string(), z.number(), z.boolean(), z.null()]);
+const modelProfileSchema = z.object({
+  id: profileScalarSchema.optional(),
+  name: profileScalarSchema.optional(),
+  values: z.record(z.string(), profileScalarSchema).optional(),
+  createdAt: z.number().optional(),
+  updatedAt: z.number().optional(),
+});
+const modelProfilesPayloadSchema = z.object({
+  profiles: z.array(modelProfileSchema).optional(),
+});
+type ParsedModelProfile = z.infer<typeof modelProfileSchema>;
+type ProfileScalar = z.infer<typeof profileScalarSchema>;
 
 function isModelConfigKey(key: string): boolean {
   return PRIMARY_MODEL_KEY_RE.test(key) || MODEL_PROFILES_KEY_RE.test(key);
@@ -146,17 +163,10 @@ function profileModelLabelsForConfig(config: readonly ConsoleConfigEntry[]): str
     if (entry.redacted || !MODEL_PROFILES_KEY_RE.test(entry.key) || !entry.value.trim()) {
       return [];
     }
-    try {
-      const payload = JSON.parse(entry.value) as { profiles?: unknown[] };
-      const profiles = Array.isArray(payload.profiles) ? payload.profiles : [];
-      return profiles
-        .map(normalizeModelProfile)
+    return parseModelProfiles(entry.value)
         .filter((profile): profile is ConsoleModelProfile => profile !== null)
         .map((profile) => profile.values["config/ai/model"]?.trim() ?? "")
         .filter(Boolean);
-    } catch {
-      return [];
-    }
   });
 }
 
@@ -165,11 +175,7 @@ function profileModelOptionsForConfig(config: readonly ConsoleConfigEntry[]): Co
     if (entry.redacted || !MODEL_PROFILES_KEY_RE.test(entry.key) || !entry.value.trim()) {
       return [];
     }
-    try {
-      const payload = JSON.parse(entry.value) as { profiles?: unknown[] };
-      const profiles = Array.isArray(payload.profiles) ? payload.profiles : [];
-      return profiles
-        .map(normalizeModelProfile)
+    return parseModelProfiles(entry.value)
         .filter((profile): profile is ConsoleModelProfile => profile !== null)
         .map((profile) => {
           const model = profile.values["config/ai/model"]?.trim() ?? "";
@@ -181,9 +187,6 @@ function profileModelOptionsForConfig(config: readonly ConsoleConfigEntry[]): Co
             : null;
         })
         .filter((option): option is ConsoleModelOption => option !== null);
-    } catch {
-      return [];
-    }
   });
 }
 
@@ -191,7 +194,7 @@ export function modelProfilesForConfig(
   config: readonly ConsoleConfigEntry[],
   uid: number | null | undefined,
 ): ConsoleModelProfile[] {
-  if (typeof uid !== "number" || !Number.isFinite(uid)) {
+  if (uid === null || uid === undefined || !Number.isFinite(uid)) {
     return [];
   }
   const entry = config.find((candidate) =>
@@ -203,16 +206,9 @@ export function modelProfilesForConfig(
     return [];
   }
 
-  try {
-    const payload = JSON.parse(entry.value) as { profiles?: unknown[] };
-    const profiles = Array.isArray(payload.profiles) ? payload.profiles : [];
-    return profiles
-      .map(normalizeModelProfile)
+  return parseModelProfiles(entry.value)
       .filter((profile): profile is ConsoleModelProfile => profile !== null)
       .sort((left, right) => right.updatedAt - left.updatedAt || left.name.localeCompare(right.name));
-  } catch {
-    return [];
-  }
 }
 
 export function modelProfileSummary(profile: ConsoleModelProfile): string {
@@ -256,49 +252,56 @@ export function overrideConfigCount(config: readonly ConsoleConfigEntry[]): numb
   return overrideConfigEntries(config).length;
 }
 
-function normalizeModelProfile(value: unknown): ConsoleModelProfile | null {
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
-    return null;
+function parseModelProfiles(rawValue: string): ConsoleModelProfile[] {
+  let decoded: unknown;
+  try {
+    decoded = JSON.parse(rawValue);
+  } catch {
+    return [];
   }
-  const record = value as Record<string, unknown>;
-  const id = normalizeProfileId(record.id);
-  const name = normalizeProfileName(record.name);
+  const parsed = modelProfilesPayloadSchema.safeParse(decoded);
+  if (!parsed.success) {
+    return [];
+  }
+  return (parsed.data.profiles ?? [])
+    .map(normalizeModelProfile)
+    .filter((profile): profile is ConsoleModelProfile => profile !== null);
+}
+
+function normalizeModelProfile(value: ParsedModelProfile): ConsoleModelProfile | null {
+  const id = normalizeProfileId(value.id);
+  const name = normalizeProfileName(value.name);
   if (!id || !name) {
     return null;
   }
-  const values = normalizeProfileValues(record.values);
+  const values = normalizeProfileValues(value.values ?? {});
   return {
     id,
     name,
     values,
-    createdAt: normalizeTimestamp(record.createdAt),
-    updatedAt: normalizeTimestamp(record.updatedAt),
+    createdAt: normalizeTimestamp(value.createdAt),
+    updatedAt: normalizeTimestamp(value.updatedAt),
   };
 }
 
-function normalizeProfileValues(value: unknown): Record<string, string> {
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
-    return {};
-  }
-  const values: Record<string, string> = {};
-  for (const [key, rawValue] of Object.entries(value as Record<string, unknown>)) {
-    if (key.startsWith("config/ai/") && !SENSITIVE_PROFILE_VALUE_KEY_RE.test(key)) {
-      values[key] = String(rawValue ?? "");
-    }
-  }
-  return values;
+function normalizeProfileValues(value: Record<string, ProfileScalar>) {
+  return Object.fromEntries(
+    Object.entries(value)
+      .filter(([key]) => key.startsWith("config/ai/") && !SENSITIVE_PROFILE_VALUE_KEY_RE.test(key))
+      .map(([key, rawValue]) => [key, String(rawValue ?? "")]),
+  );
 }
 
-function normalizeProfileName(value: unknown): string {
+function normalizeProfileName(value: ProfileScalar | undefined): string {
   return String(value ?? "").trim().replace(/\s+/g, " ").slice(0, 80);
 }
 
-function normalizeProfileId(value: unknown): string {
+function normalizeProfileId(value: ProfileScalar | undefined): string {
   return String(value ?? "").trim().toLowerCase().replace(/[^a-z0-9_-]/g, "");
 }
 
-function normalizeTimestamp(value: unknown): number {
-  return typeof value === "number" && Number.isFinite(value) && value > 0 ? value : 0;
+function normalizeTimestamp(value: number | undefined): number {
+  return value !== undefined && Number.isFinite(value) && value > 0 ? value : 0;
 }
 
 export function modelOptionForValue(

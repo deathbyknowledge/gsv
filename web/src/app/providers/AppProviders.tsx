@@ -1,13 +1,25 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/preact-query";
-import type { ComponentChildren } from "preact";
+import type { ComponentChildren, ComponentType } from "preact";
 import { useEffect, useRef } from "preact/hooks";
 import { GatewayProvider } from "../services/gateway/GatewayProvider";
 import { GatewaySignalInvalidator } from "../services/query/GatewaySignalInvalidator";
 import { SessionProvider, useSession } from "../services/session/SessionProvider";
-import type { SessionSnapshot } from "../services/session/sessionService";
+import type {
+  SessionClient,
+  SessionService,
+  SessionSnapshot,
+} from "../services/session/sessionService";
 
 type AppProvidersProps = {
   children: ComponentChildren;
+};
+
+type QueryInvalidatorComponent = ComponentType;
+type SessionServiceFactory = (client: SessionClient) => SessionService;
+
+export type AppProviderDependencies = {
+  QueryInvalidator?: QueryInvalidatorComponent;
+  createSessionService?: SessionServiceFactory;
 };
 
 export function createWebQueryClient(): QueryClient {
@@ -46,16 +58,21 @@ export function resolveScopedWebQueryClient(
 }
 
 type SessionScopedQueryProviderProps = AppProvidersProps & {
+  QueryInvalidator?: QueryInvalidatorComponent;
   scope: string;
 };
 
 function ScopedQueryTree({
   children,
   client,
-}: AppProvidersProps & { client: QueryClient }) {
+  QueryInvalidator,
+}: AppProvidersProps & {
+  client: QueryClient;
+  QueryInvalidator: QueryInvalidatorComponent;
+}) {
   return (
     <QueryClientProvider client={client}>
-      <GatewaySignalInvalidator />
+      <QueryInvalidator />
       {children}
     </QueryClientProvider>
   );
@@ -63,6 +80,7 @@ function ScopedQueryTree({
 
 export function SessionScopedQueryProvider({
   children,
+  QueryInvalidator = GatewaySignalInvalidator,
   scope,
 }: SessionScopedQueryProviderProps) {
   const stateRef = useRef<ScopedWebQueryClient | null>(null);
@@ -77,26 +95,40 @@ export function SessionScopedQueryProvider({
   }, [state.client]);
 
   return (
-    <ScopedQueryTree key={state.scope} client={state.client}>
+    <ScopedQueryTree
+      key={state.scope}
+      client={state.client}
+      QueryInvalidator={QueryInvalidator}
+    >
       {children}
     </ScopedQueryTree>
   );
 }
 
-function SessionQueryProvider({ children }: AppProvidersProps) {
+function SessionQueryProvider({
+  children,
+  QueryInvalidator,
+}: AppProvidersProps & Pick<AppProviderDependencies, "QueryInvalidator">) {
   const { snapshot } = useSession();
   return (
-    <SessionScopedQueryProvider scope={webQuerySessionScope(snapshot)}>
+    <SessionScopedQueryProvider
+      scope={webQuerySessionScope(snapshot)}
+      QueryInvalidator={QueryInvalidator}
+    >
       {children}
     </SessionScopedQueryProvider>
   );
 }
 
-export function AppProviders({ children }: AppProvidersProps) {
+export function AppProviders({
+  children,
+  QueryInvalidator,
+  createSessionService,
+}: AppProvidersProps & AppProviderDependencies) {
   return (
     <GatewayProvider>
-      <SessionProvider>
-        <SessionQueryProvider>
+      <SessionProvider createService={createSessionService}>
+        <SessionQueryProvider QueryInvalidator={QueryInvalidator}>
           {children}
         </SessionQueryProvider>
       </SessionProvider>

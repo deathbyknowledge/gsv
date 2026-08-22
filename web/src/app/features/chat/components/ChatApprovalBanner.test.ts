@@ -49,7 +49,7 @@ describe("ChatApprovalBanner", () => {
     });
 
     expect(summary).not.toMatch(
-      /[\u0000-\u001f\u007f-\u009f\u200b-\u200f\u202a-\u202e\u2060-\u2069\ufeff]/,
+      /[\p{Cc}\u200b-\u200f\u202a-\u202e\u2060-\u2069\ufeff]/u,
     );
     expect(summary).toContain("To: victim@example.com approve attacker@example.com");
     expect(summary).toContain("Subject: Invoice ALLOW");

@@ -15,8 +15,23 @@ import { adapterDetailId, adapterName, deriveAccountId, iconForAdapterName } fro
 import { WhatsAppOnboardingFlow } from "./WhatsAppOnboardingFlow";
 import { ManagedTelegramOnboardingFlow } from "./ManagedTelegramOnboardingFlow";
 
-type MessengerOnboardingFlowProps = {
+export type MessengerOnboardingDependencies = {
+  ConnectFlowShell: typeof ConnectFlowShell;
+  useConnectAdapter: () => Pick<
+    ReturnType<typeof useConnectConsoleAdapter>,
+    "isPending" | "mutateAsync"
+  >;
+  useConsumeLinkCode: () => Pick<
+    ReturnType<typeof useConsumeIdentityLinkCode>,
+    "isPending" | "mutateAsync"
+  >;
+  useUnsavedGuard: typeof useUnsavedGuard;
+  useUnsavedGuardLeave: typeof useUnsavedGuardLeave;
+};
+
+export type MessengerOnboardingFlowProps = {
   adapterId: string;
+  dependencies?: MessengerOnboardingDependencies;
   existingAccountIds?: readonly string[];
   forceRelink?: boolean;
   initialAccountId?: string | null;
@@ -34,7 +49,7 @@ const STEP_LINK = 3;
 const stepLinksStyle = { display: "flex", flexWrap: "wrap" as const, gap: "18px", alignItems: "center" };
 const tokenFieldStyle = { maxWidth: "520px" };
 
-function errorText(error: unknown): string {
+function errorText<T>(error: T): string {
   return error instanceof Error ? error.message : error ? String(error) : "";
 }
 
@@ -46,6 +61,7 @@ function linkedText(result: IdentityLinkMutationResult): string {
 
 export function MessengerOnboardingFlow({
   adapterId,
+  dependencies = defaultMessengerOnboardingDependencies,
   existingAccountIds = [],
   forceRelink = false,
   initialAccountId = null,
@@ -77,6 +93,7 @@ export function MessengerOnboardingFlow({
   return (
     <BotMessengerOnboardingFlow
       adapterId={adapterId}
+      dependencies={dependencies}
       initialAccountId={initialAccountId}
       onBack={onBack}
       onConnected={onConnected}
@@ -86,12 +103,16 @@ export function MessengerOnboardingFlow({
 
 function BotMessengerOnboardingFlow({
   adapterId,
+  dependencies,
   initialAccountId,
   onBack,
   onConnected,
-}: Pick<MessengerOnboardingFlowProps, "adapterId" | "initialAccountId" | "onBack" | "onConnected">): JSX.Element {
-  const connect = useConnectConsoleAdapter();
-  const consumeLinkCode = useConsumeIdentityLinkCode();
+}: Pick<
+  MessengerOnboardingFlowProps,
+  "adapterId" | "initialAccountId" | "onBack" | "onConnected"
+> & { dependencies: MessengerOnboardingDependencies }): JSX.Element {
+  const connect = dependencies.useConnectAdapter();
+  const consumeLinkCode = dependencies.useConsumeLinkCode();
   const [step, setStep] = useState(STEP_CREATE);
   const [token, setToken] = useState("");
   const [linkCode, setLinkCode] = useState("");
@@ -100,7 +121,7 @@ function BotMessengerOnboardingFlow({
   const [linkError, setLinkError] = useState("");
   const [linkResultText, setLinkResultText] = useState("");
 
-  useUnsavedGuard(
+  dependencies.useUnsavedGuard(
     () => !linked && (step > STEP_CREATE || token.trim() !== "" || linkCode.trim() !== ""),
   );
 
@@ -114,7 +135,7 @@ function BotMessengerOnboardingFlow({
   // Steps 1-2 are performed on the messaging platform; 3-4 happen inside GSV.
   const onPlatform = step <= STEP_TOKEN;
 
-  const requestLeave = useUnsavedGuardLeave();
+  const requestLeave = dependencies.useUnsavedGuardLeave();
   const goNext = () => setStep((current) => Math.min(current + 1, STEP_CONNECT));
   const goBack = () => {
     if (step === STEP_CREATE) {
@@ -405,5 +426,14 @@ function BotMessengerOnboardingFlow({
     ],
   };
 
-  return <ConnectFlowShell flow={flow} current={step} onStep={goToStep} />;
+  const FlowShell = dependencies.ConnectFlowShell;
+  return <FlowShell flow={flow} current={step} onStep={goToStep} />;
 }
+
+const defaultMessengerOnboardingDependencies: MessengerOnboardingDependencies = {
+  ConnectFlowShell,
+  useConnectAdapter: useConnectConsoleAdapter,
+  useConsumeLinkCode: useConsumeIdentityLinkCode,
+  useUnsavedGuard,
+  useUnsavedGuardLeave,
+};

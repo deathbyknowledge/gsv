@@ -48,20 +48,26 @@ function treeWidth(count: number): number {
   return Math.max(96, count * 96 + Math.max(0, count - 1) * 64);
 }
 
-function branchStyle(index: number, count: number): JSX.CSSProperties {
+type DesktopBranchStyle = JSX.CSSProperties & {
+  "--gsv-branch-left"?: string;
+  "--gsv-branch-count"?: number;
+  "--gsv-tree-width"?: string;
+};
+
+function branchStyle(index: number, count: number): DesktopBranchStyle {
   const width = treeWidth(count);
   const left = count <= 1 ? 50 : ((48 + index * 160) / width) * 100;
 
   return {
     "--gsv-branch-left": `${left}%`,
-  } as JSX.CSSProperties;
+  };
 }
 
-function branchCountStyle(count: number): JSX.CSSProperties {
+function branchCountStyle(count: number): DesktopBranchStyle {
   return {
     "--gsv-branch-count": count,
     "--gsv-tree-width": `${treeWidth(count)}px`,
-  } as JSX.CSSProperties;
+  };
 }
 
 

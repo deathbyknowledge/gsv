@@ -57,7 +57,7 @@ const ACTION: Swatch[] = [
 ];
 
 function tokenValue(varName: string): string {
-  if (typeof document === "undefined") return "";
+  if (!globalThis.document) return "";
   return getComputedStyle(document.documentElement).getPropertyValue(varName).trim();
 }
 

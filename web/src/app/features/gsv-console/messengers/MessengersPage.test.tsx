@@ -1,9 +1,7 @@
-import type { ComponentChildren } from "preact";
 import { act } from "preact/test-utils";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type {
   ConsoleAdapter,
-  ConsoleAdapterAccount,
   ConsoleResourceState,
 } from "../domain/consoleModels";
 import {
@@ -11,34 +9,50 @@ import {
   consoleAdapterAccount,
   createTestRoot,
 } from "./messengerTestHarness";
+import {
+  MessengersPage,
+  type MessengersPageDependencies,
+} from "./MessengersPage";
 
-const mocks = vi.hoisted(() => ({
-  detailRenders: [] as Array<{
+type MessengerPageTestState = {
+  detailRenders: Array<{
     accountId: string;
     identityLinkCount: number;
     onLinkIdentity: (() => void) | undefined;
-  }>,
-  inventory: [] as ConsoleAdapter[],
+  }>;
+  inventory: ConsoleAdapter[];
+  inventoryResourceState: Pick<
+    ConsoleResourceState<ConsoleAdapter[]>,
+    "isError" | "isLoading" | "isRefreshing" | "isUnavailable"
+  >;
+  linkPanelRenders: Array<{
+    errorText: string | undefined;
+    linkCount: number;
+    refreshing: boolean;
+  }>;
+  onboardingRenders: Array<{
+    adapterId: string;
+    existingAccountIds: string[];
+    forceRelink: boolean;
+    initialAccountId: string | null;
+    onBack: () => void;
+  }>;
+  platformRenders: string[];
+};
+
+const mocks: MessengerPageTestState = {
+  detailRenders: [],
+  inventory: [],
   inventoryResourceState: {
     isError: false,
     isLoading: false,
     isRefreshing: false,
     isUnavailable: false,
   },
-  linkPanelRenders: [] as Array<{
-    errorText: string | undefined;
-    linkCount: number;
-    refreshing: boolean;
-  }>,
-  onboardingRenders: [] as Array<{
-    adapterId: string;
-    existingAccountIds: string[];
-    forceRelink: boolean;
-    initialAccountId: string | null;
-    onBack: () => void;
-  }>,
-  platformRenders: [] as string[],
-}));
+  linkPanelRenders: [],
+  onboardingRenders: [],
+  platformRenders: [],
+};
 
 function resource<T>(
   data: T,
@@ -58,98 +72,56 @@ function resource<T>(
   };
 }
 
-vi.mock("../hooks/useConsoleData", () => ({
-  useConsoleAccounts: () => ({
-    accounts: [],
-    resource: resource([]),
-  }),
-  useConsoleAdapterInventory: () => ({
-    adapters: mocks.inventory,
-    resource: resource(mocks.inventory, mocks.inventoryResourceState),
-  }),
-  useConsoleIdentityLinks: () => ({
-    links: [],
-    resource: resource([]),
-  }),
-  useDisconnectConsoleAdapter: () => ({
-    error: null,
-    isPending: false,
-    mutateAsync: vi.fn(),
-  }),
-}));
-
-vi.mock("../components/ConsolePageTemplate", () => ({
-  ConsolePage: ({ children }: { children: ComponentChildren }) => children,
-  ConsoleResourceBoundary: <T,>({
-    render: renderResource,
-    resource: resourceState,
-  }: {
-    render: (data: T) => ComponentChildren;
-    resource: ConsoleResourceState<T>;
-  }) => resourceState.data === null ? null : renderResource(resourceState.data),
-}));
-
-vi.mock("../card-template/CardListTemplate", () => ({
-  CardListTemplate: () => null,
-}));
-
-vi.mock("../components/ConsoleDetailPage", () => ({
-  ConsoleDetailPage: (props: { title: string }) => {
-    mocks.platformRenders.push(props.title);
-    return null;
-  },
-}));
-
-vi.mock("./MessengerDetailPage", () => ({
-  MessengerDetailPage: (props: {
-    adapter: ConsoleAdapterAccount;
-    identityLinks: readonly unknown[];
-    onLinkIdentity?: () => void;
-  }) => {
-    mocks.detailRenders.push({
-      accountId: props.adapter.accountId,
-      identityLinkCount: props.identityLinks.length,
-      onLinkIdentity: props.onLinkIdentity,
-    });
-    return null;
-  },
-}));
-
-vi.mock("./MessengerLinkCodePanel", () => ({
-  MessengerLinkCodePanel: (props: {
-    errorText?: string;
-    linkCount: number;
-    refreshing: boolean;
-  }) => {
-    mocks.linkPanelRenders.push({
-      errorText: props.errorText,
-      linkCount: props.linkCount,
-      refreshing: props.refreshing,
-    });
-    return null;
-  },
-}));
-
-vi.mock("./MessengerOnboardingFlow", () => ({
-  MessengerOnboardingFlow: (props: {
-    adapterId: string;
-    existingAccountIds?: readonly string[];
-    forceRelink?: boolean;
-    initialAccountId?: string | null;
-    onBack: () => void;
-  }) => {
-    mocks.onboardingRenders.push({
-      adapterId: props.adapterId,
-      existingAccountIds: [...(props.existingAccountIds ?? [])],
-      forceRelink: props.forceRelink ?? false,
-      initialAccountId: props.initialAccountId ?? null,
-      onBack: props.onBack,
-    });
-    return null;
-  },
-}));
-
-import { MessengersPage } from "./MessengersPage";
+function testDependencies(): MessengersPageDependencies {
+  return {
+    ConsolePage: ({ children }) => <>{children}</>,
+    ConsoleResourceBoundary: ({ render, resource: resourceState }) => (
+      <>{resourceState.data === null ? null : render(resourceState.data)}</>
+    ),
+    MessengerDetailPage: (props) => {
+      mocks.detailRenders.push({
+        accountId: props.adapter.accountId,
+        identityLinkCount: props.identityLinks.length,
+        onLinkIdentity: props.onLinkIdentity,
+      });
+      return <></>;
+    },
+    MessengerLinkCodePanel: (props) => {
+      mocks.linkPanelRenders.push({
+        errorText: props.errorText,
+        linkCount: props.linkCount,
+        refreshing: props.refreshing,
+      });
+      return <></>;
+    },
+    MessengerOnboardingFlow: (props) => {
+      mocks.onboardingRenders.push({
+        adapterId: props.adapterId,
+        existingAccountIds: [...(props.existingAccountIds ?? [])],
+        forceRelink: props.forceRelink ?? false,
+        initialAccountId: props.initialAccountId ?? null,
+        onBack: props.onBack,
+      });
+      return <></>;
+    },
+    MessengerPlatformPage: (props) => {
+      mocks.platformRenders.push(props.adapter.adapter === "telegram" ? "Telegram" : props.adapter.adapter);
+      return <></>;
+    },
+    MessengersRoster: () => <></>,
+    useAccounts: () => ({ accounts: [], resource: resource([]) }),
+    useAdapterInventory: () => ({
+      adapters: mocks.inventory,
+      resource: resource(mocks.inventory, mocks.inventoryResourceState),
+    }),
+    useIdentityLinks: () => ({ links: [], resource: resource([]) }),
+    useDisconnectAdapter: () => ({
+      error: null,
+      isPending: false,
+      mutateAsync: vi.fn(async () => ({ ok: true, message: "", error: "" })),
+    }),
+  };
+}
 
 let root: ReturnType<typeof createTestRoot> | null = null;
 
@@ -159,7 +131,7 @@ async function renderPage(props: {
   onSelectionChange?: (selection: { createNew?: boolean } | null) => void;
 }): Promise<void> {
   root ??= createTestRoot("The messenger route harness");
-  await root.render(<MessengersPage {...props} />);
+  await root.render(<MessengersPage dependencies={testDependencies()} {...props} />);
 }
 
 function lastOnboardingRender() {

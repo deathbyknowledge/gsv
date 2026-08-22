@@ -23,7 +23,7 @@ import type {
   ProcMediaReadArgs,
   ProcMediaReadResult,
   ProcMediaWriteResult,
-  ProcSendResult,
+
   ProcSpawnArgs,
   ProcSpawnResult,
   ConversationForProcessResult,
@@ -33,10 +33,16 @@ import type {
   ConversationSendResult,
 } from "@humansandmachines/gsv/protocol";
 import { frameBodyFromBlob, frameBodyToBlob } from "../../../services/gateway/frameBody";
+import { z } from "zod";
+
+const mediaReadDataSchema = z.union([
+  z.object({ ok: z.literal(true), key: z.string(), path: z.string().optional(), mimeType: z.string(), size: z.number(), conversationId: z.string().optional() }),
+  z.object({ ok: z.literal(false), error: z.string() }),
+]);
 import {
   normalizeHistory,
   normalizeProcessSummaries,
-  normalizeSendPayload,
+
   type ChatForkResult,
   type ChatHistoryCompactResult,
   type ChatHistorySegmentReadResult,
@@ -52,9 +58,6 @@ import {
 
 type ChatGsvClient = Pick<GSVClient, "proc" | "conversation" | "request">;
 type ChatMediaGsvClient = Pick<GSVClient, "request">;
-type ProcAiConfigGetArgsWithPid = ProcAiConfigGetArgs & { pid?: string };
-type ProcAiConfigSetArgsWithPid = ProcAiConfigSetArgs & { pid?: string };
-
 type FailureResult = { ok: false; error: string };
 
 export type ChatProcessMedia = (
@@ -64,16 +67,11 @@ export type ChatProcessMedia = (
   blob: Blob;
 };
 
-function throwIfFailed<T>(result: T | FailureResult): T {
-  if (
-    result &&
-    typeof result === "object" &&
-    "ok" in result &&
-    result.ok === false
-  ) {
+function throwIfFailed<T extends { ok: true }>(result: T | FailureResult): T {
+  if (!result.ok) {
     throw new Error(result.error || "GSV process request failed");
   }
-  return result as T;
+  return result;
 }
 
 export async function listChatProcesses(
@@ -107,7 +105,7 @@ export async function sendChatMessage(
   const settled = await Promise.allSettled(uploads.map(async ({ body, ...input }) => {
     const response = await client.request("proc.media.write", {
       ...input,
-      ...(draft.pid ? { pid: draft.pid } : {}),
+      ...(draft.pid ? { pid: draft.pid } : undefined),
     }, {
       body: frameBodyFromBlob(body),
     });
@@ -125,7 +123,7 @@ export async function sendChatMessage(
     return await client.conversation.send({
       conversationId,
       text: draft.message,
-      ...(media.length > 0 ? { media } : {}),
+      ...(media.length > 0 ? { media } : undefined),
       idempotencyKey: crypto.randomUUID(),
     });
   } catch (error) {
@@ -155,7 +153,7 @@ async function rollbackChatMedia(
   media: ProcMediaInput[],
 ): Promise<void> {
   await Promise.allSettled(media.flatMap(({ key }) => key
-    ? [client.proc.media.delete({ key, ...(pid ? { pid } : {}) })]
+    ? [client.proc.media.delete({ key, ...(pid ? { pid } : undefined) })]
     : []));
 }
 
@@ -191,13 +189,17 @@ export async function readChatProcessMedia(
 ): Promise<ChatProcessMedia> {
   const conversation = "conversationId" in args && Boolean(args.conversationId.trim());
   const response = conversation
-    ? await client.request("conversation.media.read", args as ConversationMediaReadArgs)
-    : await client.request("proc.media.read", args as ProcMediaReadArgs);
-  if (!response.data.ok) {
-    await response.body?.stream.cancel(response.data.error).catch(() => {});
-    throw new Error(response.data.error || "GSV process media request failed");
+    ? await client.request("conversation.media.read", {
+        conversationId: args.conversationId,
+        key: args.key,
+      })
+    : await client.request("proc.media.read", args);
+  const data = mediaReadDataSchema.parse(response.data);
+  if (!data.ok) {
+    await response.body?.stream.cancel(data.error).catch(() => {});
+    throw new Error(data.error || "GSV process media request failed");
   }
-  if (response.data.size > MAX_CHAT_PROCESS_MEDIA_BYTES) {
+  if (data.size > MAX_CHAT_PROCESS_MEDIA_BYTES) {
     const error = new Error("Process media exceeds the 25 MiB display limit");
     await response.body?.stream.cancel(error).catch(() => {});
     throw error;
@@ -206,12 +208,13 @@ export async function readChatProcessMedia(
     throw new Error("Process media response did not include a body");
   }
   const blob = await frameBodyToBlob(response.body, {
-    mimeType: response.data.mimeType,
-    expectedLength: response.data.size,
+    mimeType: data.mimeType,
+    expectedLength: data.size,
     label: "Process media",
   });
   return {
-    ...response.data,
+    ...data,
+    path: data.path ?? args.key,
     blob,
   };
 }
@@ -255,19 +258,19 @@ export async function readChatHistorySegment(
 
 export async function getChatProcessAiConfig(
   client: ChatGsvClient,
-  args: ProcAiConfigGetArgsWithPid = {},
+  args: ProcAiConfigGetArgs = {},
 ): Promise<ChatProcessAiConfig> {
   const result = throwIfFailed<Extract<ProcAiConfigGetResult, { ok: true }>>(
-    await client.proc.ai.config.get(args as ProcAiConfigGetArgs),
+    await client.proc.ai.config.get(args),
   );
   return result.config;
 }
 
 export async function setChatProcessAiConfig(
   client: ChatGsvClient,
-  args: ProcAiConfigSetArgsWithPid,
+  args: ProcAiConfigSetArgs,
 ): Promise<ChatProcessAiConfigSetResult> {
   return throwIfFailed<Extract<ProcAiConfigSetResult, { ok: true }>>(
-    await client.proc.ai.config.set(args as ProcAiConfigSetArgs),
+    await client.proc.ai.config.set(args),
   );
 }

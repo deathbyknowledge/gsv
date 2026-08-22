@@ -2,35 +2,56 @@ import type {
   FilesContentItem,
   FilesDeletePayload,
   FilesDirectoryEntry,
-  FilesDirectoryPayload,
   FilesErrorPayload,
-  FilesFilePayload,
   FilesReadPayload,
   FilesSearchMatch,
   FilesSearchPayload,
   FilesTarget,
   FilesWritePayload,
 } from "./models";
+import { z } from "zod";
 import { childPath, detectPathStyle, normalizePath, normalizeTarget, parentPath } from "./paths";
 
-function asRecord(value: unknown): Record<string, unknown> | null {
-  return value && typeof value === "object" ? value as Record<string, unknown> : null;
+type FilesWireValue = string | number | boolean | null | FilesWireValue[] | FilesWireRecord;
+type FilesWireRecord = { [key: string]: FilesWireValue };
+const filesWireValueSchema: z.ZodType<FilesWireValue> = z.lazy(() => z.union([
+  z.string(),
+  z.number(),
+  z.boolean(),
+  z.null(),
+  z.array(filesWireValueSchema),
+  z.record(z.string(), filesWireValueSchema),
+]));
+const filesPayloadSchema = z.union([filesWireValueSchema, z.array(filesWireValueSchema)]);
+type FilesRpcPayload = z.input<typeof filesPayloadSchema>;
+
+function parseFilesPayload(value: FilesRpcPayload): FilesWireValue | FilesWireValue[] {
+  return filesPayloadSchema.parse(value);
 }
 
-function asString(value: unknown): string | null {
-  return typeof value === "string" ? value : null;
+function asRecord(value: FilesWireValue | FilesWireValue[]): FilesWireRecord | null {
+  const parsed = z.record(z.string(), filesWireValueSchema).safeParse(value);
+  return parsed.success ? parsed.data : null;
 }
 
-function asNumber(value: unknown): number | null {
-  return typeof value === "number" && Number.isFinite(value) ? value : null;
+function asString(value: FilesWireValue | undefined): string | null {
+  const parsed = z.string().safeParse(value);
+  return parsed.success ? parsed.data : null;
 }
 
-function asBoolean(value: unknown): boolean | null {
-  return typeof value === "boolean" ? value : null;
+function asNumber(value: FilesWireValue | undefined): number | null {
+  const parsed = z.number().finite().safeParse(value);
+  return parsed.success ? parsed.data : null;
 }
 
-function asStringArray(value: unknown): string[] {
-  return Array.isArray(value) ? value.filter((entry): entry is string => typeof entry === "string") : [];
+function asBoolean(value: FilesWireValue | undefined): boolean | null {
+  const parsed = z.boolean().safeParse(value);
+  return parsed.success ? parsed.data : null;
+}
+
+function asStringArray(value: FilesWireValue | undefined): string[] {
+  const parsed = z.array(z.string()).safeParse(value);
+  return parsed.success ? parsed.data : [];
 }
 
 function decodeNumberedText(content: string): string {
@@ -40,16 +61,14 @@ function decodeNumberedText(content: string): string {
     .join("\n");
 }
 
-function normalizeContent(content: unknown): string | FilesContentItem[] {
-  if (typeof content === "string") {
-    return decodeNumberedText(content);
-  }
-  if (!Array.isArray(content)) {
-    return "";
-  }
-  return content
+function normalizeContent(content: FilesWireValue | undefined): string | FilesContentItem[] {
+  const text = z.string().safeParse(content);
+  if (text.success) return decodeNumberedText(text.data);
+  const items = z.array(filesWireValueSchema).safeParse(content);
+  if (!items.success) return "";
+  return items.data
     .map((item) => asRecord(item))
-    .filter((item): item is Record<string, unknown> => item !== null)
+    .filter((item): item is FilesWireRecord => item !== null)
     .map((item) => {
       if (item.type === "image") {
         return {
@@ -65,9 +84,10 @@ function normalizeContent(content: unknown): string | FilesContentItem[] {
     });
 }
 
-export function normalizeFilesTargets(payload: unknown): FilesTarget[] {
-  const record = asRecord(payload);
-  const rawDevices = Array.isArray(payload) ? payload : Array.isArray(record?.devices) ? record.devices : [];
+export function normalizeFilesTargets(payload: FilesRpcPayload): FilesTarget[] {
+  const parsed = parseFilesPayload(payload);
+  const record = asRecord(parsed);
+  const rawDevices = Array.isArray(parsed) ? parsed : Array.isArray(record?.devices) ? record.devices : [];
   const targets = rawDevices
     .map((device) => {
       const item = asRecord(device) ?? {};
@@ -91,9 +111,9 @@ export function normalizeFilesTargets(payload: unknown): FilesTarget[] {
   return targets;
 }
 
-export function normalizeFilesRead(payload: unknown, target: string, requestedPath: string): FilesReadPayload | FilesErrorPayload {
+export function normalizeFilesRead(payload: FilesRpcPayload, target: string, requestedPath: string): FilesReadPayload | FilesErrorPayload {
   const normalizedTarget = normalizeTarget(target);
-  const record = asRecord(payload);
+  const record = asRecord(parseFilesPayload(payload));
   const fallbackPath = normalizePath(requestedPath, detectPathStyle(requestedPath));
 
   if (!record || record.ok !== true) {
@@ -142,13 +162,13 @@ export function normalizeFilesRead(payload: unknown, target: string, requestedPa
 }
 
 export function normalizeFilesSearch(
-  payload: unknown,
+  payload: FilesRpcPayload,
   target: string,
   path: string,
   query: string,
 ): FilesSearchPayload | FilesErrorPayload {
   const normalizedPath = normalizePath(path, detectPathStyle(path));
-  const record = asRecord(payload);
+  const record = asRecord(parseFilesPayload(payload));
   if (!record || record.ok !== true) {
     return {
       ok: false,
@@ -160,7 +180,7 @@ export function normalizeFilesSearch(
 
   const matches: FilesSearchMatch[] = (Array.isArray(record.matches) ? record.matches : [])
     .map((match) => asRecord(match))
-    .filter((match): match is Record<string, unknown> => match !== null)
+    .filter((match): match is FilesWireRecord => match !== null)
     .map((match) => ({
       path: asString(match.path) ?? "",
       line: asNumber(match.line),
@@ -179,9 +199,9 @@ export function normalizeFilesSearch(
   };
 }
 
-export function normalizeFilesWrite(payload: unknown, target: string, path: string): FilesWritePayload | FilesErrorPayload {
+export function normalizeFilesWrite(payload: FilesRpcPayload, target: string, path: string): FilesWritePayload | FilesErrorPayload {
   const normalizedPath = normalizePath(path, detectPathStyle(path));
-  const record = asRecord(payload);
+  const record = asRecord(parseFilesPayload(payload));
   if (!record || record.ok !== true) {
     return {
       ok: false,
@@ -198,9 +218,9 @@ export function normalizeFilesWrite(payload: unknown, target: string, path: stri
   };
 }
 
-export function normalizeFilesDelete(payload: unknown, target: string, path: string): FilesDeletePayload | FilesErrorPayload {
+export function normalizeFilesDelete(payload: FilesRpcPayload, target: string, path: string): FilesDeletePayload | FilesErrorPayload {
   const normalizedPath = normalizePath(path, detectPathStyle(path));
-  const record = asRecord(payload);
+  const record = asRecord(parseFilesPayload(payload));
   if (!record || record.ok !== true) {
     return {
       ok: false,

@@ -8,6 +8,16 @@ import {
 
 export type TerminalClient = Pick<GSVClient, "call">;
 
+type TerminalRequestArgs = {
+  input: string;
+  sessionId?: string;
+  target?: string;
+  cwd?: string;
+  timeout?: number;
+  background?: boolean;
+  yieldMs?: number;
+};
+
 export async function listTerminalTargets(client: TerminalClient): Promise<TerminalTarget[]> {
   const payload = await client.call<unknown>("sys.device.list", { includeOffline: true });
   return normalizeTerminalTargets(payload);
@@ -22,7 +32,7 @@ export async function executeTerminalCommand(
     throw new Error("Command is required.");
   }
 
-  const requestArgs: Record<string, unknown> = { input: input.input };
+  const requestArgs: TerminalRequestArgs = { input: input.input };
   if (input.sessionId) {
     requestArgs.sessionId = input.sessionId;
   } else if (input.target !== "gsv") {

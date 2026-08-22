@@ -48,7 +48,7 @@ export const USERNAME_FORMAT_DESCRIPTION = "Use 1-32 characters: lowercase lette
 
 const USERNAME_FORMAT_REQUIREMENT = "be 1-32 characters, start with a lowercase letter or underscore, and use only lowercase letters, numbers, underscores, or hyphens";
 
-export const SETUP_LANE_META: Record<OnboardingLane, SetupLaneMeta> = {
+export const SETUP_LANE_META = {
   quick: {
     label: "Quick start",
     kicker: "Quick start",
@@ -73,7 +73,7 @@ export const SETUP_LANE_META: Record<OnboardingLane, SetupLaneMeta> = {
     reviewCopy: "Full-control setup with explicit AI and device choices.",
     estimate: "expected time to completion: 3 min",
   },
-};
+} satisfies Record<OnboardingLane, SetupLaneMeta>;
 
 export function isValidUsername(value: string): boolean {
   return /^[a-z_][a-z0-9_-]{0,31}$/.test(value);
@@ -101,10 +101,18 @@ export function browserTimeZone(): string {
   return Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
 }
 
+type IntlWithSupportedValues = typeof Intl & {
+  supportedValuesOf(key: "timeZone"): string[];
+};
+
+function hasSupportedValuesOf(value: typeof Intl): value is IntlWithSupportedValues {
+  return "supportedValuesOf" in value;
+}
+
 export function timeZoneOptions(): string[] {
-  const supported = (Intl as typeof Intl & {
-    supportedValuesOf?: (key: "timeZone") => string[];
-  }).supportedValuesOf?.("timeZone") ?? [];
+  const supported = hasSupportedValuesOf(Intl)
+    ? Intl.supportedValuesOf("timeZone")
+    : [];
   const preferred = [
     browserTimeZone(),
     "UTC",
@@ -123,10 +131,11 @@ export function timeZoneOptions(): string[] {
 }
 
 export function detectBrowserInstallPlatform(): InstallPlatform {
-  if (typeof navigator === "undefined") {
+  const browserNavigator = globalThis.navigator;
+  if (!browserNavigator) {
     return "linux";
   }
-  const platform = `${navigator.userAgent} ${navigator.platform}`.toLowerCase();
+  const platform = `${browserNavigator.userAgent} ${browserNavigator.platform}`.toLowerCase();
   if (platform.includes("win")) {
     return "windows";
   }
@@ -148,7 +157,7 @@ export function installPlatformLabel(platform: InstallPlatform): string {
 }
 
 export function gatewayOrigin(): string {
-  return typeof window === "undefined" ? "http://localhost:8787" : window.location.origin;
+  return globalThis.window?.location.origin ?? "http://localhost:8787";
 }
 
 export function gatewayWsUrl(origin: string): string {
@@ -337,7 +346,7 @@ export function buildSetupPayload(draft: OnboardingDraft): SessionSetupInput {
     payload.ai = {
       provider,
       model: fixedAiProviderModel(provider) ?? draft.ai.model.trim(),
-      ...(draft.ai.apiKey.trim() ? { apiKey: draft.ai.apiKey.trim() } : {}),
+      ...(draft.ai.apiKey.trim() ? { apiKey: draft.ai.apiKey.trim() } : undefined),
     };
   }
 
@@ -345,10 +354,10 @@ export function buildSetupPayload(draft: OnboardingDraft): SessionSetupInput {
     const expiryDays = draft.device.expiryDays.trim();
     payload.node = {
       deviceId: draft.device.deviceId.trim(),
-      ...(draft.device.label.trim() ? { label: draft.device.label.trim() } : {}),
+      ...(draft.device.label.trim() ? { label: draft.device.label.trim() } : undefined),
       ...(expiryDays
         ? { expiresAt: Date.now() + Math.floor(Number(expiryDays) * 24 * 60 * 60 * 1000) }
-        : {}),
+        : undefined),
     };
   }
 
@@ -380,7 +389,9 @@ export function resolveVisibleView(
   return "login";
 }
 
-export function provisioningCopy(pendingAction: PendingAction): { title: string; copy: string } {
+type ProvisioningCopy = { title: string; copy: string };
+
+export function provisioningCopy(pendingAction: PendingAction): ProvisioningCopy {
   if (pendingAction === "continue") {
     return {
       title: "Opening desktop",
@@ -440,7 +451,7 @@ export function setupResultViewModel(
   }
 
   const deviceId = result.nodeToken.allowedDeviceId ?? "node-id";
-  const expiresLabel = typeof result.nodeToken.expiresAt === "number"
+  const expiresLabel = result.nodeToken.expiresAt !== null
     ? `Expires ${new Date(result.nodeToken.expiresAt).toLocaleString()}`
     : "No expiry";
 

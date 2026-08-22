@@ -56,14 +56,14 @@ function historyTargetKey(pid: string, includeActivity: boolean): string {
 }
 
 function firstHistoryMessageId(history: ChatHistory | null): number | null {
-  return history?.messages.find((message) => typeof message.id === "number")?.id ?? null;
+  return history?.messages[0]?.id ?? null;
 }
 
 function rowMergeKey(row: ChatTranscriptRow): string {
   if ((row.role === "tool" || row.role === "toolResult") && row.toolCallId) {
     return row.runId ? `tool:${row.runId}:${row.toolCallId}` : `tool:${row.toolCallId}`;
   }
-  if (typeof row.messageId === "number") {
+  if (row.messageId !== null && row.messageId !== undefined) {
     return `message:${row.messageId}:${row.role ?? "message"}`;
   }
   if (row.role === "assistant" && row.runId && !row.id.startsWith("message:")) {
@@ -73,11 +73,11 @@ function rowMergeKey(row: ChatTranscriptRow): string {
 }
 
 function rowSortValue(row: ChatTranscriptRow): number {
-  if (typeof row.timestamp === "number" && Number.isFinite(row.timestamp)) {
+  if (row.timestamp !== null && row.timestamp !== undefined && Number.isFinite(row.timestamp)) {
     return row.timestamp;
   }
-  if (typeof row.messageId === "number") {
-    return row.messageId;
+  if (row.messageId !== null && row.messageId !== undefined) {
+    return Number(row.messageId);
   }
   return Number.MAX_SAFE_INTEGER;
 }
@@ -130,9 +130,11 @@ function rowMediaCount(row: ChatTranscriptRow): number {
 
 function timestampCloseEnough(left: number | null | undefined, right: number | null | undefined): boolean {
   if (
-    typeof left !== "number"
+    left === null
+    || left === undefined
     || !Number.isFinite(left)
-    || typeof right !== "number"
+    || right === null
+    || right === undefined
     || !Number.isFinite(right)
   ) {
     return true;
@@ -305,11 +307,11 @@ function refreshChatRuntimeQueries(queryClient: ReturnType<typeof useQueryClient
   void queryClient.invalidateQueries({ queryKey: ["process", "chat", "history-segments"] });
 }
 
-function errorMessage(error: unknown): string {
+function errorMessage(error: Error | string | null): string {
   if (error instanceof Error && error.message.trim()) {
     return error.message;
   }
-  if (typeof error === "string" && error.trim()) {
+  if (error !== null && !(error instanceof Error) && error.trim()) {
     return error;
   }
   return "History could not be loaded.";
@@ -473,7 +475,7 @@ export function useChatRuntime({
       }
       setHistoryWindow({
         ...currentWindow,
-        error: errorMessage(error),
+        error: errorMessage(error instanceof Error ? error : error ? String(error) : null),
         loadingOlder: false,
       });
     }

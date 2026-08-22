@@ -252,7 +252,10 @@ export function GsvShell({
 
   useEffect(() => {
     const handleTargetEvent = (event: Event) => {
-      const target = normalizeTargetChatProcess((event as CustomEvent).detail);
+      if (!(event instanceof CustomEvent)) {
+        return;
+      }
+      const target = normalizeTargetChatProcess(event.detail);
       if (!target || chatOwnerUid === null) {
         return;
       }
@@ -416,7 +419,6 @@ export function GsvShell({
       shell.closeMobilePanels();
     }
     // closeMobilePanels is recreated each render; depend on the route + layout.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [shell.activeSurface, shell.activeTabKey, shell.mobileLayout]);
 
   const swipeStartRef = useRef<{ x: number; y: number } | null>(null);

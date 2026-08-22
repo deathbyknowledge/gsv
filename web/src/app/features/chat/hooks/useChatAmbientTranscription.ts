@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "preact/hooks";
+import { z } from "zod";
 import type { AiTranscriptionCreateResult } from "@humansandmachines/gsv/protocol";
 import { useGateway } from "../../../services/gateway/GatewayProvider";
 import { requestAudioTranscription } from "../../../services/gateway/mediaRequests";
@@ -72,12 +73,13 @@ type ChatAmbientTranscription = {
   unavailable: boolean;
 };
 
-function formatVoiceError(error: unknown): string {
+function formatVoiceError<T>(error: T): string {
   if (error instanceof Error && error.message.trim()) {
     return error.message;
   }
-  if (typeof error === "string" && error.trim()) {
-    return error;
+  const text = z.string().safeParse(error);
+  if (text.success && text.data.trim()) {
+    return text.data;
   }
   return "Unknown error";
 }
@@ -235,9 +237,9 @@ export function useChatAmbientTranscription({
           mimeType,
           filename: presenceRecordingFilename(mimeType, startedAt),
         },
-        ...(target?.processId ? { pid: target.processId } : {}),
+        ...(target?.processId ? { pid: target.processId } : undefined),
       }, blob, signal);
-      const text = typeof result.text === "string" ? result.text.trim() : "";
+      const text = result.text.trim();
       if (!text) {
         throw new Error("No speech was transcribed");
       }

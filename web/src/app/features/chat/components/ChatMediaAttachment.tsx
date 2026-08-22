@@ -92,10 +92,10 @@ function AudioPlayer({
 
   const seek = (event: Event) => {
     const audio = audioRef.current;
-    if (!audio) {
+    if (!audio || !(event.currentTarget instanceof HTMLInputElement)) {
       return;
     }
-    const nextTime = Number((event.currentTarget as HTMLInputElement).value);
+    const nextTime = Number(event.currentTarget.value);
     if (!Number.isFinite(nextTime)) {
       return;
     }
@@ -133,7 +133,7 @@ export function ChatMediaAttachment({ media, processId }: ChatMediaAttachmentPro
   const mediaQuery = useChatProcessMedia({
     args: conversationId
       ? { conversationId, key }
-      : { key, ...(processId ? { pid: processId } : {}) },
+      : { key, ...(processId ? { pid: processId } : undefined) },
     enabled: !inlineSource && key.length > 0 && (conversationId.length > 0 || processId.length > 0),
   });
   const [storedSource, setStoredSource] = useState("");

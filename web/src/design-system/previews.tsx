@@ -321,19 +321,19 @@ function AuthPreview() {
 }
 
 // ── Registry ─────────────────────────────────────────────────────────────────
-export const PREVIEWS: Record<string, { title: string; render: () => ComponentChildren }> = {
+export const PREVIEWS = {
   list: { title: "List", render: () => <ListPreview /> },
   "card-list": { title: "Card list", render: () => <CardListPreview /> },
   detail: { title: "Detail", render: () => <DetailPreview /> },
   editor: { title: "Editor", render: () => <EditorPreview /> },
   dashboard: { title: "Dashboard", render: () => <DashboardPreview /> },
   auth: { title: "Auth", render: () => <AuthPreview /> },
-};
+} satisfies Record<string, { title: string; render: () => ComponentChildren }>;
 
 /** Full-viewport route target for /design/preview/<id>. Renders the live
  *  archetype preview, or a small fallback for an unknown id. */
 export function TemplatePreview({ id }: { id: string }) {
-  const entry = PREVIEWS[id];
+  const entry = Object.entries(PREVIEWS).find(([key]) => key === id)?.[1];
   if (!entry) {
     return (
       <div

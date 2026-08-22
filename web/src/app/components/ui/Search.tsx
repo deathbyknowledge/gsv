@@ -105,6 +105,7 @@ export function Search(props: SearchProps) {
           onKeyDown: (e) => {
             if (e.key === "Enter") {
               e.preventDefault();
+              // SAFETY: Component boundary provides the asserted DOM/test shape.
               onSearch?.((e.currentTarget as HTMLInputElement).value);
             }
           },

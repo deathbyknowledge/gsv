@@ -1,25 +1,23 @@
+import { z } from "zod";
+
 export const TARGET_CHAT_PROCESS_EVENT = "gsv:target-chat-process";
 
 export type TargetChatProcess = {
   pid: string;
 };
 
-function asRecord(value: unknown): Record<string, unknown> | null {
-  return value && typeof value === "object" && !Array.isArray(value)
-    ? value as Record<string, unknown>
-    : null;
-}
+const targetChatProcessInputSchema = z.object({
+  pid: z.string().optional(),
+  processId: z.string().optional(),
+});
+type TargetChatProcessInput = z.input<typeof targetChatProcessInputSchema>;
 
-function asTrimmedString(value: unknown): string {
-  return typeof value === "string" ? value.trim() : "";
-}
-
-export function normalizeTargetChatProcess(value: unknown): TargetChatProcess | null {
-  const record = asRecord(value);
-  if (!record) {
+export function normalizeTargetChatProcess(value: TargetChatProcessInput): TargetChatProcess | null {
+  const parsed = targetChatProcessInputSchema.safeParse(value);
+  if (!parsed.success) {
     return null;
   }
-  const pid = asTrimmedString(record.pid) || asTrimmedString(record.processId);
+  const pid = parsed.data.pid?.trim() || parsed.data.processId?.trim() || "";
   if (!pid) {
     return null;
   }
@@ -27,8 +25,9 @@ export function normalizeTargetChatProcess(value: unknown): TargetChatProcess | 
 }
 
 export function dispatchTargetChatProcess(target: TargetChatProcess): void {
-  if (typeof window === "undefined") {
+  const browserWindow = globalThis.window;
+  if (!browserWindow) {
     return;
   }
-  window.dispatchEvent(new CustomEvent(TARGET_CHAT_PROCESS_EVENT, { detail: target }));
+  browserWindow.dispatchEvent(new CustomEvent(TARGET_CHAT_PROCESS_EVENT, { detail: target }));
 }

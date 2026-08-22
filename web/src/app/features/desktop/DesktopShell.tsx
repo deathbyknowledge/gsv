@@ -8,9 +8,11 @@ type StandaloneNavigator = Navigator & {
 };
 
 function isStandaloneDisplay(): boolean {
+  // SAFETY: Standalone display mode is an optional WebKit navigator capability.
+  const webkitStandalone = (navigator as StandaloneNavigator).standalone === true;
   return window.matchMedia("(display-mode: standalone)").matches
     || window.matchMedia("(display-mode: fullscreen)").matches
-    || (navigator as StandaloneNavigator).standalone === true;
+    || webkitStandalone;
 }
 
 function formatMobileHomeDate(): string {

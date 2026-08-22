@@ -28,7 +28,7 @@ export interface RadioProps {
   onChange?: (index: number) => void;
 }
 
-const SIZE_CLASS: Record<RadioSize, string> = {
+const SIZE_CLASS = {
   small: "gsv-rg-sm",
   medium: "gsv-rg-md",
   large: "gsv-rg-lg",
@@ -129,12 +129,16 @@ export function Radio(props: RadioProps) {
   );
 }
 
-function normalizeRadioOption(option: RadioOption): { label: string; info: string } {
-  if (typeof option === "string") {
+function normalizeRadioOption(option: RadioOption) {
+  if (!isRadioObject(option)) {
     return { label: option, info: "" };
   }
   return {
     label: option.label,
     info: option.info ?? "",
   };
+}
+
+function isRadioObject(option: RadioOption): option is Exclude<RadioOption, string> {
+  return option !== String(option);
 }

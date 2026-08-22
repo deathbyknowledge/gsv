@@ -122,7 +122,10 @@ export function ChatReasoningPanel({ messages, target, onClose }: ChatReasoningP
     backRef.current?.focus();
   }, []);
 
-  const { blocks, label } = useMemo(() => {
+  const { blocks, label } = useMemo<{
+    blocks: PanelBlock[];
+    label: string;
+  }>(() => {
     if (target.kind === "run") {
       return {
         blocks: entryBlocks(collectRunEntries(messages, target.runId)),
@@ -137,7 +140,7 @@ export function ChatReasoningPanel({ messages, target, onClose }: ChatReasoningP
     }
     const message = findMessageById(messages, target.messageId);
     if (!message) {
-      return { blocks: [] as PanelBlock[], label: "REASONING" };
+      return { blocks: [], label: "REASONING" };
     }
     const blocks: PanelBlock[] = [];
     const thinking = reasoningText(message);

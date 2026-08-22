@@ -5,6 +5,12 @@ import type { MailSendArgs } from "@humansandmachines/gsv/protocol";
 import { shortId } from "./chatUiFormat";
 
 type PendingHil = NonNullable<ChatHistory["pendingHil"]>;
+type HilValue = string | number | boolean | null | HilValue[] | { [key: string]: HilValue };
+type HilArgs = Record<string, HilValue>;
+
+function isStringValue(value: HilValue): value is string {
+  return typeof value === "string";
+}
 
 type ChatApprovalBannerProps = {
   busy: boolean;
@@ -13,7 +19,7 @@ type ChatApprovalBannerProps = {
 };
 
 function formatHilTime(timestamp: number | null | undefined): string {
-  if (typeof timestamp !== "number" || !Number.isFinite(timestamp)) {
+  if (timestamp === null || timestamp === undefined || !Number.isFinite(timestamp)) {
     return "";
   }
   return new Intl.DateTimeFormat(undefined, {
@@ -22,10 +28,8 @@ function formatHilTime(timestamp: number | null | undefined): string {
   }).format(new Date(timestamp));
 }
 
-function summarizeHilValue(value: unknown): string {
-  if (typeof value === "string") {
-    return value;
-  }
+function summarizeHilValue(value: HilValue): string {
+  if (isStringValue(value)) return value;
   try {
     return JSON.stringify(value) ?? String(value);
   } catch {
@@ -40,7 +44,7 @@ type MailSendApprovalField = keyof Pick<
 
 function boundedApprovalText(value: string, maxLength: number): string {
   const normalized = value
-    .replace(/[\u0000-\u001f\u007f-\u009f\u200b-\u200f\u202a-\u202e\u2060-\u2069\ufeff]/g, " ")
+    .replace(/[\p{Cc}\u200b-\u200f\u202a-\u202e\u2060-\u2069\ufeff]/gu, " ")
     .replace(/\s+/g, " ")
     .trim();
   const characters = Array.from(normalized);
@@ -50,14 +54,14 @@ function boundedApprovalText(value: string, maxLength: number): string {
 }
 
 function mailSendString(
-  args: Record<string, unknown>,
+  args: HilArgs,
   field: MailSendApprovalField,
 ): string | null {
   const value = args[field];
-  return typeof value === "string" ? value : null;
+  return isStringValue(value) ? value : null;
 }
 
-function summarizeMailSendArgs(args: Record<string, unknown>): string {
+function summarizeMailSendArgs(args: HilArgs): string {
   const to = boundedApprovalText(mailSendString(args, "to") ?? "", 160);
   const replyToMessageId = boundedApprovalText(
     mailSendString(args, "replyToMessageId") ?? "",
@@ -88,7 +92,7 @@ function summarizeMailSendArgs(args: Record<string, unknown>): string {
 
 export function summarizeHilArgs(
   syscall: string,
-  args: Record<string, unknown> | null | undefined,
+  args: HilArgs | null | undefined,
 ): string {
   if (!args || Object.keys(args).length === 0) {
     return "No tool arguments were provided.";

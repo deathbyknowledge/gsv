@@ -112,6 +112,8 @@ export type BuildChatAgentViewModelInput = {
   statusLabel: string;
   contextLabel: string;
 };
+type ChatEmptyState = { description: string; showStartAction: boolean; title: string };
+type NormalizedCrew = { members: ChatAgentCrewView[]; hasCrewData: boolean };
 
 const DEFAULT_AGENT_IMAGE = "/img/agent-0.png";
 
@@ -127,7 +129,7 @@ export function canStartChatWork(agent: ChatAgentData | null | undefined): boole
 export function chatEmptyState(
   agent: ChatAgentData | null | undefined,
   hasActiveProcess: boolean,
-): { description: string; showStartAction: boolean; title: string } {
+): ChatEmptyState {
   if (hasActiveProcess) {
     return {
       title: "No messages yet",
@@ -151,7 +153,7 @@ export function formatChatReasoningLabel(value: string | undefined, fallback = "
 }
 
 function normalizeCount(value: number | undefined): number {
-  if (typeof value !== "number" || !Number.isFinite(value)) {
+  if (value === undefined || !Number.isFinite(value)) {
     return 0;
   }
   return Math.max(0, Math.floor(value));
@@ -230,7 +232,7 @@ function buildDefaultDescription(input: {
 function normalizeCrew(
   crew: readonly ChatAgentCrewData[] | undefined,
   fallback: Omit<ChatAgentCrewView, "active">,
-): { members: ChatAgentCrewView[]; hasCrewData: boolean } {
+): NormalizedCrew {
   const members = (crew ?? [])
     .map((member, index) => {
       const name = member.name.trim();
@@ -242,8 +244,8 @@ function normalizeCrew(
       const runAs = member.runAs?.trim();
       return {
         id: cleanText(member.id, `crew-${index}`),
-        ...(processId ? { processId } : {}),
-        ...(runAs ? { runAs } : {}),
+        ...(processId ? { processId } : undefined),
+        ...(runAs ? { runAs } : undefined),
         name,
         role: cleanText(member.role, fallback.role),
         imageSrc: cleanText(member.imageSrc, fallback.imageSrc),

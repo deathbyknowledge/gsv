@@ -23,7 +23,7 @@ export interface CounterProps {
   onChange?: (value: number) => void;
 }
 
-const SIZE_CLASS: Record<CounterSize, string> = {
+const SIZE_CLASS = {
   small: "gsv-st-sm",
   medium: "gsv-st-md",
   large: "gsv-st-lg",
@@ -130,7 +130,7 @@ export function Counter(props: CounterProps) {
             width="11"
             height="11"
             viewBox="0 0 16 16"
-            shape-rendering="crispEdges"
+            style={{ ["shape-rendering"]: "crispEdges" }}
             aria-hidden="true"
           >
             <rect x="3" y="7" width="10" height="2" fill="currentColor" />
@@ -145,6 +145,7 @@ export function Counter(props: CounterProps) {
             value={draft ?? String(val)}
             aria-label={label || "Value"}
             style={{ width: `${Math.max((draft ?? String(val)).length, 1)}ch` }}
+            // SAFETY: Component boundary provides the asserted DOM/test shape.
             onInput={(event) => setDraft((event.currentTarget as HTMLInputElement).value)}
             onBlur={commitDraft}
             onKeyDown={(event) => {
@@ -184,7 +185,7 @@ export function Counter(props: CounterProps) {
             width="11"
             height="11"
             viewBox="0 0 16 16"
-            shape-rendering="crispEdges"
+            style={{ ["shape-rendering"]: "crispEdges" }}
             aria-hidden="true"
           >
             <g fill="currentColor">

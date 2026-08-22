@@ -1,4 +1,4 @@
-import type { JSX } from "preact";
+import type { ComponentChildren, JSX } from "preact";
 import { useState } from "preact/hooks";
 import { Alert } from "../../../components/ui/Alert";
 import { Button } from "../../../components/ui/Button";
@@ -20,6 +20,23 @@ import { adapterDetailId } from "./messengerPresentation";
 type ManagedTelegramOnboardingFlowProps = {
   onBack: () => void;
   onConnected: (detailId: string) => void;
+  dependencies?: ManagedTelegramDependencies;
+};
+
+export type ManagedTelegramDependencies = {
+  ConnectFlowShell: (props: Parameters<typeof ConnectFlowShell>[0]) => ComponentChildren;
+  useUnsavedGuard: typeof useUnsavedGuard;
+  useConsoleAdapterPairingInfo: (adapter: string) => Pick<ReturnType<typeof useConsoleAdapterPairingInfo>, "data" | "isError" | "error">;
+  useInspectConsoleAdapterPairing: () => Pick<ReturnType<typeof useInspectConsoleAdapterPairing>, "isPending" | "mutateAsync">;
+  useConfirmConsoleAdapterPairing: () => Pick<ReturnType<typeof useConfirmConsoleAdapterPairing>, "isPending" | "mutateAsync">;
+};
+
+const defaultDependencies: ManagedTelegramDependencies = {
+  ConnectFlowShell: (props) => <ConnectFlowShell {...props} />,
+  useUnsavedGuard: (...args) => useUnsavedGuard(...args),
+  useConsoleAdapterPairingInfo: (...args) => useConsoleAdapterPairingInfo(...args),
+  useInspectConsoleAdapterPairing: () => useInspectConsoleAdapterPairing(),
+  useConfirmConsoleAdapterPairing: () => useConfirmConsoleAdapterPairing(),
 };
 
 const STEP_MESSAGE = 0;
@@ -31,16 +48,17 @@ const fieldStyle = { maxWidth: "520px" };
 export function ManagedTelegramOnboardingFlow({
   onBack,
   onConnected,
+  dependencies = defaultDependencies,
 }: ManagedTelegramOnboardingFlowProps): JSX.Element {
-  const info = useConsoleAdapterPairingInfo("telegram");
-  const inspect = useInspectConsoleAdapterPairing();
-  const confirm = useConfirmConsoleAdapterPairing();
+  const info = dependencies.useConsoleAdapterPairingInfo("telegram");
+  const inspect = dependencies.useInspectConsoleAdapterPairing();
+  const confirm = dependencies.useConfirmConsoleAdapterPairing();
   const [step, setStep] = useState(STEP_MESSAGE);
   const [code, setCode] = useState("");
   const [candidate, setCandidate] = useState<ConsoleAdapterPairingCandidate | null>(null);
   const [formError, setFormError] = useState("");
   const paired = step === STEP_DONE;
-  useUnsavedGuard(() => !paired && (step > STEP_MESSAGE || code.trim().length > 0));
+  dependencies.useUnsavedGuard(() => !paired && (step > STEP_MESSAGE || code.trim().length > 0));
 
   const botUsername = info.data?.botUsername?.replace(/^@/, "") ?? "";
   const botUrl = botUsername ? `https://t.me/${botUsername}` : "https://telegram.org/";
@@ -106,7 +124,7 @@ export function ManagedTelegramOnboardingFlow({
               text="Send the official GSV bot any private message. It will reply with a short-lived pairing code."
             />
             {info.isError ? (
-              <Alert variant="error" text={info.error.message} />
+              <Alert variant="error" text={info.error?.message ?? "Unable to load Telegram pairing details."} />
             ) : !info.data?.configured ? (
               <Alert variant="warning" text="Managed Telegram is not configured for this GSV environment yet." />
             ) : null}
@@ -243,7 +261,8 @@ export function ManagedTelegramOnboardingFlow({
     ],
   };
 
-  return <ConnectFlowShell flow={flow} current={step} onStep={(next) => {
+  const FlowShell = dependencies.ConnectFlowShell;
+  return <FlowShell flow={flow} current={step} onStep={(next) => {
     if (next <= step || paired) setStep(next);
   }} />;
 }

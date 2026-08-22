@@ -16,13 +16,15 @@ import "../../assets.css";
  *  - TemplateEmptyState   → ListTemplate, CardListTemplate
  */
 
-const AUTH_GALAXY_CELL_STYLE = {
+const AUTH_GALAXY_CELL_STYLE: JSX.CSSProperties & {
+  "--gsv-galaxy-reserve": string;
+} = {
   position: "relative",
   height: "320px",
   // AuthBackground reserves space for the login panel; shrink the reserve so
   // the galaxy zone fits the catalog cell.
   "--gsv-galaxy-reserve": "120px",
-} as JSX.CSSProperties;
+};
 
 const story: Story = {
   title: "Animations",

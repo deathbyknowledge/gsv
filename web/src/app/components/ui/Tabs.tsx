@@ -32,7 +32,7 @@ export function Tabs({ tabs, value, onChange, onClose, className = "", width, st
       if (cw) setW((prev) => (cw !== prev ? cw : prev));
     };
     measure();
-    if (typeof ResizeObserver !== "undefined" && rootRef.current) {
+    if ("ResizeObserver" in globalThis && rootRef.current) {
       const ro = new ResizeObserver(() => measure());
       ro.observe(rootRef.current);
       return () => ro.disconnect();
@@ -44,9 +44,10 @@ export function Tabs({ tabs, value, onChange, onClose, className = "", width, st
 
   const tabList = Array.isArray(tabs) && tabs.length ? tabs : ["GENERAL", "FILES", "TASKS"];
   const controlled = value != null;
-  const val = Math.max(0, Math.min(controlled ? (value as number) | 0 : sel | 0, tabList.length - 1));
+  // SAFETY: Component boundary provides the asserted DOM/test shape.
+  const val = Math.max(0, Math.min(controlled ? (value ?? 0) | 0 : sel | 0, tabList.length - 1));
   const emit = onChange || (() => {});
-  const closeable = typeof onClose === "function";
+  const closeable = onClose !== undefined;
   // a tab is "preview" (transient/peek) when its index matches previewIndex — purely visual, orthogonal to active
   const isPreview = (i: number) => previewIndex != null && i === (previewIndex | 0);
 

@@ -54,7 +54,7 @@ export type ConsoleAdapterAccount = {
   mode: string;
   lastActivity: number | null;
   error: string;
-  extra: Record<string, unknown>;
+  extra: JsonObject;
 };
 
 export type ConsoleAdapter = {
@@ -93,8 +93,8 @@ export type ConsoleMcpConnectionState =
 export type ConsoleMcpTool = {
   name: string;
   description: string;
-  inputSchema: Record<string, unknown> | null;
-  outputSchema: Record<string, unknown> | null;
+  inputSchema: JsonObject | null;
+  outputSchema: JsonObject | null;
 };
 
 export type ConsoleMcpServer = {
@@ -107,7 +107,7 @@ export type ConsoleMcpServer = {
   authUrl: string;
   error: string;
   instructions: string;
-  capabilities: Record<string, unknown> | null;
+  capabilities: JsonObject | null;
   tools: ConsoleMcpTool[];
   resourceCount: number;
   promptCount: number;
@@ -158,3 +158,4 @@ export type ConsoleResourceState<T> = {
   errorText: string;
   isEmpty: boolean;
 };
+import type { JsonObject } from "@humansandmachines/gsv/protocol";

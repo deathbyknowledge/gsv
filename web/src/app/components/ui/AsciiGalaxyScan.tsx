@@ -98,13 +98,14 @@ function smoother(value: number): number {
   return x * x * x * (x * (x * 6 - 15) + 10);
 }
 
-export function waitForGalaxyScanFonts(): Promise<unknown> {
+export async function waitForGalaxyScanFonts(): Promise<void> {
+  // SAFETY: Component boundary provides the asserted DOM/test shape.
   const fontSet = (document as Document & { fonts?: FontFaceSet }).fonts;
   if (!fontSet) {
     return Promise.resolve();
   }
 
-  return Promise.all([
+  await Promise.all([
     fontSet.load('48px "Departure Mono"'),
     fontSet.ready,
   ]);
@@ -130,9 +131,9 @@ export class AsciiGalaxyScanRenderer {
   constructor(private readonly config: GalaxyScanConfig) {
     this.cx = (config.cols - 1) / 2;
     this.cy = (config.rows - 1) / 2;
-    this.starBuffer = new Array(config.cols * config.rows);
+    this.starBuffer = Array.from({ length: config.cols * config.rows });
     this.brightness = new Float32Array(config.cols * config.rows);
-    this.chars = new Array(config.cols * config.rows);
+    this.chars = Array.from({ length: config.cols * config.rows });
     this.nebulaText = this.buildNebula();
   }
 
@@ -570,9 +571,11 @@ export function AsciiGalaxyScan({
   const foregroundRef = useRef<HTMLPreElement>(null);
   const replayRef = useRef<HTMLButtonElement>(null);
   const accessibleLabel = label ?? `${text} ASCII galaxy scan`;
-  const rootStyle = {
+  const rootStyle: JSX.CSSProperties & {
+    "--gsv-ascii-galaxy-font-size": string;
+  } = {
     "--gsv-ascii-galaxy-font-size": `${fontSize}px`,
-  } as JSX.CSSProperties;
+  };
 
   useEffect(() => {
     const nebulaEl = nebulaRef.current;

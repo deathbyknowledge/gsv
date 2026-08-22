@@ -188,7 +188,7 @@ export function buildShellChatAgent({
     const behavior = defaultBehaviorView(config, modelLabels);
     return {
       id: "administration",
-      ...(ownedActiveProcess ? { processId: ownedActiveProcess.pid } : {}),
+      ...(ownedActiveProcess ? { processId: ownedActiveProcess.pid } : undefined),
       name: "Administration",
       role: "NO PERSONAL INTELLIGENCE",
       description: "This account does not have a personal intelligence.",
@@ -225,7 +225,7 @@ export function buildShellChatAgent({
 
   return {
     id: personalAccount ? `account:${personalAccount.uid}` : "personal-intelligence",
-    ...(ownedActiveProcess ? { processId: ownedActiveProcess.pid } : {}),
+    ...(ownedActiveProcess ? { processId: ownedActiveProcess.pid } : undefined),
     name: personalAccount?.displayName ?? "Personal intelligence",
     role: personalAccount
       ? labelForConsoleAccountRelation(personalAccount.relation)

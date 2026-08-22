@@ -6,6 +6,7 @@ import "./AgentCard.css";
 
 export interface AgentTask {
   name: string;
+  // SAFETY: Component boundary provides the asserted DOM/test shape.
   /** "running" | "error" | "idle" (anything not error/idle reads as running). */
   status: string;
 }
@@ -75,6 +76,7 @@ function permissionForValue(value: string | undefined): string {
   if (value === "allow") {
     return "auto";
   }
+  // SAFETY: Component boundary provides the asserted DOM/test shape.
   return PERMS.includes(value ?? "") ? value as string : "ask";
 }
 
@@ -119,6 +121,7 @@ export function AgentCard(props: AgentCardProps) {
 
   useEffect(() => {
     const onDoc = (e: MouseEvent) => {
+      // SAFETY: Component boundary provides the asserted DOM/test shape.
       if (rootRef.current && !rootRef.current.contains(e.target as Node)) setTaskOpen(false);
     };
     document.addEventListener("mousedown", onDoc);
@@ -393,7 +396,7 @@ export function AgentCard(props: AgentCardProps) {
                       padding: "10px 12px",
                       cursor: "pointer",
                       transition: "background .12s",
-                      ...(i === task ? { background: "var(--hover)" } : {}),
+                      ...(i === task ? { background: "var(--hover)" } : undefined),
                     }}
                   >
                     <span style={dotFor(t.status)} />

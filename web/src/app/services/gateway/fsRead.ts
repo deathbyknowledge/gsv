@@ -1,4 +1,5 @@
 import type { GSVClient, GsvBody } from "@humansandmachines/gsv/client";
+import { z } from "zod";
 import {
   bodyToBytes,
   bodyToText,
@@ -8,6 +9,11 @@ import {
 export type FsReadClient = Pick<GSVClient, "request">;
 
 type FsReadFileResult = Extract<FsReadResult, { kind: "text" | "image" }>;
+const fsReadArgsSchema = z.object({
+  path: z.string(),
+  offset: z.number().optional(),
+  limit: z.number().optional(),
+});
 type FsReadImageContent = [
   { type: "text"; text: string },
   { type: "image"; data: string; mimeType: string },
@@ -18,11 +24,15 @@ export type MaterializedFsReadResult =
   | (Omit<FsReadFileResult, "kind"> & { kind: "text"; content: string })
   | (Omit<FsReadFileResult, "kind"> & { kind: "image"; content: FsReadImageContent });
 
-export async function requestFsRead(
+export async function requestFsRead<T>(
   client: FsReadClient,
-  args: unknown,
+  args: T,
 ): Promise<MaterializedFsReadResult> {
-  const { data, body } = await client.request<FsReadResult>("fs.read", args);
+  const parsedArgs = fsReadArgsSchema.safeParse(args);
+  if (!parsedArgs.success) {
+    throw new Error("fs.read requires a valid path");
+  }
+  const { data, body } = await client.request<FsReadResult>("fs.read", parsedArgs.data);
   return await materializeFsRead(data, body);
 }
 

@@ -1,22 +1,68 @@
+import { z } from "zod";
 import type { TerminalCommandInput, TerminalTarget, TerminalTranscriptEntry } from "./models";
 
-function asRecord(value: unknown): Record<string, unknown> | null {
-  return value && typeof value === "object" ? value as Record<string, unknown> : null;
-}
+type TerminalWireValue = string | number | boolean | null | TerminalWireValue[] | TerminalWireRecord;
+type TerminalWireRecord = { [key: string]: TerminalWireValue };
+const terminalWireSchema: z.ZodType<TerminalWireValue> = z.lazy(() => z.union([
+  z.string(),
+  z.number(),
+  z.boolean(),
+  z.null(),
+  z.array(terminalWireSchema),
+  z.record(z.string(), terminalWireSchema),
+]));
 
-function asString(value: unknown): string | null {
-  return typeof value === "string" ? value : null;
-}
+const terminalStringSchema = z.string().catch("");
+const terminalNumberSchema = z.number().finite().nullable().catch(null);
+const terminalBooleanSchema = z.boolean().nullable().catch(null);
 
-function asNumber(value: unknown): number | null {
-  return typeof value === "number" && Number.isFinite(value) ? value : null;
-}
+const terminalTargetItemSchema = z.object({
+  deviceId: terminalStringSchema,
+  id: terminalStringSchema,
+  label: terminalStringSchema,
+  online: terminalBooleanSchema,
+  platform: terminalStringSchema,
+  description: terminalStringSchema,
+});
 
-function asBoolean(value: unknown): boolean | null {
-  return typeof value === "boolean" ? value : null;
-}
+const terminalTargetsPayloadSchema = z.union([
+  z.array(terminalWireSchema.pipe(terminalTargetItemSchema.catch({
+    deviceId: "",
+    id: "",
+    label: "",
+    online: false,
+    platform: "",
+    description: "",
+  }))),
+  z.object({
+    devices: z.array(terminalWireSchema.pipe(terminalTargetItemSchema.catch({
+      deviceId: "",
+      id: "",
+      label: "",
+      online: false,
+      platform: "",
+      description: "",
+    }))).catch([]),
+  }),
+]).catch([]);
 
-function prettyJson(value: unknown): string {
+const terminalTranscriptSchema = z.object({
+  status: terminalStringSchema,
+  error: terminalStringSchema,
+  exitCode: terminalNumberSchema,
+  stdout: terminalStringSchema,
+  output: terminalStringSchema,
+  stderr: terminalStringSchema,
+  ok: terminalBooleanSchema,
+  backgrounded: terminalBooleanSchema,
+  background: terminalBooleanSchema,
+  sessionId: terminalStringSchema,
+  truncated: terminalBooleanSchema,
+});
+
+const optionalPositiveIntSchema = z.coerce.number().finite().positive().transform(Math.floor).nullable().catch(null);
+
+function prettyJson<T>(value: T): string {
   try {
     return JSON.stringify(value, null, 2);
   } catch {
@@ -29,22 +75,21 @@ export function normalizeTerminalTarget(target: string | null | undefined): stri
   return value.length > 0 ? value : "gsv";
 }
 
-export function normalizeTerminalTargets(payload: unknown): TerminalTarget[] {
-  const record = asRecord(payload);
-  const rawDevices = Array.isArray(payload) ? payload : Array.isArray(record?.devices) ? record.devices : [];
+export function normalizeTerminalTargets<T>(payload: T): TerminalTarget[] {
+  const parsed = terminalTargetsPayloadSchema.parse(payload);
+  const rawDevices = Array.isArray(parsed) ? parsed : parsed.devices;
   const targets = rawDevices
     .map((device) => {
-      const item = asRecord(device) ?? {};
-      const id = asString(item.deviceId) ?? asString(item.id) ?? "";
+      const id = device.deviceId || device.id;
       if (!id) {
         return null;
       }
       return {
         id,
-        label: asString(item.label) ?? id,
-        online: asBoolean(item.online) ?? false,
-        platform: asString(item.platform) ?? "",
-        description: asString(item.description) ?? "",
+        label: device.label || id,
+    online: device.online ?? false,
+        platform: device.platform,
+        description: device.description,
       };
     })
     .filter((target): target is TerminalTarget => target !== null)
@@ -53,12 +98,8 @@ export function normalizeTerminalTargets(payload: unknown): TerminalTarget[] {
   return targets;
 }
 
-export function parseOptionalPositiveInt(value: unknown): number | null {
-  if (typeof value === "number" && Number.isFinite(value) && value > 0) {
-    return Math.floor(value);
-  }
-  const parsed = Number.parseInt(String(value ?? "").trim(), 10);
-  return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+export function parseOptionalPositiveInt<T>(value: T): number | null {
+  return optionalPositiveIntSchema.parse(value);
 }
 
 export function normalizeCommandInput(input: TerminalCommandInput): Required<Pick<TerminalCommandInput, "input">> & {
@@ -80,15 +121,15 @@ export function normalizeCommandInput(input: TerminalCommandInput): Required<Pic
   };
 }
 
-export function normalizeTranscriptEntry(
-  payload: unknown,
+export function normalizeTranscriptEntry<T>(
+  payload: T,
   startedAt: number,
   input: ReturnType<typeof normalizeCommandInput>,
 ): TerminalTranscriptEntry {
   const completedAt = Date.now();
-  const record = asRecord(payload);
+  const parsed = terminalTranscriptSchema.safeParse(payload);
 
-  if (!record) {
+  if (!parsed.success) {
     return {
       id: `${startedAt}-${completedAt}`,
       target: input.target,
@@ -108,14 +149,14 @@ export function normalizeTranscriptEntry(
     };
   }
 
-  const statusText = (asString(record.status) ?? "").toLowerCase();
-  const errorText = asString(record.error);
-  const exitCode = asNumber(record.exitCode);
-  const stdout = asString(record.stdout) ?? asString(record.output) ?? "";
-  let stderr = asString(record.stderr) ?? "";
-  const explicitOk = asBoolean(record.ok);
-  const backgrounded = input.background || asBoolean(record.backgrounded) === true || asBoolean(record.background) === true;
-  const failed = explicitOk === false || statusText === "failed" || Boolean(errorText) || (exitCode !== null && exitCode !== 0);
+  const record = parsed.data;
+  const statusText = record.status.toLowerCase();
+  const errorText = record.error || null;
+  const exitCode = record.exitCode;
+  const stdout = record.stdout || record.output;
+  let stderr = record.stderr;
+  const backgrounded = input.background || record.backgrounded === true || record.background === true;
+  const failed = record.ok === false || statusText === "failed" || Boolean(errorText) || (exitCode !== null && exitCode !== 0);
 
   if (failed && stderr.trim().length === 0) {
     stderr = errorText ?? (exitCode !== null ? `exit ${exitCode}` : "");
@@ -135,7 +176,7 @@ export function normalizeTranscriptEntry(
     stdout,
     stderr,
     exitCode,
-    sessionId: (asString(record.sessionId) ?? input.sessionId) || null,
-    truncated: asBoolean(record.truncated) ?? false,
+    sessionId: record.sessionId || input.sessionId || null,
+    truncated: record.truncated === true,
   };
 }

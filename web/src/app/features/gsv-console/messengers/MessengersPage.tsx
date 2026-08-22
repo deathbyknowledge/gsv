@@ -2,7 +2,7 @@ import { useEffect, useState } from "preact/hooks";
 import { Button } from "../../../components/ui/Button";
 import { Icon } from "../../../components/ui/Icon";
 import { Link } from "../../../components/ui/Link";
-import { ListRow, type ListRowStatus } from "../../../components/ui/ListRow";
+import { ListRow } from "../../../components/ui/ListRow";
 import { SectionHeader } from "../../../components/ui/SectionHeader";
 import { CardListTemplate } from "../card-template/CardListTemplate";
 import { Tag, type TagTone } from "../../../components/ui/Tag";
@@ -52,10 +52,38 @@ import {
 import "./MessengersPage.css";
 
 type MessengersPageProps = {
+  dependencies?: MessengersPageDependencies;
   initialCreate?: boolean;
   initialDetailId?: string | null;
   initialDetailLabel?: string | null;
   onSelectionChange?: (selection: ConsoleListSelection | null) => void;
+};
+
+type ConsoleDataOptions = { enabled: boolean };
+export type MessengersPageDependencies = {
+  ConsolePage: typeof ConsolePage;
+  ConsoleResourceBoundary: typeof ConsoleResourceBoundary;
+  MessengerDetailPage: typeof MessengerDetailPage;
+  MessengerLinkCodePanel: typeof MessengerLinkCodePanel;
+  MessengerOnboardingFlow: typeof MessengerOnboardingFlow;
+  MessengerPlatformPage: typeof MessengerPlatformPage;
+  MessengersRoster: typeof MessengersRoster;
+  useAccounts: (options: ConsoleDataOptions) => Pick<
+    ReturnType<typeof useConsoleAccounts>,
+    "accounts" | "resource"
+  >;
+  useAdapterInventory: (options: ConsoleDataOptions) => Pick<
+    ReturnType<typeof useConsoleAdapterInventory>,
+    "adapters" | "resource"
+  >;
+  useIdentityLinks: (options: ConsoleDataOptions) => Pick<
+    ReturnType<typeof useConsoleIdentityLinks>,
+    "links" | "resource"
+  >;
+  useDisconnectAdapter: () => Pick<
+    ReturnType<typeof useDisconnectConsoleAdapter>,
+    "error" | "isPending" | "mutateAsync"
+  >;
 };
 
 type MessengerOnboardingSession = {
@@ -74,14 +102,17 @@ function onboardingSessionKey(session: MessengerOnboardingSession): string {
   ].join(":");
 }
 
-const PLATFORM_BLURB: Record<string, string> = {
-  telegram: "Message your GSV from Telegram — check files, approve tasks, and stay in control from anywhere.",
-  discord: "Bring your GSV into Discord — check files, approve tasks, and stay in control from anywhere.",
-  whatsapp: "Message your GSV through a dedicated WhatsApp account linked with a QR code.",
-};
-
 function platformBlurb(adapter: string): string {
-  return PLATFORM_BLURB[adapter] ?? `Connect ${adapterName(adapter)} to message your GSV remotely.`;
+  if (adapter === "telegram") {
+    return "Message your GSV from Telegram — check files, approve tasks, and stay in control from anywhere.";
+  }
+  if (adapter === "discord") {
+    return "Bring your GSV into Discord — check files, approve tasks, and stay in control from anywhere.";
+  }
+  if (adapter === "whatsapp") {
+    return "Message your GSV through a dedicated WhatsApp account linked with a QR code.";
+  }
+  return `Connect ${adapterName(adapter)} to message your GSV remotely.`;
 }
 
 function placeholderAdapter(adapter: string): ConsoleAdapter {
@@ -124,10 +155,14 @@ function accountSub(account: ConsoleAdapterAccount, identityLinks: readonly Cons
 
 function PlatformStatusBadge({ adapter }: { adapter: ConsoleAdapter }) {
   const info = familyStatus(adapter);
-  const badge = <Tag tone={info.tone as TagTone} label={info.label} dot boxed />;
+  const badge = <Tag tone={tagTone(info.tone)} label={info.label} dot boxed />;
   return info.tooltip ? (
     <Tooltip text={info.tooltip} position="top">{badge}</Tooltip>
   ) : badge;
+}
+
+function tagTone(tone: ReturnType<typeof familyStatus>["tone"]): TagTone {
+  return tone === "live" ? "online" : tone;
 }
 
 const MAX_CARD_ACCOUNTS = 2;
@@ -178,7 +213,7 @@ export function MessengerCard({
                 icon={iconForAdapterName(account.adapter)}
                 label={adapterLabel(account)}
                 sub={accountSub(account, identityLinks)}
-                status={listRowStatusForTone(toneForAdapter(account)) as ListRowStatus}
+                status={listRowStatusForTone(toneForAdapter(account))}
                 statusDotPlacement="trailing"
                 statusLabel={statusForAdapter(account)}
                 chevron
@@ -312,7 +347,7 @@ function MessengerPlatformPage({
               icon={iconForAdapterName(account.adapter)}
               label={adapterLabel(account)}
               sub={accountSub(account, identityLinks)}
-              status={listRowStatusForTone(toneForAdapter(account)) as ListRowStatus}
+              status={listRowStatusForTone(toneForAdapter(account))}
               statusDotPlacement="trailing"
               statusLabel={statusForAdapter(account)}
               chevron
@@ -339,6 +374,7 @@ function renderMessengerDetail(
   onReconnect: (account: ConsoleAdapterAccount) => void,
   onRelink: (account: ConsoleAdapterAccount) => void,
   onLinkIdentity: () => void,
+  DetailPage: typeof MessengerDetailPage,
 ) {
   const parsed = parseAdapterDetailId(id);
   const account = parsed
@@ -347,7 +383,7 @@ function renderMessengerDetail(
       ?.accounts.find((entry) => entry.accountId === parsed.accountId) ?? null
     : null;
   return account ? (
-    <MessengerDetailPage
+    <DetailPage
       accounts={accounts}
       adapter={account}
       identityLinks={linksForMessengerAccount(account, identityLinks)}
@@ -365,15 +401,23 @@ function renderMessengerDetail(
 }
 
 export function MessengersPage({
+  dependencies = defaultMessengersPageDependencies,
   initialCreate = false,
   initialDetailId = null,
   initialDetailLabel = null,
   onSelectionChange,
 }: MessengersPageProps) {
-  const adapters = useConsoleAdapterInventory({ enabled: true });
-  const accounts = useConsoleAccounts({ enabled: true });
-  const identityLinks = useConsoleIdentityLinks({ enabled: true });
-  const disconnectAdapter = useDisconnectConsoleAdapter();
+  const adapters = dependencies.useAdapterInventory({ enabled: true });
+  const accounts = dependencies.useAccounts({ enabled: true });
+  const identityLinks = dependencies.useIdentityLinks({ enabled: true });
+  const disconnectAdapter = dependencies.useDisconnectAdapter();
+  const Page = dependencies.ConsolePage;
+  const ResourceBoundary = dependencies.ConsoleResourceBoundary;
+  const DetailPage = dependencies.MessengerDetailPage;
+  const LinkCodePanel = dependencies.MessengerLinkCodePanel;
+  const OnboardingFlow = dependencies.MessengerOnboardingFlow;
+  const PlatformPage = dependencies.MessengerPlatformPage;
+  const Roster = dependencies.MessengersRoster;
   const [onboarding, setOnboarding] = useState<MessengerOnboardingSession | null>(null);
   const { selectedDetail, selectDetail } = useConsoleListSelection({
     initialCreate,
@@ -501,8 +545,8 @@ export function MessengersPage({
   };
 
   return (
-    <ConsolePage flush>
-      <ConsoleResourceBoundary
+    <Page flush>
+      <ResourceBoundary
         resource={resourceWithLocalEmptyState(adapters.resource)}
         emptyLabel="NO MESSENGERS"
         errorLabel="MESSENGERS"
@@ -520,7 +564,7 @@ export function MessengersPage({
                 route: "create" as const,
               };
             return (
-              <MessengerOnboardingFlow
+              <OnboardingFlow
                 key={onboardingSessionKey(explicitOnboarding)}
                 adapterId={explicitOnboarding.adapterId}
                 existingAccountIds={data
@@ -542,7 +586,7 @@ export function MessengersPage({
               if (target) {
                 if (onboarding?.route === "implicit-platform" && onboarding.adapterId === platform) {
                   return (
-                    <MessengerOnboardingFlow
+                    <OnboardingFlow
                       key={onboardingSessionKey(onboarding)}
                       adapterId={platform}
                       existingAccountIds={[]}
@@ -560,7 +604,7 @@ export function MessengersPage({
                   && (target.supportsConnect || target.supportsPairing)
                 ) {
                   return (
-                    <MessengerOnboardingFlow
+                    <OnboardingFlow
                       key={onboardingSessionKey({
                         accountId: null,
                         adapterId: platform,
@@ -576,7 +620,7 @@ export function MessengersPage({
                   );
                 }
                 return (
-                  <MessengerPlatformPage
+                  <PlatformPage
                     adapter={target}
                     identityLinks={identityLinks.links}
                     onBack={closeOnboarding}
@@ -601,6 +645,7 @@ export function MessengersPage({
               reconnect,
               relink,
               closeOnboarding,
+              DetailPage,
             );
             if (detail) {
               return detail;
@@ -609,12 +654,12 @@ export function MessengersPage({
 
           return (
             <>
-              <MessengerLinkCodePanel
+              <LinkCodePanel
                 errorText={identityLinksError}
                 linkCount={identityLinks.links.length}
                 refreshing={identityLinksRefreshing}
               />
-              <MessengersRoster
+              <Roster
                 adapters={data}
                 identityLinks={identityLinks.links}
                 onConnect={openCreate}
@@ -626,6 +671,20 @@ export function MessengersPage({
           );
         }}
       />
-    </ConsolePage>
+    </Page>
   );
 }
+
+const defaultMessengersPageDependencies: MessengersPageDependencies = {
+  ConsolePage,
+  ConsoleResourceBoundary,
+  MessengerDetailPage,
+  MessengerLinkCodePanel,
+  MessengerOnboardingFlow,
+  MessengerPlatformPage,
+  MessengersRoster,
+  useAccounts: useConsoleAccounts,
+  useAdapterInventory: useConsoleAdapterInventory,
+  useIdentityLinks: useConsoleIdentityLinks,
+  useDisconnectAdapter: useDisconnectConsoleAdapter,
+};

@@ -4,7 +4,7 @@ import { APP_VERSION } from "../../../../appVersion";
 import { GsvMark } from "../../../components/ui/GsvMark";
 import { Icon } from "../../../components/ui/Icon";
 import { IconButton } from "../../../components/ui/IconButton";
-import { OBJECT_GLYPH_ICON, type ObjectGlyph } from "../../../components/ui/objectGlyph";
+import { OBJECT_GLYPH_ICON } from "../../../components/ui/objectGlyph";
 import {
   type DesktopChildObject,
   type DesktopObject,
@@ -41,10 +41,10 @@ type ShellRailProps = {
 /** Sections that show a "create" entry in their drawer. The label is the same
  *  for every section. Messengers are intentionally absent — connecting a
  *  messenger is done from its dedicated platform page. */
-const CREATE_LABEL: Record<string, string> = {
-  machines: "+ CONNECT NEW",
-  integrations: "+ CONNECT NEW",
-};
+const CREATE_LABEL = new Map<DesktopObjectId, string>([
+  ["machines", "+ CONNECT NEW"],
+  ["integrations", "+ CONNECT NEW"],
+]);
 
 /** Drawer id for the GSV system-surfaces section (the one non-object section). */
 const GSV_DRAWER = "gsv";
@@ -189,7 +189,7 @@ export function ShellRail({
             title={object.label}
             onClick={() => openSection(object)}
           >
-            <Icon name={OBJECT_GLYPH_ICON[object.glyph as ObjectGlyph]} size={19} />
+            <Icon name={OBJECT_GLYPH_ICON[object.glyph]} size={19} />
             <span class="gsv-rail-status-dot" style={{ background: statusColor(object.status), color: statusColor(object.status) }} />
           </button>
         ))}
@@ -229,7 +229,7 @@ export function ShellRail({
                   >
                     <span class="gsv-rail-node-icon">
                       <span class="gsv-rail-node-disc">
-                        <Icon name={OBJECT_GLYPH_ICON[object.glyph as ObjectGlyph]} size={19} />
+                        <Icon name={OBJECT_GLYPH_ICON[object.glyph]} size={19} />
                       </span>
                     </span>
                     <span class="gsv-rail-row-copy">
@@ -250,13 +250,13 @@ export function ShellRail({
                           {child.label}
                         </button>
                       ))}
-                      {CREATE_LABEL[object.id] ? (
+                      {CREATE_LABEL.get(object.id) ? (
                         <button
                           type="button"
                           class={`gsv-rail-subitem gsv-rail-subitem-create${object.id === createSection ? " is-active" : ""}`}
                           onClick={() => onCreateObject(object.id)}
                         >
-                          {CREATE_LABEL[object.id]}
+                          {CREATE_LABEL.get(object.id)}
                         </button>
                       ) : null}
                     </div>

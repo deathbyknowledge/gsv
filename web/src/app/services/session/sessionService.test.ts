@@ -1,6 +1,13 @@
-import type { GSVClient } from "@humansandmachines/gsv/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { createSessionService } from "./sessionService";
+import type { GsvClientStatus } from "@humansandmachines/gsv/client";
+import { createSessionService, type SessionClient } from "./sessionService";
+
+type StatusListener = (status: GsvClientStatus) => void;
+
+function requireStatusListener(listener: StatusListener | null): StatusListener {
+  if (!listener) throw new Error("status listener was not registered");
+  return listener;
+}
 
 function installWindow(): void {
   const values = new Map<string, string>();
@@ -23,35 +30,29 @@ afterEach(() => {
 describe("session lock", () => {
   it("publishes the locked identity boundary synchronously", () => {
     installWindow();
-    let onStatus: ((status: {
-      connectionId: string;
-      state: string;
-      url: string;
-      username: string;
-    }) => void) | null = null;
+    let onStatus: StatusListener | null = null;
     const client = {
       disconnect: vi.fn(),
       isConnected: () => false,
-      onStatus: (listener: typeof onStatus) => {
+      connect: vi.fn(),
+      requestOnce: vi.fn(),
+      onStatus: (listener: StatusListener) => {
         onStatus = listener;
         return () => undefined;
       },
-    } as unknown as GSVClient;
+      sys: { token: { create: vi.fn(), revoke: vi.fn(), list: vi.fn() } },
+    } satisfies SessionClient;
     const service = createSessionService(client);
     const snapshots = [service.snapshot()];
     service.subscribe((snapshot) => snapshots.push(snapshot));
 
-    const publishStatus = onStatus as unknown as (status: {
-      connectionId: string;
-      state: string;
-      url: string;
-      username: string;
-    }) => void;
+    const publishStatus = requireStatusListener(onStatus);
     publishStatus({
       connectionId: "connection:alice",
       state: "connected",
       url: "wss://example.test/ws",
       username: "alice",
+      message: null,
     });
     expect(service.snapshot().phase).toBe("ready");
 
@@ -67,37 +68,39 @@ describe("session lock", () => {
 
   it("does not let delayed lock cleanup disconnect a newer login", async () => {
     installWindow();
-    let onStatus: ((status: {
-      connectionId: string;
-      state: string;
-      url: string;
-      username: string;
-    }) => void) | null = null;
+    let onStatus: StatusListener | null = null;
     const disconnect = vi.fn();
-    const connect = vi.fn(async () => ({
-      server: { connectionId: "connection:bob" },
-    }));
+    const connect = vi.fn<SessionClient["connect"]>();
+    connect.mockResolvedValue({
+      server: { version: "test", release: "test", connectionId: "connection:bob" },
+      protocol: 2,
+      identity: {
+        role: "user",
+        process: { uid: 1, gid: 1, gids: [1], username: "bob", home: "/", cwd: "/" },
+        capabilities: [],
+      },
+      syscalls: [],
+      signals: [],
+    });
     const client = {
       connect,
       disconnect,
       isConnected: () => false,
-      onStatus: (listener: typeof onStatus) => {
+      requestOnce: vi.fn(),
+      onStatus: (listener: StatusListener) => {
         onStatus = listener;
         return () => undefined;
       },
-    } as unknown as GSVClient;
+      sys: { token: { create: vi.fn(), revoke: vi.fn(), list: vi.fn() } },
+    } satisfies SessionClient;
     const service = createSessionService(client);
-    const publishStatus = onStatus as unknown as (status: {
-      connectionId: string;
-      state: string;
-      url: string;
-      username: string;
-    }) => void;
+    const publishStatus = requireStatusListener(onStatus);
     publishStatus({
       connectionId: "connection:alice",
       state: "connected",
       url: "wss://example.test/ws",
       username: "alice",
+      message: null,
     });
 
     service.lock();

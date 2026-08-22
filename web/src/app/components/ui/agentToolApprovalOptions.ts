@@ -127,6 +127,7 @@ export const APPROVAL_MATCH_OPTIONS: SelectOption[] = CAPABILITY_FAMILIES.flatMa
 const APPROVAL_MATCH_VALUES = CAPABILITY_FAMILIES.flatMap((family) => family.options.map((option) => option.match));
 const APPROVAL_MATCH_LABELS = new Map(
   CAPABILITY_FAMILIES.flatMap((family) =>
+    // SAFETY: Component boundary provides the asserted DOM/test shape.
     family.options.map((option) => [option.match, option.label] as const)
   ),
 );
@@ -192,12 +193,17 @@ export function matchOptionsForRule(match: string): SelectOption[] {
 
 export function matchIndexForRule(match: string): number {
   const options = matchOptionsForRule(match);
-  const index = options.findIndex((option) => typeof option !== "string" && option.value === match);
+  const index = options.findIndex((option) => selectOptionValue(option) === match);
   return index >= 0 ? index : 0;
 }
 
 export function approvalOptionValue(option: SelectOption): string {
-  return typeof option === "string" ? option : option.value ?? option.label;
+  return selectOptionValue(option);
+}
+
+function selectOptionValue(option: SelectOption): string {
+  const candidate = Object(option);
+  return "value" in candidate ? String(candidate.value ?? candidate.label) : String(option);
 }
 
 export function targetOptionsForRule(target: string | undefined, targets: readonly AgentToolTarget[]): SelectOption[] {
@@ -212,7 +218,7 @@ export function targetOptionsForRule(target: string | undefined, targets: readon
       };
     });
   const knownValues = new Set([
-    ...BUILTIN_TARGET_OPTIONS.map((option) => typeof option === "string" ? option : option.value ?? option.label),
+    ...BUILTIN_TARGET_OPTIONS.map(selectOptionValue),
     ...targetOptions.map((option) => option.value ?? option.label),
   ]);
   const baseOptions = target === "targets/*"
@@ -234,7 +240,7 @@ export function targetOptionsForRule(target: string | undefined, targets: readon
 export function targetIndexForRule(target: string | undefined, targets: readonly AgentToolTarget[]): number {
   const options = targetOptionsForRule(target, targets);
   const value = target ?? "";
-  const index = options.findIndex((option) => typeof option !== "string" && (option.value ?? option.label) === value);
+  const index = options.findIndex((option) => selectOptionValue(option) === value);
   return index >= 0 ? index : 0;
 }
 

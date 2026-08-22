@@ -15,7 +15,7 @@ export interface IconProps {
   title?: string;
 }
 
-const DOTICON_ALIAS: Record<string, string> = {
+const DOTICON_ALIAS = {
   add: "circlePlus",
   computer: "box",
   files: "folder",
@@ -45,7 +45,7 @@ function isDoticonName(name: string): boolean {
 
 function doticonName(name: string): string {
   const cleanName = cleanIconName(name).replace(/^doticons\/(?:16\/)?/, "");
-  return DOTICON_ALIAS[cleanName] ?? cleanName;
+  return Object.entries(DOTICON_ALIAS).find(([key]) => key === cleanName)?.[1] ?? cleanName;
 }
 
 function doticonMatrix(name: string, size: number, matrix: DotIconMatrix): 16 | 32 {

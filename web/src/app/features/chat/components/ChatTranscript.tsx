@@ -2,6 +2,7 @@ import type { ComponentChildren } from "preact";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "preact/hooks";
 import DOMPurify from "dompurify";
 import { parse as parseMarkdown } from "marked";
+import { z } from "zod";
 import { CopyGlyph } from "../../../components/ui/lineGlyphs";
 import { CopyIconButton, MessageMeta } from "../../../components/ui/MessageMeta";
 import { ReasoningGlyph } from "../../../components/ui/ReasoningGlyph";
@@ -95,7 +96,7 @@ const EMPTY_VIEWPORT: TranscriptViewport = {
 };
 
 function copyWithFallback(text: string): boolean {
-  if (typeof document === "undefined" || !document.body) {
+  if (!("document" in globalThis) || !document.body) {
     return false;
   }
 
@@ -122,7 +123,7 @@ async function copyText(text: string): Promise<boolean> {
     return false;
   }
 
-  if (typeof navigator !== "undefined" && navigator.clipboard) {
+  if ("navigator" in globalThis && navigator.clipboard) {
     try {
       await navigator.clipboard.writeText(text);
       return true;
@@ -194,7 +195,7 @@ function originLabel(origin: ChatDockMessage["origin"]): string {
 
 function AssistantGlyph() {
   return (
-    <svg width="16" height="16" viewBox="0 0 16 16" shape-rendering="crispEdges">
+    <svg width="16" height="16" viewBox="0 0 16 16" style={{ ["shape-rendering"]: "crispEdges" }}>
       <g fill="currentColor">
         <rect x="7" y="1" width="2" height="2" />
         <rect x="6" y="3" width="4" height="6" />
@@ -292,7 +293,7 @@ function assistantBlocks(text: string): AssistantBlock[] {
 
 const chatMarkdownPurifier = DOMPurify();
 
-if (typeof chatMarkdownPurifier.addHook === "function") {
+if (chatMarkdownPurifier.addHook) {
   chatMarkdownPurifier.addHook("afterSanitizeAttributes", (node) => {
     if (node.tagName !== "A") {
       return;
@@ -306,7 +307,7 @@ if (typeof chatMarkdownPurifier.addHook === "function") {
 }
 
 function sanitizeChatMarkdown(value: string): string {
-  if (typeof chatMarkdownPurifier.sanitize === "function") {
+  if (chatMarkdownPurifier.sanitize) {
     return String(chatMarkdownPurifier.sanitize(value));
   }
   // Vitest and other non-DOM renderers cannot initialize DOMPurify. Keep the
@@ -402,12 +403,34 @@ function BackupModelBadge({ backupModel }: { backupModel: ChatBackupModelInfo })
   );
 }
 
-function formatToolDetailValue(value: unknown): string {
+type ToolPayload = string | number | boolean | null | ToolPayload[] | ToolPayloadRecord;
+type ToolPayloadRecord = { [key: string]: ToolPayload };
+const toolPayloadSchema: z.ZodType<ToolPayload> = z.lazy(() => z.union([
+  z.string(), z.number(), z.boolean(), z.null(),
+  z.array(toolPayloadSchema),
+  z.record(z.string(), toolPayloadSchema),
+]));
+
+function toolPayloadFor(
+  message: ChatDockMessage,
+  field: "toolArgs" | "toolOutput",
+): ToolPayload | undefined {
+  const parsed = toolPayloadSchema.safeParse(message[field]);
+  return parsed.success ? parsed.data : undefined;
+}
+
+function payloadArray(value: ToolPayload | undefined): ToolPayload[] {
+  const parsed = z.array(toolPayloadSchema).safeParse(value);
+  return parsed.success ? parsed.data : [];
+}
+
+function formatToolDetailValue(value: ToolPayload | undefined): string {
   if (value === undefined) {
     return "";
   }
-  if (typeof value === "string") {
-    return value;
+  const text = z.string().safeParse(value);
+  if (text.success) {
+    return text.data;
   }
   try {
     return JSON.stringify(value, null, 2);
@@ -420,26 +443,23 @@ function isEmptyObjectText(value: string): boolean {
   return value.trim() === "{}" || value.trim() === "[]";
 }
 
-function optionalString(value: unknown): string | null {
-  return typeof value === "string" ? value : null;
+function optionalString(value: ToolPayload | undefined): string | null {
+  const parsed = z.string().safeParse(value);
+  return parsed.success ? parsed.data : null;
 }
 
 function truncateBlock(value: string, maxLength: number): string {
   return value.length <= maxLength ? value : `${value.slice(0, maxLength).trimEnd()}\n...`;
 }
 
-function asRecord(value: unknown): Record<string, unknown> | null {
-  return value && typeof value === "object" && !Array.isArray(value)
-    ? value as Record<string, unknown>
-    : null;
+function asRecord(value: ToolPayload | undefined): ToolPayloadRecord | null {
+  const parsed = z.record(z.string(), toolPayloadSchema).safeParse(value);
+  return parsed.success ? parsed.data : null;
 }
 
-function asString(value: unknown): string | null {
-  return typeof value === "string" && value.trim() ? value : null;
-}
-
-function asNumber(value: unknown): number | null {
-  return typeof value === "number" && Number.isFinite(value) ? value : null;
+function asString(value: ToolPayload | undefined): string | null {
+  const parsed = z.string().safeParse(value);
+  return parsed.success && parsed.data.trim() ? parsed.data : null;
 }
 
 function shortId(value: string | undefined): string {
@@ -520,7 +540,7 @@ export function toolStatusLabel(message: ChatDockMessage): string {
 }
 
 function toolPathTarget(message: ChatDockMessage): string | null {
-  const args = asRecord(message.toolArgs);
+  const args = asRecord(toolPayloadFor(message, "toolArgs"));
   const path = asString(args?.path)
     ?? asString(args?.file)
     ?? asString(args?.targetPath)
@@ -529,7 +549,7 @@ function toolPathTarget(message: ChatDockMessage): string | null {
 }
 
 function shellInputText(message: ChatDockMessage): string | null {
-  const args = asRecord(message.toolArgs);
+  const args = asRecord(toolPayloadFor(message, "toolArgs"));
   return asString(args?.input)
     ?? asString(args?.command)
     ?? asString(args?.cmd)
@@ -549,8 +569,8 @@ export type ToolDetailSection = {
   label: string;
 };
 
-function textDetail(label: string, value: unknown, maxLength = 12000): ToolDetailSection | null {
-  const text = typeof value === "string" ? value : formatToolDetailValue(value);
+function textDetail(label: string, value: ToolPayload | undefined, maxLength = 12000): ToolDetailSection | null {
+  const text = formatToolDetailValue(value);
   if (!text.trim() || isEmptyObjectText(text)) {
     return null;
   }
@@ -568,7 +588,7 @@ function fileToolKind(syscall: string | null): "read" | "write" | "edit" | "dele
   return null;
 }
 
-function readToolDetails(output: unknown): ToolDetailSection | null {
+function readToolDetails(output: ToolPayload | undefined): ToolDetailSection | null {
   const record = asRecord(output);
   const content = optionalString(record?.content);
   if (content !== null) {
@@ -576,8 +596,8 @@ function readToolDetails(output: unknown): ToolDetailSection | null {
       ? textDetail("CONTENT", content)
       : { label: "CONTENT", body: <p class="gsv-chat-tool-muted">Empty file.</p> };
   }
-  const directories = Array.isArray(record?.directories) ? record.directories : [];
-  const files = Array.isArray(record?.files) ? record.files : [];
+  const directories = payloadArray(record?.directories);
+  const files = payloadArray(record?.files);
   if (directories.length || files.length) {
     const listing = [
       ...directories.map((item) => `${String(item)}/`),
@@ -588,7 +608,7 @@ function readToolDetails(output: unknown): ToolDetailSection | null {
   return textDetail("OUTPUT", output);
 }
 
-function shellToolDetails(output: unknown): ToolDetailSection[] {
+function shellToolDetails(output: ToolPayload | undefined): ToolDetailSection[] {
   const record = asRecord(output);
   const stdout = optionalString(record?.stdout);
   const stderr = optionalString(record?.stderr);
@@ -601,11 +621,10 @@ function shellToolDetails(output: unknown): ToolDetailSection[] {
     : [textDetail("OUTPUT", output)].filter((section): section is ToolDetailSection => section !== null);
 }
 
-function codeModeToolDetails(output: unknown): ToolDetailSection[] {
+function codeModeToolDetails(output: ToolPayload | undefined): ToolDetailSection[] {
   const record = asRecord(output);
-  const logs = Array.isArray(record?.logs)
-    ? record.logs.map((item) => typeof item === "string" ? item : formatToolDetailValue(item)).filter(Boolean).join("\n")
-    : "";
+  const logs = payloadArray(record?.logs)
+    .map((item) => formatToolDetailValue(item)).filter(Boolean).join("\n");
   const sections = [
     textDetail("LOGS", logs),
     textDetail("ERROR", record?.error),
@@ -614,7 +633,7 @@ function codeModeToolDetails(output: unknown): ToolDetailSection[] {
   return sections.length > 0 ? sections : [];
 }
 
-function searchToolDetails(output: unknown): ToolDetailSection | null {
+function searchToolDetails(output: ToolPayload | undefined): ToolDetailSection | null {
   const record = asRecord(output);
   const matches = Array.isArray(record?.matches) ? record.matches : [];
   if (matches.length > 0) {
@@ -623,7 +642,7 @@ function searchToolDetails(output: unknown): ToolDetailSection | null {
   return textDetail("OUTPUT", output);
 }
 
-function editToolDiff(args: Record<string, unknown> | null): ToolDetailSection | null {
+function editToolDiff(args: ToolPayloadRecord | null): ToolDetailSection | null {
   const oldText = optionalString(args?.oldString);
   const newText = optionalString(args?.newString);
   if (oldText === null && newText === null) {
@@ -638,7 +657,7 @@ function editToolDiff(args: Record<string, unknown> | null): ToolDetailSection |
 export function toolDetailSections(tool: ChatDockMessage): ToolDetailSection[] {
   const syscall = toolSyscall(tool);
   const kind = fileToolKind(syscall);
-  const args = asRecord(tool.toolArgs);
+  const args = asRecord(toolPayloadFor(tool, "toolArgs"));
   const sections: ToolDetailSection[] = [];
 
   if (kind === "write") {
@@ -655,23 +674,23 @@ export function toolDetailSections(tool: ChatDockMessage): ToolDetailSection[] {
     const diff = editToolDiff(args);
     if (diff) sections.push(diff);
   } else if (kind === "read" && tool.role === "toolResult") {
-    const detail = readToolDetails(tool.toolOutput);
+    const detail = readToolDetails(toolPayloadFor(tool, "toolOutput"));
     if (detail) sections.push(detail);
   } else if (syscall === "shell.exec" && tool.role === "toolResult") {
-    sections.push(...shellToolDetails(tool.toolOutput));
+    sections.push(...shellToolDetails(toolPayloadFor(tool, "toolOutput")));
   } else if ((syscall === "codemode.exec" || syscall === "codemode.run") && tool.role === "toolResult") {
-    sections.push(...codeModeToolDetails(tool.toolOutput));
+    sections.push(...codeModeToolDetails(toolPayloadFor(tool, "toolOutput")));
   } else if (syscall === "fs.search" && tool.role === "toolResult") {
-    const detail = searchToolDetails(tool.toolOutput);
+    const detail = searchToolDetails(toolPayloadFor(tool, "toolOutput"));
     if (detail) sections.push(detail);
   }
 
   if (tool.role === "tool" && sections.length === 0) {
-    const input = textDetail("INPUT", tool.toolArgs);
+    const input = textDetail("INPUT", toolPayloadFor(tool, "toolArgs"));
     if (input) sections.push(input);
   }
   if (tool.role === "toolResult" && sections.length === 0) {
-    const output = textDetail("OUTPUT", tool.toolOutput ?? tool.text);
+    const output = textDetail("OUTPUT", toolPayloadFor(tool, "toolOutput") ?? tool.text);
     if (output) sections.push(output);
   }
   return sections;
@@ -1049,8 +1068,9 @@ function UserMessage({
   const mobile = useTranscriptMobile();
   // Built once, routed by breakpoint: desktop puts them in the meta row,
   // mobile in the swipe rail — never both (no duplicate controls for AT).
-  const branchPoint: ChatBranchPoint | null = typeof message.messageId === "number"
-    ? { throughMessageId: message.messageId }
+  const messageId = z.number().finite().safeParse(message.messageId);
+  const branchPoint: ChatBranchPoint | null = messageId.success
+    ? { throughMessageId: messageId.data }
     : message.runId
       ? { throughRunId: message.runId }
       : null;
@@ -1302,8 +1322,8 @@ function ToolResultMessage({
   const output = message.role === "tool" && message.status === "planning"
     ? "Preparing tool call."
     : message.text;
-  const argsText = formatToolDetailValue(message.toolArgs);
-  const outputText = formatToolDetailValue(message.toolOutput);
+  const argsText = formatToolDetailValue(toolPayloadFor(message, "toolArgs"));
+  const outputText = formatToolDetailValue(toolPayloadFor(message, "toolOutput"));
   const hasDetails = Boolean(argsText.trim() || outputText.trim());
 
   return (
@@ -1910,11 +1930,11 @@ export function ChatTranscript({
     }
     const update = () => updateViewportForNode(node);
     update();
-    if (typeof ResizeObserver === "undefined") {
+    if (!globalThis.ResizeObserver) {
       window.addEventListener("resize", update);
       return () => window.removeEventListener("resize", update);
     }
-    const observer = new ResizeObserver(update);
+    const observer = new globalThis.ResizeObserver(update);
     observer.observe(node);
     return () => observer.disconnect();
   }, [updateViewportForNode]);

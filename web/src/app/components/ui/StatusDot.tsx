@@ -7,14 +7,14 @@ export interface StatusDotProps {
   glow?: boolean;
 }
 
-const TONE_VAR: Record<StatusTone, string> = {
+const TONE_VAR = {
   online: "var(--online)",
   error: "var(--error)",
   idle: "var(--idle)",
   update: "var(--update)",
   live: "var(--live)",
   warn: "var(--warn)",
-};
+} satisfies Record<StatusTone, string>;
 
 /** StatusDot — ported from StatusDot.dc.html. */
 export function StatusDot({ tone = "online", size = 8, glow }: StatusDotProps) {
@@ -37,14 +37,14 @@ export function StatusDot({ tone = "online", size = 8, glow }: StatusDotProps) {
 
 /** Status-label text color per tone, mirroring ListRow's treatment: idle stays
  *  dim (var(--meta)) rather than tinted; every other tone takes its own color. */
-export const STATUS_TEXT: Record<StatusTone, string> = {
+export const STATUS_TEXT = {
   online: "var(--online)",
   error: "var(--error)",
   idle: "var(--meta)",
   update: "var(--update)",
   live: "var(--live)",
   warn: "var(--warn)",
-};
+} satisfies Record<StatusTone, string>;
 
 export interface StatusMetaProps {
   tone: StatusTone;

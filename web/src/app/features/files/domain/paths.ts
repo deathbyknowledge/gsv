@@ -5,7 +5,10 @@ export function normalizeTarget(target: string | null | undefined): string {
   return value.length > 0 ? value : "gsv";
 }
 
-export function targetArgs(target: string, args: Record<string, unknown>): Record<string, unknown> {
+type FileRequestValue = string | number | boolean | null | undefined;
+type FileRequestArgs = Record<string, FileRequestValue>;
+
+export function targetArgs(target: string, args: FileRequestArgs): FileRequestArgs {
   const normalizedTarget = normalizeTarget(target);
   return normalizedTarget === "gsv" ? args : { ...args, target: normalizedTarget };
 }

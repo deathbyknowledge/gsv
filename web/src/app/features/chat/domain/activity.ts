@@ -5,6 +5,7 @@ import type {
   ChatProcessStatusTone,
 } from "./agent";
 import type { ChatRuntimeState, ChatTranscriptRow } from "./transcript";
+import { z } from "zod";
 
 export type ChatLiveActivity = {
   activity: string;
@@ -14,14 +15,26 @@ export type ChatLiveActivity = {
   tasks: ChatAgentTaskData[];
 };
 
-function asRecord(value: unknown): Record<string, unknown> | null {
-  return value && typeof value === "object" && !Array.isArray(value)
-    ? value as Record<string, unknown>
-    : null;
+type ActivityValue = string | number | boolean | null | ActivityValue[] | ActivityRecord;
+type ActivityRecord = { [key: string]: ActivityValue };
+const activityValueSchema: z.ZodType<ActivityValue> = z.lazy(() => z.union([
+  z.string(),
+  z.number(),
+  z.boolean(),
+  z.null(),
+  z.array(activityValueSchema),
+  z.record(z.string(), activityValueSchema),
+]));
+const activityRecordSchema = z.record(z.string(), activityValueSchema);
+
+function asRecord<T>(value: T): ActivityRecord | null {
+  const parsed = activityRecordSchema.safeParse(value);
+  return parsed.success ? parsed.data : null;
 }
 
-function asString(value: unknown): string | null {
-  return typeof value === "string" && value.trim() ? value : null;
+function asString<T>(value: T): string | null {
+  const parsed = z.string().safeParse(value);
+  return parsed.success && parsed.data.trim() ? parsed.data : null;
 }
 
 function basenamePath(value: string): string {
@@ -68,7 +81,7 @@ function toolDisplayName(toolName: string | undefined, syscall: string | null): 
   return name;
 }
 
-function toolPathTarget(args: unknown): string | null {
+function toolPathTarget<T>(args: T): string | null {
   const record = asRecord(args);
   const path = asString(record?.path)
     ?? asString(record?.file)
@@ -77,7 +90,7 @@ function toolPathTarget(args: unknown): string | null {
   return path ? basenamePath(path) : null;
 }
 
-function shellInputText(args: unknown): string | null {
+function shellInputText<T>(args: T): string | null {
   const record = asRecord(args);
   return asString(record?.input)
     ?? asString(record?.command)
@@ -256,6 +269,6 @@ export function applyChatLiveActivityToAgent(
     activity: activity.activity,
     status: activity.agentStatus,
     statusLabel: activity.statusLabel,
-    ...(patchedCrew ? { crew: patchedCrew } : {}),
+    ...(patchedCrew ? { crew: patchedCrew } : undefined),
   };
 }

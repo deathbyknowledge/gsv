@@ -1,12 +1,12 @@
 import type { ConsoleAccount, ConsoleAccountRelation, ConsoleConfigEntry } from "./consoleModels";
 
-const ACCOUNT_RELATION_LABEL: Record<ConsoleAccountRelation, string> = {
+const ACCOUNT_RELATION_LABEL = {
   self: "HUMAN (YOU)",
   "personal-agent": "PERSONAL AGENT",
   agent: "AGENT",
   human: "HUMAN",
   unknown: "ACCOUNT",
-};
+} satisfies Record<ConsoleAccountRelation, string>;
 
 export function labelForConsoleAccountRelation(relation: ConsoleAccountRelation): string {
   return ACCOUNT_RELATION_LABEL[relation];

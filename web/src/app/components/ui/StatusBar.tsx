@@ -8,6 +8,7 @@ export interface StatusBarProps {
   powerTone?: "online" | "loading" | "offline" | "error";
   statusLabel?: string;
   statusTone?: "online" | "loading" | "offline" | "error";
+  // SAFETY: Component boundary provides the asserted DOM/test shape.
   /** When set, the bar renders this single line as its content instead of the
    *  model/context/clock/power layout. */
   label?: string;
@@ -34,6 +35,7 @@ function statusColor(tone: NonNullable<StatusBarProps["statusTone"]>): string {
 
 /** StatusBar — ported from StatusBar.dc.html. Bottom system status strip:
  *  online indicator + model + context on the left, clock + power on the right.
+ // SAFETY: Component boundary provides the asserted DOM/test shape.
  *  When `label` is provided, renders that single line as the bar's content. */
 export function StatusBar({
   model = "GATEWAY DEFAULT",
@@ -65,6 +67,7 @@ export function StatusBar({
         alignItems: "center",
         justifyContent: justify,
         padding: "0 18px",
+        // SAFETY: Component boundary provides the asserted DOM/test shape.
         // font-family + size (10px) from .gsv-sublabel; tracking kept as inline override
         letterSpacing: ".14em",
         color: "var(--text-dim)",

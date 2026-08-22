@@ -351,7 +351,7 @@ export function GsvConsole({
   // detail crumb so the breadcrumb (and header back-arrow) own the path back to
   // the index, instead of leaving the trail stuck at LIBRARY.
   const libraryDetail = libraryDetailLabel(libraryRoute);
-  const inLibrary = activeSurface === "library"
+  const _inLibrary = activeSurface === "library"
     || (activeSurface === "settings" && settingsRoute.view === "list" && settingsRoute.kind === "library");
   // Route through the unsaved guard: leaving a dirty page editor / capture /
   // build form via the LIBRARY crumb or header back-arrow must prompt first,

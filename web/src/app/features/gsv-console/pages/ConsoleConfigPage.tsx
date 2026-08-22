@@ -1,4 +1,5 @@
 import type { ComponentChildren } from "preact";
+import { z } from "zod";
 import { useEffect, useMemo, useState } from "preact/hooks";
 import {
   AgentToolsPanel,
@@ -57,7 +58,6 @@ import {
   deleteModelProfile,
   effectiveAiValuesForViewer,
   isSensitiveSettingKey,
-  modelDisplayName,
   modelProfileDefaultEntries,
   modelProfileSaveEntries,
   modelValidationValuesFromProfileDrafts,
@@ -154,6 +154,13 @@ type OpenAiCodexOAuthPoll =
 
 type SettingsStatusTone = "pending" | "success" | "error";
 type ModelProfileStep = 0 | 1 | 2 | 3;
+
+function modelProfileStep(value: number): ModelProfileStep {
+  if (value <= 0) return 0;
+  if (value === 1) return 1;
+  if (value === 2) return 2;
+  return 3;
+}
 
 type SettingsFieldGroupProps = {
   config: readonly ConsoleConfigEntry[];
@@ -574,7 +581,7 @@ function ModelSettingsDetail({
           size="small"
           width={520}
           current={newProfileStep}
-          onChange={(index) => setNewProfileStep(Math.max(0, Math.min(index, newProfileStep)) as ModelProfileStep)}
+          onChange={(index) => setNewProfileStep(modelProfileStep(Math.min(index, newProfileStep)))}
           l0={MODEL_PROFILE_STEP_LABELS[0]}
           l1={MODEL_PROFILE_STEP_LABELS[1]}
           l2={MODEL_PROFILE_STEP_LABELS[2]}
@@ -788,24 +795,6 @@ function profileRow(profile: ConsoleModelProfile, onOpen: () => void): SettingsL
     statusLabel: model ? "MODEL" : "INCOMPLETE",
     tone: model ? "online" : "warn",
     tag: { label: label || "MODEL", tone: "info" },
-    onOpen,
-  };
-}
-
-function toolModelRow(
-  group: ConsoleSettingGroup,
-  values: Record<string, string>,
-  onOpen: () => void,
-): SettingsListRow {
-  const modelField = group.fields.find((field) => field.key.endsWith("/model"));
-  const model = modelField ? values[modelField.key] ?? "" : "";
-  return {
-    id: group.id,
-    icon: toolModelIcon(group.id),
-    label: group.title,
-    sub: model ? modelDisplayName(model) : group.description,
-    statusLabel: model ? "CONFIGURED" : "EMPTY",
-    tone: model ? "online" : "idle",
     onOpen,
   };
 }
@@ -1126,7 +1115,7 @@ function ModelProfileForm({
       : "Testing model...");
     await onValidate({
       values: validationValues,
-      ...(profile && !effectiveClearedSecretKeys.has(MODEL_API_KEY_FIELD_KEY) ? { presetId: profile.id } : {}),
+      ...(profile && !effectiveClearedSecretKeys.has(MODEL_API_KEY_FIELD_KEY) ? { presetId: profile.id } : undefined),
     });
   };
   const validateDraftsWithOpenAiCodexLogin = async () => {
@@ -1310,7 +1299,7 @@ function ModelProfileForm({
   }, makeDefault ? "Saved and set as default" : "Saved", "TESTING...");
 
   if (!profile) {
-    const clampedStep = Math.max(0, Math.min(step, MODEL_PROFILE_STEP_LABELS.length - 1)) as ModelProfileStep;
+    const clampedStep = modelProfileStep(step);
     const canContinue = editable && !pending && (
       clampedStep === 0 ? true :
       clampedStep === 1 ? nameReady :
@@ -1322,7 +1311,7 @@ function ModelProfileForm({
         return;
       }
       setStatusText("");
-      onStepChange?.(Math.min(3, clampedStep + 1) as ModelProfileStep);
+      onStepChange?.(modelProfileStep(clampedStep + 1));
     };
     const stepTitle = clampedStep === 0
       ? "Choose model type"
@@ -1378,7 +1367,7 @@ function ModelProfileForm({
             disabled={pending || clampedStep === 0}
             onClick={() => {
               setStatusText("");
-              onStepChange?.(Math.max(0, clampedStep - 1) as ModelProfileStep);
+              onStepChange?.(modelProfileStep(clampedStep - 1));
             }}
           />
           <Button variant="secondary" label="CANCEL" disabled={pending} onClick={onCancel} />
@@ -1908,7 +1897,11 @@ function AdvancedSettingsFields({
     <details
       class="gsv-console-advanced-fields"
       open={open}
-      onToggle={(event) => setOpen((event.currentTarget as HTMLDetailsElement).open)}
+      onToggle={(event) => {
+        if (event.currentTarget instanceof HTMLDetailsElement) {
+          setOpen(event.currentTarget.open);
+        }
+      }}
     >
       <summary class="gsv-console-advanced-summary">
         <span>Advanced</span>
@@ -1921,10 +1914,12 @@ function AdvancedSettingsFields({
   );
 }
 
-function splitModelSettingsFields(fields: readonly ConsoleSettingField[]): {
+type ModelSettingsFieldGroups = {
   primary: readonly ConsoleSettingField[];
   advanced: readonly ConsoleSettingField[];
-} {
+};
+
+function splitModelSettingsFields(fields: readonly ConsoleSettingField[]): ModelSettingsFieldGroups {
   const hasAdvancedModelFields = fields.some((field) => MODEL_ADVANCED_FIELD_KEYS.has(field.key));
   if (!hasAdvancedModelFields) {
     return { primary: fields, advanced: [] };
@@ -1939,10 +1934,7 @@ function settingFieldGroupsForProvider(
   fields: readonly ConsoleSettingField[],
   openAiCodexProvider: boolean,
   gsvProvider: boolean,
-): {
-  primary: readonly ConsoleSettingField[];
-  advanced: readonly ConsoleSettingField[];
-} {
+): ModelSettingsFieldGroups {
   const visibleFields = fields.filter((field) =>
     !(
       (openAiCodexProvider && OPENAI_CODEX_IGNORED_PROFILE_FIELD_KEYS.has(field.key))
@@ -2062,7 +2054,7 @@ function shouldApplyOpenAiCodexDefaultModel(
     currentModel.startsWith("@cf/");
 }
 
-function isMissingOpenAiCodexCredentialError(error: unknown): boolean {
+function isMissingOpenAiCodexCredentialError<T>(error: T): boolean {
   const message = errorMessage(error);
   return /no api key for provider:\s*openai-codex/i.test(message) ||
     /openai codex.*(?:connect|login|credential|account)/i.test(message);
@@ -2414,7 +2406,12 @@ function selectOptionValue(option: SelectOption | undefined): string {
   if (!option) {
     return "";
   }
-  return typeof option === "string" ? option : option.value ?? option.label;
+  const text = z.string().safeParse(option);
+  if (text.success) {
+    return text.data;
+  }
+  const objectOption = z.object({ value: z.string().optional(), label: z.string() }).safeParse(option);
+  return objectOption.success ? objectOption.data.value ?? objectOption.data.label : "";
 }
 
 function isFieldRedacted(
@@ -2453,6 +2450,6 @@ function serializeSettingValue(field: ConsoleSettingField, value: string): strin
   return value;
 }
 
-function errorMessage(error: unknown): string {
+function errorMessage<T>(error: T): string {
   return error instanceof Error ? error.message : error ? String(error) : "Unable to save settings.";
 }

@@ -144,7 +144,7 @@ function CrewRoster({
     if (!node) return;
     const update = () => setWidth(node.clientWidth);
     update();
-    if (typeof ResizeObserver === "undefined") {
+    if (!globalThis.ResizeObserver) {
       window.addEventListener("resize", update);
       return () => window.removeEventListener("resize", update);
     }

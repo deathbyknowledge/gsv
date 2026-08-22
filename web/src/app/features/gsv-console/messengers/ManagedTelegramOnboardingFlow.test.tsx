@@ -1,4 +1,3 @@
-import type { ComponentChildren } from "preact";
 import { act } from "preact/test-utils";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ConnectFlowDef } from "../connect-flows/connectFlowTypes";
@@ -8,15 +7,17 @@ import {
   flowStepNodes,
   nodeWithLabel,
 } from "./messengerTestHarness";
+import { ManagedTelegramOnboardingFlow, type ManagedTelegramDependencies } from "./ManagedTelegramOnboardingFlow";
 
 const mocks = vi.hoisted(() => ({
   confirm: vi.fn(),
+  // SAFETY: Test fixture data is constructed with the asserted shape for this focused case.
   currentFlow: null as ConnectFlowDef | null,
   currentStep: -1,
   inspect: vi.fn(),
 }));
 
-vi.mock("../hooks/useConsoleData", () => ({
+const dependencies: ManagedTelegramDependencies = {
   useConsoleAdapterPairingInfo: () => ({
     data: {
       adapter: "telegram",
@@ -25,6 +26,7 @@ vi.mock("../hooks/useConsoleData", () => ({
       botUsername: "official_gsv_bot",
     },
     isError: false,
+    error: null,
   }),
   useInspectConsoleAdapterPairing: () => ({
     isPending: false,
@@ -34,13 +36,7 @@ vi.mock("../hooks/useConsoleData", () => ({
     isPending: false,
     mutateAsync: mocks.confirm,
   }),
-}));
-
-vi.mock("../../gsv-shell/unsaved/unsavedGuard", () => ({
   useUnsavedGuard: () => undefined,
-}));
-
-vi.mock("../connect-flows/ConnectFlowShell", () => ({
   ConnectFlowShell: ({
     current,
     flow,
@@ -52,9 +48,7 @@ vi.mock("../connect-flows/ConnectFlowShell", () => ({
     mocks.currentStep = current;
     return null;
   },
-}));
-
-import { ManagedTelegramOnboardingFlow } from "./ManagedTelegramOnboardingFlow";
+};
 
 let root: ReturnType<typeof createTestRoot> | null = null;
 
@@ -100,7 +94,7 @@ beforeEach(async () => {
   });
   root = createTestRoot("Managed Telegram onboarding harness");
   await root.render(
-    <ManagedTelegramOnboardingFlow onBack={() => undefined} onConnected={() => undefined} />,
+    <ManagedTelegramOnboardingFlow onBack={() => undefined} onConnected={() => undefined} dependencies={dependencies} />,
   );
 });
 
@@ -114,6 +108,7 @@ describe("ManagedTelegramOnboardingFlow", () => {
   it("starts with the official bot and never asks the user for a BotFather token", async () => {
     expect(currentFlow().title).toBe("Connect Telegram");
     expect(mocks.currentStep).toBe(0);
+    // SAFETY: Test fixture data is constructed with the asserted shape for this focused case.
     expect(collectText(currentFlow().steps.flatMap((step) => step.render({} as never))))
       .not.toContain("BotFather");
     expect(nodes().some((node) => node.props.label === "ACCESS TOKEN")).toBe(false);
@@ -142,8 +137,7 @@ describe("ManagedTelegramOnboardingFlow", () => {
     });
     expect(mocks.currentStep).toBe(3);
     const success = nodes().find((node) =>
-      typeof node.props.text === "string"
-      && node.props.text.includes("personal intelligence")
+      node.props.text?.includes("personal intelligence")
     );
     expect(success).toBeTruthy();
   });

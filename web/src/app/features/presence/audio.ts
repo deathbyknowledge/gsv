@@ -5,9 +5,8 @@ type AudioWindow = Window & {
 };
 
 export function canUseBrowserVoiceRecorder(): boolean {
-  return typeof navigator !== "undefined"
-    && Boolean(navigator.mediaDevices?.getUserMedia)
-    && typeof MediaRecorder !== "undefined";
+  const browserNavigator = globalThis.navigator;
+  return Boolean(browserNavigator?.mediaDevices && globalThis.MediaRecorder);
 }
 
 export function canUseAmbientMode(): boolean {
@@ -41,10 +40,11 @@ export function createAudioContext(): AudioContext {
 }
 
 export function selectVoiceRecorderMimeType(): string {
-  if (typeof MediaRecorder === "undefined" || typeof MediaRecorder.isTypeSupported !== "function") {
+  const recorder = globalThis.MediaRecorder;
+  if (!recorder?.isTypeSupported) {
     return "";
   }
-  return PRESENCE_RECORDER_MIME_TYPES.find((mimeType) => MediaRecorder.isTypeSupported(mimeType)) || "";
+  return PRESENCE_RECORDER_MIME_TYPES.find((mimeType) => recorder.isTypeSupported(mimeType)) || "";
 }
 
 export function presenceRecordingFilename(mimeType: string, timestamp = Date.now()): string {
@@ -66,8 +66,13 @@ export function totalBlobSize(blobs: Blob[]): number {
 }
 
 function resolveAudioContext(): typeof AudioContext | null {
-  const audioWindow = window as AudioWindow;
-  return window.AudioContext ?? audioWindow.webkitAudioContext ?? null;
+  const browserWindow = globalThis.window;
+  if (!browserWindow) {
+    return null;
+  }
+  // SAFETY: The browser window may expose the prefixed constructor on legacy engines.
+  const audioWindow = browserWindow as AudioWindow;
+  return browserWindow.AudioContext ?? audioWindow.webkitAudioContext ?? null;
 }
 
 function extensionForVoiceMimeType(mimeType: string): string {

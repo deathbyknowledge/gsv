@@ -2,6 +2,7 @@ import { Tag, type TagTone } from "../../app/components/ui/Tag";
 import type { Story } from "../story";
 
 const TONES: TagTone[] = ["update", "online", "error", "warn", "info", "accent", "idle"];
+const PULSING_TONES = ["info", "online", "error"] satisfies TagTone[];
 
 const story: Story = {
   title: "Tag",
@@ -28,7 +29,7 @@ const story: Story = {
       <div class="ds-cell">
         <div class="ds-label">Pulsing dot (in progress)</div>
         <div class="ds-row">
-          {(["info", "online", "error"] as TagTone[]).map((tone) => (
+          {PULSING_TONES.map((tone) => (
             <Tag key={tone} tone={tone} label={tone.toUpperCase()} dot pulse />
           ))}
         </div>

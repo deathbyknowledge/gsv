@@ -1,6 +1,7 @@
 import DOMPurify from "dompurify";
 import { parse as parseMarkdown } from "marked";
 import { useEffect, useRef } from "preact/hooks";
+import { z } from "zod";
 import {
   normalizeDbScopedLibraryPath,
   normalizeLibraryPath,
@@ -220,7 +221,8 @@ function wireSourceRefs(
 
 function renderMarkdownHtml(markdown: string): string {
   const parsed = parseMarkdown(markdown, { async: false, breaks: true, gfm: true });
-  return DOMPurify.sanitize(typeof parsed === "string" ? parsed : String(parsed));
+  const html = z.string().safeParse(parsed);
+  return DOMPurify.sanitize(html.success ? html.data : String(parsed));
 }
 
 function resolveLibraryLink(rawHref: string, selectedDb: string, selectedPath: string): string | null {
@@ -265,7 +267,7 @@ function parseRenderedSourceRef(value: string): { target: string; path: string; 
   };
 }
 
-function slugifyHeading(value: unknown): string {
+function slugifyHeading<T>(value: T): string {
   return String(value ?? "")
     .toLowerCase()
     .replace(/[^a-z0-9\s-]/g, "")
@@ -274,7 +276,7 @@ function slugifyHeading(value: unknown): string {
     .replace(/-+/g, "-") || "section";
 }
 
-function escapeHtml(value: unknown): string {
+function escapeHtml<T>(value: T): string {
   return String(value ?? "")
     .replaceAll("&", "&amp;")
     .replaceAll("<", "&lt;")

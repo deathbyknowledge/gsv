@@ -23,6 +23,7 @@ import type {
   ProcSendArgs,
 } from "@humansandmachines/gsv/protocol";
 import { normalizeHilRequest } from "./hil";
+import { z } from "zod";
 
 export type ChatRunState = "idle" | "running" | "queued" | "awaiting_hil";
 
@@ -100,12 +101,24 @@ export type ChatProcessAiConfig = Extract<ProcAiConfigGetResult, { ok: true }>["
 export type ChatProcessAiConfigSetArgs = ProcAiConfigSetArgs;
 export type ChatProcessAiConfigSetResult = Extract<ProcAiConfigSetResult, { ok: true }>;
 
+type HistoryValue = string | number | boolean | null | HistoryValue[] | HistoryRecord;
+type HistoryRecord = { [key: string]: HistoryValue };
+const historyValueSchema: z.ZodType<HistoryValue> = z.lazy(() => z.union([
+  z.string(),
+  z.number(),
+  z.boolean(),
+  z.null(),
+  z.array(historyValueSchema),
+  z.record(z.string(), historyValueSchema),
+]));
+const historyRecordSchema = z.record(z.string(), historyValueSchema);
+
 function cleanOptionalString(value: string | undefined): string | undefined {
   const normalized = value?.trim();
   return normalized ? normalized : undefined;
 }
 
-function stringifyMessageContent(value: unknown): string {
+function stringifyMessageContent(value: HistoryValue): string {
   try {
     return JSON.stringify(value, null, 2) ?? String(value);
   } catch {
@@ -113,88 +126,74 @@ function stringifyMessageContent(value: unknown): string {
   }
 }
 
-function normalizeMessageText(value: unknown, role?: ChatHistoryMessageRole): string {
-  if (typeof value === "string") {
-    return value;
+function normalizeMessageText(value: HistoryValue, role?: ChatHistoryMessageRole): string {
+  const text = z.string().safeParse(value);
+  if (text.success) {
+    return text.data;
+  }
+  const number = z.number().safeParse(value);
+  const boolean = z.boolean().safeParse(value);
+  if (number.success || boolean.success) {
+    return String(number.success ? number.data : boolean.data);
   }
 
-  if (typeof value === "number" || typeof value === "boolean") {
-    return String(value);
-  }
-
-  if (Array.isArray(value)) {
-    return value
+  const list = z.array(historyValueSchema).safeParse(value);
+  if (list.success) {
+    return list.data
       .map((part) => {
-        if (typeof part === "string") {
-          return part;
+        const partText = z.string().safeParse(part);
+        if (partText.success) {
+          return partText.data;
         }
-        if (part && typeof part === "object" && "text" in part) {
-          const text = (part as { text?: unknown }).text;
-          return typeof text === "string" ? text : "";
+        const record = historyRecordSchema.safeParse(part);
+        if (!record.success) {
+          return "";
         }
-        if (part && typeof part === "object" && "output" in part) {
-          return normalizeMessageText((part as { output?: unknown }).output, role);
-        }
-        if (part && typeof part === "object" && "content" in part) {
-          return normalizeMessageText((part as { content?: unknown }).content, role);
-        }
+        if ("text" in record.data) return normalizeMessageText(record.data.text, role);
+        if ("output" in record.data) return normalizeMessageText(record.data.output, role);
+        if ("content" in record.data) return normalizeMessageText(record.data.content, role);
         return "";
       })
       .filter(Boolean)
       .join("\n");
   }
 
-  if (value && typeof value === "object" && "text" in value) {
-    const text = (value as { text?: unknown }).text;
-    return typeof text === "string" ? text : "";
+  const record = historyRecordSchema.safeParse(value);
+  if (record.success && "result" in record.data) {
+    return normalizeMessageText(record.data.result, role);
   }
-
-  if (value && typeof value === "object" && "output" in value) {
-    return normalizeMessageText((value as { output?: unknown }).output, role);
-  }
-
-  if (value && typeof value === "object" && "content" in value) {
-    return normalizeMessageText((value as { content?: unknown }).content, role);
-  }
-
-  if (value && typeof value === "object" && "result" in value) {
-    return normalizeMessageText((value as { result?: unknown }).result, role);
-  }
-
-  if (value && typeof value === "object" && "error" in value) {
-    const error = (value as { error?: unknown }).error;
-    const text = normalizeMessageText(error, role);
+  if (record.success && "error" in record.data) {
+    const text = normalizeMessageText(record.data.error, role);
     return text ? `Error: ${text}` : "";
   }
 
-  if (value && typeof value === "object" && "toolName" in value) {
-    const toolName = (value as { toolName?: unknown }).toolName;
-    const label = typeof toolName === "string" && toolName.trim()
-      ? `Tool result: ${toolName.trim()}`
+  if (record.success && "toolName" in record.data) {
+    const toolName = z.string().safeParse(record.data.toolName);
+    const label = toolName.success && toolName.data.trim()
+      ? `Tool result: ${toolName.data.trim()}`
       : "Tool result";
-    const args = "args" in value ? (value as { args?: unknown }).args : undefined;
+    const args = "args" in record.data ? record.data.args : undefined;
     const details = args === undefined ? "" : stringifyMessageContent(args);
     return details ? `${label}\n${details}` : label;
   }
 
   if (role === "system" || role === "toolResult") {
-    const text = stringifyMessageContent(value);
-    return text === undefined ? "" : text;
+    return stringifyMessageContent(value);
   }
 
   if (value !== null && value !== undefined) {
-    const text = stringifyMessageContent(value);
-    return text === undefined ? "" : text;
+    return stringifyMessageContent(value);
   }
 
   return "";
 }
 
-function normalizeFallbackToolText(value: unknown): string {
-  if (value && typeof value === "object" && "toolName" in value) {
-    const toolName = (value as { toolName?: unknown }).toolName;
-    return typeof toolName === "string" && toolName.trim()
-      ? `Tool result: ${toolName}`
+function normalizeFallbackToolText(value: HistoryValue): string {
+  const record = historyRecordSchema.safeParse(value);
+  if (record.success && "toolName" in record.data) {
+    const toolName = z.string().safeParse(record.data.toolName);
+    return toolName.success && toolName.data.trim()
+      ? `Tool result: ${toolName.data}`
       : "";
   }
 
@@ -204,7 +203,7 @@ function normalizeFallbackToolText(value: unknown): string {
 export function normalizeRunState(input: {
   activeRunId?: string | null;
   queuedCount?: number | null;
-  pendingHil?: unknown;
+  pendingHil?: ProcHilRequest | null;
 }): ChatRunState {
   if (input.pendingHil) {
     return "awaiting_hil";
@@ -254,17 +253,21 @@ export function normalizeProcessSummaries(processes: readonly ProcListEntry[]): 
 }
 
 export function normalizeHistoryMessage(message: ProcHistoryMessage, index: number): ChatHistoryMessage {
-  const id = typeof message.id === "number" ? message.id : null;
-  const timestamp = typeof message.timestamp === "number" ? message.timestamp : null;
+  const idResult = z.number().safeParse(message.id);
+  const id = idResult.success ? idResult.data : null;
+  const timestampResult = z.number().safeParse(message.timestamp);
+  const timestamp = timestampResult.success ? timestampResult.data : null;
+  const contentResult = historyValueSchema.safeParse(message.content);
+  const content = contentResult.success ? contentResult.data : null;
 
   return {
     id,
     clientId: id === null ? `transient-${index}` : String(id),
     runId: message.runId ?? null,
     role: message.role,
-    content: message.content,
-    text: normalizeMessageText(message.content, message.role)
-      || normalizeFallbackToolText(message.content),
+    content,
+    text: normalizeMessageText(content, message.role)
+      || normalizeFallbackToolText(content),
     timestamp,
     origin: message.origin,
     metadata: message.metadata,
@@ -299,8 +302,8 @@ export function normalizeSendPayload(
 
   return {
     message,
-    ...(pid ? { pid } : {}),
-    ...(media && media.length > 0 ? { media } : {}),
+    ...(pid ? { pid } : undefined),
+    ...(media && media.length > 0 ? { media } : undefined),
   };
 }
 

@@ -1,5 +1,5 @@
 import { Fragment } from "preact";
-import { IconButton } from "./IconButton";
+import { IconButton, type IconButtonSize } from "./IconButton";
 import "./Breadcrumbs.css";
 
 export interface Crumb {
@@ -24,18 +24,18 @@ export interface BreadcrumbsProps {
   currentAriaCurrent?: "page" | "location" | "step" | "true";
 }
 
-const SIZE_CLASS: Record<BreadcrumbsSize, string> = {
+const SIZE_CLASS = {
   small: "gsv-bc-sm",
   medium: "gsv-bc-md",
   large: "gsv-bc-lg",
 };
 
 /** IconButton size paired with each crumb scale, so the back button tracks the trail. */
-const BACK_SIZE: Record<BreadcrumbsSize, "small" | "medium" | "large"> = {
+const BACK_SIZE = {
   small: "small",
   medium: "small",
   large: "medium",
-};
+} satisfies Record<BreadcrumbsSize, IconButtonSize>;
 
 /** A single rendered node in the trail: either a real crumb or the collapsed ellipsis. */
 interface Node {
@@ -113,7 +113,7 @@ export function Breadcrumbs({
       ) : null}
       <ol class="gsv-bc-list">
         {nodes.map((node, i) => {
-          const clickable = typeof node.onClick === "function";
+          const clickable = node.onClick !== undefined;
           const last = i === nodes.length - 1;
           return (
             <Fragment key={`${node.kind}:${node.label}:${i}`}>

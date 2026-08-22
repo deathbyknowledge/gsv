@@ -76,6 +76,7 @@ describe("console settings domain", () => {
     });
     expect(profiles[0].values["config/ai/fallback_model_profile"]).toBeUndefined();
 
+    // SAFETY: Test fixture uses the asserted API shape for this focused case.
     const serialized = JSON.parse(serializeModelProfiles(profiles)) as {
       profiles: Array<{ values: Record<string, string> }>;
     };
@@ -103,6 +104,7 @@ describe("console settings domain", () => {
       ...modelProfileSaveEntries(0, profiles, nextProfiles, clearedSecretKeys),
       ...modelProfileDefaultEntries([], 0, true, nextProfiles[0], clearedSecretKeys),
     ];
+    // SAFETY: Test fixture uses the asserted API shape for this focused case.
     const storedProfiles = JSON.parse(
       entries.find((entry) => entry.key === modelProfilesConfigKey(0))?.value ?? "{}",
     ) as { profiles?: Array<{ values: Record<string, string> }> };
@@ -161,6 +163,7 @@ describe("console settings domain", () => {
   });
 
   it("redacts legacy secrets from model profile config JSON", () => {
+    // SAFETY: Test fixture uses the asserted API shape for this focused case.
     const redacted = JSON.parse(redactModelProfilesConfigValue(JSON.stringify({
       version: 1,
       profiles: [{

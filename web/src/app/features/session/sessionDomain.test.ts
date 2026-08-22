@@ -7,7 +7,6 @@ import {
   buildSetupPayload,
   resolveVisibleView,
   validateSetupDetails,
-  type PendingAction,
 } from "./sessionDomain";
 
 function snapshot(phase: SessionPhase): SessionSnapshot {

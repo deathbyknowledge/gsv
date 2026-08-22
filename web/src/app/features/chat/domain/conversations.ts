@@ -67,8 +67,8 @@ function interactionOrigin(origin: ConversationMessageOrigin): InteractionOrigin
     return {
       kind: "client",
       connectionId: "conversation",
-      ...(origin.clientId ? { clientId: origin.clientId } : {}),
-      ...(origin.platform ? { platform: origin.platform } : {}),
+      ...(origin.clientId ? { clientId: origin.clientId } : undefined),
+      ...(origin.platform ? { platform: origin.platform } : undefined),
     };
   }
   if (origin.kind === "adapter") {
@@ -78,7 +78,7 @@ function interactionOrigin(origin: ConversationMessageOrigin): InteractionOrigin
       accountId: origin.accountId,
       actorId: origin.actorId,
       surface: origin.surface,
-      ...(origin.providerMessageId ? { messageId: origin.providerMessageId } : {}),
+      ...(origin.providerMessageId ? { messageId: origin.providerMessageId } : undefined),
     };
   }
   if (origin.kind === "process") {

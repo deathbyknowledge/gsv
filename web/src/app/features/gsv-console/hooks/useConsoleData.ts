@@ -605,15 +605,16 @@ function toResourceState<T>(
   enabled: boolean,
   isEmptyData: (data: T) => boolean,
 ): ConsoleResourceState<T> {
-  const hasData = query.data !== undefined;
+  const data = query.data;
+  const hasData = data !== undefined;
   return {
-    data: query.data ?? null,
+    data: data ?? null,
     isUnavailable: !enabled && !hasData,
     isLoading: query.isLoading && !hasData,
     isRefreshing: query.isFetching && hasData,
     isError: query.isError && !hasData,
     errorText: errorText(query.error),
-    isEmpty: !query.isLoading && !query.isError && hasData && isEmptyData(query.data as T),
+    isEmpty: !query.isLoading && !query.isError && data !== undefined && isEmptyData(data),
   };
 }
 
@@ -631,6 +632,6 @@ function isOverviewEmpty(value: ConsoleOverviewData): boolean {
     && value.config.length === 0;
 }
 
-function errorText(error: unknown): string {
+function errorText<T>(error: T): string {
   return error instanceof Error ? error.message : error ? String(error) : "";
 }

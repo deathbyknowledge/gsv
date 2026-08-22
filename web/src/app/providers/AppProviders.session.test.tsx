@@ -7,25 +7,9 @@ import type {
   SessionSnapshot,
 } from "../services/session/sessionService";
 
-const sessionFactory = vi.hoisted(() => ({
-  create: vi.fn(),
-}));
-
-vi.mock("../services/session/sessionService", async (importOriginal) => {
-  const original = await importOriginal<
-    typeof import("../services/session/sessionService")
-  >();
-  return {
-    ...original,
-    createSessionService: sessionFactory.create,
-  };
-});
-
-vi.mock("../services/query/GatewaySignalInvalidator", () => ({
-  GatewaySignalInvalidator: () => null,
-}));
-
 import { AppProviders } from "./AppProviders";
+
+const NoopInvalidator = () => null;
 
 function session(phase: SessionSnapshot["phase"]): SessionSnapshot {
   return {
@@ -44,6 +28,7 @@ function createSessionHarness() {
   const listeners = new Set<(snapshot: SessionSnapshot) => void>();
   const start = vi.fn(async () => {});
   const service: SessionService = {
+    // SAFETY: Test fixture data is constructed with the asserted shape for this focused case.
     client: {} as SessionService["client"],
     snapshot: () => current,
     subscribe: (listener) => {
@@ -93,12 +78,15 @@ describe("session bootstrap ownership", () => {
     const root = createTestRoot("The session bootstrap provider harness");
     const harness = createSessionHarness();
     const lifecycle: string[] = [];
-    sessionFactory.create.mockReturnValue(harness.service);
+    const createSessionService = vi.fn(() => harness.service);
     vi.stubGlobal("document", {});
 
     try {
       await root.render(
-        <AppProviders>
+        <AppProviders
+          QueryInvalidator={NoopInvalidator}
+          createSessionService={createSessionService}
+        >
           <MountProbe lifecycle={lifecycle} />
         </AppProviders>,
       );
@@ -116,7 +104,6 @@ describe("session bootstrap ownership", () => {
     } finally {
       await root.unmount();
       vi.unstubAllGlobals();
-      sessionFactory.create.mockReset();
     }
   });
 });

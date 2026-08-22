@@ -63,13 +63,7 @@ export function resolveChatProcessTargets(input: {
   personalPid?: string | null;
   processes: readonly ChatProcessSummary[];
   workSessionPid?: string | null;
-}): {
-  activeProcess: ChatProcessSummary | null;
-  personalProcess: ChatProcessSummary | null;
-  targetedProcess: ChatProcessSummary | null;
-  workSessionActive: boolean;
-  workSessionProcess: ChatProcessSummary | null;
-} {
+}) {
   const personalProcess = selectPersonalChatProcess(
     input.processes,
     input.ownerUid,

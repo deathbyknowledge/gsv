@@ -1,6 +1,6 @@
 import type { LibraryEntry, LibraryNote, LibraryTreeNode } from "./libraryTypes";
 
-export function normalizeLibraryPath(value: unknown): string {
+export function normalizeLibraryPath<T>(value: T): string {
   const trimmed = String(value ?? "")
     .trim()
     .replace(/^\/+/, "")
@@ -20,7 +20,7 @@ export function normalizeLibraryPath(value: unknown): string {
   return parts.join("/");
 }
 
-export function normalizeLibraryDbId(value: unknown): string {
+export function normalizeLibraryDbId<T>(value: T): string {
   const db = normalizeLibraryPath(value);
   if (!db || db.includes("/")) {
     throw new Error("collection id is required");
@@ -28,7 +28,7 @@ export function normalizeLibraryDbId(value: unknown): string {
   return db;
 }
 
-export function normalizeDbScopedLibraryPath(value: unknown, db: string): string {
+export function normalizeDbScopedLibraryPath<T>(value: T, db: string): string {
   const path = normalizeLibraryPath(value);
   if (!path) {
     return "";
@@ -248,7 +248,7 @@ export function normalizeLibraryQueryTerms(query: string): string[] {
     .filter(Boolean);
 }
 
-function slugifyHeading(value: unknown): string {
+function slugifyHeading<T>(value: T): string {
   return String(value ?? "")
     .toLowerCase()
     .replace(/[^a-z0-9\s-]/g, "")

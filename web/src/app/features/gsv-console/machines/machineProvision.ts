@@ -122,12 +122,7 @@ export function buildBrowserExtensionConfig(input: {
   username: string;
   deviceId: string;
   token: string;
-}): {
-  gatewayUrl: string;
-  username: string;
-  token: string;
-  deviceId: string;
-} {
+}) {
   const deviceId = requireDeviceId(input.deviceId);
   return {
     gatewayUrl: buildGatewayWsUrl(input.origin),

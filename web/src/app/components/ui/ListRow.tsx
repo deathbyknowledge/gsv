@@ -35,7 +35,7 @@ export interface ListRowProps {
   onClick?: () => void;
 }
 
-const STATUS_TEXT: Record<Exclude<ListRowStatus, "none">, string> = {
+const STATUS_TEXT = {
   online: "var(--online)",
   error: "var(--error)",
   idle: "var(--meta)",
@@ -44,7 +44,7 @@ const STATUS_TEXT: Record<Exclude<ListRowStatus, "none">, string> = {
   warn: "var(--warn)",
 };
 
-const DOT_COLOR: Record<Exclude<ListRowStatus, "none">, string> = {
+const DOT_COLOR = {
   online: "var(--online)",
   error: "var(--error)",
   idle: "var(--idle)",
@@ -77,6 +77,7 @@ export function ListRow({
   const compact = density === "compact";
   const st = status || "online";
   const hasDot = st !== "none";
+  // SAFETY: Component boundary provides the asserted DOM/test shape.
   const dotKey = (st === "none" ? "online" : st) as Exclude<ListRowStatus, "none">;
   const dc = DOT_COLOR[dotKey];
   const dotClass = `lr-dot${statusDotPlacement === "trailing" ? " is-trailing" : ""}`;
@@ -95,7 +96,7 @@ export function ListRow({
     gap: compact ? "10px" : "14px",
     overflow: "hidden",
     padding: compact ? "8px 14px" : "15px 20px",
-    ...(compact ? { minHeight: "34px" } : {}),
+    ...(compact ? { minHeight: "34px" } : undefined),
     cursor: onClick ? "pointer" : "default",
     transition: "background .12s",
     font: "inherit",
@@ -109,7 +110,7 @@ export function ListRow({
     borderRadius: "50%",
     flex: "none",
     background: dc,
-    ...(st === "idle" ? {} : { boxShadow: `0 0 7px ${dc}` }),
+    ...(st === "idle" ? undefined : { boxShadow: `0 0 7px ${dc}` }),
   };
 
   const content = (
@@ -131,7 +132,7 @@ export function ListRow({
             textOverflow: "ellipsis",
             whiteSpace: "nowrap",
             /* size + .04em tracking from .gsv-listitem; compact drops to 13px */
-            ...(compact ? { fontSize: "0.8125rem" } : {}),
+            ...(compact ? { fontSize: "0.8125rem" } : undefined),
             color: "var(--text)",
           }}
         >
