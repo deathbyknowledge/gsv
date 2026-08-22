@@ -20,6 +20,7 @@ import {
 import type {
   AdapterAccountStatus,
   AdapterActivity,
+  AdapterConnectConfig,
   AdapterConnectResult,
   AdapterDisconnectResult,
   AdapterInstallationContext,
@@ -30,35 +31,33 @@ import type {
   BinaryBody,
 } from "./types";
 import { parseTelegramWebhookPath } from "./webhook-route";
+import {
+  TelegramAccount,
+  telegramUpdateSchema,
+  type TelegramUpdate,
+} from "./telegram-account";
+import * as z from "zod/mini";
 
-export { TelegramAccount } from "./telegram-account";
+export { TelegramAccount };
 export type * from "./types";
 
 interface Env {
-  TELEGRAM_ACCOUNT: DurableObjectNamespace;
+  TELEGRAM_ACCOUNT: DurableObjectNamespace<TelegramAccount>;
   TELEGRAM_BOT_TOKEN?: string;
   TELEGRAM_WEBHOOK_BASE_URL?: string;
   TELEGRAM_WEBHOOK_SECRET?: string;
 }
 
-type WebhookResult = { ok: boolean; status?: number; error?: string };
+const telegramConnectConfigSchema = z.strictObject({
+  botToken: z.optional(z.string()),
+  webhookBaseUrl: z.optional(z.string()),
+  webhookSecret: z.optional(z.string()),
+});
+type TelegramConnectConfig = z.infer<typeof telegramConnectConfigSchema>;
 
-type TelegramAccountStub = {
-  start(
-    botToken: string,
-    accountId: string,
-    webhookBaseUrl: string,
-    webhookRoute: string,
-    webhookSecret?: string,
-  ): Promise<void>;
-  stop(): Promise<void>;
-  getStatus(): Promise<AdapterAccountStatus>;
-  sendMessage(
-    message: AdapterOutboundMessage,
-    body?: BinaryBody,
-  ): Promise<AdapterSendResult>;
-  setTyping(surface: AdapterSurface, typing: boolean): Promise<void>;
-  handleWebhook(update: unknown, secretToken: string | null): Promise<WebhookResult>;
+type TelegramAccountReference = {
+  id: DurableObjectId;
+  account: DurableObjectStub<TelegramAccount>;
 };
 
 function toJsonError(message: string, status = 500): Response {
@@ -73,37 +72,34 @@ export class TelegramChannel
 
   async adapterConnect(
     accountId: string,
-    config?: Record<string, unknown>,
+    config?: AdapterConnectConfig,
   ): Promise<AdapterConnectResult>;
   async adapterConnect(
     installation: AdapterInstallationContext,
     accountId: string,
-    config?: Record<string, unknown>,
+    config?: AdapterConnectConfig,
   ): Promise<AdapterConnectResult>;
   async adapterConnect(...args: AdapterConnectRpcArgs): Promise<AdapterConnectResult> {
     const resolved = resolveAdapterConnectRpcArgs(args);
+    const config = telegramConnectConfigSchema.safeParse(resolved.config);
+    if (!config.success) {
+      return { ok: false, error: "Telegram adapter config is invalid" };
+    }
     return await this.#adapterConnectForInstallation(
       resolved.installation,
       resolved.accountId,
-      resolved.config,
+      config.data,
     );
   }
 
   async #adapterConnectForInstallation(
     installation: AdapterInstallationContext,
     accountId: string,
-    config: Record<string, unknown> = {},
+    config: TelegramConnectConfig = {},
   ): Promise<AdapterConnectResult> {
-    const botToken =
-      (typeof config.botToken === "string" ? config.botToken : undefined) ||
-      this.env.TELEGRAM_BOT_TOKEN;
-    const webhookBaseUrl =
-      (typeof config.webhookBaseUrl === "string"
-        ? config.webhookBaseUrl
-        : undefined) || this.env.TELEGRAM_WEBHOOK_BASE_URL;
-    const webhookSecret =
-      (typeof config.webhookSecret === "string" ? config.webhookSecret : undefined) ||
-      this.env.TELEGRAM_WEBHOOK_SECRET;
+    const botToken = config.botToken || this.env.TELEGRAM_BOT_TOKEN;
+    const webhookBaseUrl = config.webhookBaseUrl || this.env.TELEGRAM_WEBHOOK_BASE_URL;
+    const webhookSecret = config.webhookSecret || this.env.TELEGRAM_WEBHOOK_SECRET;
 
     if (!botToken) {
       return {
@@ -311,13 +307,13 @@ export class TelegramChannel
   private getAccountDO(
     installation: AdapterInstallationContext,
     accountId: string,
-  ): { id: DurableObjectId; account: TelegramAccountStub } {
+  ): TelegramAccountReference {
     const id = this.env.TELEGRAM_ACCOUNT.idFromName(
       adapterAccountDurableObjectName(installation, accountId),
     );
     return {
       id,
-      account: this.env.TELEGRAM_ACCOUNT.get(id) as unknown as TelegramAccountStub,
+      account: this.env.TELEGRAM_ACCOUNT.get(id),
     };
   }
 }
@@ -349,11 +345,13 @@ export default {
       } catch {
         return new Response("Not Found", { status: 404 });
       }
-      const account = env.TELEGRAM_ACCOUNT.get(id) as unknown as TelegramAccountStub;
+      const account = env.TELEGRAM_ACCOUNT.get(id);
 
-      let updatePayload: unknown;
+      let updatePayload: TelegramUpdate;
       try {
-        updatePayload = await request.json();
+        const parsed = telegramUpdateSchema.safeParse(await request.json());
+        if (!parsed.success) return toJsonError("Invalid Telegram update payload", 400);
+        updatePayload = parsed.data;
       } catch {
         return toJsonError("Invalid JSON payload", 400);
       }

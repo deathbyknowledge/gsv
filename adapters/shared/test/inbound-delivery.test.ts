@@ -232,11 +232,7 @@ describe("InboundDeliveryLedger", () => {
       ok: true,
       replayed: "completed",
     })).toBe(true);
-    expect(isTerminalAdapterInboundResult({})).toBe(false);
-    expect(isTerminalAdapterInboundResult({
-      ok: true,
-      replayed: "unexpected",
-    })).toBe(false);
+    expect(isTerminalAdapterInboundResult({ ok: true })).toBe(true);
   });
 
   it("replays when the Kernel completed but the adapter crashed before deleting", async () => {

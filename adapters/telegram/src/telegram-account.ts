@@ -29,9 +29,7 @@ import type {
   AdapterAccountStatus,
   AdapterActor,
   AdapterInboundMessage,
-  AdapterInboundResult,
   AdapterInstallationContext,
-  AdapterMedia,
   AdapterOutboundMessage,
   AdapterSendResult,
   AdapterSurface,
@@ -51,6 +49,7 @@ import {
   type TelegramInboundMediaSource,
 } from "./telegram-inbound-media";
 import { buildTelegramWebhookPath } from "./webhook-route";
+import * as z from "zod/mini";
 
 interface Env {
   GATEWAY: Fetcher & AdapterGatewayBinding;
@@ -131,7 +130,7 @@ type TelegramMessage = {
   sticker?: TelegramStickerAttachment;
 };
 
-type TelegramUpdate = {
+export type TelegramUpdate = {
   update_id: number;
   message?: TelegramMessage;
   edited_message?: TelegramMessage;
@@ -166,6 +165,80 @@ type TelegramStickerAttachment = TelegramFileAttachment & {
   is_video?: boolean;
   emoji?: string;
 };
+
+const telegramUserSchema = z.object({
+  id: z.number(),
+  is_bot: z.optional(z.boolean()),
+  first_name: z.optional(z.string()),
+  last_name: z.optional(z.string()),
+  username: z.optional(z.string()),
+});
+const telegramChatSchema = z.object({
+  id: z.number(),
+  type: z.enum(["private", "group", "supergroup", "channel"]),
+  title: z.optional(z.string()),
+  username: z.optional(z.string()),
+  first_name: z.optional(z.string()),
+  last_name: z.optional(z.string()),
+});
+const telegramMessageEntitySchema = z.object({
+  type: z.string(),
+  offset: z.number(),
+  length: z.number(),
+});
+const telegramPhotoSizeSchema = z.object({
+  file_id: z.string(),
+  file_unique_id: z.optional(z.string()),
+  width: z.optional(z.number()),
+  height: z.optional(z.number()),
+  file_size: z.optional(z.number()),
+});
+const telegramFileAttachmentSchema = z.object({
+  file_id: z.optional(z.string()),
+  file_unique_id: z.optional(z.string()),
+  file_name: z.optional(z.string()),
+  mime_type: z.optional(z.string()),
+  file_size: z.optional(z.number()),
+  duration: z.optional(z.number()),
+});
+const telegramStickerAttachmentSchema = z.object({
+  ...telegramFileAttachmentSchema.shape,
+  is_animated: z.optional(z.boolean()),
+  is_video: z.optional(z.boolean()),
+  emoji: z.optional(z.string()),
+});
+const telegramReplyMessageSchema = z.object({
+  message_id: z.number(),
+  text: z.optional(z.string()),
+  caption: z.optional(z.string()),
+  from: z.optional(telegramUserSchema),
+});
+const telegramMessageSchema = z.object({
+  message_id: z.number(),
+  date: z.number(),
+  chat: telegramChatSchema,
+  from: z.optional(telegramUserSchema),
+  text: z.optional(z.string()),
+  caption: z.optional(z.string()),
+  entities: z.optional(z.array(telegramMessageEntitySchema)),
+  caption_entities: z.optional(z.array(telegramMessageEntitySchema)),
+  reply_to_message: z.optional(telegramReplyMessageSchema),
+  photo: z.optional(z.array(telegramPhotoSizeSchema)),
+  document: z.optional(telegramFileAttachmentSchema),
+  audio: z.optional(telegramFileAttachmentSchema),
+  voice: z.optional(telegramFileAttachmentSchema),
+  video: z.optional(telegramFileAttachmentSchema),
+  video_note: z.optional(telegramFileAttachmentSchema),
+  animation: z.optional(telegramFileAttachmentSchema),
+  sticker: z.optional(telegramStickerAttachmentSchema),
+});
+export const telegramUpdateSchema = z.object({
+  update_id: z.number(),
+  message: z.optional(telegramMessageSchema),
+  edited_message: z.optional(telegramMessageSchema),
+  channel_post: z.optional(telegramMessageSchema),
+  edited_channel_post: z.optional(telegramMessageSchema),
+});
 
 type TelegramFile = {
   file_id: string;
@@ -536,6 +609,12 @@ export class TelegramAccount extends DurableObject<Env> {
       }
     }
 
+    const extra: NonNullable<AdapterAccountStatus["extra"]> = {};
+    if (this.state.botUserId !== null) extra.botUserId = this.state.botUserId;
+    if (this.state.botUsername !== null) extra.botUsername = this.state.botUsername;
+    if (this.state.webhookUrl !== null) extra.webhookUrl = this.state.webhookUrl;
+    if (pendingUpdateCount !== undefined) extra.pendingUpdateCount = pendingUpdateCount;
+
     return {
       accountId: this.getAccountId(),
       connected: this.state.connected,
@@ -543,12 +622,7 @@ export class TelegramAccount extends DurableObject<Env> {
       mode: "webhook",
       lastActivity: this.state.lastActivity ?? undefined,
       error: this.state.lastError ?? undefined,
-      extra: {
-        botUserId: this.state.botUserId ?? undefined,
-        botUsername: this.state.botUsername ?? undefined,
-        webhookUrl: this.state.webhookUrl ?? undefined,
-        pendingUpdateCount,
-      },
+      extra,
     };
   }
 
@@ -708,7 +782,7 @@ export class TelegramAccount extends DurableObject<Env> {
 
       try {
         await this.deliveries.succeed(message.deliveryId, attemptId, sentMessageId);
-      } catch (error) {
+      } catch {
         return {
           ok: false,
           error: "Telegram accepted the delivery but its durable outcome could not be recorded",
@@ -793,14 +867,6 @@ export class TelegramAccount extends DurableObject<Env> {
       };
     }
 
-    if (!update || typeof update !== "object") {
-      return {
-        ok: false,
-        status: 400,
-        error: "Invalid Telegram update payload",
-      };
-    }
-
     const message = this.extractMessage(update);
     const updateId = this.normalizeUpdateId(update.update_id);
     if (!message) {
@@ -851,7 +917,7 @@ export class TelegramAccount extends DurableObject<Env> {
       return { terminal: false, error: "Telegram account is disconnected" };
     }
 
-    const result = await callAdapterGateway<AdapterInboundResult>(
+    const result = await callAdapterGateway(
       this.env.GATEWAY,
       this.getInstallationContext(),
       "adapter.inbound",

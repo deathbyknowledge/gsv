@@ -39,7 +39,8 @@
     "access": "public"
   },
   "dependencies": {
-    "marked": "^16.4.2"
+    "marked": "^16.4.2",
+    "zod": "4.3.6"
   },
   "devDependencies": {
     "esbuild": "^0.27.7",

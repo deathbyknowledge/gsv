@@ -3,7 +3,7 @@ import type {
   AdapterMessageDestination,
   AdapterSurfaceKind,
 } from "@humansandmachines/gsv/protocol";
-import { isAdapterInboundResult } from "@humansandmachines/gsv/protocol";
+import { adapterInboundResultSchema } from "@humansandmachines/gsv/protocol";
 
 type AdapterIngressReceiptInput = {
   adapter: string;
@@ -377,16 +377,15 @@ function completedClaimFromRow(row: AdapterIngressReceiptRow): AdapterIngressRec
 }
 
 function parseAdapterInboundResult(row: AdapterIngressReceiptRow): AdapterInboundResult {
-  let result: unknown;
   try {
-    result = JSON.parse(row.result_json ?? "");
+    const decoded = adapterInboundResultSchema.safeParse(JSON.parse(row.result_json ?? ""));
+    if (!decoded.success || decoded.data.replayed !== undefined) {
+      throw new Error(`Invalid adapter ingress receipt result: ${row.receipt_id}`);
+    }
+    return decoded.data;
   } catch {
     throw new Error(`Invalid adapter ingress receipt result: ${row.receipt_id}`);
   }
-  if (!isAdapterInboundResult(result) || result.replayed !== undefined) {
-    throw new Error(`Invalid adapter ingress receipt result: ${row.receipt_id}`);
-  }
-  return result;
 }
 
 function parseReceiptProgress(row: AdapterIngressReceiptRow): unknown {

@@ -4,7 +4,6 @@ import type {
   AdapterSendResult,
   AdapterSurface,
 } from "./types";
-import { isAdapterInboundResult } from "../../../packages/gsv/src/protocol/adapters.js";
 import { shouldReplaceAlarm } from "./alarm";
 
 export type PendingInboundResponse<ResponseContext = never> = {
@@ -229,7 +228,9 @@ export class InboundDeliveryLedger<Payload, ResponseContext = never> {
       }
 
       const error = disposition.error?.slice(0, MAX_ERROR_LENGTH);
-      return { state: "pending", ...(error ? { error } : {}) };
+      const result: InboundDeliveryAttempt = { state: "pending" };
+      if (error) result.error = error;
+      return result;
     } finally {
       this.active.delete(normalizedId);
     }
@@ -331,7 +332,9 @@ export class InboundDeliveryLedger<Payload, ResponseContext = never> {
       && attempted.attempt < MAX_RESPONSE_DELIVERY_ATTEMPTS
     ) {
       const detail = retryError.slice(0, MAX_ERROR_LENGTH);
-      return { state: "pending", ...(detail ? { error: detail } : {}) };
+      const result: InboundDeliveryAttempt = { state: "pending" };
+      if (detail) result.error = detail;
+      return result;
     }
     if (retryError !== undefined) {
       console.warn(JSON.stringify({
@@ -360,14 +363,14 @@ export class InboundDeliveryLedger<Payload, ResponseContext = never> {
 
 /** An in-progress replay is an acknowledgement of ownership, not completion. */
 export function isTerminalAdapterInboundResult(
-  result: unknown,
-): result is AdapterInboundResult {
-  return isAdapterInboundResult(result) && result.replayed !== "in_progress";
+  result: AdapterInboundResult,
+): boolean {
+  return result.replayed !== "in_progress";
 }
 
 /** Converts a terminal Kernel result into durable, provider-ready responses. */
 export function adapterInboundResultDisposition(
-  result: unknown,
+  result: AdapterInboundResult,
   input: {
     surface: AdapterSurface;
     providerMessageId: string;
@@ -383,29 +386,33 @@ export function adapterInboundResultDisposition(
 
   const responses: PendingInboundResponse[] = [];
   if (result.challenge?.prompt) {
+    const message: AdapterOutboundMessage = {
+      deliveryId: result.challenge.deliveryId,
+      surface: input.surface,
+      text: result.challenge.prompt,
+      replyToId: input.providerMessageId,
+    };
+    if (input.actorId) message.actorId = input.actorId;
     responses.push({
-      message: {
-        deliveryId: result.challenge.deliveryId,
-        surface: input.surface,
-        ...(input.actorId ? { actorId: input.actorId } : {}),
-        text: result.challenge.prompt,
-        replyToId: input.providerMessageId,
-      },
+      message,
       expiresAt: result.challenge.expiresAt,
     });
   }
   if (result.reply?.text) {
+    const message: AdapterOutboundMessage = {
+      deliveryId: result.reply.deliveryId,
+      surface: input.surface,
+      text: result.reply.text,
+      replyToId: result.reply.replyToId || input.providerMessageId,
+    };
+    if (input.actorId) message.actorId = input.actorId;
     responses.push({
-      message: {
-        deliveryId: result.reply.deliveryId,
-        surface: input.surface,
-        ...(input.actorId ? { actorId: input.actorId } : {}),
-        text: result.reply.text,
-        replyToId: result.reply.replyToId || input.providerMessageId,
-      },
+      message,
     });
   }
-  return { terminal: true, ...(responses.length > 0 ? { responses } : {}) };
+  const disposition: InboundDeliveryDisposition = { terminal: true };
+  if (responses.length > 0) disposition.responses = responses;
+  return disposition;
 }
 
 function requireDeliveryId(value: string): string {
@@ -423,6 +430,6 @@ function requireAlarmTime(value: number): number {
   return value;
 }
 
-function toErrorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
+function toErrorMessage(cause: unknown): string {
+  return cause instanceof Error ? cause.message : String(cause);
 }

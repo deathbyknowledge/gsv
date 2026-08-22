@@ -3,6 +3,7 @@ export type {
   AdapterActivity,
   AdapterActor,
   AdapterConnectChallenge,
+  AdapterConnectConfig,
   AdapterInstallationContext,
   AdapterGatewayFrame as GatewayFrame,
   AdapterGatewayRequestFrame as GatewayRequestFrame,

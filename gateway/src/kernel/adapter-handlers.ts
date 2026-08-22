@@ -13,6 +13,7 @@ import type {
 } from "../adapter-interface";
 import type {
   AdapterConnectArgs,
+  AdapterConnectConfig,
   AdapterConnectResult as AdapterConnectSyscallResult,
   AdapterDisconnectArgs,
   AdapterDisconnectResult as AdapterDisconnectSyscallResult,
@@ -37,6 +38,9 @@ import type {
   AdapterSendResult,
   AdapterStatusArgs,
   AdapterStatusResult,
+  AdapterWorkerConnectResult,
+  AdapterWorkerDisconnectResult,
+  AdapterWorkerSendResult,
   BinaryBody,
   ProcMediaInput,
   ProcessIdentity,
@@ -45,13 +49,14 @@ import type {
 import {
   cancelBinaryBody,
   consumeAdapterMediaBodyParts,
-  isAdapterWorkerActivityResult,
-  isAdapterWorkerConnectResult,
-  isAdapterWorkerDisconnectResult,
-  isAdapterWorkerSendResult,
-  isAdapterWorkerStatusResult,
+  adapterAccountStatusSchema,
+  adapterWorkerActivityResultSchema,
+  adapterWorkerConnectResultSchema,
+  adapterWorkerDisconnectResultSchema,
+  adapterWorkerSendResultSchema,
   validateAdapterMediaBody,
 } from "@humansandmachines/gsv/protocol";
+import * as z from "zod/mini";
 import { resolveCallerOwnerUid, type KernelContext } from "./context";
 import type { RequestFrame, ResponseOkFrame } from "../protocol/frames";
 import type {
@@ -85,7 +90,7 @@ import { isLocked } from "../auth/shadow";
 type LegacyStandaloneAdapterService = {
   adapterConnect(
     accountId: string,
-    config?: Record<string, unknown>,
+    config?: AdapterConnectConfig,
   ): ReturnType<AdapterWorkerInterface["adapterConnect"]>;
   adapterDisconnect(
     accountId: string,
@@ -108,6 +113,7 @@ type AdapterServiceBinding = Fetcher
   & Partial<AdapterWorkerInterface>
   & Partial<AdapterPairingWorkerInterface>
   & Partial<LegacyStandaloneAdapterService>;
+const adapterStatusListSchema = z.array(adapterAccountStatusSchema);
 type AdapterCommandResult = {
   handled: boolean;
   reply?: {
@@ -202,7 +208,7 @@ export async function handleAdapterConnect(
   if (!service) {
     return { ok: false, error: `Adapter service unavailable: ${adapter}` };
   }
-  if (typeof service.adapterConnect !== "function") {
+  if (!service.adapterConnect) {
     return { ok: false, error: `Adapter service does not implement connect: ${adapter}` };
   }
 
@@ -212,16 +218,19 @@ export async function handleAdapterConnect(
     if (needsOwnerClaim) {
       ctx.adapters.status.setOwner(adapter, accountId, ownerUid);
     }
-    let connectResult: unknown;
+    let connectResult: AdapterWorkerConnectResult;
     try {
-      connectResult = await callAdapterConnect(service, ctx, accountId, args.config);
+      const decoded = adapterWorkerConnectResultSchema.safeParse(
+        await callAdapterConnect(service, ctx, accountId, args.config),
+      );
+      if (!decoded.success) {
+        logAdapterBoundaryFailure("error", "connect_invalid_response");
+        return { ok: false, error: `Adapter returned an invalid connect response: ${adapter}` };
+      }
+      connectResult = decoded.data;
     } catch {
       logAdapterBoundaryFailure("error", "connect_worker_failed");
       return { ok: false, error: `Adapter connect failed: ${adapter}` };
-    }
-    if (!isAdapterWorkerConnectResult(connectResult)) {
-      logAdapterBoundaryFailure("error", "connect_invalid_response");
-      return { ok: false, error: `Adapter returned an invalid connect response: ${adapter}` };
     }
     if (!connectResult.ok) {
       return {
@@ -278,22 +287,25 @@ export async function handleAdapterDisconnect(
   if (!service) {
     return { ok: false, error: `Adapter service unavailable: ${adapter}` };
   }
-  if (typeof service.adapterDisconnect !== "function") {
+  if (!service.adapterDisconnect) {
     return { ok: false, error: `Adapter service does not implement disconnect: ${adapter}` };
   }
 
   ctx.adapters.status.beginLifecycle(adapter, accountId);
   try {
-    let result: unknown;
+    let result: AdapterWorkerDisconnectResult;
     try {
-      result = await callAdapterDisconnect(service, ctx, accountId);
+      const decoded = adapterWorkerDisconnectResultSchema.safeParse(
+        await callAdapterDisconnect(service, ctx, accountId),
+      );
+      if (!decoded.success) {
+        logAdapterBoundaryFailure("error", "disconnect_invalid_response");
+        return { ok: false, error: `Adapter returned an invalid disconnect response: ${adapter}` };
+      }
+      result = decoded.data;
     } catch {
       logAdapterBoundaryFailure("error", "disconnect_worker_failed");
       return { ok: false, error: `Adapter disconnect failed: ${adapter}` };
-    }
-    if (!isAdapterWorkerDisconnectResult(result)) {
-      logAdapterBoundaryFailure("error", "disconnect_invalid_response");
-      return { ok: false, error: `Adapter returned an invalid disconnect response: ${adapter}` };
     }
     if (!result.ok) {
       return { ok: false, error: result.error };
@@ -731,9 +743,21 @@ async function deliverAdapterMessage(
     replyToId: args.replyToId,
   };
 
-  let result: unknown;
+  let result: AdapterWorkerSendResult;
   try {
-    result = await callAdapterSend(service, ctx.installationId, accountId, outbound, body);
+    const decoded = adapterWorkerSendResultSchema.safeParse(
+      await callAdapterSend(service, ctx.installationId, accountId, outbound, body),
+    );
+    if (!decoded.success) {
+      logAdapterBoundaryFailure("error", "send_invalid_response");
+      return {
+        ok: false,
+        error: `Adapter returned an invalid send response: ${adapter}`,
+        deliveryId,
+        retryable: false,
+      };
+    }
+    result = decoded.data;
   } catch {
     return {
       ok: false,
@@ -743,15 +767,6 @@ async function deliverAdapterMessage(
     };
   } finally {
     await cancelBinaryBody(body, "adapter.send completed");
-  }
-  if (!isAdapterWorkerSendResult(result)) {
-    logAdapterBoundaryFailure("error", "send_invalid_response");
-    return {
-      ok: false,
-      error: `Adapter returned an invalid send response: ${adapter}`,
-      deliveryId,
-      retryable: false,
-    };
   }
   if (!result.ok) {
     if (result.ambiguous) {
@@ -878,15 +893,18 @@ export async function handleAdapterStatus(
   const accountId = args.accountId?.trim() || undefined;
 
   const service = resolveAdapterService(ctx.env, adapter);
-  if (service && typeof service.adapterStatus === "function") {
+  if (service?.adapterStatus) {
     const refreshAccountIds = adapterStatusRefreshAccountIds(ctx, adapter, accountId);
     for (const refreshAccountId of refreshAccountIds) {
       try {
-        const statuses: unknown = await callAdapterStatus(service, ctx, refreshAccountId);
-        if (!isAdapterWorkerStatusResult(statuses)) {
+        const decoded = adapterStatusListSchema.safeParse(
+          await callAdapterStatus(service, ctx, refreshAccountId),
+        );
+        if (!decoded.success) {
           logAdapterBoundaryFailure("error", "status_invalid_response");
           continue;
         }
+        const statuses = decoded.data;
         const allowedAccountIds = refreshAccountId ? new Set([refreshAccountId]) : null;
         for (const status of statuses) {
           if (allowedAccountIds && !allowedAccountIds.has(status.accountId.trim())) {
@@ -2098,22 +2116,25 @@ export async function setAdapterActivityForKernel(
   activity: AdapterActivity,
 ): Promise<void> {
   const service = resolveAdapterService(env, adapter);
-  if (!service || typeof service.adapterSetActivity !== "function") {
+  if (!service?.adapterSetActivity) {
     return;
   }
 
   try {
-    const result: unknown = await callAdapterSetActivity(
-      service,
-      installationId,
-      accountId,
-      surface,
-      activity,
+    const decoded = adapterWorkerActivityResultSchema.safeParse(
+      await callAdapterSetActivity(
+        service,
+        installationId,
+        accountId,
+        surface,
+        activity,
+      ),
     );
-    if (!isAdapterWorkerActivityResult(result)) {
+    if (!decoded.success) {
       logAdapterBoundaryFailure("warn", "activity_invalid_response");
       return;
     }
+    const result = decoded.data;
     if (!result.ok) {
       logAdapterBoundaryFailure("warn", "activity_rejected");
     }
@@ -2128,16 +2149,19 @@ async function refreshAdapterStatus(
   adapter: string,
   accountId: string,
 ): Promise<AdapterAccountStatus | null> {
-  if (typeof service.adapterStatus !== "function") {
+  if (!service.adapterStatus) {
     return null;
   }
 
   try {
-    const statuses: unknown = await callAdapterStatus(service, ctx, accountId);
-    if (!isAdapterWorkerStatusResult(statuses)) {
+    const decoded = adapterStatusListSchema.safeParse(
+      await callAdapterStatus(service, ctx, accountId),
+    );
+    if (!decoded.success) {
       logAdapterBoundaryFailure("error", "status_invalid_response");
       return null;
     }
+    const statuses = decoded.data;
     const accountStatuses = statuses.filter((status) => status.accountId === accountId);
     for (const status of accountStatuses) {
       const localized = localizeAdapterStatus(ctx, adapter, status);
@@ -2175,7 +2199,7 @@ function callAdapterConnect(
   service: AdapterServiceBinding,
   ctx: KernelContext,
   accountId: string,
-  config?: Record<string, unknown>,
+  config?: AdapterConnectConfig,
 ) {
   return ctx.installationId === SINGLETON_INSTALLATION_ID
     ? service.adapterConnect!(accountId, config)

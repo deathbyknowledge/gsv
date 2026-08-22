@@ -19,6 +19,7 @@ import {
 import type {
   AdapterAccountStatus,
   AdapterActivity,
+  AdapterConnectConfig,
   AdapterConnectResult,
   AdapterDisconnectResult,
   AdapterInstallationContext,
@@ -30,9 +31,15 @@ import type {
 } from "../../shared/src/types";
 import { errorFields, errorMessage, logWhatsApp } from "./logging";
 import { WhatsAppAccount } from "./whatsapp-account";
+import * as z from "zod/mini";
 
 export { WhatsAppAccount } from "./whatsapp-account";
 export type * from "./types";
+
+const whatsappConnectConfigSchema = z.strictObject({
+  force: z.optional(z.union([z.boolean(), z.string()])),
+});
+type WhatsAppConnectConfig = z.infer<typeof whatsappConnectConfigSchema>;
 
 export class WhatsAppChannelEntrypoint
   extends WorkerEntrypoint<Env>
@@ -42,26 +49,30 @@ export class WhatsAppChannelEntrypoint
 
   async adapterConnect(
     accountId: string,
-    config?: Record<string, unknown>,
+    config?: AdapterConnectConfig,
   ): Promise<AdapterConnectResult>;
   async adapterConnect(
     installation: AdapterInstallationContext,
     accountId: string,
-    config?: Record<string, unknown>,
+    config?: AdapterConnectConfig,
   ): Promise<AdapterConnectResult>;
   async adapterConnect(...args: AdapterConnectRpcArgs): Promise<AdapterConnectResult> {
     const resolved = resolveAdapterConnectRpcArgs(args);
+    const config = whatsappConnectConfigSchema.safeParse(resolved.config);
+    if (!config.success) {
+      return { ok: false, error: "WhatsApp adapter config is invalid" };
+    }
     return await this.#adapterConnectForInstallation(
       resolved.installation,
       resolved.accountId,
-      resolved.config,
+      config.data,
     );
   }
 
   async #adapterConnectForInstallation(
     installation: AdapterInstallationContext,
     accountId: string,
-    config: Record<string, unknown> = {},
+    config: WhatsAppConnectConfig = {},
   ): Promise<AdapterConnectResult> {
     try {
       const parsedInstallation = parseAdapterInstallationContext(installation);

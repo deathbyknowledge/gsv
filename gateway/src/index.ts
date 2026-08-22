@@ -17,8 +17,10 @@ import type {
   UnlinkManagedTelegramIdentityResult,
 } from "@humansandmachines/gsv/protocol";
 import {
+  adapterGatewayFrameSchema,
+  adapterInstallationContextSchema,
+  binaryBodySchema,
   cancelBinaryBody,
-  isAdapterInstallationContext,
 } from "@humansandmachines/gsv/protocol";
 import type { Frame } from "./protocol/frames";
 import { buildOAuthClientMetadata } from "./oauth-http";
@@ -42,6 +44,7 @@ import { managedInstallationWorkGate } from "./installation/lifecycle";
 import { createInstallationStorage } from "./installation/storage";
 import { createInstallationRipgit } from "./installation/ripgit";
 import { buildGitProxyRequest, getBasicAuth, matchGitPath } from "./git";
+import * as z from "zod/mini";
 
 export { Kernel } from "./kernel/do";
 export { Process } from "./process/do";
@@ -158,26 +161,26 @@ export class GatewayEntrypoint
       | [frame: Frame]
       | [installation: AdapterInstallationContext, frame: Frame]
   ): Promise<Frame | null> {
-    const values = args as unknown[];
     try {
-      if (values.length === 1) {
+      if (args.length === 1) {
         return await routeAdapterServiceFrame(
           this.env,
           { installationId: SINGLETON_INSTALLATION_ID },
-          requireAdapterServiceFrame(values[0]),
+          requireAdapterServiceFrame(args[0]),
         );
       }
-      if (values.length === 2 && isAdapterInstallationContext(values[0])) {
+      const installation = adapterInstallationContextSchema.safeParse(args[0]);
+      if (args.length === 2 && installation.success) {
         return await routeAdapterServiceFrame(
           this.env,
-          values[0],
-          requireAdapterServiceFrame(values[1]),
+          installation.data,
+          requireAdapterServiceFrame(args[1]),
         );
       }
       throw new Error("Gateway serviceFrame RPC arguments are invalid");
     } catch (error) {
       await Promise.all(
-        adapterServiceFrameBodyCandidates(values)
+        adapterServiceFrameBodyCandidates(args)
           .map((body) => cancelBinaryBody(body, "Gateway service request failed")),
       );
       console.error("[GatewayEntrypoint] serviceFrame failed:", error);
@@ -269,7 +272,7 @@ async function routeAdapterServiceFrame(
   installation: AdapterInstallationContext,
   frame: Frame,
 ): Promise<Frame | null> {
-  const body = binaryBodyCandidate((frame as { body?: unknown }).body);
+  const body = adapterServiceFrameBody(frame);
   try {
     const installationId = resolveAdapterInstallationId(bindings, installation);
     if (bindings.INSTALLATION_DIRECTORY) {
@@ -299,61 +302,31 @@ async function routeAdapterServiceFrame(
   }
 }
 
-function requireAdapterServiceFrame(value: unknown): Frame {
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
-    throw new Error("Gateway serviceFrame frame is invalid");
-  }
-  const frame = value as Record<string, unknown>;
-  if (frame.body !== undefined && !binaryBodyCandidate(frame.body)) {
-    throw new Error("Gateway serviceFrame body is invalid");
-  }
-  if (frame.type === "req") {
-    if (
-      typeof frame.id !== "string"
-      || typeof frame.call !== "string"
-      || !("args" in frame)
-    ) {
-      throw new Error("Gateway serviceFrame frame is invalid");
-    }
-    return value as Frame;
-  }
-  if (frame.type === "res") {
-    if (typeof frame.id !== "string" || typeof frame.ok !== "boolean") {
-      throw new Error("Gateway serviceFrame frame is invalid");
-    }
-    return value as Frame;
-  }
-  if (frame.type === "sig" && typeof frame.signal === "string") {
-    return value as Frame;
-  }
-  throw new Error("Gateway serviceFrame frame is invalid");
+function requireAdapterServiceFrame(value: Frame): Frame {
+  const parsed = adapterGatewayFrameSchema.safeParse(value);
+  if (!parsed.success) throw new Error("Gateway serviceFrame frame is invalid");
+  return value;
 }
 
-function adapterServiceFrameBodyCandidates(values: unknown[]): BinaryBody[] {
+type AdapterServiceRpcArgument = AdapterInstallationContext | Frame;
+const adapterServiceFrameBodySchema = z.object({ body: binaryBodySchema });
+
+function adapterServiceFrameBodyCandidates(
+  values: readonly AdapterServiceRpcArgument[],
+): BinaryBody[] {
   const bodies = new Set<BinaryBody>();
   for (const value of values) {
-    if (!value || typeof value !== "object" || Array.isArray(value)) continue;
-    try {
-      const body = binaryBodyCandidate((value as { body?: unknown }).body);
-      if (body) bodies.add(body);
-    } catch {
-      continue;
-    }
+    const body = adapterServiceFrameBody(value);
+    if (body) bodies.add(body);
   }
   return [...bodies];
 }
 
-function binaryBodyCandidate(value: unknown): BinaryBody | undefined {
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
-    return undefined;
-  }
-  try {
-    return (value as { stream?: unknown }).stream instanceof ReadableStream
-      ? value as BinaryBody
-      : undefined;
-  } catch {
-    return undefined;
-  }
+function adapterServiceFrameBody(
+  value: AdapterServiceRpcArgument,
+): BinaryBody | undefined {
+  const parsed = adapterServiceFrameBodySchema.safeParse(value);
+  return parsed.success ? parsed.data.body : undefined;
 }
 
 function resolveAdapterInstallationId(

@@ -1,7 +1,8 @@
 import {
-  isAdapterInstallationContext,
+  adapterInstallationContextSchema,
   type AdapterInstallationContext,
 } from "../../../packages/gsv/src/protocol/adapters.js";
+import * as z from "zod/mini";
 
 export const LEGACY_STANDALONE_ADAPTER_INSTALLATION_ID = "singleton";
 const MAX_DURABLE_OBJECT_NAME_BYTES = 1_024;
@@ -11,13 +12,24 @@ export type AdapterAccountDurableObjectIdentity = AdapterInstallationContext & {
   accountId: string;
 };
 
+export type AdapterAccountStoredIdentity = {
+  installationId?: string | null;
+  accountId?: string | null;
+};
+
+const adapterAccountStoredIdentitySchema = z.object({
+  installationId: z.optional(z.nullable(z.string())),
+  accountId: z.optional(z.nullable(z.string())),
+});
+
 export function parseAdapterInstallationContext(
-  value: unknown,
+  value: AdapterInstallationContext,
 ): AdapterInstallationContext {
-  if (!isAdapterInstallationContext(value)) {
+  const parsed = adapterInstallationContextSchema.safeParse(value);
+  if (!parsed.success) {
     throw new Error("Adapter installation context is invalid");
   }
-  return Object.freeze({ installationId: value.installationId });
+  return Object.freeze(parsed.data);
 }
 
 export function adapterAccountDurableObjectName(
@@ -77,10 +89,7 @@ export function parseAdapterAccountDurableObjectName(
 export function assertAdapterAccountDurableObjectIdentity(
   name: string | undefined,
   accountId: string,
-  stored?: {
-    installationId?: unknown;
-    accountId?: unknown;
-  },
+  stored?: AdapterAccountStoredIdentity,
 ): AdapterAccountDurableObjectIdentity {
   const identity = stored
     ? resolveAdapterAccountDurableObjectIdentity(name, stored)
@@ -93,11 +102,13 @@ export function assertAdapterAccountDurableObjectIdentity(
 
 export function resolveAdapterAccountDurableObjectIdentity(
   name: string | undefined,
-  stored: {
-    installationId?: unknown;
-    accountId?: unknown;
-  },
+  storedInput: AdapterAccountStoredIdentity,
 ): AdapterAccountDurableObjectIdentity {
+  const parsedStored = adapterAccountStoredIdentitySchema.safeParse(storedInput);
+  if (!parsedStored.success) {
+    throw new Error("Persisted adapter account identity is invalid");
+  }
+  const stored = parsedStored.data;
   if (name) {
     if (
       name.startsWith(ADAPTER_ACCOUNT_DURABLE_OBJECT_PREFIX)
@@ -123,7 +134,8 @@ export function resolveAdapterAccountDurableObjectIdentity(
     }
     const identity = parseAdapterAccountDurableObjectName(name);
     if (
-      typeof stored.accountId === "string"
+      stored.accountId !== undefined
+      && stored.accountId !== null
       && stored.accountId
       && stored.accountId.trim() !== identity.accountId
     ) {
@@ -140,12 +152,14 @@ export function resolveAdapterAccountDurableObjectIdentity(
     return identity;
   }
 
-  const installation = parseAdapterInstallationContext({
+  const parsedInstallation = adapterInstallationContextSchema.safeParse({
     installationId: stored.installationId,
   });
-  const accountId = typeof stored.accountId === "string"
-    ? stored.accountId.trim()
-    : "";
+  if (!parsedInstallation.success) {
+    throw new Error("Persisted adapter installation identity is invalid");
+  }
+  const installation = parsedInstallation.data;
+  const accountId = stored.accountId?.trim() ?? "";
   if (!accountId) {
     throw new Error("Adapter account identity is unavailable");
   }

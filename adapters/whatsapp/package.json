@@ -15,7 +15,8 @@
     "cf-typegen": "wrangler types"
   },
   "dependencies": {
-    "@whiskeysockets/baileys": "7.0.0-rc14"
+    "@whiskeysockets/baileys": "7.0.0-rc14",
+    "zod": "4.3.6"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "5.20260731.1",

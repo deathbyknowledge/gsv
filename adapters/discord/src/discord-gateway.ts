@@ -192,6 +192,9 @@ export class DiscordGateway extends DurableObject<Env> {
 
   async getStatus(): Promise<AdapterAccountStatus> {
     await this.loadState();
+    const extra: NonNullable<AdapterAccountStatus["extra"]> = {};
+    if (this.state.sessionId !== undefined) extra.sessionId = this.state.sessionId;
+    if (this.state.seq !== undefined) extra.seq = this.state.seq;
     return {
       accountId: this.getAccountId(),
       connected: this.state.connected,
@@ -199,10 +202,7 @@ export class DiscordGateway extends DurableObject<Env> {
       mode: "gateway",
       lastActivity: this.state.lastHeartbeatAck ?? undefined,
       error: this.state.lastError ?? undefined,
-      extra: {
-        sessionId: this.state.sessionId,
-        seq: this.state.seq,
-      },
+      extra,
     };
   }
 
@@ -403,12 +403,17 @@ export class DiscordGateway extends DurableObject<Env> {
         
         // Notify Gateway of status change via Service Binding RPC.
         const accountId = this.getAccountId();
+        const extra: NonNullable<AdapterAccountStatus["extra"]> = {};
+        if (botUser) {
+          extra.botUserId = botUser.id;
+          extra.botUsername = botUser.username;
+        }
         await this.notifyGatewayStatus({
           accountId,
           connected: true,
           authenticated: true,
           mode: "gateway",
-          extra: { botUserId: botUser?.id, botUsername: botUser?.username },
+          extra,
         });
         
         await this.saveState();
@@ -530,7 +535,7 @@ export class DiscordGateway extends DurableObject<Env> {
       wasMentioned,
     };
 
-    const result = await callAdapterGateway<AdapterInboundResult>(
+    const result = await callAdapterGateway(
       this.env.GATEWAY,
       this.getInstallationContext(),
       "adapter.inbound",

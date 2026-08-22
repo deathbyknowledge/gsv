@@ -43,8 +43,8 @@ import type {
   AdapterAccountStatus,
   AdapterActivity,
   AdapterActor,
+  AdapterConnectConfig,
   AdapterInboundMessage,
-  AdapterInboundResult,
   AdapterInstallationContext,
   AdapterMedia,
   AdapterOutboundMessage,
@@ -54,15 +54,21 @@ import type {
   BinaryBody,
 } from "../../shared/src/types";
 
-type RecordedMessage = {
-  direction: "in" | "out";
-  message: AdapterOutboundMessage | AdapterInboundMessage;
-  timestamp: number;
-};
+type RecordedMessage =
+  | {
+      direction: "in";
+      message: AdapterInboundMessage;
+      timestamp: number;
+    }
+  | {
+      direction: "out";
+      message: AdapterOutboundMessage;
+      timestamp: number;
+    };
 
 interface Env {
   GATEWAY: Fetcher & AdapterGatewayBinding;
-  TEST_CHANNEL_STATE: DurableObjectNamespace;
+  TEST_CHANNEL_STATE: DurableObjectNamespace<TestChannelState>;
 }
 
 // ============================================================================
@@ -93,11 +99,8 @@ export class TestChannelState extends DurableObject<Env> {
     return this.connected;
   }
   
-  async recordMessage(
-    direction: "in" | "out",
-    message: AdapterOutboundMessage | AdapterInboundMessage,
-  ): Promise<void> {
-    this.messages.push({ direction, message, timestamp: Date.now() });
+  async recordInboundMessage(message: AdapterInboundMessage): Promise<void> {
+    this.messages.push({ direction: "in", message, timestamp: Date.now() });
     await this.ctx.storage.put("messages", this.messages);
   }
 
@@ -144,7 +147,7 @@ export class TestChannelState extends DurableObject<Env> {
 
     try {
       await this.deliveries.succeed(message.deliveryId, claim.attemptId, messageId);
-    } catch (error) {
+    } catch {
       return {
         ok: false,
         error: "Test adapter recorded the delivery but could not persist its outcome",
@@ -161,7 +164,7 @@ export class TestChannelState extends DurableObject<Env> {
   async getOutboundMessages(): Promise<AdapterOutboundMessage[]> {
     return this.messages
       .filter(m => m.direction === "out")
-      .map(m => m.message as AdapterOutboundMessage);
+      .map(m => m.message);
   }
   
   async clearMessages(): Promise<void> {
@@ -190,17 +193,17 @@ export class TestChannel extends WorkerEntrypoint<Env> implements AdapterWorkerI
     const id = this.env.TEST_CHANNEL_STATE.idFromName(
       adapterAccountDurableObjectName(installation, accountId),
     );
-    return this.env.TEST_CHANNEL_STATE.get(id) as DurableObjectStub<TestChannelState>;
+    return this.env.TEST_CHANNEL_STATE.get(id);
   }
 
   async adapterConnect(
     accountId: string,
-    config?: Record<string, unknown>,
+    config?: AdapterConnectConfig,
   ): Promise<{ ok: true; connected: true; authenticated: true; message: string }>;
   async adapterConnect(
     installation: AdapterInstallationContext,
     accountId: string,
-    config?: Record<string, unknown>,
+    config?: AdapterConnectConfig,
   ): Promise<{ ok: true; connected: true; authenticated: true; message: string }>;
   async adapterConnect(
     ...args: AdapterConnectRpcArgs
@@ -216,7 +219,7 @@ export class TestChannel extends WorkerEntrypoint<Env> implements AdapterWorkerI
   async #adapterConnectForInstallation(
     installation: AdapterInstallationContext,
     accountId: string,
-    _config: Record<string, unknown> = {},
+    _config: AdapterConnectConfig = {},
   ): Promise<{ ok: true; connected: true; authenticated: true; message: string }> {
     const parsedInstallation = parseAdapterInstallationContext(installation);
     const state = this.getStateDO(parsedInstallation, accountId);
@@ -476,12 +479,12 @@ export class TestChannel extends WorkerEntrypoint<Env> implements AdapterWorkerI
       wasMentioned: surface.kind === "dm" ? true : options?.wasMentioned === true,
     };
 
-    await state.recordMessage("in", message);
+    await state.recordInboundMessage(message);
 
     console.log(`[TestChannel] Simulating inbound from ${surface.id}: ${text}`);
 
     try {
-      const result = await callAdapterGateway<AdapterInboundResult>(
+      const result = await callAdapterGateway(
         this.env.GATEWAY,
         parsedInstallation,
         "adapter.inbound",
@@ -541,7 +544,7 @@ export class TestChannel extends WorkerEntrypoint<Env> implements AdapterWorkerI
 // ============================================================================
 
 export default {
-  async fetch(request: Request, env: Env): Promise<Response> {
+  async fetch(request: Request): Promise<Response> {
     const url = new URL(request.url);
     
     if (url.pathname === "/" || url.pathname === "/health") {

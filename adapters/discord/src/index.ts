@@ -30,6 +30,7 @@ import {
 import type {
   AdapterAccountStatus,
   AdapterActivity,
+  AdapterConnectConfig,
   AdapterConnectResult,
   AdapterDisconnectResult,
   AdapterInstallationContext,
@@ -39,19 +40,26 @@ import type {
   AdapterWorkerInterface,
   BinaryBody,
 } from "../../shared/src/types";
+import { DiscordGateway } from "./discord-gateway";
+import * as z from "zod/mini";
 
-export { DiscordGateway } from "./discord-gateway";
+export { DiscordGateway };
 
 // Re-export interface types for consumers
 export type * from "./types";
 
 interface Env {
-  DISCORD_GATEWAY: DurableObjectNamespace;
+  DISCORD_GATEWAY: DurableObjectNamespace<DiscordGateway>;
   // Secrets
   DISCORD_BOT_TOKEN?: string;
 }
 
 const DISCORD_API = "https://discord.com/api/v10";
+
+const discordConnectConfigSchema = z.strictObject({
+  botToken: z.optional(z.string()),
+});
+type DiscordConnectConfig = z.infer<typeof discordConnectConfigSchema>;
 
 /**
  * Discord Channel Entrypoint
@@ -64,19 +72,23 @@ export class DiscordChannel extends WorkerEntrypoint<Env> implements AdapterWork
 
   async adapterConnect(
     accountId: string,
-    config?: Record<string, unknown>,
+    config?: AdapterConnectConfig,
   ): Promise<AdapterConnectResult>;
   async adapterConnect(
     installation: AdapterInstallationContext,
     accountId: string,
-    config?: Record<string, unknown>,
+    config?: AdapterConnectConfig,
   ): Promise<AdapterConnectResult>;
   async adapterConnect(...args: AdapterConnectRpcArgs): Promise<AdapterConnectResult> {
     const resolved = resolveAdapterConnectRpcArgs(args);
+    const config = discordConnectConfigSchema.safeParse(resolved.config);
+    if (!config.success) {
+      return { ok: false, error: "Discord adapter config is invalid" };
+    }
     return await this.#adapterConnectForInstallation(
       resolved.installation,
       resolved.accountId,
-      resolved.config,
+      config.data,
     );
   }
 
@@ -88,11 +100,9 @@ export class DiscordChannel extends WorkerEntrypoint<Env> implements AdapterWork
   async #adapterConnectForInstallation(
     installation: AdapterInstallationContext,
     accountId: string,
-    config: Record<string, unknown> = {},
+    config: DiscordConnectConfig = {},
   ): Promise<AdapterConnectResult> {
-    const configuredToken = typeof config.botToken === "string"
-      ? config.botToken.trim()
-      : "";
+    const configuredToken = config.botToken?.trim() ?? "";
     const botToken = configuredToken || this.env.DISCORD_BOT_TOKEN;
     if (!botToken) {
       return { ok: false, error: "No bot token provided" };
@@ -285,11 +295,11 @@ export class DiscordChannel extends WorkerEntrypoint<Env> implements AdapterWork
   private getGatewayDO(
     installation: AdapterInstallationContext,
     accountId: string,
-  ) {
+  ): DiscordGatewayStub {
     const id = this.env.DISCORD_GATEWAY.idFromName(
       adapterAccountDurableObjectName(installation, accountId),
     );
-    return this.env.DISCORD_GATEWAY.get(id) as unknown as DiscordGatewayStub;
+    return this.env.DISCORD_GATEWAY.get(id);
   }
 
   private async resolveBotToken(
@@ -307,7 +317,7 @@ export class DiscordChannel extends WorkerEntrypoint<Env> implements AdapterWork
   ): Promise<Response> {
     const headers = new Headers(init.headers || {});
     headers.set("Authorization", `Bot ${init.botToken}`);
-    const isFormDataBody = typeof FormData !== "undefined" && init.body instanceof FormData;
+    const isFormDataBody = init.body instanceof FormData;
     if (!headers.has("Content-Type") && init.body && !isFormDataBody) {
       headers.set("Content-Type", "application/json; charset=utf-8");
     }
@@ -318,24 +328,15 @@ export class DiscordChannel extends WorkerEntrypoint<Env> implements AdapterWork
 }
 
 // Type for DO stub methods
-interface DiscordGatewayStub {
-  start(botToken: string, accountId?: string): Promise<void>;
-  stop(): Promise<void>;
-  getStatus(): Promise<AdapterAccountStatus>;
-  getBotToken(): Promise<string | null>;
-  sendMessage(
-    message: AdapterOutboundMessage,
-    body?: BinaryBody,
-  ): Promise<AdapterSendResult>;
-}
+type DiscordGatewayStub = DurableObjectStub<DiscordGateway>;
 
-function toErrorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
+function toErrorMessage(cause: unknown): string {
+  return cause instanceof Error ? cause.message : String(cause);
 }
 
 // Default export: HTTP handler for direct requests
 export default {
-  async fetch(request: Request, env: Env): Promise<Response> {
+  async fetch(request: Request): Promise<Response> {
     const url = new URL(request.url);
 
     if (url.pathname === "/" || url.pathname === "/health") {

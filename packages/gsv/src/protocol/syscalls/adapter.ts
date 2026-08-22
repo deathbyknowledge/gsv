@@ -1,20 +1,42 @@
 import type {
   AdapterAccountStatus,
+  AdapterConnectConfig,
   AdapterInboundMessage,
   AdapterInboundResult,
   AdapterMedia,
   AdapterSurface,
 } from "../adapters";
 import {
-  isAdapterConnectChallenge,
+  adapterConnectChallengeSchema,
   type AdapterConnectChallenge,
 } from "../adapters";
+import type { JsonValue } from "../json";
+import * as z from "zod/mini";
+
+const nonEmptyStringSchema = z.string().check(z.minLength(1));
 
 export type AdapterConnectArgs = {
   adapter: string;
   accountId: string;
-  config?: Record<string, unknown>;
+  config?: AdapterConnectConfig;
 };
+
+export const adapterConnectResultSchema = z.discriminatedUnion("ok", [
+  z.strictObject({
+    ok: z.literal(true),
+    adapter: nonEmptyStringSchema,
+    accountId: nonEmptyStringSchema,
+    connected: z.boolean(),
+    authenticated: z.boolean(),
+    message: z.optional(z.string()),
+    challenge: z.optional(adapterConnectChallengeSchema),
+  }),
+  z.strictObject({
+    ok: z.literal(false),
+    error: nonEmptyStringSchema,
+    challenge: z.optional(adapterConnectChallengeSchema),
+  }),
+]);
 
 export type AdapterConnectResult =
   | {
@@ -33,30 +55,8 @@ export type AdapterConnectResult =
     };
 
 /** Validate the complete public `adapter.connect` result at a client boundary. */
-export function isAdapterConnectResult(value: unknown): value is AdapterConnectResult {
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
-    return false;
-  }
-  const result = value as Record<string, unknown>;
-  if (typeof result.ok !== "boolean") {
-    return false;
-  }
-  if (
-    result.challenge !== undefined
-    && !isAdapterConnectChallenge(result.challenge)
-  ) {
-    return false;
-  }
-  if (!result.ok) {
-    return typeof result.error === "string" && result.error.trim().length > 0;
-  }
-  return typeof result.adapter === "string"
-    && result.adapter.trim().length > 0
-    && typeof result.accountId === "string"
-    && result.accountId.trim().length > 0
-    && typeof result.connected === "boolean"
-    && typeof result.authenticated === "boolean"
-    && (result.message === undefined || typeof result.message === "string");
+export function isAdapterConnectResult(value: JsonValue): value is AdapterConnectResult {
+  return adapterConnectResultSchema.safeParse(value).success;
 }
 
 export type AdapterDisconnectArgs = {
@@ -155,6 +155,10 @@ export type AdapterStateUpdateArgs = {
 export type AdapterStateUpdateResult = {
   ok: true;
 };
+
+export const adapterStateUpdateResultSchema = z.strictObject({
+  ok: z.literal(true),
+});
 
 export type AdapterPairInfoArgs = {
   adapter: string;

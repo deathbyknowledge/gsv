@@ -387,7 +387,7 @@ export class ManagedTelegramPeer extends DurableObject<ManagedTelegramPeerEnv> {
       return { terminal: true };
     }
 
-    const result = await callAdapterGateway<AdapterInboundResult>(
+    const result = await callAdapterGateway(
       this.env.GATEWAY,
       { installationId: route.installationId },
       "adapter.inbound",

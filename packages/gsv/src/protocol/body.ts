@@ -1,7 +1,19 @@
+import * as z from "zod/mini";
+
 export type BinaryBody = {
   stream: ReadableStream<Uint8Array>;
   length?: number;
 };
+
+const binaryBodyObjectSchema = z.strictObject({
+  stream: z.instanceof(ReadableStream),
+  length: z.optional(z.number()),
+});
+
+/** Validates a transferred body without replacing its identity or stream. */
+export const binaryBodySchema = z.custom<BinaryBody>(
+  (value) => binaryBodyObjectSchema.safeParse(value).success,
+);
 
 const MAX_PREALLOCATED_BODY_BYTES = 64 * 1024 * 1024;
 

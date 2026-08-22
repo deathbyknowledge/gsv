@@ -3,6 +3,7 @@ export type {
   AdapterActivity,
   AdapterActor,
   AdapterConnectChallenge,
+  AdapterConnectConfig,
   AdapterConnectResult,
   AdapterDisconnectResult,
   AdapterInboundMessage,

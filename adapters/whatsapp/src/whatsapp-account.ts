@@ -1407,7 +1407,7 @@ export class WhatsAppAccount extends DurableObject<Env> {
       const gatewayStartedAt = Date.now();
       let result: AdapterInboundResult;
       try {
-        result = await callAdapterGateway<AdapterInboundResult>(
+        result = await callAdapterGateway(
           this.gatewayBinding(),
           this.getInstallationContext(),
           "adapter.inbound",
@@ -1808,6 +1808,19 @@ export class WhatsAppAccount extends DurableObject<Env> {
   }
 
   private adapterStatus(): AdapterAccountStatus {
+    const extra: NonNullable<AdapterAccountStatus["extra"]> = {
+      connectionStatus: this.state.status,
+    };
+    if (this.state.selfE164 !== undefined) extra.selfE164 = this.state.selfE164;
+    if (this.state.lastConnectedAt !== undefined) {
+      extra.lastConnectedAt = this.state.lastConnectedAt;
+    }
+    if (this.state.lastDisconnectedAt !== undefined) {
+      extra.lastDisconnectedAt = this.state.lastDisconnectedAt;
+    }
+    if (this.state.disconnectReason !== undefined) {
+      extra.disconnectReason = this.state.disconnectReason;
+    }
     return {
       accountId: this.state.accountId,
       connected: this.socketIsHealthy(),
@@ -1815,13 +1828,7 @@ export class WhatsAppAccount extends DurableObject<Env> {
       mode: "websocket",
       lastActivity: this.state.lastActivity,
       error: this.state.lastError,
-      extra: {
-        selfE164: this.state.selfE164,
-        connectionStatus: this.state.status,
-        lastConnectedAt: this.state.lastConnectedAt,
-        lastDisconnectedAt: this.state.lastDisconnectedAt,
-        disconnectReason: this.state.disconnectReason,
-      },
+      extra,
     };
   }
 
