@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { ChatHistory } from "./processes";
+import { preserveDirectedConversationDelivery } from "./conversations";
 import {
   SYSTEM_ERROR_PREFIXES,
   addOptimisticUserMessage,
@@ -25,6 +26,23 @@ function history(messages: ChatHistory["messages"]): ChatHistory {
 }
 
 describe("chat transcript rows", () => {
+  it("does not downgrade a live directed Message during history synchronization", () => {
+    const current = {
+      id: "conversation:msg-one",
+      role: "assistant" as const,
+      text: "hello",
+      time: "",
+      timestamp: 1,
+      delivery: "directed" as const,
+    };
+    const synchronized = { ...current, delivery: "sync" as const };
+
+    expect(preserveDirectedConversationDelivery(current, synchronized).delivery)
+      .toBe("directed");
+    expect(preserveDirectedConversationDelivery(undefined, synchronized).delivery)
+      .toBe("sync");
+  });
+
   it("renders media attached to a historical assistant reply", () => {
     const media = {
       type: "document",
@@ -55,7 +73,7 @@ describe("chat transcript rows", () => {
     ]);
   });
 
-  it("shows final reply media from the live output signal", () => {
+  it("shows canonical Message media from the live output signal", () => {
     const media = {
       type: "image",
       mimeType: "image/png",

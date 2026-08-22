@@ -19,6 +19,7 @@ import {
 
 type UseChatRuntimeOptions = {
   enabled?: boolean;
+  observe?: boolean;
   processId: string;
 };
 
@@ -50,8 +51,8 @@ function historyStateKey(state: ChatRuntimeState): string {
   ].join(":");
 }
 
-function historyTargetKey(pid: string): string {
-  return pid;
+function historyTargetKey(pid: string, includeActivity: boolean): string {
+  return `${pid}:${includeActivity ? "activity" : "status"}`;
 }
 
 function firstHistoryMessageId(history: ChatHistory | null): number | null {
@@ -316,17 +317,19 @@ function errorMessage(error: unknown): string {
 
 export function useChatRuntime({
   enabled = true,
+  observe = false,
   processId,
 }: UseChatRuntimeOptions) {
   const { client, connected } = useGateway();
   const queryClient = useQueryClient();
   const hasProcess = processId.trim().length > 0;
-  const targetKey = historyTargetKey(processId);
+  const targetKey = historyTargetKey(processId, observe);
   const history = useChatProcessHistory({
     enabled: enabled && hasProcess,
     args: hasProcess
-      ? {
+        ? {
           pid: processId,
+          includeMessages: observe,
           limit: HISTORY_PAGE_SIZE,
           tail: true,
         }
@@ -379,7 +382,21 @@ export function useChatRuntime({
       return undefined;
     }
 
-    return client.onSignal((signal, payload) => {
+    let active = true;
+    let observing = false;
+    const observation = observe
+      ? client.proc.observe({ pid: processId })
+        .then(() => {
+          if (!active) {
+            return client.proc.unobserve({ pid: processId }).then(() => undefined);
+          }
+          observing = true;
+          return undefined;
+        })
+        .catch(() => undefined)
+      : Promise.resolve();
+
+    const unsubscribe = client.onSignal((signal, payload) => {
       const current = runtimeRef.current;
       const reduction = applyChatSignal(current, signal, payload, {
         pid: processId,
@@ -394,7 +411,16 @@ export function useChatRuntime({
         void refetchHistory();
       }
     });
-  }, [client, connected, enabled, hasProcess, processId, queryClient, refetchHistory]);
+    return () => {
+      active = false;
+      unsubscribe();
+      if (observing) {
+        void client.proc.unobserve({ pid: processId }).catch(() => undefined);
+      } else {
+        void observation;
+      }
+    };
+  }, [client, connected, enabled, hasProcess, observe, processId, queryClient, refetchHistory]);
 
   const appendOptimisticUserMessage = useCallback((message: string, media: unknown[] = []) => {
     setRuntime((current) => addOptimisticUserMessage(

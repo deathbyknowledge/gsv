@@ -73,6 +73,7 @@ export type ChatHistory = {
 
 export type ChatSendDraft = {
   pid?: string;
+  conversationId?: string;
   message: string;
   media?: ChatMediaUpload[];
 };

@@ -26,7 +26,11 @@ use tokio::task::{AbortHandle, JoinSet};
 
 use crate::content::{MediaAttachment, MediaKind};
 use crate::desktop_control::{DesktopControlRequest, NativeDesktopControlHandler};
-use crate::history::{normalize_history, HistorySnapshot, MAX_FETCHED_HISTORY_MESSAGES};
+#[cfg(test)]
+use crate::history::normalize_history;
+use crate::history::{
+    normalize_conversation_history, HistorySnapshot, MAX_FETCHED_HISTORY_MESSAGES,
+};
 use crate::machine_setup::{self, DaemonServiceControl, MachineActivation, MachineRuntimeStatus};
 use crate::startup::{
     resolve_startup, ConnectionSettings, Credential, LoginDefaults, LoginStep, StartupResolution,
@@ -62,8 +66,16 @@ pub enum ApprovalDecision {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum MediaSource {
-    Process { key: String },
-    Remote { url: String },
+    Process {
+        key: String,
+    },
+    Conversation {
+        conversation_id: String,
+        key: String,
+    },
+    Remote {
+        url: String,
+    },
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -1733,7 +1745,7 @@ fn queue_session_signal(
         return false;
     }
     if let Some(expected_pid) = state.selected_pid.as_deref() {
-        if payload.get("pid").and_then(Value::as_str) != Some(expected_pid) {
+        if signal_process_id(&payload) != Some(expected_pid) {
             return false;
         }
     }
@@ -1753,6 +1765,18 @@ fn queue_session_signal(
         state.buffered.push(BufferedSignal { name, payload });
     }
     true
+}
+
+fn signal_process_id(payload: &Value) -> Option<&str> {
+    payload
+        .get("pid")
+        .or_else(|| payload.get("processId"))
+        .or_else(|| {
+            payload
+                .get("message")
+                .and_then(|message| message.get("processId"))
+        })
+        .and_then(Value::as_str)
 }
 
 fn reserve_operation(
@@ -2418,6 +2442,10 @@ async fn establish_live_session(
     let pid = choose_process(&client, preferred_pid, require_preferred_pid)
         .await
         .map_err(EstablishFailure::session)?;
+    client
+        .request_ok("proc.observe", Some(json!({ "pid": pid })))
+        .await
+        .map_err(|error| EstablishFailure::session(error.to_string()))?;
     if signal_lease.select_pid(pid.clone()) {
         process_exit.notify_one();
     }
@@ -3169,18 +3197,25 @@ fn select_existing_process(response: &Value, preferred_pid: Option<&str>) -> Opt
     }
 
     processes
-        .into_iter()
-        .filter_map(|process| {
-            let pid = process.get("pid")?.as_str()?.to_string();
-            let activity = process
-                .get("lastActiveAt")
-                .and_then(Value::as_i64)
-                .or_else(|| process.get("createdAt").and_then(Value::as_i64))
-                .unwrap_or_default();
-            Some((activity, pid))
+        .iter()
+        .find(|process| process.get("personal").and_then(Value::as_bool) == Some(true))
+        .and_then(|process| process.get("pid").and_then(Value::as_str))
+        .map(str::to_string)
+        .or_else(|| {
+            processes
+                .into_iter()
+                .filter_map(|process| {
+                    let pid = process.get("pid")?.as_str()?.to_string();
+                    let activity = process
+                        .get("lastActiveAt")
+                        .and_then(Value::as_i64)
+                        .or_else(|| process.get("createdAt").and_then(Value::as_i64))
+                        .unwrap_or_default();
+                    Some((activity, pid))
+                })
+                .max_by_key(|(activity, _)| *activity)
+                .map(|(_, pid)| pid)
         })
-        .max_by_key(|(activity, _)| *activity)
-        .map(|(_, pid)| pid)
 }
 
 async fn fetch_history(
@@ -3188,7 +3223,37 @@ async fn fetch_history(
     pid: &str,
     generation: u64,
 ) -> Result<PreparedHistory, RequestFailure> {
-    let payload = retry_history_fetch(
+    let conversation = retry_history_fetch(
+        || {
+            request_ok(
+                client,
+                "conversation.forProcess",
+                Some(json!({ "pid": pid })),
+            )
+        },
+        HISTORY_FETCH_RETRY_DELAY,
+    )
+    .await?;
+    let conversation_id = conversation
+        .get("conversation")
+        .and_then(|value| value.get("id"))
+        .and_then(Value::as_str)
+        .ok_or_else(|| RequestFailure::transport("GSV returned no conversation id"))?;
+    let conversation_history = retry_history_fetch(
+        || {
+            request_ok(
+                client,
+                "conversation.history",
+                Some(json!({
+                    "conversationId": conversation_id,
+                    "limit": MAX_FETCHED_HISTORY_MESSAGES,
+                })),
+            )
+        },
+        HISTORY_FETCH_RETRY_DELAY,
+    )
+    .await?;
+    let process_history = retry_history_fetch(
         || {
             request_ok(
                 client,
@@ -3203,13 +3268,18 @@ async fn fetch_history(
         HISTORY_FETCH_RETRY_DELAY,
     )
     .await?;
-    let snapshot = tokio::task::spawn_blocking(move || Arc::new(normalize_history(&payload)))
-        .await
-        .map_err(|error| {
-            RequestFailure::transport(format!(
-                "The history preparation worker stopped unexpectedly: {error}"
-            ))
-        })?;
+    let snapshot = tokio::task::spawn_blocking(move || {
+        Arc::new(normalize_conversation_history(
+            &conversation_history,
+            &process_history,
+        ))
+    })
+    .await
+    .map_err(|error| {
+        RequestFailure::transport(format!(
+            "The history preparation worker stopped unexpectedly: {error}"
+        ))
+    })?;
     Ok(PreparedHistory {
         generation,
         snapshot,
@@ -3244,12 +3314,30 @@ async fn load_media(
 ) -> Result<MediaResponse, RequestFailure> {
     match source {
         MediaSource::Process { key } => fetch_process_media(client, pid, &key).await,
+        MediaSource::Conversation {
+            conversation_id,
+            key,
+        } => fetch_conversation_media(client, &conversation_id, &key).await,
         MediaSource::Remote { url } => {
             tokio::time::timeout(MEDIA_FETCH_TIMEOUT, fetch_remote_media(http_client, &url))
                 .await
                 .map_err(|_| RequestFailure::transport("The remote media fetch timed out."))?
         }
     }
+}
+
+async fn fetch_conversation_media(
+    client: &KernelClient,
+    conversation_id: &str,
+    key: &str,
+) -> Result<MediaResponse, RequestFailure> {
+    fetch_stored_media(
+        client,
+        "conversation.media.read",
+        json!({ "conversationId": conversation_id, "key": key }),
+        "Conversation media",
+    )
+    .await
 }
 
 async fn fetch_process_media(
@@ -3263,17 +3351,28 @@ async fn fetch_process_media(
         ));
     }
 
-    let request = client.connection().request_response(
+    fetch_stored_media(
+        client,
         "proc.media.read",
-        Some(json!({ "pid": pid, "key": key })),
-        RPC_TIMEOUT,
-    );
+        json!({ "pid": pid, "key": key }),
+        "Process media",
+    )
+    .await
+}
+
+async fn fetch_stored_media(
+    client: &KernelClient,
+    call: &str,
+    args: Value,
+    label: &str,
+) -> Result<MediaResponse, RequestFailure> {
+    let request = client
+        .connection()
+        .request_response(call, Some(args), RPC_TIMEOUT);
     let response = tokio::time::timeout(RPC_ENVELOPE_TIMEOUT, request)
         .await
         .map_err(|_| {
-            RequestFailure::transport(format!(
-                "proc.media.read timed out after {RPC_ENVELOPE_TIMEOUT:?}"
-            ))
+            RequestFailure::transport(format!("{call} timed out after {RPC_ENVELOPE_TIMEOUT:?}"))
         })?
         .map_err(|error| RequestFailure::transport(error.to_string()))?;
 
@@ -3287,9 +3386,9 @@ async fn fetch_process_media(
     }
 
     let Some(mut body) = response.body else {
-        return Err(RequestFailure::transport(
-            "GSV returned media metadata without its body.",
-        ));
+        return Err(RequestFailure::transport(format!(
+            "GSV returned {label} metadata without its body."
+        )));
     };
     let Some(declared_size) = data.get("size").and_then(Value::as_u64) else {
         body.cancel("Media size metadata was invalid");
@@ -3450,10 +3549,10 @@ async fn send_message(
     media: &[MediaAttachment],
 ) -> Result<ProcSendResult, SendAttemptFailure> {
     let media = media.iter().map(media_to_json).collect::<Vec<_>>();
-    let payload = match request_ok(
+    let conversation = match request_ok(
         client,
-        "proc.send",
-        Some(json!({ "pid": pid, "message": message, "media": media })),
+        "conversation.forProcess",
+        Some(json!({ "pid": pid })),
     )
     .await
     {
@@ -3468,20 +3567,57 @@ async fn send_message(
             });
         }
     };
-    let result: ProcSendResult =
-        serde_json::from_value(payload).map_err(|error| SendAttemptFailure::Uncertain {
-            message: format!("Invalid proc.send response: {error}"),
+    let Some(conversation_id) = conversation
+        .get("conversation")
+        .and_then(|value| value.get("id"))
+        .and_then(Value::as_str)
+    else {
+        return Err(SendAttemptFailure::Uncertain {
+            message: "GSV returned no conversation id".to_string(),
+            media: Vec::new(),
+        });
+    };
+    let payload = match request_ok(
+        client,
+        "conversation.send",
+        Some(json!({
+            "conversationId": conversation_id,
+            "text": message,
+            "media": media,
+            "idempotencyKey": uuid::Uuid::new_v4().to_string(),
+        })),
+    )
+    .await
+    {
+        Ok(payload) => payload,
+        Err(error) if error.kind == RequestFailureKind::Rejected => {
+            return Err(SendAttemptFailure::Rejected(error.to_string()));
+        }
+        Err(error) => {
+            return Err(SendAttemptFailure::Uncertain {
+                message: error.to_string(),
+                media: Vec::new(),
+            });
+        }
+    };
+    let run_id = payload
+        .get("runId")
+        .and_then(Value::as_str)
+        .ok_or_else(|| SendAttemptFailure::Uncertain {
+            message: "Invalid conversation.send response".to_string(),
             media: Vec::new(),
         })?;
-    if !result.ok {
-        return Err(SendAttemptFailure::Rejected(
-            result
-                .error
-                .clone()
-                .unwrap_or_else(|| "The gateway rejected the thought".to_string()),
-        ));
-    }
-    Ok(result)
+    Ok(ProcSendResult {
+        ok: true,
+        status: if payload.get("queued").and_then(Value::as_bool) == Some(true) {
+            "queued".to_string()
+        } else {
+            "started".to_string()
+        },
+        run_id: run_id.to_string(),
+        queued: payload.get("queued").and_then(Value::as_bool) == Some(true),
+        error: None,
+    })
 }
 
 async fn upload_and_send_message(
@@ -3692,6 +3828,10 @@ fn media_from_json(value: &Value) -> Option<MediaAttachment> {
         kind,
         mime_type: mime_type.to_string(),
         key: Some(key.to_string()),
+        conversation_id: value
+            .get("conversationId")
+            .and_then(Value::as_str)
+            .map(str::to_string),
         path: value
             .get("path")
             .and_then(Value::as_str)
@@ -3727,6 +3867,7 @@ mod outgoing_media_tests {
             kind: MediaKind::Document,
             mime_type: "application/pdf".to_string(),
             key: Some(key.to_string()),
+            conversation_id: None,
             path: None,
             url: None,
             filename: Some("report.pdf".to_string()),
@@ -4285,9 +4426,9 @@ async fn load_demo_media(
                 .await
                 .map_err(|_| RequestFailure::transport("The remote media fetch timed out."))??
         }
-        MediaSource::Process { .. } => {
+        MediaSource::Process { .. } | MediaSource::Conversation { .. } => {
             return Err(RequestFailure::rejected(
-                "Process media is not available in the demo session.",
+                "Stored media is not available in the demo session.",
             ));
         }
     };

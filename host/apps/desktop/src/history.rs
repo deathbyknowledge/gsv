@@ -9,7 +9,7 @@ use std::hash::{DefaultHasher, Hasher as _};
 use std::io;
 use std::sync::Arc;
 
-use serde_json::Value;
+use serde_json::{json, Value};
 
 use crate::content::{MediaAttachment, MediaKind};
 use crate::prepared::{content_revision, ContentRevision};
@@ -314,6 +314,75 @@ pub fn normalize_history(payload: &Value) -> HistorySnapshot {
     }
 }
 
+pub fn normalize_conversation_history(conversation: &Value, process: &Value) -> HistorySnapshot {
+    let messages = conversation
+        .get("messages")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .map(|message| {
+            let author = message.get("author").unwrap_or(&Value::Null);
+            let role = if author.get("kind").and_then(Value::as_str) == Some("user") {
+                "user"
+            } else {
+                "assistant"
+            };
+            json!({
+                "id": message.get("id").cloned().unwrap_or(Value::Null),
+                "runId": message.get("runId").cloned().unwrap_or(Value::Null),
+                "role": role,
+                "content": message.get("text").cloned().unwrap_or_else(|| json!("")),
+                "media": message.get("media").cloned().unwrap_or_else(|| json!([])),
+                "timestamp": message.get("createdAt").cloned().unwrap_or(Value::Null),
+            })
+        })
+        .collect::<Vec<_>>();
+    let summary = conversation.get("conversation").unwrap_or(&Value::Null);
+    let projected = json!({
+        "messages": messages,
+        "messageCount": summary.get("latestSequence").cloned().unwrap_or_else(|| json!(0)),
+        "truncated": conversation.get("hasMore").and_then(Value::as_bool) == Some(true),
+        "hasMoreBefore": conversation.get("hasMore").cloned().unwrap_or_else(|| json!(false)),
+        "hasMoreAfter": false,
+        "activeRunId": process.get("activeRunId").cloned().unwrap_or(Value::Null),
+        "runState": process.get("runState").cloned().unwrap_or(Value::Null),
+        "pendingHil": process.get("pendingHil").cloned().unwrap_or(Value::Null),
+        "context": process.get("context").cloned().unwrap_or(Value::Null),
+    });
+    let mut canonical = normalize_history(&projected);
+    let activity = normalize_history(process);
+    let raw_run_by_moment = activity
+        .moments
+        .iter()
+        .filter_map(|moment| Some((moment.id.as_ref(), moment.run_id.as_deref()?)))
+        .collect::<HashMap<_, _>>();
+    let canonical_moment_by_run = canonical
+        .moments
+        .iter()
+        .filter(|moment| moment.role == HistoryMomentRole::Intelligence)
+        .filter_map(|moment| Some((moment.run_id.as_deref()?, moment.id.clone())))
+        .collect::<HashMap<_, _>>();
+    let summaries = activity
+        .activity
+        .summaries
+        .iter()
+        .filter_map(|summary| {
+            let run_id = raw_run_by_moment.get(summary.moment_id.as_ref())?;
+            let moment_id = canonical_moment_by_run.get(run_id)?.clone();
+            Some(HistoryActivitySummary {
+                moment_id,
+                entries: summary.entries.clone(),
+            })
+        })
+        .collect::<Vec<_>>();
+    canonical.activity = HistoryActivity {
+        summaries: summaries.into(),
+        latest_call_states: activity.activity.latest_call_states,
+        authoritative: activity.activity.authoritative,
+    };
+    canonical
+}
+
 /// Message ids are process-history identities. A repeated id is an invalid transport record, but
 /// retaining the latest occurrence gives reconnecting clients a deterministic, internally
 /// consistent snapshot without allowing two different bodies to share one presentation key.
@@ -376,7 +445,10 @@ fn derive_history_activity(
                 run_boundaries.insert(run_id);
             }
             Some("assistant") => {
-                let tool_calls = history_tool_calls(value);
+                let tool_calls = history_tool_calls(value)
+                    .into_iter()
+                    .filter(|call| !is_terminal_delivery_tool(call))
+                    .collect::<Vec<_>>();
                 if !tool_calls.is_empty() {
                     runs_with_call_context.insert(run_id.clone());
                     for call in tool_calls {
@@ -548,6 +620,13 @@ fn history_tool_calls(message: &Value) -> Vec<&Value> {
         .collect()
 }
 
+fn is_terminal_delivery_tool(call: &Value) -> bool {
+    matches!(
+        call.get("name").and_then(Value::as_str),
+        Some("Message" | "Silence")
+    )
+}
+
 fn summary_entries(counts: [u64; ACTIVITY_CATEGORIES.len()]) -> Vec<HistoryActivitySummaryEntry> {
     ACTIVITY_CATEGORIES
         .into_iter()
@@ -586,6 +665,7 @@ fn parse_media(value: &Value) -> Vec<MediaAttachment> {
                 kind,
                 mime_type: mime_type.to_string(),
                 key: optional_string(item.get("key")),
+                conversation_id: optional_string(item.get("conversationId")),
                 path: optional_string(item.get("path")),
                 url: optional_string(item.get("url")),
                 filename: optional_string(item.get("filename")),
@@ -939,5 +1019,84 @@ mod tests {
             .moments
             .iter()
             .all(|moment| !moment.text.contains("stale response")));
+    }
+
+    #[test]
+    fn conversation_history_attaches_process_activity_to_the_canonical_message() {
+        let conversation = json!({
+            "conversation": { "latestSequence": 2 },
+            "messages": [
+                {
+                    "id": "conversation-user",
+                    "runId": "run-1",
+                    "author": { "kind": "user" },
+                    "text": "inspect it",
+                    "createdAt": 1
+                },
+                {
+                    "id": "conversation-answer",
+                    "runId": "run-1",
+                    "author": { "kind": "process" },
+                    "text": "done",
+                    "createdAt": 2
+                }
+            ],
+            "hasMore": false
+        });
+        let process = json!({
+            "messages": [
+                { "id": 1, "runId": "run-1", "role": "user", "content": "inspect it" },
+                {
+                    "id": 2,
+                    "runId": "run-1",
+                    "role": "assistant",
+                    "content": {
+                        "toolCalls": [{
+                            "id": "shell-1",
+                            "name": "Shell",
+                            "syscall": "shell.exec",
+                            "arguments": { "input": "pwd" }
+                        }]
+                    }
+                },
+                {
+                    "id": 3,
+                    "runId": "run-1",
+                    "role": "toolResult",
+                    "content": {
+                        "toolCallId": "shell-1",
+                        "toolName": "Shell",
+                        "outcome": "completed",
+                        "content": "ok"
+                    }
+                },
+                {
+                    "id": 4,
+                    "runId": "run-1",
+                    "role": "assistant",
+                    "content": {
+                        "text": "done",
+                        "toolCalls": [{
+                            "id": "message-1",
+                            "name": "Message",
+                            "arguments": { "text": "done" }
+                        }]
+                    }
+                }
+            ],
+            "messageCount": 4,
+            "truncated": false,
+            "hasMoreBefore": false,
+            "hasMoreAfter": false
+        });
+
+        let snapshot = normalize_conversation_history(&conversation, &process);
+
+        assert_eq!(snapshot.activity.summaries.len(), 1);
+        assert_eq!(
+            snapshot.activity.summaries[0].moment_id.as_ref(),
+            "conversation-answer"
+        );
+        assert_eq!(snapshot.activity.summaries[0].entries[0].count, 1);
     }
 }

@@ -47,6 +47,7 @@ import {
   type ChatTranscriptionTarget,
   useChatReplySpeech,
   useChatRuntime,
+  useChatConversation,
   useDraggableMinimizedChat,
 } from "../hooks";
 import { useChatFeedback } from "../hooks/useChatFeedback";
@@ -56,7 +57,11 @@ import { ChatArchivePanel } from "./ChatArchivePanel";
 import { ChatReasoningPanel, type ChatReasoningTarget } from "./ChatReasoningPanel";
 import { ChatDockHeader } from "./ChatDockHeader";
 import { ChatDockPopovers, type ChatPopoverId } from "./ChatDockPopovers";
-import { ChatTranscript, type ChatDockMessage } from "./ChatTranscript";
+import {
+  ChatTranscript,
+  type ChatBranchPoint,
+  type ChatDockMessage,
+} from "./ChatTranscript";
 import {
   ChatWorkSessionAnnouncement,
   ChatWorkSessionBanner,
@@ -76,18 +81,18 @@ export type StartedChatProcess = {
 
 type ChatBranchRequest = {
   canStartNewTask: boolean;
+  branch: ChatBranchPoint;
   forkPending: boolean;
   hasActiveProcess: boolean;
-  messageId: number;
-  mutate: (input: { pid: string; throughMessageId: number }) => void;
+  mutate: (input: { pid: string } & ChatBranchPoint) => void;
   processId: string;
 };
 
 export function requestChatBranch({
   canStartNewTask,
+  branch,
   forkPending,
   hasActiveProcess,
-  messageId,
   mutate,
   processId,
 }: ChatBranchRequest): boolean {
@@ -96,7 +101,7 @@ export function requestChatBranch({
   }
   mutate({
     pid: processId,
-    throughMessageId: messageId,
+    ...branch,
   });
   return true;
 }
@@ -296,6 +301,11 @@ export function ChatDock({
   const canStartProcess = canStartChatWork(agent);
   const chatRuntime = useChatRuntime({
     enabled: hasActiveProcess,
+    observe: bodyState === "reasoning",
+    processId: activeProcessId,
+  });
+  const chatConversation = useChatConversation({
+    enabled: hasActiveProcess,
     processId: activeProcessId,
   });
   const spawnProcess = useSpawnChatProcess();
@@ -431,7 +441,7 @@ export function ChatDock({
     statusLabel: effectiveStatusLabel,
     contextLabel,
   }), [effectiveAgent, title, effectiveStatus, effectiveStatusLabel, contextLabel]);
-  const transcriptMessages = runtime.rows;
+  const transcriptMessages = chatConversation.rows;
   const runState = runtime.runState ?? (effectiveStatusLabel === "loading" ? undefined : effectiveStatusLabel);
   const canAbortRun = hasActiveProcess
     && !abortProcess.isPending
@@ -439,9 +449,9 @@ export function ChatDock({
     && (Boolean(runtime.activeRunId) || Boolean(pendingHil) || runState === "running" || runState === "awaiting_hil");
   const context = runtime.context;
   const replySpeech = useChatReplySpeech({
-    hydrated: !processHistory.isLoading,
+    hydrated: !chatConversation.historyLoading,
     processId: activeProcessId,
-    rows: runtime.rows,
+    rows: transcriptMessages,
   });
   const historySegments = useChatHistorySegments({
     enabled: open && hasActiveProcess,
@@ -477,13 +487,16 @@ export function ChatDock({
   const historyCost = formatHistoryCostTooltip(context);
   const hasVisibleMessages = transcriptMessages.length > 0;
   const processLookupLoading = !hasActiveProcess && effectiveStatusLabel === "loading";
-  const hasTranscriptError = processHistory.isError && !hasVisibleMessages;
+  const hasTranscriptError = Boolean(chatConversation.historyError) && !hasVisibleMessages;
   const transcriptState = hasTranscriptError
     ? "error"
-    : ((processHistory.isLoading || processLookupLoading) && !hasVisibleMessages)
+    : ((chatConversation.historyLoading || processLookupLoading) && !hasVisibleMessages)
       ? "loading"
       : "ready";
-  const transcriptError = errorMessage(processHistory.error, "Process history could not be loaded.");
+  const transcriptError = errorMessage(
+    chatConversation.historyError,
+    "Conversation history could not be loaded.",
+  );
   const emptyState = chatEmptyState(agent, hasActiveProcess);
   const compactPending = compactHistory.isPending;
   const compactFailed = compactHistory.isError;
@@ -522,7 +535,7 @@ export function ChatDock({
     if (
       !pinnedTarget || targetPid === activeProcessId
     ) {
-      chatRuntime.appendOptimisticUserMessage(outgoingMessage, media.map((item): ProcMediaInput => ({
+      chatConversation.appendOptimistic(outgoingMessage, media.map((item): ProcMediaInput => ({
         type: item.type,
         mimeType: item.mimeType,
         ...(item.filename ? { filename: item.filename } : {}),
@@ -536,6 +549,9 @@ export function ChatDock({
     await sendMessage.mutateAsync({
       message: outgoingMessage,
       pid: targetPid,
+      ...(targetPid === activeProcessId && chatConversation.conversation
+        ? { conversationId: chatConversation.conversation.id }
+        : {}),
       ...(media.length > 0 ? { media } : {}),
     });
     return { processId: targetPid };
@@ -543,7 +559,7 @@ export function ChatDock({
     activeAgent.name,
     activeProcessId,
     canStartProcess,
-    chatRuntime,
+    chatConversation,
     onProcessStarted,
     sendMessage,
     spawnProcess,
@@ -661,8 +677,8 @@ export function ChatDock({
   const processReasoning = processAiConfig.data?.values["config/ai/reasoning"]?.trim() ?? "";
   const contextReasoning = context?.reasoning?.trim() ?? "";
   const currentReasoningLabel = formatChatReasoningLabel(processReasoning || contextReasoning || activeAgent.reasoningLabel);
-  const compactKeepLast = Math.max(1, Math.min(48, Math.floor(Math.max(runtime.messageCount, transcriptMessages.length) / 2)));
-  const compactMessageTotal = Math.max(runtime.messageCount, transcriptMessages.length);
+  const compactKeepLast = Math.max(1, Math.min(48, Math.floor(runtime.messageCount / 2)));
+  const compactMessageTotal = runtime.messageCount;
   const compactKeepMax = Math.max(1, Math.min(96, compactMessageTotal - 1));
   const canFreeContext = hasActiveProcess
     && !canAbortRun
@@ -794,12 +810,12 @@ export function ChatDock({
     }
   };
 
-  const branchFromMessage = (messageId: number) => {
+  const branchFromMessage = (branch: ChatBranchPoint) => {
     requestChatBranch({
       canStartNewTask,
+      branch,
       forkPending: forkProcess.isPending,
       hasActiveProcess,
-      messageId,
       processId: activeProcessId,
       mutate: (input) => forkProcess.mutate(input, {
         onSuccess: (result) => {
@@ -1166,7 +1182,7 @@ export function ChatDock({
 
       {bodyState === "reasoning" && reasoningTarget ? (
         <ChatReasoningPanel
-          messages={transcriptMessages}
+          messages={runtime.rows}
           target={reasoningTarget}
           onClose={() => returnToChat({ restoreFocus: true })}
         />
@@ -1209,11 +1225,11 @@ export function ChatDock({
         emptyDescription={emptyState.description}
         errorMessage={transcriptError}
         feedback={feedback.entries}
-        hasOlderMessages={chatRuntime.hasOlderHistory}
+        hasOlderMessages={chatConversation.hasMore}
         messages={transcriptMessages}
         mobile={mobileLayout}
-        loadingOlderMessages={chatRuntime.loadingOlderHistory}
-        onLoadOlder={chatRuntime.loadOlderHistory}
+        loadingOlderMessages={chatConversation.loadingOlder}
+        onLoadOlder={chatConversation.loadOlder}
         onBranch={canStartNewTask && hasActiveProcess && !forkProcess.isPending
           ? branchFromMessage
           : undefined}

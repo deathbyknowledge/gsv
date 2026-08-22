@@ -27,6 +27,10 @@ export function chatMediaKey(media: unknown): string {
   return asString(asRecord(media)?.key) ?? "";
 }
 
+export function chatMediaConversationId(media: unknown): string {
+  return asString(asRecord(media)?.conversationId) ?? "";
+}
+
 export function chatMediaMimeType(media: unknown): string {
   return asString(asRecord(media)?.mimeType) ?? "application/octet-stream";
 }

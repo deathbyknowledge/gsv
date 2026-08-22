@@ -32,6 +32,11 @@ fn debug_log(enabled: bool, message: impl AsRef<str>) {
 fn signal_run_id(payload: &Value) -> Option<String> {
     payload
         .get("runId")
+        .or_else(|| {
+            payload
+                .get("message")
+                .and_then(|message| message.get("runId"))
+        })
         .and_then(|value| value.as_str())
         .map(ToOwned::to_owned)
 }
@@ -78,30 +83,37 @@ fn process_chat_signal(
     );
 
     match signal {
-        "proc.run.output" => {
-            if !emitted_text.load(Ordering::SeqCst) {
-                if let Some(text) = payload.get("text").and_then(|value| value.as_str()) {
+        "message.committed" => {
+            let is_directed_process_message = payload.get("directed").and_then(Value::as_bool)
+                == Some(true)
+                && payload
+                    .get("message")
+                    .and_then(|message| message.get("author"))
+                    .and_then(|author| author.get("kind"))
+                    .and_then(Value::as_str)
+                    == Some("process");
+            if is_directed_process_message && !emitted_text.load(Ordering::SeqCst) {
+                if let Some(text) = payload
+                    .get("message")
+                    .and_then(|message| message.get("text"))
+                    .and_then(Value::as_str)
+                {
                     print!("{}", text);
                     let _ = io::stdout().flush();
                     emitted_text.store(true, Ordering::SeqCst);
                 }
             }
         }
-        "proc.run.stream" => {
-            if let Some(text) = payload
-                .get("event")
-                .and_then(|event| event.as_object())
-                .and_then(|event| {
-                    if event.get("type").and_then(|value| value.as_str()) == Some("text_delta") {
-                        event.get("delta").and_then(|value| value.as_str())
-                    } else {
-                        None
-                    }
-                })
-            {
+        "message.delta" => {
+            if let Some(text) = payload.get("delta").and_then(Value::as_str) {
                 print!("{}", text);
                 let _ = io::stdout().flush();
                 emitted_text.store(true, Ordering::SeqCst);
+            }
+        }
+        "message.aborted" => {
+            if emitted_text.swap(false, Ordering::SeqCst) {
+                println!();
             }
         }
         "proc.run.tool.started" => {
@@ -112,13 +124,7 @@ fn process_chat_signal(
         "proc.run.finished" => {
             if let Some(error) = payload.get("error").and_then(|value| value.as_str()) {
                 eprintln!("\nError: {}", error);
-            } else if !emitted_text.load(Ordering::SeqCst) {
-                if let Some(text) = payload.get("text").and_then(|value| value.as_str()) {
-                    if !text.is_empty() {
-                        println!("\nAssistant: {}", text);
-                    }
-                }
-            } else {
+            } else if emitted_text.load(Ordering::SeqCst) {
                 println!();
             }
 
@@ -263,8 +269,8 @@ pub(crate) async fn run_client(
                     debug_enabled_for_handler,
                     format!("signal recv raw={} runId={}", sig.signal, incoming_run_id),
                 );
-                if !sig.signal.starts_with("proc.run.") {
-                    debug_log(debug_enabled_for_handler, "signal ignored (non-run)");
+                if !sig.signal.starts_with("proc.run.") && !sig.signal.starts_with("message.") {
+                    debug_log(debug_enabled_for_handler, "signal ignored (non-chat)");
                     return;
                 }
                 let expected = expected_run_id_for_handler
@@ -357,6 +363,7 @@ pub(crate) async fn run_client(
         }
     };
     debug_log(debug_enabled, format!("chat process pid={pid}"));
+    let conversation_id = client.conversation_for_process(&pid).await?;
 
     if let Some(message) = message {
         begin_wait_for_chat_response(
@@ -369,17 +376,23 @@ pub(crate) async fn run_client(
         debug_log(
             debug_enabled,
             format!(
-                "proc.send start pid={} chars={}",
+                "conversation.send start pid={} chars={}",
                 pid,
                 message.chars().count()
             ),
         );
 
-        let result = client.proc_send(&pid, &message).await?;
+        let result = client
+            .conversation_send(
+                &conversation_id,
+                &message,
+                &uuid::Uuid::new_v4().to_string(),
+            )
+            .await?;
         debug_log(
             debug_enabled,
             format!(
-                "proc.send response runId={} queued={}",
+                "conversation.send response runId={} queued={}",
                 result.run_id, result.queued
             ),
         );
@@ -442,14 +455,20 @@ pub(crate) async fn run_client(
         );
         debug_log(
             debug_enabled,
-            format!("proc.send start pid={} chars={}", pid, line.chars().count()),
+            format!(
+                "conversation.send start pid={} chars={}",
+                pid,
+                line.chars().count()
+            ),
         );
 
-        let result = client.proc_send(&pid, line).await?;
+        let result = client
+            .conversation_send(&conversation_id, line, &uuid::Uuid::new_v4().to_string())
+            .await?;
         debug_log(
             debug_enabled,
             format!(
-                "proc.send response runId={} queued={}",
+                "conversation.send response runId={} queued={}",
                 result.run_id, result.queued
             ),
         );
@@ -485,7 +504,10 @@ pub(crate) async fn run_client(
 
 #[cfg(test)]
 mod tests {
-    use super::{implicit_personal_owner_uid, personal_process_id};
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::{Arc, Mutex};
+
+    use super::{implicit_personal_owner_uid, personal_process_id, process_chat_signal};
     use serde_json::json;
 
     #[test]
@@ -548,5 +570,55 @@ mod tests {
         });
 
         assert_eq!(personal_process_id(&payload, 1000), None);
+    }
+
+    #[test]
+    fn an_aborted_message_stream_allows_the_committed_replacement_to_print() {
+        let expected_run_id = Arc::new(Mutex::new(Some("run-one".to_string())));
+        let awaiting_response = AtomicBool::new(true);
+        let emitted_text = AtomicBool::new(true);
+        let completed = AtomicBool::new(false);
+
+        process_chat_signal(
+            false,
+            "message.aborted",
+            &json!({ "runId": "run-one", "reason": "projection changed" }),
+            &expected_run_id,
+            &awaiting_response,
+            &emitted_text,
+            &completed,
+        );
+
+        assert!(!emitted_text.load(Ordering::SeqCst));
+        assert!(awaiting_response.load(Ordering::SeqCst));
+        assert!(!completed.load(Ordering::SeqCst));
+    }
+
+    #[test]
+    fn a_committed_user_input_is_not_printed_as_the_answer() {
+        let expected_run_id = Arc::new(Mutex::new(Some("run-one".to_string())));
+        let awaiting_response = AtomicBool::new(true);
+        let emitted_text = AtomicBool::new(false);
+        let completed = AtomicBool::new(false);
+
+        process_chat_signal(
+            false,
+            "message.committed",
+            &json!({
+                "directed": false,
+                "message": {
+                    "runId": "run-one",
+                    "author": { "kind": "user", "uid": 1000 },
+                    "text": "hello"
+                }
+            }),
+            &expected_run_id,
+            &awaiting_response,
+            &emitted_text,
+            &completed,
+        );
+
+        assert!(!emitted_text.load(Ordering::SeqCst));
+        assert!(!completed.load(Ordering::SeqCst));
     }
 }

@@ -776,6 +776,7 @@ mod tests {
             kind: crate::content::MediaKind::Image,
             mime_type: "image/png".to_string(),
             key: Some(key.to_string()),
+            conversation_id: None,
             path: None,
             url: None,
             filename: None,

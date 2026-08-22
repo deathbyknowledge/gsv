@@ -34,6 +34,13 @@ pub(super) fn media_descriptors(
                 PreparedMediaSource::Process { key } => MediaSource::Process {
                     key: key.to_string(),
                 },
+                PreparedMediaSource::Conversation {
+                    conversation_id,
+                    key,
+                } => MediaSource::Conversation {
+                    conversation_id: conversation_id.to_string(),
+                    key: key.to_string(),
+                },
                 PreparedMediaSource::Remote { url } => MediaSource::Remote {
                     url: url.to_string(),
                 },
@@ -930,6 +937,7 @@ mod tests {
             kind: MediaKind::Image,
             mime_type: "image/png".to_string(),
             key: Some("agents/hank/media/result.png".to_string()),
+            conversation_id: None,
             path: None,
             url: None,
             filename: None,

@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "preact/hooks";
 import { Icon } from "../../../components/ui/Icon";
 import {
   chatMediaDescription,
+  chatMediaConversationId,
   chatMediaDuration,
   chatMediaFilename,
   chatMediaKey,
@@ -127,10 +128,13 @@ function AudioPlayer({
 
 export function ChatMediaAttachment({ media, processId }: ChatMediaAttachmentProps) {
   const key = chatMediaKey(media);
+  const conversationId = chatMediaConversationId(media);
   const inlineSource = chatMediaSource(media);
   const mediaQuery = useChatProcessMedia({
-    args: { key, ...(processId ? { pid: processId } : {}) },
-    enabled: !inlineSource && key.length > 0 && processId.length > 0,
+    args: conversationId
+      ? { conversationId, key }
+      : { key, ...(processId ? { pid: processId } : {}) },
+    enabled: !inlineSource && key.length > 0 && (conversationId.length > 0 || processId.length > 0),
   });
   const [storedSource, setStoredSource] = useState("");
   const storedBlob = mediaQuery.data?.blob;

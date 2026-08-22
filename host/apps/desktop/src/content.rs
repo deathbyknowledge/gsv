@@ -126,6 +126,7 @@ pub struct MediaAttachment {
     pub kind: MediaKind,
     pub mime_type: String,
     pub key: Option<String>,
+    pub conversation_id: Option<String>,
     pub path: Option<String>,
     pub url: Option<String>,
     pub filename: Option<String>,

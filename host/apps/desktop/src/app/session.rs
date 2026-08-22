@@ -376,10 +376,7 @@ impl GsvApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if let (Some(expected), Some(actual)) = (
-            self.pid.as_deref(),
-            payload.get("pid").and_then(Value::as_str),
-        ) {
+        if let (Some(expected), Some(actual)) = (self.pid.as_deref(), signal_process_id(payload)) {
             if expected != actual {
                 return;
             }
@@ -402,22 +399,33 @@ impl GsvApp {
                     self.conversation.finish_live_activity(&activity);
                 }
             }
+            "message.started" => {
+                if let Some(run_id) = run_id {
+                    self.conversation.start_run(run_id);
+                }
+            }
+            "message.delta" => {
+                let before = self.visible_moment_key();
+                if let Some(delta) = payload.get("delta").and_then(Value::as_str) {
+                    self.conversation.stream_text(run_id, delta);
+                }
+                self.reveal_visible_change(before);
+            }
+            "message.aborted" => {
+                if let Some(run_id) = run_id {
+                    self.conversation.abort_run(run_id);
+                }
+            }
+            "message.committed" => {
+                let _ = self.commands.send(ClientCommand::RefreshHistory);
+            }
             "proc.run.stream" => {
                 if !self.accept_stream_sequence(run_id, payload) {
                     return;
                 }
                 let event = payload.get("event").unwrap_or(payload);
-                if event.get("type").and_then(Value::as_str) == Some("text_delta") {
-                    let before = self.visible_moment_key();
-                    if let Some(partial) = stream_partial_text(event) {
-                        self.conversation.replace_run_text_owned(run_id, partial);
-                    } else if let Some(delta) = event.get("delta").and_then(Value::as_str) {
-                        self.conversation.stream_text(run_id, delta);
-                    }
-                    self.reveal_visible_change(before);
-                } else {
-                    self.conversation.resume_thinking(run_id);
-                }
+                let _ = event;
+                self.conversation.resume_thinking(run_id);
             }
             "proc.run.retrying" => {
                 if self.conversation.accepts_run(run_id) {
@@ -635,14 +643,16 @@ fn format_machine_diagnostics(diagnostics: &daemon_protocol::Diagnostics) -> Str
     )
 }
 
-fn stream_partial_text(event: &Value) -> Option<String> {
-    let content = event.get("partial")?.get("content")?.as_array()?;
-    let text = content
-        .iter()
-        .filter(|block| block.get("type").and_then(Value::as_str) == Some("text"))
-        .filter_map(|block| block.get("text").and_then(Value::as_str))
-        .collect::<String>();
-    (!text.is_empty()).then_some(text)
+fn signal_process_id(payload: &Value) -> Option<&str> {
+    payload
+        .get("pid")
+        .or_else(|| payload.get("processId"))
+        .or_else(|| {
+            payload
+                .get("message")
+                .and_then(|message| message.get("processId"))
+        })
+        .and_then(Value::as_str)
 }
 
 fn signal_requests_history(payload: &Value) -> bool {

@@ -38,6 +38,9 @@ import type { ChatReasoningTarget } from "./ChatReasoningPanel";
 
 export type ChatDockMessageRole = ChatTranscriptRowRole;
 export type ChatDockMessage = ChatTranscriptRow;
+export type ChatBranchPoint =
+  | { throughMessageId: number }
+  | { throughRunId: string };
 
 type ChatTranscriptProps = {
   activeRunId?: string | null;
@@ -56,7 +59,7 @@ type ChatTranscriptProps = {
   /** Shell mobile layout: timestamps stay inline; message actions move into
    *  the swipe-to-reveal rail. */
   mobile?: boolean;
-  onBranch?: (messageId: number) => void;
+  onBranch?: (point: ChatBranchPoint) => void;
   /** Opens the full-body reasoning panel for a run or an assistant reply. */
   onOpenReasoning?: (target: ChatReasoningTarget) => void;
 };
@@ -1041,18 +1044,23 @@ function UserMessage({
   message: ChatDockMessage;
   processId: string;
   onCopy: () => void;
-  onBranch?: (messageId: number) => void;
+  onBranch?: (point: ChatBranchPoint) => void;
 }) {
   const mobile = useTranscriptMobile();
   // Built once, routed by breakpoint: desktop puts them in the meta row,
   // mobile in the swipe rail — never both (no duplicate controls for AT).
-  const branchAction = message.messageId && onBranch ? (
+  const branchPoint: ChatBranchPoint | null = typeof message.messageId === "number"
+    ? { throughMessageId: message.messageId }
+    : message.runId
+      ? { throughRunId: message.runId }
+      : null;
+  const branchAction = branchPoint && onBranch ? (
     <Hint text="Branch new work from this message">
       <button
         type="button"
         class="gsv-mm-btn"
         aria-label="Branch new work from this message"
-        onClick={() => onBranch(message.messageId as number)}
+        onClick={() => onBranch(branchPoint)}
       >
         <svg width="13" height="13" viewBox="0 0 16 16" aria-hidden="true">
           <g fill="none" stroke="currentColor" stroke-width="1.5">
@@ -1091,7 +1099,7 @@ function UserMessage({
           {message.media?.length ? (
             <div class="gsv-chat-media-list">
               {message.media.map((media, index) => (
-                <ChatMediaAttachment key={`${message.id}:media:${index}`} media={media} processId={processId} />
+                <ChatMediaAttachment key={`${message.id}:media:${index}`} media={media} processId={message.processId || processId} />
               ))}
             </div>
           ) : null}
@@ -1512,13 +1520,15 @@ function AssistantProcessMessage({
     ? message.text
     : message.streaming ? "Thinking..." : "";
 
-  const reasoningAction = reasoning && onOpenReasoning ? (
+  const reasoningAction = (reasoning || message.runId) && onOpenReasoning ? (
     <Hint position="top" text="Expand reasoning">
       <button
         type="button"
         class="gsv-chat-reasoning-icon"
         aria-label="Expand reasoning"
-        onClick={() => onOpenReasoning({ kind: "message", messageId: message.id })}
+        onClick={() => onOpenReasoning(message.runId
+          ? { kind: "run", runId: message.runId }
+          : { kind: "message", messageId: message.id })}
       >
         <ReasoningGlyph size={13} />
       </button>
@@ -1567,7 +1577,7 @@ function AssistantProcessMessage({
       {message.media?.length ? (
         <div class="gsv-chat-media-list is-assistant">
           {message.media.map((media, index) => (
-            <ChatMediaAttachment key={`${message.id}:media:${index}`} media={media} processId={processId} />
+            <ChatMediaAttachment key={`${message.id}:media:${index}`} media={media} processId={message.processId || processId} />
           ))}
         </div>
       ) : null}
@@ -1665,7 +1675,7 @@ function ProcessMessage({
         {message.media?.length ? (
           <div class="gsv-chat-media-list">
             {message.media.map((media, index) => (
-              <ChatMediaAttachment key={`${message.id}:media:${index}`} media={media} processId={processId} />
+              <ChatMediaAttachment key={`${message.id}:media:${index}`} media={media} processId={message.processId || processId} />
             ))}
           </div>
         ) : null}
@@ -1723,7 +1733,7 @@ function TranscriptRenderItemView({
   copyState: CopyState | null;
   expandedKeys: ReadonlySet<string>;
   item: TranscriptRenderItem;
-  onBranch?: (messageId: number) => void;
+  onBranch?: (point: ChatBranchPoint) => void;
   onCopy: (message: ChatDockMessage, messageId: string) => void;
   onOpenReasoning?: (target: ChatReasoningTarget) => void;
   onToggleExpand: (messageId: string) => void;

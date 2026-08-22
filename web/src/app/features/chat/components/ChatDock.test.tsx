@@ -52,6 +52,16 @@ vi.mock("../hooks", () => {
       toggleLive: vi.fn(),
     }),
     useChatHistorySegments: () => ({ data: [] }),
+    useChatConversation: () => ({
+      appendOptimistic: vi.fn(),
+      conversation: null,
+      hasMore: false,
+      historyError: null,
+      historyLoading: false,
+      loadOlder: vi.fn(),
+      loadingOlder: false,
+      rows: mocks.rows,
+    }),
     useChatProcessAiConfig: () => ({
       data: null,
       error: null,
@@ -167,19 +177,34 @@ describe("ChatDock Work branching", () => {
     });
     const transcript = findComponent<{
       messages: unknown[];
-      onBranch?: (messageId: number) => void;
+      onBranch?: (point: { throughMessageId: number } | { throughRunId: string }) => void;
     }>(dock, ChatTranscript);
 
     expect(transcript?.props.messages).toHaveLength(1);
     expect(transcript?.props.onBranch).toBeUndefined();
     expect(requestChatBranch({
       canStartNewTask: false,
+      branch: { throughMessageId: 7 },
       forkPending: false,
       hasActiveProcess: true,
-      messageId: 7,
       mutate: mocks.forkMutate,
       processId: "root-work",
     })).toBe(false);
     expect(mocks.forkMutate).not.toHaveBeenCalled();
+  });
+
+  it("branches canonical conversation messages through their process run", () => {
+    expect(requestChatBranch({
+      canStartNewTask: true,
+      branch: { throughRunId: "run:conversation-message" },
+      forkPending: false,
+      hasActiveProcess: true,
+      mutate: mocks.forkMutate,
+      processId: "proc:personal",
+    })).toBe(true);
+    expect(mocks.forkMutate).toHaveBeenCalledWith({
+      pid: "proc:personal",
+      throughRunId: "run:conversation-message",
+    });
   });
 });

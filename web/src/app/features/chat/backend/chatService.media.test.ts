@@ -25,11 +25,19 @@ describe("chat process media", () => {
         },
       };
     });
-    const send = vi.fn(async () => ({ ok: true as const, status: "started" as const, runId: "run:1" }));
+    const send = vi.fn(async () => ({
+      message: {} as never,
+      handlerPid: "proc:test",
+      runId: "run:1",
+    }));
     const client = {
       request,
-      proc: { send },
-    } as unknown as Pick<GSVClient, "proc" | "request">;
+      proc: {},
+      conversation: {
+        forProcess: vi.fn(async () => ({ conversation: { id: "conv:test" } })),
+        send,
+      },
+    } as unknown as Pick<GSVClient, "proc" | "conversation" | "request">;
 
     await sendChatMessage(client, {
       pid: "proc:test",
@@ -48,8 +56,9 @@ describe("chat process media", () => {
       expect.objectContaining({ body: expect.any(Object) }),
     );
     expect(send).toHaveBeenCalledWith({
-      pid: "proc:test",
-      message: "look",
+      conversationId: "conv:test",
+      text: "look",
+      idempotencyKey: expect.any(String),
       media: [{
         type: "image",
         mimeType: "image/png",
@@ -64,8 +73,9 @@ describe("chat process media", () => {
     const send = vi.fn();
     const client = {
       request,
-      proc: { send, media: { delete: vi.fn() } },
-    } as unknown as Pick<GSVClient, "proc" | "request">;
+      proc: { media: { delete: vi.fn() } },
+      conversation: { forProcess: vi.fn(), send },
+    } as unknown as Pick<GSVClient, "proc" | "conversation" | "request">;
 
     await expect(sendChatMessage(client, {
       message: "too large",
@@ -97,8 +107,12 @@ describe("chat process media", () => {
     const send = vi.fn();
     const client = {
       request,
-      proc: { send, media: { delete: remove } },
-    } as unknown as Pick<GSVClient, "proc" | "request">;
+      proc: { media: { delete: remove } },
+      conversation: {
+        forProcess: vi.fn(async () => ({ conversation: { id: "conv:test" } })),
+        send,
+      },
+    } as unknown as Pick<GSVClient, "proc" | "conversation" | "request">;
 
     await expect(sendChatMessage(client, {
       pid: "proc:test",
@@ -132,10 +146,13 @@ describe("chat process media", () => {
     const client = {
       request,
       proc: {
-        send: vi.fn(async () => ({ ok: false as const, error: "conversation closed" })),
         media: { delete: remove },
       },
-    } as unknown as Pick<GSVClient, "proc" | "request">;
+      conversation: {
+        forProcess: vi.fn(async () => ({ conversation: { id: "conv:test" } })),
+        send: vi.fn(async () => { throw new Error("conversation closed"); }),
+      },
+    } as unknown as Pick<GSVClient, "proc" | "conversation" | "request">;
 
     await expect(sendChatMessage(client, {
       pid: "proc:test",

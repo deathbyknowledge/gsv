@@ -171,4 +171,52 @@ impl KernelClient {
 
         Ok(result)
     }
+
+    pub async fn conversation_for_process(
+        &self,
+        pid: &str,
+    ) -> Result<String, Box<dyn std::error::Error>> {
+        let payload = self
+            .request_ok("conversation.forProcess", Some(json!({ "pid": pid })))
+            .await?;
+        payload
+            .get("conversation")
+            .and_then(|conversation| conversation.get("id"))
+            .and_then(Value::as_str)
+            .map(str::to_string)
+            .ok_or_else(|| "conversation.forProcess returned no conversation id".into())
+    }
+
+    pub async fn conversation_send(
+        &self,
+        conversation_id: &str,
+        message: &str,
+        idempotency_key: &str,
+    ) -> Result<ProcSendResult, Box<dyn std::error::Error>> {
+        let payload = self
+            .request_ok(
+                "conversation.send",
+                Some(json!({
+                    "conversationId": conversation_id,
+                    "text": message,
+                    "idempotencyKey": idempotency_key,
+                })),
+            )
+            .await?;
+        let run_id = payload
+            .get("runId")
+            .and_then(Value::as_str)
+            .ok_or("conversation.send returned no run id")?;
+        let queued = payload
+            .get("queued")
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
+        Ok(ProcSendResult {
+            ok: true,
+            status: if queued { "queued" } else { "started" }.to_string(),
+            run_id: run_id.to_string(),
+            queued,
+            error: None,
+        })
+    }
 }

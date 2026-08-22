@@ -2027,6 +2027,7 @@ fn draft_attachment_media(attachment: &DraftAttachment) -> MediaAttachment {
         kind: attachment.kind,
         mime_type: attachment.mime_type.clone(),
         key: None,
+        conversation_id: None,
         path: None,
         url: None,
         filename: Some(attachment.filename.clone()),

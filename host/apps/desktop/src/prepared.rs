@@ -67,8 +67,16 @@ pub(crate) enum PreparedMediaOrigin {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) enum PreparedMediaSource {
-    Process { key: Arc<str> },
-    Remote { url: Arc<str> },
+    Process {
+        key: Arc<str>,
+    },
+    Conversation {
+        conversation_id: Arc<str>,
+        key: Arc<str>,
+    },
+    Remote {
+        url: Arc<str>,
+    },
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -398,6 +406,17 @@ fn attachment_descriptor(attachment: &MediaAttachment) -> Option<PreparedMediaDe
         })
         .filter(|key| !key.is_empty())
     {
+        if let Some(conversation_id) = attachment.conversation_id.as_deref() {
+            return Some(PreparedMediaDescriptor {
+                cache_key: Arc::from(format!("conversation:{conversation_id}:{key}")),
+                source: PreparedMediaSource::Conversation {
+                    conversation_id: Arc::from(conversation_id),
+                    key: Arc::from(key),
+                },
+                mime_type: Some(Arc::from(attachment.mime_type.as_str())),
+                origin: PreparedMediaOrigin::Attachment,
+            });
+        }
         return Some(PreparedMediaDescriptor {
             cache_key: Arc::from(format!("process:{key}")),
             source: PreparedMediaSource::Process {
@@ -462,6 +481,7 @@ mod tests {
             kind,
             mime_type: "image/png".to_string(),
             key: None,
+            conversation_id: None,
             path: None,
             url: None,
             filename: None,

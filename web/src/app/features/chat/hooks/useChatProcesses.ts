@@ -11,6 +11,7 @@ import type {
   ProcListArgs,
   ProcMediaReadArgs,
   ProcSpawnArgs,
+  ConversationMediaReadArgs,
 } from "@humansandmachines/gsv/protocol";
 import { useGateway } from "../../../services/gateway/GatewayProvider";
 import {
@@ -45,7 +46,7 @@ export const chatProcessHistoryQueryKey = (args: ProcHistoryArgs = {}) => [
 
 export const chatProcessHistoryQueryKeyRoot = ["process", "chat", "history"] as const;
 
-export const chatProcessMediaQueryKey = (args: ProcMediaReadArgs) => [
+export const chatProcessMediaQueryKey = (args: ProcMediaReadArgs | ConversationMediaReadArgs) => [
   "process",
   "chat",
   "media",
@@ -86,7 +87,7 @@ type UseChatProcessHistoryOptions = ChatQueryOptions & {
 };
 
 type UseChatProcessMediaOptions = ChatQueryOptions & {
-  args: ProcMediaReadArgs;
+  args: ProcMediaReadArgs | ConversationMediaReadArgs;
 };
 
 function hasHistoryTarget(args: ProcHistoryArgs): boolean {

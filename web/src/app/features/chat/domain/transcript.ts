@@ -38,7 +38,10 @@ export type ChatTranscriptRow = {
   time: string;
   timestamp: number | null;
   media?: unknown[];
-  messageId?: number | null;
+  messageId?: number | string | null;
+  processId?: string;
+  delivery?: "directed" | "sync";
+  conversationSequence?: number;
   origin?: InteractionOrigin;
   toolArgs?: unknown;
   toolCallId?: string;
@@ -589,8 +592,8 @@ function appendUniqueMessageRow(rows: ChatTranscriptRow[], row: ChatTranscriptRo
   return dropEmptyTransientRows(withoutMatchingOptimistic, row.runId).concat(row);
 }
 
-function dropOneMatchingOptimisticUserRow(
-  rows: ChatTranscriptRow[],
+export function dropOneMatchingOptimisticUserRow(
+  rows: readonly ChatTranscriptRow[],
   row: ChatTranscriptRow,
 ): ChatTranscriptRow[] {
   let dropped = false;
