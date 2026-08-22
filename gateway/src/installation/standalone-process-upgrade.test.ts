@@ -1,6 +1,6 @@
 import { env } from "cloudflare:workers";
 import { runInDurableObject } from "cloudflare:test";
-import { getAgentByName } from "agents";
+import { getDurableObjectByName } from "../shared/durable-object";
 import { describe, expect, it } from "vitest";
 import type { ProcessIdentity } from "@humansandmachines/gsv/protocol";
 
@@ -21,7 +21,7 @@ const ROOT_IDENTITY: ProcessIdentity = {
 describe("standalone Process upgrade compatibility", () => {
   it("routes current Kernel history reads to legacy raw-pid Process state", async () => {
     const pid = `legacy-upgrade-${crypto.randomUUID()}`;
-    const legacyProcess = await getAgentByName(env.PROCESS, pid);
+    const legacyProcess = await getDurableObjectByName(env.PROCESS, pid);
     const identityResponse = await legacyProcess.recvFrame({
       type: "req",
       id: crypto.randomUUID(),

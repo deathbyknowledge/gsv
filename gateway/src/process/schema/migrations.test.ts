@@ -38,7 +38,7 @@ function createTableStatement(name: string): string {
 describe("process schema migrations", () => {
   it("starts the process component at a v1 baseline with ordered migrations", () => {
     expect(PROCESS_SCHEMA_COMPONENT).toBe("process");
-    expect(PROCESS_MIGRATIONS).toHaveLength(9);
+    expect(PROCESS_MIGRATIONS).toHaveLength(10);
     expect(PROCESS_MIGRATIONS[0]).toMatchObject({
       id: 1,
       name: "initial_process_schema",
@@ -75,6 +75,10 @@ describe("process schema migrations", () => {
       id: 9,
       name: "add_typed_message_queue",
     });
+    expect(PROCESS_MIGRATIONS[9]).toMatchObject({
+      id: 10,
+      name: "own_durable_tasks",
+    });
   });
 
   it("keeps the shipped v1 table set intact", () => {
@@ -87,6 +91,7 @@ describe("process schema migrations", () => {
       "pending_hil",
       "conversation_segments",
       "conversation_archives",
+      "cf_agents_schedules",
     ]);
   });
 
@@ -113,6 +118,7 @@ describe("process schema migrations", () => {
       "messages_conversation_id_id_idx",
       "conversation_archives_conversation_generation_idx",
       "messages_run_id_idx",
+      "cf_agents_schedules_time_idx",
     ]);
   });
 

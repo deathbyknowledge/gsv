@@ -10,7 +10,8 @@
  * Each "turn" is scheduled via this.schedule() to avoid subrequest limits.
  */
 
-import { Agent as Host } from "agents";
+import { DurableObject } from "cloudflare:workers";
+import { z } from "zod";
 import type {
   Frame,
   FrameBody,
@@ -222,6 +223,11 @@ import {
   redactProcessAiConfigSnapshot,
 } from "./ai-config";
 import { runProcessSqlMigrations } from "./schema/migrations";
+import {
+  DurableTaskScheduler,
+  type DurableTask,
+  type DurableTaskOptions,
+} from "../shared/durable-tasks";
 import { hasCapability } from "../kernel/capabilities";
 import {
   normalizeNetFetchTimeoutMs,
@@ -1155,13 +1161,44 @@ function fitCompactionRecord(message: MessageRecord, maxChars: number): string |
   return null;
 }
 
-export class Process extends Host<Env> {
+type ProcessTask =
+  | { callback: "onMediaPreparationTimeout"; payload: string }
+  | { callback: "onRunFinishDelivery"; payload: string }
+  | {
+      callback: "onToolDispatchTimeout";
+      payload: { runId: string; dispatchId: string };
+    }
+  | { callback: "tick"; payload: { runId: string; generation: number } };
+
+type ProcessTaskCallback = ProcessTask["callback"];
+
+const PROCESS_TASK_SCHEMA = z.discriminatedUnion("callback", [
+  z.object({
+    callback: z.literal("onMediaPreparationTimeout"),
+    payload: z.string(),
+  }),
+  z.object({
+    callback: z.literal("onRunFinishDelivery"),
+    payload: z.string(),
+  }),
+  z.object({
+    callback: z.literal("onToolDispatchTimeout"),
+    payload: z.object({ runId: z.string(), dispatchId: z.string() }),
+  }),
+  z.object({
+    callback: z.literal("tick"),
+    payload: z.object({ runId: z.string(), generation: z.number().int() }),
+  }),
+]);
+
+export class Process extends DurableObject<Env> {
   readonly installationId: string;
   readonly pid: string;
   private readonly store: ProcessStore;
   private readonly storage: R2Bucket;
   private readonly generation: ReturnType<typeof createGenerationService>;
   private readonly ripgit: RipgitClient | null;
+  private readonly tasks: DurableTaskScheduler<ProcessTask>;
   private readonly codeModeResponses = new Map<string, CodeModeResponseWaiter>();
   private readonly codeModeApprovals = new Map<string, CodeModeApprovalWaiter>();
   private readonly requestControllers = new Map<string, AbortController>();
@@ -1200,6 +1237,11 @@ export class Process extends Host<Env> {
     if (!this.killed) {
       runProcessSqlMigrations(ctx.storage);
     }
+    this.tasks = new DurableTaskScheduler(
+      ctx.storage,
+      decodeProcessTask,
+      this.runScheduledTask.bind(this),
+    );
     this.store = new ProcessStore(ctx.storage.sql);
     this.ripgit = env.RIPGIT
       ? new RipgitClient(createInstallationRipgit(env.RIPGIT, this.installationId))
@@ -1227,6 +1269,45 @@ export class Process extends Host<Env> {
     ) as Array<{ runId: string }>;
     for (const finish of pendingFinishes) {
       this.ctx.waitUntil(this.onRunFinishDelivery(finish.runId));
+    }
+  }
+
+  async alarm(): Promise<void> {
+    if (this.killed) {
+      if (this.killedTombstone?.cleanup === "pending") {
+        await this.completeKilledProcessCleanup();
+      }
+      return;
+    }
+    await this.tasks.alarm();
+  }
+
+  private schedule(
+    when: Date | number,
+    callback: ProcessTaskCallback,
+    payload: ProcessTask["payload"],
+    options?: DurableTaskOptions,
+  ) {
+    const task = PROCESS_TASK_SCHEMA.parse({ callback, payload });
+    return this.tasks.schedule(when, task, options);
+  }
+
+  private async runScheduledTask(
+    task: DurableTask<ProcessTask>,
+  ): Promise<void> {
+    switch (task.callback) {
+      case "onMediaPreparationTimeout":
+        await this.onMediaPreparationTimeout(task.payload);
+        return;
+      case "onRunFinishDelivery":
+        await this.onRunFinishDelivery(task.payload);
+        return;
+      case "onToolDispatchTimeout":
+        await this.onToolDispatchTimeout(task.payload);
+        return;
+      case "tick":
+        await this.tick(task.payload);
+        return;
     }
   }
 
@@ -8673,6 +8754,13 @@ function formatAdapterSurfaceForContext(surface: AdapterSurface): string {
     return `${surface.kind} ${label}${thread}`;
   }
   return `${surface.kind} ${label}`;
+}
+
+function decodeProcessTask(callback: string, payloadJson: string): ProcessTask {
+  return PROCESS_TASK_SCHEMA.parse({
+    callback,
+    payload: JSON.parse(payloadJson),
+  });
 }
 
 function titleCase(value: string): string {

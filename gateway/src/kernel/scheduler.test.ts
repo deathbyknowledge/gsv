@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { env } from "cloudflare:workers";
 import { runDurableObjectAlarm, runInDurableObject } from "cloudflare:test";
-import { getAgentByName } from "agents";
+import { getDurableObjectByName } from "../shared/durable-object";
 import type {
   ProcessIdentity,
   SchedulePrincipal,
@@ -258,7 +258,7 @@ describe("scheduler", () => {
   });
 
   it("preserves a one-shot occurrence across retry and rotates it on user re-arm or update", async () => {
-    const kernel = await getAgentByName<Env, Kernel>(
+    const kernel = await getDurableObjectByName<Env, Kernel>(
       env.KERNEL,
       `scheduler-one-shot-occurrence-test-${crypto.randomUUID()}`,
     );
@@ -437,7 +437,7 @@ describe("scheduler", () => {
   });
 
   it("uses the per-occurrence attempt count for retry cutoff, backoff, and force isolation", async () => {
-    const kernel = await getAgentByName<Env, Kernel>(
+    const kernel = await getDurableObjectByName<Env, Kernel>(
       env.KERNEL,
       `scheduler-one-shot-attempt-test-${crypto.randomUUID()}`,
     );
@@ -540,7 +540,7 @@ describe("scheduler", () => {
   });
 
   it("records and summarizes an ambiguous adapter delivery without retrying", async () => {
-    const kernel = await getAgentByName<Env, Kernel>(
+    const kernel = await getDurableObjectByName<Env, Kernel>(
       env.KERNEL,
       `scheduler-ambiguous-adapter-test-${crypto.randomUUID()}`,
     );
@@ -1090,7 +1090,7 @@ describe("scheduler", () => {
   it("runs a due schedule through the Kernel and delivers a process event", async () => {
     const pid = `sched-event-${crypto.randomUUID()}`;
     const installationId = `scheduler-test-${crypto.randomUUID()}`;
-    const kernel = await getAgentByName<Env, Kernel>(
+    const kernel = await getDurableObjectByName<Env, Kernel>(
       env.KERNEL,
       installationId,
     );
@@ -1165,7 +1165,7 @@ describe("scheduler", () => {
   });
 
   it("runs a due command schedule through the Kernel shell", async () => {
-    const kernel = await getAgentByName<Env, Kernel>(
+    const kernel = await getDurableObjectByName<Env, Kernel>(
       env.KERNEL,
       `scheduler-command-test-${crypto.randomUUID()}`,
     );
@@ -1225,7 +1225,7 @@ describe("scheduler", () => {
   });
 
   it("gives recurring command mail sends occurrence-specific delivery ids", async () => {
-    const kernel = await getAgentByName<Env, Kernel>(
+    const kernel = await getDurableObjectByName<Env, Kernel>(
       env.KERNEL,
       `scheduler-mail-delivery-test-${crypto.randomUUID()}`,
     );
@@ -1298,7 +1298,7 @@ describe("scheduler", () => {
   });
 
   it("isolates command delivery ids for schedules due at the same time", async () => {
-    const kernel = await getAgentByName<Env, Kernel>(
+    const kernel = await getDurableObjectByName<Env, Kernel>(
       env.KERNEL,
       `scheduler-mail-collision-test-${crypto.randomUUID()}`,
     );
@@ -1356,7 +1356,7 @@ describe("scheduler", () => {
   });
 
   it("runs command schedules as the stored run-as account", async () => {
-    const kernel = await getAgentByName<Env, Kernel>(
+    const kernel = await getDurableObjectByName<Env, Kernel>(
       env.KERNEL,
       `scheduler-runas-test-${crypto.randomUUID()}`,
     );
@@ -1424,7 +1424,7 @@ describe("scheduler", () => {
   });
 
   it("fails process events when the run-as account no longer exists", async () => {
-    const kernel = await getAgentByName<Env, Kernel>(
+    const kernel = await getDurableObjectByName<Env, Kernel>(
       env.KERNEL,
       `scheduler-missing-runas-test-${crypto.randomUUID()}`,
     );
@@ -1454,7 +1454,7 @@ describe("scheduler", () => {
       target: { kind: "process.event", pid: "missing", message: "Do not deliver." } as const,
     },
   ])("rechecks $capability when a process schedule fires", async ({ capability, target }) => {
-    const kernel = await getAgentByName<Env, Kernel>(
+    const kernel = await getDurableObjectByName<Env, Kernel>(
       env.KERNEL,
       `scheduler-revoked-capability-test-${crypto.randomUUID()}`,
     );
@@ -1481,7 +1481,7 @@ describe("scheduler", () => {
   });
 
   it("rechecks adapter.send when a scheduled process event has a reply target", async () => {
-    const kernel = await getAgentByName<Env, Kernel>(
+    const kernel = await getDurableObjectByName<Env, Kernel>(
       env.KERNEL,
       `scheduler-revoked-reply-test-${crypto.randomUUID()}`,
     );
@@ -1520,10 +1520,10 @@ describe("scheduler", () => {
     )).rejects.toThrow("Permission denied: adapter.send");
   });
 
-  it("fires an armed one-shot schedule through the Agent alarm", async () => {
+  it("fires an armed one-shot schedule through the Kernel alarm", async () => {
     const pid = `sched-alarm-${crypto.randomUUID()}`;
     const installationId = `scheduler-alarm-test-${crypto.randomUUID()}`;
-    const kernel = await getAgentByName<Env, Kernel>(
+    const kernel = await getDurableObjectByName<Env, Kernel>(
       env.KERNEL,
       installationId,
     );
@@ -1606,7 +1606,7 @@ describe("scheduler", () => {
   });
 
   it("retains one distinct outbound recovery wake after the current wake runs", async () => {
-    const kernel = await getAgentByName<Env, Kernel>(
+    const kernel = await getDurableObjectByName<Env, Kernel>(
       env.KERNEL,
       `scheduler-mail-recovery-test-${crypto.randomUUID()}`,
     );
@@ -1676,7 +1676,7 @@ describe("scheduler", () => {
   });
 
   it("preserves due work while a managed installation is suspended", async () => {
-    const kernel = await getAgentByName<Env, Kernel>(
+    const kernel = await getDurableObjectByName<Env, Kernel>(
       env.KERNEL,
       `scheduler-suspended-test-${crypto.randomUUID()}`,
     );
@@ -1736,7 +1736,7 @@ describe("scheduler", () => {
   });
 
   it("rounds Kernel wake rows up to avoid firing before millisecond-precision due times", async () => {
-    const kernel = await getAgentByName<Env, Kernel>(
+    const kernel = await getDurableObjectByName<Env, Kernel>(
       env.KERNEL,
       `scheduler-wake-rounding-test-${crypto.randomUUID()}`,
     );
@@ -1761,7 +1761,7 @@ describe("scheduler", () => {
   it("re-arms when an existing wake fires before the GSV schedule is due", async () => {
     const pid = `sched-early-${crypto.randomUUID()}`;
     const installationId = `scheduler-early-wake-test-${crypto.randomUUID()}`;
-    const kernel = await getAgentByName<Env, Kernel>(
+    const kernel = await getDurableObjectByName<Env, Kernel>(
       env.KERNEL,
       installationId,
     );
@@ -1850,7 +1850,7 @@ describe("scheduler", () => {
   it("ignores stale wake rows before checking due state", async () => {
     const pid = `sched-stale-${crypto.randomUUID()}`;
     const installationId = `scheduler-stale-wake-test-${crypto.randomUUID()}`;
-    const kernel = await getAgentByName<Env, Kernel>(
+    const kernel = await getDurableObjectByName<Env, Kernel>(
       env.KERNEL,
       installationId,
     );
@@ -1937,7 +1937,7 @@ describe("scheduler", () => {
   it("force-runs a process event schedule before it is due", async () => {
     const pid = `sched-force-${crypto.randomUUID()}`;
     const installationId = `scheduler-force-test-${crypto.randomUUID()}`;
-    const kernel = await getAgentByName<Env, Kernel>(
+    const kernel = await getDurableObjectByName<Env, Kernel>(
       env.KERNEL,
       installationId,
     );
@@ -2004,7 +2004,7 @@ describe("scheduler", () => {
   });
 
   it("skips a due schedule that is already running", async () => {
-    const kernel = await getAgentByName<Env, Kernel>(
+    const kernel = await getDurableObjectByName<Env, Kernel>(
       env.KERNEL,
       `scheduler-overlap-test-${crypto.randomUUID()}`,
     );
@@ -2058,7 +2058,7 @@ describe("scheduler", () => {
   it("disables an after schedule once it runs", async () => {
     const pid = `sched-once-${crypto.randomUUID()}`;
     const installationId = `scheduler-once-test-${crypto.randomUUID()}`;
-    const kernel = await getAgentByName<Env, Kernel>(
+    const kernel = await getDurableObjectByName<Env, Kernel>(
       env.KERNEL,
       installationId,
     );
@@ -2120,7 +2120,7 @@ describe("scheduler", () => {
 
   it("runs a due process.spawn schedule and sends the prompt to the cron process", async () => {
     const installationId = `scheduler-spawn-test-${crypto.randomUUID()}`;
-    const kernel = await getAgentByName<Env, Kernel>(
+    const kernel = await getDurableObjectByName<Env, Kernel>(
       env.KERNEL,
       installationId,
     );
@@ -2213,7 +2213,7 @@ describe("scheduler", () => {
   });
 
   it("runs process-principal spawn schedules after the creator process is gone", async () => {
-    const kernel = await getAgentByName<Env, Kernel>(
+    const kernel = await getDurableObjectByName<Env, Kernel>(
       env.KERNEL,
       `scheduler-dead-parent-spawn-test-${crypto.randomUUID()}`,
     );

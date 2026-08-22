@@ -1,15 +1,13 @@
-import {
-  Connection,
-  ConnectionContext,
-  Agent as Host,
-  getCurrentAgent,
-  type WSMessage,
-} from "agents";
+import { DurableObject } from "cloudflare:workers";
+import { z } from "zod";
 import {
   DurableObjectOAuthClientProvider,
   type AgentMcpOAuthProvider,
 } from "agents/mcp/do-oauth-client-provider";
-import type { MCPConnectionResult } from "agents/mcp/client";
+import {
+  MCPClientManager,
+  type MCPConnectionResult,
+} from "agents/mcp/client";
 import type {
   Frame,
   FrameBody,
@@ -150,6 +148,18 @@ import {
   managedInstallationWorkGate,
   type ManagedInstallationLifecycleBindings,
 } from "../installation/lifecycle";
+import {
+  DurableTaskScheduler,
+  type DurableTask,
+  type DurableTaskOptions,
+} from "../shared/durable-tasks";
+import {
+  acceptKernelWebSocket,
+  KernelConnection,
+  type KernelConnectionState as ConnectionState,
+  type KernelWebSocketMessage,
+  restoreKernelWebSocket,
+} from "./connection";
 
 const PROCESS_REQUEST_CANCEL_TTL_MS = 60_000;
 const MAX_PROCESS_REQUEST_CANCELLATIONS = 1024;
@@ -171,7 +181,7 @@ type AdapterSignalDeliveryRetry = {
   runId: string;
   processId: string;
   signal: string;
-  payload: unknown;
+  payload?: unknown;
   attempt: number;
 };
 
@@ -208,14 +218,6 @@ function adapterSignalRetryDelayMs(attempt: number): number {
   return Math.min(30_000, 1_000 * (2 ** Math.max(0, attempt - 1)));
 }
 
-type ConnectionState = {
-  step: "pending" | "connected" | "superseded";
-  identity?: ConnectionIdentity;
-  clientId?: string;
-  clientPlatform?: string;
-  observedProcessIds?: string[];
-};
-
 type ProcessNetFetchOptions = {
   ttlMs?: number;
   internalPurpose?: "model-transport";
@@ -251,9 +253,60 @@ type PendingManagedOnboardingCompletion = {
   installationId: string;
 };
 
+type KernelTask =
+  | { callback: "onAdapterSignalDelivery"; payload: AdapterSignalDeliveryRetry }
+  | { callback: "onIpcCallDelivery"; payload: string }
+  | { callback: "onIpcCallTimeout"; payload: string | IpcCallTimeout }
+  | { callback: "onManagedOutboundEnqueue"; payload: string }
+  | { callback: "onProcessDeliveryNotice"; payload: ProcessDeliveryNoticeRetry }
+  | { callback: "onRouteExpired"; payload: string }
+  | { callback: "onScheduleDue"; payload: string };
+
+type KernelTaskCallback = KernelTask["callback"];
+
+const KERNEL_TASK_SCHEMA = z.discriminatedUnion("callback", [
+  z.object({
+    callback: z.literal("onAdapterSignalDelivery"),
+    payload: z.object({
+      runId: z.string(),
+      processId: z.string(),
+      signal: z.string(),
+      payload: z.json().optional(),
+      attempt: z.number().int().positive(),
+    }),
+  }),
+  z.object({ callback: z.literal("onIpcCallDelivery"), payload: z.string() }),
+  z.object({
+    callback: z.literal("onIpcCallTimeout"),
+    payload: z.union([
+      z.string(),
+      z.object({
+        callId: z.string(),
+        terminateTargetOnTimeout: z.boolean().optional(),
+      }),
+    ]),
+  }),
+  z.object({ callback: z.literal("onManagedOutboundEnqueue"), payload: z.string() }),
+  z.object({
+    callback: z.literal("onProcessDeliveryNotice"),
+    payload: z.object({
+      noticeId: z.string(),
+      runId: z.string(),
+      processId: z.string(),
+      deliveryKind: z.enum(["hil", "final"]),
+      requestId: z.string().optional(),
+      state: z.enum(["permanent", "ambiguous", "exhausted"]),
+      message: z.string(),
+      cleanupRunRoute: z.boolean(),
+    }),
+  }),
+  z.object({ callback: z.literal("onRouteExpired"), payload: z.string() }),
+  z.object({ callback: z.literal("onScheduleDue"), payload: z.string() }),
+]);
+
 const MANAGED_ONBOARDING_COMPLETION_KEY = "managed_onboarding_completion";
 
-export class Kernel extends Host<Env> {
+export class Kernel extends DurableObject<Env> {
   private readonly installationId: string;
   private installationIdentity?: InstallationIdentity;
   private readonly installationStorage: R2Bucket;
@@ -274,7 +327,9 @@ export class Kernel extends Host<Env> {
   private readonly mailboxes: MailboxStore;
   private readonly oauth: OAuthStore;
   private readonly mcpServers: McpServerStore;
-  private readonly connections = new Map<string, Connection<ConnectionState>>();
+  private readonly connections = new Map<string, KernelConnection<ConnectionState>>();
+  private readonly tasks: DurableTaskScheduler<KernelTask>;
+  private mcp: MCPClientManager;
   private managedOnboardingInProgress = false;
   private pendingManagedOnboarding?: PendingManagedOnboardingCompletion;
   private readonly pendingKernelResponses = new Map<string, (frame: ResponseFrame) => void>();
@@ -350,6 +405,15 @@ export class Kernel extends Host<Env> {
     this.oauth = new OAuthStore(sql);
 
     this.mcpServers = new McpServerStore(sql);
+    this.tasks = new DurableTaskScheduler(
+      ctx.storage,
+      decodeKernelTask,
+      this.runScheduledTask.bind(this),
+    );
+    this.mcp = new MCPClientManager("GSV Kernel", SERVER_VERSION, {
+      storage: ctx.storage,
+      createAuthProvider: (callbackUrl) => this.createMcpOAuthProvider(callbackUrl),
+    });
     installMcpDiscoveryCompatibility(this.mcp);
     this.mcp.configureOAuthCallback({
       customHandler: (result) => oauthCallbackHtmlResponse(
@@ -370,6 +434,9 @@ export class Kernel extends Host<Env> {
     this.mcp.onServerStateChanged(() => {
       this.broadcastMcpChanged();
     });
+    ctx.blockConcurrencyWhile(async () => {
+      await this.mcp.restoreConnectionsFromStorage(ctx.id.name ?? this.installationId);
+    });
 
     this.rehydrateConnections();
     for (const callId of this.ipcCalls.recoverDeliveryIds()) {
@@ -379,7 +446,7 @@ export class Kernel extends Host<Env> {
 
   createMcpOAuthProvider(callbackUrl: string): AgentMcpOAuthProvider {
     const provider = (
-      new DurableObjectOAuthClientProvider(this.ctx.storage, this.name, callbackUrl)
+      new DurableObjectOAuthClientProvider(this.ctx.storage, this.installationId, callbackUrl)
     ) as AgentMcpOAuthProvider & { clientMetadataUrl?: string };
     const metadataUrl = `${new URL(callbackUrl).origin}/.well-known/oauth-client/gsv.json`;
     if (metadataUrl.startsWith("https://")) {
@@ -436,15 +503,115 @@ export class Kernel extends Host<Env> {
     return oauthCallbackHtmlResponse(result, result.ok ? 200 : result.status);
   }
 
+  async fetch(request: Request): Promise<Response> {
+    const url = new URL(request.url);
+    if (url.pathname === "/ws") {
+      if (
+        request.method !== "GET"
+        || request.headers.get("upgrade")?.toLowerCase() !== "websocket"
+      ) {
+        return new Response("WebSocket upgrade required", { status: 426 });
+      }
+      const accepted = acceptKernelWebSocket<ConnectionState>(
+        this.ctx,
+        request,
+        { step: "pending" } satisfies ConnectionState,
+      );
+      this.onConnect(accepted.connection);
+      return accepted.response;
+    }
+
+    if (this.mcp.isCallbackRequest(request)) {
+      const result = await this.mcp.handleCallbackRequest(request);
+      if (result.authSuccess) {
+        this.ctx.waitUntil(this.mcp.establishConnection(result.serverId));
+      }
+      this.broadcastMcpChanged();
+      const customHandler = this.mcp.getOAuthCallbackConfig()?.customHandler;
+      return customHandler
+        ? customHandler(result)
+        : Response.redirect(url.origin);
+    }
+    return await this.onRequest(request);
+  }
+
+  async webSocketMessage(
+    socket: WebSocket,
+    message: KernelWebSocketMessage,
+  ): Promise<void> {
+    const connection = this.connectionForSocket(socket);
+    if (!connection) {
+      socket.close(1011, "Connection state unavailable");
+      return;
+    }
+    await this.onMessage(connection, message);
+  }
+
+  webSocketClose(
+    socket: WebSocket,
+    _code: number,
+    _reason: string,
+    _wasClean: boolean,
+  ): void {
+    const connection = this.connectionForSocket(socket);
+    if (connection) this.onClose(connection);
+  }
+
+  webSocketError(socket: WebSocket): void {
+    const connection = this.connectionForSocket(socket);
+    if (connection) this.onClose(connection);
+  }
+
+  async alarm(): Promise<void> {
+    await this.tasks.alarm();
+  }
+
+  private schedule(
+    when: Date | number,
+    callback: KernelTaskCallback,
+    payload: KernelTask["payload"],
+    options?: DurableTaskOptions,
+  ) {
+    const task = KERNEL_TASK_SCHEMA.parse({ callback, payload });
+    return this.tasks.schedule(when, task, options);
+  }
+
+  private cancelSchedule(id: string): Promise<boolean> {
+    return this.tasks.cancel(id);
+  }
+
+  private async runScheduledTask(
+    task: DurableTask<KernelTask>,
+  ): Promise<void> {
+    switch (task.callback) {
+      case "onAdapterSignalDelivery":
+        await this.onAdapterSignalDelivery(task.payload);
+        return;
+      case "onIpcCallDelivery":
+        await this.onIpcCallDelivery(task.payload);
+        return;
+      case "onIpcCallTimeout":
+        await this.onIpcCallTimeout(task.payload);
+        return;
+      case "onManagedOutboundEnqueue":
+        await this.onManagedOutboundEnqueue(task.payload);
+        return;
+      case "onProcessDeliveryNotice":
+        await this.onProcessDeliveryNotice(task.payload);
+        return;
+      case "onRouteExpired":
+        await this.onRouteExpired(task.payload);
+        return;
+      case "onScheduleDue":
+        await this.onScheduleDue(task.payload, task);
+        return;
+    }
+  }
+
   private async addMcpServerConnection(input: McpAddConnectionInput): Promise<McpAddConnectionResult> {
     const serverName = `u${input.uid}:${input.name}`;
     const serverId = `mcp-${crypto.randomUUID()}`;
-    let callbackHost = this.installationIdentity?.canonicalOrigin ?? input.callbackHost;
-    if (!callbackHost) {
-      const { request, connection } = getCurrentAgent();
-      const activeUrl = request?.url ?? connection?.uri;
-      callbackHost = activeUrl ? new URL(activeUrl).origin : undefined;
-    }
+    const callbackHost = this.installationIdentity?.canonicalOrigin ?? input.callbackHost;
     const callbackUrl = callbackHost
       ? `${callbackHost.replace(/\/$/, "")}/oauth/callback`
       : undefined;
@@ -521,6 +688,10 @@ export class Kernel extends Host<Env> {
     }
   }
 
+  private async removeMcpServer(serverId: string): Promise<void> {
+    await this.mcp.removeServer(serverId);
+  }
+
   private broadcastMcpChanged(): void {
     const uids = new Set(this.mcpServers.list().map((record) => record.uid));
     for (const uid of uids) {
@@ -528,19 +699,15 @@ export class Kernel extends Host<Env> {
     }
   }
 
-  shouldSendProtocolMessages(_: Connection, __: ConnectionContext): boolean {
-    return false;
-  }
-
-  onConnect(connection: Connection): void {
+  onConnect(connection: KernelConnection<ConnectionState>): void {
     const state: ConnectionState = { step: "pending" };
     connection.setState(state);
+    this.connections.set(connection.id, connection);
   }
 
-  onClose(connection: Connection): void {
+  onClose(connection: KernelConnection<ConnectionState>): void {
     this.closeFrameBodyChannel(connection.id);
-    const state = connection.state as ConnectionState | undefined;
-    if (!state) return;
+    const state = connection.state;
 
     this.connections.delete(connection.id);
     const origin: RouteOrigin = { type: "connection", id: connection.id };
@@ -566,7 +733,10 @@ export class Kernel extends Host<Env> {
     this.runRoutes.clearForConnection(connection.id);
   }
 
-  async onMessage(connection: Connection<ConnectionState>, message: WSMessage): Promise<void> {
+  async onMessage(
+    connection: KernelConnection<ConnectionState>,
+    message: KernelWebSocketMessage,
+  ): Promise<void> {
     if (typeof message !== "string") {
       this.handleBinaryMessage(connection, message);
       return;
@@ -616,7 +786,7 @@ export class Kernel extends Host<Env> {
   }
 
   private handleRequestCancel(
-    connection: Connection<ConnectionState>,
+    connection: KernelConnection<ConnectionState>,
     frame: SignalFrame,
   ): void {
     if (connection.state?.step !== "connected") {
@@ -1962,7 +2132,7 @@ export class Kernel extends Host<Env> {
     return result.response;
   }
 
-  private buildContext(connection: Connection<ConnectionState>): KernelContext {
+  private buildContext(connection: KernelConnection<ConnectionState>): KernelContext {
     const state = connection.state;
     if (!state) throw new Error("Connection state is missing");
     return this.buildKernelContext({
@@ -1972,7 +2142,7 @@ export class Kernel extends Host<Env> {
   }
 
   private buildKernelContext(options: {
-    connection?: Connection | null;
+    connection?: KernelConnection<ConnectionState> | null;
     identity?: ConnectionIdentity;
     processId?: string;
     processRunId?: string;
@@ -2019,7 +2189,11 @@ export class Kernel extends Host<Env> {
         await this.scheduleManagedOutboundEnqueue(outboundId, dueAtMs);
       },
       runSchedules: this.runSchedules.bind(this),
-      addMcpServerConnection: this.addMcpServerConnection.bind(this),
+      addMcpServerConnection: (input) => this.addMcpServerConnection({
+        ...input,
+        callbackHost: input.callbackHost
+          ?? (options.connection ? new URL(options.connection.uri).origin : undefined),
+      }),
       removeMcpServerConnection: this.removeMcpServer.bind(this),
       refreshMcpServerConnection: this.refreshMcpServerConnection.bind(this),
       callMcpTool: (serverId, toolName, args, signal) => this.mcp.callTool(
@@ -2318,7 +2492,7 @@ export class Kernel extends Host<Env> {
   }
 
   private decodeWebSocketFrame(
-    connection: Connection<ConnectionState>,
+    connection: KernelConnection<ConnectionState>,
     frame: Frame,
   ): Frame {
     const descriptor = (frame as unknown as { body?: BinaryFrameDescriptor }).body;
@@ -2335,13 +2509,16 @@ export class Kernel extends Host<Env> {
   }
 
   private receiveFrameBody(
-    connection: Connection<ConnectionState>,
+    connection: KernelConnection<ConnectionState>,
     descriptor: BinaryFrameDescriptor,
   ): FrameBody {
     return this.frameBodyChannel(connection).receive(descriptor);
   }
 
-  private sendWebSocketFrame(connection: Connection, frame: Frame): OutgoingBinaryBody | null {
+  private sendWebSocketFrame(
+    connection: KernelConnection<ConnectionState>,
+    frame: Frame,
+  ): OutgoingBinaryBody | null {
     const body = frame.type === "sig" || (frame.type === "res" && !frame.ok)
       ? undefined
       : frame.body;
@@ -2364,7 +2541,7 @@ export class Kernel extends Host<Env> {
     return outgoing;
   }
 
-  private frameBodyChannel(connection: Connection): BinaryBodyChannel {
+  private frameBodyChannel(connection: KernelConnection<ConnectionState>): BinaryBodyChannel {
     let channel = this.frameBodyChannels.get(connection.id);
     if (!channel) {
       channel = new BinaryBodyChannel({
@@ -2482,7 +2659,7 @@ export class Kernel extends Host<Env> {
     }
   }
 
-  private findDeviceConnection(deviceId: string): Connection<ConnectionState> | null {
+  private findDeviceConnection(deviceId: string): KernelConnection<ConnectionState> | null {
     for (const [, conn] of this.connections) {
       if (this.isConnectionForDevice(conn, deviceId)) {
         return conn;
@@ -2491,7 +2668,10 @@ export class Kernel extends Host<Env> {
     return null;
   }
 
-  private isConnectionForDevice(connection: Connection<ConnectionState>, deviceId: string): boolean {
+  private isConnectionForDevice(
+    connection: KernelConnection<ConnectionState>,
+    deviceId: string,
+  ): boolean {
     const state = connection.state;
     return state?.step === "connected" &&
       state.identity?.role === "driver" &&
@@ -2563,7 +2743,7 @@ export class Kernel extends Host<Env> {
   }
 
   private async handleReq(
-    connection: Connection<ConnectionState>,
+    connection: KernelConnection<ConnectionState>,
     wireFrame: RequestFrame,
   ): Promise<void> {
     let frame: RequestFrame;
@@ -2793,7 +2973,7 @@ export class Kernel extends Host<Env> {
   }
 
   private async handleSysConnect(
-    connection: Connection<ConnectionState>,
+    connection: KernelConnection<ConnectionState>,
     frame: RequestFrame<"sys.connect">,
   ): Promise<void> {
     const ctx = this.buildContext(connection);
@@ -2842,7 +3022,7 @@ export class Kernel extends Host<Env> {
   }
 
   private activateConnection(
-    connection: Connection<ConnectionState>,
+    connection: KernelConnection<ConnectionState>,
     state: ConnectionState & { step: "connected"; identity: ConnectionIdentity },
   ): void {
     connection.setState(state);
@@ -2868,7 +3048,7 @@ export class Kernel extends Host<Env> {
   }
 
   private async handleSysSetup(
-    connection: Connection<ConnectionState>,
+    connection: KernelConnection<ConnectionState>,
     frame: RequestFrame<"sys.setup">,
   ): Promise<void> {
     const state = connection.state as ConnectionState | undefined;
@@ -2905,7 +3085,7 @@ export class Kernel extends Host<Env> {
   }
 
   private async handleSysSetupAssist(
-    connection: Connection<ConnectionState>,
+    connection: KernelConnection<ConnectionState>,
     frame: RequestFrame<"sys.setup.assist">,
   ): Promise<void> {
     const state = connection.state as ConnectionState | undefined;
@@ -2961,7 +3141,7 @@ export class Kernel extends Host<Env> {
   }
 
   private async handleManagedSysSetup(
-    connection: Connection<ConnectionState>,
+    connection: KernelConnection<ConnectionState>,
     frame: RequestFrame<"sys.setup">,
     ctx: KernelContext,
   ): Promise<void> {
@@ -3133,7 +3313,10 @@ export class Kernel extends Host<Env> {
     );
   }
 
-  private handleRes(connection: Connection<ConnectionState>, wireFrame: ResponseFrame): void {
+  private handleRes(
+    connection: KernelConnection<ConnectionState>,
+    wireFrame: ResponseFrame,
+  ): void {
     const route = this.routes.get(wireFrame.id);
     if (!route) {
       if (wireFrame.ok) {
@@ -3193,11 +3376,17 @@ export class Kernel extends Host<Env> {
     this.deliverToOrigin(route.origin, frame);
   }
 
-  private handleBinaryMessage(connection: Connection<ConnectionState>, message: WSMessage): void {
+  private handleBinaryMessage(
+    connection: KernelConnection<ConnectionState>,
+    message: KernelWebSocketMessage,
+  ): void {
     this.frameBodyChannel(connection).handleFrame(message as ArrayBuffer | ArrayBufferView);
   }
 
-  private handleSig(connection: Connection<ConnectionState>, frame: SignalFrame): void {
+  private handleSig(
+    connection: KernelConnection<ConnectionState>,
+    frame: SignalFrame,
+  ): void {
     const state = connection.state as ConnectionState | undefined;
     const targetId = state?.identity?.role === "driver"
       ? state.identity.device
@@ -3981,21 +4170,18 @@ export class Kernel extends Host<Env> {
     }
   }
 
-  /**
-   * Rebuild in-memory connection index after hibernation/wake.
-   * The Agent runtime restores Connection objects and their persisted state,
-   * but our local maps must be reconstructed per constructor invocation.
-   */
+  /** Rebuild the in-memory connection index from hibernating WebSockets. */
   private rehydrateConnections(): void {
-    const live = this.getConnections<ConnectionState>();
-
     const onlineTargets = new Set<string>();
-
-    for (const connection of live) {
+    for (const socket of this.ctx.getWebSockets()) {
+      const connection = restoreKernelWebSocket(socket);
+      if (!connection) {
+        socket.close(1011, "Connection state unavailable");
+        continue;
+      }
       const state = connection.state;
-      if (!state || state.step !== "connected" || !state.identity) continue;
-
       this.connections.set(connection.id, connection);
+      if (!state || state.step !== "connected" || !state.identity) continue;
       if (state.identity.role === "driver") {
         onlineTargets.add(state.identity.device);
         this.devices.setOnline(state.identity.device, true);
@@ -4011,18 +4197,29 @@ export class Kernel extends Host<Env> {
     }
   }
 
+  private connectionForSocket(socket: WebSocket): KernelConnection<ConnectionState> | null {
+    for (const connection of this.connections.values()) {
+      if (connection.socket === socket) return connection;
+    }
+    return null;
+  }
+
   private extractRunId(payload: unknown): string | null {
     if (!payload || typeof payload !== "object") return null;
     const maybe = (payload as Record<string, unknown>).runId;
     return typeof maybe === "string" && maybe.trim().length > 0 ? maybe : null;
   }
 
-  private sendOk(connection: Connection, id: string, data?: unknown): void {
+  private sendOk(
+    connection: KernelConnection<ConnectionState>,
+    id: string,
+    data?: unknown,
+  ): void {
     connection.send(JSON.stringify({ type: "res", id, ok: true, data }));
   }
 
   private sendError(
-    connection: Connection,
+    connection: KernelConnection<ConnectionState>,
     id: string,
     code: number,
     message: string,
@@ -4093,6 +4290,13 @@ function normalizeRequestCancelReason(reason: string | undefined): string {
 
 function asRecord(value: unknown): Record<string, unknown> | null {
   return value && typeof value === "object" ? value as Record<string, unknown> : null;
+}
+
+function decodeKernelTask(callback: string, payloadJson: string): KernelTask {
+  return KERNEL_TASK_SCHEMA.parse({
+    callback,
+    payload: JSON.parse(payloadJson),
+  });
 }
 
 function scheduleResultSummary(record: ScheduleRecord, result: unknown): string {

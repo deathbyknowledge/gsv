@@ -57,14 +57,12 @@ describe("Gateway adapter RPC compatibility", () => {
       data: { routed: true },
     };
     const serviceFrame = vi.fn(async () => response);
-    const setName = vi.fn(async () => undefined);
-    const idFromName = vi.fn((name: string) => name);
-    const get = vi.fn(() => ({ serviceFrame, setName }));
-    const gateway = gatewayWithEnv({ KERNEL: { idFromName, get } });
+    const getByName = vi.fn(() => ({ serviceFrame }));
+    const gateway = gatewayWithEnv({ KERNEL: { getByName } });
     const frame = requestFrame("legacy");
 
     await expect(gateway.serviceFrame(frame)).resolves.toEqual(response);
-    expect(idFromName).toHaveBeenCalledWith("singleton");
+    expect(getByName).toHaveBeenCalledWith("singleton");
     expect(serviceFrame).toHaveBeenCalledWith(frame);
   });
 
@@ -77,9 +75,7 @@ describe("Gateway adapter RPC compatibility", () => {
       data: { routed: true },
     };
     const serviceFrame = vi.fn(async () => response);
-    const setName = vi.fn(async () => undefined);
-    const idFromName = vi.fn((name: string) => name);
-    const get = vi.fn(() => ({ serviceFrame, setName }));
+    const getByName = vi.fn(() => ({ serviceFrame }));
     const resolveInstallation = vi.fn(async () => ({
       found: true as const,
       installationId: installation.installationId,
@@ -89,13 +85,13 @@ describe("Gateway adapter RPC compatibility", () => {
     }));
     const gateway = gatewayWithEnv({
       INSTALLATION_DIRECTORY: { resolveInstallation },
-      KERNEL: { idFromName, get },
+      KERNEL: { getByName },
     });
     const frame = requestFrame("managed");
 
     await expect(gateway.serviceFrame(installation, frame)).resolves.toEqual(response);
     expect(resolveInstallation).toHaveBeenCalledWith(installation.installationId);
-    expect(idFromName).toHaveBeenCalledWith(installation.installationId);
+    expect(getByName).toHaveBeenCalledWith(installation.installationId);
     expect(serviceFrame).toHaveBeenCalledWith(frame);
   });
 
@@ -110,23 +106,23 @@ describe("Gateway adapter RPC compatibility", () => {
     await expect(managedGateway.serviceFrame(managedRequest.frame)).resolves.toBeNull();
     expect(managedRequest.cancelled()).toBe("Gateway service request failed");
 
-    const idFromName = vi.fn();
+    const getByName = vi.fn();
     const standaloneRequest = requestFrameWithTrackedBody("standalone-scoped-call");
-    const standaloneGateway = gatewayWithEnv({ KERNEL: { idFromName } });
+    const standaloneGateway = gatewayWithEnv({ KERNEL: { getByName } });
 
     await expect(standaloneGateway.serviceFrame(
       { installationId: "inst_rpc_compat" },
       standaloneRequest.frame,
     )).resolves.toBeNull();
     expect(standaloneRequest.cancelled()).toBe("Gateway service request failed");
-    expect(idFromName).not.toHaveBeenCalled();
+    expect(getByName).not.toHaveBeenCalled();
     error.mockRestore();
   });
 
   it("rejects malformed RPC variants and cancels every candidate frame body", async () => {
     const error = vi.spyOn(console, "error").mockImplementation(() => {});
-    const idFromName = vi.fn();
-    const gateway = gatewayWithEnv({ KERNEL: { idFromName } });
+    const getByName = vi.fn();
+    const gateway = gatewayWithEnv({ KERNEL: { getByName } });
 
     await expect(callServiceFrame(gateway, null)).resolves.toBeNull();
 
@@ -152,7 +148,7 @@ describe("Gateway adapter RPC compatibility", () => {
       null,
     )).resolves.toBeNull();
     expect(extraArgument.cancelled()).toBe("Gateway service request failed");
-    expect(idFromName).not.toHaveBeenCalled();
+    expect(getByName).not.toHaveBeenCalled();
     error.mockRestore();
   });
 });

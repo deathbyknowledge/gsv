@@ -338,6 +338,24 @@ describe("gateway authentication integration", () => {
       }));
   });
 
+  it("keeps an authenticated socket usable across Kernel hibernation", async () => {
+    await setup();
+    const user = createClient({
+      username: USERNAME,
+      password: PASSWORD,
+      client: clientInfo("user", "hibernating-user"),
+    });
+    await user.connect();
+    const before = await user.proc.list();
+
+    await harness.getWorker("gsv").evictDurableObject("KERNEL", {
+      name: SINGLETON_INSTALLATION_ID,
+      webSockets: "hibernate",
+    });
+
+    await expect(user.proc.list()).resolves.toEqual(before);
+  });
+
   function createClient(options: ConstructorParameters<typeof GSVClient>[0]): GSVClient {
     const client = new GSVClient({
       url: webSocketUrl(baseUrl),

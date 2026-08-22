@@ -1,13 +1,13 @@
 import { describe, expect, it } from "vitest";
 import { env } from "cloudflare:workers";
 import { runInDurableObject } from "cloudflare:test";
-import { getAgentByName } from "agents";
+import { getDurableObjectByName } from "../shared/durable-object";
 import type { Kernel } from "./do";
 import type { IpcCallStore } from "./ipc-calls";
 
 describe("IpcCallStore", () => {
   it("stores run correlation atomically and cancels pending calls by source run", async () => {
-    const kernel = await getAgentByName(env.KERNEL, crypto.randomUUID());
+    const kernel = await getDurableObjectByName(env.KERNEL, crypto.randomUUID());
     await runInDurableObject(kernel, (instance: Kernel) => {
       const calls = (instance as unknown as { ipcCalls: IpcCallStore }).ipcCalls;
       const callId = crypto.randomUUID();
@@ -68,7 +68,7 @@ describe("IpcCallStore", () => {
   });
 
   it("allows calls made outside an active source run", async () => {
-    const kernel = await getAgentByName(env.KERNEL, crypto.randomUUID());
+    const kernel = await getDurableObjectByName(env.KERNEL, crypto.randomUUID());
     await runInDurableObject(kernel, (instance: Kernel) => {
       const calls = (instance as unknown as { ipcCalls: IpcCallStore }).ipcCalls;
       const callId = crypto.randomUUID();
@@ -90,7 +90,7 @@ describe("IpcCallStore", () => {
   });
 
   it("fails pending calls when their target process is killed", async () => {
-    const kernel = await getAgentByName(env.KERNEL, crypto.randomUUID());
+    const kernel = await getDurableObjectByName(env.KERNEL, crypto.randomUUID());
     await runInDurableObject(kernel, (instance: Kernel) => {
       const calls = (instance as unknown as { ipcCalls: IpcCallStore }).ipcCalls;
       const callId = crypto.randomUUID();

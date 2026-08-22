@@ -29,7 +29,7 @@ function createRoutedKernel() {
 }
 
 describe("Kernel frame bodies", () => {
-  it("passes request cancellation to Agents SDK MCP calls", async () => {
+  it("passes request cancellation to Kernel MCP calls", async () => {
     const callTool = vi.fn(async () => ({ content: [] }));
     const kernel = Object.create(Kernel.prototype) as any;
     kernel.mcp = { callTool };

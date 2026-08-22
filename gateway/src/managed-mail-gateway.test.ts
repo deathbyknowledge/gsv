@@ -4,14 +4,14 @@ import { GatewayEntrypoint } from "./index";
 describe("managed mail Gateway routing", () => {
   it("checks the installation directory before addressing a Kernel and cancels the body", async () => {
     const resolveInstallation = vi.fn(async () => ({ found: false as const }));
-    const idFromName = vi.fn(() => {
+    const getByName = vi.fn(() => {
       throw new Error("Kernel must not be addressed");
     });
     const gateway = Object.create(GatewayEntrypoint.prototype) as GatewayEntrypoint;
     Object.defineProperty(gateway, "env", {
       value: {
         INSTALLATION_DIRECTORY: { resolveInstallation },
-        KERNEL: { idFromName },
+        KERNEL: { getByName },
       },
     });
     const cancel = vi.fn();
@@ -27,18 +27,18 @@ describe("managed mail Gateway routing", () => {
     )).rejects.toThrow("Managed installation is unavailable");
 
     expect(resolveInstallation).toHaveBeenCalledWith("installation-unknown");
-    expect(idFromName).not.toHaveBeenCalled();
+    expect(getByName).not.toHaveBeenCalled();
     expect(cancel).toHaveBeenCalledWith("Managed mail Gateway request completed");
   });
 
   it("rejects malformed installation ids before directory or Kernel routing", async () => {
     const resolveInstallation = vi.fn();
-    const idFromName = vi.fn();
+    const getByName = vi.fn();
     const gateway = Object.create(GatewayEntrypoint.prototype) as GatewayEntrypoint;
     Object.defineProperty(gateway, "env", {
       value: {
         INSTALLATION_DIRECTORY: { resolveInstallation },
-        KERNEL: { idFromName },
+        KERNEL: { getByName },
       },
     });
     const cancel = vi.fn();
@@ -50,7 +50,7 @@ describe("managed mail Gateway routing", () => {
     )).rejects.toThrow();
 
     expect(resolveInstallation).not.toHaveBeenCalled();
-    expect(idFromName).not.toHaveBeenCalled();
+    expect(getByName).not.toHaveBeenCalled();
     expect(cancel).toHaveBeenCalledOnce();
   });
 
@@ -61,7 +61,7 @@ describe("managed mail Gateway routing", () => {
       draft: {},
       body: { stream: new ReadableStream(), length: 0 },
     }));
-    const kernel = { setName: vi.fn(), completeManagedOutboundMail, claimManagedOutboundMail };
+    const kernel = { completeManagedOutboundMail, claimManagedOutboundMail };
     const resolveInstallation = vi.fn(async () => ({
       found: true as const,
       state: "restricted" as const,
@@ -69,13 +69,12 @@ describe("managed mail Gateway routing", () => {
       handle: "hank",
       canonicalOrigin: "https://hank.gsv.space",
     }));
-    const idFromName = vi.fn(() => "kernel-id");
-    const get = vi.fn(() => kernel);
+    const getByName = vi.fn(() => kernel);
     const gateway = Object.create(GatewayEntrypoint.prototype) as GatewayEntrypoint;
     Object.defineProperty(gateway, "env", {
       value: {
         INSTALLATION_DIRECTORY: { resolveInstallation },
-        KERNEL: { idFromName, get },
+        KERNEL: { getByName },
       },
     });
     const reference = {
@@ -103,14 +102,14 @@ describe("managed mail Gateway routing", () => {
 
   it("acknowledges completion for an authoritatively missing installation without a Kernel", async () => {
     const resolveInstallation = vi.fn(async () => ({ found: false as const }));
-    const idFromName = vi.fn(() => {
+    const getByName = vi.fn(() => {
       throw new Error("Kernel must not be addressed");
     });
     const gateway = Object.create(GatewayEntrypoint.prototype) as GatewayEntrypoint;
     Object.defineProperty(gateway, "env", {
       value: {
         INSTALLATION_DIRECTORY: { resolveInstallation },
-        KERNEL: { idFromName },
+        KERNEL: { getByName },
       },
     });
     const completion = {
@@ -127,7 +126,7 @@ describe("managed mail Gateway routing", () => {
     )).resolves.toBeUndefined();
 
     expect(resolveInstallation).toHaveBeenCalledWith("installation-missing");
-    expect(idFromName).not.toHaveBeenCalled();
+    expect(getByName).not.toHaveBeenCalled();
   });
 
   it("rejects directory identity mismatch without allocating a Kernel", async () => {
@@ -138,12 +137,12 @@ describe("managed mail Gateway routing", () => {
       handle: "other",
       canonicalOrigin: "https://other.gsv.space",
     }));
-    const idFromName = vi.fn();
+    const getByName = vi.fn();
     const gateway = Object.create(GatewayEntrypoint.prototype) as GatewayEntrypoint;
     Object.defineProperty(gateway, "env", {
       value: {
         INSTALLATION_DIRECTORY: { resolveInstallation },
-        KERNEL: { idFromName },
+        KERNEL: { getByName },
       },
     });
 
@@ -158,19 +157,19 @@ describe("managed mail Gateway routing", () => {
       },
     )).rejects.toThrow("does not match");
 
-    expect(idFromName).not.toHaveBeenCalled();
+    expect(getByName).not.toHaveBeenCalled();
   });
 
   it("propagates directory transport errors without allocating a Kernel", async () => {
     const resolveInstallation = vi.fn(async () => {
       throw new Error("directory unavailable");
     });
-    const idFromName = vi.fn();
+    const getByName = vi.fn();
     const gateway = Object.create(GatewayEntrypoint.prototype) as GatewayEntrypoint;
     Object.defineProperty(gateway, "env", {
       value: {
         INSTALLATION_DIRECTORY: { resolveInstallation },
-        KERNEL: { idFromName },
+        KERNEL: { getByName },
       },
     });
 
@@ -185,6 +184,6 @@ describe("managed mail Gateway routing", () => {
       },
     )).rejects.toThrow("directory unavailable");
 
-    expect(idFromName).not.toHaveBeenCalled();
+    expect(getByName).not.toHaveBeenCalled();
   });
 });

@@ -90,7 +90,7 @@ filtered from non-root config reads.
 OAuth account credentials live in Kernel SQLite, separate from runtime config.
 The public syscall surface exposes account summaries only; access tokens,
 refresh tokens, and PKCE verifiers are not returned by `sys.oauth.*`. MCP server
-tokens are managed by the Kernel Agent MCP client manager; GSV keeps separate
+tokens are managed by the Kernel's composed MCP client manager; GSV keeps separate
 user ownership metadata so MCP listing and tool calls are scoped before
 CodeMode or shell can use them.
 

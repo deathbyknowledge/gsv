@@ -913,7 +913,7 @@ Runtime behavior:
 `sys.connect`, `sys.setup`, and `sys.setup.assist` are special-cased before normal auth/capability dispatch. Other `sys.*` calls require a connected identity and are denied in setup mode.
 
 OAuth callbacks are handled by the Gateway HTTP route `GET /oauth/callback`.
-Gateway forwards that route to the Kernel, where the inherited Agent MCP client
+Gateway forwards that route to the Kernel, where its composed MCP client
 manager gets first chance to consume MCP OAuth callbacks before the generic
 `sys.oauth.*` callback handler runs. `sys.oauth.start` callers must pass the
 exact redirect URI they registered with the remote provider, normally

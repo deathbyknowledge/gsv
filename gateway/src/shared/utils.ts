@@ -17,7 +17,6 @@ import type {
   ProcessMessageStreamSignal,
 } from "../protocol/process-frames";
 import type { NetFetchArgs } from "@humansandmachines/gsv/protocol";
-import { getAgentByName } from "agents";
 import { SINGLETON_INSTALLATION_ID } from "../installation/identity";
 import {
   conversationDurableObjectName,
@@ -50,7 +49,7 @@ export async function getProcessByPid(
   pid: string,
   installationId: string = SINGLETON_INSTALLATION_ID,
 ): Promise<ProcessPtr> {
-  return await getAgentByName(env.PROCESS, processDurableObjectName(installationId, pid));
+  return env.PROCESS.getByName(processDurableObjectName(installationId, pid));
 }
 
 export function sendFrameToKernel(

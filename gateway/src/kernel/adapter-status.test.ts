@@ -1,13 +1,13 @@
 import { describe, expect, it } from "vitest";
 import { env } from "cloudflare:workers";
 import { runInDurableObject } from "cloudflare:test";
-import { getAgentByName } from "agents";
+import { getDurableObjectByName } from "../shared/durable-object";
 import type { Kernel } from "./do";
 import type { AdapterStatusStore } from "./adapter-status";
 
 describe("AdapterStatusStore ownership", () => {
   it("preserves owners across service status updates", async () => {
-    const kernel = await getAgentByName(env.KERNEL, crypto.randomUUID());
+    const kernel = await getDurableObjectByName(env.KERNEL, crypto.randomUUID());
     await runInDurableObject(kernel, (instance: Kernel) => {
       const status = (instance as unknown as {
         adapters: { status: AdapterStatusStore };

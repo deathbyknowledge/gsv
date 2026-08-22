@@ -5,7 +5,6 @@
  * sys.setup.assist handlers. Authenticated dispatch guarantees it is present.
  */
 
-import type { Connection } from "agents";
 import type { MCPClientManager } from "agents/mcp/client";
 import type {
   ConnectionIdentity,
@@ -29,6 +28,7 @@ import type { ScheduleStore } from "./scheduler";
 import type { MailboxStore } from "./mailbox-store";
 import type { McpAddConnectionInput, McpAddConnectionResult } from "./sys/mcp";
 import type { InstallationIdentity } from "../installation/identity";
+import type { KernelConnection, KernelConnectionState } from "./connection";
 
 export type KernelContext = {
   env: Env;
@@ -50,7 +50,7 @@ export type KernelContext = {
   ipcCalls: IpcCallStore;
   schedules: ScheduleStore;
   mailboxes: MailboxStore;
-  connection: Connection | null;
+  connection: KernelConnection<KernelConnectionState> | null;
   identity?: ConnectionIdentity;
   processId?: string;
   processRunId?: string;

@@ -1,4 +1,3 @@
-import { getAgentByName } from "agents";
 import { env } from "cloudflare:workers";
 import type {
   InstallationDirectoryResult,
@@ -223,7 +222,7 @@ export async function getKernelByInstallationId(
   namespace: DurableObjectNamespace<Kernel>,
   installationId: string,
 ): Promise<DurableObjectStub<Kernel>> {
-  return await getAgentByName(namespace, parseInstallationId(installationId));
+  return namespace.getByName(parseInstallationId(installationId));
 }
 
 // TODO: this should move to wherever we put an actual implementation for it

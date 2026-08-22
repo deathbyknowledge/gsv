@@ -10,7 +10,6 @@
  * the routing table).
  */
 
-import type { Connection } from "agents";
 import type {
   FrameBody,
   RequestFrame,
@@ -20,6 +19,7 @@ import type {
 import { isRoutableSyscall, type SyscallName } from "../syscalls";
 import type { KernelContext } from "./context";
 import type { RouteOrigin } from "./routing";
+import type { KernelConnection, KernelConnectionState } from "./connection";
 import type { ShellSessionRecord, ShellSessionStore } from "./shell-sessions";
 import {
   handleFsRead,
@@ -133,9 +133,9 @@ import {
 } from "./conversation-handlers";
 export type DispatchDeps = {
   shellSessions: ShellSessionStore;
-  connections: Map<string, Connection>;
+  connections: Map<string, KernelConnection<KernelConnectionState>>;
   sendFrame: (
-    connection: Connection,
+    connection: KernelConnection<KernelConnectionState>,
     frame: RequestFrame | ResponseFrame,
   ) => { cancel(reason?: unknown): Promise<void> } | null;
   registerRoute: (route: {
@@ -732,8 +732,8 @@ export function routedFrameTtlMs(frame: RequestFrame): number {
 
 function findDeviceConnection(
   deviceId: string,
-  connections: Map<string, Connection>,
-): Connection | null {
+  connections: Map<string, KernelConnection<KernelConnectionState>>,
+): KernelConnection<KernelConnectionState> | null {
   for (const [, conn] of connections) {
     const state = conn.state as {
       step?: string;

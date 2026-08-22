@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { env } from "cloudflare:workers";
 import { runInDurableObject } from "cloudflare:test";
-import { getAgentByName } from "agents";
+import { getDurableObjectByName } from "../shared/durable-object";
 import { handleSignalUnwatch, handleSignalWatch } from "./signals";
 import type { KernelContext } from "./context";
 import type { Kernel } from "./do";
@@ -43,7 +43,7 @@ function makeContext(overrides: Partial<KernelContext> = {}): KernelContext {
 
 describe("signal watch handlers", () => {
   it("reports logical rows removed from the indexed watch table", async () => {
-    const kernel = await getAgentByName(env.KERNEL, crypto.randomUUID());
+    const kernel = await getDurableObjectByName(env.KERNEL, crypto.randomUUID());
     await runInDurableObject(kernel, (instance: Kernel) => {
       const store = (instance as unknown as { signalWatches: SignalWatchStore }).signalWatches;
       const target = { kind: "process" as const, processId: "proc-target" };
