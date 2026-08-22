@@ -84,7 +84,7 @@ export function pairingSessionExpired(
   now = Date.now(),
 ): boolean {
   return !authenticated
-    && typeof expiresAt === "number"
+    && expiresAt !== undefined
     && Number.isFinite(expiresAt)
     && expiresAt <= now;
 }

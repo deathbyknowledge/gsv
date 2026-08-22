@@ -49,6 +49,7 @@ import {
   type TelegramInboundMediaSource,
 } from "./telegram-inbound-media";
 import { buildTelegramWebhookPath } from "./webhook-route";
+import type { callManagedTelegramApi } from "./managed-telegram-api";
 import * as z from "zod/mini";
 
 interface Env {
@@ -201,8 +202,16 @@ const telegramFileAttachmentSchema = z.object({
   file_size: z.optional(z.number()),
   duration: z.optional(z.number()),
 });
+const telegramFileAttachmentFields = {
+  file_id: z.optional(z.string()),
+  file_unique_id: z.optional(z.string()),
+  file_name: z.optional(z.string()),
+  mime_type: z.optional(z.string()),
+  file_size: z.optional(z.number()),
+  duration: z.optional(z.number()),
+};
 const telegramStickerAttachmentSchema = z.object({
-  ...telegramFileAttachmentSchema.shape,
+  ...telegramFileAttachmentFields,
   is_animated: z.optional(z.boolean()),
   is_video: z.optional(z.boolean()),
   emoji: z.optional(z.string()),
@@ -290,8 +299,8 @@ function buildWebhookSecret(): string {
   return crypto.randomUUID().replace(/-/g, "");
 }
 
-function toErrorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
+function toErrorMessage(error: Error | string): string {
+  return error instanceof Error ? error.message : error;
 }
 
 export class TelegramAccount extends DurableObject<Env> {
@@ -406,7 +415,7 @@ export class TelegramAccount extends DurableObject<Env> {
 
   private async callTelegramApi<T>(
     method: string,
-    payload: Record<string, unknown> | FormData,
+    payload: Parameters<typeof callManagedTelegramApi>[2],
     botToken?: string,
   ): Promise<T> {
     const token = botToken ?? this.state.botToken;
@@ -414,8 +423,7 @@ export class TelegramAccount extends DurableObject<Env> {
       throw new Error("Telegram bot token is not configured");
     }
 
-    const isFormDataPayload =
-      typeof FormData !== "undefined" && payload instanceof FormData;
+    const isFormDataPayload = payload instanceof FormData;
 
     let response: Response;
     try {
@@ -430,7 +438,7 @@ export class TelegramAccount extends DurableObject<Env> {
       });
     } catch (error) {
       throw new TelegramDeliveryError(
-        `Telegram API ${method} transport failed: ${toErrorMessage(error)}`,
+        `Telegram API ${method} transport failed: ${toErrorMessage(error instanceof Error ? error : String(error))}`,
         "ambiguous",
       );
     }
@@ -440,7 +448,7 @@ export class TelegramAccount extends DurableObject<Env> {
       responseText = await response.text();
     } catch (error) {
       throw new TelegramDeliveryError(
-        `Telegram API ${method} response could not be read: ${toErrorMessage(error)}`,
+        `Telegram API ${method} response could not be read: ${toErrorMessage(error instanceof Error ? error : String(error))}`,
         response.ok
           ? "ambiguous"
           : classifyNonIdempotentProviderStatus(response.status),
@@ -449,7 +457,7 @@ export class TelegramAccount extends DurableObject<Env> {
     let parsed: TelegramApiResponse<T> | null = null;
     if (responseText) {
       try {
-        parsed = JSON.parse(responseText) as TelegramApiResponse<T>;
+        parsed = JSON.parse(responseText);
       } catch {
         parsed = null;
       }
@@ -651,7 +659,7 @@ export class TelegramAccount extends DurableObject<Env> {
       });
     } catch (error) {
       await cancelBinaryBody(body, error);
-      return { ok: false, error: toErrorMessage(error) };
+      return { ok: false, error: toErrorMessage(error instanceof Error ? error : String(error)) };
     }
 
     let mediaBytes: Array<Uint8Array | undefined>;
@@ -664,7 +672,7 @@ export class TelegramAccount extends DurableObject<Env> {
     } catch (error) {
       return {
         ok: false,
-        error: `Could not read Telegram media body: ${toErrorMessage(error)}`,
+        error: `Could not read Telegram media body: ${toErrorMessage(error instanceof Error ? error : String(error))}`,
         retryable: true,
       };
     }
@@ -675,7 +683,7 @@ export class TelegramAccount extends DurableObject<Env> {
     } catch (error) {
       return {
         ok: false,
-        error: `Could not fingerprint Telegram delivery: ${toErrorMessage(error)}`,
+        error: `Could not fingerprint Telegram delivery: ${toErrorMessage(error instanceof Error ? error : String(error))}`,
         retryable: true,
       };
     }
@@ -686,7 +694,7 @@ export class TelegramAccount extends DurableObject<Env> {
     } catch (error) {
       return {
         ok: false,
-        error: `Telegram delivery ledger unavailable: ${toErrorMessage(error)}`,
+        error: `Telegram delivery ledger unavailable: ${toErrorMessage(error instanceof Error ? error : String(error))}`,
         retryable: true,
       };
     }
@@ -725,8 +733,8 @@ export class TelegramAccount extends DurableObject<Env> {
       return {
         ok: false,
         error,
-        ...(kind === "retryable" ? { retryable: true } : {}),
-        ...(kind === "ambiguous" ? { ambiguous: true } : {}),
+        retryable: kind === "retryable" ? true : undefined,
+        ambiguous: kind === "ambiguous" ? true : undefined,
       };
     };
 
@@ -746,7 +754,7 @@ export class TelegramAccount extends DurableObject<Env> {
       } else {
         const deliveries = planTelegramMediaDeliveries(media);
         let mediaOffset = 0;
-        const callApi = <T>(method: string, payload: Record<string, unknown> | FormData) =>
+          const callApi = <T>(method: string, payload: Parameters<typeof callManagedTelegramApi>[2]) =>
           this.callTelegramApi<T>(method, payload);
         for (const [index, delivery] of deliveries.entries()) {
           const caption = index === 0 ? trimmedText : "";
@@ -807,7 +815,7 @@ export class TelegramAccount extends DurableObject<Env> {
         : error instanceof TelegramDeliveryError
           ? error.kind
           : "permanent";
-      return await fail(kind, toErrorMessage(error));
+      return await fail(kind, toErrorMessage(error instanceof Error ? error : String(error)));
     }
   }
 
@@ -946,8 +954,8 @@ export class TelegramAccount extends DurableObject<Env> {
     return responseDisposition;
   }
 
-  private normalizeUpdateId(value: unknown): number | null {
-    if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 0) {
+  private normalizeUpdateId(value: number | null | undefined): number | null {
+    if (value === undefined || value === null || !Number.isSafeInteger(value) || value < 0) {
       return null;
     }
     return value;
@@ -1036,7 +1044,7 @@ export class TelegramAccount extends DurableObject<Env> {
         wasMentioned,
         media: media.media.length > 0 ? media.media : undefined,
       },
-      ...(media.body ? { body: media.body } : {}),
+      body: media.body,
     };
   }
 

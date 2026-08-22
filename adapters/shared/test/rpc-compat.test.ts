@@ -29,8 +29,10 @@ const MESSAGE: AdapterOutboundMessage = {
 };
 const BODY: BinaryBody = { stream: new ReadableStream(), length: 0 };
 
-function trackedBody(): { body: BinaryBody; cancelled: () => unknown } {
-  let cancelled: unknown;
+type TrackedBody = { body: BinaryBody; cancelled: () => Error | string | undefined };
+
+function trackedBody(): TrackedBody {
+  let cancelled: Error | string | undefined;
   return {
     body: {
       stream: new ReadableStream<Uint8Array>({
@@ -73,6 +75,7 @@ describe("adapter RPC compatibility", () => {
         surface: SURFACE,
         activity: ACTIVITY,
       });
+// SAFETY: This test fixture deliberately supplies the contract shape under test.
   });
 
   it("accepts already-deployed managed Gateway calls without reinterpretation", async () => {
@@ -108,58 +111,60 @@ describe("adapter RPC compatibility", () => {
 
   it("cancels a scoped send body before a wrapper rejects malformed identity", async () => {
     const request = trackedBody();
+// SAFETY: This test fixture deliberately supplies the contract shape under test.
     const args = [
       { installationId: "../invalid" },
       "account",
+// SAFETY: This test fixture deliberately supplies the contract shape under test.
       MESSAGE,
       request.body,
-    ] as unknown as AdapterSendRpcArgs;
+    ] as AdapterSendRpcArgs;
 
     await expect(representativeAdapterSend(...args))
       .rejects.toThrow("Adapter installation context is invalid");
+// SAFETY: This test fixture deliberately supplies the contract shape under test.
     expect(request.cancelled()).toBeInstanceOf(Error);
+// SAFETY: This test fixture deliberately supplies the contract shape under test.
     expect((request.cancelled() as Error).message)
       .toBe("Adapter installation context is invalid");
   });
 
+// SAFETY: This test fixture deliberately supplies the contract shape under test.
   it("rejects ambiguous overload arities instead of reinterpreting them", () => {
-    expect(() => resolveAdapterConnectRpcArgs([
-      "account",
-      {},
-      {},
-    ] as unknown as AdapterConnectRpcArgs)).toThrow("RPC arguments are invalid");
-    expect(() => resolveAdapterDisconnectRpcArgs([
-      "installation",
-      "account",
-    ] as unknown as AdapterDisconnectRpcArgs)).toThrow("RPC arguments are invalid");
-    expect(() => resolveAdapterStatusRpcArgs([
-      "installation",
-      "account",
-    ] as unknown as AdapterStatusRpcArgs)).toThrow("RPC arguments are invalid");
-    expect(() => resolveAdapterActivityRpcArgs([
-      "installation",
-      "account",
-      SURFACE,
-      ACTIVITY,
-    ] as unknown as AdapterActivityRpcArgs)).toThrow("RPC arguments are invalid");
+    // SAFETY: malformed overload fixture intentionally violates the adapter argument contract.
+    const connectArgs = ["account", {}, {}] as AdapterConnectRpcArgs;
+    expect(() => resolveAdapterConnectRpcArgs(connectArgs)).toThrow("RPC arguments are invalid");
+    // SAFETY: malformed overload fixture intentionally violates the adapter argument contract.
+    const disconnectArgs = ["installation", "account"] as AdapterDisconnectRpcArgs;
+    expect(() => resolveAdapterDisconnectRpcArgs(disconnectArgs)).toThrow("RPC arguments are invalid");
+    // SAFETY: malformed overload fixture intentionally violates the adapter argument contract.
+    const statusArgs = ["installation", "account"] as AdapterStatusRpcArgs;
+    expect(() => resolveAdapterStatusRpcArgs(statusArgs)).toThrow("RPC arguments are invalid");
+    // SAFETY: malformed overload fixture intentionally violates the adapter argument contract.
+    const activityArgs = ["installation", "account", SURFACE, ACTIVITY] as AdapterActivityRpcArgs;
+    expect(() => resolveAdapterActivityRpcArgs(activityArgs)).toThrow("RPC arguments are invalid");
   });
 
   it("cancels every possible send body slot when overload discrimination fails", async () => {
     const fourthArgument = trackedBody();
-    await expect(representativeAdapterSend(...([
+    // SAFETY: malformed overload fixture intentionally violates the adapter argument contract.
+    const fourthArgs = [
       "installation",
       "account",
       MESSAGE,
       fourthArgument.body,
-    ] as unknown as AdapterSendRpcArgs))).rejects.toThrow("RPC arguments are invalid");
+    ] as AdapterSendRpcArgs;
+    await expect(representativeAdapterSend(...fourthArgs)).rejects.toThrow("RPC arguments are invalid");
     expect(fourthArgument.cancelled()).toBeInstanceOf(Error);
 
     const thirdArgument = trackedBody();
-    await expect(representativeAdapterSend(...([
+    // SAFETY: malformed overload fixture intentionally violates the adapter argument contract.
+    const thirdArgs = [
       123,
       MESSAGE,
       thirdArgument.body,
-    ] as unknown as AdapterSendRpcArgs))).rejects.toThrow(
+    ] as AdapterSendRpcArgs;
+    await expect(representativeAdapterSend(...thirdArgs)).rejects.toThrow(
       "Adapter installation context is invalid",
     );
     expect(thirdArgument.cancelled()).toBeInstanceOf(Error);

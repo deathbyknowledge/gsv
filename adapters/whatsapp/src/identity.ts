@@ -97,23 +97,12 @@ export function phoneHandleFromJid(jid: string | null | undefined): string | und
   return match ? `+${match[1]}` : undefined;
 }
 
-export function messageTimestampMs(value: unknown): number | undefined {
+type TimestampValue = number | bigint | string | { toString(): string } | null | undefined;
+export function messageTimestampMs(value: TimestampValue): number | undefined {
+  if (value === null || value === undefined) return undefined;
   let serialized: string;
   try {
-    if (typeof value === "number") {
-      if (!Number.isFinite(value)) return undefined;
-      serialized = String(Math.trunc(value));
-    } else if (typeof value === "bigint" || typeof value === "string") {
-      serialized = String(value);
-    } else if (
-      value
-      && typeof value === "object"
-      && typeof (value as { toString?: unknown }).toString === "function"
-    ) {
-      serialized = (value as { toString(): string }).toString();
-    } else {
-      return undefined;
-    }
+    serialized = String(value);
   } catch {
     return undefined;
   }
@@ -240,8 +229,22 @@ export function selectInboundUpsertMessages(
     : [...messages];
 }
 
+type WhatsAppIdentityTransaction = {
+  get<T>(key: string): Promise<T | undefined>;
+  put<T>(key: string, value: T): Promise<void>;
+  list(options?: { prefix?: string }): Promise<Map<string, unknown>>;
+  delete(key: string | string[]): Promise<boolean>;
+};
+
+type WhatsAppIdentityStorage = {
+  get<T>(key: string): Promise<T | undefined>;
+  transaction<T>(
+    closure: (txn: WhatsAppIdentityTransaction) => Promise<T>,
+  ): Promise<T>;
+};
+
 export class WhatsAppIdentityStore {
-  constructor(private readonly storage: DurableObjectStorage) {}
+  constructor(private readonly storage: WhatsAppIdentityStorage) {}
 
   async canonicalJid(
     primary: string | null | undefined,
@@ -351,7 +354,7 @@ function uniqueMappings(
 }
 
 async function legacyPnForLids(
-  storage: Pick<DurableObjectStorage, "get">,
+  storage: Pick<WhatsAppIdentityStorage, "get">,
   jids: readonly string[],
 ): Promise<string | null> {
   for (const jid of jids) {
@@ -363,13 +366,13 @@ async function legacyPnForLids(
 }
 
 async function legacyPnForLid(
-  storage: Pick<DurableObjectStorage, "get">,
+  storage: Pick<WhatsAppIdentityStorage, "get">,
   lid: string,
 ): Promise<string | null> {
   const alias = await storage.get<string>(
     `${LEGACY_ACTOR_ALIAS_PREFIX}${actorIdFromJid(lid)}`,
   );
-  if (typeof alias !== "string" || !alias.startsWith(ACTOR_PREFIX)) return null;
+  if (!alias || !alias.startsWith(ACTOR_PREFIX)) return null;
   const pn = normalizeWhatsAppJid(alias);
   return isWhatsAppPnJid(pn) ? pn : null;
 }

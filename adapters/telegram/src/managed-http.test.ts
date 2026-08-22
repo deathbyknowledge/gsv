@@ -7,7 +7,18 @@ import {
 
 const SECRET = "valid_webhook_secret_123";
 
-function telegramUpdate(actorId = 12345): Record<string, unknown> {
+type TelegramUpdateFixture = {
+  update_id: number;
+  message: {
+    message_id: number;
+    date: number;
+    text: string;
+    chat: { id: number; type: "private" };
+    from: { id: number; is_bot: boolean; first_name: string };
+  };
+};
+
+function telegramUpdate(actorId = 12345): TelegramUpdateFixture {
   return {
     update_id: 42,
     message: {
@@ -24,11 +35,12 @@ function makeEnv(overrides: Partial<ManagedTelegramHttpEnv> = {}) {
   const handleWebhook = vi.fn(async () => ({ ok: true as const }));
   const idFromName = vi.fn((name: string) => ({ name }));
   const get = vi.fn(() => ({ handleWebhook }));
-  const env: ManagedTelegramHttpEnv = {
+    // SAFETY: this test fake implements the only namespace operations used by the handler.
+    const env: ManagedTelegramHttpEnv = {
     MANAGED_TELEGRAM_PEER: {
       idFromName,
       get,
-    } as unknown as Pick<DurableObjectNamespace, "idFromName" | "get">,
+    } as Pick<DurableObjectNamespace, "idFromName" | "get">,
     TELEGRAM_BOT_TOKEN: "token",
     TELEGRAM_BOT_USERNAME: "official_gsv_bot",
     TELEGRAM_WEBHOOK_SECRET: SECRET,

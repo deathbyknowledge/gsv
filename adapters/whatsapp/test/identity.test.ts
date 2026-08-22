@@ -20,11 +20,25 @@ class MemoryStorage {
   transactionCount = 0;
 
   async get<T>(key: string): Promise<T | undefined> {
+    // SAFETY: Fixture storage returns the generic value requested by the caller.
     return this.values.get(key) as T | undefined;
   }
 
   async put<T>(key: string, value: T): Promise<void> {
     this.values.set(key, value);
+  }
+
+  async list<T>(options?: { prefix?: string }): Promise<Map<string, T>> {
+    // SAFETY: The fixture map is converted to the generic list contract requested by the test.
+    return new Map([...this.values.entries()]
+      .filter(([key]) => !options?.prefix || key.startsWith(options.prefix))) as Map<string, T>;
+  }
+
+  async delete(key: string | string[]): Promise<boolean> {
+    if (Array.isArray(key)) {
+      return key.every((item) => this.values.delete(item));
+    }
+    return this.values.delete(key);
   }
 
   async transaction<T>(operation: (txn: MemoryStorage) => Promise<T>): Promise<T> {
@@ -34,6 +48,7 @@ class MemoryStorage {
 }
 
 function message(id: string, timestampSeconds: number): WAMessage {
+  // SAFETY: Fixture supplies the WAMessage key and timestamp consumed by identity normalization.
   return {
     key: { id, remoteJid: "12025550123@s.whatsapp.net" },
     messageTimestamp: timestampSeconds,
@@ -65,7 +80,7 @@ describe("WhatsApp identity", () => {
     const pn = "12025550123@s.whatsapp.net";
     storage.values.set(`actor_alias:${actorIdFromJid(lid)}`, actorIdFromJid(pn));
     const identities = new WhatsAppIdentityStore(
-      storage as unknown as DurableObjectStorage,
+      storage,
     );
 
     await expect(identities.canonicalJid(lid)).resolves.toBe(pn);
@@ -76,7 +91,7 @@ describe("WhatsApp identity", () => {
   it("persists both mapping directions when PN and LID arrive together", async () => {
     const storage = new MemoryStorage();
     const identities = new WhatsAppIdentityStore(
-      storage as unknown as DurableObjectStorage,
+      storage,
     );
     const lid = "987654321@lid";
     const pn = "12025550123@s.whatsapp.net";
@@ -89,7 +104,7 @@ describe("WhatsApp identity", () => {
   it("binds large history mapping sets in bounded storage transactions", async () => {
     const storage = new MemoryStorage();
     const identities = new WhatsAppIdentityStore(
-      storage as unknown as DurableObjectStorage,
+      storage,
     );
     const mappings = Array.from({ length: 300 }, (_, index) => ({
       lid: `${900000000 + index}@lid`,
@@ -110,7 +125,7 @@ describe("WhatsApp identity", () => {
       "wa:jid:12345@g.us",
     );
     const identities = new WhatsAppIdentityStore(
-      storage as unknown as DurableObjectStorage,
+      storage,
     );
 
     await expect(identities.canonicalJid(lid)).resolves.toBe(lid);

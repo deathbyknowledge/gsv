@@ -1,7 +1,6 @@
 import { DurableObject } from "cloudflare:workers";
 import {
   MANAGED_TELEGRAM_ACCOUNT_ID,
-  type AdapterInboundResult,
 } from "../../../packages/gsv/src/protocol/adapters.js";
 import {
   DeliveryLedger,
@@ -84,6 +83,8 @@ type ResponseContext =
   | { kind: "installation"; installationId: string; generation: string };
 
 type PairingIssue = { code: string; claimId: string; expiresAt: number };
+type ManagedPairingStub = { initialize(input: ManagedTelegramPairingRecord): Promise<{ created: boolean }> };
+type TelegramApiPayload = Parameters<typeof callManagedTelegramApi>[2];
 
 const STATE_KEY = "managed_telegram_peer:v1:state";
 const INBOUND_PREFIX = "managed_telegram_peer:v1:inbound:";
@@ -129,7 +130,7 @@ export class ManagedTelegramPeer extends DurableObject<ManagedTelegramPeerEnv> {
     try {
       await this.inboundDeliveries.enqueueAndArm(
         inbound.deliveryId,
-        { inbound, ...(routeGeneration ? { routeGeneration } : {}) },
+        { inbound, routeGeneration },
         Date.now() + INBOUND_WAKE_DELAY_MS,
       );
     } catch {
@@ -400,18 +401,18 @@ export class ManagedTelegramPeer extends DurableObject<ManagedTelegramPeerEnv> {
           surface: {
             kind: "dm",
             id: inbound.surfaceId,
-            ...(current.actorName ? { name: current.actorName } : {}),
-            ...(current.actorHandle ? { handle: current.actorHandle } : {}),
+            name: current.actorName,
+            handle: current.actorHandle,
           },
           actor: {
             id: inbound.actorId,
-            ...(current.actorName ? { name: current.actorName } : {}),
-            ...(current.actorHandle ? { handle: current.actorHandle } : {}),
+            name: current.actorName,
+            handle: current.actorHandle,
           },
           text: inbound.text,
-          ...(transfer.media.length > 0 ? { media: transfer.media } : {}),
-          ...(inbound.replyToId ? { replyToId: inbound.replyToId } : {}),
-          ...(inbound.timestamp ? { timestamp: inbound.timestamp } : {}),
+          media: transfer.media.length > 0 ? transfer.media : undefined,
+          replyToId: inbound.replyToId,
+          timestamp: inbound.timestamp,
           wasMentioned: true,
         },
       },
@@ -425,9 +426,8 @@ export class ManagedTelegramPeer extends DurableObject<ManagedTelegramPeerEnv> {
     });
     return {
       terminal: disposition.terminal,
-      ...(disposition.error ? { error: disposition.error } : {}),
-      ...(disposition.responses ? {
-        responses: disposition.responses.map((response) => ({
+      error: disposition.error,
+      responses: disposition.responses?.map((response) => ({
           ...response,
           context: {
             kind: "installation" as const,
@@ -435,7 +435,6 @@ export class ManagedTelegramPeer extends DurableObject<ManagedTelegramPeerEnv> {
             generation: route.generation,
           },
         })),
-      } : {}),
     };
   }
 
@@ -607,7 +606,7 @@ export class ManagedTelegramPeer extends DurableObject<ManagedTelegramPeerEnv> {
         acceptedProviderDeliveries = 1;
         messageId = String(sent.message_id);
       } else {
-        const callApi = <T>(method: string, payload: Record<string, unknown> | FormData) =>
+        const callApi = <T>(method: string, payload: TelegramApiPayload) =>
           callManagedTelegramApi<T>(token, method, payload, fetcher);
         const deliveries = planTelegramMediaDeliveries(media);
         let mediaOffset = 0;
@@ -677,11 +676,9 @@ export class ManagedTelegramPeer extends DurableObject<ManagedTelegramPeerEnv> {
     return state;
   }
 
-  private pairing(code: string) {
+  private pairing(code: string): ManagedPairingStub {
     const id = this.env.MANAGED_TELEGRAM_PAIRING.idFromName(`pair:${code}`);
-    return this.env.MANAGED_TELEGRAM_PAIRING.get(id) as unknown as {
-      initialize(input: ManagedTelegramPairingRecord): Promise<{ created: boolean }>;
-    };
+    return typedStub<ManagedPairingStub, DurableObjectStub<undefined>>(this.env.MANAGED_TELEGRAM_PAIRING.get(id));
   }
 
   private botToken(): string {
@@ -695,6 +692,11 @@ export class ManagedTelegramPeer extends DurableObject<ManagedTelegramPeerEnv> {
       ? (input, init) => this.env.TELEGRAM_API!.fetch(input, init)
       : fetch;
   }
+}
+
+function typedStub<T, V = T>(value: V): T {
+  // SAFETY: The Durable Object namespace binding owns the declared RPC contract.
+  return value as T & V;
 }
 
 function platformResponse(
@@ -713,7 +715,7 @@ function platformResponse(
         text,
         replyToId: inbound.messageId,
       },
-      context: { kind: "platform", ...(claimId ? { claimId } : {}) },
+      context: { kind: "platform", claimId },
     }],
   };
 }
@@ -752,22 +754,21 @@ function parseRoute(value: AdapterPairingRoute): AdapterPairingRoute {
   };
 }
 
-function requireOpaque(value: unknown, field: string): string {
-  if (typeof value !== "string" || !/^[A-Za-z0-9](?:[A-Za-z0-9._:-]{0,190}[A-Za-z0-9])?$/.test(value)) {
+function requireOpaque(value: string, field: string): string {
+  if (!/^[A-Za-z0-9](?:[A-Za-z0-9._:-]{0,190}[A-Za-z0-9])?$/.test(value)) {
     throw new Error(`${field} is invalid`);
   }
   return value;
 }
 
-function requireLocalUid(value: unknown): number {
-  if (!Number.isSafeInteger(value) || (value as number) < 0 || (value as number) > 2_147_483_647) {
+function requireLocalUid(value: number): number {
+  if (!Number.isSafeInteger(value) || value < 0 || value > 2_147_483_647) {
     throw new Error("localUid is invalid");
   }
-  return value as number;
+  return value;
 }
 
-function requireCanonicalOrigin(value: unknown): string {
-  if (typeof value !== "string") throw new Error("canonicalOrigin is invalid");
+function requireCanonicalOrigin(value: string): string {
   const url = new URL(value);
   if (
     url.protocol !== "https:"

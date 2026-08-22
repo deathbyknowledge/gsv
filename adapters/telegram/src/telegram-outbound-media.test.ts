@@ -26,11 +26,17 @@ describe("Telegram outbound media", () => {
     const [method, payload] = callApi.mock.calls[0]!;
     expect(method).toBe("sendAudio");
     expect(payload).toBeInstanceOf(FormData);
-    const form = payload as FormData;
+    if (!(payload instanceof FormData)) {
+      throw new Error("expected multipart media payload");
+    }
+    const form = payload;
     expect(form.get("chat_id")).toBe("12345");
     expect(form.get("caption")).toBe("audio <b>reply</b>");
     expect(form.get("reply_parameters")).toBe('{"message_id":7}');
-    const audio = form.get("audio") as File;
+    const audio = form.get("audio");
+    if (!(audio instanceof File)) {
+      throw new Error("expected uploaded audio file");
+    }
     expect(audio.name).toBe("reply.ogg");
     expect(audio.type).toBe("audio/ogg");
     expect(new Uint8Array(await audio.arrayBuffer())).toEqual(new Uint8Array([1, 2, 3, 4]));

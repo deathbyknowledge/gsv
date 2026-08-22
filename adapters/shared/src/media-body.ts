@@ -38,7 +38,7 @@ export async function readResponseBodyBytes(
   try {
     declaredBytes = responseBodyLength(response, options.expectedBytes);
   } catch (error) {
-    await cancelResponseBody(response, error);
+    await cancelResponseBody(response, String(error));
     throw error;
   }
   if (declaredBytes !== undefined && declaredBytes > maxBytes) {
@@ -56,13 +56,13 @@ export async function readResponseBodyBytes(
     return await bodyToBytes(
       {
         stream: response.body,
-        ...(declaredBytes === undefined ? {} : { length: declaredBytes }),
+        ...(declaredBytes === undefined ? undefined : { length: declaredBytes }),
       },
       maxBytes,
       options.signal,
     );
   } catch (error) {
-    await cancelResponseBody(response, error);
+    await cancelResponseBody(response, String(error));
     const detail = error instanceof Error ? error.message : String(error);
     throw new Error(`${label} could not be read: ${detail}`);
   }
@@ -83,7 +83,7 @@ export async function responseBodyToBinaryBody(
   try {
     declaredBytes = responseBodyLength(response, options.expectedBytes);
   } catch (error) {
-    await cancelResponseBody(response, error);
+    await cancelResponseBody(response, String(error));
     throw error;
   }
   if (declaredBytes !== undefined && declaredBytes > maxBytes) {
@@ -124,12 +124,13 @@ export function binaryBodyFromOwnedBytes(
 
 export async function cancelResponseBody(
   response: Response,
-  reason?: unknown,
+  reason?: Error | string,
 ): Promise<void> {
   if (response.body && !response.body.locked) {
     await response.body.cancel(reason).catch(() => {});
   }
 }
+
 
 function responseBodyLength(
   response: Response,

@@ -4,9 +4,13 @@ import { binaryBodyFromOwnedBytes } from "../../shared/src/media-body";
 
 type TelegramApiMessage = {
   method: string;
-  body: { chat_id?: string; text?: string; [key: string]: unknown };
-  result: unknown;
+  body: { chat_id?: string; text?: string; caption?: string; audio?: { bytes?: number[] } };
+  result: { ok?: boolean };
 };
+
+type TelegramUpdateContent = { text?: string; voice?: { file_id: string; file_size: number; duration: number; mime_type: string } };
+type GatewayCall = { installation?: { installationId?: string }; call?: string; args?: { message?: { text?: string; media?: Array<{ type: string }> } }; bodyBytes?: number[] };
+type ManagedOperationResult = { ok?: boolean };
 
 type ManagedPairingStub = {
   inspect(): Promise<{
@@ -26,13 +30,13 @@ type ManagedPairingStub = {
     operationId: string;
     route: { installationId: string; localUid: number; generation: string };
     canonicalOrigin: string;
-  }): Promise<unknown>;
+  }): Promise<ManagedOperationResult>;
   finalize(input: {
     code: string;
     operationId: string;
     route: { installationId: string; localUid: number; generation: string };
     canonicalOrigin: string;
-  }): Promise<unknown>;
+  }): Promise<ManagedOperationResult>;
 };
 
 type ManagedPeerStub = {
@@ -62,7 +66,7 @@ function update(updateId: number, messageId: number, text: string): Request {
 function messageUpdate(
   updateId: number,
   messageId: number,
-  content: Record<string, unknown>,
+  content: TelegramUpdateContent,
 ): Request {
   return new Request("https://telegram.test/webhook", {
     method: "POST",
@@ -89,13 +93,20 @@ function messageUpdate(
 }
 
 async function telegramMessages(): Promise<TelegramApiMessage[]> {
+  // SAFETY: The Cloudflare test environment declares TELEGRAM_API as a Fetcher binding.
   const binding = env.TELEGRAM_API as Fetcher;
   return await (await binding.fetch("https://telegram-api.test/messages")).json();
 }
 
-async function gatewayCalls(): Promise<Array<Record<string, unknown>>> {
+async function gatewayCalls(): Promise<GatewayCall[]> {
+  // SAFETY: The Cloudflare test environment declares GATEWAY as a Fetcher binding.
   const binding = env.GATEWAY as Fetcher;
   return await (await binding.fetch("https://gateway.test/calls")).json();
+}
+
+function typedStub<T, V>(value: V): T {
+  // SAFETY: Cloudflare test bindings implement the explicitly declared RPC contract.
+  return value as T;
 }
 
 describe("managed Telegram clean-instance flow", () => {
@@ -108,10 +119,11 @@ describe("managed Telegram clean-instance flow", () => {
     const code = pairingText.match(/[A-HJ-NP-Z2-9]{4}(?:-[A-HJ-NP-Z2-9]{4}){2}/)?.[0];
     expect(code).toBeTruthy();
     const normalizedCode = code!.replaceAll("-", "");
+    // SAFETY: The test environment exposes the declared Durable Object namespace binding.
     const namespace = env.MANAGED_TELEGRAM_PAIRING as DurableObjectNamespace;
-    const pairing = namespace.get(
+    const pairing = typedStub<ManagedPairingStub>(namespace.get(
       namespace.idFromName(`pair:${normalizedCode}`),
-    ) as unknown as ManagedPairingStub;
+    ));
 
     await expect(pairing.inspect()).resolves.toMatchObject({
       actorId: "12345",
@@ -179,10 +191,11 @@ describe("managed Telegram clean-instance flow", () => {
       }));
     });
 
+    // SAFETY: The test environment exposes the declared Durable Object namespace binding.
     const peers = env.MANAGED_TELEGRAM_PEER as DurableObjectNamespace;
-    const peer = peers.get(
+    const peer = typedStub<ManagedPeerStub>(peers.get(
       peers.idFromName("managed:12345"),
-    ) as unknown as ManagedPeerStub;
+    ));
     await expect(peer.sendMessage("installation_test", {
       deliveryId: "outbound-audio-1",
       surface: { kind: "dm", id: "12345" },

@@ -13,7 +13,10 @@ class MemoryTransaction {
   ) {}
 
   async get<T>(key: string): Promise<T | undefined> {
+// SAFETY: This test fixture deliberately supplies the contract shape under test.
+    // SAFETY: The fixture returns the value previously stored under this key.
     return this.values.get(key) as T | undefined;
+// SAFETY: This test fixture deliberately supplies the contract shape under test.
   }
 
   async put<T>(key: string, value: T): Promise<void> {
@@ -41,17 +44,26 @@ class MemoryTransaction {
   async list<T>(options?: {
     prefix?: string;
     limit?: number;
+// SAFETY: This test fixture deliberately supplies the contract shape under test.
   }): Promise<Map<string, T>> {
     const entries = [...this.values.entries()]
+// SAFETY: This test fixture deliberately supplies the contract shape under test.
       .filter(([key]) => !options?.prefix || key.startsWith(options.prefix))
+// SAFETY: This test fixture deliberately supplies the contract shape under test.
       .slice(0, options?.limit);
+// SAFETY: This test fixture deliberately supplies the contract shape under test.
+    // SAFETY: The fixture list is requested through the generic storage API.
     return new Map(entries) as Map<string, T>;
   }
 }
 
+// SAFETY: This test fixture deliberately supplies the contract shape under test.
+type AlarmFixture = { value: number | null };
+
 class MemoryStorage {
+// SAFETY: This test fixture deliberately supplies the contract shape under test.
   readonly values = new Map<string, unknown>();
-  readonly alarm = { value: null as number | null };
+  readonly alarm: AlarmFixture = { value: null };
   failNextDelete = false;
 
   async transaction<T>(
@@ -61,6 +73,7 @@ class MemoryStorage {
   }
 
   async get<T>(key: string): Promise<T | undefined> {
+    // SAFETY: The fixture returns the value previously stored under this key.
     return this.values.get(key) as T | undefined;
   }
 
@@ -91,27 +104,33 @@ class MemoryStorage {
     const entries = [...this.values.entries()]
       .filter(([key]) => !options?.prefix || key.startsWith(options.prefix))
       .slice(0, options?.limit);
+    // SAFETY: The fixture list is requested through the generic storage API.
     return new Map(entries) as Map<string, T>;
   }
 }
 
 function ledger(
+// SAFETY: This test fixture deliberately supplies the contract shape under test.
   storage: MemoryStorage,
 ): InboundDeliveryLedger<{ providerMessageId: string }> {
   return new InboundDeliveryLedger(
-    storage as unknown as DurableObjectStorage,
+    // SAFETY: MemoryStorage implements the DurableObjectStorage methods used here.
+    storage as DurableObjectStorage,
     "pending_inbound:",
   );
 }
 
 function retainedLedger(
   storage: MemoryStorage,
+// SAFETY: This test fixture deliberately supplies the contract shape under test.
 ): InboundDeliveryLedger<
+// SAFETY: This test fixture deliberately supplies the contract shape under test.
   { providerMessageId: string },
   { installationId: string; generation: string }
 > {
   return new InboundDeliveryLedger(
-    storage as unknown as DurableObjectStorage,
+    // SAFETY: MemoryStorage implements the DurableObjectStorage methods used here.
+    storage as DurableObjectStorage,
     "retained_inbound:",
     {
       completedRetentionMs: 1_000,

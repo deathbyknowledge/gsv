@@ -2,10 +2,19 @@ import {
   extractTelegramInboundContent,
   type TelegramInboundMediaSource,
 } from "./telegram-inbound-media";
+import { z } from "zod";
 
 const MAX_TEXT_LENGTH = 16_384;
 const MAX_DISPLAY_NAME_LENGTH = 160;
 const MAX_HANDLE_LENGTH = 64;
+
+const telegramManagedMessageSchema = z.object({
+  message_id: z.number(), date: z.number(),
+  chat: z.object({ id: z.number(), type: z.string() }).passthrough(),
+  from: z.object({ id: z.number(), is_bot: z.boolean(), first_name: z.string().optional(), last_name: z.string().optional(), username: z.string().optional() }).passthrough(),
+  reply_to_message: z.object({ message_id: z.number() }).passthrough().optional(),
+}).passthrough();
+const telegramManagedUpdateSchema = z.object({ update_id: z.number(), message: telegramManagedMessageSchema.optional() }).passthrough();
 
 const UNSUPPORTED_CONTENT_FIELDS = [
   "contact",
@@ -40,17 +49,17 @@ export type ManagedTelegramUpdateDisposition =
   | { kind: "ignored" }
   | { kind: "invalid" };
 
-export function normalizeManagedTelegramUpdate(
-  value: unknown,
+export function normalizeManagedTelegramUpdate<T>(
+  value: T,
 ): ManagedTelegramUpdateDisposition {
-  const update = asRecord(value);
-  if (!update) return { kind: "invalid" };
-  if (!("message" in update)) return { kind: "ignored" };
+  const parsed = telegramManagedUpdateSchema.safeParse(value);
+  if (!parsed.success) return { kind: "invalid" };
+  const update = parsed.data;
+  if (!update.message) return { kind: "ignored" };
 
-  const message = asRecord(update.message);
-  const chat = asRecord(message?.chat);
-  const from = asRecord(message?.from);
-  if (!message || !chat || !from) return { kind: "invalid" };
+  const message = update.message;
+  const chat = message.chat;
+  const from = message.from;
   if (chat.type !== "private" || from.is_bot === true) return { kind: "ignored" };
 
   const actorId = positiveTelegramId(from.id);
@@ -66,8 +75,7 @@ export function normalizeManagedTelegramUpdate(
   const unsupportedContent = UNSUPPORTED_CONTENT_FIELDS.some(
     (field) => message[field] !== undefined,
   ) || !text;
-  const reply = asRecord(message.reply_to_message);
-  const replyToId = positiveIntegerString(reply?.message_id);
+  const replyToId = positiveIntegerString(message.reply_to_message?.message_id);
   const timestamp = nonNegativeTimestamp(message.date);
   const actorName = displayName(from.first_name, from.last_name);
   const actorHandle = handle(from.username);
@@ -80,12 +88,12 @@ export function normalizeManagedTelegramUpdate(
       messageId,
       actorId,
       surfaceId,
-      ...(actorName ? { actorName } : {}),
-      ...(actorHandle ? { actorHandle } : {}),
+      actorName,
+      actorHandle,
       text: text || "",
-      ...(content.media.length > 0 ? { media: content.media } : {}),
-      ...(replyToId ? { replyToId } : {}),
-      ...(timestamp !== undefined ? { timestamp } : {}),
+      media: content.media.length > 0 ? content.media : undefined,
+      replyToId: replyToId ?? undefined,
+      timestamp,
       unsupportedContent,
     },
   };
@@ -96,48 +104,41 @@ export function isManagedTelegramPairCommand(text: string): boolean {
   return command === "/start" || command === "/connect" || command === "/link";
 }
 
-function asRecord(value: unknown): Record<string, unknown> | null {
-  return value !== null && typeof value === "object" && !Array.isArray(value)
-    ? value as Record<string, unknown>
-    : null;
-}
-
-function positiveTelegramId(value: unknown): string | null {
-  return typeof value === "number" && Number.isSafeInteger(value) && value > 0
+function positiveTelegramId(value: number): string | null {
+  return Number.isSafeInteger(value) && value > 0
     ? String(value)
     : null;
 }
 
-function positiveIntegerString(value: unknown): string | null {
-  return typeof value === "number" && Number.isSafeInteger(value) && value > 0
+function positiveIntegerString(value: number | undefined): string | null {
+  return value !== undefined && Number.isSafeInteger(value) && value > 0
     ? String(value)
     : null;
 }
 
-function nonNegativeSafeInteger(value: unknown): number | null {
-  return typeof value === "number" && Number.isSafeInteger(value) && value >= 0
+function nonNegativeSafeInteger(value: number): number | null {
+  return Number.isSafeInteger(value) && value >= 0
     ? value
     : null;
 }
 
-function normalizedText(value: unknown): string | null {
-  if (typeof value !== "string") return null;
+function normalizedText(value: string | null | undefined): string | null {
+  if (value === null || value === undefined) return null;
   const trimmed = value.trim();
   return trimmed ? trimmed.slice(0, MAX_TEXT_LENGTH) : null;
 }
 
-function nonNegativeTimestamp(value: unknown): number | undefined {
-  return typeof value === "number"
-    && Number.isSafeInteger(value)
+function nonNegativeTimestamp(value: number): number | undefined {
+  return Number.isSafeInteger(value)
     && value >= 0
     && value <= Math.floor(Number.MAX_SAFE_INTEGER / 1000)
     ? value * 1000
     : undefined;
 }
 
-function displayName(first: unknown, last: unknown): string | undefined {
+function displayName(first: string | undefined, last: string | undefined): string | undefined {
   const name = [first, last]
-    .filter((value): value is string => typeof value === "string")
+    .filter((value): value is string => value !== undefined)
     .map((value) => value.trim())
     .filter(Boolean)
     .join(" ")
@@ -145,8 +146,8 @@ function displayName(first: unknown, last: unknown): string | undefined {
   return name || undefined;
 }
 
-function handle(value: unknown): string | undefined {
-  if (typeof value !== "string") return undefined;
+function handle(value: string | undefined): string | undefined {
+  if (value === undefined) return undefined;
   const normalized = value.trim().replace(/^@/, "").slice(0, MAX_HANDLE_LENGTH);
   return /^[A-Za-z0-9_]{1,64}$/.test(normalized) ? `@${normalized}` : undefined;
 }

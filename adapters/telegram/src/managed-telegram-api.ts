@@ -9,6 +9,15 @@ import {
 import type { BinaryBody } from "./types";
 import type { TelegramInboundFile } from "./telegram-inbound-media";
 import { sendTelegramMarkdownMessage } from "./telegram-formatting";
+type TelegramJsonValue =
+  | string
+  | number
+  | boolean
+  | null
+  | undefined
+  | TelegramJsonValue[]
+  | { [key: string]: TelegramJsonValue };
+type TelegramApiPayload = FormData | { [key: string]: TelegramJsonValue };
 
 const TELEGRAM_API_BASE = "https://api.telegram.org";
 const TELEGRAM_FILE_BASE = "https://api.telegram.org/file";
@@ -109,7 +118,7 @@ export async function downloadManagedTelegramFile(
 export async function callManagedTelegramApi<T>(
   botToken: string,
   method: string,
-  payload: Record<string, unknown> | FormData,
+  payload: TelegramApiPayload,
   fetcher: ManagedTelegramFetch,
 ): Promise<T> {
   const token = botToken.trim();
@@ -138,7 +147,7 @@ export async function callManagedTelegramApi<T>(
   let parsed: TelegramApiResponse<T> | null = null;
   try {
     const responseText = await response.text();
-    parsed = responseText ? JSON.parse(responseText) as TelegramApiResponse<T> : null;
+    parsed = responseText ? JSON.parse(responseText) : null;
   } catch {
     if (response.ok) {
       throw new ManagedTelegramDeliveryError(
@@ -149,8 +158,8 @@ export async function callManagedTelegramApi<T>(
   }
 
   if (!response.ok || !parsed || !parsed.ok) {
-    const providerStatus = parsed && !parsed.ok && Number.isFinite(parsed.error_code)
-      ? parsed.error_code as number
+    const providerStatus = parsed && !parsed.ok && parsed.error_code !== undefined
+      ? parsed.error_code
       : response.status;
     const description = parsed && !parsed.ok ? parsed.description : undefined;
     throw new ManagedTelegramDeliveryError(

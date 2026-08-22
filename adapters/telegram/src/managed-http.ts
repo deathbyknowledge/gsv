@@ -7,7 +7,7 @@ import {
   type ManagedTelegramInbound,
 } from "./managed-update";
 
-type ManagedTelegramPeerStub = {
+type ManagedTelegramPeerStub = DurableObjectStub & {
   handleWebhook(inbound: ManagedTelegramInbound): Promise<{ ok: true }>;
 };
 
@@ -67,7 +67,8 @@ export async function handleManagedTelegramRequest(
   const id = env.MANAGED_TELEGRAM_PEER.idFromName(
     `managed:${normalized.inbound.surfaceId}`,
   );
-  const peer = env.MANAGED_TELEGRAM_PEER.get(id) as unknown as ManagedTelegramPeerStub;
+  // SAFETY: the managed peer namespace is owned by this worker and exposes the handleWebhook RPC.
+  const peer = env.MANAGED_TELEGRAM_PEER.get(id) as ManagedTelegramPeerStub;
   await peer.handleWebhook(normalized.inbound);
   return Response.json({ ok: true });
 }

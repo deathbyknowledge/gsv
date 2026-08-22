@@ -5,15 +5,17 @@ import { deliverDiscordMessage } from "../src/discord-delivery";
 import type { AdapterOutboundMessage } from "../../shared/src/types";
 
 class MemoryTransaction {
-  constructor(private readonly values: Map<string, unknown>) {}
+  constructor(private readonly values: Map<string, StoredValue>) {}
 
   async get<T>(key: string): Promise<T | undefined> {
+    // SAFETY: The fixture returns the value previously stored under this key.
     return this.values.get(key) as T | undefined;
   }
 
   async list<T>(options?: { prefix?: string }): Promise<Map<string, T>> {
     const entries = [...this.values.entries()]
       .filter(([key]) => !options?.prefix || key.startsWith(options.prefix));
+    // SAFETY: The fixture list is requested through the generic storage API.
     return new Map(entries) as Map<string, T>;
   }
 
@@ -33,7 +35,7 @@ class MemoryTransaction {
 }
 
 class MemoryStorage {
-  private readonly values = new Map<string, unknown>();
+  private readonly values = new Map<string, StoredValue>();
 
   async transaction<T>(
     closure: (txn: MemoryTransaction) => Promise<T>,
@@ -42,10 +44,23 @@ class MemoryStorage {
   }
 }
 
+type StoredValue = object | string | number | null | undefined;
+type DiscordRequestPayload = {
+  content?: string;
+  enforce_nonce?: boolean;
+  message_reference?: { message_id?: string };
+  nonce?: string;
+};
+
 function memoryLedger(): DeliveryLedger {
   return new DeliveryLedger(
-    new MemoryStorage() as unknown as DurableObjectStorage,
+    storageFixture(new MemoryStorage()),
   );
+}
+
+function storageFixture<T>(value: T): DurableObjectStorage {
+  // SAFETY: The in-memory fixture implements the DurableObjectStorage methods exercised here.
+  return value as DurableObjectStorage & T;
 }
 
 const message: AdapterOutboundMessage = {
@@ -63,7 +78,8 @@ afterEach(() => {
 describe("deliverDiscordMessage", () => {
   it("deduplicates replayed immediate replies before provider I/O", async () => {
     const provider = vi.fn(async (_url: string, init?: RequestInit) => {
-      const payload = JSON.parse(String(init?.body)) as Record<string, unknown>;
+      // SAFETY: Discord request payload is constructed by the delivery owner above.
+      const payload = JSON.parse(String(init?.body)) as DiscordRequestPayload;
       expect(payload).toMatchObject({
         content: "Command result",
         enforce_nonce: true,

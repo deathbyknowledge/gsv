@@ -1,14 +1,16 @@
 import type { AdapterMedia } from "./types";
+import type { callManagedTelegramApi } from "./managed-telegram-api";
 import {
   buildTelegramReplyParameters,
   callTelegramApiWithMarkdownCaption,
+  type TelegramReplyParameters,
 } from "./telegram-formatting";
 
 export type TelegramSentMediaMessage = { message_id: number };
 
 export type TelegramMediaApiCall = <T>(
   method: string,
-  payload: Record<string, unknown> | FormData,
+  payload: Parameters<typeof callManagedTelegramApi>[2],
 ) => Promise<T>;
 
 type TelegramInputMediaType = "photo" | "video" | "audio" | "document";
@@ -19,6 +21,19 @@ type TelegramInputMedia = {
   caption?: string;
   parse_mode?: "HTML";
 };
+
+type TelegramMediaPayload = {
+  chat_id: string;
+  photo?: string;
+  video?: string;
+  audio?: string;
+  document?: string;
+  caption?: string;
+  parse_mode?: "HTML";
+  reply_parameters?: TelegramReplyParameters;
+};
+
+type TelegramSendMethod = { method: string; mediaField: TelegramInputMediaType };
 
 export async function sendTelegramMediaMessage(
   callApi: TelegramMediaApiCall,
@@ -37,13 +52,16 @@ export async function sendTelegramMediaMessage(
       (apiMethod, payload) => callApi<TelegramSentMediaMessage>(apiMethod, payload),
       method,
       caption,
-      (formattedCaption, parseMode) => ({
-        chat_id: chatId,
-        [mediaField]: media.url,
-        ...(formattedCaption ? { caption: formattedCaption } : {}),
-        ...(parseMode ? { parse_mode: parseMode } : {}),
-        ...(replyParameters ? { reply_parameters: replyParameters } : {}),
-      }),
+      (formattedCaption, parseMode) => {
+        const payload: TelegramMediaPayload = {
+          chat_id: chatId,
+          [mediaField]: media.url,
+        };
+        if (formattedCaption) payload.caption = formattedCaption;
+        if (parseMode) payload.parse_mode = parseMode;
+        if (replyParameters) payload.reply_parameters = replyParameters;
+        return payload;
+      },
     );
   }
 
@@ -113,17 +131,19 @@ export async function sendTelegramMediaGroupMessage(
     "sendMediaGroup",
     caption,
     (formattedCaption, parseMode) => {
-      const inputMedia = preparedMedia.map<TelegramInputMedia>((media, index) => ({
-        ...media,
-        ...(index === 0 && formattedCaption ? { caption: formattedCaption } : {}),
-        ...(index === 0 && parseMode ? { parse_mode: parseMode } : {}),
-      }));
+      const inputMedia = preparedMedia.map<TelegramInputMedia>((media, index) => {
+        const item: TelegramInputMedia = { ...media };
+        if (index === 0 && formattedCaption) item.caption = formattedCaption;
+        if (index === 0 && parseMode) item.parse_mode = parseMode;
+        return item;
+      });
       if (uploadEntries.length === 0) {
-        return {
+        const payload: TelegramMediaPayload & { media: TelegramInputMedia[] } = {
           chat_id: chatId,
           media: inputMedia,
-          ...(replyParameters ? { reply_parameters: replyParameters } : {}),
         };
+        if (replyParameters) payload.reply_parameters = replyParameters;
+        return payload;
       }
       const form = new FormData();
       form.set("chat_id", chatId);
@@ -153,7 +173,7 @@ function validateMediaGroupTypes(mediaItems: readonly AdapterMedia[]): void {
 
 function telegramSendMethod(
   mediaType: AdapterMedia["type"],
-): { method: string; mediaField: string } {
+): TelegramSendMethod {
   switch (telegramInputMediaType(mediaType)) {
     case "photo":
       return { method: "sendPhoto", mediaField: "photo" };
@@ -183,7 +203,7 @@ function telegramMediaFilename(media: AdapterMedia): string {
   const provided = media.filename?.trim();
   if (provided) return provided;
   const normalized = media.mimeType.split(";", 1)[0]!.trim().toLowerCase();
-  const mapping: Record<string, string> = {
+  const mapping = {
     "application/json": "json",
     "application/pdf": "pdf",
     "application/zip": "zip",
@@ -198,8 +218,8 @@ function telegramMediaFilename(media: AdapterMedia): string {
     "text/plain": "txt",
     "video/mp4": "mp4",
     "video/webm": "webm",
-  };
-  const extension = mapping[normalized]
+  } satisfies Record<string, string>;
+  const extension = Object.entries(mapping).find(([mimeType]) => mimeType === normalized)?.[1]
     ?? (media.type === "document" ? "bin" : media.type);
   return `attachment.${extension}`;
 }

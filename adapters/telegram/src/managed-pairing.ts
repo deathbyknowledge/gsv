@@ -31,7 +31,7 @@ export interface ManagedTelegramPairingEnv {
   GATEWAY: Fetcher & ManagedTelegramGatewayService;
 }
 
-type ManagedTelegramPeerStub = {
+type ManagedTelegramPeerStub = DurableObjectStub & {
   inspectPairing(claimId: string, expiresAt: number): Promise<AdapterPairingCandidate>;
   preparePairing(
     claimId: string,
@@ -201,7 +201,8 @@ export class ManagedTelegramPairing extends DurableObject<ManagedTelegramPairing
 
   private peer(surfaceId: string): ManagedTelegramPeerStub {
     const id = this.env.MANAGED_TELEGRAM_PEER.idFromName(`managed:${surfaceId}`);
-    return this.env.MANAGED_TELEGRAM_PEER.get(id) as unknown as ManagedTelegramPeerStub;
+    // SAFETY: the managed peer namespace is owned by this worker and exposes the pairing RPCs.
+    return this.env.MANAGED_TELEGRAM_PEER.get(id) as ManagedTelegramPeerStub;
   }
 }
 

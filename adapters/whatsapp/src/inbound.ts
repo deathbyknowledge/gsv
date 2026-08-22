@@ -15,6 +15,7 @@ export function whatsAppInboundText(
   extracted: proto.IMessage | undefined,
   contentType: keyof proto.IMessage | undefined,
 ): string | undefined {
+  // SAFETY: Baileys content type selects a text-bearing message payload.
   const content = contentType && extracted
     ? extracted[contentType] as TextBearingContent | null
     : null;
@@ -30,6 +31,7 @@ export function quotedWhatsAppMessageText(
 ): string | undefined {
   const extracted = extractMessageContent(message);
   const contentType = extracted ? getContentType(extracted) : undefined;
+  // SAFETY: Baileys content type selects a text-bearing message payload.
   const content = contentType && extracted
     ? extracted[contentType] as TextBearingContent | null
     : null;
@@ -48,6 +50,7 @@ export function whatsAppFallbackText(
   switch (contentType) {
     case "locationMessage":
     case "liveLocationMessage": {
+      // SAFETY: location discriminator selects the Baileys location payload.
       const location = message[contentType] as {
         degreesLatitude?: number | null;
         degreesLongitude?: number | null;
@@ -84,6 +87,7 @@ export function whatsAppFallbackText(
     case "pollCreationMessage":
     case "pollCreationMessageV2":
     case "pollCreationMessageV3": {
+      // SAFETY: poll discriminator selects the Baileys poll payload.
       const poll = message[contentType] as {
         name?: string | null;
         options?: Array<{ optionName?: string | null } | null> | null;
@@ -161,9 +165,11 @@ function finiteCoordinates(
   latitude: number | null | undefined,
   longitude: number | null | undefined,
 ): string | undefined {
-  return typeof latitude === "number"
+  return latitude !== null
+    && latitude !== undefined
     && Number.isFinite(latitude)
-    && typeof longitude === "number"
+    && longitude !== null
+    && longitude !== undefined
     && Number.isFinite(longitude)
     ? `${latitude.toFixed(6)}, ${longitude.toFixed(6)}`
     : undefined;

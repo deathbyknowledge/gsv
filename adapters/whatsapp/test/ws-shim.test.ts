@@ -19,12 +19,18 @@ class FakeWorkerWebSocket extends EventTarget {
   readonly close = vi.fn();
 }
 
-function upgradeResponse(socket: FakeWorkerWebSocket): Response {
+type UpgradeResponse = {
+  status: number;
+  webSocket: FakeWorkerWebSocket;
+  body: null;
+};
+
+function upgradeResponse(socket: FakeWorkerWebSocket): UpgradeResponse {
   return {
     status: 101,
     webSocket: socket,
     body: null,
-  } as unknown as Response;
+  };
 }
 
 describe("Workers WebSocket shim", () => {
@@ -62,8 +68,8 @@ describe("Workers WebSocket shim", () => {
 
   it("finishes close when a deferred upgrade resolves after cancellation", async () => {
     const workerSocket = new FakeWorkerWebSocket();
-    let resolveFetch!: (response: Response) => void;
-    vi.stubGlobal("fetch", vi.fn(async () => await new Promise<Response>((resolve) => {
+    let resolveFetch!: (response: UpgradeResponse) => void;
+    vi.stubGlobal("fetch", vi.fn(async () => await new Promise<UpgradeResponse>((resolve) => {
       resolveFetch = resolve;
     })));
     const socket = new WebSocket("wss://web.whatsapp.com/ws/chat");
@@ -80,8 +86,8 @@ describe("Workers WebSocket shim", () => {
   it("finishes close when a timed-out fetch later returns an upgrade", async () => {
     vi.useFakeTimers();
     const workerSocket = new FakeWorkerWebSocket();
-    let resolveFetch!: (response: Response) => void;
-    vi.stubGlobal("fetch", vi.fn(async () => await new Promise<Response>((resolve) => {
+    let resolveFetch!: (response: UpgradeResponse) => void;
+    vi.stubGlobal("fetch", vi.fn(async () => await new Promise<UpgradeResponse>((resolve) => {
       resolveFetch = resolve;
     })));
     const socket = new WebSocket("wss://web.whatsapp.com/ws/chat", {

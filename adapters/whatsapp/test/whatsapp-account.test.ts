@@ -4,10 +4,6 @@ import type {
 } from "@whiskeysockets/baileys";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-vi.mock("cloudflare:workers", () => ({
-  DurableObject: class {},
-}));
-
 import {
   SOCKET_RESIDENCY_ALARM_INTERVAL_MS,
   SocketOperationQueue,
@@ -42,13 +38,22 @@ type EnsureAccount = (
   accountId: string,
 ) => Promise<void>;
 
-const accountMethod = <T>(name: string): T =>
-  Reflect.get(WhatsAppAccount.prototype, name) as T;
+function socketFixture<T>(value: T): WASocket {
+  // SAFETY: Each fixture supplies the socket members exercised by its scenario.
+  return value as WASocket & T;
+}
 
-const accountField = <T>(account: WhatsAppAccount, name: string): T =>
-  Reflect.get(account, name) as T;
+const accountMethod = <T>(name: string): T => {
+  // SAFETY: Tests select private methods by their stable owner-defined names.
+  return WhatsAppAccount.prototype[name as keyof WhatsAppAccount] as T;
+};
 
-function fakeAccount(fields: Record<string, unknown>): WhatsAppAccount {
+const accountField = <T>(account: WhatsAppAccount, name: string): T => {
+  // SAFETY: Tests select private fields by their stable owner-defined names.
+  return account[name as keyof WhatsAppAccount] as T;
+};
+
+function fakeAccount<T>(fields: T): WhatsAppAccount {
   return Object.assign(Object.create(WhatsAppAccount.prototype), fields);
 }
 
@@ -60,10 +65,10 @@ describe("WhatsApp account residency", () => {
   it("renews residency without replacing a healthy provider session", async () => {
     const now = 1_000;
     vi.spyOn(Date, "now").mockReturnValue(now);
-    const socket = {
+    const socket = socketFixture({
       ws: { isOpen: true },
       end: vi.fn(async () => undefined),
-    } as unknown as WASocket;
+    });
     const authenticatedSockets = new WeakSet<object>();
     authenticatedSockets.add(socket);
     const state = {
@@ -102,10 +107,10 @@ describe("WhatsApp account residency", () => {
   it("retires an unhealthy transport through the normal reconnect path", async () => {
     const now = 1_000;
     vi.spyOn(Date, "now").mockReturnValue(now);
-    const socket = {
+    const socket = socketFixture({
       ws: { isOpen: false },
       end: vi.fn(async () => undefined),
-    } as unknown as WASocket;
+    });
     const authenticatedSockets = new WeakSet<object>();
     authenticatedSockets.add(socket);
     const state = {
@@ -147,10 +152,10 @@ describe("WhatsApp account residency", () => {
   it("leaves a connecting socket to its connection deadline", async () => {
     const now = 10_000;
     vi.spyOn(Date, "now").mockReturnValue(now);
-    const socket = {
+    const socket = socketFixture({
       ws: { isOpen: true },
       end: vi.fn(async () => undefined),
-    } as unknown as WASocket;
+    });
     const state = {
       ...defaultWhatsAppAccountState(),
       desired: "connected" as const,
@@ -189,10 +194,10 @@ describe("WhatsApp account residency", () => {
     const now = 1_000;
     vi.spyOn(Date, "now").mockReturnValue(now);
     vi.spyOn(console, "log").mockImplementation(() => undefined);
-    const socket = {
+    const socket = socketFixture({
       ws: { isOpen: true },
       user: {},
-    } as unknown as WASocket;
+    });
     const authenticatedSockets = new WeakSet<object>();
     authenticatedSockets.add(socket);
     const state = {
@@ -235,8 +240,8 @@ describe("WhatsApp account residency", () => {
       releaseMutation = resolve;
     });
     const precedingMutation = sessionMutations.run(() => mutationGate);
-    const socket = {} as WASocket;
-    const nextSocket = {} as WASocket;
+    const socket = socketFixture({});
+    const nextSocket = socketFixture({});
     const saveCreds = vi.fn(async () => undefined);
     const owned: Promise<unknown>[] = [];
     const account = fakeAccount({
@@ -272,7 +277,7 @@ describe("WhatsApp account session identity", () => {
       releaseMutation = resolve;
     });
     const precedingMutation = sessionMutations.run(() => mutationGate);
-    const socket = {} as WASocket;
+    const socket = socketFixture({});
     const bindLidPnMappings = vi.fn(async () => undefined);
     const state = {
       ...defaultWhatsAppAccountState(),

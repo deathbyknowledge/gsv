@@ -49,6 +49,7 @@ import {
   type WASocket,
   type WAMessage,
 } from "@whiskeysockets/baileys";
+import { z } from "zod";
 import {
   clearAuthState,
   hasRegisteredAuthState,
@@ -127,6 +128,7 @@ const SOCKET_OPEN_WAIT_MS = 25_000;
 const SOCKET_CLOSE_WAIT_MS = 5_000;
 const TINY_JPEG_BASE64 =
   "/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAP//////////////////////////////////////////////////////////////////////////////////////2wBDAf//////////////////////////////////////////////////////////////////////////////////////wAARCAABAAEDASIAAhEBAxEB/8QAFQABAQAAAAAAAAAAAAAAAAAAAAX/xAAUEAEAAAAAAAAAAAAAAAAAAAAA/9oADAMBAAIQAxAAAAEf/8QAFBABAAAAAAAAAAAAAAAAAAAAAP/aAAgBAQABBQJ//8QAFBEBAAAAAAAAAAAAAAAAAAAAAP/aAAgBAwEBPwF//8QAFBEBAAAAAAAAAAAAAAAAAAAAAP/aAAgBAgEBPwF//8QAFBABAAAAAAAAAAAAAAAAAAAAAP/aAAgBAQAGPwJ//8QAFBABAAAAAAAAAAAAAAAAAAAAAP/aAAgBAQABPyF//9oADAMBAAIAAwAAABCf/8QAFBEBAAAAAAAAAAAAAAAAAAAAAP/aAAgBAwEBPxB//8QAFBEBAAAAAAAAAAAAAAAAAAAAAP/aAAgBAgEBPxB//8QAFBABAAAAAAAAAAAAAAAAAAAAAP/aAAgBAQABPxB//9k=";
+
 
 type PairingWaiter = {
   resolve: (result: { connected?: boolean; qr?: string; expiresAt?: number }) => void;
@@ -381,12 +383,13 @@ export class WhatsAppAccount extends DurableObject<Env> {
           logWhatsApp("error", "state_persist_failed", errorFields(stateError));
         });
       }
-      return {
+      const result: AdapterSendResult = {
         ok: false,
         error,
-        ...(kind === "retryable" ? { retryable: true } : {}),
-        ...(kind === "ambiguous" ? { ambiguous: true } : {}),
       };
+      if (kind === "retryable") result.retryable = true;
+      if (kind === "ambiguous") result.ambiguous = true;
+      return result;
     };
 
     try {
@@ -433,7 +436,7 @@ export class WhatsAppAccount extends DurableObject<Env> {
 
       try {
         await this.deliveries.succeed(ledgerDeliveryId, attemptId, providerMessageId);
-      } catch (error) {
+      } catch {
         return {
           ok: false,
           error: "WhatsApp accepted the delivery but its durable outcome could not be recorded",
@@ -455,11 +458,12 @@ export class WhatsAppAccount extends DurableObject<Env> {
         acceptedDeliveries,
         ...errorFields(error),
       });
+      const providerFailure = providerFailureSchema.parse(error);
       const kind = acceptedDeliveries > 0
         ? "ambiguous"
         : error instanceof WhatsAppPreparationError
           ? error.retryable ? "retryable" : "permanent"
-        : classifyWhatsAppSendFailure(error);
+        : classifyWhatsAppSendFailure(providerFailure);
       return await fail(kind, errorMessage(error));
     }
   }
@@ -537,7 +541,8 @@ export class WhatsAppAccount extends DurableObject<Env> {
       }
     } catch (error) {
       logWhatsApp("error", "alarm_lifecycle_failed", errorFields(error));
-      await this.scheduleReconnectAfterFailure(error);
+      // SAFETY: Lifecycle errors are normalized to the status-bearing provider contract.
+      await this.scheduleReconnectAfterFailure(error as ProviderFailure);
     }
 
     await this.retryPendingInbound();
@@ -812,7 +817,7 @@ export class WhatsAppAccount extends DurableObject<Env> {
         "WhatsApp WebSocket upgrade timed out",
       );
     } catch (error) {
-      const failure = toError(error, "WhatsApp WebSocket upgrade failed");
+      const failure = toError(String(error), "WhatsApp WebSocket upgrade failed");
       const supersededConnectionDeadline = this.state.connectionDeadlineAt;
       if (this.isCurrentSocket(generation, socket)) {
         ++this.socketGeneration;
@@ -1044,7 +1049,7 @@ export class WhatsAppAccount extends DurableObject<Env> {
     this.resolvePairingWaiters({});
   }
 
-  private async scheduleReconnectAfterFailure(error: unknown): Promise<void> {
+  private async scheduleReconnectAfterFailure(error: ProviderFailure): Promise<void> {
     if (this.state.desired !== "connected") return;
     if (this.sock) {
       this.state.lastError = errorMessage(error);
@@ -1120,9 +1125,9 @@ export class WhatsAppAccount extends DurableObject<Env> {
       status: providerError ? "error" : "logged_out",
       disconnectReason: "user_logout",
       lastDisconnectedAt,
-      ...(providerError
-        ? { lastError: `WhatsApp logout failed: ${errorMessage(providerError)}` }
-        : {}),
+      lastError: providerError
+        ? `WhatsApp logout failed: ${errorMessage(providerError)}`
+        : undefined,
     };
     this.qrCode = null;
     this.groupMetadata.clear();
@@ -1147,7 +1152,7 @@ export class WhatsAppAccount extends DurableObject<Env> {
         await this.startSocket(source);
         socket = this.sock;
       } catch (error) {
-        failure = toError(error, "WhatsApp logout connection failed");
+        failure = toError(String(error), "WhatsApp logout connection failed");
       }
     }
     if (socket && !authenticated && !failure) {
@@ -1158,7 +1163,7 @@ export class WhatsAppAccount extends DurableObject<Env> {
         );
         authenticated = true;
       } catch (error) {
-        failure = toError(error, "WhatsApp logout connection timed out");
+        failure = toError(String(error), "WhatsApp logout connection timed out");
       }
     }
 
@@ -1174,7 +1179,7 @@ export class WhatsAppAccount extends DurableObject<Env> {
             "WhatsApp provider logout timed out",
           );
         } catch (error) {
-          failure = toError(error, "WhatsApp provider logout failed");
+          failure = toError(String(error), "WhatsApp provider logout failed");
         }
       }
       if (!authenticated || failure) {
@@ -1282,6 +1287,7 @@ export class WhatsAppAccount extends DurableObject<Env> {
     const attempt = await this.inboundDeliveries.attempt(
       deliveryId,
       async (encoded) => {
+        // SAFETY: Baileys protobuf decoding returns the WebMessageInfo shape persisted by this adapter.
         const decoded = proto.WebMessageInfo.decode(encoded) as WAMessage;
         if (!decoded.key) return { terminal: true };
         return this.forwardInboundMessage(
@@ -1378,12 +1384,12 @@ export class WhatsAppAccount extends DurableObject<Env> {
         kind: identity.isGroup ? "group" : "dm",
         id: identity.surfaceJid,
         name: identity.isGroup ? groupName : message.pushName ?? undefined,
-        ...(!identity.isGroup && actorHandle ? { handle: actorHandle } : {}),
+        handle: !identity.isGroup && actorHandle ? actorHandle : undefined,
       },
       actor: {
         id: actorId,
         name: message.pushName ?? undefined,
-        ...(actorHandle ? { handle: actorHandle } : {}),
+        handle: actorHandle ?? undefined,
       },
       text: text || (
         media.media.length > 0
@@ -1392,7 +1398,7 @@ export class WhatsAppAccount extends DurableObject<Env> {
             ? "[Media unavailable]"
             : ""
       ),
-      ...(media.media.length > 0 ? { media: media.media } : {}),
+      media: media.media.length > 0 ? media.media : undefined,
       replyToId: contextInfo?.stanzaId ?? undefined,
       replyToText: quotedWhatsAppMessageText(contextInfo?.quotedMessage),
       timestamp: messageTimestampMs(message.messageTimestamp),
@@ -1585,10 +1591,10 @@ export class WhatsAppAccount extends DurableObject<Env> {
         id: replyToId,
         remoteJid,
         fromMe: false,
-        ...(participant ? { participant } : {}),
-        ...(participantAlt ? { participantAlt } : {}),
+        participant,
+        participantAlt,
       },
-      ...(participant ? { participant } : {}),
+      participant,
       message: { conversation: "" },
     };
   }
@@ -1604,11 +1610,7 @@ export class WhatsAppAccount extends DurableObject<Env> {
         false,
       );
     }
-    const upload = Buffer.from(
-      bytes.buffer as ArrayBuffer,
-      bytes.byteOffset,
-      bytes.byteLength,
-    );
+    const upload = Buffer.from(bytes);
     const caption = formatWhatsAppText(captionText.trim()) || undefined;
     switch (media.type) {
       case "image":
@@ -1616,14 +1618,14 @@ export class WhatsAppAccount extends DurableObject<Env> {
           image: upload,
           mimetype: media.mimeType,
           jpegThumbnail: TINY_JPEG_BASE64,
-          ...(caption ? { caption } : {}),
+          caption,
         };
       case "video":
         return {
           video: upload,
           mimetype: media.mimeType,
           jpegThumbnail: TINY_JPEG_BASE64,
-          ...(caption ? { caption } : {}),
+          caption,
         };
       case "audio":
         return {
@@ -1636,7 +1638,7 @@ export class WhatsAppAccount extends DurableObject<Env> {
           document: upload,
           mimetype: media.mimeType || "application/octet-stream",
           fileName: defaultWhatsAppFilename(media),
-          ...(caption ? { caption } : {}),
+          caption,
         };
     }
   }
@@ -1847,7 +1849,7 @@ export class WhatsAppAccount extends DurableObject<Env> {
   }
 
   private gatewayBinding(): AdapterGatewayBinding {
-    return this.env.GATEWAY as unknown as AdapterGatewayBinding;
+    return gatewayBinding(this.env.GATEWAY);
   }
 
   private own(event: string, promise: Promise<unknown>): void {
@@ -1857,39 +1859,60 @@ export class WhatsAppAccount extends DurableObject<Env> {
   }
 }
 
+function gatewayBinding<T>(value: T): AdapterGatewayBinding {
+  // SAFETY: the worker environment declares GATEWAY as the adapter RPC binding.
+  return value as AdapterGatewayBinding;
+}
+
 function messageContextInfo(
   message: proto.IMessage | undefined,
   contentType: keyof proto.IMessage | undefined,
 ): proto.IContextInfo | undefined {
   if (!message || !contentType) return undefined;
   const content = message[contentType];
-  if (!content || typeof content !== "object") return undefined;
-  return (content as { contextInfo?: proto.IContextInfo | null }).contextInfo ?? undefined;
+  if (!content) return undefined;
+  const parsed = messageContextSchema.safeParse(content);
+  return parsed.success ? parsed.data.contextInfo ?? undefined : undefined;
 }
 
-function providerStatusCode(error: unknown): number | undefined {
+type ProviderNode = {
+  output?: ProviderNode;
+  statusCode?: number;
+  status?: number;
+};
+type ProviderFailure = Error | ProviderNode | null | undefined;
+const providerNodeSchema: z.ZodType<ProviderNode> = z.lazy(() => z.object({
+  output: providerNodeSchema.optional(),
+  statusCode: z.number().optional(),
+  status: z.number().optional(),
+}).passthrough());
+const providerFailureSchema = z.union([z.instanceof(Error), providerNodeSchema, z.null(), z.undefined()]);
+const messageContextSchema = z.object({ contextInfo: z.any().nullable().optional() }).passthrough();
+
+function providerStatusCode(error: ProviderFailure): number | undefined {
   return nestedNumber(error, ["output", "statusCode"])
     ?? nestedNumber(error, ["statusCode"])
     ?? nestedNumber(error, ["status"]);
 }
 
-function classifyWhatsAppSendFailure(error: unknown): DeliveryFailureKind {
-  if (isWhatsAppEncryptionPreparationFailure(error)) return "retryable";
+function classifyWhatsAppSendFailure(error: ProviderFailure): DeliveryFailureKind {
+  if (error instanceof Error && isWhatsAppEncryptionPreparationFailure(error)) return "retryable";
   const status = providerStatusCode(error);
   return status === undefined
     ? "ambiguous"
     : classifyNonIdempotentProviderStatus(status);
 }
 
-function nestedNumber(value: unknown, path: string[]): number | undefined {
-  let current = value;
+function nestedNumber(value: ProviderFailure, path: string[]): number | undefined {
+  let current: ProviderNode | number | undefined = value instanceof Error ? undefined : value ?? undefined;
   for (const key of path) {
-    if (!current || typeof current !== "object") return undefined;
-    current = (current as Record<string, unknown>)[key];
+    if (!current || Number(current) === current) return undefined;
+    const node = providerNodeSchema.parse(current);
+    current = key === "output" ? node.output : key === "statusCode" ? node.statusCode : node.status;
   }
-  return typeof current === "number" && Number.isFinite(current)
-    ? current
-    : undefined;
+  if (!Number.isFinite(current) || Number(current) !== current) return undefined;
+  const status = Number(current);
+  return Number.isFinite(status) && status === current ? status : undefined;
 }
 
 function disconnectReasonName(statusCode: number | undefined): string {
@@ -1938,6 +1961,6 @@ async function withTimeout<T>(
   }
 }
 
-function toError(error: unknown, fallback: string): Error {
+function toError(error: Error | string | null | undefined, fallback: string): Error {
   return error instanceof Error ? error : new Error(fallback);
 }

@@ -7,6 +7,20 @@ import {
   type AdapterMediaPart,
 } from "../../shared/src/media-body";
 import type { AdapterMedia, BinaryBody } from "./types";
+import { z } from "zod";
+
+const telegramFileSchema = z.object({
+  file_id: z.string().optional(), file_size: z.number().optional(), file_path: z.string().optional(),
+  mime_type: z.string().optional(), file_name: z.string().optional(), duration: z.number().optional(),
+  is_video: z.boolean().optional(), is_animated: z.boolean().optional(), width: z.number().optional(), height: z.number().optional(),
+}).passthrough();
+const telegramMessageSchema = z.object({
+  text: z.string().optional(), caption: z.string().optional(), photo: z.array(telegramFileSchema).optional(),
+  video: telegramFileSchema.optional(), video_note: telegramFileSchema.optional(), audio: telegramFileSchema.optional(),
+  voice: telegramFileSchema.optional(), document: telegramFileSchema.optional(), animation: telegramFileSchema.optional(),
+  sticker: telegramFileSchema.optional(),
+}).passthrough();
+type TelegramFile = z.infer<typeof telegramFileSchema>;
 
 export type TelegramInboundMediaSource = {
   type: AdapterMedia["type"];
@@ -32,11 +46,12 @@ export type TelegramInboundMediaLoadResult = AdapterMediaBundle & {
 };
 
 export function extractTelegramInboundContent(
-  value: unknown,
+  value: z.input<typeof telegramMessageSchema>,
   messageId: string,
 ): TelegramInboundContent {
-  const message = asRecord(value);
-  if (!message) return { text: null, media: [] };
+  const parsed = telegramMessageSchema.safeParse(value);
+  if (!parsed.success) return { text: null, media: [] };
+  const message = parsed.data;
 
   const media: TelegramInboundMediaSource[] = [];
   let fallbackText: string | null = null;
@@ -56,7 +71,7 @@ export function extractTelegramInboundContent(
       fileId: photo.fileId,
       mimeType: "image/jpeg",
       filename: `telegram-photo-${messageId}.jpg`,
-      ...(photo.size === undefined ? {} : { size: photo.size }),
+      size: photo.size,
     }, "[Photo]");
   }
   add(fileSource(
@@ -90,7 +105,7 @@ export function extractTelegramInboundContent(
     `telegram-document-${messageId}.bin`,
   ), "[Document]");
 
-  const animation = asRecord(message.animation);
+  const animation = message.animation;
   const animationMime = boundedString(animation?.mime_type, 255) ?? "video/mp4";
   const animationType = mediaTypeFromMime(animationMime);
   add(fileSource(
@@ -117,7 +132,7 @@ export async function loadTelegramInboundMedia(
       maxBytes: number,
     ): Promise<(BinaryBody & { length: number }) | null>;
     skipFailures?: boolean;
-    onFailure?(error: unknown): void;
+    onFailure?(error: Error | string): void;
   },
 ): Promise<TelegramInboundMediaLoadResult> {
   const parts: AdapterMediaPart[] = [];
@@ -149,15 +164,15 @@ export async function loadTelegramInboundMedia(
         media: {
           type: source.type,
           mimeType: source.mimeType,
-          ...(source.filename ? { filename: source.filename } : {}),
+          filename: source.filename,
           size: body.length,
-          ...(source.duration === undefined ? {} : { duration: source.duration }),
+          duration: source.duration,
         },
         body,
       });
       bodyBytes += body.length;
     } catch (error) {
-      options.onFailure?.(error);
+      options.onFailure?.(error instanceof Error ? error : String(error));
       if (options.skipFailures) {
         skipped += 1;
         continue;
@@ -170,17 +185,17 @@ export async function loadTelegramInboundMedia(
   return { ...await bundleAdapterMedia(parts), skipped };
 }
 
-function largestPhoto(value: unknown): { fileId: string; size?: number } | null {
-  if (!Array.isArray(value)) return null;
+function largestPhoto(value: readonly TelegramFile[] | undefined): { fileId: string; size?: number } | null {
+  if (!value) return null;
   let largest: { fileId: string; size?: number; pixels: number } | null = null;
   for (const candidate of value) {
-    const photo = asRecord(candidate);
-    const fileId = providerFileId(photo?.file_id);
+    const photo = candidate;
+    const fileId = providerFileId(photo.file_id);
     if (!fileId) continue;
-    const size = safeNonNegativeInteger(photo?.file_size);
-    const width = safeNonNegativeInteger(photo?.width) ?? 0;
-    const height = safeNonNegativeInteger(photo?.height) ?? 0;
-    const next = { fileId, ...(size === undefined ? {} : { size }), pixels: width * height };
+    const size = safeNonNegativeInteger(photo.file_size);
+    const width = safeNonNegativeInteger(photo.width) ?? 0;
+    const height = safeNonNegativeInteger(photo.height) ?? 0;
+    const next = { fileId, size, pixels: width * height };
     if (
       !largest
       || (next.size ?? 0) > (largest.size ?? 0)
@@ -191,17 +206,17 @@ function largestPhoto(value: unknown): { fileId: string; size?: number } | null 
   }
   return largest ? {
     fileId: largest.fileId,
-    ...(largest.size === undefined ? {} : { size: largest.size }),
+    size: largest.size,
   } : null;
 }
 
 function fileSource(
-  value: unknown,
+  value: TelegramFile | undefined,
   type: AdapterMedia["type"],
   defaultMimeType: string,
   defaultFilename: string,
 ): TelegramInboundMediaSource | null {
-  const file = asRecord(value);
+  const file = value;
   const fileId = providerFileId(file?.file_id);
   if (!fileId) return null;
   const mimeType = boundedString(file?.mime_type, 255) ?? defaultMimeType;
@@ -213,13 +228,13 @@ function fileSource(
     fileId,
     mimeType,
     filename,
-    ...(size === undefined ? {} : { size }),
-    ...(duration === undefined ? {} : { duration }),
+    size,
+    duration,
   };
 }
 
-function stickerSource(value: unknown, messageId: string): TelegramInboundMediaSource | null {
-  const sticker = asRecord(value);
+function stickerSource(value: TelegramFile | undefined, messageId: string): TelegramInboundMediaSource | null {
+  const sticker = value;
   const fileId = providerFileId(sticker?.file_id);
   if (!fileId) return null;
   const isVideo = sticker?.is_video === true;
@@ -235,7 +250,7 @@ function stickerSource(value: unknown, messageId: string): TelegramInboundMediaS
     fileId,
     mimeType,
     filename,
-    ...(size === undefined ? {} : { size }),
+    size,
   };
 }
 
@@ -249,7 +264,7 @@ function mediaTypeFromMime(mimeType: string): AdapterMedia["type"] {
 
 function extensionFromMime(mimeType: string, mediaType: AdapterMedia["type"]): string {
   const normalized = mimeType.split(";", 1)[0]!.trim().toLowerCase();
-  const mapping: Record<string, string> = {
+  const mapping = {
     "application/pdf": "pdf",
     "application/x-tgsticker": "tgs",
     "audio/mpeg": "mp3",
@@ -260,44 +275,39 @@ function extensionFromMime(mimeType: string, mediaType: AdapterMedia["type"]): s
     "image/webp": "webp",
     "video/mp4": "mp4",
     "video/webm": "webm",
-  };
-  return mapping[normalized] ?? (mediaType === "document" ? "bin" : mediaType);
+  } satisfies Record<string, string>;
+  return Object.entries(mapping).find(([key]) => key === normalized)?.[1]
+    ?? (mediaType === "document" ? "bin" : mediaType);
 }
 
-function normalizedText(value: unknown): string | null {
-  if (typeof value !== "string") return null;
+function normalizedText(value: string | undefined): string | null {
+  if (value === undefined) return null;
   const trimmed = value.trim();
   return trimmed || null;
 }
 
-function providerFileId(value: unknown): string | null {
+function providerFileId(value: string | undefined): string | null {
   return boundedOpaque(value, 1_024) ?? null;
 }
 
-function boundedString(value: unknown, maxLength: number): string | undefined {
-  if (typeof value !== "string") return undefined;
+function boundedString(value: string | undefined, maxLength: number): string | undefined {
+  if (value === undefined) return undefined;
   const normalized = value.trim();
   return normalized ? normalized.slice(0, maxLength) : undefined;
 }
 
-function boundedOpaque(value: unknown, maxLength: number): string | undefined {
-  if (typeof value !== "string") return undefined;
+function boundedOpaque(value: string | undefined, maxLength: number): string | undefined {
+  if (value === undefined) return undefined;
   const normalized = value.trim();
   return normalized
     && normalized.length <= maxLength
-    && !/[\u0000-\u001f\u007f]/.test(normalized)
+    && ![...normalized].some((char) => char.charCodeAt(0) < 32 || char.charCodeAt(0) === 127)
     ? normalized
     : undefined;
 }
 
-function safeNonNegativeInteger(value: unknown): number | undefined {
-  return typeof value === "number" && Number.isSafeInteger(value) && value >= 0
+function safeNonNegativeInteger(value: number | undefined): number | undefined {
+  return value !== undefined && Number.isSafeInteger(value) && value >= 0
     ? value
     : undefined;
-}
-
-function asRecord(value: unknown): Record<string, unknown> | null {
-  return value !== null && typeof value === "object" && !Array.isArray(value)
-    ? value as Record<string, unknown>
-    : null;
 }

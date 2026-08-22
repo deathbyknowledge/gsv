@@ -24,7 +24,6 @@ import type {
   AdapterSurface,
   BinaryBody,
 } from "./types";
-import type { ManagedTelegramPairingEnv } from "./managed-pairing";
 import type { ManagedTelegramPeerEnv } from "./managed-peer";
 import {
   managedTelegramConfigured,
@@ -82,10 +81,10 @@ export class ManagedTelegramChannel extends WorkerEntrypoint<Env> {
       connected: configured,
       authenticated: false,
       mode: "managed-shared",
-      ...(!configured ? { error: "Managed Telegram is not configured" } : {}),
-      ...(validManagedTelegramBotUsername(this.env.TELEGRAM_BOT_USERNAME)
-        ? { extra: { botUsername: normalizedManagedTelegramBotUsername(this.env.TELEGRAM_BOT_USERNAME) } }
-        : {}),
+      error: configured ? undefined : "Managed Telegram is not configured",
+      extra: validManagedTelegramBotUsername(this.env.TELEGRAM_BOT_USERNAME)
+        ? { botUsername: normalizedManagedTelegramBotUsername(this.env.TELEGRAM_BOT_USERNAME) }
+        : undefined,
     }];
   }
 
@@ -110,7 +109,7 @@ export class ManagedTelegramChannel extends WorkerEntrypoint<Env> {
       );
     } catch (error) {
       await cancelBinaryBody(body, error);
-      return { ok: false, error: safeError(error) };
+      return { ok: false, error: safeError(error instanceof Error ? error : String(error)) };
     }
   }
 
@@ -135,7 +134,7 @@ export class ManagedTelegramChannel extends WorkerEntrypoint<Env> {
       );
       return { ok: true };
     } catch (error) {
-      return { ok: false, error: safeError(error) };
+      return { ok: false, error: safeError(error instanceof Error ? error : String(error)) };
     }
   }
 
@@ -146,9 +145,9 @@ export class ManagedTelegramChannel extends WorkerEntrypoint<Env> {
     return {
       accountId: MANAGED_TELEGRAM_ACCOUNT_ID,
       configured: this.isConfigured(),
-      ...(validManagedTelegramBotUsername(this.env.TELEGRAM_BOT_USERNAME)
-        ? { botUsername: normalizedManagedTelegramBotUsername(this.env.TELEGRAM_BOT_USERNAME) }
-        : {}),
+      botUsername: validManagedTelegramBotUsername(this.env.TELEGRAM_BOT_USERNAME)
+        ? normalizedManagedTelegramBotUsername(this.env.TELEGRAM_BOT_USERNAME)
+        : undefined,
     };
   }
 
@@ -209,13 +208,13 @@ export class ManagedTelegramChannel extends WorkerEntrypoint<Env> {
       throw new Error("Managed Telegram surface ID is invalid");
     }
     const id = this.env.MANAGED_TELEGRAM_PEER.idFromName(`managed:${surfaceId}`);
-    return this.env.MANAGED_TELEGRAM_PEER.get(id) as unknown as ManagedTelegramPeerStub;
+    return typedStub(this.env.MANAGED_TELEGRAM_PEER.get(id));
   }
 
   private pairing(code: string): ManagedTelegramPairingStub {
     const normalized = normalizePairingCode(code);
     const id = this.env.MANAGED_TELEGRAM_PAIRING.idFromName(`pair:${normalized}`);
-    return this.env.MANAGED_TELEGRAM_PAIRING.get(id) as unknown as ManagedTelegramPairingStub;
+    return typedStub(this.env.MANAGED_TELEGRAM_PAIRING.get(id));
   }
 
   private isConfigured(): boolean {
@@ -229,7 +228,7 @@ export default {
   },
 } satisfies ExportedHandler<Env>;
 
-function parseManagedInstallation(value: unknown): AdapterInstallationContext {
+function parseManagedInstallation(value: AdapterInstallationContext): AdapterInstallationContext {
   const installation = parseAdapterInstallationContext(value);
   if (installation.installationId === LEGACY_STANDALONE_ADAPTER_INSTALLATION_ID) {
     throw new Error("Managed Telegram cannot address singleton");
@@ -243,7 +242,12 @@ function normalizePairingCode(value: string): string {
   return normalized;
 }
 
-function safeError(error: unknown): string {
+function typedStub<T, V>(value: V): T {
+  // SAFETY: The Durable Object namespace binding owns the declared RPC contract.
+  return value as T & V;
+}
+
+function safeError(error: Error | string): string {
   if (error instanceof Error && /not linked|invalid|direct messages|media/.test(error.message)) {
     return error.message;
   }

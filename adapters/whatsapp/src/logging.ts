@@ -1,4 +1,15 @@
+import { z } from "zod";
+
 export type WhatsAppLogLevel = "info" | "warn" | "error";
+type ErrorFields = { errorType: string; statusCode?: number };
+const externalErrorSchema = z.unknown();
+type ExternalError = Parameters<typeof externalErrorSchema.safeParse>[0];
+const errorMetadataSchema = z.looseObject({
+  output: z.optional(z.looseObject({ statusCode: z.optional(z.number()) })),
+  statusCode: z.optional(z.number()),
+  status: z.optional(z.number()),
+});
+const errorObjectSchema = z.looseObject({});
 
 export function logWhatsApp(
   level: WhatsAppLogLevel,
@@ -21,22 +32,19 @@ export function logWhatsApp(
   }
 }
 
-export function errorFields(error: unknown): {
-  errorType: string;
-  statusCode?: number;
-} {
+export function errorFields(error: ExternalError): ErrorFields {
+  const metadata = errorMetadataSchema.safeParse(error);
   const statusCode = httpStatusCode(
-    nestedNumber(error, ["output", "statusCode"])
-    ?? nestedNumber(error, ["statusCode"])
-    ?? nestedNumber(error, ["status"]),
+    metadata.success
+      ? metadata.data.output?.statusCode ?? metadata.data.statusCode ?? metadata.data.status
+      : undefined,
   );
-  return {
-    errorType: allowlistedErrorType(error),
-    ...(statusCode === undefined ? {} : { statusCode }),
-  };
+  const fields: ErrorFields = { errorType: allowlistedErrorType(error) };
+  if (statusCode !== undefined) fields.statusCode = statusCode;
+  return fields;
 }
 
-export function errorMessage(error: unknown): string {
+export function errorMessage(error: ExternalError): string {
   const message = error instanceof Error ? error.message : String(error);
   return message
     .replace(/https?:\/\/[^\s"'<>]+/gi, "[url-redacted]")
@@ -54,17 +62,6 @@ export function errorMessage(error: unknown): string {
     .slice(0, 500);
 }
 
-function nestedNumber(value: unknown, path: string[]): number | undefined {
-  let current = value;
-  for (const key of path) {
-    if (!current || typeof current !== "object") return undefined;
-    current = (current as Record<string, unknown>)[key];
-  }
-  return typeof current === "number" && Number.isFinite(current)
-    ? current
-    : undefined;
-}
-
 function httpStatusCode(value: number | undefined): number | undefined {
   return value !== undefined
     && Number.isInteger(value)
@@ -74,7 +71,7 @@ function httpStatusCode(value: number | undefined): number | undefined {
     : undefined;
 }
 
-function allowlistedErrorType(error: unknown): string {
+function allowlistedErrorType(error: ExternalError): string {
   if (error instanceof RangeError) return "RangeError";
   if (error instanceof TypeError) return "TypeError";
   if (error instanceof SyntaxError) return "SyntaxError";
@@ -83,16 +80,6 @@ function allowlistedErrorType(error: unknown): string {
   if (error instanceof EvalError) return "EvalError";
   if (error instanceof AggregateError) return "AggregateError";
   if (error instanceof Error) return "Error";
-  switch (typeof error) {
-    case "bigint":
-    case "boolean":
-    case "function":
-    case "number":
-    case "string":
-    case "symbol":
-    case "undefined":
-      return typeof error;
-    default:
-      return error === null ? "null" : "object";
-  }
+  if (errorObjectSchema.safeParse(error).success) return "object";
+  return error === null ? "null" : "unknown";
 }

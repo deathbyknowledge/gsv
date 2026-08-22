@@ -61,16 +61,18 @@ export function restoreWhatsAppAccountState(
   now: number,
 ): WhatsAppAccountState {
   if (stored?.version === 2) {
+    // SAFETY: Persisted state is normalized by the lifecycle boundary before field access.
+    const normalizedStored = stored as WhatsAppAccountState & {
+      rotationAt?: number;
+      leaseRefreshAt?: number;
+      lastMessageAt?: number;
+    };
     const {
       rotationAt: _obsoleteRotationAt,
       leaseRefreshAt: _obsoleteLeaseRefreshAt,
       lastMessageAt: _obsoleteLastMessageAt,
       ...current
-    } = stored as WhatsAppAccountState & {
-      rotationAt?: number;
-      leaseRefreshAt?: number;
-      lastMessageAt?: number;
-    };
+    } = normalizedStored;
     return { ...defaultWhatsAppAccountState(), ...current };
   }
   if (!hasRegisteredLegacyAuth) {

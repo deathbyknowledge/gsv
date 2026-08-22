@@ -5,7 +5,18 @@ import {
   normalizeManagedTelegramUpdate,
 } from "./managed-update";
 
-function update(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+type MessageFixture = {
+  message_id: number;
+  date: number;
+  text?: string;
+  chat: { id: number; type: "private" | "group" };
+  from: { id: number; is_bot: boolean; first_name?: string; last_name?: string; username?: string };
+  contact?: { phone_number: string };
+  voice?: { file_id: string; file_size: number; duration: number; mime_type: string };
+};
+type UpdateFixture = { update_id: number; message: MessageFixture };
+
+function update(overrides: Partial<UpdateFixture> = {}): UpdateFixture {
   return {
     update_id: 42,
     message: {
@@ -45,7 +56,7 @@ describe("managed Telegram update normalization", () => {
   });
 
   it("marks rich or empty messages unsupported without exposing provider shapes", () => {
-    const message = (update().message as Record<string, unknown>);
+    const message = update().message;
     expect(normalizeManagedTelegramUpdate(update({
       message: { ...message, text: undefined, contact: { phone_number: "secret" } },
     }))).toMatchObject({
@@ -55,7 +66,7 @@ describe("managed Telegram update normalization", () => {
   });
 
   it("normalizes a voice note as binary-backed inbound audio", () => {
-    const message = update().message as Record<string, unknown>;
+    const message = update().message;
     expect(normalizeManagedTelegramUpdate(update({
       message: {
         ...message,
@@ -85,7 +96,7 @@ describe("managed Telegram update normalization", () => {
   });
 
   it("ignores groups, bots, and mismatched private peers", () => {
-    const message = update().message as Record<string, unknown>;
+    const message = update().message;
     expect(normalizeManagedTelegramUpdate(update({
       message: { ...message, chat: { id: 12345, type: "group" } },
     }))).toEqual({ kind: "ignored" });

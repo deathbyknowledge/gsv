@@ -31,11 +31,11 @@ const STATE_UPDATE_ARGS = {
   },
 } as const;
 
-function trackedBody(): {
-  body: BinaryBody;
-  cancelled: () => unknown;
-} {
-  let cancelled: unknown;
+type TrackedBody = { body: BinaryBody; cancelled: () => Error | string | undefined };
+
+function trackedBody(): TrackedBody {
+  let cancelled: Error | string | undefined;
+// SAFETY: This test fixture deliberately supplies the contract shape under test.
   return {
     body: {
       stream: new ReadableStream<Uint8Array>({
@@ -59,11 +59,13 @@ function binding(
     scopedFrame?: GatewayFrame,
   ) => scopedFrame
     ? await scopedServiceFrame(
+// SAFETY: This test fixture deliberately supplies the contract shape under test.
         installationOrFrame as AdapterInstallationContext,
         scopedFrame,
       )
     : null);
   return {
+// SAFETY: This test fixture deliberately supplies the contract shape under test.
     serviceFrame: serviceFrame as AdapterGatewayBinding["serviceFrame"],
   };
 }

@@ -89,15 +89,15 @@ export class WebSocket extends EventEmitter {
     return this;
   }
 
-  ping(_data?: unknown, _mask?: boolean, callback?: () => void): void {
+  ping(_data?: string | ArrayBuffer | Uint8Array, _mask?: boolean, callback?: () => void): void {
     callback?.();
   }
 
-  pong(_data?: unknown, _mask?: boolean, callback?: () => void): void {
+  pong(_data?: string | ArrayBuffer | Uint8Array, _mask?: boolean, callback?: () => void): void {
     callback?.();
   }
 
-  private async handleMessage(data: unknown): Promise<void> {
+  private async handleMessage(data: string | ArrayBuffer | Uint8Array | Blob): Promise<void> {
     if (data instanceof ArrayBuffer) {
       this.requireMessageSize(data.byteLength);
       this.emit("message", Buffer.from(data));
@@ -112,18 +112,20 @@ export class WebSocket extends EventEmitter {
       });
       this.emit(
         "message",
-        Buffer.from(bytes.buffer as ArrayBuffer, bytes.byteOffset, bytes.byteLength),
+        Buffer.from(bytes),
       );
       return;
     }
-    if (typeof data === "string" || data instanceof Uint8Array) {
+    if (data instanceof Uint8Array) {
       this.requireMessageSize(
-        typeof data === "string" ? new TextEncoder().encode(data).byteLength : data.byteLength,
+        data.byteLength,
       );
       this.emit("message", data);
       return;
     }
-    throw new Error("Unsupported WebSocket message type");
+    this.requireMessageSize(new TextEncoder().encode(data).byteLength);
+    this.emit("message", data);
+    return;
   }
 
   private async connect(url: string | URL, options?: WebSocketOptions): Promise<void> {

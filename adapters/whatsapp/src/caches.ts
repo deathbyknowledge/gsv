@@ -105,6 +105,7 @@ export class GroupMetadataCache {
       expiresAt: Date.now() + this.ttlMs,
     });
     while (this.entries.size > this.maxEntries) {
+      // SAFETY: Cache keys are strings and the iterator may be exhausted.
       const oldest = this.entries.keys().next().value as string | undefined;
       if (oldest === undefined) break;
       this.entries.delete(oldest);

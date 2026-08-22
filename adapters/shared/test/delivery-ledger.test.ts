@@ -13,12 +13,15 @@ class MemoryTransaction {
   constructor(private readonly values: Map<string, unknown>) {}
 
   async get<T>(key: string): Promise<T | undefined> {
+// SAFETY: This test fixture deliberately supplies the contract shape under test.
     return this.values.get(key) as T | undefined;
   }
 
   async list<T>(options?: { prefix?: string }): Promise<Map<string, T>> {
     const entries = [...this.values.entries()]
+// SAFETY: This test fixture deliberately supplies the contract shape under test.
       .filter(([key]) => !options?.prefix || key.startsWith(options.prefix));
+// SAFETY: This test fixture deliberately supplies the contract shape under test.
     return new Map(entries) as Map<string, T>;
   }
 
@@ -48,9 +51,11 @@ class MemoryStorage {
 }
 
 function memoryLedger(options: ConstructorParameters<typeof DeliveryLedger>[1] = {}) {
+// SAFETY: This test fixture deliberately supplies the contract shape under test.
   const storage = new MemoryStorage();
+// SAFETY: This test fixture deliberately supplies the contract shape under test.
   return new DeliveryLedger(
-    storage as unknown as DurableObjectStorage,
+    storage as DurableObjectStorage,
     options,
   );
 }

@@ -25,15 +25,10 @@ export const MAX_WHATSAPP_MEDIA_TOTAL_BYTES = 24 * 1024 * 1024;
 const MAX_ENCRYPTED_MEDIA_BYTES = MAX_WHATSAPP_MEDIA_BYTES + 32;
 
 type WhatsAppMediaNode = {
-  mimetype?: string | null;
-  fileName?: string | null;
-  url?: string | null;
-  directPath?: string | null;
-  mediaKey?: Uint8Array | null;
-  fileLength?: unknown;
-  fileSha256?: Uint8Array | null;
-  fileEncSha256?: Uint8Array | null;
-  seconds?: number | null;
+  mimetype?: string | null; fileName?: string | null; url?: string | null;
+  directPath?: string | null; mediaKey?: Uint8Array | null;
+  fileLength?: number | bigint | string; fileSha256?: Uint8Array | null;
+  fileEncSha256?: Uint8Array | null; seconds?: number | null;
 };
 
 export class WhatsAppInboundMediaError extends Error {
@@ -62,10 +57,10 @@ export async function downloadWhatsAppMedia(
         message = await socket.updateMediaMessage(message);
         return await downloadOnce(message);
       } catch (retryError) {
-        throw classifyMediaError(retryError, true);
+        throw classifyMediaError(retryError instanceof Error ? retryError : new Error(String(retryError)), true);
       }
     }
-    throw classifyMediaError(error);
+    throw classifyMediaError(error instanceof Error ? error : new Error(String(error)));
   }
 }
 
@@ -74,6 +69,7 @@ async function downloadOnce(message: WAMessage): Promise<AdapterMediaPart | null
   const contentType = extracted ? getContentType(extracted) : undefined;
   const descriptor = contentType ? whatsAppMediaDescriptor(contentType) : null;
   if (!extracted || !contentType || !descriptor) return null;
+  // SAFETY: the Baileys content discriminator selects the corresponding media node.
   const node = extracted[contentType] as WhatsAppMediaNode | null | undefined;
   if (!node || !node.mediaKey) {
     throw new WhatsAppInboundMediaError("WhatsApp media key is missing", false);
@@ -128,21 +124,17 @@ async function downloadOnce(message: WAMessage): Promise<AdapterMediaPart | null
     expectedEncryptedSha256: node.fileEncSha256,
   });
 
+  const mediaResult: AdapterMedia = {
+    type: descriptor.type,
+    mimeType: normalizeWhatsAppMimeType(node.mimetype, descriptor.defaultMimeType),
+    size: staged.length,
+  };
+  const filename = descriptor.type === "document" ? normalizeWhatsAppFilename(node.fileName) : undefined;
+  if (filename) mediaResult.filename = filename;
+  const duration = normalizeWhatsAppDuration(node.seconds);
+  if (duration !== undefined) mediaResult.duration = duration;
   return {
-    media: {
-      type: descriptor.type,
-      mimeType: normalizeWhatsAppMimeType(
-        node.mimetype,
-        descriptor.defaultMimeType,
-      ),
-      ...(descriptor.type === "document" && normalizeWhatsAppFilename(node.fileName)
-        ? { filename: normalizeWhatsAppFilename(node.fileName) }
-        : {}),
-      ...(normalizeWhatsAppDuration(node.seconds) !== undefined
-        ? { duration: normalizeWhatsAppDuration(node.seconds) }
-        : {}),
-      size: staged.length,
-    },
+    media: mediaResult,
     body: {
       length: staged.length,
       stream: temporaryFileBody(staged.path),
@@ -206,9 +198,7 @@ async function decryptAndValidateToTemporaryFile(
       const next = await reader.read();
       if (next.done) break;
       const chunk = Buffer.from(
-        next.value.buffer as ArrayBuffer,
-        next.value.byteOffset,
-        next.value.byteLength,
+        next.value,
       );
       encryptedLength += chunk.byteLength;
       if (encryptedLength > MAX_ENCRYPTED_MEDIA_BYTES) {
@@ -287,12 +277,8 @@ function temporaryFileBody(path: string): ReadableStream<Uint8Array> {
           await cleanup();
           return;
         }
-        const chunk = next.value as Buffer;
-        controller.enqueue(new Uint8Array(
-          chunk.buffer as ArrayBuffer,
-          chunk.byteOffset,
-          chunk.byteLength,
-        ));
+        const chunk = next.value;
+        controller.enqueue(chunk);
       } catch (error) {
         controller.error(error);
         stream.destroy();
@@ -448,23 +434,11 @@ function equalBytes(left: Uint8Array, right: Uint8Array): boolean {
   );
 }
 
-function normalizeByteLength(value: unknown): number | null {
+function normalizeByteLength(value: number | bigint | string | null | undefined): number | null {
+  if (value === null || value === undefined) return null;
   let serialized: string;
   try {
-    if (typeof value === "number") {
-      if (!Number.isFinite(value)) return null;
-      serialized = String(Math.trunc(value));
-    } else if (typeof value === "bigint" || typeof value === "string") {
-      serialized = String(value);
-    } else if (
-      value
-      && typeof value === "object"
-      && typeof (value as { toString?: unknown }).toString === "function"
-    ) {
-      serialized = (value as { toString(): string }).toString();
-    } else {
-      return null;
-    }
+    serialized = String(value);
   } catch {
     return null;
   }
@@ -474,7 +448,7 @@ function normalizeByteLength(value: unknown): number | null {
 }
 
 function classifyMediaError(
-  error: unknown,
+  error: Error,
   refreshedMediaUrl = false,
 ): WhatsAppInboundMediaError {
   if (error instanceof WhatsAppInboundMediaError) return error;
@@ -514,7 +488,12 @@ export function normalizeWhatsAppFilename(
   value: string | null | undefined,
 ): string | undefined {
   const normalized = value
-    ?.replace(/[\u0000-\u001f\u007f]/g, " ")
+    ?.split("")
+    .filter((character) => {
+      const code = character.charCodeAt(0);
+      return code > 31 && code !== 127;
+    })
+    .join("")
     .replace(/\s+/g, " ")
     .trim();
   return normalized ? normalized.slice(0, 240) : undefined;
@@ -523,7 +502,8 @@ export function normalizeWhatsAppFilename(
 export function normalizeWhatsAppDuration(
   value: number | null | undefined,
 ): number | undefined {
-  return typeof value === "number" && Number.isFinite(value) && value >= 0
+  if (value === null || value === undefined) return undefined;
+  return Number.isFinite(value) && value >= 0
     ? Math.min(value, 30 * 24 * 60 * 60)
     : undefined;
 }

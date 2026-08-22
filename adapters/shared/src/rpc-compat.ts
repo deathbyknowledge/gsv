@@ -24,10 +24,12 @@ const STANDALONE_INSTALLATION = Object.freeze({
 
 const standaloneConnectRpcSchema = z.union([
   z.tuple([z.string()]),
+  z.tuple([z.string(), z.undefined()]),
   z.tuple([z.string(), adapterConnectConfigSchema]),
 ]);
 const managedConnectRpcSchema = z.union([
   z.tuple([adapterInstallationContextSchema, z.string()]),
+  z.tuple([adapterInstallationContextSchema, z.string(), z.undefined()]),
   z.tuple([
     adapterInstallationContextSchema,
     z.string(),
@@ -51,6 +53,7 @@ const managedStatusRpcSchema = z.union([
 ]);
 const standaloneSendRpcSchema = z.union([
   z.tuple([z.string(), adapterOutboundMessageSchema]),
+  z.tuple([z.string(), adapterOutboundMessageSchema, z.undefined()]),
   z.tuple([z.string(), adapterOutboundMessageSchema, binaryBodySchema]),
 ]);
 const managedSendRpcSchema = z.union([
@@ -58,6 +61,12 @@ const managedSendRpcSchema = z.union([
     adapterInstallationContextSchema,
     z.string(),
     adapterOutboundMessageSchema,
+  ]),
+  z.tuple([
+    adapterInstallationContextSchema,
+    z.string(),
+    adapterOutboundMessageSchema,
+    z.undefined(),
   ]),
   z.tuple([
     adapterInstallationContextSchema,

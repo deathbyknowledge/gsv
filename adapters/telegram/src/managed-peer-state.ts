@@ -33,6 +33,9 @@ export type ManagedTelegramPeerState = {
     route: ManagedTelegramPeerRoute;
   };
 };
+type PairingTransition = { state: ManagedTelegramPeerState; preparation: AdapterPairingPreparation };
+type FinalizeResult = PairingTransition & { changed: boolean };
+type DisconnectResult = { state: ManagedTelegramPeerState; disconnected: boolean };
 
 export function bindManagedTelegramPeerIdentity(
   state: ManagedTelegramPeerState | undefined,
@@ -45,15 +48,11 @@ export function bindManagedTelegramPeerIdentity(
     version: 1,
     actorId: inbound.actorId,
     surfaceId: inbound.surfaceId,
-    ...(inbound.actorName || state?.actorName
-      ? { actorName: inbound.actorName ?? state?.actorName }
-      : {}),
-    ...(inbound.actorHandle || state?.actorHandle
-      ? { actorHandle: inbound.actorHandle ?? state?.actorHandle }
-      : {}),
-    ...(state?.activeRoute ? { activeRoute: state.activeRoute } : {}),
-    ...(state?.pairing ? { pairing: state.pairing } : {}),
-    ...(state?.lastDisconnect ? { lastDisconnect: state.lastDisconnect } : {}),
+    actorName: inbound.actorName ?? state?.actorName,
+    actorHandle: inbound.actorHandle ?? state?.actorHandle,
+    activeRoute: state?.activeRoute,
+    pairing: state?.pairing,
+    lastDisconnect: state?.lastDisconnect,
   };
 }
 
@@ -65,8 +64,8 @@ export function pairingCandidate(
     accountId: "managed",
     actorId: state.actorId,
     surfaceId: state.surfaceId,
-    ...(state.actorName ? { actorName: state.actorName } : {}),
-    ...(state.actorHandle ? { actorHandle: state.actorHandle } : {}),
+    actorName: state.actorName,
+    actorHandle: state.actorHandle,
     expiresAt,
     linked: Boolean(state.activeRoute),
   };
@@ -81,7 +80,7 @@ export function prepareManagedTelegramPairing(
     route: ManagedTelegramPeerRoute;
     now: number;
   },
-): { state: ManagedTelegramPeerState; preparation: AdapterPairingPreparation } {
+): PairingTransition {
   const pairing = requirePairing(state, input.claimId, input.expiresAt);
   if (pairing.status !== "pending") {
     assertOperationReplay(pairing, input.operationId, input.route);
@@ -99,7 +98,7 @@ export function prepareManagedTelegramPairing(
     status: "prepared",
     operationId: input.operationId,
     preparedRoute: input.route,
-    ...(state.activeRoute ? { previousRoute: state.activeRoute } : {}),
+    previousRoute: state.activeRoute,
   };
   const next = { ...state, pairing: prepared };
   return { state: next, preparation: preparation(next, prepared) };
@@ -113,7 +112,7 @@ export function activateManagedTelegramPairing(
     operationId: string;
     route: ManagedTelegramPeerRoute;
   },
-): { state: ManagedTelegramPeerState; preparation: AdapterPairingPreparation } {
+): PairingTransition {
   const pairing = requirePairing(state, input.claimId, input.expiresAt);
   assertOperationReplay(pairing, input.operationId, input.route);
   if (pairing.status === "pending") throw new Error("Pairing code was not prepared");
@@ -133,7 +132,7 @@ export function finalizeManagedTelegramPairing(
     operationId: string;
     route: ManagedTelegramPeerRoute;
   },
-): { state: ManagedTelegramPeerState; preparation: AdapterPairingPreparation; changed: boolean } {
+): FinalizeResult {
   const pairing = requirePairing(state, input.claimId, input.expiresAt);
   assertOperationReplay(pairing, input.operationId, input.route);
   if (pairing.status !== "active" && pairing.status !== "finalized") {
@@ -150,7 +149,7 @@ export function finalizeManagedTelegramPairing(
 export function disconnectManagedTelegramPeer(
   state: ManagedTelegramPeerState,
   input: { operationId: string; route: AdapterPairingRoute },
-): { state: ManagedTelegramPeerState; disconnected: boolean } {
+): DisconnectResult {
   const active = state.activeRoute;
   if (!active) {
     const replay = state.lastDisconnect;
@@ -179,7 +178,7 @@ function preparation(
   return {
     candidate: pairingCandidate(state, pairing.expiresAt),
     route: pairing.preparedRoute,
-    ...(pairing.previousRoute ? { previousRoute: pairing.previousRoute } : {}),
+    previousRoute: pairing.previousRoute,
   };
 }
 
