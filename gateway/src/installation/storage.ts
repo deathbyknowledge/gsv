@@ -93,13 +93,14 @@ class InstallationR2Bucket implements R2Bucket {
   }
 
   async list(options: R2ListOptions = {}): Promise<R2Objects> {
-    const result = await this.bucket.list({
+    const physicalOptions: R2ListOptions = {
       ...options,
       prefix: this.physicalKey(options.prefix ?? ""),
-      ...(options.startAfter === undefined
-        ? {}
-        : { startAfter: this.physicalKey(options.startAfter) }),
-    });
+    };
+    if (options.startAfter !== undefined) {
+      physicalOptions.startAfter = this.physicalKey(options.startAfter);
+    }
+    const result = await this.bucket.list(physicalOptions);
     return {
       ...result,
       objects: result.objects.map((object) => mapObject(object, this.prefix)),
@@ -127,8 +128,9 @@ function mapObject<T extends R2Object>(object: T | null, prefix: string): T | nu
       if (property === "key") {
         return logicalKey;
       }
-      const value = Reflect.get(target, property, target);
-      return typeof value === "function" ? value.bind(target) : value;
+      // SAFETY: Proxy property keys are keys of the wrapped R2 object.
+      const value = target[property as keyof T];
+      return value instanceof Function ? value.bind(target) : value;
     },
   });
 }

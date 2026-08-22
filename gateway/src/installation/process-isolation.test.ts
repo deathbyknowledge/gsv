@@ -4,7 +4,9 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   bodyFromBytes,
   bodyToBytes,
+  type ArgsOf,
   type ProcessIdentity,
+  type SyscallName,
 } from "@humansandmachines/gsv/protocol";
 import type { Process } from "../process/do";
 import type { RequestFrame, ResponseFrame } from "../protocol/frames";
@@ -71,17 +73,20 @@ describe("managed Process isolation", () => {
 
     const firstPhysicalKey = `${installationStoragePrefix(firstId)}${firstUpload.key}`;
     const secondPhysicalKey = `${installationStoragePrefix(secondId)}${secondUpload.key}`;
-    expect([...new Uint8Array(
-      await (await env.STORAGE.get(firstPhysicalKey))!.arrayBuffer(),
-    )]).toEqual([1, 2, 3]);
-    expect([...new Uint8Array(
-      await (await env.STORAGE.get(secondPhysicalKey))!.arrayBuffer(),
-    )]).toEqual([4, 5, 6]);
+    const firstObject = await env.STORAGE.get(firstPhysicalKey);
+    const secondObject = await env.STORAGE.get(secondPhysicalKey);
+    if (!firstObject || !secondObject) {
+      throw new Error("Expected installation-scoped media objects");
+    }
+    expect([...new Uint8Array(await firstObject.arrayBuffer())]).toEqual([1, 2, 3]);
+    expect([...new Uint8Array(await secondObject.arrayBuffer())]).toEqual([4, 5, 6]);
     expect(await env.STORAGE.head(firstUpload.key)).toBeNull();
 
+    // SAFETY: proc.media.read requests return the protocol's media-read response frame.
     const firstRead = await first.recvFrame(request("proc.media.read", {
       key: firstUpload.key,
     })) as ResponseFrame<"proc.media.read">;
+    // SAFETY: proc.media.read requests return the protocol's media-read response frame.
     const secondRead = await second.recvFrame(request("proc.media.read", {
       key: secondUpload.key,
     })) as ResponseFrame<"proc.media.read">;
@@ -109,6 +114,7 @@ async function writeMedia(
   pid: string,
   bytes: number[],
 ): Promise<{ key: string }> {
+  // SAFETY: proc.media.write requests return the protocol's media-write response frame.
   const response = await process.recvFrame({
     ...request("proc.media.write", {
       pid,
@@ -137,13 +143,15 @@ function identity(username: string): ProcessIdentity {
   };
 }
 
-function request(call: string, args: unknown): RequestFrame {
-  return {
+function request<S extends SyscallName>(call: S, args: ArgsOf<S>): RequestFrame<S> {
+  const frame = {
     type: "req",
     id: crypto.randomUUID(),
     call,
     args,
-  } as RequestFrame;
+  };
+  // SAFETY: call and args share the same syscall generic, preserving the mapped frame pair.
+  return frame as RequestFrame<S>;
 }
 
 function createInstallationId(): string {

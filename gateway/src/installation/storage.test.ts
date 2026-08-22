@@ -111,8 +111,9 @@ describe("installation R2 storage", () => {
         if (property === "resumeMultipartUpload") {
           return resumeMultipartUpload;
         }
-        const value = Reflect.get(target, property, target);
-        return typeof value === "function" ? value.bind(target) : value;
+        // SAFETY: Proxy keys are keys of the wrapped test R2 binding.
+        const value = target[property as keyof typeof target];
+        return value instanceof Function ? value.bind(target) : value;
       },
     });
     const storage = createInstallationStorage(bucket, installationId);

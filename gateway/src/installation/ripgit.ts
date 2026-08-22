@@ -2,11 +2,9 @@ import {
   SINGLETON_INSTALLATION_ID,
   parseInstallationId,
 } from "./identity";
-import type { Fetcher } from "@cloudflare/workers-types"
+import type { Fetcher } from "@cloudflare/workers-types";
 
 export const RIPGIT_INSTALLATION_HEADER = "x-gsv-installation-id";
-
-
 export function createInstallationRipgit<T extends Fetcher>(
   binding: T,
   installationId: string,
@@ -27,8 +25,9 @@ export function createInstallationRipgit<T extends Fetcher>(
   return new Proxy(binding, {
     get(target, property) {
       if (property === "fetch") return fetch;
-      const value = Reflect.get(target, property, target);
-      return typeof value === "function" ? value.bind(target) : value;
+      // SAFETY: Proxy property keys are keys of the wrapped Fetcher binding.
+      const value = target[property as keyof T];
+      return value instanceof Function ? value.bind(target) : value;
     },
   });
 }

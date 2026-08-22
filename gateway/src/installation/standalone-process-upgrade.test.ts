@@ -27,16 +27,16 @@ describe("standalone Process upgrade compatibility", () => {
       id: crypto.randomUUID(),
       call: "proc.setidentity",
       args: { identity: ROOT_IDENTITY },
-    } as RequestFrame<"proc.setidentity">);
+    } satisfies RequestFrame<"proc.setidentity">);
     expect(identityResponse).toMatchObject({ ok: true, data: { ok: true } });
 
     await runInDurableObject(legacyProcess, (instance: Process, state) => {
       expect(state.id.name).toBe(pid);
-      const store = (instance as unknown as {
+      const store = fixtureInternals<{
         store: {
           appendMessage(role: "user", content: string): number;
         };
-      }).store;
+      }>(instance).store;
       store.appendMessage("user", "history persisted before the upgrade");
     });
 
@@ -45,7 +45,7 @@ describe("standalone Process upgrade compatibility", () => {
 
     const kernel = await getKernelPtr();
     await runInDurableObject(kernel, (instance: Kernel) => {
-      const internals = instance as unknown as {
+      const internals = fixtureInternals<{
         caps: { seed(): void };
         procs: {
           spawn(
@@ -54,11 +54,12 @@ describe("standalone Process upgrade compatibility", () => {
             options: Record<string, never>,
           ): void;
         };
-      };
+      }>(instance);
       internals.caps.seed();
       internals.procs.spawn(pid, ROOT_IDENTITY, {});
     });
 
+    // SAFETY: proc.history requests return the protocol's proc.history response frame.
     const response = await kernel.recvFrame(pid, {
       type: "req",
       id: crypto.randomUUID(),
@@ -77,3 +78,9 @@ describe("standalone Process upgrade compatibility", () => {
     });
   });
 });
+
+function fixtureInternals<T>(instance: Process | Kernel): T {
+  // SAFETY: callers name the exact private fixture surface they use; this
+  // helper is confined to tests that seed pre-upgrade Durable Object state.
+  return instance as T;
+}

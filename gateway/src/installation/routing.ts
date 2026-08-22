@@ -77,8 +77,8 @@ export function parseProcessDurableObjectName(
   }
 }
 
-function parseProcessId(value: unknown): string {
-  if (typeof value !== "string" || value.length === 0)
+function parseProcessId(value: string): string {
+  if (value.length === 0)
     throw new Error("pid must be a non-empty string");
   return value;
 }
@@ -142,8 +142,8 @@ export function parseConversationDurableObjectName(
   }
 }
 
-function parseConversationId(value: unknown): string {
-  if (typeof value !== "string" || value.length === 0) {
+function parseConversationId(value: string): string {
+  if (value.length === 0) {
     throw new Error("conversationId must be a non-empty string");
   }
   return value;
@@ -158,6 +158,8 @@ function assertDurableObjectNameLength(name: string): void {
 function getGatewayInstallationRoutingSource(
   request: Request,
 ) {
+  // SAFETY: deployment variants expose these optional bindings through the
+  // generated Env shape only when present; access remains feature-gated below.
   const bindings = env as Env & GatewayInstallationBindings;
   if (bindings.INSTALLATION_DIRECTORY) {
     return {
