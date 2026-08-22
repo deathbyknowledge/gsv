@@ -262,7 +262,13 @@ describe("Kernel frame bodies", () => {
       type: "res",
       id: "req-1",
       ok: true,
-      data: { content: "current" },
+      data: {
+        ok: true,
+        path: "/current.txt",
+        kind: "text",
+        contentType: "text/plain",
+        size: 7,
+      },
     });
 
     expect(kernel.routes.remove).toHaveBeenCalledWith("req-1");
@@ -270,7 +276,13 @@ describe("Kernel frame bodies", () => {
       type: "res",
       id: "req-1",
       ok: true,
-      data: { content: "current" },
+      data: {
+        ok: true,
+        path: "/current.txt",
+        kind: "text",
+        contentType: "text/plain",
+        size: 7,
+      },
     });
   });
 
@@ -370,7 +382,14 @@ describe("Kernel frame bodies", () => {
       type: "res",
       id: "req-1",
       ok: true,
-      data: { ok: true },
+      data: {
+        ok: true,
+        url: "https://example.com",
+        status: 200,
+        statusText: "OK",
+        headers: {},
+        redirected: false,
+      },
     });
 
     await vi.waitFor(() => expect(cancel).toHaveBeenCalledWith("Device response received"));

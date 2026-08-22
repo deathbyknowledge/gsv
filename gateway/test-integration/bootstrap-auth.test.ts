@@ -53,8 +53,8 @@ describe("gateway authentication integration", () => {
         role: "invalid" as ConnectArgs["client"]["role"],
       },
     })).rejects.toMatchObject({
-      code: 103,
-      message: "Invalid client role",
+      code: 400,
+      message: "Invalid sys.connect arguments",
     });
   });
 

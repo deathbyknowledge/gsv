@@ -20,6 +20,9 @@
     "lint": "node ./tools/oxlint/check.mjs",
     "lint:audit": "oxlint . --deny-warnings --report-unused-disable-directives",
     "lint:fix": "node ./tools/oxlint/check.mjs --fix",
+    "lint:ratchet": "node ./tools/oxlint/ratchet.mjs",
+    "protocol:generate": "node ./tools/protocol/generate-gateway-wire-validator.mjs",
+    "protocol:check": "node ./tools/protocol/generate-gateway-wire-validator.mjs --check",
     "extension:check": "npm run check --workspace extension",
     "extension:build": "npm run build --workspace extension",
     "extension:package": "bash ./scripts/build-extension-package.sh",
@@ -36,6 +39,8 @@
   },
   "devDependencies": {
     "@oxlint/plugins": "1.79.0",
-    "oxlint": "1.79.0"
+    "ajv": "8.20.0",
+    "oxlint": "1.79.0",
+    "ts-json-schema-generator": "2.9.0"
   }
 }

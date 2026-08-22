@@ -16,6 +16,17 @@ import type {
   ResponseFrame,
   SignalFrame,
 } from "../protocol/frames";
+import {
+  decodeWireFrameJson,
+  decodeWireResponse,
+  InvalidWireFrameError,
+} from "../protocol/decode-wire-frame";
+import type {
+  WireFrame,
+  WireRequestFrame,
+  WireResponseEnvelope,
+  WireResponseFrame,
+} from "@humansandmachines/gsv/protocol";
 import { consumeProcessRunStream } from "../protocol/process-run-stream";
 import type {
   AdapterMedia,
@@ -737,30 +748,21 @@ export class Kernel extends DurableObject<Env> {
     connection: KernelConnection<ConnectionState>,
     message: KernelWebSocketMessage,
   ): Promise<void> {
-    if (typeof message !== "string") {
+    if (message instanceof ArrayBuffer) {
       this.handleBinaryMessage(connection, message);
       return;
     }
 
-    let parsed: Frame;
+    let parsed: WireFrame;
     try {
-      const value = JSON.parse(message) as unknown;
-      if (!value || typeof value !== "object") {
-        throw new Error("Invalid frame");
-      }
-      parsed = value as Frame;
-    } catch {
-      this.sendError(connection, "?", 400, "Malformed JSON");
-      return;
-    }
-
-    const valid = parsed.type === "req"
-      ? typeof parsed.id === "string" && typeof parsed.call === "string"
-      : parsed.type === "res"
-        ? typeof parsed.id === "string" && typeof parsed.ok === "boolean"
-        : parsed.type === "sig" && typeof parsed.signal === "string";
-    if (!valid) {
-      this.sendError(connection, "?", 400, "Invalid frame");
+      parsed = decodeWireFrameJson(message);
+    } catch (error) {
+      this.sendError(
+        connection,
+        error instanceof InvalidWireFrameError ? error.frameId : "?",
+        400,
+        error instanceof Error ? error.message : "Invalid frame",
+      );
       return;
     }
 
@@ -772,10 +774,6 @@ export class Kernel extends DurableObject<Env> {
         this.handleRes(connection, parsed);
         break;
       case "sig":
-        if ((parsed as unknown as { body?: unknown }).body !== undefined) {
-          this.sendError(connection, "?", 400, "Signals cannot carry bodies");
-          return;
-        }
         if (parsed.signal === REQUEST_CANCEL_SIGNAL) {
           this.handleRequestCancel(connection, parsed);
         } else {
@@ -2491,21 +2489,25 @@ export class Kernel extends DurableObject<Env> {
     void body.cancel(reason);
   }
 
-  private decodeWebSocketFrame(
+  private decodeWebSocketRequestFrame(
     connection: KernelConnection<ConnectionState>,
-    frame: Frame,
-  ): Frame {
-    const descriptor = (frame as unknown as { body?: BinaryFrameDescriptor }).body;
-    if (descriptor === undefined) {
-      return frame;
-    }
-    if (frame.type === "sig" || (frame.type === "res" && !frame.ok)) {
-      throw new Error("This frame type cannot carry a body");
-    }
-    return {
-      ...frame,
-      body: this.receiveFrameBody(connection, descriptor),
-    } as Frame;
+    frame: WireRequestFrame,
+  ): RequestFrame {
+    const { body, ...request } = frame;
+    return body === undefined
+      ? request
+      : { ...request, body: this.receiveFrameBody(connection, body) };
+  }
+
+  private decodeWebSocketResponseFrame(
+    connection: KernelConnection<ConnectionState>,
+    frame: WireResponseFrame,
+  ): ResponseFrame {
+    if (!frame.ok) return frame;
+    const { body, ...response } = frame;
+    return body === undefined
+      ? response
+      : { ...response, body: this.receiveFrameBody(connection, body) };
   }
 
   private receiveFrameBody(
@@ -2744,11 +2746,11 @@ export class Kernel extends DurableObject<Env> {
 
   private async handleReq(
     connection: KernelConnection<ConnectionState>,
-    wireFrame: RequestFrame,
+    wireFrame: WireRequestFrame,
   ): Promise<void> {
     let frame: RequestFrame;
     try {
-      frame = this.decodeWebSocketFrame(connection, wireFrame) as RequestFrame;
+      frame = this.decodeWebSocketRequestFrame(connection, wireFrame);
     } catch (error) {
       this.sendError(
         connection,
@@ -3315,12 +3317,12 @@ export class Kernel extends DurableObject<Env> {
 
   private handleRes(
     connection: KernelConnection<ConnectionState>,
-    wireFrame: ResponseFrame,
+    wireEnvelope: WireResponseEnvelope,
   ): void {
-    const route = this.routes.get(wireFrame.id);
+    const route = this.routes.get(wireEnvelope.id);
     if (!route) {
-      if (wireFrame.ok) {
-        const descriptor = (wireFrame as unknown as { body?: BinaryFrameDescriptor }).body;
+      if (wireEnvelope.ok) {
+        const descriptor = wireEnvelope.body;
         if (descriptor) {
           try {
             void this.receiveFrameBody(connection, descriptor).stream.cancel("Request is no longer pending");
@@ -3341,21 +3343,22 @@ export class Kernel extends DurableObject<Env> {
 
     let frame: ResponseFrame;
     try {
-      frame = this.decodeWebSocketFrame(connection, wireFrame) as ResponseFrame;
+      const wireFrame = decodeWireResponse(route.call, wireEnvelope);
+      frame = this.decodeWebSocketResponseFrame(connection, wireFrame);
     } catch (error) {
       const message = error instanceof Error ? error.message : "Invalid frame body";
-      this.cancelRoute(wireFrame.id);
+      this.cancelRoute(wireEnvelope.id);
       this.deliverToOrigin(
         route.origin,
         errFrame(
-          wireFrame.id,
+          wireEnvelope.id,
           502,
           `Invalid response from device ${route.deviceId}: ${message}`,
         ),
       );
       this.sendError(
         connection,
-        wireFrame.id,
+        wireEnvelope.id,
         400,
         message,
       );
@@ -3378,9 +3381,9 @@ export class Kernel extends DurableObject<Env> {
 
   private handleBinaryMessage(
     connection: KernelConnection<ConnectionState>,
-    message: KernelWebSocketMessage,
+    message: ArrayBuffer,
   ): void {
-    this.frameBodyChannel(connection).handleFrame(message as ArrayBuffer | ArrayBufferView);
+    this.frameBodyChannel(connection).handleFrame(message);
   }
 
   private handleSig(

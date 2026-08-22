@@ -17,6 +17,7 @@
     "**/dist/**",
     "**/target/**",
     "release/**",
+    "gateway/src/protocol/generated/**",
     "tools/oxlint/anti-slop/**"
   ],
   "jsPlugins": [

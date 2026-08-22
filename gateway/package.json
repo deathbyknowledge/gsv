@@ -9,14 +9,14 @@
     "start": "wrangler dev",
     "cf-typegen": "wrangler types",
     "test": "vitest --config vitest.config.ts",
-    "test:unit": "vitest run --config vitest.config.ts",
+    "test:unit": "npm --prefix .. run protocol:check && vitest run --config vitest.config.ts",
     "typecheck:integration": "tsc --noEmit -p tsconfig.integration.json",
     "test:integration": "npm --prefix ../packages/gsv run build && npm run typecheck:integration && npm --prefix ../web run build && vitest run --config vitest.integration.config.ts",
     "test:run": "npm run test:unit && npm run test:integration"
   },
   "devDependencies": {
-    "@cloudflare/workers-types": "^5.20260814.1",
     "@cloudflare/vitest-pool-workers": "^0.18.0",
+    "@cloudflare/workers-types": "^5.20260814.1",
     "alchemy": "^0.83.1",
     "tsx": "^4.19.0",
     "typescript": "^5.5.2",
@@ -24,6 +24,7 @@
     "wrangler": "^4.123.0"
   },
   "dependencies": {
+    "@cfworker/json-schema": "4.1.1",
     "@cloudflare/codemode": "^0.3.4",
     "@earendil-works/pi-ai": "^0.83.0",
     "@humansandmachines/gsv": "file:../packages/gsv",

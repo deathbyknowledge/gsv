@@ -12,7 +12,10 @@ The current protocol is syscall-based:
 
 The source of truth is:
 
+- `packages/gsv/src/protocol/wire-frame.ts`
 - `gateway/src/protocol/frames.ts`
+- `gateway/src/protocol/decode-wire-frame.ts`
+- `tools/protocol/generate-gateway-wire-validator.mjs`
 - `packages/gsv/src/protocol/request-cancel.ts`
 - `packages/gsv/src/protocol/adapters.ts`
 - `packages/gsv/src/protocol/adapter-media-body.ts`
@@ -43,7 +46,7 @@ For syscall arguments, result shapes, and domain behavior, see [Syscalls Referen
 | `type` | `"req"` | Yes | Request discriminator |
 | `id` | `string` | Yes | Request/response correlation ID |
 | `call` | `string` | Yes | Syscall name |
-| `args` | `object` | No | Syscall arguments |
+| `args` | `object` | Yes | Arguments for the exact syscall named by `call` |
 | `body` | `BodyDescriptor` | No | Attached request byte stream |
 
 ### Response Frame
@@ -78,7 +81,7 @@ Error:
 | `type` | `"res"` | Yes | Response discriminator |
 | `id` | `string` | Yes | Matching request ID |
 | `ok` | `boolean` | Yes | Success flag |
-| `data` | `unknown` | No | Present when `ok` is `true` |
+| `data` | JSON value | No | Present when `ok` is `true`; must match the routed syscall result |
 | `error` | `ErrorShape` | No | Present when `ok` is `false` |
 | `body` | `BodyDescriptor` | No | Attached byte stream; only valid when `ok` is `true` |
 
@@ -97,7 +100,7 @@ Error:
 |---|---|---|---|
 | `type` | `"sig"` | Yes | Signal discriminator |
 | `signal` | `string` | Yes | Signal/event name |
-| `payload` | `unknown` | No | Signal payload |
+| `payload` | JSON value | No | Signal payload |
 | `seq` | `number` | No | Optional sequence number |
 
 ### ErrorShape
@@ -115,7 +118,7 @@ Error:
 |---|---|---|---|
 | `code` | `number` | Yes | Error code |
 | `message` | `string` | Yes | Human-readable message |
-| `details` | `unknown` | No | Structured error context |
+| `details` | JSON value | No | Structured error context |
 | `retryable` | `boolean` | No | Retry hint |
 
 ---
@@ -234,6 +237,14 @@ include `ai.provider.gsv`; standalone gateways omit it.
 ---
 
 ## Syscall Dispatch
+
+The Kernel decodes each incoming text frame once at the WebSocket boundary.
+Requests are validated against the argument contract for their exact `call`.
+Successful driver responses are validated against the result contract recorded
+on the matching route. Dispatch and syscall handlers therefore receive trusted
+protocol types and do not repeat structural type checks. Authorization,
+resource limits, and other semantic policy remain the responsibility of the
+owning Kernel or syscall handler.
 
 The websocket protocol is uniform: every operation is a `req` frame with a syscall name in `call`. Dispatch behavior depends on the syscall domain:
 

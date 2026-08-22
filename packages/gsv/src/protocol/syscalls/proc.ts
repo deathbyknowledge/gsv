@@ -340,6 +340,7 @@ export type ProcAiConfigSnapshot = {
 };
 
 export type ProcAiConfigGetArgs = {
+  pid?: string;
   redacted?: boolean;
 };
 
@@ -353,17 +354,21 @@ export type ProcAiConfigGetResult =
 
 export type ProcAiConfigSetArgs =
   | {
+      pid?: string;
       clear: true;
     }
   | {
+      pid?: string;
       profileId: string;
       profileName?: string;
     }
   | {
+      pid?: string;
       profileName: string;
       profileId?: string;
     }
   | {
+      pid?: string;
       values: Record<string, string>;
       profile?: {
         id?: string;
@@ -371,6 +376,7 @@ export type ProcAiConfigSetArgs =
       };
     }
   | {
+      pid?: string;
       key: string;
       value: string;
     };

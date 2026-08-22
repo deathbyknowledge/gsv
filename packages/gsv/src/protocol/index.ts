@@ -25,3 +25,5 @@ export * from "./speech-text";
 export * from "./managed";
 export * from "./managed-inference-stream";
 export * from "./mail";
+export type * from "./json";
+export type * from "./wire-frame";
