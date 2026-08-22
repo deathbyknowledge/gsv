@@ -1,5 +1,5 @@
 import type { AdapterMessageDestination, EventReplyTarget } from "./interaction-origin";
-import type { JsonObject, JsonValue } from "../json";
+import type { JsonObject } from "../json";
 
 export type ScheduleExpression =
   | { kind: "at"; atMs: number }
@@ -78,7 +78,7 @@ export type ScheduleRunHistoryEntry = {
   finishedAtMs: number;
   status: "ok" | "error" | "skipped";
   error?: string;
-  result?: JsonValue;
+  result?: unknown;
 };
 
 export type SchedulerListArgs = {

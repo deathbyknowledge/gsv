@@ -1,4 +1,4 @@
-import type { JsonObject, JsonValue } from "../json";
+import type { JsonObject } from "../json";
 
 export type ProcessIdentity = {
   uid: number;
@@ -524,8 +524,8 @@ export type SysMcpCallArgs = {
 };
 
 export type SysMcpCallResult = {
-  content?: JsonValue;
-  structuredContent?: JsonValue;
+  content?: unknown;
+  structuredContent?: unknown;
   isError?: boolean;
 };
 

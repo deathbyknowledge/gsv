@@ -1,6 +1,6 @@
 import type { ProcessIdentity } from "./system";
 import type { ProcAiConfigProfileRef } from "./proc";
-import type { JsonObject, JsonValue } from "../json";
+import type { JsonObject } from "../json";
 
 export type ToolDefinition = {
   name: string;
@@ -194,7 +194,7 @@ export type AiAssistantMessage = {
   model: string;
   responseModel?: string;
   responseId?: string;
-  diagnostics?: JsonValue[];
+  diagnostics?: unknown[];
   usage: AiUsage;
   stopReason: AiStopReason;
   errorMessage?: string;
@@ -206,7 +206,7 @@ export type AiToolResultMessage = {
   toolCallId: string;
   toolName: string;
   content: Array<AiTextContent | AiImageContent>;
-  details?: JsonValue;
+  details?: unknown;
   isError: boolean;
   timestamp?: number;
 };
@@ -276,7 +276,7 @@ export type AiTranscriptionCreateResult = {
   text: string;
   language?: string;
   duration?: number;
-  segments?: JsonValue[];
+  segments?: unknown[];
   provider: string;
   model: string;
 };
@@ -382,7 +382,7 @@ export type AiImageReadResult =
     text: string;
     answer: string;
     responseFormat: AiImageReadResponseFormat;
-    structured?: JsonValue;
+    structured?: unknown;
   })
   | (AiImageReadResultMetadata & {
     mode: "point";
