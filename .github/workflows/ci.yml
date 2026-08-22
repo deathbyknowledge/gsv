@@ -160,6 +160,25 @@ jobs:
       - name: Verify synced versions
         run: npm run version:check
 
+  lint:
+    name: TypeScript and JavaScript Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: 'npm'
+          cache-dependency-path: package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run Oxlint and anti-slop
+        run: npm run lint
+
   release-scripts-check:
     name: Release Scripts (${{ matrix.os }})
     runs-on: ${{ matrix.os }}

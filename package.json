@@ -17,6 +17,9 @@
     "dev:managed": "bash ./scripts/dev-managed-stack.sh",
     "managed:check": "bash ./scripts/check-managed-deployment.sh",
     "managed:deploy": "bash ./scripts/deploy-managed-stack.sh",
+    "lint": "node ./tools/oxlint/check.mjs",
+    "lint:audit": "oxlint . --deny-warnings --report-unused-disable-directives",
+    "lint:fix": "node ./tools/oxlint/check.mjs --fix",
     "extension:check": "npm run check --workspace extension",
     "extension:build": "npm run build --workspace extension",
     "extension:package": "bash ./scripts/build-extension-package.sh",
@@ -30,5 +33,9 @@
     "release:build:cloudflare": "bash ./scripts/build-cloudflare-bundles.sh",
     "release:show:stable-tag": "node ./scripts/release.mjs stable-tag",
     "release:cut:stable": "node ./scripts/release.mjs cut-stable"
+  },
+  "devDependencies": {
+    "@oxlint/plugins": "1.79.0",
+    "oxlint": "1.79.0"
   }
 }
