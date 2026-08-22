@@ -78,7 +78,7 @@ export function findByUsername(
   return entries.find((e) => e.username === username);
 }
 
-export function isLocked(entry: ShadowEntry): boolean {
+export function isLocked(entry: Pick<ShadowEntry, "hash">): boolean {
   return entry.hash === "" || entry.hash === "!" || entry.hash === "*";
 }
 
@@ -195,7 +195,7 @@ export async function verify(
   credential: string,
   storedHash: string,
 ): Promise<boolean> {
-  if (isLocked({ hash: storedHash } as ShadowEntry)) return false;
+  if (isLocked({ hash: storedHash })) return false;
 
   if (storedHash.startsWith("$pbkdf2-sha512$")) {
     return verifyPassword(credential, storedHash);
