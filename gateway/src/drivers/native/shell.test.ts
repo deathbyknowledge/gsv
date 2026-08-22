@@ -529,6 +529,10 @@ describe("native shell execution", () => {
 
     const ctx = makeContext();
     const read = await handleFsRead({ path: "/tmp/fs-read-image" }, ctx);
+    const referenced = await handleFsRead({
+      path: "/tmp/fs-read-image",
+      representation: "resource",
+    }, ctx);
     const stat = await handleFsTransferStat({ path: "/tmp/fs-read-image" }, ctx);
 
     expect(read.data).toMatchObject({
@@ -538,11 +542,47 @@ describe("native shell execution", () => {
       size: bytes.byteLength,
     });
     expect(read.body && await bodyToBytes(read.body)).toEqual(bytes);
+    expect(referenced.body).toBeUndefined();
+    expect(referenced.data).toMatchObject({
+      ok: true,
+      kind: "image",
+      resource: {
+        type: "file",
+        target: "gsv",
+        path: "/tmp/fs-read-image",
+        contentType: "image/png",
+        size: bytes.byteLength,
+        revision: expect.any(String),
+      },
+    });
     expect(stat).toMatchObject({
       ok: true,
       contentType: "image/png",
       size: bytes.byteLength,
+      revision: expect.any(String),
     });
+  });
+
+  it("refuses to transfer a different file revision", async () => {
+    const path = "/tmp/fs-transfer-revision.png";
+    await env.STORAGE.put(path.slice(1), new Uint8Array([1]), {
+      httpMetadata: { contentType: "image/png" },
+    });
+    const ctx = makeContext();
+    const stat = await handleFsTransferStat({ path }, ctx);
+    expect(stat).toMatchObject({ ok: true, revision: expect.any(String) });
+    if (!stat.ok || !stat.revision) throw new Error("fixture did not produce a revision");
+    await env.STORAGE.put(path.slice(1), new Uint8Array([2, 3]), {
+      httpMetadata: { contentType: "image/png" },
+    });
+
+    const response = await handleFsTransferSend({ path, revision: stat.revision }, ctx, "send-1");
+
+    expect(response.data).toEqual({
+      ok: false,
+      error: `Source revision is no longer available: ${path}`,
+    });
+    expect(response.body).toBeUndefined();
   });
 
   it("reads SVG images as text", async () => {

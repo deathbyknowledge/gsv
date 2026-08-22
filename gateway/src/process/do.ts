@@ -32,6 +32,7 @@ import type {
   AiTextGenerateOptions,
   AiToolsDevice,
   InteractionOrigin,
+  FileResourceReference,
   NetFetchArgs,
   ProcessIdentity,
   ProcSendArgs,
@@ -224,7 +225,9 @@ import {
 } from "../codemode/request";
 import { formatAgentToolResponse, materializeToolResponse } from "./tool-response";
 import {
+  extractFsReadResource,
   extractToolResultImages,
+  replaceFsReadResource,
   unwrapStoredToolResult,
   wrapStoredToolResult,
 } from "./tool-result-media";
@@ -6728,6 +6731,20 @@ export class Process extends DurableObject<ProcessEnv> {
     const lifecycleEpoch = this.lifecycleEpoch;
     const signal = this.runAbortSignal(runId);
     const parsedResult = jsonValueSchema.parse(result ?? null);
+    const pending = this.store.getPending(executionId);
+    const sourceResource = pending?.call === "fs.read"
+      ? extractFsReadResource(parsedResult)
+      : null;
+    if (sourceResource) {
+      const retained = await this.retainFileResource(runId, executionId, sourceResource);
+      return {
+        value: jsonValueSchema.parse(wrapStoredToolResult(
+          replaceFsReadResource(parsedResult, retained.ref),
+          [retained.media],
+        )),
+        createdKeys: [],
+      };
+    }
     const extracted = extractToolResultImages(parsedResult, {
       maxImages: MAX_MESSAGE_MEDIA_ITEMS,
       maxBytes: MAX_PROCESS_MEDIA_READ_BYTES,
@@ -6794,6 +6811,150 @@ export class Process extends DurableObject<ProcessEnv> {
     } catch (error) {
       await this.deletePreparedToolResultMedia(createdKeys);
       throw error;
+    }
+  }
+
+  private async retainFileResource(
+    runId: string,
+    executionId: string,
+    source: FileResourceReference,
+  ): Promise<{ ref: FileResourceReference; media: StoredProcessMedia }> {
+    const signal = this.runAbortSignal(runId);
+    signal.throwIfAborted();
+    if (source.expiresAt !== undefined && source.expiresAt <= Date.now()) {
+      throw new Error(`Resource has expired: ${source.path}`);
+    }
+    if (
+      !source.contentType.toLowerCase().startsWith("image/")
+      || isVectorImageMimeType(source.contentType)
+    ) {
+      throw new Error(`Unsupported resource content type: ${source.contentType}`);
+    }
+    if (source.size > MAX_PROCESS_MEDIA_READ_BYTES) {
+      throw new Error(`Resource exceeds the ${MAX_PROCESS_MEDIA_READ_BYTES}-byte limit`);
+    }
+    const archiveId = await stableOpaqueId("archived-media", [
+      source.target,
+      source.path,
+      source.revision,
+    ]);
+    const key = `${this.archiveMediaPrefix()}${archiveId}`;
+    const path = `/${key}`;
+
+    const requestId = crypto.randomUUID();
+    const request: RequestFrame<"fs.transfer.send"> = {
+      type: "req",
+      id: requestId,
+      call: "fs.transfer.send",
+      args: {
+        target: source.target,
+        path: source.path,
+        revision: source.revision,
+      },
+      runId,
+    };
+    const response = await sendFrameToKernel(this.installationId, this.pid, request);
+    if (!response || response.type !== "res") {
+      throw new Error(`Resource source did not respond: ${source.target}:${source.path}`);
+    }
+    if (this.handleRunStopped(runId) || this.store.getPending(executionId)?.runId !== runId) {
+      await cancelResponseBody(response, "Resource is no longer pending");
+      throw new Error("Resource is no longer pending");
+    }
+    if (!response.ok) {
+      throw new Error(response.error.message);
+    }
+    const result = response.data;
+    if (!result?.ok) {
+      await cancelResponseBody(response, "Resource source rejected the requested revision");
+      throw new Error(result?.error ?? "Resource source returned no result");
+    }
+    if (!response.body) {
+      throw new Error("Resource source returned no body");
+    }
+    if (
+      result.path !== source.path
+      || result.size !== source.size
+      || result.revision !== source.revision
+      || response.body.length !== source.size
+    ) {
+      await response.body.stream.cancel("Resource source changed during resolution").catch(() => {});
+      throw new Error(`Resource source changed during resolution: ${source.path}`);
+    }
+
+    let releaseMedia: (() => void) | null = null;
+    try {
+      releaseMedia = await this.acquireMediaKeyAdmissions([key]);
+      let archived = await this.storage.head(key);
+      if (archived) {
+        await response.body.stream.cancel("Resource is already retained").catch(() => {});
+        if (
+          archived.size !== source.size
+          || !this.isValidOwnedArchiveObject(key, archived, {
+            sourceEtag: source.revision,
+            expectedContentType: source.contentType,
+          })
+        ) {
+          throw new Error(`Retained resource collision: ${path}`);
+        }
+      } else {
+        const fixed = new FixedLengthStream(source.size);
+        const stored = this.storage.put(key, fixed.readable, {
+          httpMetadata: { contentType: source.contentType },
+          customMetadata: {
+            uid: String(this.identity.uid),
+            gid: String(this.identity.gid),
+            mode: "400",
+            purpose: "resource",
+            sourceEtag: source.revision,
+            sourceContentType: source.contentType,
+          },
+        });
+        const piped = response.body.stream.pipeTo(fixed.writable, { signal });
+        const [storedResult, pipedResult] = await Promise.allSettled([stored, piped]);
+        if (storedResult.status === "rejected" || pipedResult.status === "rejected") {
+          const reason = storedResult.status === "rejected"
+            ? storedResult.reason
+            : pipedResult.status === "rejected"
+              ? pipedResult.reason
+              : "unknown resource retention error";
+          throw reason instanceof Error ? reason : new Error(String(reason));
+        }
+        archived = await this.storage.head(key);
+        if (
+          !archived
+          || archived.size !== source.size
+          || !this.isValidOwnedArchiveObject(key, archived, {
+            sourceEtag: source.revision,
+            expectedContentType: source.contentType,
+          })
+        ) {
+          throw new Error(`Failed to verify retained resource: ${path}`);
+        }
+      }
+
+      return {
+        ref: {
+          type: "file",
+          target: "gsv",
+          path,
+          revision: archived.httpEtag,
+          contentType: source.contentType,
+          size: source.size,
+        },
+        media: {
+          type: "image",
+          mimeType: source.contentType,
+          key,
+          path,
+          size: source.size,
+        },
+      };
+    } catch (error) {
+      await response.body.stream.cancel(error).catch(() => {});
+      throw error;
+    } finally {
+      releaseMedia?.();
     }
   }
 
@@ -7317,13 +7478,16 @@ export class Process extends DurableObject<ProcessEnv> {
       return;
     }
     const pid = this.pid;
+    const dispatchArgs = call === "fs.read"
+      ? { ...args, representation: "resource" }
+      : args;
     // SAFETY: tool arguments cross the model boundary through jsonObjectSchema,
     // and the Kernel remains the owner of per-syscall semantic validation.
     const reqFrame = {
       type: "req",
       id: dispatchId,
       call,
-      args,
+      args: dispatchArgs,
       runId,
     } as RequestFrame;
 

@@ -1,7 +1,11 @@
+import type { FileResourceReference } from "../resource";
+
 export type FsReadArgs = {
+  target?: string;
   path: string;
   offset?: number;
   limit?: number;
+  representation?: "content" | "resource";
 };
 
 export type FsReadResult =
@@ -12,6 +16,7 @@ export type FsReadResult =
       contentType: string;
       lines?: number;
       size: number;
+      resource?: FileResourceReference;
     }
   | { ok: true; path: string; files: string[]; directories: string[] }
   | { ok: false; error: string };
@@ -92,11 +97,14 @@ export type FsTransferStatResult =
       isFile: boolean;
       isDirectory: boolean;
       contentType?: string;
+      revision?: string;
     }
   | { ok: false; error: string };
 
 export type FsTransferSendArgs = {
+  target?: string;
   path: string;
+  revision?: string;
 };
 
 export type FsTransferSendResult =
@@ -105,6 +113,7 @@ export type FsTransferSendResult =
       path: string;
       size: number;
       contentType?: string;
+      revision?: string;
     }
   | { ok: false; error: string };
 

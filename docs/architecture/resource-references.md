@@ -1,6 +1,8 @@
 # Resource References and Lazy Binary Resolution
 
-Status: deferred design proposal. This is not the current runtime contract.
+Status: staged implementation. The common reference contract, revision-aware
+filesystem transfer, and image-bearing `fs.read` retention are implemented.
+Client uploads, adapter media, and the public process-media cutover remain.
 
 GSV should represent files and media once, as authorized resource references,
 and move their bytes only when a consumer resolves those references. Structured
@@ -11,7 +13,7 @@ This avoids turning an image into bytes, then base64, then bytes again; avoids
 copying the same attachment at every process, adapter, and client boundary; and
 lets Web, Desktop, models, and other clients resolve the same resource lazily.
 
-## Proposed contract
+## Contract
 
 A message or tool result contains a typed resource block rather than inline
 bytes or separate process-media metadata:
@@ -33,10 +35,9 @@ type ResourceBlock = {
 };
 ```
 
-The final shape may use an opaque Kernel-issued identifier instead of exposing
-every locator field. The invariant is more important than the encoding: a
-reference identifies one authorized, immutable resource version and carries no
-bytes.
+The locator is not a bearer capability. Issuance validates the source, and
+resolution repeats normal target, path, identity, and capability checks. A
+reference identifies one immutable resource version and carries no bytes.
 
 ## Resolution flow
 
@@ -46,7 +47,7 @@ machine, browser, adapter, or gsv produces a file
   -> a message or tool result persists that reference once
   -> a model or client resolves it when needed
   -> fs.transfer.send returns the bytes over the binary-body channel
-  -> GSV may retain one durable, content-addressed copy when history requires it
+  -> Process retains one durable immutable copy when history requires it
 ```
 
 Base64 is permitted only at the final provider adapter when a model API requires
@@ -98,7 +99,7 @@ implementation behind a resource resolver. The intended end state is:
 - public `proc.media.write/read/delete` calls can be retired once all producers
   use the common reference contract.
 
-The current tool-result bridge accepts inline provider image blocks, extracts
+The compatibility tool-result bridge accepts inline provider image blocks, extracts
 their bytes into process-scoped R2 media, persists only references in new
 history, and rehydrates bytes while assembling model context. The common
 reference migration must replace that initial inline/base64 boundary rather
@@ -106,20 +107,21 @@ than layering another copy on top. It must also continue resolving existing
 tool-result media references and legacy inline history until an explicit data
 migration or compatibility cutover retires both representations.
 
-## Suggested implementation order
+## Implementation order
 
-1. Define and validate the reference and resource-block protocol types.
-2. Let image-bearing `fs.read` tool results persist a source reference without
+1. Done: define and validate the reference and resource-block protocol types.
+2. Done: let image-bearing `fs.read` return a source reference without
    materializing base64.
-3. Add one Process resolver that streams a reference through
-   `fs.transfer.send`, retains it when required, and projects it into provider
-   image content only while assembling model context.
+3. Done for image reads: Process resolves the exact source revision through
+   `fs.transfer.send`, retains it in the run-as agent's immutable archive, and
+   projects provider image content only while assembling model context.
 4. Let Web and Desktop resolve the same reference lazily and cache by revision.
 5. Move client uploads and adapter media onto references while preserving their
    current authorization and replay fences.
 6. Remove the superseded public process-media orchestration after a deliberate
    compatibility cutover.
 
-Before implementation, decide the reference issuer/authorization encoding,
-retention point, source expiry contract, and whether cross-target references are
-structured or Kernel-opaque.
+The implemented encoding is structured and non-authoritative. Source expiry is
+explicit when present. Durable Process retention occurs before the tool result
+is committed, so later file edits mint a new revision without changing the old
+history entry.

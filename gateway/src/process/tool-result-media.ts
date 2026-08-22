@@ -1,7 +1,10 @@
 import type { StoredProcessMedia } from "./media";
 import {
+  fileResourceReferenceSchema,
   jsonObjectSchema,
   jsonValueSchema,
+  resourceBlockSchema,
+  type FileResourceReference,
   type JsonObject,
   type JsonValue,
 } from "@humansandmachines/gsv/protocol";
@@ -54,6 +57,12 @@ const storedToolResultSchema = z.object({
   output: z.json(),
   media: z.array(storedMediaSchema),
 });
+const fsReadResourceResultSchema = z.object({
+  ok: z.literal(true),
+  kind: z.literal("image"),
+  resource: fileResourceReferenceSchema,
+  content: z.array(z.json()),
+}).catchall(z.json());
 
 export type ExtractedToolResultImage = {
   bytes: Uint8Array;
@@ -66,6 +75,38 @@ export type StoredToolResultEnvelope = {
   output: ToolResultValue;
   media: StoredProcessMedia[];
 };
+
+export function extractFsReadResource(value: ToolResultValue): FileResourceReference | null {
+  const parsed = fsReadResourceResultSchema.safeParse(value);
+  if (!parsed.success) return null;
+  const blocks = parsed.data.content.flatMap((item) => {
+    const block = resourceBlockSchema.safeParse(item);
+    return block.success ? [block.data] : [];
+  });
+  if (
+    blocks.length !== 1
+    || JSON.stringify(blocks[0]?.ref) !== JSON.stringify(parsed.data.resource)
+  ) {
+    throw new Error("fs.read resource response is inconsistent");
+  }
+  return parsed.data.resource;
+}
+
+export function replaceFsReadResource(
+  value: ToolResultValue,
+  resource: FileResourceReference,
+): ToolResultValue {
+  const parsed = fsReadResourceResultSchema.parse(value);
+  return jsonValueSchema.parse({
+    ...parsed,
+    resource,
+    content: parsed.content.map((item) => (
+      resourceBlockSchema.safeParse(item).success
+        ? { type: "resource", ref: resource }
+        : item
+    )),
+  });
+}
 
 export function extractToolResultImages(
   value: ToolResultValue,

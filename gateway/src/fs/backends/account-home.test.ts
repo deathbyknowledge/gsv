@@ -441,6 +441,36 @@ describe("AccountHomeMountBackend delegated routing", () => {
       .toEqual(archivedBytes.buffer);
   });
 
+  it("exposes retained resources through the same read-only namespace", async () => {
+    const key = `home/alice/.gsv/media/archived-media:${"c".repeat(64)}`;
+    const path = `/${key}`;
+    const bytes = new Uint8Array([2, 4, 6, 8]);
+    await env.STORAGE.put(key, bytes, {
+      httpMetadata: { contentType: "image/png" },
+      customMetadata: {
+        uid: String(ALICE.uid),
+        gid: String(ALICE.gid),
+        mode: "400",
+        purpose: "resource",
+        sourceEtag: "device-revision-1",
+        sourceContentType: "image/png",
+      },
+    });
+    const fs = new GsvFs(
+      env.STORAGE,
+      PERSONAL_AGENT,
+      undefined,
+      undefined,
+      null,
+      createPersonalAgentBackend(),
+    );
+
+    const opened = await fs.openFile(path);
+
+    expect(new Uint8Array(await new Response(opened.body).arrayBuffer())).toEqual(bytes);
+    await expect(fs.writeFile(path, "overwrite")).rejects.toThrow("EACCES");
+  });
+
   it("hides malformed archived media from filesystem reads and search", async () => {
     const archiveRoot = "/home/alice/.gsv/media";
     const basename = `archived-media:${"b".repeat(64)}`;

@@ -22,6 +22,7 @@ export * from "./binary-body-channel";
 export * from "./request-cancel";
 export * from "./file-content";
 export * from "./speech-text";
+export * from "./resource";
 export * from "./managed";
 export * from "./managed-inference-stream";
 export * from "./mail";

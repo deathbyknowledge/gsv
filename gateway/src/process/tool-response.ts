@@ -1,6 +1,7 @@
 import {
   bodyToBytes,
   bodyToText,
+  fileResourceReferenceSchema,
   jsonValueSchema,
 } from "@humansandmachines/gsv/protocol";
 import type {
@@ -26,6 +27,7 @@ const toolResponseRecordSchema = z.object({
   path: z.string().optional(),
   size: z.number().optional(),
   lines: z.number().optional(),
+  resource: fileResourceReferenceSchema.optional(),
 }).catchall(z.json());
 
 const textToolResponseSchema = toolResponseRecordSchema.extend({
@@ -66,8 +68,27 @@ export async function materializeToolResponse(
     && !("files" in record)
     && !("directories" in record)
     && !body
+    && !(record.kind === "image" && record.resource)
   ) {
     throw new Error("fs.read file response did not include a body");
+  }
+  if (
+    call === "fs.read"
+    && record?.ok === true
+    && record.kind === "image"
+    && record.resource
+    && !body
+  ) {
+    const path = record.path ?? record.resource.path;
+    const mimeType = record.contentType ?? record.resource.contentType;
+    const size = record.size ?? record.resource.size;
+    return {
+      ...record,
+      content: [
+        { type: "text", text: `Read image ${path} [${mimeType}, ${formatSize(size)}]` },
+        { type: "resource", ref: record.resource },
+      ],
+    };
   }
   if (!body) {
     return jsonValueSchema.parse(data);

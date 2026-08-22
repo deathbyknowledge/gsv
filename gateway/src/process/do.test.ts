@@ -7245,6 +7245,115 @@ describe("Process DO — mechanical", () => {
       }
     });
 
+    it("retains fs.read resources without storing transport base64", async () => {
+      const pid = "mech-tool-result-resource";
+      const runId = "run-tool-result-resource";
+      const dispatchId = "dispatch-tool-result-resource";
+      const sourcePath = "/root/tool-result-resource.png";
+      const sourceKey = sourcePath.slice(1);
+      const bytes = new Uint8Array([7, 8, 9]);
+      await env.STORAGE.put(sourceKey, bytes, {
+        httpMetadata: { contentType: "image/png" },
+      });
+      const source = await env.STORAGE.head(sourceKey);
+      if (!source) throw new Error("fixture source was not stored");
+      const stub = await initProcess(pid, ROOT_IDENTITY);
+      let retainedKey = "";
+
+      try {
+        await runInDurableObject(stub, async (instance: Process) => {
+          // SAFETY: this test exercises private Process lifecycle seams inside its own DO instance.
+          const process = instance as any;
+          process.currentRun = { runId };
+          process.sendSignal = vi.fn(async () => {});
+          process.store.register(
+            dispatchId,
+            "call-tool-result-resource",
+            runId,
+            "fs.read",
+            { path: sourcePath },
+          );
+          process.store.register(
+            "dispatch-tool-result-resource-blocker",
+            "call-tool-result-resource-blocker",
+            runId,
+            "fs.read",
+            { path: "/tmp/blocker" },
+          );
+
+          const resource = {
+            type: "file" as const,
+            target: "gsv",
+            path: sourcePath,
+            revision: source.httpEtag,
+            contentType: "image/png",
+            size: bytes.byteLength,
+          };
+          await expect(process.resolveStartedTool(runId, dispatchId, {
+            ok: true,
+            path: sourcePath,
+            kind: "image",
+            contentType: "image/png",
+            size: bytes.byteLength,
+            resource,
+            content: [
+              { type: "text", text: "Read image" },
+              { type: "resource", ref: resource },
+            ],
+          })).resolves.toBe(true);
+
+          const resolved = process.store.getResults(runId)[0];
+          expect(JSON.stringify(resolved.result)).not.toContain("BwgJ");
+          expect(resolved.result).toMatchObject({
+            __gsvStoredToolResult: 1,
+            output: {
+              resource: {
+                type: "file",
+                target: "gsv",
+                path: expect.stringMatching(/^\/root\/\.gsv\/media\/archived-media:/),
+                revision: expect.any(String),
+              },
+              content: [
+                { type: "text" },
+                {
+                  type: "resource",
+                  ref: {
+                    target: "gsv",
+                    path: expect.stringMatching(/^\/root\/\.gsv\/media\/archived-media:/),
+                  },
+                },
+              ],
+            },
+          });
+          retainedKey = resolved.result.media[0].key;
+          const retained = await env.STORAGE.get(retainedKey);
+          expect(retained && [...new Uint8Array(await retained.arrayBuffer())]).toEqual([7, 8, 9]);
+          expect(retained?.customMetadata).toMatchObject({
+            uid: "0",
+            gid: "0",
+            mode: "400",
+            purpose: "resource",
+            sourceEtag: source.httpEtag,
+            sourceContentType: "image/png",
+          });
+
+          await process.ingestToolResults(runId, process.store.getResults(runId), {
+            interruptPending: "test completed",
+          });
+          const messages = await process.buildContextMessages();
+          const result = messages.find(
+            (message: any) => message.role === "toolResult"
+              && message.toolCallId === "call-tool-result-resource",
+          );
+          expect(result.content.some((block: any) => block.type === "image" && block.data === "BwgJ"))
+            .toBe(true);
+        });
+      } finally {
+        await env.STORAGE.delete(sourceKey);
+        if (retainedKey) await env.STORAGE.delete(retainedKey);
+      }
+    });
+
     it("reconciles repeated process media writes and drains the repeated body", async () => {
       const pid = "mech-media-write-idempotent";
       const stub = await initProcess(pid, ROOT_IDENTITY);

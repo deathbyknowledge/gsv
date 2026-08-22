@@ -436,7 +436,7 @@ The current body-bearing syscalls are:
 
 | Syscall | Request body | Response body |
 |---|---|---|
-| `fs.read` | No | Always for a successful file read; raw UTF-8 text or image bytes. Directory listings and operation errors remain JSON-only. |
+| `fs.read` | No | Raw UTF-8 text, or image bytes when `representation` is `content`. Resource-mode image reads, directory listings, and operation errors are JSON-only. |
 | `fs.transfer.receive` | Required file bytes | No |
 | `fs.transfer.send` | No | Successful file bytes |
 | `net.fetch` | Optional HTTP request bytes | HTTP response bytes when the response has a body |

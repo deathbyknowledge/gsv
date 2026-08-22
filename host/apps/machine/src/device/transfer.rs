@@ -1,3 +1,4 @@
+use crate::file_revision::file_revision;
 use crate::tools::{ToolBody, ToolOutput};
 use gateway_client::IncomingBody;
 use serde::Deserialize;
@@ -55,6 +56,8 @@ struct TransferStatArgs {
 #[derive(Deserialize)]
 struct TransferSendArgs {
     path: String,
+    #[serde(default)]
+    revision: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -84,7 +87,8 @@ async fn handle_stat(args: Value, workspace: &Path) -> Result<ToolOutput, String
         "size": metadata.len(),
         "isFile": metadata.is_file(),
         "isDirectory": metadata.is_dir(),
-        "contentType": content_type.flatten()
+        "contentType": content_type.flatten(),
+        "revision": metadata.is_file().then(|| file_revision(&metadata)),
     })))
 }
 
@@ -102,6 +106,17 @@ async fn handle_send(args: Value, workspace: &Path) -> Result<ToolOutput, String
     if !metadata.is_file() {
         return Err(format!("Not a file: '{}'", path.display()));
     }
+    let revision = file_revision(&metadata);
+    if args
+        .revision
+        .as_ref()
+        .is_some_and(|expected| expected != &revision)
+    {
+        return Err(format!(
+            "Source revision is no longer available: '{}'",
+            path.display()
+        ));
+    }
 
     let content_type = mime_guess::from_path(&path)
         .first()
@@ -113,7 +128,8 @@ async fn handle_send(args: Value, workspace: &Path) -> Result<ToolOutput, String
             "ok": true,
             "path": source,
             "size": length,
-            "contentType": content_type
+            "contentType": content_type,
+            "revision": revision
         }),
         ToolBody::reader(file, Some(length), Some(length), source),
     ))
@@ -270,6 +286,15 @@ mod tests {
         assert_eq!(body.length, Some(3));
         assert_eq!(body.max_length, Some(3));
         assert_eq!(output.data["size"], 3);
+        assert!(output.data["revision"].is_string());
+
+        let error = handle_send(
+            json!({ "path": "source.bin", "revision": "stale" }),
+            &workspace,
+        )
+        .await
+        .unwrap_err();
+        assert!(error.contains("Source revision is no longer available"));
 
         tokio::fs::remove_dir_all(workspace).await.unwrap();
     }

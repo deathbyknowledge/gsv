@@ -144,7 +144,7 @@ pub fn all_tools_with_workspace_for_device(
 ) -> Vec<Box<dyn Tool>> {
     vec![
         Box::new(ShellTool::new(workspace.clone())),
-        Box::new(ReadTool::new(workspace.clone())),
+        Box::new(ReadTool::for_device(workspace.clone(), device_id.clone())),
         Box::new(WriteTool::new(workspace.clone())),
         Box::new(DeleteTool::new(workspace.clone())),
         Box::new(EditTool::new(workspace.clone())),

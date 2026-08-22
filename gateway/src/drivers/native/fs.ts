@@ -22,6 +22,7 @@ import type { FsEditArgs, FsEditResult } from "../../syscalls/edit";
 import type { FsDeleteArgs, FsDeleteResult } from "../../syscalls/delete";
 import type { FsSearchArgs, FsSearchResult } from "../../syscalls/search";
 import type {
+  FileResourceReference,
   FsCopyArgs,
   FsCopyEndpoint,
   FsCopyResult,
@@ -125,6 +126,20 @@ export async function handleFsRead(
     const contentType = opened.contentType ?? inferContentType(p);
 
     if (contentType.trim().toLowerCase().startsWith("image/") && !isTextContentType(contentType)) {
+      if (args.representation === "resource") {
+        await opened.body.cancel().catch(() => {});
+        if (!opened.etag) {
+          throw new Error(`Unable to identify file revision: ${p}`);
+        }
+        return readImageResource(p, contentType, opened.size, {
+          type: "file",
+          target: "gsv",
+          path: p,
+          revision: opened.etag,
+          contentType,
+          size: opened.size,
+        });
+      }
       return readImage(p, contentType, opened.body, opened.size);
     }
 
@@ -208,6 +223,24 @@ function readImage(
   };
 }
 
+function readImageResource(
+  path: string,
+  contentType: string,
+  size: number,
+  resource: FileResourceReference,
+): FsReadResponse {
+  return {
+    data: {
+      ok: true,
+      path,
+      kind: "image",
+      contentType,
+      size,
+      resource,
+    },
+  };
+}
+
 async function readDirectory(
   fs: GsvFs,
   path: string,
@@ -248,6 +281,15 @@ export async function handleFsTransferStat(
       const opened = await fs.openFile(path);
       contentType = opened.contentType ?? inferContentType(path);
       await opened.body?.cancel().catch(() => {});
+      return {
+        ok: true,
+        path,
+        size: stat.size,
+        isFile: true,
+        isDirectory: false,
+        contentType,
+        revision: opened.etag,
+      };
     }
     return {
       ok: true,
@@ -284,6 +326,15 @@ export async function handleFsTransferSend(
 
   try {
     const opened = await fs.openFile(path);
+    if (args.revision && opened.etag !== args.revision) {
+      await opened.body?.cancel("Source revision is no longer available").catch(() => {});
+      return {
+        type: "res",
+        id: frameId,
+        ok: true,
+        data: { ok: false, error: `Source revision is no longer available: ${path}` },
+      };
+    }
     if (opened.status !== 200 || !opened.body) {
       throw new Error(`Unable to open source for transfer: ${path}`);
     }
@@ -296,6 +347,7 @@ export async function handleFsTransferSend(
         path,
         size: opened.size,
         contentType: opened.contentType ?? inferContentType(path),
+        revision: opened.etag,
       },
       body: { stream: opened.body, length: opened.size },
     };
@@ -690,10 +742,12 @@ async function openDeviceSource(
       `Source is not a file: ${source.target}:${source.path}`,
     );
   }
+  const sendArgs: JsonObject = { path: source.path };
+  if (stat.revision) sendArgs.revision = stat.revision;
   const response = await transport.requestDevice(
     source.target,
     "fs.transfer.send",
-    { path: source.path },
+    sendArgs,
     { ttlMs: 120_000, signal },
   );
   // SAFETY: The fs.transfer.send response is decoded by the transport contract.
@@ -703,6 +757,10 @@ async function openDeviceSource(
   }
   if (!response.body) {
     throw new Error("fs.transfer.send returned no response body");
+  }
+  if (stat.revision && result.revision !== stat.revision) {
+    void response.body.stream.cancel("Source revision changed during transfer");
+    throw new Error(`Source revision changed during transfer: ${source.path}`);
   }
   if (response.body.length !== stat.size) {
     void response.body.stream.cancel();

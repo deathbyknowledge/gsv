@@ -1,3 +1,4 @@
+use crate::file_revision::file_revision;
 use crate::protocol::ToolDefinition;
 use crate::tools::{Tool, ToolBody, ToolOutput};
 use async_trait::async_trait;
@@ -11,11 +12,19 @@ const MIME_SNIFF_BYTES: u64 = 8192;
 
 pub struct ReadTool {
     workspace: PathBuf,
+    device_id: String,
 }
 
 impl ReadTool {
     pub fn new(workspace: PathBuf) -> Self {
-        Self { workspace }
+        Self::for_device(workspace, "local".to_string())
+    }
+
+    pub fn for_device(workspace: PathBuf, device_id: String) -> Self {
+        Self {
+            workspace,
+            device_id,
+        }
     }
 
     fn resolve_path(&self, path: &str) -> PathBuf {
@@ -35,6 +44,8 @@ struct ReadArgs {
     offset: Option<usize>,
     #[serde(default)]
     limit: Option<usize>,
+    #[serde(default)]
+    representation: Option<String>,
 }
 
 fn format_byte_size(bytes: u64) -> String {
@@ -138,6 +149,23 @@ impl Tool for ReadTool {
             .unwrap_or_else(|| infer_content_type(&resolved));
 
         if content_type.starts_with("image/") && !is_text_content_type(content_type) {
+            if args.representation.as_deref() == Some("resource") {
+                return Ok(ToolOutput::json(json!({
+                    "ok": true,
+                    "path": resolved.display().to_string(),
+                    "size": size,
+                    "kind": "image",
+                    "contentType": content_type,
+                    "resource": {
+                        "type": "file",
+                        "target": self.device_id,
+                        "path": resolved.display().to_string(),
+                        "revision": file_revision(&metadata),
+                        "contentType": content_type,
+                        "size": size,
+                    },
+                })));
+            }
             return Ok(ToolOutput::with_body(
                 json!({
                     "ok": true,
@@ -293,6 +321,33 @@ mod tests {
         let mut actual = String::new();
         body.reader.read_to_string(&mut actual).await.unwrap();
         assert_eq!(actual, svg);
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[tokio::test]
+    async fn returns_versioned_image_resources_for_connected_devices() {
+        let root = std::env::temp_dir().join(format!("gsv-read-test-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&root).unwrap();
+        let bytes = vec![0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a];
+        fs::write(root.join("image.png"), &bytes).unwrap();
+
+        let result = ReadTool::for_device(root.clone(), "laptop".to_string())
+            .execute(json!({ "path": "image.png", "representation": "resource" }))
+            .await
+            .unwrap();
+
+        assert!(result.body.is_none());
+        assert_eq!(result.data["resource"]["target"], "laptop");
+        assert_eq!(
+            result.data["resource"]["path"],
+            root.join("image.png").display().to_string()
+        );
+        assert_eq!(result.data["resource"]["contentType"], "image/png");
+        assert_eq!(result.data["resource"]["size"], bytes.len());
+        assert!(result.data["resource"]["revision"]
+            .as_str()
+            .is_some_and(|revision| !revision.is_empty()));
 
         fs::remove_dir_all(root).unwrap();
     }

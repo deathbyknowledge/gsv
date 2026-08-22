@@ -72,7 +72,7 @@ Runtime behavior:
 
 | Syscall | Handler | Behavior |
 |---|---|---|
-| `fs.read` | `handleFsRead`; CLI `Read` | Resolves paths against process `cwd` and home. Direct directory results are JSON. A successful file result always attaches a response body containing raw UTF-8 text or image bytes; `data` contains file metadata. Text decoding is strict across native and device implementations, so invalid UTF-8 returns a binary-file error. `offset` defaults to `0`; `limit` defaults to all lines. Agent tool results add line numbers when presenting text to the model. The transport streams images without a target-specific size cap; process tool results cap model-context materialization at 25 MiB. |
+| `fs.read` | `handleFsRead`; CLI `Read` | Resolves paths against process `cwd` and home. Direct directory results are JSON. Text reads attach raw UTF-8 in the response body. Image reads attach raw bytes by default; `representation: "resource"` instead returns a revision-bound file reference with no body. Process-dispatched reads select resources automatically, retain the exact revision in the run-as agent's immutable archive, and add provider image bytes only while assembling model context. Text decoding is strict across native and device implementations, so invalid UTF-8 returns a binary-file error. `offset` defaults to `0`; `limit` defaults to all lines. Agent tool results add line numbers when presenting text to the model. Retained process image reads are capped at 25 MiB. |
 | `fs.write` | `handleFsWrite`; CLI `Write` | Creates or replaces a complete file. Native writes through `GsvFs.writeFile`; CLI creates parent directories explicitly. Returns written path and size. |
 | `fs.edit` | `handleFsEdit`; CLI `Edit` | Performs exact string replacement in a text file. `replaceAll` defaults to `false`; if multiple matches exist and `replaceAll` is false, the handler asks for a more specific edit. |
 | `fs.delete` | `handleFsDelete`; CLI `Delete` | Deletes the path. Native checks existence then calls `rm` with force; CLI deletes files or directories recursively. This is destructive. |
@@ -83,9 +83,9 @@ Device routing errors are frame-level errors: `403` for access denied, `503` for
 ```ts
 type FilesystemSyscalls = {
   "fs.read": {
-    args: { target?: string; path: string; offset?: number; limit?: number };
+    args: { target?: string; path: string; offset?: number; limit?: number; representation?: "content" | "resource" };
     result:
-      | { ok: true; path: string; kind: "text" | "image"; contentType: string; lines?: number; size: number }
+      | { ok: true; path: string; kind: "text" | "image"; contentType: string; lines?: number; size: number; resource?: FileResourceReference }
       | { ok: true; path: string; files: string[]; directories: string[] }
       | OperationError;
   };
