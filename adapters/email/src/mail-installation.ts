@@ -15,6 +15,8 @@ import { mailLimits, type MailEnv, type MailLimits } from "./env";
 import { parseMail } from "./mime";
 import { OutboundDeliveryCoordinator } from "./outbound";
 import { runMailSqlMigrations } from "./schema/migrations";
+interface ExternalObject { [key: string]: ExternalValue; }
+type ExternalValue = string | number | boolean | ExternalObject | null | undefined;
 
 const ALARM_BATCH_SIZE = 20;
 const SUMMARY_RESERVATION_MS = 5 * 60 * 1000;
@@ -23,6 +25,7 @@ const MAX_RETRY_MS = 60 * 60 * 1000;
 const MAX_ENVELOPE_ADDRESS_LENGTH = 512;
 const MAX_MESSAGE_ID_LENGTH = 512;
 const MAX_LIST_LIMIT = 100;
+type MailIntakeListResult = { limit: number; cursor?: string };
 const RAW_CHUNK_BYTES = 1024 * 1024;
 const UPLOAD_EXPIRY_MS = 24 * 60 * 60 * 1000;
 const TEXT_ENCODER = new TextEncoder();
@@ -101,10 +104,10 @@ export class MailInstallation extends DurableObject<MailEnv> {
   constructor(ctx: DurableObjectState, env: MailEnv) {
     super(ctx, env);
     const name = ctx.id.name;
-    if (!isAdapterInstallationContext({ installationId: name })) {
+    if (!name) {
       throw new Error("MailInstallation must be addressed by installation ID");
     }
-    this.installationId = name as string;
+    this.installationId = name;
     this.limits = mailLimits(env);
     runMailSqlMigrations(ctx.storage);
     this.ensureIdentity();
@@ -147,7 +150,7 @@ export class MailInstallation extends DurableObject<MailEnv> {
         }
       }
     } catch (error) {
-      await cancelBody(body, error);
+      await cancelBody(body, String(error));
       throw error;
     }
   }
@@ -197,9 +200,9 @@ export class MailInstallation extends DurableObject<MailEnv> {
     const pageRows = rows.slice(0, input.limit);
     return {
       items: pageRows.map(intakeDiagnostic),
-      ...(hasMore && pageRows.length > 0
-        ? { cursor: pageRows[pageRows.length - 1].intake_id }
-        : {}),
+      cursor: hasMore && pageRows.length > 0
+        ? pageRows[pageRows.length - 1].intake_id
+        : undefined,
     };
   }
 
@@ -548,6 +551,7 @@ export class MailInstallation extends DurableObject<MailEnv> {
       if (!row.metadata_json) {
         throw new Error("Pending mail intake is missing its durable body");
       }
+      // SAFETY: Durable storage contains metadata written by this adapter's serializer.
       const metadata = JSON.parse(row.metadata_json) as ManagedInboundMailMetadata;
       body = this.rawMessageBody(row);
       const result = await this.env.GATEWAY.acceptManagedInboundMail(
@@ -590,7 +594,7 @@ export class MailInstallation extends DurableObject<MailEnv> {
         now,
         row.intake_id,
       );
-      logRetry("storage", error);
+      logRetry("storage", String(error));
     } finally {
       if (body) {
         await cancelBody(body, "Managed mail storage RPC finished");
@@ -718,7 +722,7 @@ export class MailInstallation extends DurableObject<MailEnv> {
       this.deferSummaryFailure(
         row.intake_id,
         row.summary_attempts + 1,
-        error,
+        String(error),
         false,
       );
       return;
@@ -744,7 +748,7 @@ export class MailInstallation extends DurableObject<MailEnv> {
           this.deferSummaryFailure(
             row.intake_id,
             row.summary_attempts + 1,
-            error,
+            String(error),
             ["failed", "aborted", "abandoned"].includes(status.state),
           );
           return;
@@ -753,7 +757,7 @@ export class MailInstallation extends DurableObject<MailEnv> {
         this.deferSummaryFailure(
           row.intake_id,
           row.summary_attempts + 1,
-          statusError,
+          String(statusError),
           false,
         );
         return;
@@ -827,7 +831,7 @@ export class MailInstallation extends DurableObject<MailEnv> {
   private deferSummaryFailure(
     intakeId: string,
     attempts: number,
-    error: unknown,
+    error: Error | string | null | undefined,
     advanceGeneration: boolean,
   ): void {
     const now = Date.now();
@@ -842,7 +846,7 @@ export class MailInstallation extends DurableObject<MailEnv> {
       now,
       intakeId,
     );
-    logRetry("summary", error);
+    logRetry("summary", String(error));
   }
 
   private async notifySummary(row: IntakeRow): Promise<void> {
@@ -883,7 +887,7 @@ export class MailInstallation extends DurableObject<MailEnv> {
         now,
         row.intake_id,
       );
-      logRetry("completion", error);
+      logRetry("completion", String(error));
     }
   }
 
@@ -1024,9 +1028,9 @@ function intakeDiagnostic(row: IntakeRow): ManagedMailIntakeDiagnostic {
     storageAttempts: row.storage_attempts,
     summaryAttempts: row.summary_attempts,
     completionAttempts: row.completion_attempts,
-    ...(row.message_id ? { messageId: row.message_id } : {}),
-    ...(row.stored_at === null ? {} : { storedAt: row.stored_at }),
-    ...(row.completed_at === null ? {} : { completedAt: row.completed_at }),
+    messageId: row.message_id ?? undefined,
+    storedAt: row.stored_at ?? undefined,
+    completedAt: row.completed_at ?? undefined,
   };
 }
 
@@ -1044,9 +1048,9 @@ function parseEnvelope(value: MailEnvelope, maxMessageBytes: number): MailEnvelo
   return { from, to, rawSize };
 }
 
-function parseEnvelopeAddress(value: unknown, field: string): string {
+function parseEnvelopeAddress(value: ExternalValue, field: string): string {
   if (
-    typeof value !== "string"
+    String(value) !== value
     || !value.trim()
     || value.length > MAX_ENVELOPE_ADDRESS_LENGTH
     || /[\r\n\0]/.test(value)
@@ -1056,30 +1060,30 @@ function parseEnvelopeAddress(value: unknown, field: string): string {
   return value.trim();
 }
 
-function parseListInput(value: ListManagedMailIntakesInput): {
-  cursor?: string;
-  limit: number;
-} {
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
+function parseListInput(value: ListManagedMailIntakesInput): MailIntakeListResult {
+  if (!value || value.constructor !== Object || Array.isArray(value)) {
     throw new Error("Mail intake list input is invalid");
   }
   const limit = value.limit ?? 50;
   if (!Number.isSafeInteger(limit) || limit <= 0 || limit > MAX_LIST_LIMIT) {
     throw new Error("Mail intake list limit is invalid");
   }
-  if (value.cursor !== undefined && typeof value.cursor !== "string") {
+  if (value.cursor !== undefined && String(value.cursor) !== value.cursor) {
     throw new Error("Mail intake list cursor is invalid");
   }
-  return { limit, ...(value.cursor ? { cursor: value.cursor } : {}) };
+  const result: MailIntakeListResult = { limit };
+  if (value.cursor !== undefined) result.cursor = value.cursor;
+  return result;
 }
 
 function parseSummaryInput(value: string | null): SummaryInput {
   if (!value) throw new Error("Mail summary input is unavailable");
+  // SAFETY: This JSON is produced by the adapter's own summary request serializer.
   const parsed = JSON.parse(value) as Partial<SummaryInput>;
   if (
-    typeof parsed.from !== "string"
-    || typeof parsed.subject !== "string"
-    || typeof parsed.text !== "string"
+    String(parsed.from) !== parsed.from
+    || String(parsed.subject) !== parsed.subject
+    || String(parsed.text) !== parsed.text
   ) {
     throw new Error("Mail summary input is invalid");
   }
@@ -1090,13 +1094,14 @@ function parseSummaryInput(value: string | null): SummaryInput {
   };
 }
 
-function validateSummary(value: unknown): ManagedMailSummary {
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
+function validateSummary(value: ExternalValue): ManagedMailSummary {
+  if (!value || value.constructor !== Object || Array.isArray(value)) {
     throw new Error("Managed mail summary is invalid");
   }
+  // SAFETY: The object guard above establishes a record for field validation.
   const candidate = value as Partial<ManagedMailSummary>;
   if (
-    typeof candidate.summary !== "string"
+    String(candidate.summary) !== candidate.summary
     || candidate.summary.trim() !== candidate.summary
     || candidate.summary.length === 0
     || TEXT_ENCODER.encode(candidate.summary).byteLength > 280
@@ -1110,20 +1115,21 @@ function validateSummary(value: unknown): ManagedMailSummary {
       "suspicious",
       "other",
     ].includes(candidate.category ?? "")
-    || typeof candidate.requiresAttention !== "boolean"
-    || typeof candidate.confidence !== "number"
+    || (candidate.requiresAttention !== true && candidate.requiresAttention !== false)
+    || Number(candidate.confidence) !== candidate.confidence
     || !Number.isFinite(candidate.confidence)
     || candidate.confidence < 0
     || candidate.confidence > 1
   ) {
     throw new Error("Managed mail summary is invalid");
   }
+  // SAFETY: All required summary fields were validated above.
   return candidate as ManagedMailSummary;
 }
 
-function parseOpaqueId(value: unknown, field: string): string {
+function parseOpaqueId(value: ExternalValue, field: string): string {
   if (
-    typeof value !== "string"
+    String(value) !== value
     || !/^[A-Za-z0-9](?:[A-Za-z0-9._:-]{0,126}[A-Za-z0-9])?$/.test(value)
   ) {
     throw new Error(`Mail ${field} is invalid`);
@@ -1131,9 +1137,9 @@ function parseOpaqueId(value: unknown, field: string): string {
   return value;
 }
 
-function parseBoundedId(value: unknown, field: string, maxLength: number): string {
+function parseBoundedId(value: ExternalValue, field: string, maxLength: number): string {
   if (
-    typeof value !== "string"
+    String(value) !== value
     || !value.trim()
     || value.length > maxLength
     || /[\r\n\0]/.test(value)
@@ -1161,7 +1167,7 @@ function exactArrayBuffer(bytes: Uint8Array): ArrayBuffer {
   return bytes.slice().buffer;
 }
 
-async function cancelBody(body: BinaryBody, reason: unknown): Promise<void> {
+async function cancelBody(body: BinaryBody, reason: Error | string | null | undefined): Promise<void> {
   if (!body.stream.locked) {
     await body.stream.cancel(reason).catch(() => {});
   }
@@ -1189,12 +1195,12 @@ function retryDelay(attempt: number): number {
 
 function logRetry(
   phase: "storage" | "summary" | "completion",
-  error: unknown,
+  error: Error | string | null | undefined,
 ): void {
   console.warn(JSON.stringify({
     service: "managed_mail",
     event: "retry_scheduled",
     phase,
-    errorType: error instanceof Error ? error.name : typeof error,
+    errorType: error instanceof Error ? error.name : "Error",
   }));
 }

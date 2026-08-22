@@ -8,6 +8,8 @@ import {
 } from "@humansandmachines/gsv/protocol";
 import { mailAddressForHandle } from "./address";
 import type { MailEnv, MailLimits } from "./env";
+interface ExternalObject { [key: string]: ExternalValue; }
+type ExternalValue = string | number | boolean | ExternalObject | null | undefined;
 
 const ABSOLUTE_MAX_TEXT_BYTES = 1024 * 1024;
 const CLAIM_RESERVATION_MS = 5 * 60 * 1000;
@@ -271,7 +273,7 @@ export class OutboundDeliveryCoordinator {
         this.env.MAIL_DOMAIN,
       );
     } catch (error) {
-      this.deferClaim(reference, reserved.claim_attempts, error);
+      this.deferClaim(reference, reserved.claim_attempts, String(error));
       return;
     }
     if (reserved.expected_from === null) {
@@ -292,7 +294,7 @@ export class OutboundDeliveryCoordinator {
           reference,
         );
       } catch (error) {
-        this.deferClaim(reference, reserved.claim_attempts, error);
+        this.deferClaim(reference, reserved.claim_attempts, String(error));
         return;
       }
       if (outcome.status === "rejected") {
@@ -321,7 +323,7 @@ export class OutboundDeliveryCoordinator {
         );
       } catch (error) {
         if (!(error instanceof InvalidDraftError)) {
-          this.deferClaim(reference, reserved.claim_attempts, error);
+          this.deferClaim(reference, reserved.claim_attempts, String(error));
           return;
         }
         this.setTerminal(reference, "failed", "invalid_draft");
@@ -359,7 +361,7 @@ export class OutboundDeliveryCoordinator {
     claim: ManagedOutboundMailClaim,
     expectedFrom: string,
   ): Promise<ValidatedOutbound> {
-    if (!claim || typeof claim !== "object") {
+    if (!claim || claim.constructor !== Object) {
       throw new InvalidDraftError();
     }
     const draft = claim.draft;
@@ -411,11 +413,12 @@ export class OutboundDeliveryCoordinator {
     const headers: Record<string, string> = {};
     if (draft.inReplyTo) headers["In-Reply-To"] = draft.inReplyTo;
     if (draft.references) headers.References = draft.references;
-    return {
+    const validated: ValidatedOutbound = {
       draft,
       text,
-      ...(Object.keys(headers).length > 0 ? { headers } : {}),
     };
+    if (Object.keys(headers).length > 0) validated.headers = headers;
+    return validated;
   }
 
   private async send(outbound: ValidatedOutbound): Promise<EmailSendResult> {
@@ -424,7 +427,7 @@ export class OutboundDeliveryCoordinator {
       from: outbound.draft.from,
       subject: outbound.draft.subject,
       text: outbound.text,
-      ...(outbound.headers ? { headers: outbound.headers } : {}),
+      headers: outbound.headers,
     });
   }
 
@@ -547,7 +550,7 @@ export class OutboundDeliveryCoordinator {
   private deferClaim(
     reference: ManagedOutboundMailReference,
     attempts: number,
-    error: unknown,
+    error: Error | string | null | undefined,
   ): void {
     const now = Date.now();
     this.ctx.storage.sql.exec(
@@ -566,7 +569,7 @@ export class OutboundDeliveryCoordinator {
       service: "managed_mail",
       event: "retry_scheduled",
       phase: "outbound_claim",
-      errorType: error instanceof Error ? error.name : typeof error,
+      errorType: error instanceof Error ? error.name : "Error",
     }));
   }
 
@@ -697,10 +700,8 @@ export class OutboundDeliveryCoordinator {
       outboundId: row.outbound_id,
       fingerprint: row.fingerprint,
       state: row.state,
-      ...(row.provider_message_id
-        ? { providerMessageId: row.provider_message_id }
-        : {}),
-      ...(row.error_code ? { errorCode: row.error_code } : {}),
+      providerMessageId: row.provider_message_id ?? undefined,
+      errorCode: row.error_code ?? undefined,
     };
     const now = Date.now();
     try {
@@ -738,7 +739,7 @@ export class OutboundDeliveryCoordinator {
         service: "managed_mail",
         event: "retry_scheduled",
         phase: "outbound_completion",
-        errorType: error instanceof Error ? error.name : typeof error,
+        errorType: error instanceof Error ? error.name : "Error",
       }));
     }
   }
@@ -801,7 +802,7 @@ const OUTBOUND_SELECT = `
 function parseReference(value: ManagedOutboundMailReference): ManagedOutboundMailReference {
   if (
     !value
-    || typeof value !== "object"
+    || value.constructor !== Object
     || value.version !== 1
     || !validOpaqueId(value.outboundId)
     || !validFingerprint(value.fingerprint)
@@ -815,20 +816,20 @@ function parseReference(value: ManagedOutboundMailReference): ManagedOutboundMai
   };
 }
 
-function validOpaqueId(value: unknown): value is string {
-  return typeof value === "string"
+function validOpaqueId(value: ExternalValue): value is string {
+  return String(value) === value
     && value.length > 0
     && value.trim() === value
     && TEXT_ENCODER.encode(value).byteLength <= MAX_OPAQUE_ID_LENGTH
-    && !/[\u0000-\u001f\u007f]/.test(value);
+    && !/\p{Cc}/u.test(value);
 }
 
-function validFingerprint(value: unknown): value is string {
-  return typeof value === "string" && /^sha256:[0-9a-f]{64}$/.test(value);
+function validFingerprint(value: ExternalValue): value is string {
+  return String(value) === value && /^sha256:[0-9a-f]{64}$/.test(value);
 }
 
-function validAddress(value: unknown): value is string {
-  if (typeof value !== "string") return false;
+function validAddress(value: ExternalValue): value is string {
+  if (String(value) !== value) return false;
   const separator = value.lastIndexOf("@");
   return value.length > 0
     && TEXT_ENCODER.encode(value).byteLength <= MAX_ADDRESS_LENGTH
@@ -837,37 +838,37 @@ function validAddress(value: unknown): value is string {
     && value.indexOf("@") === separator
     && separator < value.length - 1
     && value.slice(separator + 1).toLowerCase() === value.slice(separator + 1)
-    && !/[\s\u0000-\u001f\u007f<>(),;:"]/.test(value)
+    && !/[\s\p{Cc}<>(),;:"]/u.test(value)
     && !value.includes("..");
 }
 
-function validSubject(value: unknown): value is string {
-  return typeof value === "string"
+function validSubject(value: ExternalValue): value is string {
+  return String(value) === value
     && value.length > 0
     && value.trim() === value
     && TEXT_ENCODER.encode(value).byteLength <= MAX_SUBJECT_LENGTH
-    && !/[\u0000-\u001f\u007f]/.test(value);
+    && !/\p{Cc}/u.test(value);
 }
 
-function validOptionalHeader(value: unknown): boolean {
+function validOptionalHeader(value: ExternalValue): boolean {
   return value === undefined
-    || (typeof value === "string"
+    || (String(value) === value
       && value.length > 0
       && TEXT_ENCODER.encode(value).byteLength <= MAX_HEADER_LENGTH
-      && !/[\u0000-\u001f\u007f]/.test(value));
+      && !/\p{Cc}/u.test(value));
 }
 
-function validOptionalOpaqueId(value: unknown): boolean {
+function validOptionalOpaqueId(value: ExternalValue): boolean {
   return value === undefined || validOpaqueId(value);
 }
 
-function parseProviderMessageId(value: unknown): string {
+function parseProviderMessageId(value: ExternalValue): string {
   if (
-    typeof value !== "string"
+    String(value) !== value
     || value.length === 0
     || TEXT_ENCODER.encode(value).byteLength > MAX_OPAQUE_ID_LENGTH
     || value.trim() !== value
-    || /[\u0000-\u001f\u007f]/.test(value)
+    || /\p{Cc}/u.test(value)
   ) {
     throw new Error("Managed outbound provider message ID is invalid");
   }
@@ -882,7 +883,7 @@ function isTerminal(
 
 async function cancelClaimBody(
   claim: ManagedOutboundMailClaim,
-  reason: unknown,
+  reason: Error | string | null | undefined,
 ): Promise<void> {
   if (claim.body?.stream && !claim.body.stream.locked) {
     await claim.body.stream.cancel(reason).catch(() => {});

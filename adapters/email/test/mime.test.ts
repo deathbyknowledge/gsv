@@ -177,7 +177,7 @@ describe("managed mail MIME parsing", () => {
 
     expect(parsed.summaryInput.subject).not.toMatch(/[\r\n\0]/);
     expect(parsed.summaryInput.text).not.toContain("\0");
-    expect(parsed.metadata.subject).not.toMatch(/[\u0000-\u001f\u007f]/);
+    expect(parsed.metadata.subject).not.toMatch(/\p{Cc}/u);
     expect(empty.summaryInput.text).toBe("Message has no text body");
   });
 

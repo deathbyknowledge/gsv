@@ -108,7 +108,7 @@ function positiveInteger(value: number | string, name: string): number {
 }
 
 function nonNegativeInteger(value: number | string, name: string): number {
-  const parsed = typeof value === "number" ? value : Number(value);
+  const parsed = Number(value) === value ? value : Number(value);
   if (!Number.isSafeInteger(parsed) || parsed < 0) {
     throw new Error(`${name} must be a non-negative safe integer`);
   }

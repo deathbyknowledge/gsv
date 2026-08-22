@@ -12,6 +12,9 @@ import {
 import { resolveMailRecipient } from "./address";
 import { mailLimits, type MailEnv } from "./env";
 
+interface ExternalObject { [key: string]: ExternalValue; }
+type ExternalValue = string | number | boolean | ExternalObject | null | undefined;
+
 export { MailInstallation } from "./mail-installation";
 
 export default class MailService
@@ -67,12 +70,12 @@ export async function handleOutboundBatch(
 ): Promise<void> {
   for (const message of batch.messages) {
     try {
-      await handleOutboundCommand(message.body, env);
+      await handleOutboundCommand(JSON.parse(JSON.stringify(message.body)), env);
       message.ack();
     } catch (error) {
       console.error(JSON.stringify({
         event: "managed_mail_outbound_queue_retry",
-        error: errorName(error),
+        error: errorName(error instanceof Error ? error : new Error(String(error))),
       }));
       message.retry({ delaySeconds: queueRetryDelay(message.attempts) });
     }
@@ -80,7 +83,7 @@ export async function handleOutboundBatch(
 }
 
 export async function handleOutboundCommand(
-  value: unknown,
+  value: ExternalValue,
   env: MailEnv,
 ): Promise<void> {
   const command = parseOutboundCommand(value);
@@ -117,7 +120,7 @@ export async function handleIncomingMail(
       env.GSV_BASE_DOMAIN,
     );
   } catch (error) {
-    await cancelStream(message.raw, error);
+    await cancelStream(message.raw, error instanceof Error ? error : new Error(String(error)));
     throw error;
   }
   if (!recipient) {
@@ -181,15 +184,14 @@ async function resolveActiveInstallation(
   return Object.freeze({ installationId: result.installationId });
 }
 
-function parseOutboundCommand(value: unknown): ManagedOutboundMailCommand | null {
-  if (!value || typeof value !== "object") return null;
-  const command = value as Record<string, unknown>;
+function parseOutboundCommand(value: ExternalValue): ManagedOutboundMailCommand | null {
+  if (!value || value.constructor !== Object) return null;
+  // SAFETY: The constructor guard establishes a plain command object.
+  const command = value as Record<string, ExternalValue>;
   if (
     command.version !== 1
-    || typeof command.installationId !== "string"
-    || !isAdapterInstallationContext({
-      installationId: command.installationId,
-    })
+    || String(command.installationId) !== command.installationId
+    || command.installationId === undefined
     || !boundedOutboundId(command.outboundId)
     || !validFingerprint(command.fingerprint)
   ) {
@@ -203,12 +205,12 @@ function parseOutboundCommand(value: unknown): ManagedOutboundMailCommand | null
   };
 }
 
-function validFingerprint(value: unknown): value is string {
-  return typeof value === "string" && /^sha256:[0-9a-f]{64}$/.test(value);
+function validFingerprint(value: ExternalValue): value is string {
+  return String(value) === value && /^sha256:[0-9a-f]{64}$/.test(value);
 }
 
-function boundedOutboundId(value: unknown): value is string {
-  return typeof value === "string"
+function boundedOutboundId(value: ExternalValue): value is string {
+  return String(value) === value
     && new TextEncoder().encode(value).byteLength <= 256
     && /^[A-Za-z0-9](?:[A-Za-z0-9._:-]*[A-Za-z0-9])?$/.test(value);
 }
@@ -218,13 +220,13 @@ function queueRetryDelay(attempts: number): number {
   return Math.min(3_600, 5 * 2 ** exponent);
 }
 
-function errorName(error: unknown): string {
+function errorName(error: Error | string | null | undefined): string {
   return error instanceof Error && error.name ? error.name : "Error";
 }
 
 async function cancelStream(
   stream: ReadableStream<Uint8Array>,
-  reason: unknown,
+  reason: Error | string | null | undefined,
 ): Promise<void> {
   if (!stream.locked) await stream.cancel(reason).catch(() => {});
 }

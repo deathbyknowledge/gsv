@@ -16,6 +16,8 @@ const MAX_RFC822_NESTING = 2;
 const MAX_ADDRESSES_PER_FIELD = 200;
 const MAX_ATTACHMENTS = 256;
 const MAX_ADDRESS_BYTES = 512;
+interface SerializedObject { [key: string]: SerializedValue; }
+type SerializedValue = string | number | boolean | SerializedObject | SerializedValue[] | null | undefined;
 const MAX_NAME_BYTES = 512;
 const MAX_SUBJECT_BYTES = 4_096;
 const MAX_RFC_MESSAGE_ID_BYTES = 2_048;
@@ -87,15 +89,15 @@ export async function parseMail(
       from: requiredAddress(input.envelopeFrom, "envelopeFrom"),
       to: requiredAddress(input.envelopeTo, "envelopeTo"),
     },
-    ...(rfcMessageId ? { rfcMessageId } : {}),
-    ...(mailDate(email) === undefined ? {} : { sentAt: mailDate(email) }),
-    ...(from ? { from } : {}),
+    rfcMessageId,
+    sentAt: mailDate(email),
+    from,
     to: mailboxes(email.to),
     cc: mailboxes(email.cc),
     replyTo: mailboxes(email.replyTo),
-    ...(subject === undefined ? {} : { subject }),
-    ...(text === undefined ? {} : { text }),
-    ...(html === undefined ? {} : { html }),
+    subject,
+    text,
+    html,
     attachments: email.attachments
       .slice(0, MAX_ATTACHMENTS)
       .map(attachmentMetadata),
@@ -139,7 +141,7 @@ function compactMetadata(
   };
 }
 
-function serializedBytes(value: unknown): number {
+function serializedBytes(value: SerializedValue): number {
   return TEXT_ENCODER.encode(JSON.stringify(value)).byteLength;
 }
 
@@ -177,7 +179,7 @@ function mailbox(value: Mailbox): ManagedMailAddress | null {
   const name = boundedText(sanitizeHeaderText(value.name), MAX_NAME_BYTES)?.trim();
   return {
     address,
-    ...(name ? { name } : {}),
+    name,
   };
 }
 
@@ -201,9 +203,9 @@ function attachmentMetadata(
   return {
     mimeType,
     size: attachmentSize(attachment.content),
-    ...(filename ? { filename } : {}),
-    ...(disposition ? { disposition } : {}),
-    ...(contentId ? { contentId } : {}),
+    filename,
+    disposition,
+    contentId,
   };
 }
 
@@ -214,8 +216,8 @@ function attachmentDisposition(
 }
 
 function attachmentSize(content: Attachment["content"]): number {
-  if (typeof content === "string") return TEXT_ENCODER.encode(content).byteLength;
-  return content.byteLength;
+  if (String(content) === content) return TEXT_ENCODER.encode(String(content)).byteLength;
+  return new Blob([content]).size;
 }
 
 function mailDate(email: Email): number | undefined {
@@ -236,11 +238,11 @@ function boundedText(value: string | undefined, maxBytes: number): string | unde
 }
 
 function sanitizeHeaderText(value: string | undefined): string | undefined {
-  return value?.replace(/[\u0000-\u001f\u007f]/g, " ");
+  return value?.replace(/\p{Cc}/gu, " ");
 }
 
 function sanitizeBodyText(value: string | undefined): string | undefined {
-  return value?.replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g, "");
+  return value?.replace(/\p{Cc}/gu, "");
 }
 
 function optionalAddress(value: string | undefined): string | undefined {

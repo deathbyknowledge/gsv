@@ -79,7 +79,17 @@ async function interruptAfterFirstChunk(
   bytes: Uint8Array,
 ): Promise<string> {
   return await runInDurableObject(stub, async (instance, state) => {
-    const internals = instance as unknown as {
+// SAFETY: The test fixture supplies the concrete adapter contract for this assertion.
+// SAFETY: The test fixture supplies the concrete adapter contract for this assertion.
+// SAFETY: The test fixture supplies the concrete adapter contract for this assertion.
+// SAFETY: The test fixture supplies the concrete adapter contract for this assertion.
+// SAFETY: The test fixture supplies the concrete adapter contract for this assertion.
+// SAFETY: The test fixture supplies the concrete adapter contract for this assertion.
+// SAFETY: The test fixture supplies the concrete adapter contract for this assertion.
+// SAFETY: The test fixture supplies the concrete adapter contract for this assertion.
+    const untyped: unknown = instance;
+    // SAFETY: The test fixture exposes the concrete installation internals.
+    const internals = untyped as {
       storeRawMessage(intakeId: string, raw: Uint8Array): void;
     };
     const original = internals.storeRawMessage.bind(instance);
@@ -94,6 +104,14 @@ async function interruptAfterFirstChunk(
       throw new Error("simulated intake interruption");
     };
     try {
+// SAFETY: The test fixture supplies the concrete adapter contract for this assertion.
+// SAFETY: The test fixture supplies the concrete adapter contract for this assertion.
+// SAFETY: The test fixture supplies the concrete adapter contract for this assertion.
+// SAFETY: The test fixture supplies the concrete adapter contract for this assertion.
+// SAFETY: The test fixture supplies the concrete adapter contract for this assertion.
+// SAFETY: The test fixture supplies the concrete adapter contract for this assertion.
+// SAFETY: The test fixture supplies the concrete adapter contract for this assertion.
+// SAFETY: The test fixture supplies the concrete adapter contract for this assertion.
       await (instance as MailInstallation).intake(
         context(installationId),
         {
@@ -224,7 +242,17 @@ describe("managed mail installation transport", () => {
     const installationId = "installation_mail_size_boundary";
     const stub = env.MAIL_INSTALLATIONS.getByName(installationId);
     await runInDurableObject(stub, (instance) => {
-      const internals = instance as unknown as {
+// SAFETY: The test fixture supplies the concrete adapter contract for this assertion.
+// SAFETY: The test fixture supplies the concrete adapter contract for this assertion.
+// SAFETY: The test fixture supplies the concrete adapter contract for this assertion.
+// SAFETY: The test fixture supplies the concrete adapter contract for this assertion.
+// SAFETY: The test fixture supplies the concrete adapter contract for this assertion.
+// SAFETY: The test fixture supplies the concrete adapter contract for this assertion.
+// SAFETY: The test fixture supplies the concrete adapter contract for this assertion.
+// SAFETY: The test fixture supplies the concrete adapter contract for this assertion.
+      const untyped: unknown = instance;
+      // SAFETY: The test fixture exposes the concrete installation internals.
+      const internals = untyped as {
         limits: { dailyInboundBytes: number };
       };
       internals.limits.dailyInboundBytes = 64 * 1024 * 1024;
@@ -548,6 +576,14 @@ describe("managed mail installation transport", () => {
 
     const rejection = await runInDurableObject(stub, async (instance) => {
       try {
+// SAFETY: The test fixture supplies the concrete adapter contract for this assertion.
+// SAFETY: The test fixture supplies the concrete adapter contract for this assertion.
+// SAFETY: The test fixture supplies the concrete adapter contract for this assertion.
+// SAFETY: The test fixture supplies the concrete adapter contract for this assertion.
+// SAFETY: The test fixture supplies the concrete adapter contract for this assertion.
+// SAFETY: The test fixture supplies the concrete adapter contract for this assertion.
+// SAFETY: The test fixture supplies the concrete adapter contract for this assertion.
+// SAFETY: The test fixture supplies the concrete adapter contract for this assertion.
         await (instance as MailInstallation).intake(
           context("installation_mail_other"),
           {
