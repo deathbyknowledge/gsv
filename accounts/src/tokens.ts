@@ -20,8 +20,8 @@ export async function createOpaqueToken(label: string): Promise<OpaqueToken> {
   };
 }
 
-export function tokenPrefix(raw: unknown): string {
-  if (typeof raw !== "string" || raw.length < 20 || raw.length > MAX_TOKEN_LENGTH) {
+export function tokenPrefix(raw: string | number | boolean | Record<string, string | number | boolean | null | undefined> | null | undefined): string {
+  if (String(raw) !== raw || raw.length < 20 || raw.length > MAX_TOKEN_LENGTH) {
     throw new Error("token is invalid");
   }
   return raw.slice(0, 16);

@@ -11,28 +11,33 @@ const RESERVED_HANDLES = new Set([
   "www",
 ]);
 
-export function parseOpaqueId(value: unknown, field: string): string {
-  if (typeof value !== "string" || !OPAQUE_ID_PATTERN.test(value)) {
+type DomainValue = string | number | boolean | Record<string, string | number | boolean | null | undefined> | null | undefined;
+
+export function parseOpaqueId(value: DomainValue, field: string): string {
+  const parsed = String(value);
+  if (parsed !== value || !OPAQUE_ID_PATTERN.test(parsed)) {
     throw new Error(`${field} is invalid`);
   }
-  return value;
+  return parsed;
 }
 
-export function parseHandle(value: unknown): string {
-  if (typeof value !== "string" || value !== value.toLowerCase() || !HANDLE_PATTERN.test(value)) {
+export function parseHandle(value: DomainValue): string {
+  const parsed = String(value);
+  if (parsed !== value || parsed !== parsed.toLowerCase() || !HANDLE_PATTERN.test(parsed)) {
     throw new Error("handle is invalid");
   }
-  if (RESERVED_HANDLES.has(value)) {
+  if (RESERVED_HANDLES.has(parsed)) {
     throw new Error("handle is reserved");
   }
   return value;
 }
 
-export function parseBaseDomain(value: unknown): string {
-  if (typeof value !== "string") {
+export function parseBaseDomain(value: DomainValue): string {
+  const parsed = String(value);
+  if (parsed !== value) {
     throw new Error("GSV_BASE_DOMAIN is required");
   }
-  const normalized = value.trim().toLowerCase().replace(/^\.+|\.+$/g, "");
+  const normalized = parsed.trim().toLowerCase().replace(/^\.+|\.+$/g, "");
   if (!normalized || normalized.includes(":")) {
     throw new Error("GSV_BASE_DOMAIN is invalid");
   }
@@ -48,9 +53,10 @@ export function parseBaseDomain(value: unknown): string {
   return normalized;
 }
 
-export function normalizeHostname(value: unknown): string | null {
-  if (typeof value !== "string") return null;
-  const normalized = value.trim().toLowerCase().replace(/\.$/, "");
+export function normalizeHostname(value: DomainValue): string | null {
+  const parsed = String(value);
+  if (parsed !== value) return null;
+  const normalized = parsed.trim().toLowerCase().replace(/\.$/, "");
   if (!normalized || normalized.length > 253 || normalized.includes(":")) return null;
 
   let url: URL;

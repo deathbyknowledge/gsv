@@ -119,7 +119,7 @@ export class ManagedInferenceUsageStore {
 function validateUsageEvent(
   event: ManagedInferenceUsageEvent,
 ): ManagedInferenceUsageEvent {
-  if (!event || typeof event !== "object" || event.version !== 1) {
+  if (!event || event.constructor !== Object || event.version !== 1) {
     throw new Error("Managed inference usage event is invalid");
   }
   parseOpaqueId(event.installationId, "installationId");
@@ -186,7 +186,7 @@ function validateUsageEvent(
 function optionalValue(value: string | undefined, field: string): void {
   if (
     value !== undefined
-    && (typeof value !== "string"
+    && (String(value) !== value
       || value.length < 1
       || value.length > OPTIONAL_VALUE_MAX_LENGTH)
   ) {

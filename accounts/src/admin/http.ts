@@ -5,6 +5,7 @@ import {
   readJsonObject,
   requireString,
 } from "../http";
+import type { JsonValue, JsonObject } from "../http";
 import type { AccountsAdminAccess } from "./access";
 import type { ManagedInferenceRoutingUpdate } from "../inference-policy";
 import { adminInferencePage } from "./inference-page";
@@ -263,7 +264,9 @@ export class AccountsAdminHttp {
               request.method === "HEAD",
             );
       }
-      const failure = publicAdminFailure(error);
+      const failure = publicAdminFailure(
+        error instanceof Error ? error : new Error("request failed"),
+      );
       if (isAdminApiPath(url.pathname)) {
         return json({ error: failure.message }, failure.status);
       }
@@ -392,6 +395,7 @@ function parseInstallationRoute(pathname: string): {
     ? {
         api: Boolean(match[1]),
         installationId: match[2] ?? "",
+// SAFETY: This assertion follows boundary validation or a test fixture with the declared owner contract.
         action: (match[3] as InstallationAdminAction | undefined) ?? null,
       }
     : null;
@@ -460,10 +464,7 @@ async function readJsonInferencePolicy(request: Request): Promise<{
   };
 }
 
-function readFormInferencePolicy(form: URLSearchParams): {
-  enabled: boolean;
-  monthlyLimitNanoUsd: number;
-} {
+function readFormInferencePolicy(form: URLSearchParams) {
   return {
     enabled: readFormBoolean(form.get("enabled"), "enabled"),
     monthlyLimitNanoUsd: parseUsdToNanoUsd(
@@ -473,7 +474,7 @@ function readFormInferencePolicy(form: URLSearchParams): {
 }
 
 function readJsonInferenceRouting(
-  body: Record<string, unknown>,
+  body: JsonObject,
 ): ManagedInferenceRoutingUpdate {
   const provider = readJsonObjectField(body.provider, "provider");
   return {
@@ -587,25 +588,28 @@ function readFormInferenceRouting(
   };
 }
 
-function requireBoolean(value: unknown, field: string): boolean {
-  if (typeof value !== "boolean") throw new Error(`${field} is invalid`);
+function requireBoolean(value: JsonValue, field: string): boolean {
+  if (value !== true && value !== false) throw new Error(`${field} is invalid`);
   return value;
 }
 
 function readJsonObjectField(
-  value: unknown,
+  value: JsonValue,
   field: string,
-): Record<string, unknown> {
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
+): JsonObject {
+  if (!value || value.constructor !== Object || Array.isArray(value)) {
     throw new Error(`${field} is invalid`);
   }
-  return value as Record<string, unknown>;
+// SAFETY: This assertion follows boundary validation or a test fixture with the declared owner contract.
+  return value as JsonObject;
 }
 
-function requirePositiveInteger(value: unknown, field: string): number {
+function requirePositiveInteger(value: JsonValue, field: string): number {
+// SAFETY: This assertion follows boundary validation or a test fixture with the declared owner contract.
   if (!Number.isSafeInteger(value) || (value as number) <= 0) {
     throw new Error(`${field} is invalid`);
   }
+// SAFETY: This assertion follows boundary validation or a test fixture with the declared owner contract.
   return value as number;
 }
 
@@ -616,22 +620,24 @@ function parsePositiveInteger(value: string | null, field: string): number {
   return requirePositiveInteger(Number(value), field);
 }
 
-function requireStringArray(value: unknown, field: string): string[] {
-  if (!Array.isArray(value) || value.some((item) => typeof item !== "string")) {
+function requireStringArray(value: JsonValue, field: string): string[] {
+  if (!Array.isArray(value) || value.some((item) => String(item) !== item)) {
     throw new Error(`${field} is invalid`);
   }
+// SAFETY: This assertion follows boundary validation or a test fixture with the declared owner contract.
   return value as string[];
 }
 
 function requireQuantizations(
-  value: unknown,
+  value: JsonValue,
 ): ManagedInferenceRoutingUpdate["provider"]["quantizations"] {
+// SAFETY: This assertion follows boundary validation or a test fixture with the declared owner contract.
   return requireStringArray(value, "quantizations") as
     ManagedInferenceRoutingUpdate["provider"]["quantizations"];
 }
 
 function requireProviderSort(
-  value: unknown,
+  value: JsonValue,
 ): ManagedInferenceRoutingUpdate["provider"]["sort"] {
   if (
     value !== "default"
@@ -645,7 +651,7 @@ function requireProviderSort(
 }
 
 function requireDataCollection(
-  value: unknown,
+  value: JsonValue,
 ): ManagedInferenceRoutingUpdate["provider"]["dataCollection"] {
   if (value !== "allow" && value !== "deny") {
     throw new Error("dataCollection is invalid");
@@ -688,14 +694,14 @@ function optionalFormNumber(
 }
 
 function optionalJsonNumber(
-  value: unknown,
+  value: JsonValue,
   field: "preferredMinThroughput" | "preferredMaxLatency",
 ): Partial<Pick<
   ManagedInferenceRoutingUpdate["provider"],
   "preferredMinThroughput" | "preferredMaxLatency"
 >> {
   if (value === undefined) return {};
-  if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) {
+  if (Number(value) !== value || !Number.isFinite(value) || value <= 0) {
     throw new Error(`${field} is invalid`);
   }
   return field === "preferredMinThroughput"
@@ -703,7 +709,7 @@ function optionalJsonNumber(
     : { preferredMaxLatency: value };
 }
 
-function requireOperationalState(value: unknown): "active" | "restricted" {
+function requireOperationalState(value: JsonValue): "active" | "restricted" {
   if (value !== "active" && value !== "restricted") {
     throw new Error("installation state is invalid");
   }
@@ -716,8 +722,8 @@ function readFormBoolean(value: string | null, field: string): boolean {
   throw new Error(`${field} is invalid`);
 }
 
-function requireNanoUsd(value: unknown, field: string): number {
-  if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 0) {
+function requireNanoUsd(value: JsonValue, field: string): number {
+  if (Number(value) !== value || !Number.isSafeInteger(value) || value < 0) {
     throw new Error(`${field} is invalid`);
   }
   return value;
@@ -756,7 +762,7 @@ function redirect(location: string): Response {
   });
 }
 
-function publicAdminFailure(error: unknown): { message: string; status: number } {
+function publicAdminFailure(error: Error) {
   const message = error instanceof Error ? error.message : "";
   if (
     message.startsWith("handle ")

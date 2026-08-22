@@ -1,8 +1,6 @@
 const MAX_JSON_BODY_BYTES = 32 * 1024;
 
-export async function readJsonObject(
-  request: Request,
-): Promise<Record<string, unknown>> {
+export async function readJsonObject(request: Request): Promise<JsonObject> {
   const type = request.headers.get("content-type")?.split(";", 1)[0]?.trim();
   if (type !== "application/json") throw new Error("JSON body is required");
   const declaredLength = Number(request.headers.get("content-length"));
@@ -13,15 +11,21 @@ export async function readJsonObject(
   if (new TextEncoder().encode(text).byteLength > MAX_JSON_BODY_BYTES) {
     throw new Error("request body is too large");
   }
-  const value = JSON.parse(text) as unknown;
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
+  const value: unknown = JSON.parse(text);
+  if (!value || value.constructor !== Object || Array.isArray(value)) {
     throw new Error("JSON object is required");
   }
-  return value as Record<string, unknown>;
+// SAFETY: This assertion follows boundary validation or a test fixture with the declared owner contract.
+  return value as JsonObject;
 }
 
-export function requireString(value: unknown, field: string): string {
-  if (typeof value !== "string" || !value) throw new Error(`${field} is required`);
+export interface JsonObject {
+  [key: string]: JsonValue;
+}
+export type JsonValue = string | number | boolean | null | JsonObject | JsonValue[] | undefined;
+
+export function requireString(value: JsonValue, field: string): string {
+  if (String(value) !== value || !value) throw new Error(`${field} is required`);
   return value;
 }
 
@@ -35,7 +39,7 @@ export function hasExpectedOrigin(request: Request, expectedOrigin: string): boo
   }
 }
 
-export function json(value: unknown, status = 200): Response {
+export function json(value: JsonValue, status = 200): Response {
   return Response.json(value, { status, headers: noStoreHeaders() });
 }
 

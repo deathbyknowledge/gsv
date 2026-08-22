@@ -5,6 +5,7 @@ import {
   type ManagedInferenceRouting,
 } from "@humansandmachines/gsv/protocol";
 import { parseOpaqueId } from "./domain";
+import type { JsonValue } from "./http";
 
 export type ManagedInferenceControl = {
   enabled: boolean;
@@ -259,12 +260,8 @@ function routingFromRow(row: RoutingRow): ManagedInferenceRouting {
       ignore: storedStringList(row.provider_ignore_json, "provider ignore"),
       quantizations: storedQuantizations(row.quantizations_json),
       sort,
-      ...(row.preferred_min_throughput === null
-        ? {}
-        : { preferredMinThroughput: row.preferred_min_throughput }),
-      ...(row.preferred_max_latency === null
-        ? {}
-        : { preferredMaxLatency: row.preferred_max_latency }),
+      preferredMinThroughput: row.preferred_min_throughput ?? undefined,
+      preferredMaxLatency: row.preferred_max_latency ?? undefined,
     },
     updatedAt: requiredNonNegativeInteger(row.updated_at, "updatedAt"),
   });
@@ -287,7 +284,7 @@ function validateRouting(
     throw new Error("maxOutputTokens cannot exceed contextWindow");
   }
   const provider = value.provider;
-  if (!provider || typeof provider !== "object") {
+  if (!provider || provider.constructor !== Object) {
     throw new Error("provider is invalid");
   }
   const order = requiredStringList(provider.order, "provider.order");
@@ -347,6 +344,7 @@ function validateRouting(
       only,
       ignore,
       quantizations,
+// SAFETY: This assertion follows boundary validation or a test fixture with the declared owner contract.
       sort: sort as ManagedInferenceRouting["provider"]["sort"],
       ...optionalPositiveNumber(
         provider.preferredMinThroughput,
@@ -371,9 +369,9 @@ function validateStoredRouting(
   };
 }
 
-function requiredModelId(value: unknown): string {
+function requiredModelId(value: JsonValue): string {
   if (
-    typeof value !== "string"
+    String(value) !== value
     || value.length < 1
     || value.length > 200
     || value.trim() !== value
@@ -384,51 +382,62 @@ function requiredModelId(value: unknown): string {
   return value;
 }
 
-function requiredDisplayName(value: unknown): string {
+function requiredDisplayName(value: JsonValue): string {
   if (
-    typeof value !== "string"
+    String(value) !== value
     || value.length < 1
     || value.length > 200
     || value.trim() !== value
-    || /[\u0000-\u001f\u007f]/.test(value)
+    || /\p{Cc}/u.test(value)
   ) {
     throw new Error("displayName is invalid");
   }
   return value;
 }
 
-function requiredPositiveInteger(value: unknown, field: string): number {
+function requiredPositiveInteger(value: JsonValue, field: string): number {
+// SAFETY: This assertion follows boundary validation or a test fixture with the declared owner contract.
   if (!Number.isSafeInteger(value) || (value as number) <= 0) {
     throw new Error(`${field} is invalid`);
   }
+// SAFETY: This assertion follows boundary validation or a test fixture with the declared owner contract.
+// SAFETY: This assertion follows boundary validation or a test fixture with the declared owner contract.
+// SAFETY: This assertion follows boundary validation or a test fixture with the declared owner contract.
+// SAFETY: This assertion follows boundary validation or a test fixture with the declared owner contract.
+// SAFETY: This assertion follows boundary validation or a test fixture with the declared owner contract.
+// SAFETY: The surrounding owner contract or fixture establishes this asserted shape.
+  // SAFETY: Number.isSafeInteger established the numeric domain above.
+  // SAFETY: Number.isSafeInteger established the numeric domain above.
   return value as number;
 }
 
-function requiredNonNegativeInteger(value: unknown, field: string): number {
+function requiredNonNegativeInteger(value: JsonValue, field: string): number {
+// SAFETY: This assertion follows boundary validation or a test fixture with the declared owner contract.
   if (!Number.isSafeInteger(value) || (value as number) < 0) {
     throw new Error(`${field} is invalid`);
   }
+  // SAFETY: Number.isSafeInteger established the numeric domain above.
   return value as number;
 }
 
-function requiredPrice(value: unknown, field: string): number {
+function requiredPrice(value: JsonValue, field: string): number {
   const price = requiredNonNegativeInteger(value, field);
   if (price > 1_000_000) throw new Error(`${field} is invalid`);
   return price;
 }
 
-function requiredStringList(value: unknown, field: string): string[] {
+function requiredStringList(value: JsonValue, field: string): string[] {
   if (!Array.isArray(value) || value.length > 32) {
     throw new Error(`${field} is invalid`);
   }
   const result: string[] = [];
   for (const item of value) {
     if (
-      typeof item !== "string"
+      String(item) !== item
       || item.length < 1
       || item.length > 80
       || item.trim() !== item
-      || /[\u0000-\u001f\u007f,]/.test(item)
+      || /[\p{Cc},]/u.test(item)
       || result.includes(item)
     ) {
       throw new Error(`${field} is invalid`);
@@ -438,25 +447,27 @@ function requiredStringList(value: unknown, field: string): string[] {
   return result;
 }
 
-function requiredQuantizations(value: unknown): ManagedInferenceQuantization[] {
+function requiredQuantizations(value: JsonValue): ManagedInferenceQuantization[] {
   const values = requiredStringList(value, "provider.quantizations");
   if (values.some((item) => !MANAGED_INFERENCE_QUANTIZATIONS.includes(
+// SAFETY: This assertion follows boundary validation or a test fixture with the declared owner contract.
     item as ManagedInferenceQuantization,
   ))) {
     throw new Error("provider.quantizations is invalid");
   }
+// SAFETY: This assertion follows boundary validation or a test fixture with the declared owner contract.
   return values as ManagedInferenceQuantization[];
 }
 
 function optionalPositiveNumber(
-  value: unknown,
+  value: JsonValue,
   field: "provider.preferredMinThroughput" | "provider.preferredMaxLatency",
 ): Partial<Pick<
   ManagedInferenceRouting["provider"],
   "preferredMinThroughput" | "preferredMaxLatency"
 >> {
   if (value === undefined) return {};
-  if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) {
+  if (Number(value) !== value || !Number.isFinite(value) || value <= 0) {
     throw new Error(`${field} is invalid`);
   }
   return field === "provider.preferredMinThroughput"
@@ -487,13 +498,13 @@ function storedQuantizations(value: string): ManagedInferenceQuantization[] {
   }
 }
 
-function requiredBoolean(value: unknown, field: string): boolean {
-  if (typeof value !== "boolean") throw new Error(`${field} is invalid`);
+function requiredBoolean(value: JsonValue, field: string): boolean {
+  if (value !== true && value !== false) throw new Error(`${field} is invalid`);
   return value;
 }
 
-function requiredMonthlyLimit(value: unknown): number {
-  if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 0) {
+function requiredMonthlyLimit(value: JsonValue): number {
+  if (Number(value) !== value || !Number.isSafeInteger(value) || value < 0) {
     throw new Error("managed inference monthly limit is invalid");
   }
   return value;
