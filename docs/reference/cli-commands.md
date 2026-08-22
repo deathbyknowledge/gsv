@@ -30,8 +30,10 @@ gsv chat [MESSAGE] [--pid PID]
 gsv shell
 ```
 
-`chat` sends a message to a process with `proc.send`. With `MESSAGE`, it waits
-for the matching `proc.run.finished` signal for up to 120 seconds. The
+`chat` resolves the Home or selected Work conversation and sends with
+`conversation.send`. With `MESSAGE`, it waits for the canonical
+`message.committed` and matching `proc.run.finished` signals for up to 120
+seconds. The
 interactive prompt returns after each message is accepted so another message
 can supersede an active run; type `quit` or `exit` to leave. `--pid` targets a
 specific process; when omitted, the CLI uses the user's personal
@@ -100,14 +102,14 @@ with an error there. `proc list` labels the one canonical process as
 `kind=personal`; all other entries are `kind=work`, even when they run as the
 same personal-agent account.
 
-`message current` reports where the current run's final answer is delivered
-automatically. For an adapter run, both text and JSON output include an opaque
+`message current` reports the current run's directed endpoint. For an adapter
+run, both text and JSON output include an opaque
 destination id suitable for a later `message send --to`; raw provider ids stay
-hidden. `message attach` adds one or more GSV filesystem files to that
-same final answer for native clients and adapter origins; it does not create an
-extra message. Existing files in the current process's `/var/media` directory
+hidden. `message attach` adds one or more GSV filesystem files to the run's
+eventual terminal Message; it does not create an extra message. Existing files
+in the current process's `/var/media` directory
 are reused, while other readable files are staged there. Return the answer
-normally. `message send` creates an
+with Message, or choose Silence. `message send` creates an
 additional outbound message or sends to another authorized destination.
 `message destinations` lists observed destinations that are online; `--all`
 also includes known authorized destinations whose adapter account is offline.
@@ -125,7 +127,7 @@ app to return to personal intelligence; `route clear` does not clear a DM.
 opaque destination id or unambiguous label from `message destinations --all`.
 `route set` accepts a full or unique process-id prefix or an unambiguous process
 label. A route change controls future inbound messages only, so the run making
-the change still returns its final reply to the conversation that started it.
+the change keeps its terminal Message directed to the conversation that started it.
 Repeated `route set` calls from the same current run to the same work process
 are idempotent. Newer private activity or a newer selection fences a late call.
 
@@ -150,9 +152,9 @@ reasoning, or structured output. The underlying `ai.image.read` response body
 streams decoded UTF-8 chunks; the gateway shell collects those chunks into its
 final `shell.exec` stdout.
 
-`--to here` selects the current adapter reply surface. An explicit send to that
-same destination requires `--also`, acknowledging that it is intentionally in
-addition to the automatic final reply. `--attach` streams one GSV filesystem
+`--to here` selects the current adapter endpoint. An explicit send to that same
+destination requires `--also`, acknowledging that it is intentionally separate
+from the terminal Message. `--attach` streams one GSV filesystem
 file; `--mime` overrides the inferred MIME type. Copy a file from a connected
 target to GSV before attaching it:
 

@@ -454,6 +454,73 @@ if (res.status === "failed") {
 return { exitCode: res.exitCode, output };
 ```
 
+## Conversations: `conversation.*`
+
+`conversation.*` is the direct-client interface for canonical user-visible messages. It is
+separate from raw `proc.history` activity. These operations require an authenticated direct user
+client; Process and adapter service callers use private Kernel-owned admission paths.
+
+| Syscall | Handler | Behavior |
+|---|---|---|
+| `conversation.home` | Kernel | Ensures and returns the caller's stable Home conversation and current personal Process handler. |
+| `conversation.forProcess` | Kernel | Returns Home for the personal Process or ensures a Work conversation for an owned interactive Process. |
+| `conversation.list` | Kernel | Lists the caller's canonical Home, Work, and Group conversations. |
+| `conversation.history` | Conversation DO | Returns a newest-first page normalized into chronological order, paging transparently across hot SQLite messages and immutable R2 segments. |
+| `conversation.send` | Kernel | Idempotently commits user input, preinstalls the originating connection's directed run route, and admits the interaction to the conversation handler. The returned run id is deterministically bound to the canonical input message. |
+| `conversation.media.read` | Conversation DO through Kernel | Returns metadata plus a body stream for media owned by that conversation. Process cleanup does not remove it. |
+
+```ts
+type ConversationKind = "home" | "work" | "group";
+type ConversationSummary = {
+  id: string;
+  kind: ConversationKind;
+  ownerUid: number;
+  title: string | null;
+  handlerPid: string;
+  latestSequence: number;
+  createdAt: number;
+  updatedAt: number;
+};
+type ConversationMessage = {
+  id: string;
+  conversationId: string;
+  sequence: number;
+  author: { kind: "user"; uid: number } | { kind: "process"; pid: string; uid: number };
+  text: string;
+  media?: MediaInput[];
+  origin: ConversationMessageOrigin;
+  processId?: string;
+  runId?: string;
+  createdAt: number;
+};
+type ConversationSyscalls = {
+  "conversation.home": {
+    args: Record<string, never>;
+    result: { conversation: ConversationSummary };
+  };
+  "conversation.forProcess": {
+    args: { pid: string };
+    result: { conversation: ConversationSummary };
+  };
+  "conversation.list": {
+    args: Record<string, never>;
+    result: { conversations: ConversationSummary[] };
+  };
+  "conversation.history": {
+    args: { conversationId: string; beforeSequence?: number; limit?: number };
+    result: { conversation: ConversationSummary; messages: ConversationMessage[]; hasMore: boolean };
+  };
+  "conversation.send": {
+    args: { conversationId: string; text: string; media?: MediaInput[]; idempotencyKey?: string };
+    result: { message: ConversationMessage; handlerPid: string; runId: string; queued?: boolean };
+  };
+  "conversation.media.read": {
+    args: { conversationId: string; key: string };
+    result: { ok: true; conversationId: string; key: string; mimeType: string; size: number } | OperationError;
+  };
+};
+```
+
 ## Processes: `proc.*`
 
 `proc.*` controls GSV AI processes. These are long-lived agent processes, not shell commands.
@@ -463,6 +530,8 @@ Runtime behavior:
 | Syscall | Handler | Behavior |
 |---|---|---|
 | `proc.list` | `handleProcList` | Reads the kernel process registry. Each entry reports whether it occupies its owner's one personal-process slot. Root defaults to all processes and may filter by `uid`; non-root is always scoped to its owning human. |
+| `proc.observe` | Kernel | Adds an owned Process to the current user connection's raw-activity observation set. Reasoning, output, tool, retry, HIL, and finish signals then reach that connection even when it does not own the run route. |
+| `proc.unobserve` | Kernel | Removes an owned Process from the current connection's observation set. |
 | `proc.spawn` | `handleProcSpawn` | Resolves the run-as identity (the personal agent for a parentless default, the parent for an inherited child, or explicit `runAs`), registers a process, sends kernel-only `proc.setidentity`, and optionally admits the initial prompt. |
 | `proc.send` | Process DO `handleProcSend` | Admits work into the target process history. A direct user message supersedes the active run; process and scheduler messages remain FIFO queued. Media entries contain process-scoped keys returned by `proc.media.write` or external URLs; inline `media.data` is not accepted. Media-bearing messages are admitted immediately and generation starts after background preparation. Kernel-owned paths can preallocate a run id, which the Process reconciles against active, queued, and recorded admissions. |
 | `proc.ipc.send` | `handleProcIpcSend` | Process-callable same-owner IPC. Validates that the caller is a registered process, the target exists, and source/target owners match, then sends kernel-only `proc.ipc.deliver` to the target Process DO. The target receives a visible user message envelope and starts or queues a run. |
@@ -470,7 +539,7 @@ Runtime behavior:
 | `proc.abort` | Process DO | Cancels the active run. Converts outstanding tool calls to error results, sends `request.cancel` for active tool, CodeMode, and routed provider requests, clears pending HIL and current run, emits `proc.run.finished` with `status: "aborted"`, and may promote the next queued run. Cancellation is nonblocking and late results cannot mutate the successor run. An optional `runId` prevents a stale abort from stopping a successor. |
 | `proc.hil` | Process DO | Resolves a pending human-in-the-loop request. `approve` dispatches the original syscall; `deny` appends a synthetic error tool result. `remember: true` with `approve` stores a process-local allow override for the syscall and target class. |
 | `proc.kill` | Process DO | Optionally archives the process history under the run-as agent's home, promotes referenced media into immutable archive objects, clears live process media, and wipes Process DO state. After success the Kernel removes the process registry entry. |
-| `proc.history` | Process DO | Returns paged stored messages, message count and cursor flags, pending HIL, and the latest context-pressure state. Offset paging reads from the beginning. `tail: true` reads the latest page, `beforeMessageId` reads older messages, and `afterMessageId` reads newer messages. Tool results and assistant metadata are expanded into structured content. |
+| `proc.history` | Process DO | Returns paged stored messages, message count and cursor flags, pending HIL, and the latest context-pressure state. Offset paging reads from the beginning. `tail: true` reads the latest page, `beforeMessageId` reads older messages, and `afterMessageId` reads newer messages. `includeMessages: false` returns status metadata without transferring raw Process activity. Tool results and assistant metadata are expanded into structured content when messages are included. |
 | `proc.media.read` | Process DO | Reads one process-scoped media object. A successful result returns key, filesystem path, MIME type, and size in `data` and always attaches the media bytes as a response body. |
 | `proc.media.write` | Process DO | Streams one request body directly into process-scoped R2 storage. The body descriptor must declare its exact length so R2 receives a fixed-length stream. An internal caller may supply `mediaId` as an idempotency key: an exact repeated descriptor drains the repeated body and returns the original reference, while conflicting metadata is rejected. Returns a stable media reference for `proc.send`, including its read-only `/var/media/{uid}/{pid}/{id}` filesystem path. |
 | `proc.media.delete` | Process DO | Idempotently deletes one unreferenced process-scoped media object. Keys outside the target process or already referenced by process history are rejected. Used to roll back uploads that are not admitted by `proc.send`. |
@@ -479,7 +548,7 @@ Runtime behavior:
 | `proc.history.compact` | Process DO | Archives an old history prefix, inserts a visible system summary marker, and records a `compaction` segment. Requires a supplied or generated summary and exactly one of `keepLast` or `throughMessageId`. |
 | `proc.history.segment.read` | Process DO | Reads paged messages from a compacted segment without restoring them into active history. |
 | `proc.history.segments` | Process DO | Lists compacted segments, including archive paths and summary marker ids. |
-| `proc.fork` | `handleProcFork` | Creates a new process from committed source history through `throughMessageId`, or from a compacted `segmentId`. Its label defaults to `Branch of <source label>` and the canonical label is returned. Segment restore includes the live suffix present at the compaction boundary unless `includeLiveSuffix: false`. Active work, queued input, tools, and HIL are not copied. |
+| `proc.fork` | `handleProcFork` | Creates a new process from committed source history through a raw `throughMessageId`, a canonical Conversation message's `throughRunId`, or a compacted `segmentId`. Run selection resolves to the corresponding Process input boundary. Its label defaults to `Branch of <source label>` and the canonical label is returned. Segment restore includes the live suffix present at the compaction boundary unless `includeLiveSuffix: false`. Active work, queued input, tools, and HIL are not copied. |
 | `proc.reset` | Process DO | Archives the non-empty history, clears active execution state, queues, process media, and messages, then increments the history generation. |
 | `proc.ipc.deliver` | Process DO direct path | Kernel-only through public dispatch. Delivers a Kernel-validated IPC envelope to the target process. |
 | `proc.history.export` | Process DO direct path | Kernel-only syscall used by `proc.fork` to materialize committed history as archive paths. |
@@ -491,6 +560,7 @@ type ProcHilRequest = {
   pid: string;
   requestId: string;
   runId: string;
+  conversationId?: string;
   callId: string;
   toolName: string;
   syscall: string;
@@ -586,6 +656,16 @@ type ProcessSyscalls = {
     result: { ok: true; pid: string; label?: string; cwd: string } | OperationError;
   };
 
+  "proc.observe": {
+    args: { pid: string };
+    result: { ok: true; pid: string };
+  };
+
+  "proc.unobserve": {
+    args: { pid: string };
+    result: { ok: true; pid: string };
+  };
+
   "proc.send": {
     args: { pid?: string; message: string; media?: MediaInput[] };
     result: { ok: true; status: "started"; runId: string; queued?: boolean; replayed?: "active" | "queued" | "recorded" } | OperationError;
@@ -622,7 +702,7 @@ type ProcessSyscalls = {
   };
 
   "proc.history": {
-    args: { pid?: string; limit?: number; offset?: number; beforeMessageId?: number; afterMessageId?: number; tail?: boolean };
+    args: { pid?: string; includeMessages?: boolean; limit?: number; offset?: number; beforeMessageId?: number; afterMessageId?: number; tail?: boolean };
     result: { ok: true; pid: string; messages: ProcHistoryMessage[]; messageCount: number; truncated?: boolean; hasMoreBefore?: boolean; hasMoreAfter?: boolean; pendingHil?: ProcHilRequest | null; context?: ProcContextState | null } | OperationError;
   };
 
@@ -667,12 +747,12 @@ type ProcessSyscalls = {
   };
 
   "proc.fork": {
-    args: { pid?: string; segmentId?: string; throughMessageId?: number; label?: string; includeLiveSuffix?: boolean };
+    args: { pid?: string; segmentId?: string; throughMessageId?: number; throughRunId?: string; label?: string; includeLiveSuffix?: boolean };
     result: { ok: true; pid: string; label: string; sourcePid: string; segment?: ProcHistorySegment; throughMessageId?: number; restoredMessages: number; includedLiveSuffix: boolean } | OperationError;
   };
 
   "proc.history.export": {
-    args: { segmentId?: string; throughMessageId?: number; includeLiveSuffix?: boolean };
+    args: { segmentId?: string; throughMessageId?: number; throughRunId?: string; includeLiveSuffix?: boolean };
     result: { ok: true; sourcePid: string; archivePaths: string[]; temporaryArchivePaths: string[]; segment?: ProcHistorySegment; throughMessageId?: number; includedLiveSuffix: boolean } | OperationError;
   };
 
@@ -1096,9 +1176,9 @@ Runtime behavior:
 | `adapter.pair.inspect` | `handleAdapterPairInspect` | Direct signed-in human only. Resolves a short-lived code to the external identity that requested it. It does not create or move a link. |
 | `adapter.pair.confirm` | `handleAdapterPairConfirm` | Direct signed-in human only. Binds the inspected external identity to the caller's current installation and local uid, activates a fresh route generation, writes the Kernel identity link, and finalizes retryable cleanup of any previous installation. Agent processes cannot invoke this flow. |
 | `adapter.pair.disconnect` | `handleAdapterPairDisconnect` | Direct signed-in human only. Generation-fences and disables the managed peer route before removing the matching Kernel identity link. Generic `sys.unlink` refuses managed links so the two sides cannot be orphaned. |
-| `adapter.inbound` | `handleAdapterInbound` | Service-role only. Requires a stable account-scoped ingress `deliveryId`, derived from the provider's complete event identity, and claims its durable receipt before link, command, HIL, route, media, or Process side effects. Actor and surface remain authorization metadata rather than receipt-key components, so alias normalization cannot bypass replay protection and equal provider stanza ids from different participants remain distinct. Completed replays return the persisted disposition; a concurrent live claim reports `replayed: "in_progress"`, while an abandoned or post-restart claim is fenced and reclaimed. Optional media bytes are cancelled before staging on any replay. New ingress resolves the exact identity link, issues link challenges for unlinked DMs, and drops unlinked non-DM messages. A linked non-DM message is admitted only when the adapter sets `wasMentioned: true`. Normal messages derive an opaque run id, record the actor/thread-scoped surface, store media idempotently, install the automatic reply route, and reconcile through kernel-only `proc.adapter.deliver`. Immediate replies and link challenges carry deterministic outbound `deliveryId` values and use the adapter's ordinary outbound ledger. Persistent first-party adapters retain the provider payload before this call, then replace it with any terminal response state before provider delivery; transport failures and `in_progress` retry through their existing account alarm. |
+| `adapter.inbound` | `handleAdapterInbound` | Service-role only. Requires a stable account-scoped ingress `deliveryId`, derived from the provider's complete event identity, and claims its durable receipt before link, command, HIL, route, media, or Process side effects. Actor and surface remain authorization metadata rather than receipt-key components, so alias normalization cannot bypass replay protection and equal provider stanza ids from different participants remain distinct. Completed replays return the persisted disposition; a concurrent live claim reports `replayed: "in_progress"`, while an abandoned or post-restart claim is fenced and reclaimed. Optional media bytes are cancelled before staging on any replay. New ingress resolves the exact identity link, issues link challenges for unlinked DMs, and drops unlinked non-DM messages. A linked non-DM message is admitted only when the adapter sets `wasMentioned: true`. Normal messages resolve the canonical Home, Work, or Group conversation, append the user Message idempotently, derive an opaque run id, install its exact directed endpoint, and reconcile through kernel-only `proc.adapter.deliver`. Immediate replies and link challenges carry deterministic outbound `deliveryId` values and use the adapter's ordinary outbound ledger. Persistent first-party adapters retain the provider payload before this call, then replace it with any terminal response state before provider delivery; transport failures and `in_progress` retry through their existing account alarm. |
 | `adapter.state.update` | `handleAdapterStateUpdate` | Service-role only. Updates status without changing ownership and broadcasts a minimal `adapter.status` invalidation to root, the account owner, and linked users. |
-| `adapter.send` | `handleAdapterSend` | Accepts optional concatenated media bytes, validates the caller's identity link or exact observed surface route, allocates or validates a stable `deliveryId`, and forwards outbound text, media, reply id, and body to the adapter service. During a process run, an explicit send to the current automatic reply surface is rejected unless `also: true` acknowledges the additional message. Returns the delivery id, provider message id when available, and `sent`, `deduplicated`, or `ambiguous` delivery state. A failed result is retryable only when replaying the same delivery id is safe. |
+| `adapter.send` | `handleAdapterSend` | Accepts optional concatenated media bytes, validates the caller's identity link or exact observed surface route, allocates or validates a stable `deliveryId`, and forwards outbound text, media, reply id, and body to the adapter service. During a process run, a separate send to the current directed endpoint is rejected unless `also: true` acknowledges the additional message. Returns the delivery id, provider message id when available, and `sent`, `deduplicated`, or `ambiguous` delivery state. A failed result is retryable only when replaying the same delivery id is safe. |
 | `adapter.status` | `handleAdapterStatus` | Attempts live status refresh, swallowing live errors, then returns last known local statuses sorted newest first and optionally filtered by account id. |
 
 Adapter status intentionally remains useful when a live adapter service is unavailable; stale local state may be returned.

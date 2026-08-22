@@ -22,11 +22,12 @@ operational task, [How-to Guides](../how-to/) will usually get you there faster.
 A good order is:
 
 1. this overview
-2. [The Agent Loop](./agent-loop.md)
-3. [Process IPC and Scheduler](./process-ipc-and-scheduler.md)
-4. [The Adapter Model](./adapter-model.md)
-5. [Context and Knowledge](./context-and-knowledge.md)
-6. [Security Model](./security-model.md)
+2. [Conversations and Process Activity](./conversations.md)
+3. [The Agent Loop](./agent-loop.md)
+4. [Process IPC and Scheduler](./process-ipc-and-scheduler.md)
+5. [The Adapter Model](./adapter-model.md)
+6. [Context and Knowledge](./context-and-knowledge.md)
+7. [Security Model](./security-model.md)
 
 ## The Current Pillars
 
@@ -74,10 +75,25 @@ human-in-the-loop state, and process-local metadata. The Kernel registry stores
 the process metadata needed for routing and permissions.
 
 The agent loop belongs to the Process DO. It assembles context, calls the model,
-receives tool calls, issues syscalls, waits for results, and emits `proc.run.*`
-and `proc.changed` signals through the Kernel. `gsv chat` is therefore just one
-client for a process; browser clients and adapters can reach the same process
-model.
+receives tool calls, issues syscalls, waits for results, and emits raw
+`proc.run.*` and `proc.changed` activity through the Kernel. A Process explicitly
+finishes each interaction with Message or Silence.
+
+### Conversations
+
+Conversations are the durable user-facing record. Home remains stable while its
+personal Process can be reset or replaced; Work conversations reference explicit
+interactive work Processes; adapter groups retain their own conversations.
+Canonical Messages live in installation-scoped Conversation Durable Objects,
+not Process history. Each Message records its handling PID and run ID so clients
+can inspect the corresponding raw execution while it exists or through its
+archive later.
+
+Web, Desktop, CLI, and linked private adapters synchronize the same Home. The
+endpoint that admitted a run receives transient Message streaming; other signed-in
+clients receive the committed Message as synchronization. Raw Process activity is
+sent only to the run's routed connection or a client that explicitly observes the
+Process.
 
 ### Filesystem and Storage
 
@@ -153,6 +169,7 @@ A typical chat request follows this path:
 CLI, browser, or adapter
   -> Gateway Worker
   -> Kernel DO
+  -> canonical Conversation input
   -> Process DO
   -> model call
   -> syscall request
@@ -160,8 +177,9 @@ CLI, browser, or adapter
   -> native handler, Process DO, or device driver
   -> response
   -> Process DO continues the run
-  -> proc.run.* signals return through Kernel run routing
-  -> original client or adapter surface
+  -> Process chooses Message or Silence
+  -> canonical Message commit
+  -> directed endpoint plus synchronized clients
 ```
 
 The same dispatcher handles non-chat requests. A client can issue `fs.read`;
@@ -187,6 +205,7 @@ server.
 The system uses multiple Durable Object roles instead of one monolith:
 
 - Kernel DO: authoritative control plane and router.
+- Conversation DOs: canonical Messages, idempotency receipts, and archive indexes.
 - Process DOs: durable agent loops and process-local SQLite.
 - ripgit objects/workers: repository storage and Git protocol handling.
 
@@ -223,10 +242,11 @@ of chat integrations.
   records the proposed common file-reference contract for machines, clients,
   adapters, model context, and durable GSV retention. It replaces eager media
   copying with lazy binary resolution and is intentionally not implemented yet.
-- [Unified Protocol Peers](./unified-protocol-peers.md) records the proposed
-  shared syscall, command, and exact-output model for WebSocket clients and
-  service-bound adapters. It is intentionally deferred until managed staging
-  and the native application are stable.
-- [Universal Routing Graph and Surface Bindings](./interaction-surface-bindings.md)
-  explores durable Process bindings and output graphs. It is also design-only
-  and is not a prerequisite for the unified peer model.
+- [Unified Protocol Peers](./unified-protocol-peers.md) records the remaining
+  transport-independent identity, capability, and command work. Canonical
+  Conversations and directed Message signals now provide its shared output
+  foundation, but service-bound adapters do not yet expose the full client
+  syscall surface.
+- [Surface Bindings and Output Graphs](./interaction-surface-bindings.md) records
+  the constraints on any future binding or forwarding design. The older
+  Process-owned automatic-output graph is superseded.

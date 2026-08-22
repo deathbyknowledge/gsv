@@ -1,10 +1,14 @@
 # The Agent Loop
 
 The agent loop is the runtime inside a GSV process. It turns incoming messages,
-signals, and queued work into model calls, syscall requests, tool results, and
-`proc.run.*` / `proc.changed` signals. The loop is not tied to one client. CLI chat, browser apps,
-adapter messages, scheduled work, and signal watches all converge on the same
-Process DO model.
+signals, and queued work into model calls, syscall requests, tool results, explicit
+Message or Silence choices, and `proc.run.*` / `proc.changed` signals. The loop is
+not tied to one client. CLI chat, browser apps, adapter messages, scheduled work,
+and signal watches all converge on the same Process DO model.
+
+Process history is raw execution activity, not the canonical user conversation.
+See [Conversations and Process Activity](./conversations.md) for Home, Work,
+message synchronization, endpoint delivery, and retention.
 
 ## Process, Not Session
 
@@ -20,25 +24,31 @@ parent, and state. Process SQLite stores the mutable run state:
 - `pending_hil`: human-in-the-loop tool approval state.
 - `process_kv`: process metadata.
 
-The Kernel delivers frames to the Process DO through `recvFrame`. `proc.send`
-starts or supersedes a user run and queues background-origin work, `proc.history` reads stored messages, `proc.reset`
-archives and clears history, and `proc.kill` optionally archives history before
-wiping the process.
+The Kernel delivers frames to the Process DO through `recvFrame`. Direct clients
+append canonical input with `conversation.send`, which privately admits the same
+interaction to its handler Process. Adapter ingress follows the same Kernel-owned
+conversation path. `proc.send` remains the Process admission primitive and handles
+background-origin work, `proc.history` reads raw Process activity, `proc.reset`
+archives and clears that activity, and `proc.kill` optionally archives it before
+wiping the Process. None of those lifecycle operations deletes canonical messages.
 
 ## Message Lifecycle
 
 A normal user message follows this path:
 
-1. The Kernel authorizes the caller and forwards `proc.send` to the target
-   Process DO.
-2. The process appends the user message immediately. Media preparation proceeds
+1. The Kernel authorizes the direct client or adapter, appends the canonical user
+   message, and selects the conversation's handler Process.
+2. Before Process admission, the Kernel installs the run's directed client or
+   adapter endpoint. It then forwards the interaction through `proc.send` or
+   `proc.adapter.deliver` with the conversation and input-message identities.
+3. The Process appends its raw user-input activity immediately. Media preparation proceeds
    in the background and generation waits for it.
-3. If no run is active, the process creates `currentRun` and schedules a
+4. If no run is active, the Process creates `currentRun` and schedules a
    near-immediate `tick`.
-4. If a direct user run is active, its outstanding tool calls receive terminal
+5. If a direct user run is active, its outstanding tool calls receive terminal
    interruption results and the new run supersedes it. Process- and
    scheduler-origin work remains FIFO in `message_queue`.
-5. The scheduled tick continues the agent loop without keeping one long request
+6. The scheduled tick continues the agent loop without keeping one long request
    open.
 
 An unnamed spawned task publishes a bounded fallback title immediately and
@@ -100,14 +110,14 @@ take one recovery turn after a
 fabricated tool response; a second such response terminates the run so an
 untrusted email cannot create an unbounded inference loop.
 
-Reply routing does not alter that standing system prompt. The first
+Endpoint routing does not alter that standing system prompt. The first
 model-visible message that owns a run, and the next such message whenever its
-reply semantics change, receives a concise chronological annotation such as
-`[Reply destination: automatic to this Telegram direct message.]`. It appears
+delivery semantics change, receives a concise chronological annotation such as
+`[Directed endpoint: this Telegram direct message.]`. It appears
 beside the existing `[From: ...]` annotation without changing the stored
 message. A route-less run names the GSV process history instead. A
 non-distinct runtime event that joins an active run is
-only annotated with its source; it does not change that run's reply destination.
+only annotated with its source; it does not change that run's directed endpoint.
 This keeps prior provider input byte-stable when a later message arrives from
 another client or adapter, preserving prefix-cache reuse.
 
@@ -129,13 +139,17 @@ set to the PID.
 
 The model response can contain text, thinking blocks, and tool calls:
 
-- Text and final-reply media references are emitted through `proc.run.output`;
-  streaming blocks flow through `proc.run.stream`.
+- Text, reasoning, and tool-call blocks are raw Process activity. They are emitted
+  through `proc.run.output` / `proc.run.stream` only to the run owner and clients
+  that explicitly called `proc.observe`.
 - Assistant text, thinking blocks, and tool calls are stored in the `messages`
   table.
-- If there are no tool calls, the process persists any media registered by
-  `message attach` on the final assistant record, emits `proc.run.finished` with
-  the same references, and finishes the run.
+- `Message` commits exactly one canonical user-visible message and any media
+  registered by `message attach`. `Silence` finishes without a canonical output.
+- While the `Message` arguments stream, the originating client receives
+  `message.started` and `message.delta`. Adapters wait for `message.committed`.
+- Ordinary assistant text without Message or Silence causes one `[GSV EVENT]`
+  correction. A second omission ends the run with an inspectable bounded error.
 - If there are tool calls, the process evaluates approval rules and dispatches
   each allowed call as a syscall frame.
 
@@ -147,10 +161,13 @@ still preserved in assistant history with synthetic terminal tool results so
 provider history remains structurally valid and the next model turn can recover
 instead of silently completing or hanging.
 
-Only syscall-backed tools are exposed to the model. Current agent-visible tool
-names are `Read`, `Write`, `Edit`, `Delete`, `Search`, `Shell`, and `CodeMode`;
+Only syscall-backed work tools are exposed to the model. Current agent-visible
+work tool names are `Read`, `Write`, `Edit`, `Delete`, `Search`, `Shell`, and `CodeMode`;
 they map to `fs.read`, `fs.write`, `fs.edit`, `fs.delete`, `fs.search`,
 `shell.exec`, and `codemode.exec`.
+
+Message and Silence are fixed terminal protocol controls. They do not add
+capabilities, target external services, or enlarge the composable work-tool surface.
 
 `CodeMode` remains the programmable tool for multi-step orchestration. It can
 call `fs.*`, `shell.exec`, and connected MCP tools as generated async
@@ -182,7 +199,7 @@ schedules/continues the loop:
 4. Background-origin queued messages are promoted as separate runs after the
    current run finishes.
 
-This repeats until the model produces a final response without tool calls.
+This repeats until the model completes a valid Message or Silence action.
 
 Tool result content is stored as text. Non-string syscall output is JSON encoded
 for model history.

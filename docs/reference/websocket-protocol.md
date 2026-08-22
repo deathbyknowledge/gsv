@@ -242,6 +242,7 @@ The websocket protocol is uniform: every operation is a `req` frame with a sysca
 | `fs.*` | Native on `gsv`, or routed to a driver when `args.target` names a device |
 | `shell.exec` | Native on `gsv`, routed to a driver when `args.target` names a device, or routed by `args.sessionId` for an existing shell session |
 | `proc.*` | Kernel and Process DO control plane |
+| `conversation.*` | Kernel-owned canonical conversation state and media |
 | `repo.*`, `sys.*`, `sched.*`, `signal.*` | Kernel-handled |
 | `adapter.*` | Service-binding / adapter control path |
 | `ai.tools`, `ai.config` | Kernel-internal process bootstrap path |
@@ -269,8 +270,9 @@ Current role defaults from `buildSignalList()`:
     A retry after context compaction stays on the active model and has no
     `fallback` field; model fallback transitions include their source and target.
 - `proc.run.output`
-  - Carries assembled assistant text/thinking and, when present, process-owned
-    `media` references registered for the automatic final reply.
+  - Carries raw assembled assistant text, model reasoning, and process-owned
+    media references for process inspection. It is not a user-facing Message
+    and does not imply delivery to an endpoint.
 - `proc.run.tool.started`
   - Emitted after a tool execution is durably marked dispatched. Its payload
     includes `pid`, `runId`, provider `callId`, and the unique `executionId`
@@ -289,9 +291,24 @@ Current role defaults from `buildSignalList()`:
     The payload includes the Process-resolved `target` so clients can explain
     the approval scope without reproducing routing policy from raw arguments.
 - `proc.run.finished`
-  - Repeats final-reply `media` references after they have been persisted on the
-    assistant history record.
+  - Reports the terminal Process-run status. A successful user-facing response
+    is represented separately by `message.committed`.
 - `process.exit`
+- `conversation.changed`
+  - Announces that canonical conversation history has advanced. Clients use
+    `conversation.history` to synchronize the durable record.
+- `message.started`
+  - Begins the directed endpoint's transient projection of a Process Message.
+- `message.delta`
+  - Appends text to that transient projection. It is sent only to the connection
+    that admitted the run; other clients synchronize the committed Message.
+- `message.committed`
+  - Carries a canonical `ConversationMessage`. `directed` is true only for the
+    connection whose input admitted the run; other connected clients receive
+    the same committed Message with `directed: false`.
+- `message.aborted`
+  - Discards the directed endpoint's transient projection when a Message cannot
+    be committed or the run is superseded.
 - `device.status`
 - `adapter.status`
 - `mcp.changed`
@@ -304,13 +321,26 @@ Current role defaults from `buildSignalList()`:
 
 Service connections receive no ambient signals. Adapter workers report state through the gateway service binding.
 
-`proc.run.*` signals are emitted by Process DOs and relayed through run-route tracking. In the current kernel:
+`proc.run.*` signals are raw Process activity emitted by Process DOs. In the
+current Kernel:
 
-- user connections receive routed process signals for their own runs
+- the connection that admitted a run receives its activity through the exact
+  run route
+- another user connection receives that activity only after explicitly calling
+  `proc.observe` for the owner-scoped Process; `proc.unobserve` removes the watch
+- idle owner connections receive only a content-free `proc.changed` invalidation
+  for process-list synchronization, not its raw message, context, or run fields
 - `proc.run.hil.requested` is broadcast to every connected user client for the
   process owner; its payload includes `pid`, and `proc.history` recovers pending
   requests after reconnects
-- adapter surfaces also consume HIL and terminal run signals through their run route
+- adapter surfaces consume HIL prompts and committed Messages through their
+  exact run route; they do not render raw model output as a reply
+
+Canonical `conversation.*` and `message.*` signals are independent of raw
+Process observation. All connected clients for the owner can synchronize the
+same conversation, while only the directed connection receives transient
+Message streaming. A model must explicitly finish an interaction with Message
+or Silence; ordinary assistant output remains Process activity.
 
 ### Request cancellation
 
@@ -401,6 +431,7 @@ The current body-bearing syscalls are:
 | `net.fetch` | Optional HTTP request bytes | HTTP response bytes when the response has a body |
 | `proc.media.read` | No | Successful stored media bytes |
 | `proc.media.write` | Required media bytes with an exact descriptor length | No |
+| `conversation.media.read` | No | Successful canonical conversation media bytes |
 | `ai.transcription.create` | Required audio bytes | No |
 | `ai.image.read` | Required image bytes | Decoded UTF-8 text when caption, query, or OCR requests set `stream: true` |
 | `ai.image.generate` | No | Generated image bytes when returned inline |

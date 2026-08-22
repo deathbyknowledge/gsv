@@ -141,13 +141,15 @@ The inbound path looks like this:
 6. A private DM updates the owner's last-active linked private destination and
    resolves PERSONAL HOME or an explicit work override. A shared surface
    resolves its actor/thread-scoped persisted route.
-7. Media is streamed into process-owned storage, and the Kernel creates the run
-   reply route before admitting the message.
-8. The message is delivered to the routed process. Unrouted private DMs converge
+7. Media is streamed into process-owned storage, the canonical conversation input
+   is committed, and the Kernel creates the run's directed endpoint before admission.
+8. The message is delivered to the routed process with its conversation and
+   canonical input-message identities. Unrouted private DMs converge
    on the owner's canonical personal controller without writing a route; an
    unrouted group, channel, or thread starts and binds a separate interactive
    process running as the owner's personal agent.
-9. The process runs the normal agent loop and emits `proc.run.*` signals.
+9. The process runs the normal agent loop. Raw `proc.run.*` activity is inspectable;
+   only an explicit Message becomes user-visible conversation output.
 
 The important point is that inbound adapter traffic does not create a special
 kind of bot runtime. It feeds the same durable process model that the CLI and
@@ -155,30 +157,33 @@ Desktop use.
 
 ## Outbound flow
 
-The automatic outbound path is the reverse:
+The canonical outbound path is:
 
-1. A process produces terminal output or requests HIL.
-2. The Kernel looks up the exact run route created during admission.
-3. If no exact route exists and this is the canonical personal controller, the
-   Kernel may materialize an adapter run route from the owner's last-active
-   linked private destination. Other processes never use this fallback.
-4. It rechecks the linked actor's destination authority.
-5. If the route is an adapter route, the Kernel sends the reply through the
-   adapter worker.
-6. The adapter worker formats it for the chat platform and delivers it.
+1. A process chooses the terminal Message control. Ordinary assistant text remains
+   raw Process activity; Silence finishes without output.
+2. The Kernel commits the Message to the canonical conversation and looks up the
+   exact directed endpoint created during admission.
+3. If no conversation identity or exact route exists and this is a background run
+   in the canonical personal controller, the Kernel may materialize an adapter route
+   from the owner's last-active linked private destination. A disconnected client
+   conversation never jumps to an adapter, and other processes never use the fallback.
+4. The Kernel rechecks the linked actor's destination authority.
+5. If the endpoint is an adapter, the Kernel durably queues `message.committed` for
+   that adapter. Adapters never receive Process token or reasoning streams.
+6. The adapter buffers the committed message, formats it for the provider, and delivers it.
+7. Other signed-in clients synchronize the canonical message without treating it as
+   directed to them.
 
 Again, the adapter is a transport surface, not the place where durable agent
-state lives. The agent normally returns its final answer without calling an
-explicit send operation.
+or conversation state lives.
 
-The `message` shell command is the explicit path for an additional or
-cross-channel message. `message current` describes the automatic route and
-includes its opaque destination id when the route is an adapter surface,
-`message destinations` lists authorized observed surfaces, `message attach`
-registers files on the run's automatic final response, and `message send --to ...`
-sends text or one filesystem attachment as an extra message. An explicit
-send to the current automatic destination requires `--also`, preventing an
-accidental duplicate final reply.
+The `message` shell command exposes delivery context and the explicit path for a
+separate or cross-channel message. `message current` describes the directed endpoint
+and includes its opaque destination id when it is an adapter surface,
+`message destinations` lists authorized observed surfaces, and `message attach`
+registers files for the eventual terminal Message. `message send --to ...` sends a
+separate message. Sending separately to the current endpoint requires `--also`,
+preventing an accidental duplicate.
 
 `message route` is the process-facing control for persistent group, channel,
 and thread mappings. It selects destinations through `here`, opaque GSV ids, or
@@ -187,8 +192,8 @@ interactive processes. The canonical personal process may also set a private
 DM to an owned non-personal process when that exact latest DM message started
 its current run. This opens an explicitly labeled INTERNAL WORK / WORK SESSION;
 the human uses `/home` for the canonical PERSONAL HOME.
-Changing a selection does not change an existing run route: the current answer
-returns to its origin, while the next inbound message enters the new selection.
+Changing a selection does not change an existing run route: the current Message
+stays directed to its origin, while the next inbound message enters the new selection.
 
 Managed outbound email has a separate explicit path because email is a mailbox,
 not an observed chat surface. `mail.send` accepts one recipient and a plain-text
@@ -266,7 +271,7 @@ retry-safe response failures stop after ten durably counted attempts. Completed
 Kernel receipts are capped and retained for seven days.
 
 Outbound messages cross the adapter-worker boundary with a stable
-`deliveryId`. Automatic run replies, schedule occurrences, and the `message`
+`deliveryId`. Committed run Messages, schedule occurrences, and the `message`
 CLI derive it before their first attempt. First-party
 adapter account Durable Objects retain a bounded delivery ledger and return a
 recorded success without contacting the provider again. Each ledger record also
@@ -280,8 +285,8 @@ enforced deterministic nonce, while Telegram and WhatsApp conservatively use
 at-most-once delivery. The Kernel persists retry-safe terminal delivery as its
 own scheduled work, stops typing after every attempt, and removes the reply
 route after success or after a terminal delivery notice is accepted by the
-Process. The answer remains in process history with an inspectable delivery
-outcome. Approval attempt one is durably queued before Process acknowledges the
+Process. The canonical Message remains in conversation history and its delivery
+outcome remains inspectable in Process activity. Approval attempt one is durably queued before Process acknowledges the
 HIL signal; provider notification failure therefore cannot clear or fail a
 pending approval.
 Link challenges, adapter command responses, and human-approval acknowledgements
@@ -340,12 +345,12 @@ ranges in media-array order. The body is consumed sequentially with one owner;
 failure or cancellation cancels the remaining stream. Current Gateway limits
 are 20 items, 48 MiB per item, and 48 MiB total.
 
-Inbound bytes are stored once under the owning process and exposed to the agent
+Inbound bytes are staged under the owning process and exposed to the agent
 at a stable read-only `/var/media/{uid}/{pid}/{id}` path. The agent can inspect
 that path, copy it to a connected machine with target-aware `cp`, register it on
-the automatic final reply with `message attach`, or attach it to an explicit
-adapter message. Automatic attachments persist on the assistant history record,
-so native GSV clients and adapters consume the same Process-owned reference. A
+the terminal Message with `message attach`, or attach it to a separate adapter
+message. A canonical Message copies attached media into conversation-owned R2,
+so it survives Process cleanup and every client consumes the same reference. A
 file on a connected machine can travel the other direction by copying it to GSV
 first and passing the local path to `message attach` or `message send --attach`.
 
@@ -417,7 +422,8 @@ runtime.
 5. Implement mention/reply activation for every supported non-DM surface.
 6. Use the shared binary-body helpers and common media limits.
 7. Exercise DM linking, shared surfaces, media cancellation, reconnects,
-   request-bound approvals, duplicate ingress, and final reply routing.
+   request-bound approvals, duplicate ingress, canonical Messages, and directed
+   endpoint routing.
 
 ## Why this matters
 

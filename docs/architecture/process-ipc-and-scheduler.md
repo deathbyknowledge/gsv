@@ -49,9 +49,9 @@ It is not itself a process signal. The terms mean:
   adapter, or the scheduler; and
 - a process signal is a lifecycle operation such as abort, reset, or kill.
 
-Runtime events rendered into model context are visibly marked. Process IPC uses
-the current `[Process Event]:` envelope rather than pretending the source was a
-human message.
+Runtime events stored as system records are projected into model context under
+the `[GSV EVENT]` envelope. Process IPC uses identified `Delegated task from…`
+or `Message from…` text rather than pretending the source was a human.
 
 ## Process IPC
 

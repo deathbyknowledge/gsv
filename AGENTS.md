@@ -51,6 +51,8 @@ Processes have identities, histories, permissions, queues, pending work, and lif
 
 The personal agent account is the user's personal intelligence. One Kernel-marked interactive process receives its top-level conversation across user interfaces; its pid is replaceable and otherwise follows ordinary process lifecycle. Other processes are visible work, even when they run as the same account. They share natural-language commitments through the account's `context.d` and delegate bounded work through the existing process and IPC primitives. A delegated process is an ordinary process acting in a worker role, not a second orchestration runtime.
 
+Canonical user-facing conversations are not Process histories. Conversations retain only committed user-visible Messages across Process replacement or deletion; Process history retains reasoning, drafts, tools, results, and terminal choices for inspection. Every interaction must finish explicitly with Message or Silence. Clients may opt into raw Process observation, while adapters consume only committed messages.
+
 ### Prefer fewer mechanisms
 
 - Consolidate duplicate paths and delete obsolete ones when behavior remains clear.
@@ -67,6 +69,7 @@ The personal agent account is the user's personal intelligence. One Kernel-marke
 - `inference/`: private managed inference entrypoint, platform-owned provider transport, per-installation budgets, and usage settlement.
 - `gateway/src/kernel/`: authentication, capabilities, syscall dispatch, configuration, process registry, routing, schedules, adapters, and user connections.
 - `gateway/src/process/`: agent loop, history, queued input, pending tools, approvals, cancellation, context assembly, and process-scoped media.
+- `gateway/src/conversation/`: canonical user-visible message history, conversation-owned media, hot SQLite retention, and immutable R2 archive segments.
 - `gateway/src/syscalls/` and `gateway/src/protocol/`: public runtime contracts and frame transport.
 - `gateway/src/inference/`: provider integration and model transport.
 - `packages/gsv/`: public client and protocol types.
@@ -104,6 +107,7 @@ Keep platform-specific identity and delivery behavior in its adapter. Keep visua
 - Filesystem, shell, and network behavior must remain consistent between local gateway and device implementations.
 - Adapters receive stable actor and surface semantics; channel-specific identifiers do not leak into generic RPCs.
 - Private user surfaces default to the personal process. Direct access to another process is an explicit, visibly labeled work session; opening one surface must not silently redefine the user's personal intelligence elsewhere.
+- A run route directs immediate message streaming and delivery to one originating endpoint; it does not own the canonical conversation. Other clients synchronize committed messages without inheriting that endpoint's delivery behavior.
 
 ### Data and security
 
@@ -111,6 +115,7 @@ Keep platform-specific identity and delivery behavior in its adapter. Keep visua
 - Managed onboarding capabilities authorize only first-boot setup for one installation. Store them hashed in accounts, keep them out of URLs after the browser reads the fragment, and let only the Kernel create local credentials.
 - Never hardcode or log secrets, raw authentication material, QR payloads, prompts, tool arguments, or private file contents.
 - Store live process media once in R2, persist references in history, and scope keys to the owning process. Before live cleanup, promote archived references to immutable media under the run-as agent home. Hydrate bytes only while building model context or serving an explicit media read.
+- Copy media on a committed canonical Message into conversation-owned R2 storage so Process cleanup cannot delete user-visible conversation history.
 - Telemetry uses an explicit allowlist and records timings and outcomes rather than user content.
 
 ## Schema migrations

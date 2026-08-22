@@ -1,9 +1,11 @@
-# Unified Protocol Peers (Proposal)
+# Unified Protocol Peers
 
-Status: **design only and deferred**. Finish the managed staging dogfood and
-stabilize the native application before implementing this proposal. No wire
-contract, migration, syscall, or compatibility behavior described here exists
-yet.
+Status: **foundation implemented; broader peer unification deferred**.
+Canonical Conversations, explicit Message/Silence completion, directed client
+streaming, adapter delivery of committed Messages, and opt-in Process
+observation now provide one interaction model across transports. The remaining
+facility negotiation, delegated adapter syscall surface, and shared command
+frontend described here are proposals, not compatibility promises.
 
 ## Problem
 
@@ -11,15 +13,16 @@ GSV currently separates clients and adapters more deeply than their actual
 roles require.
 
 - Web, native, and CLI clients connect over WebSocket, call ordinary syscalls,
-  and receive broad process signals.
+  synchronize canonical Conversations, and explicitly observe raw Process
+  activity when needed.
 - Adapter Workers communicate over service bindings. They use the same frame
   shape, but enter through a restricted `serviceFrame` path and mostly call
   adapter-specific syscalls.
 - Text commands exposed by an adapter can reproduce client operations such as
   listing processes, but do so through a separate command path.
-- An adapter receives the exact final answer routed back to its originating
-  conversation. A client receives owner-wide `proc.run.*` signals and must
-  infer which output was actually addressed to its interaction.
+- Adapters and clients now receive the same canonical committed Message
+  semantics, while only a directed client receives transient Message deltas.
+  They still enter through different authenticated transport and command paths.
 
 This makes adapters artificially narrow and clients artificially unaware of
 routing. It also encourages provider-specific command implementations and
@@ -76,8 +79,8 @@ Examples:
 | Telegram transport control | service identity | service binding | adapter lifecycle and provider operations |
 | Linked Telegram conversation | delegated human identity | service binding | restricted syscalls, interactive input, routed output |
 
-The Process remains the only durable conversation and agent-history primitive.
-A peer is not another chat record, process, agent, or notification inbox.
+A Conversation is the durable user-facing message primitive. A Process remains
+the durable execution and raw-history primitive. A peer is neither one.
 
 ## Adapters as protocol peers
 
@@ -136,36 +139,33 @@ Provider-specific syntax remains in the adapter. Authorization and behavior
 remain in the Kernel syscall boundary. No command may become more powerful
 because a transport parsed it locally.
 
-## Exact routed output for every peer
+## Directed Messages for every peer
 
-Owner-wide process signals and directed interaction output have different
-meanings and should remain different protocol events.
+Observed Process activity and directed interaction output have different
+meanings and remain different protocol events.
 
 `proc.run.*` and `proc.changed` describe process execution and persisted state.
 They may be observed by multiple clients and are useful for streaming,
 inspection, synchronization, and control. They do not by themselves mean that
 a user-facing answer was addressed to the observing client.
 
-When an interactive run owes an answer to its origin, the Kernel should emit a
-canonical routed output frame. An illustrative shape is:
+When an interactive run produces a user-visible answer, it explicitly chooses
+Message. The Kernel emits the implemented canonical signals:
 
 ```ts
-type InteractionMessageSignal = {
-  type: "sig";
-  signal: "interaction.message";
-  payload: {
-    deliveryId: string;
-    runId: string;
-    processId: string;
-    text: string;
-    media?: InteractionMedia[];
-  };
-};
+type MessageSignal =
+  | { signal: "message.started"; payload: MessageStreamIdentity }
+  | { signal: "message.delta"; payload: MessageStreamIdentity & { delta: string } }
+  | { signal: "message.aborted"; payload: MessageStreamIdentity & { reason: string } }
+  | { signal: "message.committed"; payload: {
+      message: ConversationMessage;
+      directed: boolean;
+    } };
 ```
 
-The exact name and payload require protocol design. Its semantic meaning is
-fixed: this is an assistant message addressed to this peer through the exact
-run route.
+Its semantic meaning is fixed: transient events belong only to the live endpoint
+that admitted the run; the committed Message belongs to its Conversation and is
+synchronized to the owner's other clients.
 
 - An adapter renders it into the provider's message format.
 - Native renders it in the active interaction and may play a local sound.
@@ -199,14 +199,15 @@ needed by its transport. The final transport is selected only when delivering:
   and idempotency in its own boundary.
 
 The common protocol must not pretend all transports have identical durability.
-A disconnected WebSocket can recover committed output from Process history.
+A disconnected WebSocket recovers committed output from Conversation history.
 An adapter may provide store-and-forward delivery with a durable provider
 ledger. Those are transport properties beneath the same directed-message
 semantics.
 
-Owner-wide observation remains separate from the exact route. A client may
-observe many Processes while only receiving an `interaction.message` when one
-of its own interactive runs produces the answer owed to it.
+Observation remains separate from the exact route. A client may observe many
+Processes while receiving directed Message deltas only for its own admitted
+run. Other committed Messages still synchronize without becoming directed
+notifications.
 
 ## Transport-independent frame handling
 
@@ -288,12 +289,13 @@ work designated ahead of it is stable.
    cancellation, capability, dispatch, and post-dispatch ownership.
 3. Add a Kernel-derived delegated user context for linked adapter actors and
    prove that the adapter cannot choose or widen it.
-4. Define one interactive admission call and one exact routed output frame.
-5. Deliver that frame through both live WebSockets and existing adapter
-   callbacks while preserving adapter retry ledgers.
+4. Extend the implemented `conversation.send` / adapter canonical admission
+   boundary into a transport-independent peer operation.
+5. Keep the implemented `message.*` delivery semantics while removing duplicate
+   WebSocket-versus-adapter frame plumbing.
 6. Move bounded adapter commands onto the shared command-to-syscall registry.
-7. Migrate native and web clients to use exact routed output for addressed
-   message presentation while retaining process signals for observation.
+7. Native and Web already use canonical Conversations and directed Messages;
+   retain that contract while migrating their authentication context.
 8. Remove superseded adapter-only command and connection-versus-adapter reply
    branches after compatibility gates are satisfied.
 
@@ -311,10 +313,9 @@ cancellation, and disconnects must fail without changing Process state.
   allowing another bound service to impersonate it.
 - Which capability profile each first-party adapter receives by default and
   how users inspect or narrow it.
-- Whether routed streaming is part of the first version or only terminal
-  messages are standardized initially.
+- Whether service-bound adapter peers should receive transient Message streaming;
+  current adapters deliberately buffer and deliver only committed Messages.
 - Whether the command registry belongs in the public SDK, the Kernel, or a
   shared package with Kernel-owned execution.
 - How existing connection and adapter run-route rows migrate without moving or
   duplicating already-admitted replies.
-
