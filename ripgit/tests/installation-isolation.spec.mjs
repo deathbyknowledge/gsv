@@ -55,14 +55,15 @@ describe("Repository installation isolation", () => {
   });
 
   async function createRepository(installationId) {
+    const headers = { "content-type": "application/json" };
+    if (installationId) {
+      headers[INSTALLATION_HEADER] = installationId;
+    }
     const response = await miniflare.dispatchFetch(
       "http://ripgit/hyperspace/repos/alice/home/apply",
       {
         method: "POST",
-        headers: {
-          "content-type": "application/json",
-          ...(installationId ? { [INSTALLATION_HEADER]: installationId } : {}),
-        },
+        headers,
         body: JSON.stringify({
           defaultBranch: "main",
           author: "alice",
