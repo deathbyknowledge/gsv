@@ -2176,7 +2176,7 @@ export class Process extends DurableObject<Env> {
         return { ok: false, error: `Unsupported AI config key: ${args.key}` };
       }
       const current = this.store.getAiConfigSnapshot();
-      const values = { ...(current?.values ?? {}) };
+      const values = { ...current?.values };
       const value = String(args.value ?? "").trim();
       if (value) {
         values[args.key] = value;

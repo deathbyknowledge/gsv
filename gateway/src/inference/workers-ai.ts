@@ -777,7 +777,7 @@ function withWorkersAiAbortSignal(
   signal: AbortSignal,
 ): WorkersAiRunOptions {
   return {
-    ...(options ?? {}),
+    ...options,
     signal,
   };
 }

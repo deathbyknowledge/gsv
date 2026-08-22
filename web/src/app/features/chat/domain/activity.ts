@@ -252,7 +252,7 @@ export function applyChatLiveActivityToAgent(
   });
 
   return {
-    ...(agent ?? {}),
+    ...agent,
     activity: activity.activity,
     status: activity.agentStatus,
     statusLabel: activity.statusLabel,

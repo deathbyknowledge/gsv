@@ -210,7 +210,7 @@ function validFingerprint(value: unknown): value is string {
 function boundedOutboundId(value: unknown): value is string {
   return typeof value === "string"
     && new TextEncoder().encode(value).byteLength <= 256
-    && /^[A-Za-z0-9](?:[A-Za-z0-9._:\-]*[A-Za-z0-9])?$/.test(value);
+    && /^[A-Za-z0-9](?:[A-Za-z0-9._:-]*[A-Za-z0-9])?$/.test(value);
 }
 
 function queueRetryDelay(attempts: number): number {

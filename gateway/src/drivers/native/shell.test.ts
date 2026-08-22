@@ -210,7 +210,7 @@ function makeContext(options?: {
       getOwnerUid() {
         return identity.uid;
       },
-      ...(options?.procs ?? {}),
+      ...options?.procs,
     } as never,
     oauth: options?.oauth ?? {
       listAccounts: vi.fn(() => []),

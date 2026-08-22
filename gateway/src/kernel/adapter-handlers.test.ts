@@ -446,7 +446,7 @@ function makeContext(
           return {
             ...existing,
             metadata: {
-              ...(existing.metadata ?? {}),
+              ...existing.metadata,
               surfaceKind: surface.kind,
               surfaceId: surface.id,
               ...(surface.threadId ? { threadId: surface.threadId } : {}),

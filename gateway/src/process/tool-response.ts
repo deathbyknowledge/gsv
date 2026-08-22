@@ -19,7 +19,7 @@ export async function materializeToolResponse(
     const bytes = body ? await bodyToBytes(body, Infinity, signal) : new Uint8Array();
     const text = decodeUtf8(bytes);
     return {
-      ...(record ?? {}),
+      ...record,
       bodyBase64: encodeBase64Bytes(bytes),
       ...(text === null ? {} : { bodyText: text }),
       bodyBytes: bytes.byteLength,

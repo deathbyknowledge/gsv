@@ -56,7 +56,7 @@ export function hasRawToolCallMarkupOutput(response: AssistantMessage): boolean 
     .map((block) => block.text)
     .join("")
     .trim();
-  return /^<tool_call(?:\s|>)/.test(text) && /<\/tool_call>$/.test(text);
+  return /^<tool_call(?:\s|>)/.test(text) && text.endsWith("</tool_call>");
 }
 
 export function isRetryableGenerationErrorMessage(message: string): boolean {

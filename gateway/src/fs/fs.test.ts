@@ -399,7 +399,7 @@ function makeRuntimeViewFs(identity: ProcessIdentity, selfPid?: string): GsvFs {
           return { ok: true, pid, config: processAiConfig };
         }
         if ("key" in args && typeof args.key === "string") {
-          const values = { ...(processAiConfig?.values ?? {}) };
+          const values = { ...processAiConfig?.values };
           const value = String(args.value ?? "").trim();
           if (value) {
             values[args.key] = value;

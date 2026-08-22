@@ -837,7 +837,7 @@ function validAddress(value: unknown): value is string {
     && value.indexOf("@") === separator
     && separator < value.length - 1
     && value.slice(separator + 1).toLowerCase() === value.slice(separator + 1)
-    && !/[\s\u0000-\u001f\u007f<>(),;:\"]/.test(value)
+    && !/[\s\u0000-\u001f\u007f<>(),;:"]/.test(value)
     && !value.includes("..");
 }
 

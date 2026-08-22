@@ -138,7 +138,7 @@ describe("managed mail MIME parsing", () => {
       body,
       "--example",
       "Content-Type: application/octet-stream",
-      `Content-Disposition: attachment; filename=\"${longFilename}\"`,
+      `Content-Disposition: attachment; filename="${longFilename}"`,
       "Content-ID: <file@example.com>",
       "Content-Transfer-Encoding: base64",
       "",

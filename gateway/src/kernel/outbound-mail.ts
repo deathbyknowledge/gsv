@@ -456,7 +456,7 @@ function normalizeAddress(value: unknown): string {
     || separator <= 0
     || separator === address.length - 1
     || address.indexOf("@") !== separator
-    || /[\s\u0000-\u001f\u007f<>(),;:\"]/.test(address)
+    || /[\s\u0000-\u001f\u007f<>(),;:"]/.test(address)
     || address.includes("..")
   ) {
     throw new MailSendError("to is not a valid single email address", false);
