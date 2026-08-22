@@ -12,6 +12,7 @@ import {
 } from "../shared/diagnostics";
 import { debuggerTabs, releaseAllDebuggers } from "../shared/debugger";
 import { loadRuntimeState, saveRuntimeState } from "../shared/runtime-state";
+import { isNumber } from "../shared/schemas";
 import type { ActivityEntry, ExtensionUiState, RuntimeMessage, RuntimeResponse } from "../shared/ui-state";
 import {
   grantMediaCapture,
@@ -147,7 +148,8 @@ async function handleRuntimeMessage(message: RuntimeMessage): Promise<RuntimeRes
         return { ok: false, error: "Unknown message", state: await buildUiState() };
     }
   } catch (error) {
-    const messageText = errorMessage(error);
+    // SAFETY: rejected browser operations expose Error-compatible values here.
+    const messageText = errorMessage(error as Error);
     const connectionRequest = message.type === "connect"
       || message.type === "refresh"
       || message.type === "save-config";
@@ -179,19 +181,23 @@ async function connectNow(config?: ExtensionConfig): Promise<void> {
 async function stopAll(): Promise<RuntimeResponse> {
   const cleanupErrors: string[] = [];
   const stoppedCaptures = await stopNetworkCapture().catch((error) => {
-    cleanupErrors.push(`network: ${errorMessage(error)}`);
+    // SAFETY: rejected browser operations expose Error-compatible values here.
+    cleanupErrors.push(`network: ${errorMessage(error as Error)}`);
     return [];
   });
   const stoppedRecordings = await stopAllMediaRecordings().catch((error) => {
-    cleanupErrors.push(`media: ${errorMessage(error)}`);
+    // SAFETY: rejected browser operations expose Error-compatible values here.
+    cleanupErrors.push(`media: ${errorMessage(error as Error)}`);
     return [];
   });
   const detachedTabs = await releaseAllDebuggers().catch((error) => {
-    cleanupErrors.push(`debugger: ${errorMessage(error)}`);
+    // SAFETY: rejected browser operations expose Error-compatible values here.
+    cleanupErrors.push(`debugger: ${errorMessage(error as Error)}`);
     return [];
   });
   await setManualReconnectSuppressed(true, "stop all").catch((error) => {
-    cleanupErrors.push(`runtime state: ${errorMessage(error)}`);
+    // SAFETY: rejected browser operations expose Error-compatible values here.
+    cleanupErrors.push(`runtime state: ${errorMessage(error as Error)}`);
   });
   addActivity({
     kind: cleanupErrors.length > 0 ? "error" : "sensitive",
@@ -233,12 +239,12 @@ async function openSidePanel(windowId?: number): Promise<void> {
   if (!chrome.sidePanel?.open) {
     throw new Error("chrome.sidePanel is unavailable; check the sidePanel permission.");
   }
-  if (typeof windowId === "number") {
+  if (isNumber(windowId)) {
     await chrome.sidePanel.open({ windowId });
     return;
   }
   const currentWindow = await chrome.windows.getCurrent();
-  if (typeof currentWindow.id !== "number") {
+  if (!isNumber(currentWindow.id)) {
     throw new Error("Unable to resolve current browser window");
   }
   await chrome.sidePanel.open({ windowId: currentWindow.id });
@@ -355,6 +361,6 @@ function gatewayHost(gatewayUrl: string): string {
   }
 }
 
-function errorMessage(error: unknown): string {
+function errorMessage(error: Error | ExtensionBoundaryValue): string {
   return error instanceof Error ? error.message : String(error);
 }

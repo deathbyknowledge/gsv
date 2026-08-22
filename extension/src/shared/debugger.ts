@@ -1,10 +1,13 @@
 export const DEBUGGER_PROTOCOL_VERSION = "1.3";
+import { isNumber } from "./schemas";
 
 type DebuggerEventListener = (
   source: chrome.debugger.DebuggerSession,
   method: string,
-  params?: object,
+  params?: DebuggerEventParams,
 ) => void;
+
+type DebuggerEventParams = { [key: string]: ExtensionBoundaryValue };
 
 type DebuggerDetachListener = (
   source: chrome.debugger.Debuggee,
@@ -53,8 +56,9 @@ export async function releaseDebugger(tabId: number): Promise<void> {
 export async function sendDebuggerCommand<T extends object | undefined = object | undefined>(
   target: chrome.debugger.DebuggerSession,
   method: string,
-  commandParams?: Record<string, unknown>,
+  commandParams?: { [key: string]: ExtensionBoundaryValue },
 ): Promise<T> {
+  // SAFETY: Chrome debugger returns the protocol response for the requested method; callers provide its T.
   return await requireDebuggerApi().sendCommand(target, method, commandParams) as T;
 }
 
@@ -103,12 +107,13 @@ function ensureChromeListeners(): void {
 
   requireDebuggerApi().onEvent.addListener((source, method, params) => {
     for (const listener of eventListeners) {
-      listener(source, method, params);
+      // SAFETY: Chrome debugger event parameters are JSON objects by protocol contract.
+      listener(source, method, params as DebuggerEventParams);
     }
   });
 
   requireDebuggerApi().onDetach.addListener((source, reason) => {
-    if (typeof source.tabId === "number") {
+    if (isNumber(source.tabId)) {
       sessions.delete(source.tabId);
     }
     for (const listener of detachListeners) {
@@ -118,7 +123,7 @@ function ensureChromeListeners(): void {
 }
 
 function requireDebuggerApi(): typeof chrome.debugger {
-  if (typeof chrome === "undefined" || !chrome.debugger) {
+  if (!globalThis.chrome?.debugger) {
     throw new Error("chrome.debugger is unavailable; check the debugger permission.");
   }
   return chrome.debugger;

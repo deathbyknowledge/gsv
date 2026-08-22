@@ -9,6 +9,7 @@ import { createBrowserCommands } from "../target/commands";
 import { BrowserFsDriver, BrowserTargetFileSystem } from "../target/fs";
 import { createRuntimeFileSystem } from "../target/runtime-fs";
 import { BrowserTargetShell } from "../target/shell";
+import { isNumber, isString } from "../shared/schemas";
 
 export type BrowserTargetActivity = Omit<ActivityEntry, "id" | "at">;
 export type BrowserTargetActivityObserver = (activity: BrowserTargetActivity) => void;
@@ -49,8 +50,11 @@ export function createBrowserTargetDriver(
         const result = response.data;
         observeActivity?.({
           ...baseActivity,
-          detail: detailWithResultPath(baseActivity.detail, result),
-          status: statusForResult(result),
+          // SAFETY: gateway syscall responses are JSON protocol values.
+          // SAFETY: syscall responses are JSON protocol values.
+          detail: detailWithResultPath(baseActivity.detail, result as ExtensionBoundaryValue),
+          // SAFETY: syscall responses are JSON protocol values.
+          status: statusForResult(result as ExtensionBoundaryValue),
           durationMs: Date.now() - startedAt,
         });
         return response;
@@ -58,7 +62,8 @@ export function createBrowserTargetDriver(
         observeActivity?.({
           kind: "error",
           label: baseActivity.label,
-          detail: truncate(`${baseActivity.detail}: ${errorMessage(error)}`, 180),
+          // SAFETY: rejected syscall operations are Error-compatible values.
+          detail: truncate(`${baseActivity.detail}: ${errorMessage(error as Error)}`, 180),
           status: "error",
           durationMs: Date.now() - startedAt,
         });
@@ -70,7 +75,8 @@ export function createBrowserTargetDriver(
 
 function activityForFrame(frame: GsvDriverRequest): BrowserTargetActivity {
   if (frame.call === "shell.exec") {
-    const input = shellInput(frame.args);
+    // SAFETY: gateway syscall arguments are JSON protocol values.
+    const input = shellInput(frame.args as ExtensionBoundaryValue);
     const command = firstShellCommand(input);
     return {
       kind: classifyShellCommand(command),
@@ -84,7 +90,8 @@ function activityForFrame(frame: GsvDriverRequest): BrowserTargetActivity {
     return {
       kind: frame.call === "fs.read" ? "fs" : classifyFsCall(frame.call),
       label: frame.call,
-      detail: truncate(pathDetail(frame.args), 180),
+      // SAFETY: gateway syscall arguments are JSON protocol values.
+      detail: truncate(pathDetail(frame.args as ExtensionBoundaryValue), 180),
       status: "active",
     };
   }
@@ -97,9 +104,9 @@ function activityForFrame(frame: GsvDriverRequest): BrowserTargetActivity {
   };
 }
 
-function shellInput(args: unknown): string {
+function shellInput(args: ExtensionBoundaryValue): string {
   const record = asRecord(args);
-  return typeof record.input === "string" ? record.input.trim() : "";
+  return isString(record.input) ? record.input.trim() : "";
 }
 
 function firstShellCommand(input: string): string {
@@ -147,9 +154,9 @@ function classifyFsCall(call: string): ActivityKind {
     : "fs";
 }
 
-function pathDetail(args: unknown): string {
+function pathDetail(args: ExtensionBoundaryValue): string {
   const record = asRecord(args);
-  const path = typeof record.path === "string" ? record.path : "";
+  const path = isString(record.path) ? record.path : "";
   if (path) {
     return path;
   }
@@ -161,24 +168,24 @@ function pathDetail(args: unknown): string {
   return "(no path)";
 }
 
-function endpointPath(value: unknown): string {
+function endpointPath(value: ExtensionBoundaryValue): string {
   const record = asRecord(value);
-  return typeof record.path === "string" ? record.path : "";
+  return isString(record.path) ? record.path : "";
 }
 
-function statusForResult(result: unknown): ActivityStatus {
+function statusForResult(result: ExtensionBoundaryValue): ActivityStatus {
   const record = asRecord(result);
   if (record.status === "failed" || record.ok === false) {
     return "error";
   }
   const exitCode = record.exitCode;
-  if (typeof exitCode === "number" && exitCode !== 0) {
+  if (isNumber(exitCode) && exitCode !== 0) {
     return "error";
   }
   return "ok";
 }
 
-function detailWithResultPath(detail: string, result: unknown): string {
+function detailWithResultPath(detail: string, result: ExtensionBoundaryValue): string {
   const path = resultPath(result);
   if (!path || detail.includes(path)) {
     return detail;
@@ -186,9 +193,9 @@ function detailWithResultPath(detail: string, result: unknown): string {
   return truncate(`${detail} -> ${path}`, 220);
 }
 
-function resultPath(result: unknown): string | null {
+function resultPath(result: ExtensionBoundaryValue): string | null {
   const record = asRecord(result);
-  const text = typeof record.output === "string" ? record.output : "";
+  const text = isString(record.output) ? record.output : "";
   if (!text) {
     return null;
   }
@@ -213,10 +220,11 @@ function truncate(value: string, maxLength: number): string {
   return `${value.slice(0, maxLength - 1)}...`;
 }
 
-function errorMessage(error: unknown): string {
+function errorMessage(error: ExtensionBoundaryValue | Error): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-function asRecord(value: unknown): Record<string, unknown> {
-  return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
+function asRecord(value: ExtensionBoundaryValue): { [key: string]: ExtensionBoundaryValue } {
+  // SAFETY: callers use this helper only after accepting JSON-like external values.
+  return value && !Array.isArray(value) && Object(value) === value ? value as { [key: string]: ExtensionBoundaryValue } : {};
 }

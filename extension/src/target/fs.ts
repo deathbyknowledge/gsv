@@ -5,6 +5,14 @@ import {
   inferFsContentType,
   isTextContentType,
 } from "@humansandmachines/gsv/protocol";
+import type {
+  FsCopyResult,
+  FsDeleteResult,
+  FsEditResult,
+  FsSearchResult,
+  FsTransferStatResult,
+  FsWriteResult,
+} from "@humansandmachines/gsv/protocol";
 import { basename, dirname, joinPath, normalizePath } from "../shared/paths";
 import {
   bytesFromStoredContent,
@@ -540,7 +548,7 @@ export class BrowserFsDriver {
     }
   }
 
-  private async write(raw: unknown): Promise<unknown> {
+  private async write(raw: unknown): Promise<FsWriteResult> {
     const args = asRecord(raw) as FsWriteArgs;
     const path = parsePath(args.path, "fs.write");
     if (typeof args.content !== "string") {
@@ -551,7 +559,7 @@ export class BrowserFsDriver {
     return { ok: true, path, size: bytes.byteLength };
   }
 
-  private async edit(raw: unknown): Promise<unknown> {
+  private async edit(raw: unknown): Promise<FsEditResult> {
     const args = asRecord(raw) as FsEditArgs;
     const path = parsePath(args.path, "fs.edit");
     if (typeof args.oldString !== "string" || typeof args.newString !== "string") {
@@ -572,14 +580,14 @@ export class BrowserFsDriver {
     return { ok: true, path, replacements: args.replaceAll === true ? count : 1 };
   }
 
-  private async delete(raw: unknown): Promise<unknown> {
+  private async delete(raw: unknown): Promise<FsDeleteResult> {
     const args = asRecord(raw) as FsDeleteArgs;
     const path = parsePath(args.path, "fs.delete");
     await this.fs.delete(path);
     return { ok: true, path };
   }
 
-  private async search(raw: unknown, signal?: AbortSignal): Promise<unknown> {
+  private async search(raw: unknown, signal?: AbortSignal): Promise<FsSearchResult> {
     const args = asRecord(raw) as FsSearchArgs;
     const query = typeof args.query === "string" ? args.query.trim() : "";
     if (!query) {
@@ -591,7 +599,7 @@ export class BrowserFsDriver {
     return { ok: true, matches, count: matches.length, truncated: matches.length >= MAX_SEARCH_MATCHES };
   }
 
-  private async copy(raw: unknown): Promise<unknown> {
+  private async copy(raw: unknown): Promise<FsCopyResult> {
     const args = asRecord(raw) as FsCopyArgs;
     const source = parseCopyEndpoint(args.source, "source");
     const destination = parseCopyEndpoint(args.destination, "destination");
@@ -606,7 +614,7 @@ export class BrowserFsDriver {
     };
   }
 
-  private async transferStat(raw: unknown): Promise<unknown> {
+  private async transferStat(raw: unknown): Promise<FsTransferStatResult> {
     const args = asRecord(raw) as TransferArgs;
     const path = parsePath(args.path, "fs.transfer.stat");
     try {

@@ -273,7 +273,8 @@ async function refresh(options: { applyConfig?: boolean; silent?: boolean; recon
     handleResponse(response, { applyConfig: options.applyConfig });
   } catch (error) {
     if (!options.silent) {
-      setNotice("error", errorMessage(error));
+      // SAFETY: rejected browser operations expose Error-compatible values here.
+      setNotice("error", errorMessage(error as Error));
     }
   }
 }
@@ -312,7 +313,8 @@ async function withBusy(action: string, run: () => Promise<void>): Promise<void>
   try {
     await run();
   } catch (error) {
-    setNotice("error", errorMessage(error));
+    // SAFETY: rejected browser operations expose Error-compatible values here.
+    setNotice("error", errorMessage(error as Error));
   } finally {
     busyAction = null;
     renderBusyState();
@@ -458,8 +460,9 @@ function getFormConfig(): ExtensionConfig {
   };
 }
 
-function validateConfig(config: ExtensionConfig): FieldErrors {
-  const errors: FieldErrors = {};
+function validateConfig(config: ExtensionConfig) {
+  // SAFETY: this object is populated only with the declared ConfigField keys below.
+  const errors = {} as FieldErrors;
   if (!normalizeGatewayUrl(config.gatewayUrl)) {
     errors.gatewayUrl = "Enter a valid host, origin, or WebSocket URL.";
   }
@@ -574,11 +577,12 @@ function actionLabel(action: string): string {
   }
 }
 
-function errorMessage(error: unknown): string {
+function errorMessage(error: Error | ExtensionBoundaryValue): string {
   return error instanceof Error ? error.message : String(error);
 }
 
 async function detectBrowserName(): Promise<string> {
+  // SAFETY: Chromium exposes these optional vendor fields on its Navigator implementation.
   const nav = navigator as Navigator & {
     brave?: { isBrave?: () => Promise<boolean> };
     userAgentData?: { brands?: Array<{ brand: string }> };
@@ -636,7 +640,7 @@ function hostLabelFromDeviceId(deviceId: string): string | null {
   return normalized;
 }
 
-function slugDevicePart(value: unknown): string {
+function slugDevicePart(value: ExtensionBoundaryValue): string {
   return String(value ?? "")
     .trim()
     .toLowerCase()

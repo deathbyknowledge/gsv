@@ -150,13 +150,15 @@ function status(state: GsvClientStatus["state"], message: string | null = null):
   };
 }
 
-function deferred<T>(): {
+type Deferred<T> = {
   promise: Promise<T>;
   resolve(value: T): void;
-  reject(error: unknown): void;
-} {
+  reject(error: Error | ExtensionBoundaryValue): void;
+};
+
+function deferred<T>(): Deferred<T> {
   let resolve!: (value: T) => void;
-  let reject!: (error: unknown) => void;
+  let reject!: (error: Error | ExtensionBoundaryValue) => void;
   const promise = new Promise<T>((resolvePromise, rejectPromise) => {
     resolve = resolvePromise;
     reject = rejectPromise;

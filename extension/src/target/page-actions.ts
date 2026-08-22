@@ -329,8 +329,10 @@ export async function sendPageKey(
     let afterObservation: ObservationPoint | null = null;
     try {
       throwIfAborted(signal);
-      await sendDebuggerCommand(target, "Input.dispatchKeyEvent", keyEvent("down", key));
-      await sendDebuggerCommand(target, "Input.dispatchKeyEvent", keyEvent("up", key));
+      // SAFETY: keyEvent produces a JSON debugger command payload.
+      await sendDebuggerCommand(target, "Input.dispatchKeyEvent", keyEvent("down", key) as { [key: string]: ExtensionBoundaryValue });
+      // SAFETY: keyEvent produces a JSON debugger command payload.
+      await sendDebuggerCommand(target, "Input.dispatchKeyEvent", keyEvent("up", key) as { [key: string]: ExtensionBoundaryValue });
       await abortableDelay(ACTION_SETTLE_MS, signal);
       afterObservation = await endObservation(target, observation);
     } finally {

@@ -2,13 +2,14 @@ import type {
   GsvClientStatus,
   GsvDriverConnectOptions,
 } from "@humansandmachines/gsv/client";
+import type { ConnectResult } from "@humansandmachines/gsv/protocol";
 import { configReady, type ExtensionConfig } from "../shared/config";
 
 type ConnectionDriver = {
   client: {
     getStatus(): GsvClientStatus;
   };
-  connect(options: GsvDriverConnectOptions): Promise<unknown>;
+  connect(options: GsvDriverConnectOptions): Promise<ConnectResult | void>;
   disconnect(reason?: string): void;
 };
 

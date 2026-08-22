@@ -1,4 +1,5 @@
 import type { ActivityEntry } from "./ui-state";
+import { isNumber, isString } from "./schemas";
 
 export type ExtensionDiagnostics = {
   activity: ActivityEntry[];
@@ -36,7 +37,8 @@ export function emptyDiagnostics(): ExtensionDiagnostics {
 
 export async function loadDiagnostics(): Promise<ExtensionDiagnostics> {
   const raw = await chrome.storage.local.get(DIAGNOSTICS_KEY);
-  return normalizeDiagnostics(raw[DIAGNOSTICS_KEY]);
+  // SAFETY: chrome.storage.local returns JSON-compatible values for this key.
+  return normalizeDiagnostics(raw[DIAGNOSTICS_KEY] as ExtensionBoundaryValue);
 }
 
 export async function saveDiagnostics(diagnostics: ExtensionDiagnostics): Promise<void> {
@@ -133,7 +135,7 @@ export function recordDiagnosticArtifactPaths(
   return next;
 }
 
-function normalizeDiagnostics(value: unknown): ExtensionDiagnostics {
+function normalizeDiagnostics(value: ExtensionBoundaryValue): ExtensionDiagnostics {
   const record = isRecord(value) ? value : {};
   const diagnostics = emptyDiagnostics();
   diagnostics.activity = normalizeActivity(record.activity);
@@ -150,7 +152,7 @@ function normalizeDiagnostics(value: unknown): ExtensionDiagnostics {
   return diagnostics;
 }
 
-function normalizeActivity(value: unknown): ActivityEntry[] {
+function normalizeActivity(value: ExtensionBoundaryValue): ActivityEntry[] {
   if (!Array.isArray(value)) {
     return [];
   }
@@ -164,7 +166,7 @@ function normalizeActivity(value: unknown): ActivityEntry[] {
     if (!id || !at || !isActivityKind(kind) || !isActivityStatus(status)) {
       continue;
     }
-    const durationMs = typeof record.durationMs === "number" && Number.isFinite(record.durationMs)
+    const durationMs = isNumber(record.durationMs) && Number.isFinite(record.durationMs)
       ? Math.max(0, Math.round(record.durationMs))
       : undefined;
     entries.push({
@@ -174,8 +176,10 @@ function normalizeActivity(value: unknown): ActivityEntry[] {
       detail: normalizeString(record.detail) ?? "",
       status,
       at,
-      ...(durationMs === undefined ? {} : { durationMs }),
     });
+    if (durationMs !== undefined) {
+      entries[entries.length - 1].durationMs = durationMs;
+    }
   }
   return sortActivity(entries).slice(0, MAX_ACTIVITY);
 }
@@ -191,34 +195,36 @@ function mergeLatestTimestamp<K extends keyof ExtensionDiagnostics>(
   valueKey?: keyof ExtensionDiagnostics,
 ): void {
   const sourceTimestamp = source[timestampKey];
-  if (typeof sourceTimestamp !== "string") {
+  if (!isString(sourceTimestamp)) {
     return;
   }
   const targetTimestamp = target[timestampKey];
-  if (typeof targetTimestamp === "string" && Date.parse(targetTimestamp) >= Date.parse(sourceTimestamp)) {
+  if (isString(targetTimestamp) && Date.parse(targetTimestamp) >= Date.parse(sourceTimestamp)) {
     return;
   }
+  // SAFETY: timestampKey is constrained to ExtensionDiagnostics keys and sourceTimestamp is its string value.
   target[timestampKey] = sourceTimestamp as ExtensionDiagnostics[K];
   if (valueKey) {
+    // SAFETY: valueKey is an explicitly paired diagnostic field supplied by the caller.
     target[valueKey] = source[valueKey] as never;
   }
 }
 
-function normalizeStringArray(value: unknown): string[] {
+function normalizeStringArray(value: ExtensionBoundaryValue): string[] {
   if (!Array.isArray(value)) {
     return [];
   }
   return value
-    .filter((item): item is string => typeof item === "string" && item.trim().length > 0)
+    .filter((item): item is string => isString(item) && item.trim().length > 0)
     .map((item) => item.trim());
 }
 
-function normalizeString(value: unknown): string | null {
-  return typeof value === "string" && value.trim() ? value.trim() : null;
+function normalizeString(value: ExtensionBoundaryValue): string | null {
+  return isString(value) && value.trim() ? value.trim() : null;
 }
 
-function normalizeIso(value: unknown): string | null {
-  if (typeof value !== "string" || !value.trim()) {
+function normalizeIso(value: ExtensionBoundaryValue): string | null {
+  if (!isString(value) || !value.trim()) {
     return null;
   }
   return Number.isFinite(Date.parse(value)) ? value : null;
@@ -237,6 +243,6 @@ function isActivityStatus(value: string | null): value is ActivityEntry["status"
   return value === "active" || value === "ok" || value === "error" || value === "info";
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return Boolean(value && typeof value === "object" && !Array.isArray(value));
+function isRecord(value: ExtensionBoundaryValue): value is { [key: string]: ExtensionBoundaryValue } {
+  return Boolean(value && !Array.isArray(value) && Object(value) === value);
 }

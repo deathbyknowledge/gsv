@@ -18,7 +18,8 @@ const CONFIG_KEY = "gsvExtensionConfig";
 
 export async function loadConfig(): Promise<ExtensionConfig> {
   const raw = await chrome.storage.local.get(CONFIG_KEY);
-  return normalizeConfig(raw[CONFIG_KEY]);
+  // SAFETY: chrome.storage.local returns JSON-compatible values for this key.
+  return normalizeConfig(raw[CONFIG_KEY] as ExtensionBoundaryValue);
 }
 
 export async function saveConfig(config: ExtensionConfig): Promise<ExtensionConfig> {
@@ -27,14 +28,14 @@ export async function saveConfig(config: ExtensionConfig): Promise<ExtensionConf
   return normalized;
 }
 
-export function normalizeConfig(value: unknown): ExtensionConfig {
+export function normalizeConfig(value: ExtensionBoundaryValue): ExtensionConfig {
   const record = isRecord(value) ? value : {};
   return {
     gatewayUrl: normalizeGatewayUrl(record.gatewayUrl, DEFAULT_CONFIG.gatewayUrl),
     username: normalizeString(record.username, DEFAULT_CONFIG.username),
     token: normalizeString(record.token, DEFAULT_CONFIG.token),
     deviceId: normalizeDeviceId(record.deviceId),
-    autoConnect: typeof record.autoConnect === "boolean" ? record.autoConnect : DEFAULT_CONFIG.autoConnect,
+    autoConnect: isBoolean(record.autoConnect) ? record.autoConnect : DEFAULT_CONFIG.autoConnect,
   };
 }
 
@@ -42,8 +43,8 @@ export function configReady(config: ExtensionConfig): boolean {
   return Boolean(config.gatewayUrl && config.username && config.token && config.deviceId);
 }
 
-export function normalizeGatewayUrl(value: unknown, fallback = ""): string {
-  const raw = typeof value === "string" ? value.trim() : "";
+export function normalizeGatewayUrl(value: ExtensionBoundaryValue, fallback = ""): string {
+  const raw = isString(value) ? value.trim() : "";
   if (!raw) {
     return fallback;
   }
@@ -72,17 +73,17 @@ export function normalizeGatewayUrl(value: unknown, fallback = ""): string {
   }
 }
 
-function normalizeString(value: unknown, fallback: string): string {
-  return typeof value === "string" ? value.trim() : fallback;
+function normalizeString(value: ExtensionBoundaryValue, fallback: string): string {
+  return isString(value) ? value.trim() : fallback;
 }
 
-function normalizeDeviceId(value: unknown): string {
+function normalizeDeviceId(value: ExtensionBoundaryValue): string {
   const normalized = normalizeString(value, DEFAULT_CONFIG.deviceId);
   return normalized || DEFAULT_CONFIG.deviceId;
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return Boolean(value && typeof value === "object" && !Array.isArray(value));
+function isRecord(value: ExtensionBoundaryValue): value is { [key: string]: ExtensionBoundaryValue } {
+  return Boolean(value && !Array.isArray(value) && Object(value) === value);
 }
 
 function inferGatewayProtocol(value: string): "ws" | "wss" {
@@ -112,3 +113,4 @@ function isPrivate172Host(host: string): boolean {
   const second = Number.parseInt(match[1], 10);
   return second >= 16 && second <= 31;
 }
+import { isBoolean, isString } from "./schemas";
