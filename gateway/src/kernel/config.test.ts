@@ -65,7 +65,7 @@ describe("ConfigStore", () => {
       expect(values.get("config/ai/model")).toBe("claude-sonnet-4-6");
       expect(values.get("config/ai/generation/streaming")).toBe("auto");
       expect(values.get("config/ai/context.d/01-gsv.md")).toContain(
-        "[Process Event]:",
+        "[GSV EVENT]",
       );
     },
   );
@@ -105,12 +105,13 @@ describe("ConfigStore", () => {
     expect(context).toContain("GSV is a personal intelligence OS");
     expect(context).toContain("its own lightweight Linux virtual computer");
     expect(context).toContain("skills show browser-target");
-    expect(context).toContain("[Process Event]:");
-    expect(context).toContain("Treat them as system notifications");
+    expect(context).toContain("[GSV EVENT]");
+    expect(context).toContain("typed runtime events from GSV");
     const targets = SYSTEM_CONFIG_DEFAULTS["config/ai/context.d/05-targets.md"];
     expect(targets).toContain("message destinations");
     expect(targets).toContain("message attach PATH...");
-    expect(targets).toContain("message send");
+    expect(targets).toContain("exactly one Message action");
+    expect(targets).toContain("or Silence");
     expect(targets).toContain(
       "cp source-target:/path destination-target:/path",
     );

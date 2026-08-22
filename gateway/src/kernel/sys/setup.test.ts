@@ -5,10 +5,17 @@ const {
   handleSysBootstrapMock,
   seedBuiltinSkillsToHomeMock,
   ensurePersonalControllerMock,
+  getConversationByIdMock,
 } = vi.hoisted(() => ({
   handleSysBootstrapMock: vi.fn(),
   seedBuiltinSkillsToHomeMock: vi.fn(),
   ensurePersonalControllerMock: vi.fn(),
+  getConversationByIdMock: vi.fn(),
+}));
+
+vi.mock("../../shared/utils", async (importOriginal) => ({
+  ...await importOriginal<typeof import("../../shared/utils")>(),
+  getConversationById: getConversationByIdMock,
 }));
 
 vi.mock("./bootstrap", () => ({
@@ -159,6 +166,7 @@ function createCtx(overrides?: {
   };
 
   const ctx = {
+    installationId: "singleton",
     auth: auth as unknown as KernelContext["auth"],
     caps: caps as unknown as KernelContext["caps"],
     config: config as unknown as KernelContext["config"],
@@ -167,6 +175,18 @@ function createCtx(overrides?: {
       ...(overrides?.ripgit ? { RIPGIT: overrides.ripgit } : {}),
       ...(overrides?.managedInference ? { MANAGED_INFERENCE: {} } : {}),
     } as unknown as KernelContext["env"],
+    conversations: {
+      ensureHome: vi.fn((ownerUid: number, handlerPid: string) => ({
+        id: `conv:home:${ownerUid}`,
+        ownerUid,
+        kind: "home",
+        title: "Home",
+        handlerPid,
+        latestSequence: 0,
+        createdAt: 1,
+        updatedAt: 1,
+      })),
+    } as unknown as KernelContext["conversations"],
     serverVersion: "0.0.1-test",
   } as KernelContext;
 
@@ -185,6 +205,7 @@ describe("handleSysSetup", () => {
     });
     seedBuiltinSkillsToHomeMock.mockResolvedValue({ username: "root", copied: 0, skipped: 0 });
     ensurePersonalControllerMock.mockResolvedValue("proc:personal");
+    getConversationByIdMock.mockReturnValue({ initialize: vi.fn(async () => undefined) });
   });
 
   it("creates first user, ai config, and node token", async () => {

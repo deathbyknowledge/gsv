@@ -1121,6 +1121,7 @@ describe("proc handlers", () => {
     sendFrameToProcessMock.mockImplementation(async (_installationId, pid, frame) => {
       if (frame.type !== "req") return null;
       if (frame.call === "proc.history.export") {
+        expect(frame.args).toEqual({ throughRunId: "run:conversation-message" });
         return {
           type: "res",
           id: frame.id,
@@ -1155,7 +1156,7 @@ describe("proc handlers", () => {
 
     const result = await handleProcFork({
       pid: sourcePid,
-      throughMessageId: 2,
+      throughRunId: "run:conversation-message",
     }, ctx);
 
     expect(result).toMatchObject({

@@ -266,6 +266,9 @@ export async function handleProcFork(
         ...(args.throughMessageId !== undefined
           ? { throughMessageId: args.throughMessageId }
           : {}),
+        ...(args.throughRunId !== undefined
+          ? { throughRunId: args.throughRunId }
+          : {}),
         ...(args.includeLiveSuffix !== undefined
           ? { includeLiveSuffix: args.includeLiveSuffix }
           : {}),
@@ -461,6 +464,7 @@ function withProcSendOrigin(frame: RequestFrame, ctx: KernelContext): RequestFra
   } else {
     delete nextArgs.origin;
   }
+  delete nextArgs.interaction;
   return { ...frame, args: nextArgs } as RequestFrame;
 }
 

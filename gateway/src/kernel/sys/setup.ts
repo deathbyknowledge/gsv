@@ -17,6 +17,7 @@ import { RipgitClient } from "../../fs";
 import { seedBuiltinSkillsToHome } from "./skills-seed";
 import { gsvInferenceFeaturesFromEnv } from "../../inference/gsv-provider";
 import { ensurePersonalController } from "../personal-controller";
+import { getConversationById } from "../../shared/utils";
 
 const USERNAME_RE = /^[a-z_][a-z0-9_-]{0,31}$/;
 
@@ -392,7 +393,12 @@ export async function handleSysSetup(
     };
 
     await timeSetupStep(timings, "provision-personal-agent", async () => {
-      await ensurePersonalController(uid, ctx, agentName);
+      const pid = await ensurePersonalController(uid, ctx, agentName);
+      const conversation = ctx.conversations.ensureHome(uid, pid);
+      await getConversationById(ctx.installationId, conversation.id).initialize({
+        ownerUid: uid,
+        kind: "home",
+      });
     });
 
     const rootShadow = auth.getShadowByUsername("root");

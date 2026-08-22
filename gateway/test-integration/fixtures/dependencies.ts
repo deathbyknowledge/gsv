@@ -137,9 +137,18 @@ export class ManagedInferenceFixture
       `pid:${input.actor.processId ?? "none"}`,
       `run:${input.actor.runId ?? "none"}`,
     ].join(":");
+    const messageToolOffered = input.tools?.some((tool) => tool.name === "Message") === true;
+    const content: ManagedInferenceResult["content"] = messageToolOffered
+      ? [{
+          type: "toolCall",
+          id: `managed-message-${input.logicalRequestId}`,
+          name: "Message",
+          arguments: { text },
+        }]
+      : [{ type: "text", text }];
     const result: ManagedInferenceResult = {
       role: "assistant",
-      content: [{ type: "text", text }],
+      content,
       api: "gsv-inference",
       provider: GSV_INFERENCE_PROVIDER,
       model: GSV_INFERENCE_PRODUCT_MODEL,
@@ -151,7 +160,7 @@ export class ManagedInferenceFixture
         totalTokens: 2,
         cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
       },
-      stopReason: "stop",
+      stopReason: messageToolOffered ? "toolUse" : "stop",
       timestamp: Date.now(),
     };
     return result;
@@ -165,32 +174,46 @@ export class ManagedInferenceFixture
       async start(controller) {
         const message = await result;
         const content = message.content[0];
-        if (!content || content.type !== "text") {
-          throw new Error("managed inference fixture expected text");
-        }
+        if (!content) throw new Error("managed inference fixture returned no content");
         controller.enqueue(encodeManagedInferenceStreamEvent({
           type: "start",
           partial: { ...message, content: [], stopReason: "pending" },
         }));
-        controller.enqueue(encodeManagedInferenceStreamEvent({
-          type: "text_start",
-          contentIndex: 0,
-          content: { type: "text", text: "" },
-        }));
-        controller.enqueue(encodeManagedInferenceStreamEvent({
-          type: "text_delta",
-          contentIndex: 0,
-          delta: content.text,
-        }));
-        await scheduler.wait(10);
-        controller.enqueue(encodeManagedInferenceStreamEvent({
-          type: "text_end",
-          contentIndex: 0,
-          content,
-        }));
+        if (content.type === "text") {
+          controller.enqueue(encodeManagedInferenceStreamEvent({
+            type: "text_start",
+            contentIndex: 0,
+            content: { type: "text", text: "" },
+          }));
+          controller.enqueue(encodeManagedInferenceStreamEvent({
+            type: "text_delta",
+            contentIndex: 0,
+            delta: content.text,
+          }));
+          await scheduler.wait(10);
+          controller.enqueue(encodeManagedInferenceStreamEvent({
+            type: "text_end",
+            contentIndex: 0,
+            content,
+          }));
+        } else if (content.type === "toolCall") {
+          controller.enqueue(encodeManagedInferenceStreamEvent({
+            type: "toolcall_start",
+            contentIndex: 0,
+            toolCall: content,
+          }));
+          await scheduler.wait(10);
+          controller.enqueue(encodeManagedInferenceStreamEvent({
+            type: "toolcall_end",
+            contentIndex: 0,
+            toolCall: content,
+          }));
+        } else {
+          throw new Error("managed inference fixture returned unsupported content");
+        }
         controller.enqueue(encodeManagedInferenceStreamEvent({
           type: "done",
-          reason: "stop",
+          reason: message.stopReason === "toolUse" ? "toolUse" : "stop",
           message,
         }));
         controller.close();

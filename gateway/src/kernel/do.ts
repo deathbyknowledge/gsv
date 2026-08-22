@@ -42,6 +42,8 @@ import type {
   SchedulerRunArgs,
   SchedulerRunResult,
   SysSetupResult,
+  ConversationMessage,
+  ConversationMessageOrigin,
 } from "@humansandmachines/gsv/protocol";
 import {
   BinaryBodyChannel,
@@ -63,6 +65,7 @@ import {
 } from "./routing";
 import { ShellSessionStore, type ShellSessionStatus } from "./shell-sessions";
 import { ProcessRegistry, type ProcessState } from "./processes";
+import { ConversationRegistry } from "./conversations";
 import { AdapterStore } from "./adapter-store";
 import { RunRouteStore, type AdapterRunRoute } from "./run-routes";
 import { OAuthStore } from "./oauth-store";
@@ -87,19 +90,13 @@ import { dispatch, type DispatchDeps } from "./dispatch";
 import { bindStreamToAbort } from "../shared/streams";
 import { raceWithAbort } from "../shared/abort";
 import type { KernelContext } from "./context";
-import { sendFrameToProcess } from "../shared/utils";
+import { getConversationById, sendFrameToProcess } from "../shared/utils";
 import { stableOpaqueId } from "../shared/stable-id";
 import {
   MAX_MESSAGE_MEDIA_ITEMS,
   MAX_MESSAGE_MEDIA_PART_BYTES,
   MAX_MESSAGE_MEDIA_TOTAL_BYTES,
 } from "../shared/message-media-limits";
-import {
-  agentArchiveMediaPath,
-  isValidAgentArchiveMediaObject,
-  processMediaPath,
-  processMediaPrefix,
-} from "../shared/process-media-path";
 import {
   handleSysSetup as handleKernelSetup,
   recoverCompletedSysSetup,
@@ -120,6 +117,10 @@ import {
 } from "./adapter-handlers";
 import { assertAdapterMessageDestinationAccess } from "./adapter-destinations";
 import type {
+  ProcessMessageCommitArgs,
+  ProcessMessageCommitResponseFrame,
+  ProcessMessageStreamSignal,
+  ProcessOutboundFrame,
   ProcessScheduleDeliverRequestFrame,
   ProcessScheduleDeliverResponseFrame,
 } from "../protocol/process-frames";
@@ -212,6 +213,7 @@ type ConnectionState = {
   identity?: ConnectionIdentity;
   clientId?: string;
   clientPlatform?: string;
+  observedProcessIds?: string[];
 };
 
 type ProcessNetFetchOptions = {
@@ -263,6 +265,7 @@ export class Kernel extends Host<Env> {
   private readonly routes: RoutingTable;
   private readonly shellSessions: ShellSessionStore;
   private readonly procs: ProcessRegistry;
+  private readonly conversations: ConversationRegistry;
   private readonly adapters: AdapterStore;
   private readonly runRoutes: RunRouteStore;
   private readonly signalWatches: SignalWatchStore;
@@ -329,6 +332,8 @@ export class Kernel extends Host<Env> {
     this.shellSessions = new ShellSessionStore(sql);
 
     this.procs = new ProcessRegistry(sql);
+
+    this.conversations = new ConversationRegistry(sql);
 
     this.adapters = new AdapterStore(sql);
 
@@ -635,8 +640,29 @@ export class Kernel extends Host<Env> {
    * or null if deferred (forwarded to a device — result will arrive later
    * via process.recvFrame callback).
    */
-  async recvFrame(processId: string, frame: Frame): Promise<Frame | null> {
+  async recvFrame(
+    processId: string,
+    frame: ProcessOutboundFrame,
+  ): Promise<Frame | ProcessMessageCommitResponseFrame | null> {
     if (frame.type === "req") {
+      if (frame.call === "proc.message.commit") {
+        try {
+          return {
+            type: "res",
+            id: frame.id,
+            ok: true,
+            data: {
+              message: await this.commitProcessMessage(processId, frame.args),
+            },
+          };
+        } catch (error) {
+          return errFrame(
+            frame.id,
+            500,
+            error instanceof Error ? error.message : String(error),
+          );
+        }
+      }
       try {
         return await this.handleProcessReq(processId, frame);
       } finally {
@@ -645,6 +671,10 @@ export class Kernel extends Host<Env> {
     }
 
     if (frame.type === "sig") {
+      if (frame.signal === "proc.message.stream") {
+        await this.deliverProcessMessageStream(processId, frame as ProcessMessageStreamSignal);
+        return null;
+      }
       const runId = this.extractRunId(frame.payload);
       if (!this.updateProcessRuntimeFromSignal(processId, frame, runId)) {
         if (frame.signal === "proc.run.finished" && runId) {
@@ -666,6 +696,162 @@ export class Kernel extends Host<Env> {
     }
 
     return null;
+  }
+
+  private async commitProcessMessage(
+    processId: string,
+    args: ProcessMessageCommitArgs,
+  ): Promise<ConversationMessage> {
+    const process = this.procs.get(processId);
+    if (!process) throw new Error("Unknown process");
+    if (!args || typeof args.runId !== "string" || !args.runId) {
+      throw new Error("Message runId is invalid");
+    }
+    if (typeof args.text !== "string") throw new Error("Message text is invalid");
+    let conversation = args.conversationId
+      ? this.conversations.get(args.conversationId)
+      : null;
+    if (conversation) {
+      if (
+        conversation.ownerUid !== process.ownerUid
+        || conversation.handlerPid !== processId
+      ) {
+        throw new Error("Process does not handle this conversation");
+      }
+    } else if (args.conversationId) {
+      throw new Error("Conversation does not exist");
+    } else {
+      conversation = process.isPersonalController
+        ? this.conversations.ensureHome(process.ownerUid, processId)
+        : this.conversations.ensureWork(process.ownerUid, processId, process.label);
+    }
+    const stub = getConversationById(this.installationId, conversation.id);
+    await stub.initialize({ ownerUid: conversation.ownerUid, kind: conversation.kind });
+    const messageId = await stableOpaqueId("msg", [
+      conversation.id,
+      processId,
+      args.runId,
+      "output",
+    ]);
+    const origin: ConversationMessageOrigin = {
+      kind: "process",
+      pid: processId,
+      runId: args.runId,
+    };
+    const appended = await stub.append({
+      messageId,
+      idempotencyKey: `output:${processId}:${args.runId}`,
+      author: { kind: "process", pid: processId, uid: process.uid },
+      text: args.text,
+      ...(args.media?.length ? { media: args.media } : {}),
+      mediaOwner: {
+        pid: processId,
+        uid: process.uid,
+        gid: process.gid,
+        home: process.home,
+      },
+      origin,
+      processId,
+      runId: args.runId,
+      createdAt: Date.now(),
+    });
+    const { message } = appended;
+    this.conversations.recordSequence(conversation.id, message.sequence);
+
+    let route = this.runRoutes.get(args.runId);
+    if (!route && !args.conversationId) {
+      route = this.materializePersonalAdapterFallback(processId, args.runId, process.ownerUid);
+    }
+    if (route?.uid !== process.ownerUid || route?.processId !== processId) {
+      if (route) this.runRoutes.delete(args.runId);
+      route = null;
+    }
+    if (route?.kind === "connection") {
+      this.sendSignalToConnection(route.connectionId, "message.committed", {
+        message,
+        directed: true,
+      });
+      if (appended.created) {
+        this.broadcastToUserUidExcept(process.ownerUid, route.connectionId, "message.committed", {
+          message,
+          directed: false,
+        });
+      }
+    } else {
+      if (appended.created) {
+        this.broadcastToUserUid(process.ownerUid, "message.committed", {
+          message,
+          directed: false,
+        });
+      }
+      if (route?.kind === "adapter") {
+        await this.queueAdapterSignalDelivery(route, {
+          type: "sig",
+          signal: "message.committed",
+          payload: { message },
+        }, 1);
+      }
+    }
+    if (appended.created) {
+      this.broadcastToUserUid(process.ownerUid, "conversation.changed", {
+        conversationId: conversation.id,
+        latestSequence: message.sequence,
+      });
+    }
+    return message;
+  }
+
+  private async deliverProcessMessageStream(
+    processId: string,
+    frame: ProcessMessageStreamSignal,
+  ): Promise<void> {
+    const process = this.procs.get(processId);
+    const payload = frame.payload;
+    if (
+      !process
+      || !payload
+      || payload.pid !== processId
+      || typeof payload.runId !== "string"
+      || typeof payload.messageId !== "string"
+    ) {
+      return;
+    }
+    const route = this.runRoutes.get(payload.runId);
+    if (
+      !route
+      || route.processId !== processId
+      || route.uid !== process.ownerUid
+    ) {
+      return;
+    }
+    if (payload.phase === "silenced") {
+      if (route.kind === "adapter") {
+        await setAdapterActivityForKernel(
+          this.bindings,
+          this.installationId,
+          route.destination.adapter,
+          route.destination.accountId,
+          route.destination.surface,
+          { kind: "typing", active: false },
+        ).catch(() => undefined);
+      }
+      return;
+    }
+    if (route.kind !== "connection") return;
+    const signal = payload.phase === "started"
+      ? "message.started"
+      : payload.phase === "delta"
+        ? "message.delta"
+        : "message.aborted";
+    this.sendSignalToConnection(route.connectionId, signal, {
+      conversationId: payload.conversationId,
+      messageId: payload.messageId,
+      processId,
+      runId: payload.runId,
+      timestamp: payload.timestamp,
+      ...(payload.phase === "delta" ? { delta: payload.delta ?? "" } : {}),
+      ...(payload.phase === "aborted" ? { reason: payload.reason ?? "aborted" } : {}),
+    });
   }
 
   async acceptProcessRunStream(
@@ -932,9 +1118,7 @@ export class Kernel extends Host<Env> {
 
     let route = runId ? this.runRoutes.get(runId) : null;
 
-    // Client-facing process signals route by the owning human (owner_uid), not the
-    // run-as identity (which may be the personal agent account).
-    this.broadcastToUserUid(ownerUid, frame.signal, frame.payload);
+    this.broadcastProcessSignal(ownerUid, processId, route, frame);
 
     if (frame.signal === "proc.run.finished") {
       const process = this.procs.get(processId);
@@ -949,9 +1133,11 @@ export class Kernel extends Host<Env> {
     if (
       !route
       && runId
-      && (
-        frame.signal === "proc.run.hil.requested"
-        || frame.signal === "proc.run.finished"
+      && frame.signal === "proc.run.hil.requested"
+      && !(
+        frame.payload
+        && typeof frame.payload === "object"
+        && typeof (frame.payload as { conversationId?: unknown }).conversationId === "string"
       )
     ) {
       route = this.materializePersonalAdapterFallback(processId, runId, ownerUid);
@@ -980,7 +1166,20 @@ export class Kernel extends Host<Env> {
       return;
     }
     if (frame.signal === "proc.run.finished") {
-      await this.attemptAdapterSignalDelivery(route, frame, 1);
+      const payload = frame.payload && typeof frame.payload === "object"
+        ? frame.payload as Record<string, unknown>
+        : {};
+      if (payload.reason !== "message.sent") {
+        this.runRoutes.delete(runId);
+        await setAdapterActivityForKernel(
+          this.bindings,
+          this.installationId,
+          route.destination.adapter,
+          route.destination.accountId,
+          route.destination.surface,
+          { kind: "typing", active: false },
+        ).catch(() => undefined);
+      }
       return;
     }
     await this.deliverSignalToAdapter(route, frame);
@@ -1052,7 +1251,7 @@ export class Kernel extends Host<Env> {
     }
 
     if (outcome.state === "delivered" || outcome.state === "skipped") {
-      if (frame.signal === "proc.run.finished") {
+      if (frame.signal === "message.committed") {
         this.runRoutes.delete(route.runId);
       }
       return;
@@ -1062,7 +1261,7 @@ export class Kernel extends Host<Env> {
     const deliveryError = outcome.error;
     const label = frame.signal === "proc.run.hil.requested"
       ? "approval notification"
-      : "automatic reply";
+      : "message";
     await this.queueProcessDeliveryNotice(route, frame, {
       state: terminalState,
       message: terminalState === "ambiguous"
@@ -1495,48 +1694,40 @@ export class Kernel extends Host<Env> {
       }
     }
 
-    if (frame.signal !== "proc.run.finished") {
-      return { state: "skipped" };
-    }
-
-    const payload =
-      frame.payload && typeof frame.payload === "object"
-        ? (frame.payload as Record<string, unknown>)
+    if (frame.signal === "message.committed") {
+      const payload = frame.payload && typeof frame.payload === "object"
+        ? frame.payload as { message?: ConversationMessage }
         : {};
-
-    const text =
-      typeof payload.error === "string" && payload.error.trim().length > 0
-        ? `Error: ${payload.error}`
-        : typeof payload.text === "string"
-          ? payload.text
-          : "";
-
-    try {
-      const attachmentBundle = await this.bundleProcessReplyMedia(
-        route.processId,
-        payload.media,
-      );
-
-      if (!text.trim() && attachmentBundle.media.length === 0) {
-        return { state: "delivered" };
+      const message = payload.message;
+      if (!message || message.processId !== route.processId || message.runId !== route.runId) {
+        return { state: "skipped" };
       }
-      return await this.deliverAdapterRouteReply(route, {
-        deliveryId: `${route.runId}:finished`,
-        text,
-        ...(attachmentBundle.media.length > 0 ? { media: attachmentBundle.media } : {}),
-      }, attachmentBundle.body);
-    } finally {
-      await setAdapterActivityForKernel(
-        this.bindings,
-        this.installationId,
-        adapter,
-        accountId,
-        surface,
-        { kind: "typing", active: false },
-      ).catch((error) => {
-        console.warn(`[Kernel] Failed to stop adapter typing for ${route.runId}:`, error);
-      });
+      try {
+        const attachmentBundle = await this.bundleConversationReplyMedia(
+          message.conversationId,
+          message.media,
+        );
+        if (!message.text.trim() && attachmentBundle.media.length === 0) {
+          return { state: "delivered" };
+        }
+        return await this.deliverAdapterRouteReply(route, {
+          deliveryId: message.id,
+          text: message.text,
+          ...(attachmentBundle.media.length > 0 ? { media: attachmentBundle.media } : {}),
+        }, attachmentBundle.body);
+      } finally {
+        await setAdapterActivityForKernel(
+          this.bindings,
+          this.installationId,
+          adapter,
+          accountId,
+          surface,
+          { kind: "typing", active: false },
+        ).catch(() => undefined);
+      }
     }
+
+    return { state: "skipped" };
   }
 
   private async deliverAdapterRouteReply(
@@ -1602,8 +1793,8 @@ export class Kernel extends Host<Env> {
     return { state: "delivered" };
   }
 
-  private async bundleProcessReplyMedia(
-    processId: string,
+  private async bundleConversationReplyMedia(
+    conversationId: string,
     value: unknown,
   ): Promise<{ media: AdapterMedia[]; body?: BinaryBody }> {
     if (value === undefined) {
@@ -1617,12 +1808,7 @@ export class Kernel extends Host<Env> {
         `Process reply media exceeds item limit (${MAX_MESSAGE_MEDIA_ITEMS})`,
       );
     }
-    const process = this.procs.get(processId);
-    if (!process) {
-      throw new AdapterReplyMediaError(`Unknown process for reply media: ${processId}`);
-    }
-
-    const prefix = processMediaPrefix(process.uid, processId);
+    const conversation = getConversationById(this.installationId, conversationId);
     const parts: AdapterMediaPart[] = [];
     let totalBytes = 0;
     try {
@@ -1632,11 +1818,8 @@ export class Kernel extends Host<Env> {
         }
         const item = raw as Record<string, unknown>;
         const key = typeof item.key === "string" ? item.key.trim() : "";
-        const activePath = key.startsWith(prefix) ? processMediaPath(key) : null;
-        const archivePath = key ? agentArchiveMediaPath(process.home, key) : null;
-        const path = activePath ?? archivePath;
-        if (!key || !path || item.path !== path) {
-          throw new AdapterReplyMediaError("Process reply media key is outside the emitting process");
+        if (!key || item.conversationId !== conversationId) {
+          throw new AdapterReplyMediaError("Message media is outside its conversation");
         }
         if (!(["image", "audio", "video", "document"] as unknown[]).includes(item.type)) {
           throw new AdapterReplyMediaError("Process reply media has an invalid type");
@@ -1645,44 +1828,24 @@ export class Kernel extends Host<Env> {
         if (!mimeType) {
           throw new AdapterReplyMediaError("Process reply media requires mimeType");
         }
-        const object = await this.storage.get(key);
-        if (!object) {
-          throw new AdapterReplyMediaError(`Process reply media not found: ${key}`);
-        }
-        if (
-          archivePath
-          && !isValidAgentArchiveMediaObject({
-            home: process.home,
-            key,
-            uid: process.uid,
-            gid: process.gid,
-            object,
-            expectedContentType: mimeType,
-          })
-        ) {
-          await object.body.cancel("Process reply archive metadata mismatch").catch(() => {});
-          throw new AdapterReplyMediaError(
-            `Process reply media archive metadata does not match the emitting process: ${key}`,
-          );
-        }
+        const object = await conversation.readMedia({ key });
         if (object.size > MAX_MESSAGE_MEDIA_PART_BYTES) {
-          await object.body.cancel("Process reply media exceeds the per-item limit").catch(() => {});
+          await object.stream.cancel("Conversation media exceeds the per-item limit").catch(() => {});
           throw new AdapterReplyMediaError(
-            `Process reply media exceeds per-item limit (${MAX_MESSAGE_MEDIA_PART_BYTES} bytes)`,
+            `Message media exceeds per-item limit (${MAX_MESSAGE_MEDIA_PART_BYTES} bytes)`,
           );
         }
         totalBytes += object.size;
         if (totalBytes > MAX_MESSAGE_MEDIA_TOTAL_BYTES) {
-          await object.body.cancel("Process reply media exceeds the total limit").catch(() => {});
+          await object.stream.cancel("Conversation media exceeds the total limit").catch(() => {});
           throw new AdapterReplyMediaError(
-            `Process reply media exceeds total limit (${MAX_MESSAGE_MEDIA_TOTAL_BYTES} bytes)`,
+            `Message media exceeds total limit (${MAX_MESSAGE_MEDIA_TOTAL_BYTES} bytes)`,
           );
         }
-        const storedMimeType = object.httpMetadata?.contentType || "application/octet-stream";
-        if (storedMimeType !== mimeType || item.size !== object.size) {
-          await object.body.cancel("Process reply media descriptor mismatch").catch(() => {});
+        if (object.mimeType !== mimeType || item.size !== object.size) {
+          await object.stream.cancel("Conversation media descriptor mismatch").catch(() => {});
           throw new AdapterReplyMediaError(
-            `Process reply media descriptor does not match stored data: ${key}`,
+            `Message media descriptor does not match stored data: ${key}`,
           );
         }
         parts.push({
@@ -1700,7 +1863,7 @@ export class Kernel extends Host<Env> {
               ? { transcription: item.transcription }
               : {}),
           },
-          body: { stream: object.body, length: object.size },
+          body: { stream: object.stream, length: object.size },
         });
       }
       return await bundleAdapterMedia(parts);
@@ -1826,6 +1989,7 @@ export class Kernel extends Host<Env> {
       config: this.config,
       devices: this.devices,
       procs: this.procs,
+      conversations: this.conversations,
       oauth: this.oauth,
       mcp: this.mcp,
       mcpServers: this.mcpServers,
@@ -2487,6 +2651,27 @@ export class Kernel extends Host<Env> {
         return;
       }
 
+      if (frame.call === "proc.observe" || frame.call === "proc.unobserve") {
+        const pid = typeof (frame.args as { pid?: unknown })?.pid === "string"
+          ? (frame.args as { pid: string }).pid.trim()
+          : "";
+        const process = pid ? this.procs.get(pid) : null;
+        if (!process || process.ownerUid !== state.identity.process.uid) {
+          this.sendError(connection, frame.id, 404, `Process not found: ${pid || "(missing)"}`);
+          return;
+        }
+        const observed = new Set(state.observedProcessIds ?? []);
+        if (frame.call === "proc.observe") observed.add(pid);
+        else observed.delete(pid);
+        connection.setState({ ...state, observedProcessIds: [...observed] });
+        this.sendOk(connection, frame.id, {
+          ok: true,
+          pid,
+          observing: frame.call === "proc.observe",
+        });
+        return;
+      }
+
       const origin: RouteOrigin = { type: "connection", id: connection.id };
       let controller: AbortController;
       try {
@@ -2634,7 +2819,13 @@ export class Kernel extends Host<Env> {
       && outcome.identity.process.uid >= 1000
       && !ctx.auth.isPersonalAgentUid(outcome.identity.process.uid)
     ) {
-      await ensurePersonalController(outcome.identity.process.uid, ctx);
+      const ownerUid = outcome.identity.process.uid;
+      const pid = await ensurePersonalController(ownerUid, ctx);
+      const conversation = ctx.conversations.ensureHome(ownerUid, pid);
+      await getConversationById(this.installationId, conversation.id).initialize({
+        ownerUid,
+        kind: "home",
+      });
     }
 
     this.activateConnection(connection, newState);
@@ -3666,6 +3857,63 @@ export class Kernel extends Host<Env> {
     }
   }
 
+  private broadcastProcessSignal(
+    uid: number,
+    processId: string,
+    route: ReturnType<RunRouteStore["get"]>,
+    frame: SignalFrame,
+  ): void {
+    const json = JSON.stringify(frame);
+    const ambient = frame.signal === "proc.changed"
+      ? JSON.stringify(ambientProcessChangeFrame(processId, frame))
+      : null;
+    for (const [connectionId, connection] of this.connections) {
+      const state = connection.state;
+      if (
+        state?.identity?.role !== "user"
+        || state.identity.process.uid !== uid
+      ) {
+        continue;
+      }
+      const routed = route?.kind === "connection" && route.connectionId === connectionId;
+      const observing = state.observedProcessIds?.includes(processId) === true;
+      if (routed || observing) {
+        connection.send(json);
+      } else if (ambient) {
+        connection.send(ambient);
+      }
+    }
+  }
+
+  private broadcastToUserUidExcept(
+    uid: number,
+    excludedConnectionId: string,
+    signal: string,
+    payload?: unknown,
+  ): void {
+    const json = JSON.stringify({ type: "sig", signal, payload } satisfies SignalFrame);
+    for (const [connectionId, connection] of this.connections) {
+      if (connectionId === excludedConnectionId) continue;
+      const state = connection.state;
+      if (
+        state?.identity?.role === "user"
+        && state.identity.process.uid === uid
+      ) {
+        connection.send(json);
+      }
+    }
+  }
+
+  private sendSignalToConnection(
+    connectionId: string,
+    signal: string,
+    payload?: unknown,
+  ): void {
+    const connection = this.connections.get(connectionId);
+    if (!connection) return;
+    connection.send(JSON.stringify({ type: "sig", signal, payload } satisfies SignalFrame));
+  }
+
   private broadcastToRole(role: ConnectionIdentity["role"], signal: string, payload?: unknown): void {
     const frame: SignalFrame = {
       type: "sig",
@@ -3793,6 +4041,31 @@ export class Kernel extends Host<Env> {
       }),
     );
   }
+}
+
+function ambientProcessChangeFrame(processId: string, frame: SignalFrame): SignalFrame {
+  const source = frame.payload && typeof frame.payload === "object"
+    ? frame.payload as Record<string, unknown>
+    : {};
+  const changes = Array.isArray(source.changes)
+    ? source.changes.filter((change): change is string => typeof change === "string")
+    : [];
+  const queuedCount = typeof source.queuedCount === "number" && Number.isSafeInteger(source.queuedCount)
+    ? source.queuedCount
+    : undefined;
+  const timestamp = typeof source.timestamp === "number" && Number.isFinite(source.timestamp)
+    ? source.timestamp
+    : undefined;
+  return {
+    type: "sig",
+    signal: "proc.changed",
+    payload: {
+      pid: processId,
+      changes,
+      ...(queuedCount === undefined ? {} : { queuedCount }),
+      ...(timestamp === undefined ? {} : { timestamp }),
+    },
+  };
 }
 
 async function cancelUnlockedBody(body: FrameBody | undefined, reason: string): Promise<void> {

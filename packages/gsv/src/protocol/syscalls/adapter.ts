@@ -85,7 +85,7 @@ export type AdapterSendArgs = {
   text: string;
   replyToId?: string;
   media?: AdapterMedia[];
-  /** Acknowledge that this explicit send intentionally duplicates the active run's automatic reply destination. */
+  /** Acknowledge that this separate send intentionally duplicates the active run's directed endpoint. */
   also?: boolean;
 };
 

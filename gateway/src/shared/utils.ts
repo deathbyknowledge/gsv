@@ -12,11 +12,19 @@ import type {
   ProcessRuntimeEventDeliverResponseFrame,
   ProcessScheduleDeliverRequestFrame,
   ProcessScheduleDeliverResponseFrame,
+  ProcessMessageCommitRequestFrame,
+  ProcessMessageCommitResponseFrame,
+  ProcessMessageStreamSignal,
 } from "../protocol/process-frames";
 import type { NetFetchArgs } from "@humansandmachines/gsv/protocol";
 import { getAgentByName } from "agents";
 import { SINGLETON_INSTALLATION_ID } from "../installation/identity";
-import { getKernelByInstallationId, processDurableObjectName } from "../installation/routing";
+import {
+  conversationDurableObjectName,
+  getKernelByInstallationId,
+  processDurableObjectName,
+} from "../installation/routing";
+import type { Conversation } from "../conversation/do";
 
 export const isWebSocketRequest = (request: Request) =>
   request.method === "GET" && request.headers.get("upgrade") === "websocket";
@@ -45,11 +53,26 @@ export async function getProcessByPid(
   return await getAgentByName(env.PROCESS, processDurableObjectName(installationId, pid));
 }
 
-export async function sendFrameToKernel(
+export function sendFrameToKernel(
+  installationId: string,
+  processId: string,
+  frame: ProcessMessageCommitRequestFrame,
+): Promise<ProcessMessageCommitResponseFrame | null>;
+export function sendFrameToKernel(
+  installationId: string,
+  processId: string,
+  frame: ProcessMessageStreamSignal,
+): Promise<Frame | null>;
+export function sendFrameToKernel(
   installationId: string,
   processId: string,
   frame: Frame,
-): Promise<Frame | null> {
+): Promise<Frame | null>;
+export async function sendFrameToKernel(
+  installationId: string,
+  processId: string,
+  frame: Frame | ProcessMessageCommitRequestFrame | ProcessMessageStreamSignal,
+): Promise<Frame | ProcessMessageCommitResponseFrame | null> {
   const kernel = await getKernelPtr(installationId);
   return kernel.recvFrame(processId, frame);
 }
@@ -123,4 +146,12 @@ export async function sendFrameToProcess(
 > {
   const proc = await getProcessByPid(pid, installationId);
   return proc.recvFrame(frame);
+}
+
+export function getConversationById(
+  installationId: string,
+  conversationId: string,
+): DurableObjectStub<Conversation> {
+  const name = conversationDurableObjectName(installationId, conversationId);
+  return env.CONVERSATION.get(env.CONVERSATION.idFromName(name));
 }

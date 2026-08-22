@@ -7,6 +7,7 @@ interface __BaseEnv_Env {
 	ASSETS: Fetcher;
 	KERNEL: DurableObjectNamespace<import("./src/index").Kernel>;
 	PROCESS: DurableObjectNamespace<import("./src/index").Process>;
+	CONVERSATION: DurableObjectNamespace<import("./src/index").Conversation>;
 	CHANNEL_TELEGRAM: Service /* entrypoint TelegramChannel from gsv-channel-telegram */;
 	CHANNEL_DISCORD: Service /* entrypoint DiscordChannel from gsv-channel-discord */;
 	CHANNEL_WHATSAPP: Service /* entrypoint WhatsAppChannelEntrypoint from gsv-channel-whatsapp */;
@@ -15,7 +16,7 @@ interface __BaseEnv_Env {
 declare namespace Cloudflare {
 	interface GlobalProps {
 		mainModule: typeof import("./src/index");
-		durableNamespaces: "Kernel" | "Process";
+		durableNamespaces: "Kernel" | "Process" | "Conversation";
 	}
 	interface Env extends __BaseEnv_Env {}
 }

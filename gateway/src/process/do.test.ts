@@ -155,6 +155,53 @@ function offeredTools(...names: string[]) {
   }));
 }
 
+function messageAction(text: string, id = `message-${crypto.randomUUID()}`) {
+  return {
+    type: "toolCall" as const,
+    id,
+    name: "Message",
+    arguments: { text },
+  };
+}
+
+function silenceAction(reason: string, id = `silence-${crypto.randomUUID()}`) {
+  return {
+    type: "toolCall" as const,
+    id,
+    name: "Silence",
+    arguments: { reason },
+  };
+}
+
+function terminalTestConfig(pid: string) {
+  return {
+    executor: { kind: "process" as const, pid },
+    profile: "task" as const,
+    provider: "test",
+    model: "test",
+    apiKey: "",
+    reasoning: "off" as const,
+    maxTokens: 8192,
+    contextWindowTokens: 128000,
+    contextWindowSource: "config" as const,
+    maxContextBytes: 32768,
+    generationStreaming: "off" as const,
+  };
+}
+
+function terminalTestResponse(content: Array<Record<string, unknown>>) {
+  return {
+    role: "assistant" as const,
+    content,
+    api: "test",
+    provider: "test",
+    model: "test",
+    usage: testUsage(),
+    stopReason: "stop" as const,
+    timestamp: Date.now(),
+  };
+}
+
 function mockRunEventSink(
   process: any,
   pid: string,
@@ -233,7 +280,10 @@ async function stubGeneration(
         const text = await generate(request);
         return {
           role: "assistant",
-          content: [{ type: "text", text }],
+          content: [
+            { type: "text", text },
+            messageAction(text),
+          ],
           api: "test",
           provider: "test",
           model: "test",
@@ -486,7 +536,7 @@ describe("Process DO — mechanical", () => {
         runId: "run-delivery-notice",
         deliveryKind: "final",
         state: "ambiguous",
-        message: "The automatic reply reached the adapter, but provider delivery is ambiguous.",
+        message: "The message reached the adapter, but provider delivery is ambiguous.",
       },
     } as const;
     await stub.recvFrame(notice);
@@ -1107,7 +1157,7 @@ describe("Process DO — mechanical", () => {
         const messages = await process.buildContextMessages("default");
         expect(messages).toHaveLength(2);
         expect(messages[0]).toMatchObject({ role: "user" });
-        expect((messages[0] as any).content).toContain("[Process Event]:");
+        expect((messages[0] as any).content).toContain("[GSV EVENT]");
         expect((messages[0] as any).content).toContain("Delegated task finished with result GREEN.");
         expect(messages[1]).toMatchObject({
           role: "user",
@@ -1152,7 +1202,7 @@ describe("Process DO — mechanical", () => {
           "user",
         ]);
         expect((messages[1] as any).toolCallId).toBe("call_shell");
-        expect((messages[2] as any).content).toContain("[Process Event]:");
+        expect((messages[2] as any).content).toContain("[GSV EVENT]");
         expect((messages[2] as any).content).toContain("Delegated task from process `worker` finished");
       });
     });
@@ -1259,7 +1309,7 @@ describe("Process DO — mechanical", () => {
         expect(context).toEqual([
           expect.objectContaining({
             role: "user",
-            content: expect.stringContaining("[Process Event]:"),
+            content: expect.stringContaining("[GSV EVENT]"),
           }),
         ]);
         expect(process.currentRun).toMatchObject({
@@ -1539,7 +1589,10 @@ describe("Process DO — mechanical", () => {
               if (mailGenerationCalls > 1) {
                 return {
                   role: "assistant",
-                  content: [{ type: "text", text: "You have an email that needs attention." }],
+                  content: [
+                    { type: "text", text: "You have an email that needs attention." },
+                    messageAction("You have an email that needs attention.", "mail-message"),
+                  ],
                   api: "test",
                   provider: "test",
                   model: "test",
@@ -1629,8 +1682,14 @@ describe("Process DO — mechanical", () => {
         await process.runTick(mailRunId);
         await process.runTick(mailRunId);
 
-        expect(generationContexts[0].tools).toBeUndefined();
-        expect(generationContexts[1].tools).toBeUndefined();
+        expect(generationContexts[0].tools.map((tool: any) => tool.name)).toEqual([
+          "Message",
+          "Silence",
+        ]);
+        expect(generationContexts[1].tools.map((tool: any) => tool.name)).toEqual([
+          "Message",
+          "Silence",
+        ]);
         expect(generationContexts[1].messages.slice(-3)).toEqual([
           expect.objectContaining({
             role: "assistant",
@@ -1664,13 +1723,21 @@ describe("Process DO — mechanical", () => {
           expect.objectContaining({
             content: 'Tool "CodeMode" was not offered for this generation',
           }),
+          expect.objectContaining({
+            content: "Message committed",
+            toolCallId: "mail-message",
+          }),
         ]);
         expect(mailMessages.findLast((message: any) => (
           message.runId === mailRunId && message.role === "assistant"
         ))).toMatchObject({
           content: "You have an email that needs attention.",
-          toolCalls: null,
         });
+        expect(JSON.parse(mailMessages.findLast((message: any) => (
+          message.runId === mailRunId && message.role === "assistant"
+        )).toolCalls)).toEqual([
+          expect.objectContaining({ id: "mail-message", name: "Message" }),
+        ]);
         expect(process.currentRun).toBeNull();
 
         phase = "human";
@@ -1705,6 +1772,8 @@ describe("Process DO — mechanical", () => {
         expect(process.kernelRpc).toHaveBeenCalledWith("ai.tools");
         expect(generationContexts[2].tools).toEqual([
           expect.objectContaining({ name: "Shell" }),
+          expect.objectContaining({ name: "Message" }),
+          expect.objectContaining({ name: "Silence" }),
         ]);
         await vi.waitFor(() => {
           expect(process.dispatchSyscall).toHaveBeenCalledOnce();
@@ -1777,7 +1846,10 @@ describe("Process DO — mechanical", () => {
             }
             return {
               role: "assistant",
-              content: [{ type: "text", text: "Human turn completed normally." }],
+              content: [
+                { type: "text", text: "Human turn completed normally." },
+                messageAction("Human turn completed normally.", "human-message"),
+              ],
               api: "test",
               provider: "test",
               model: "test",
@@ -1853,9 +1925,14 @@ describe("Process DO — mechanical", () => {
             approvalPolicy: { default: "auto", rules: [] },
           };
           await process.runTick(humanRunId);
-          expect(generationContexts[0].tools).toBeUndefined();
-          expect(generationContexts[1].tools).toEqual([
-            expect.objectContaining({ name: "Read" }),
+          expect(generationContexts[0].tools.map((tool: any) => tool.name)).toEqual([
+            "Message",
+            "Silence",
+          ]);
+          expect(generationContexts[1].tools.map((tool: any) => tool.name)).toEqual([
+            "Read",
+            "Message",
+            "Silence",
           ]);
           expect(process.kernelRpc).toHaveBeenCalledWith("ai.tools");
         } finally {
@@ -1999,7 +2076,10 @@ describe("Process DO — mechanical", () => {
                 }
               : {
                   role: "assistant",
-                  content: [{ type: "text", text: "Recovered from the invalid tool call." }],
+                  content: [
+                    { type: "text", text: "Recovered from the invalid tool call." },
+                    messageAction("Recovered from the invalid tool call.", "recovery-message"),
+                  ],
                   api: "test",
                   provider: "test",
                   model: "test",
@@ -2054,7 +2134,7 @@ describe("Process DO — mechanical", () => {
         expect(emitted.findLast((entry) => entry.signal === "proc.run.finished")?.payload)
           .toMatchObject({
             status: "ok",
-            text: "Recovered from the invalid tool call.",
+            text: null,
           });
       });
     });
@@ -2083,8 +2163,10 @@ describe("Process DO — mechanical", () => {
         process.generation = {
           async generate(request: any) {
             generationCalls += 1;
-            expect(request.context.tools).toEqual([
-              expect.objectContaining({ name: "Read" }),
+            expect(request.context.tools.map((tool: any) => tool.name)).toEqual([
+              "Read",
+              "Message",
+              "Silence",
             ]);
             return generationCalls === 1
               ? {
@@ -2112,7 +2194,10 @@ describe("Process DO — mechanical", () => {
                 }
               : {
                   role: "assistant",
-                  content: [{ type: "text", text: "Recovered from the rejected call." }],
+                  content: [
+                    { type: "text", text: "Recovered from the rejected call." },
+                    messageAction("Recovered from the rejected call.", "mixed-message"),
+                  ],
                   api: "test",
                   provider: "test",
                   model: "test",
@@ -2141,7 +2226,7 @@ describe("Process DO — mechanical", () => {
             maxContextBytes: 32768,
             generationStreaming: "off",
           },
-          tools: offeredTools("Read"),
+          tools: offeredTools("Read", "Message", "Silence"),
           devices: [],
           mcpServers: [],
           systemPrompt: "Test system prompt.",
@@ -2167,14 +2252,250 @@ describe("Process DO — mechanical", () => {
         )).map((message: any) => [message.toolCallId, message.content])).toEqual([
           ["forged-shell-mixed", 'Tool "Shell" was not offered for this generation'],
           ["offered-read", "read completed"],
+          ["mixed-message", "Message committed"],
         ]);
         expect(emitted.some((entry) => entry.signal === "proc.run.hil.requested")).toBe(false);
         expect(emitted.findLast((entry) => entry.signal === "proc.run.finished")?.payload)
           .toMatchObject({
             status: "ok",
-            text: "Recovered from the rejected call.",
+            text: null,
           });
       });
+    });
+
+    it("rejects work tools combined with a terminal action without dispatching them", async () => {
+      const pid = "mech-terminal-combination";
+      const runId = "run-terminal-combination";
+      const stub = await initProcess(pid, ROOT_IDENTITY);
+
+      await runInDurableObject(stub, async (instance: Process) => {
+        const process = instance as any;
+        process.sendSignal = vi.fn(async () => {});
+        process.scheduleTick = vi.fn(async () => {});
+        process.dispatchSyscall = vi.fn(async () => {});
+        process.generation = {
+          async generate() {
+            return terminalTestResponse([
+              {
+                type: "toolCall",
+                id: "combined-read",
+                name: "Read",
+                arguments: { path: "/root/file" },
+              },
+              messageAction("Premature answer.", "combined-message"),
+            ]);
+          },
+          async generateText() {
+            return "unused";
+          },
+        };
+        process.store.appendMessage("user", "Read before answering.", { runId });
+        process.currentRun = {
+          runId,
+          config: terminalTestConfig(pid),
+          tools: offeredTools("Read"),
+          devices: [],
+          systemPrompt: "Test system prompt.",
+          approvalPolicy: { default: "auto", rules: [] },
+        };
+
+        await process.runTick(runId);
+
+        expect(process.dispatchSyscall).not.toHaveBeenCalled();
+        expect(process.store.getResults(runId)).toEqual([]);
+        expect(process.store.getMessages().filter((message: any) => (
+          message.role === "toolResult"
+        )).map((message: any) => [message.toolCallId, message.content])).toEqual([
+          [
+            "combined-read",
+            "Message and Silence are terminal actions and cannot be combined with other actions",
+          ],
+          [
+            "combined-message",
+            "Message and Silence are terminal actions and cannot be combined with other actions",
+          ],
+        ]);
+        expect(process.scheduleTick).toHaveBeenCalledOnce();
+      });
+    });
+
+    it("requires one explicit terminal action and bounds the correction", async () => {
+      const pid = "mech-terminal-action-required";
+      const runId = "run-terminal-action-required";
+      const stub = await initProcess(pid, ROOT_IDENTITY);
+
+      const result = await runInDurableObject(stub, async (instance: Process) => {
+        const process = instance as any;
+        const emitted: Array<{ signal: string; payload: any }> = [];
+        process.sendSignal = vi.fn(async (signal: string, payload: any) => {
+          emitted.push({ signal, payload });
+        });
+        process.scheduleTick = vi.fn(async () => {});
+        process.generation = {
+          async generate() {
+            return terminalTestResponse([{ type: "text", text: "This is only a draft." }]);
+          },
+          async generateText() {
+            return "unused";
+          },
+        };
+        process.store.appendMessage("user", "Answer me.", { runId });
+        process.currentRun = {
+          runId,
+          config: terminalTestConfig(pid),
+          tools: [],
+          devices: [],
+          systemPrompt: "Test system prompt.",
+          approvalPolicy: { default: "auto", rules: [] },
+        };
+
+        await process.runTick(runId);
+        expect(process.scheduleTick).toHaveBeenCalledOnce();
+        const correction = process.store.getMessages().find((message: any) => (
+          message.role === "system" && message.runId === runId
+        ));
+        expect(correction?.content).toContain("Finish with exactly one Message action");
+        expect((await process.buildContextMessages("default"))
+          .find((message: any) => message.content.includes("Finish with exactly one Message action"))
+          ?.content).toContain("[GSV EVENT]");
+
+        await process.runTick(runId);
+        return { emitted, messages: process.store.getMessages() };
+      });
+
+      expect(result.messages.filter((message: any) => message.role === "assistant"))
+        .toHaveLength(2);
+      expect(result.emitted.findLast((entry) => entry.signal === "proc.run.finished")?.payload)
+        .toMatchObject({
+          status: "error",
+          reason: "message.action.missing",
+          error: "The model did not choose Message or Silence after correction",
+        });
+    });
+
+    it("finishes silently without committing a canonical message", async () => {
+      const pid = "mech-terminal-silence";
+      const runId = "run-terminal-silence";
+      const stub = await initProcess(pid, ROOT_IDENTITY);
+
+      const result = await runInDurableObject(stub, async (instance: Process) => {
+        const process = instance as any;
+        const emitted: Array<{ signal: string; payload: any }> = [];
+        process.sendSignal = vi.fn(async (signal: string, payload: any) => {
+          emitted.push({ signal, payload });
+        });
+        process.emitMessageStream = vi.fn(async () => {});
+        process.generation = {
+          async generate() {
+            return terminalTestResponse([
+              { type: "thinking", thinking: "No interruption is useful." },
+              silenceAction("Nothing useful to send.", "silence-action"),
+            ]);
+          },
+          async generateText() {
+            return "unused";
+          },
+        };
+        process.store.appendMessage("user", "No reply needed.", { runId });
+        process.currentRun = {
+          runId,
+          conversationId: "conv:home",
+          config: terminalTestConfig(pid),
+          tools: [],
+          devices: [],
+          systemPrompt: "Test system prompt.",
+          approvalPolicy: { default: "auto", rules: [] },
+        };
+
+        await process.runTick(runId);
+        return {
+          emitted,
+          streamCalls: process.emitMessageStream.mock.calls,
+          messages: process.store.getMessages(),
+        };
+      });
+
+      expect(result.streamCalls).toEqual([
+        [runId, expect.objectContaining({ id: `draft:${runId}` }), "silenced"],
+      ]);
+      expect(result.messages.find((message: any) => message.toolCallId === "silence-action"))
+        .toMatchObject({ content: "Interaction completed silently" });
+      expect(result.emitted.findLast((entry) => entry.signal === "proc.run.finished")?.payload)
+        .toMatchObject({ status: "ok", reason: "message.silenced", text: null });
+    });
+
+    it("returns an IPC Message to its caller without canonical delivery", async () => {
+      const pid = "mech-terminal-ipc-message";
+      const runId = "run-terminal-ipc-message";
+      const stub = await initProcess(pid, ROOT_IDENTITY);
+
+      const result = await runInDurableObject(stub, async (instance: Process) => {
+        const process = instance as any;
+        const emitted: Array<{ signal: string; payload: any }> = [];
+        process.sendSignal = vi.fn(async (signal: string, payload: any) => {
+          emitted.push({ signal, payload });
+        });
+        process.completeMessageStream = vi.fn(async () => {});
+        process.generation = {
+          async generate() {
+            return terminalTestResponse([
+              { type: "text", text: "Private worker result." },
+              messageAction("Private worker result.", "ipc-message"),
+            ]);
+          },
+          async generateText() {
+            return "unused";
+          },
+        };
+        process.store.appendMessage("user", "Return to the caller.", { runId });
+        process.currentRun = {
+          runId,
+          returnToCaller: true,
+          config: terminalTestConfig(pid),
+          tools: [],
+          devices: [],
+          systemPrompt: "Test system prompt.",
+          approvalPolicy: { default: "auto", rules: [] },
+        };
+
+        await process.runTick(runId);
+        return { emitted, streamCalls: process.completeMessageStream.mock.calls };
+      });
+
+      expect(result.streamCalls).toEqual([[runId, "Private worker result."]]);
+      expect(result.emitted.findLast((entry) => entry.signal === "proc.run.finished")?.payload)
+        .toMatchObject({
+          status: "ok",
+          reason: "message.sent",
+          text: "Private worker result.",
+        });
+    });
+
+    it("aborts a transient Message projection when its streamed text changes", async () => {
+      const pid = "mech-terminal-stream-change";
+      const runId = "run-terminal-stream-change";
+      const stub = await initProcess(pid, ROOT_IDENTITY);
+
+      const calls = await runInDurableObject(stub, async (instance: Process) => {
+        const process = instance as any;
+        process.currentRun = { runId };
+        process.emitMessageStream = vi.fn(async () => {});
+        await process.completeMessageStream(runId, "Hello");
+        await process.completeMessageStream(runId, "Goodbye");
+        return process.emitMessageStream.mock.calls;
+      });
+
+      expect(calls).toEqual([
+        [runId, expect.objectContaining({ text: "Hello", aborted: true }), "started"],
+        [runId, expect.objectContaining({ text: "Hello", aborted: true }), "delta", "Hello"],
+        [
+          runId,
+          expect.objectContaining({ text: "Hello", aborted: true }),
+          "aborted",
+          undefined,
+          "Committed message differs from its stream",
+        ],
+      ]);
     });
 
     it("emits live proc.changed message signals for scheduled runtime events", async () => {
@@ -2213,9 +2534,9 @@ describe("Process DO — mechanical", () => {
         content: expect.stringContaining("[From: schedule sched-1]"),
       });
       expect(result.contextMessages[0].content).toContain(
-        "[Reply destination: this GSV process.]",
+        "[Directed endpoint: this GSV process.]",
       );
-      expect(result.contextMessages[0].content).toContain("[Process Event]:");
+      expect(result.contextMessages[0].content).toContain("[GSV EVENT]");
       expect(result.emitted).toHaveLength(2);
       expect(result.emitted[0]).toMatchObject({
         signal: "proc.changed",
@@ -2391,7 +2712,7 @@ describe("Process DO — mechanical", () => {
         const contextMessages = await process.buildContextMessages("default");
         expect(contextMessages).toHaveLength(1);
         expect(contextMessages[0].content).toContain("[From: schedule sched-busy]");
-        expect(contextMessages[0].content).not.toContain("[Reply destination:");
+        expect(contextMessages[0].content).not.toContain("[Directed endpoint:");
 
         await process.finishRun("run-busy", { status: "ok", text: "done" });
         expect(process.currentRun).not.toBeNull();
@@ -2413,7 +2734,7 @@ describe("Process DO — mechanical", () => {
             const input = JSON.stringify(request.context.messages);
             expect(input).toContain("[From: schedule sched-adapter-reply]");
             expect(input).toContain(
-              "[Reply destination: automatic to this Telegram direct message.]",
+              "[Directed endpoint: this Telegram direct message.]",
             );
             expect(input).not.toContain("message send");
             expect(input).not.toContain("--also");
@@ -2612,14 +2933,14 @@ describe("Process DO — mechanical", () => {
             expect(first.role).toBe("user");
             expect(first.content).toContain("[From: Telegram direct message]");
             expect(first.content).toContain(
-              "[Reply destination: automatic to this Telegram direct message.]",
+              "[Directed endpoint: this Telegram direct message.]",
             );
             expect(first.content).not.toContain("Steve James");
             expect(first.content).toContain("hello from telegram");
             expect(second.role).toBe("user");
             expect(second.content).toContain("[From: WhatsApp group GSV Dev from @sam]");
             expect(second.content).toContain(
-              "[Reply destination: automatic to this WhatsApp group.]",
+              "[Directed endpoint: this WhatsApp group.]",
             );
             expect(second.content).toContain("check this from the group");
             expect(third.role).toBe("user");
@@ -2627,12 +2948,15 @@ describe("Process DO — mechanical", () => {
             expect(fourth.role).toBe("user");
             expect(fourth.content).toContain("[From: GSV Web Desktop]");
             expect(fourth.content).toContain(
-              "[Reply destination: automatic to this GSV client.]",
+              "[Directed endpoint: this GSV client.]",
             );
             expect(fourth.content).toContain("now from chat");
             return {
               role: "assistant",
-              content: [{ type: "text", text: "noted" }],
+              content: [
+                { type: "text", text: "noted" },
+                messageAction("noted", "origin-message"),
+              ],
               api: "test",
               provider: "test",
               model: "test",
@@ -2712,7 +3036,8 @@ describe("Process DO — mechanical", () => {
         await process.runTick("run-origin-context");
 
         const messages = process.store.getMessages();
-        expect(messages.map((message: any) => message.content)).toEqual([
+        expect(messages.filter((message: any) => message.role !== "toolResult")
+          .map((message: any) => message.content)).toEqual([
           "hello from telegram",
           "check this from the group",
           "same source follow-up",
@@ -2738,7 +3063,7 @@ describe("Process DO — mechanical", () => {
         });
         const clientContext = await process.buildContextMessages("default");
         expect(clientContext[0].content).toContain(
-          "[Reply destination: automatic to this GSV client.]",
+          "[Directed endpoint: this GSV client.]",
         );
 
         process.store.appendMessage("assistant", "client response", { runId: "run-client" });
@@ -2749,7 +3074,7 @@ describe("Process DO — mechanical", () => {
         const deviceContext = await process.buildContextMessages("default");
         expect(deviceContext.slice(0, clientContext.length)).toEqual(clientContext);
         expect(deviceContext[2].content).toContain(
-          "[Reply destination: automatic to this GSV device client.]",
+          "[Directed endpoint: this GSV device client.]",
         );
 
         process.store.appendMessage("assistant", "device response", { runId: "run-device" });
@@ -2760,7 +3085,7 @@ describe("Process DO — mechanical", () => {
         const processContext = await process.buildContextMessages("default");
         expect(processContext.slice(0, deviceContext.length)).toEqual(deviceContext);
         expect(processContext[4].content).toContain(
-          "[Reply destination: automatic to the calling GSV process.]",
+          "[Directed endpoint: the calling GSV process.]",
         );
 
         process.store.appendMessage("assistant", "process response", { runId: "run-process" });
@@ -2768,7 +3093,7 @@ describe("Process DO — mechanical", () => {
         const localContext = await process.buildContextMessages("default");
         expect(localContext.slice(0, processContext.length)).toEqual(processContext);
         expect(localContext[6].content).toContain(
-          "[Reply destination: this GSV process.]",
+          "[Directed endpoint: this GSV process.]",
         );
       });
     });
@@ -2794,10 +3119,10 @@ describe("Process DO — mechanical", () => {
 
         const context = await process.buildContextMessages("default");
         expect(context[0].content).toContain(
-          "[Reply destination: automatic to this Telegram direct message.]",
+          "[Directed endpoint: this Telegram direct message.]",
         );
-        expect(context[1].content).toContain("[Process Event]:");
-        expect(context[1].content).not.toContain("[Reply destination:");
+        expect(context[1].content).toContain("[GSV EVENT]");
+        expect(context[1].content).not.toContain("[Directed endpoint:");
       });
     });
 
@@ -2885,7 +3210,10 @@ describe("Process DO — mechanical", () => {
           async generate() {
             return {
               role: "assistant",
-              content: [{ type: "text", text: "Here is the report." }],
+              content: [
+                { type: "text", text: "Here is the report." },
+                messageAction("Here is the report.", "report-message"),
+              ],
               api: "test",
               provider: "test",
               model: "test",
@@ -2956,11 +3284,12 @@ describe("Process DO — mechanical", () => {
         ok: true,
         data: { ok: false, error: "media is referenced by process history" },
       });
-      expect(result.messages.at(-1)).toMatchObject({
+      expect(result.messages.findLast((message: any) => message.role === "assistant"))
+        .toMatchObject({
         role: "assistant",
         content: "Here is the report.",
         media: expect.stringMatching(/root\/\.gsv\/media\/archived-media:[0-9a-f]{64}/),
-      });
+        });
       expect(result.history).toMatchObject({
         ok: true,
         messages: expect.arrayContaining([
@@ -3146,6 +3475,7 @@ describe("Process DO — mechanical", () => {
               role: "assistant",
               content: [
                 { type: "text", text: "visible answer" },
+                messageAction("visible answer", "visible-answer-message"),
               ],
               api: "test",
               provider: "test",
@@ -3200,7 +3530,8 @@ describe("Process DO — mechanical", () => {
       });
 
       expect(result.calls).toBe(2);
-      expect(result.messages.map((message: any) => [message.role, message.content])).toEqual([
+      expect(result.messages.filter((message: any) => message.role !== "toolResult")
+        .map((message: any) => [message.role, message.content])).toEqual([
         ["user", "answer visibly"],
         ["assistant", "visible answer"],
       ]);
@@ -3221,8 +3552,8 @@ describe("Process DO — mechanical", () => {
       const finished = result.emitted.find((entry) => entry.signal === "proc.run.finished")?.payload as any;
       expect(finished).toMatchObject({
         status: "ok",
-        reason: "turn.complete",
-        text: "visible answer",
+        reason: "message.sent",
+        text: null,
       });
     });
 
@@ -3317,7 +3648,10 @@ describe("Process DO — mechanical", () => {
             }
             return {
               role: "assistant",
-              content: [{ type: "text", text: "recovered" }],
+              content: [
+                { type: "text", text: "recovered" },
+                messageAction("recovered", "provider-recovery-message"),
+              ],
               api: "test",
               provider: "test",
               model: "test",
@@ -3359,15 +3693,16 @@ describe("Process DO — mechanical", () => {
       });
 
       expect(result.calls).toBe(2);
-      expect(result.messages.map((message: any) => [message.role, message.content])).toEqual([
+      expect(result.messages.filter((message: any) => message.role !== "toolResult")
+        .map((message: any) => [message.role, message.content])).toEqual([
         ["user", "recover please"],
         ["assistant", "recovered"],
       ]);
       const finished = result.emitted.find((entry) => entry.signal === "proc.run.finished")?.payload as any;
       expect(finished).toMatchObject({
         status: "ok",
-        reason: "turn.complete",
-        text: "recovered",
+        reason: "message.sent",
+        text: null,
       });
     });
 
@@ -3578,7 +3913,10 @@ describe("Process DO — mechanical", () => {
             }
             return {
               role: "assistant",
-              content: [{ type: "text", text: "fallback pong" }],
+              content: [
+                { type: "text", text: "fallback pong" },
+                messageAction("fallback pong", "fallback-message"),
+              ],
               api: "test",
               provider: request.config.provider,
               model: request.config.model,
@@ -3639,7 +3977,8 @@ describe("Process DO — mechanical", () => {
         { provider: "custom", model: "zai-glm-4.7", accountId: "primary-account" },
         { provider: "openrouter", model: "openai/gpt-5-mini", accountId: undefined },
       ]);
-      expect(result.messages.map((message: any) => [message.role, message.content])).toEqual([
+      expect(result.messages.filter((message: any) => message.role !== "toolResult")
+        .map((message: any) => [message.role, message.content])).toEqual([
         ["user", "fail over please"],
         ["assistant", "fallback pong"],
       ]);
@@ -3665,7 +4004,7 @@ describe("Process DO — mechanical", () => {
       const finished = result.emitted.find((entry) => entry.signal === "proc.run.finished")?.payload as any;
       expect(finished).toMatchObject({
         status: "ok",
-        reason: "turn.complete",
+        reason: "message.sent",
       });
     });
 
@@ -3703,7 +4042,10 @@ describe("Process DO — mechanical", () => {
             }
             return {
               role: "assistant",
-              content: [{ type: "text", text: "fallback after compaction" }],
+              content: [
+                { type: "text", text: "fallback after compaction" },
+                messageAction("fallback after compaction", "fallback-compaction-message"),
+              ],
               api: "test",
               provider: request.config.provider,
               model: request.config.model,
@@ -3785,7 +4127,8 @@ describe("Process DO — mechanical", () => {
       expect(result.compactionConfigs).toEqual([
         { provider: "openrouter", model: "small-fallback" },
       ]);
-      expect(result.messages.map((message: any) => [message.role, message.content])).toEqual([
+      expect(result.messages.filter((message: any) => message.role !== "toolResult")
+        .map((message: any) => [message.role, message.content])).toEqual([
         ["system", expect.stringContaining("Fallback compact summary.")],
         ["user", "Context that must stay live."],
         ["assistant", "fallback after compaction"],
@@ -3832,7 +4175,10 @@ describe("Process DO — mechanical", () => {
             }
             return {
               role: "assistant",
-              content: [{ type: "text", text: "secondary account pong" }],
+              content: [
+                { type: "text", text: "secondary account pong" },
+                messageAction("secondary account pong", "secondary-account-message"),
+              ],
               api: "test",
               provider: request.config.provider,
               model: request.config.model,
@@ -3903,7 +4249,8 @@ describe("Process DO — mechanical", () => {
           accountId: "secondary-account",
         },
       ]);
-      expect(result.messages.map((message: any) => [message.role, message.content])).toEqual([
+      expect(result.messages.filter((message: any) => message.role !== "toolResult")
+        .map((message: any) => [message.role, message.content])).toEqual([
         ["user", "try another account"],
         ["assistant", "secondary account pong"],
       ]);
@@ -3942,7 +4289,10 @@ describe("Process DO — mechanical", () => {
             }
             return {
               role: "assistant",
-              content: [{ type: "text", text: "same model after compaction" }],
+              content: [
+                { type: "text", text: "same model after compaction" },
+                messageAction("same model after compaction", "same-model-message"),
+              ],
               api: "test",
               provider: request.config.provider,
               model: request.config.model,
@@ -4002,7 +4352,8 @@ describe("Process DO — mechanical", () => {
       expect(result.calls[1].context).not.toContain("old Kimi context A");
       expect(result.summaryCalls).toBe(1);
       expect(result.segments).toHaveLength(1);
-      expect(result.messages.map((message: any) => [message.role, message.content])).toEqual([
+      expect(result.messages.filter((message: any) => message.role !== "toolResult")
+        .map((message: any) => [message.role, message.content])).toEqual([
         ["system", expect.stringContaining("Kimi overflow compact summary.")],
         ["user", "Kimi context that must stay live."],
         ["assistant", "same model after compaction"],
@@ -4071,7 +4422,10 @@ describe("Process DO — mechanical", () => {
             }
             return {
               role: "assistant",
-              content: [{ type: "text", text: "returned overflow recovered" }],
+              content: [
+                { type: "text", text: "returned overflow recovered" },
+                messageAction("returned overflow recovered", "returned-overflow-message"),
+              ],
               api: "test",
               provider: request.config.provider,
               model: request.config.model,
@@ -4132,7 +4486,8 @@ describe("Process DO — mechanical", () => {
         cost: { total: 0.12, source: "model-pricing" },
         generations: 2,
       });
-      expect(result.messages.map((message: any) => [message.role, message.content])).toEqual([
+      expect(result.messages.filter((message: any) => message.role !== "toolResult")
+        .map((message: any) => [message.role, message.content])).toEqual([
         ["system", expect.stringContaining("Returned overflow compact summary.")],
         ["user", "Returned overflow context that must stay live."],
         ["assistant", "returned overflow recovered"],
@@ -4961,10 +5316,21 @@ describe("Process DO — mechanical", () => {
             partial.content[0].text = "visible retry";
             stream.push({ type: "text_delta", contentIndex: 0, delta: "visible retry", partial });
             stream.push({ type: "text_end", contentIndex: 0, content: "visible retry", partial });
+            const toolCall = messageAction("visible retry", "streamed-visible-message");
+            partial.content.push(toolCall as any);
+            partial.stopReason = "toolUse";
+            stream.push({ type: "toolcall_start", contentIndex: 1, partial });
+            stream.push({
+              type: "toolcall_delta",
+              contentIndex: 1,
+              delta: "{\"text\":\"visible retry\"}",
+              partial,
+            });
+            stream.push({ type: "toolcall_end", contentIndex: 1, toolCall, partial });
             stream.push({
               type: "done",
-              reason: "stop",
-              message: { ...partial, content: [{ type: "text", text: "visible retry" }] },
+              reason: "toolUse",
+              message: partial,
             });
             return stream;
           },
@@ -5005,7 +5371,8 @@ describe("Process DO — mechanical", () => {
       });
 
       expect(result.calls).toBe(2);
-      expect(result.messages.map((message: any) => [message.role, message.content])).toEqual([
+      expect(result.messages.filter((message: any) => message.role !== "toolResult")
+        .map((message: any) => [message.role, message.content])).toEqual([
         ["user", "stream retry please"],
         ["assistant", "visible retry"],
       ]);
@@ -5022,10 +5389,13 @@ describe("Process DO — mechanical", () => {
         "text_start",
         "text_delta",
         "text_end",
+        "toolcall_start",
+        "toolcall_delta",
+        "toolcall_end",
         "done",
       ]);
       expect(streamSignals.map((payload) => payload.seq)).toEqual([
-        1, 2, 3, 4, 5, 6, 7, 8, 9, 10,
+        1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13,
       ]);
       const outputSignal = result.emitted.find((entry) => entry.signal === "proc.run.output")?.payload as any;
       expect(outputSignal?.text).toBe("visible retry");
@@ -5258,7 +5628,10 @@ describe("Process DO — mechanical", () => {
           return {
             message: {
               role: "assistant",
-              content: [{ type: "text", text: "kernel hello" }],
+              content: [
+                { type: "text", text: "kernel hello" },
+                messageAction("kernel hello", "kernel-message"),
+              ],
               api: "test",
               provider: "anthropic",
               model: "claude-process",
@@ -5349,9 +5722,11 @@ describe("Process DO — mechanical", () => {
             role: "user",
             content: "use kernel",
           }],
-          tools: [{
-            name: "Read",
-          }],
+          tools: expect.arrayContaining([
+            expect.objectContaining({ name: "Read" }),
+            expect.objectContaining({ name: "Message" }),
+            expect.objectContaining({ name: "Silence" }),
+          ]),
           config: {
             processOverrides: {
               "config/ai/provider": "anthropic",
@@ -5365,10 +5740,11 @@ describe("Process DO — mechanical", () => {
           },
         },
       });
-      expect(result.messages[result.messages.length - 1]).toMatchObject({
+      expect(result.messages.findLast((message: any) => message.role === "assistant"))
+        .toMatchObject({
         role: "assistant",
         content: "kernel hello",
-      });
+        });
     });
 
     it("routes device text executors through ai.text.generate target", async () => {
@@ -5550,10 +5926,11 @@ describe("Process DO — mechanical", () => {
       });
 
       expect(result.deviceRequests).toHaveLength(1);
-      expect(result.messages[result.messages.length - 1]).toMatchObject({
+      expect(result.messages.findLast((message: any) => message.role === "assistant"))
+        .toMatchObject({
         role: "assistant",
         content: "device hello",
-      });
+        });
     });
   });
 
@@ -6216,7 +6593,7 @@ describe("Process DO — mechanical", () => {
         expect(user.content[0]).toEqual({
           type: "text",
           text: [
-            "[Reply destination: this GSV process.]",
+            "[Directed endpoint: this GSV process.]",
             "Describe this image.",
           ].join("\n"),
         });
@@ -7278,7 +7655,7 @@ describe("Process DO — mechanical", () => {
           role: "system",
           kind: "runtime.wake",
         });
-        expect(queued[0].message).toContain("Review the process event above");
+        expect(queued[0].message).toContain("Review the GSV event above");
         expect(process.sendSignal).toHaveBeenCalledWith(
           "proc.changed",
           expect.objectContaining({ changes: ["queue"] }),
@@ -7381,7 +7758,10 @@ describe("Process DO — mechanical", () => {
             generatedInputs.push(JSON.stringify(request.context.messages));
             return {
               role: "assistant",
-              content: [{ type: "text", text: "used delegated result" }],
+              content: [
+                { type: "text", text: "used delegated result" },
+                messageAction("used delegated result", "delegated-result-message"),
+              ],
               api: "test",
               provider: "test",
               model: "test",
@@ -7793,6 +8173,55 @@ describe("Process DO — mechanical", () => {
           { role: "assistant", content: "I will inspect it.", toolCallId: null },
           { role: "toolResult", content: "file contents", toolCallId: "call-export-read" },
         ]);
+      });
+
+      await env.STORAGE.delete(exported.archivePaths[0].replace(/^\/+/, ""));
+    });
+
+    it("resolves a canonical conversation run to its process input boundary", async () => {
+      const sourcePid = "mech-history-export-run-boundary";
+      const source = await initProcess(sourcePid, ROOT_IDENTITY);
+      const runId = "run:canonical-conversation-message";
+      const userId = await runInDurableObject(source, (instance: Process) => {
+        const store = (instance as any).store;
+        const id = store.appendMessage("user", "Branch from this conversation message.", {
+          runId,
+        });
+        store.appendMessage("assistant", "This reply must not be exported.", {
+          runId,
+        });
+        return id;
+      });
+
+      const exportResponse = await source.recvFrame(makeReq("proc.history.export", {
+        throughRunId: runId,
+      })) as ResponseOkFrame;
+      const exported = exportResponse.data as any;
+      expect(exported).toMatchObject({
+        ok: true,
+        sourcePid,
+        throughMessageId: userId,
+        includedLiveSuffix: false,
+      });
+
+      const target = await initProcess("mech-history-import-run-boundary", ROOT_IDENTITY);
+      const importResponse = await target.recvFrame(makeReq("proc.history.import", {
+        archivePaths: exported.archivePaths,
+      })) as ResponseOkFrame;
+      expect(importResponse.data).toMatchObject({
+        ok: true,
+        restoredMessages: 1,
+      });
+      await runInDurableObject(target, (instance: Process) => {
+        expect((instance as any).store.getMessages().map((message: any) => ({
+          role: message.role,
+          content: message.content,
+          runId: message.runId,
+        }))).toEqual([{
+          role: "user",
+          content: "Branch from this conversation message.",
+          runId,
+        }]);
       });
 
       await env.STORAGE.delete(exported.archivePaths[0].replace(/^\/+/, ""));
@@ -8452,7 +8881,10 @@ describe("Process DO — mechanical", () => {
             }
             return {
               role: "assistant",
-              content: [{ type: "text", text: "after compaction" }],
+              content: [
+                { type: "text", text: "after compaction" },
+                messageAction("after compaction", "auto-compaction-message"),
+              ],
               api: "test",
               provider: request.config.provider,
               model: request.config.model,
@@ -8531,7 +8963,8 @@ describe("Process DO — mechanical", () => {
 
       expect(emitted.generationCalls).toBe(2);
       expect(emitted.summaryCalls).toBe(1);
-      expect(emitted.messages.map((message: any) => [message.role, message.content])).toEqual([
+      expect(emitted.messages.filter((message: any) => message.role !== "toolResult")
+        .map((message: any) => [message.role, message.content])).toEqual([
         ["system", expect.stringContaining("Auto compact summary.")],
         ["user", "Context that must stay live."],
         ["assistant", "after compaction"],
@@ -8917,7 +9350,7 @@ describe("Process DO — mechanical", () => {
           role: "system",
           runId: "run-finish-exhausted",
           content: expect.stringContaining(
-            "Automatic reply delivery stopped after repeated transport failures",
+            "Run completion signaling stopped after repeated transport failures",
           ),
         }));
         expect(process.emitProcChanged).toHaveBeenCalledWith(
@@ -9923,6 +10356,31 @@ describe("Process DO — mechanical", () => {
       expect(data.messages).toHaveLength(200);
       expect(data.messageCount).toBe(205);
       expect(data.truncated).toBe(true);
+    });
+
+    it("returns runtime status without reading Process activity", async () => {
+      const stub = await initProcess("mech-history-status-only", ROOT_IDENTITY);
+      await runInDurableObject(stub, (instance: Process) => {
+        const process = instance as any;
+        process.store.appendMessage("user", "private Process activity", {
+          runId: "run-status-only",
+        });
+        process.currentRun = { runId: "run-status-only" };
+      });
+
+      const response = await stub.recvFrame(makeReq("proc.history", {
+        includeMessages: false,
+        tail: true,
+        limit: 50,
+      })) as ResponseOkFrame;
+      expect(response.data).toMatchObject({
+        ok: true,
+        activeRunId: "run-status-only",
+        messageCount: 1,
+        messages: [],
+        hasMoreBefore: false,
+        hasMoreAfter: false,
+      });
     });
 
     it("supports tail-first and cursor history pagination", async () => {
@@ -11223,7 +11681,7 @@ describe("Process DO — mechanical", () => {
         await archiveStarted;
         releaseGeneration();
         await assistantAppended;
-        expect(process.store.getMessages({ limit: null })).toHaveLength(4);
+        expect(process.store.getMessages({ limit: null }).length).toBeGreaterThanOrEqual(4);
         releaseArchive();
         const response = await killing;
         await ticking;
@@ -11248,14 +11706,15 @@ describe("Process DO — mechanical", () => {
 
       expect(result.response).toMatchObject({
         ok: true,
-        data: { ok: true, pid, archivedMessages: 4 },
+        data: { ok: true, pid, archivedMessages: 5 },
       });
-      expect(result.archiveAttempts).toBe(2);
+      expect(result.archiveAttempts).toBe(3);
       expect(result.contents).toEqual([
         "answer before kill",
         "checking",
         "stable result",
         "provider completed during archive",
+        expect.stringContaining("This interaction is not complete"),
       ]);
       expect(result.origin).toMatchObject({
         kind: "adapter",

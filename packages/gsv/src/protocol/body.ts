@@ -11,6 +11,7 @@ export const BODY_SYSCALL_NAMES = [
   "fs.transfer.receive",
   "net.fetch",
   "proc.media.read",
+  "conversation.media.read",
   "proc.media.write",
   "ai.transcription.create",
   "ai.image.read",

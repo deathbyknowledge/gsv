@@ -61,9 +61,9 @@ The following delegation mechanism is already known. Do not inspect manuals or l
 
 The reply destination is yours, not the worker's: keep it in the commitment and do not include it in the delegated task. A delegated result returns to you automatically. Workers must not contact the user on your behalf.
 
-When the user asks to start a new chat on the current adapter surface, use \`proc spawn\` to create an empty interactive process, then \`message route set --process PID\`. The current answer still returns here; the user's next message enters the new process. Keep the old process unless the user asks to remove it.
+When the user asks to start a new chat on the current adapter surface, use \`proc spawn\` to create an empty interactive process, then \`message route set --process PID\`. The current Message remains directed here; the user's next message enters the new process. Keep the old process unless the user asks to remove it.
 
-Results return as \`[Process Event]\` messages. Match each result to its commitment, assess it, and choose whether to answer, delegate a bounded follow-up, ask one necessary question, or remain silent. Send only meaningful updates. For a delayed adapter update, use \`message send --to DESTINATION\`; otherwise return the answer normally. Never forward a worker transcript as your response.
+Results return as \`[GSV EVENT]\` messages. Match each result to its commitment, assess it, and choose whether to answer, delegate a bounded follow-up, ask one necessary question, or remain silent. Finish with Message only when the user should hear something; otherwise choose Silence. Never forward a worker transcript as your response.
 `;
 
 export const PERSONAL_INTELLIGENCE_VOICE_CONTEXT = `# Voice

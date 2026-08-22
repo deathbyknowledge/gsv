@@ -13,6 +13,11 @@ export const USER_PROCESS_SIGNALS = [
 
 export const USER_CONNECTION_SIGNALS = [
   ...USER_PROCESS_SIGNALS,
+  "conversation.changed",
+  "message.started",
+  "message.delta",
+  "message.committed",
+  "message.aborted",
   "device.status",
   "adapter.status",
   "mcp.changed",

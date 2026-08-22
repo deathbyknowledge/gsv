@@ -1,7 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-vi.mock("../shared/utils", () => ({
+const getConversationByIdMock = vi.hoisted(() => vi.fn());
+
+vi.mock("../shared/utils", async (importOriginal) => ({
+  ...await importOriginal<typeof import("../shared/utils")>(),
   sendFrameToProcess: vi.fn(),
+  getConversationById: getConversationByIdMock,
 }));
 
 import { sendFrameToProcess } from "../shared/utils";
@@ -20,6 +24,7 @@ const TEST_INSTALLATION_ID = "singleton";
 function createRoutedKernel() {
   const kernel = Object.create(Kernel.prototype) as any;
   kernel.installationId = TEST_INSTALLATION_ID;
+  kernel.connections = new Map();
   return kernel;
 }
 
@@ -893,6 +898,281 @@ describe("Kernel user signal broadcasts", () => {
     expect(driver.send).not.toHaveBeenCalled();
     expect(service.send).not.toHaveBeenCalled();
   });
+
+  it("sends raw Process activity only to its routed or observing connections", () => {
+    const routed = {
+      state: { identity: { role: "user", process: { uid: 1000 } } },
+      send: vi.fn(),
+    };
+    const observing = {
+      state: {
+        identity: { role: "user", process: { uid: 1000 } },
+        observedProcessIds: ["proc-1"],
+      },
+      send: vi.fn(),
+    };
+    const idle = {
+      state: { identity: { role: "user", process: { uid: 1000 } } },
+      send: vi.fn(),
+    };
+    const other = {
+      state: {
+        identity: { role: "user", process: { uid: 2000 } },
+        observedProcessIds: ["proc-1"],
+      },
+      send: vi.fn(),
+    };
+    const kernel = Object.create(Kernel.prototype) as any;
+    kernel.connections = new Map([
+      ["routed", routed],
+      ["observing", observing],
+      ["idle", idle],
+      ["other", other],
+    ]);
+    const frame = {
+      type: "sig",
+      signal: "proc.run.stream",
+      payload: { pid: "proc-1", runId: "run-1", seq: 1 },
+    };
+
+    kernel.broadcastProcessSignal(1000, "proc-1", {
+      kind: "connection",
+      connectionId: "routed",
+    }, frame);
+
+    const encoded = JSON.stringify(frame);
+    expect(routed.send).toHaveBeenCalledWith(encoded);
+    expect(observing.send).toHaveBeenCalledWith(encoded);
+    expect(idle.send).not.toHaveBeenCalled();
+    expect(other.send).not.toHaveBeenCalled();
+  });
+
+  it("sends only a content-free Process invalidation to idle owner connections", () => {
+    const routed = {
+      state: { identity: { role: "user", process: { uid: 1000 } } },
+      send: vi.fn(),
+    };
+    const idle = {
+      state: { identity: { role: "user", process: { uid: 1000 } } },
+      send: vi.fn(),
+    };
+    const kernel = Object.create(Kernel.prototype) as any;
+    kernel.connections = new Map([["routed", routed], ["idle", idle]]);
+    const frame = {
+      type: "sig",
+      signal: "proc.changed",
+      payload: {
+        pid: "proc-1",
+        runId: "run-private",
+        changes: ["messages"],
+        content: "private model activity",
+        messageId: 42,
+        queuedCount: 1,
+        timestamp: 123,
+      },
+    };
+
+    kernel.broadcastProcessSignal(1000, "proc-1", {
+      kind: "connection",
+      connectionId: "routed",
+    }, frame);
+
+    expect(JSON.parse(routed.send.mock.calls[0][0])).toEqual(frame);
+    expect(JSON.parse(idle.send.mock.calls[0][0])).toEqual({
+      type: "sig",
+      signal: "proc.changed",
+      payload: {
+        pid: "proc-1",
+        changes: ["messages"],
+        queuedCount: 1,
+        timestamp: 123,
+      },
+    });
+  });
+});
+
+describe("Kernel canonical message commits", () => {
+  const process = {
+    processId: "proc-1",
+    uid: 1001,
+    gid: 1001,
+    home: "/home/personal",
+    ownerUid: 1000,
+    isPersonalController: true,
+    label: "Personal",
+  };
+  const conversation = {
+    id: "conv:home",
+    ownerUid: 1000,
+    kind: "home",
+    title: "Home",
+    handlerPid: "proc-1",
+    latestSequence: 1,
+    createdAt: 1,
+    updatedAt: 1,
+  };
+
+  function buildCommitKernel(route: Record<string, unknown> | null) {
+    const kernel = createRoutedKernel();
+    kernel.procs = { get: vi.fn(() => process) };
+    kernel.conversations = {
+      get: vi.fn(() => conversation),
+      ensureHome: vi.fn(() => conversation),
+      recordSequence: vi.fn(),
+    };
+    kernel.runRoutes = {
+      get: vi.fn(() => route),
+      delete: vi.fn(),
+    };
+    kernel.materializePersonalAdapterFallback = vi.fn(() => null);
+    kernel.queueAdapterSignalDelivery = vi.fn(async () => undefined);
+    return kernel;
+  }
+
+  function conversationStub() {
+    return {
+      initialize: vi.fn(async () => undefined),
+      append: vi.fn(async (input: any) => ({
+        created: true,
+        message: {
+          id: input.messageId,
+          conversationId: conversation.id,
+          sequence: 2,
+          author: input.author,
+          text: input.text,
+          media: input.media ?? [],
+          origin: input.origin,
+          processId: input.processId,
+          runId: input.runId,
+          createdAt: input.createdAt,
+        },
+      })),
+    };
+  }
+
+  it("directs a message only to the originating client while syncing other clients", async () => {
+    const route = {
+      kind: "connection",
+      runId: "run-1",
+      processId: "proc-1",
+      uid: 1000,
+      connectionId: "origin",
+    };
+    const kernel = buildCommitKernel(route);
+    const origin = {
+      state: { identity: { role: "user", process: { uid: 1000 } } },
+      send: vi.fn(),
+    };
+    const observer = {
+      state: { identity: { role: "user", process: { uid: 1000 } } },
+      send: vi.fn(),
+    };
+    kernel.connections = new Map([["origin", origin], ["observer", observer]]);
+    getConversationByIdMock.mockReset();
+    getConversationByIdMock.mockReturnValueOnce(conversationStub());
+
+    const message = await kernel.commitProcessMessage("proc-1", {
+      runId: "run-1",
+      conversationId: conversation.id,
+      text: "hello",
+    });
+
+    expect(JSON.parse(origin.send.mock.calls[0][0])).toMatchObject({
+      signal: "message.committed",
+      payload: { message: { id: message.id, text: "hello" }, directed: true },
+    });
+    expect(JSON.parse(observer.send.mock.calls[0][0])).toMatchObject({
+      signal: "message.committed",
+      payload: { message: { id: message.id, text: "hello" }, directed: false },
+    });
+    expect(kernel.runRoutes.delete).not.toHaveBeenCalled();
+  });
+
+  it("keeps a silenced client route until the terminal run signal", async () => {
+    const route = {
+      kind: "connection",
+      runId: "run-silenced",
+      processId: "proc-1",
+      uid: 1000,
+      connectionId: "origin",
+    };
+    const kernel = buildCommitKernel(route);
+
+    await kernel.deliverProcessMessageStream("proc-1", {
+      type: "sig",
+      signal: "proc.message.stream",
+      payload: {
+        pid: "proc-1",
+        runId: "run-silenced",
+        conversationId: conversation.id,
+        messageId: "draft:run-silenced",
+        phase: "silenced",
+        timestamp: 1,
+      },
+    });
+
+    expect(kernel.runRoutes.delete).not.toHaveBeenCalled();
+  });
+
+  it("uses the last authorized private destination only for an explicit Personal message", async () => {
+    const route = {
+      kind: "adapter",
+      runId: "run-background",
+      processId: "proc-1",
+      uid: 1000,
+      destination: {
+        kind: "adapter",
+        adapter: "telegram",
+        accountId: "managed",
+        actorId: "actor-1",
+        surface: { kind: "dm", id: "chat-1" },
+      },
+    };
+    const kernel = buildCommitKernel(null);
+    kernel.materializePersonalAdapterFallback.mockReturnValue(route);
+    const synced = {
+      state: { identity: { role: "user", process: { uid: 1000 } } },
+      send: vi.fn(),
+    };
+    kernel.connections = new Map([["web", synced]]);
+    getConversationByIdMock.mockReset();
+    getConversationByIdMock.mockReturnValueOnce(conversationStub());
+
+    const message = await kernel.commitProcessMessage("proc-1", {
+      runId: "run-background",
+      text: "new mail",
+    });
+
+    expect(kernel.queueAdapterSignalDelivery).toHaveBeenCalledWith(
+      route,
+      {
+        type: "sig",
+        signal: "message.committed",
+        payload: { message },
+      },
+      1,
+    );
+    expect(JSON.parse(synced.send.mock.calls[0][0])).toMatchObject({
+      signal: "message.committed",
+      payload: { directed: false },
+    });
+  });
+
+  it("does not redirect a disconnected client conversation to an adapter", async () => {
+    const kernel = buildCommitKernel(null);
+    kernel.connections = new Map();
+    getConversationByIdMock.mockReset();
+    getConversationByIdMock.mockReturnValueOnce(conversationStub());
+
+    await kernel.commitProcessMessage("proc-1", {
+      runId: "run-disconnected-client",
+      conversationId: conversation.id,
+      text: "stays in Home",
+    });
+
+    expect(kernel.materializePersonalAdapterFallback).not.toHaveBeenCalled();
+    expect(kernel.queueAdapterSignalDelivery).not.toHaveBeenCalled();
+  });
 });
 
 describe("Kernel process signal routing", () => {
@@ -916,6 +1196,9 @@ describe("Kernel process signal routing", () => {
     kernel.dispatchSignalWatches = vi.fn(async () => {});
     kernel.runRoutes = { get: vi.fn(() => route), delete: vi.fn() };
     kernel.broadcastToUserUid = vi.fn();
+    kernel.broadcastProcessSignal = vi.fn((_uid, _processId, _route, frame) => {
+      kernel.broadcastToUserUid(1000, frame.signal, frame.payload);
+    });
     kernel.deliverSignalToConnection = vi.fn();
     kernel.deliverSignalToAdapter = vi.fn(async () => ({ state: "delivered" }));
     kernel.schedule = vi.fn(async () => ({ id: "scheduled-delivery" }));
@@ -1104,7 +1387,7 @@ describe("Kernel process signal routing", () => {
     );
   });
 
-  it("routes a background personal terminal result to the last active private destination", async () => {
+  it("does not treat process completion as a user message", async () => {
     const { kernel, setAdapterRoute } = buildPersonalFallbackKernel();
     const frame = {
       type: "sig",
@@ -1114,17 +1397,8 @@ describe("Kernel process signal routing", () => {
 
     await kernel.handleProcessSignal("proc-1", frame);
 
-    expect(setAdapterRoute).toHaveBeenCalledWith({
-      runId: "run-background",
-      processId: "proc-1",
-      uid: 1000,
-      destination: preferredDestination,
-    });
-    expect(kernel.attemptAdapterSignalDelivery).toHaveBeenCalledWith(
-      expect.objectContaining({ destination: preferredDestination }),
-      frame,
-      1,
-    );
+    expect(setAdapterRoute).not.toHaveBeenCalled();
+    expect(kernel.attemptAdapterSignalDelivery).not.toHaveBeenCalled();
     expect(kernel.broadcastToUserUid).toHaveBeenCalledOnce();
   });
 
@@ -1146,14 +1420,32 @@ describe("Kernel process signal routing", () => {
     );
   });
 
+  it("does not redirect a disconnected client approval to an adapter", async () => {
+    const { kernel, setAdapterRoute } = buildPersonalFallbackKernel();
+    const frame = {
+      type: "sig",
+      signal: "proc.run.hil.requested",
+      payload: {
+        ...hilPayload("run-client-hil", "hil-client"),
+        conversationId: "conv:home",
+      },
+    };
+
+    await kernel.handleProcessSignal("proc-1", frame);
+
+    expect(setAdapterRoute).not.toHaveBeenCalled();
+    expect(kernel.queueAdapterSignalDelivery).not.toHaveBeenCalled();
+    expect(kernel.broadcastToUserUid).toHaveBeenCalledOnce();
+  });
+
   it("drops and clears a revoked personal fallback before adapter delivery", async () => {
     const { kernel, setAdapterRoute, clearPreferred } = buildPersonalFallbackKernel({
       authorized: false,
     });
     const frame = {
       type: "sig",
-      signal: "proc.run.finished",
-      payload: { pid: "proc-1", runId: "run-revoked", text: "done", queuedCount: 0 },
+      signal: "proc.run.hil.requested",
+      payload: hilPayload("run-revoked", "hil-revoked"),
     };
 
     await kernel.handleProcessSignal("proc-1", frame);
@@ -1385,7 +1677,7 @@ describe("Kernel process signal routing", () => {
     expect(kernel.deliverSignalToConnection).not.toHaveBeenCalled();
   });
 
-  it("durably retries a terminal adapter reply without deleting its route", async () => {
+  it("durably retries a committed adapter message without deleting its route", async () => {
     const route = {
       kind: "adapter",
       runId: "run-retry",
@@ -1407,11 +1699,23 @@ describe("Kernel process signal routing", () => {
     kernel.schedule = vi.fn(async () => ({ id: "retry-job" }));
     const frame = {
       type: "sig",
-      signal: "proc.run.finished",
-      payload: { pid: "proc-1", runId: route.runId, text: "done" },
+      signal: "message.committed",
+      payload: {
+        message: {
+          id: "msg:retry",
+          conversationId: "conv:home",
+          sequence: 2,
+          author: { kind: "process", pid: "proc-1", uid: 1001 },
+          text: "done",
+          origin: { kind: "process", pid: "proc-1", runId: route.runId },
+          processId: "proc-1",
+          runId: route.runId,
+          createdAt: 2,
+        },
+      },
     };
 
-    await kernel.handleProcessSignal("proc-1", frame);
+    await kernel.attemptAdapterSignalDelivery(route, frame, 1);
 
     expect(kernel.schedule).toHaveBeenCalledWith(
       expect.any(Date),
@@ -1419,7 +1723,7 @@ describe("Kernel process signal routing", () => {
       expect.objectContaining({
         runId: route.runId,
         processId: route.processId,
-        signal: "proc.run.finished",
+        signal: "message.committed",
         attempt: 2,
       }),
       expect.objectContaining({ idempotent: true }),
@@ -1427,7 +1731,7 @@ describe("Kernel process signal routing", () => {
     expect(kernel.runRoutes.delete).not.toHaveBeenCalled();
   });
 
-  it("keeps a terminal route until its ambiguous delivery notice is acknowledged", async () => {
+  it("keeps a committed-message route until its ambiguous delivery notice is acknowledged", async () => {
     const route = {
       kind: "adapter",
       runId: "run-ambiguous",
@@ -1449,11 +1753,23 @@ describe("Kernel process signal routing", () => {
     kernel.queueProcessDeliveryNotice = vi.fn(async () => {});
     const frame = {
       type: "sig",
-      signal: "proc.run.finished",
-      payload: { pid: "proc-1", runId: route.runId, text: "done" },
+      signal: "message.committed",
+      payload: {
+        message: {
+          id: "msg:ambiguous",
+          conversationId: "conv:home",
+          sequence: 2,
+          author: { kind: "process", pid: "proc-1", uid: 1001 },
+          text: "done",
+          origin: { kind: "process", pid: "proc-1", runId: route.runId },
+          processId: "proc-1",
+          runId: route.runId,
+          createdAt: 2,
+        },
+      },
     };
 
-    await kernel.handleProcessSignal("proc-1", frame);
+    await kernel.attemptAdapterSignalDelivery(route, frame, 1);
 
     expect(kernel.runRoutes.delete).not.toHaveBeenCalled();
     expect(kernel.queueProcessDeliveryNotice).toHaveBeenCalledWith(
@@ -1668,7 +1984,7 @@ describe("Kernel adapter route replies", () => {
     );
   });
 
-  it("permanently drops an automatic reply after destination authorization is revoked", async () => {
+  it("permanently drops a directed message after destination authorization is revoked", async () => {
     const adapterSend = vi.fn(async () => ({ ok: true as const }));
     const kernel = Object.create(Kernel.prototype) as any;
     kernel.buildProcessContext = vi.fn(() => replyContext({
@@ -1692,7 +2008,7 @@ describe("Kernel adapter route replies", () => {
     warn.mockRestore();
   });
 
-  it("propagates transient automatic reply delivery failures for retry handling", async () => {
+  it("propagates transient directed message delivery failures for retry handling", async () => {
     const adapterSend = vi.fn(async () => ({
       ok: false as const,
       error: "Telegram temporarily unavailable",
@@ -1767,7 +2083,7 @@ describe("Kernel adapter route replies", () => {
     );
   });
 
-  it("streams immutable process-owned final-reply media through the adapter body", async () => {
+  it("streams immutable conversation-owned message media through the adapter body", async () => {
     let deliveredBytes: Uint8Array | undefined;
     const adapterSend = vi.fn(async (
       _accountId: string,
@@ -1780,44 +2096,31 @@ describe("Kernel adapter route replies", () => {
       return { ok: true as const };
     });
     const kernel = Object.create(Kernel.prototype) as any;
-    const key = `home/agent/.gsv/media/archived-media:${"a".repeat(64)}`;
-    kernel.procs = {
-      get: vi.fn(() => ({ uid: 2000, gid: 2000, home: "/home/agent" })),
-    };
-    kernel.env = {
-      STORAGE: {
-        get: vi.fn(async (requested: string) => requested === key
-          ? {
-              size: 3,
-              httpMetadata: { contentType: "application/pdf" },
-              customMetadata: {
-                purpose: "conversation-media",
-                uid: "2000",
-                gid: "2000",
-                mode: "400",
-                sourceEtag: "source-etag-1",
-                sourceContentType: "application/pdf",
-              },
-              body: new ReadableStream<Uint8Array>({
-                start(controller) {
-                  controller.enqueue(new Uint8Array([7, 8, 9]));
-                  controller.close();
-                },
-              }),
-            }
-          : null),
-      },
-    };
+    const key = `conversations/conv%3Ahome/media/msg%3Aone/0`;
+    kernel.installationId = TEST_INSTALLATION_ID;
+    getConversationByIdMock.mockReturnValueOnce({
+      readMedia: vi.fn(async () => ({
+        key,
+        mimeType: "application/pdf",
+        size: 3,
+        stream: new ReadableStream<Uint8Array>({
+          start(controller) {
+            controller.enqueue(new Uint8Array([7, 8, 9]));
+            controller.close();
+          },
+        }),
+      })),
+    });
     kernel.buildProcessContext = vi.fn(() => replyContext({
       authorized: true,
       adapterSend,
     }));
-    const bundle = await kernel.bundleProcessReplyMedia("proc-1", [{
+    const bundle = await kernel.bundleConversationReplyMedia("conv:home", [{
       type: "document",
       mimeType: "application/pdf",
       filename: "report.pdf",
       key,
-      path: `/${key}`,
+      conversationId: "conv:home",
       size: 3,
     }]);
 
@@ -1844,39 +2147,28 @@ describe("Kernel adapter route replies", () => {
     );
   });
 
-  it("rejects immutable reply media whose content type differs from its source metadata", async () => {
+  it("rejects message media whose descriptor differs from its conversation object", async () => {
     const kernel = Object.create(Kernel.prototype) as any;
-    const key = `home/agent/.gsv/media/archived-media:${"b".repeat(64)}`;
+    const key = `conversations/conv%3Ahome/media/msg%3Atwo/0`;
     const cancel = vi.fn(async () => undefined);
-    kernel.procs = {
-      get: vi.fn(() => ({ uid: 2000, gid: 2000, home: "/home/agent" })),
-    };
-    kernel.env = {
-      STORAGE: {
-        get: vi.fn(async () => ({
-          size: 3,
-          httpMetadata: { contentType: "application/pdf" },
-          customMetadata: {
-            purpose: "conversation-media",
-            uid: "2000",
-            gid: "2000",
-            mode: "400",
-            sourceEtag: "source-etag-2",
-            sourceContentType: "image/png",
-          },
-          body: { cancel },
-        })),
-      },
-    };
+    kernel.installationId = TEST_INSTALLATION_ID;
+    getConversationByIdMock.mockReturnValueOnce({
+      readMedia: vi.fn(async () => ({
+        key,
+        mimeType: "image/png",
+        size: 3,
+        stream: { cancel },
+      })),
+    });
 
-    await expect(kernel.bundleProcessReplyMedia("proc-1", [{
+    await expect(kernel.bundleConversationReplyMedia("conv:home", [{
       type: "document",
       mimeType: "application/pdf",
       filename: "report.pdf",
       key,
-      path: `/${key}`,
+      conversationId: "conv:home",
       size: 3,
-    }])).rejects.toThrow("archive metadata does not match");
+    }])).rejects.toThrow("descriptor does not match");
     expect(cancel).toHaveBeenCalledOnce();
   });
 });
@@ -2504,6 +2796,9 @@ describe("Kernel process runtime projection", () => {
     kernel.dispatchSignalWatches = vi.fn(async () => {});
     kernel.runRoutes = { get: vi.fn(() => null), delete: vi.fn() };
     kernel.broadcastToUserUid = vi.fn();
+    kernel.broadcastProcessSignal = vi.fn((_uid, _processId, _route, emitted) => {
+      kernel.broadcastToUserUid(1000, emitted.signal, emitted.payload);
+    });
     kernel.completeIpcCallsForProcessSignal = vi.fn();
     const frame = {
       type: "sig",

@@ -34,6 +34,10 @@
 		{
 			"deleted_classes": ["AppRunner"],
 			"tag": "v4"
+		},
+		{
+			"new_sqlite_classes": ["Conversation"],
+			"tag": "v5"
 		}
 	],
 	"durable_objects": {
@@ -45,6 +49,10 @@
 			{
 				"class_name": "Process",
 				"name": "PROCESS"
+			},
+			{
+				"class_name": "Conversation",
+				"name": "CONVERSATION"
 			}
 		]
 	},

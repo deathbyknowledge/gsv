@@ -1,9 +1,15 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { RequestFrame } from "../protocol/frames";
 
-const { handleConnectMock, ensurePersonalControllerMock } = vi.hoisted(() => ({
+const { handleConnectMock, ensurePersonalControllerMock, getConversationByIdMock } = vi.hoisted(() => ({
   handleConnectMock: vi.fn(),
   ensurePersonalControllerMock: vi.fn(),
+  getConversationByIdMock: vi.fn(),
+}));
+
+vi.mock("../shared/utils", async (importOriginal) => ({
+  ...await importOriginal<typeof import("../shared/utils")>(),
+  getConversationById: getConversationByIdMock,
 }));
 
 vi.mock("./connect", () => ({
@@ -53,6 +59,7 @@ describe("Kernel personal controller connect lifecycle", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     ensurePersonalControllerMock.mockResolvedValue("proc:personal");
+    getConversationByIdMock.mockReturnValue({ initialize: vi.fn(async () => undefined) });
     handleConnectMock.mockResolvedValue({
       ok: true,
       identity: {
@@ -82,6 +89,13 @@ describe("Kernel personal controller connect lifecycle", () => {
     const kernel = Object.create(Kernel.prototype) as any;
     const ctx = {
       auth: { isPersonalAgentUid: vi.fn(() => false) },
+      conversations: {
+        ensureHome: vi.fn(() => ({
+          id: "conv:home",
+          ownerUid: 1000,
+          kind: "home",
+        })),
+      },
     };
     const connection = { id: "connection-1", setState: vi.fn() };
     kernel.buildContext = vi.fn(() => ctx);
@@ -108,6 +122,7 @@ describe("Kernel personal controller connect lifecycle", () => {
     const kernel = Object.create(Kernel.prototype) as any;
     const ctx = {
       auth: { isPersonalAgentUid: vi.fn(() => false) },
+      conversations: { ensureHome: vi.fn() },
     };
     const connection = { id: "connection-1", setState: vi.fn() };
     kernel.buildContext = vi.fn(() => ctx);

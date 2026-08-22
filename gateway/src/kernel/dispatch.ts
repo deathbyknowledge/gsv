@@ -123,6 +123,14 @@ import {
 } from "./targets";
 import { handleMailSend } from "./outbound-mail";
 import { handleMailStatus } from "./outbound-status";
+import {
+  handleConversationForProcess,
+  handleConversationHistory,
+  handleConversationHome,
+  handleConversationList,
+  handleConversationMediaRead,
+  handleConversationSend,
+} from "./conversation-handlers";
 export type DispatchDeps = {
   shellSessions: ShellSessionStore;
   connections: Map<string, Connection>;
@@ -316,6 +324,29 @@ async function dispatchNative(
       case "mail.status":
         data = handleMailStatus(frame.args, ctx);
         break;
+
+      case "conversation.home":
+        data = await handleConversationHome(ctx);
+        break;
+      case "conversation.forProcess":
+        data = await handleConversationForProcess(frame.args, ctx);
+        break;
+      case "conversation.list":
+        data = await handleConversationList(ctx);
+        break;
+      case "conversation.history":
+        data = await handleConversationHistory(frame.args, ctx);
+        break;
+      case "conversation.send":
+        data = await handleConversationSend(frame.args, ctx);
+        break;
+      case "conversation.media.read":
+        return {
+          type: "res",
+          id: frame.id,
+          ok: true,
+          ...await handleConversationMediaRead(frame.args, ctx),
+        };
 
       case "proc.list":
         data = handleProcList(frame.args, ctx);

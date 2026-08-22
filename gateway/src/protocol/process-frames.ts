@@ -4,8 +4,9 @@ import type {
   ManagedMailSummaryCategory,
   ProcMediaInput,
   ProcSendResult,
+  ConversationMessage,
 } from "@humansandmachines/gsv/protocol";
-import type { Frame, RequestFrame, ResponseErrFrame } from "./frames";
+import type { Frame, RequestFrame, ResponseErrFrame, SignalFrame } from "./frames";
 
 export type ProcessMailReceivedRuntimeEvent = {
   type: "mail.received";
@@ -93,6 +94,10 @@ export type ProcessAdapterDeliverArgs = {
   message: string;
   media?: ProcMediaInput[];
   origin: AdapterInteractionOrigin;
+  interaction: {
+    conversationId: string;
+    messageId: string;
+  };
 };
 
 export type ProcessAdapterDeliverRequestFrame = {
@@ -144,6 +149,41 @@ export type ProcessRunAttachResponseFrame =
     }
   | ResponseErrFrame;
 
+export type ProcessMessageCommitArgs = {
+  runId: string;
+  conversationId?: string;
+  text: string;
+  media?: ProcMediaInput[];
+};
+
+export type ProcessMessageCommitRequestFrame = {
+  type: "req";
+  id: string;
+  call: "proc.message.commit";
+  args: ProcessMessageCommitArgs;
+  body?: undefined;
+};
+
+export type ProcessMessageCommitResponseFrame =
+  | {
+      type: "res";
+      id: string;
+      ok: true;
+      data: { message: ConversationMessage };
+    }
+  | ResponseErrFrame;
+
+export type ProcessMessageStreamSignal = SignalFrame<{
+  pid: string;
+  runId: string;
+  conversationId?: string;
+  messageId: string;
+  phase: "started" | "delta" | "aborted" | "silenced";
+  delta?: string;
+  reason?: string;
+  timestamp: number;
+}> & { signal: "proc.message.stream" };
+
 export type ProcessRequestFrame =
   | RequestFrame
   | ProcessRuntimeEventDeliverRequestFrame
@@ -156,3 +196,8 @@ export type ProcessInboundFrame =
   | ProcessScheduleDeliverRequestFrame
   | ProcessAdapterDeliverRequestFrame
   | ProcessRunAttachRequestFrame;
+
+export type ProcessOutboundFrame =
+  | Frame
+  | ProcessMessageCommitRequestFrame
+  | ProcessMessageStreamSignal;

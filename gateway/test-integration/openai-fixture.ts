@@ -27,6 +27,11 @@ export type ScriptedOpenAiResponse =
       delayMs?: number;
     }
   | {
+      kind: "message";
+      text: string;
+      delayMs?: number;
+    }
+  | {
       kind: "tool-calls";
       calls: ScriptedOpenAiToolCall[];
       delayMs?: number;
@@ -65,8 +70,8 @@ type QueuedResponse = {
 };
 
 const DEFAULT_RESPONSE: ScriptedOpenAiResponse = {
-  kind: "text",
-  chunks: [INTEGRATION_REPLY],
+  kind: "message",
+  text: INTEGRATION_REPLY,
   delayMs: 25,
 };
 
@@ -205,12 +210,19 @@ function writeScriptedResponse(
       usage: fixtureUsage(),
     }));
   } else {
+    const calls = scripted.kind === "message"
+      ? [{
+          id: `message-integration-${requestNumber}`,
+          name: "Message",
+          arguments: { text: scripted.text },
+        }]
+      : scripted.calls;
     response.write(openAiChunk({
       id,
       model: "integration-model",
       choices: [{
         delta: {
-          tool_calls: scripted.calls.map((call, index) => ({
+          tool_calls: calls.map((call, index) => ({
             index,
             id: call.id,
             type: "function",

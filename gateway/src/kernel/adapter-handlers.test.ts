@@ -22,14 +22,20 @@ import {
   bodyToBytes,
   type AdapterInboundArgs,
   type BinaryBody,
+  type ConversationSummary,
 } from "@humansandmachines/gsv/protocol";
 import { runWithRealKernelSql } from "../test-support/real-kernel-sql";
 import { PrivateAdapterDestinationStore } from "./private-adapter-destinations";
 
-const ensurePersonalControllerMock = vi.hoisted(() => vi.fn());
+const { ensurePersonalControllerMock, getConversationByIdMock } = vi.hoisted(() => ({
+  ensurePersonalControllerMock: vi.fn(),
+  getConversationByIdMock: vi.fn(),
+}));
 
-vi.mock("../shared/utils", () => ({
+vi.mock("../shared/utils", async (importOriginal) => ({
+  ...await importOriginal<typeof import("../shared/utils")>(),
   sendFrameToProcess: vi.fn(),
+  getConversationById: getConversationByIdMock,
 }));
 vi.mock("./personal-controller", () => ({
   ensurePersonalController: ensurePersonalControllerMock,
@@ -76,6 +82,75 @@ function userIdentity(uid = 1000): KernelContext["identity"] {
       cwd: uid === 0 ? "/root" : "/home/sam",
     },
     capabilities: ["adapter.*"],
+  };
+}
+
+function makeConversationRegistry() {
+  const conversations = new Map<string, ConversationSummary>();
+  const homeByOwner = new Map<number, string>();
+  const workByProcess = new Map<string, string>();
+  const groupBySurface = new Map<string, string>();
+  const create = (
+    ownerUid: number,
+    handlerPid: string,
+    kind: ConversationSummary["kind"],
+    title: string | null,
+  ) => {
+    const now = Date.now();
+    const conversation: ConversationSummary = {
+      id: `conv:${crypto.randomUUID()}`,
+      ownerUid,
+      kind,
+      title,
+      handlerPid,
+      latestSequence: 0,
+      createdAt: now,
+      updatedAt: now,
+    };
+    conversations.set(conversation.id, conversation);
+    return conversation;
+  };
+  return {
+    ensureHome: vi.fn((ownerUid: number, handlerPid: string) => {
+      const id = homeByOwner.get(ownerUid);
+      const existing = id ? conversations.get(id)! : null;
+      if (existing) {
+        existing.handlerPid = handlerPid;
+        return { ...existing };
+      }
+      const conversation = create(ownerUid, handlerPid, "home", "Home");
+      homeByOwner.set(ownerUid, conversation.id);
+      return { ...conversation };
+    }),
+    ensureWork: vi.fn((ownerUid: number, handlerPid: string, title: string | null) => {
+      const id = workByProcess.get(handlerPid);
+      if (id) return { ...conversations.get(id)! };
+      const conversation = create(ownerUid, handlerPid, "work", title);
+      workByProcess.set(handlerPid, conversation.id);
+      return { ...conversation };
+    }),
+    ensureGroup: vi.fn((ownerUid: number, handlerPid: string, title: string | null, surface: string) => {
+      const id = groupBySurface.get(surface);
+      if (id) {
+        const existing = conversations.get(id)!;
+        existing.handlerPid = handlerPid;
+        return { ...existing };
+      }
+      const conversation = create(ownerUid, handlerPid, "group", title);
+      groupBySurface.set(surface, conversation.id);
+      return { ...conversation };
+    }),
+    get: vi.fn((id: string) => {
+      const conversation = conversations.get(id);
+      return conversation ? { ...conversation } : null;
+    }),
+    list: vi.fn((ownerUid: number) => [...conversations.values()]
+      .filter((conversation) => conversation.ownerUid === ownerUid)
+      .map((conversation) => ({ ...conversation }))),
+    recordSequence: vi.fn((id: string, sequence: number) => {
+      const conversation = conversations.get(id);
+      if (conversation) conversation.latestSequence = Math.max(conversation.latestSequence, sequence);
+    }),
   };
 }
 
@@ -346,6 +421,7 @@ function makeContext(
       spawn: vi.fn(),
       kill: vi.fn(() => true),
     },
+    conversations: makeConversationRegistry(),
     adapters: {
       status: {
         get: vi.fn(() => null),
@@ -429,6 +505,31 @@ describe("adapter lifecycle handlers", () => {
     sendFrameToProcessMock.mockReset();
     ensurePersonalControllerMock.mockReset();
     ensurePersonalControllerMock.mockResolvedValue("pid-1");
+    getConversationByIdMock.mockReset();
+    const appended = new Map<string, any>();
+    let sequence = 0;
+    getConversationByIdMock.mockImplementation((_installationId: string, conversationId: string) => ({
+      initialize: vi.fn(async () => undefined),
+      append: vi.fn(async (input: any) => {
+        const existing = appended.get(input.idempotencyKey);
+        if (existing) return { created: false, message: existing };
+        sequence += 1;
+        const message = {
+          id: input.messageId,
+          conversationId,
+          sequence,
+          author: input.author,
+          text: input.text,
+          media: input.media ?? [],
+          origin: input.origin,
+          processId: input.processId ?? null,
+          runId: input.runId ?? null,
+          createdAt: input.createdAt,
+        };
+        appended.set(input.idempotencyKey, message);
+        return { created: true, message };
+      }),
+    }));
   });
 
   it("notifies root and linked users when adapter state changes", () => {
@@ -1592,6 +1693,93 @@ describe("adapter lifecycle handlers", () => {
       deliveredRunIds[0],
     ]);
     expect(adapterSetActivity).not.toHaveBeenCalled();
+  });
+
+  it("upgrades an in-flight legacy Process delivery checkpoint", async () => {
+    const legacyRecovery = {
+      kind: "process_delivery",
+      uid: 1000,
+      pid: "pid-1",
+      runId: "adapter-run:legacy",
+      media: [],
+      origin: {
+        kind: "adapter",
+        adapter: "telegram",
+        accountId: "bot",
+        actorId: "telegram:user:42",
+        surface: { kind: "dm", id: "chat-42" },
+      },
+    };
+    const checkpoint = vi.fn();
+    const ctx = makeContext({}, { upsert: vi.fn() }, {
+      ingressReceipts: {
+        claim: vi.fn(() => ({
+          state: "claimed",
+          receiptId: "adapter-ingress:legacy",
+          claimToken: "claim:legacy",
+          recovery: legacyRecovery,
+        })),
+        checkpoint,
+        prepare: vi.fn(),
+        complete: vi.fn(),
+        abandon: vi.fn(),
+      },
+    });
+    sendFrameToProcessMock.mockImplementation(async (
+      _installationId: string,
+      _pid: string,
+      frame: any,
+    ) => ({
+      type: "res",
+      id: frame.id,
+      ok: true,
+      data: {
+        ok: true,
+        status: "started",
+        runId: legacyRecovery.runId,
+        queued: false,
+      },
+    }));
+
+    const result = await handleAdapterInbound({
+      adapter: "telegram",
+      accountId: "bot",
+      deliveryId: "legacy-provider-delivery",
+      message: {
+        messageId: "legacy-provider-message",
+        surface: { kind: "dm", id: "chat-42" },
+        actor: { id: "telegram:user:42" },
+        text: "resume after deploy",
+      },
+    }, ctx);
+
+    expect(result).toMatchObject({
+      ok: true,
+      delivered: { uid: 1000, pid: "pid-1", runId: legacyRecovery.runId },
+    });
+    expect(checkpoint).toHaveBeenCalledWith(
+      "adapter-ingress:legacy",
+      "claim:legacy",
+      expect.objectContaining({
+        ...legacyRecovery,
+        conversationId: expect.stringMatching(/^conv:/),
+        inputMessageId: expect.stringMatching(/^msg:/),
+        messageCreatedAt: expect.any(Number),
+      }),
+    );
+    expect(sendFrameToProcessMock).toHaveBeenCalledWith(
+      TEST_INSTALLATION_ID,
+      "pid-1",
+      expect.objectContaining({
+        call: "proc.adapter.deliver",
+        args: expect.objectContaining({
+          interaction: expect.objectContaining({
+            conversationId: expect.stringMatching(/^conv:/),
+            messageId: expect.stringMatching(/^msg:/),
+          }),
+        }),
+      }),
+    );
   });
 
   it("replays completed commands across actor alias normalization", async () => {
@@ -4083,7 +4271,7 @@ describe("adapter lifecycle handlers", () => {
       text: "duplicate",
     }, ctx)).resolves.toEqual({
       ok: false,
-      error: expect.stringContaining("automatic reply destination"),
+      error: expect.stringContaining("directed endpoint"),
       retryable: false,
     });
     expect(adapterSend).not.toHaveBeenCalled();
@@ -4098,7 +4286,7 @@ describe("adapter lifecycle handlers", () => {
     expect(adapterSend).toHaveBeenCalledTimes(1);
   });
 
-  it("forwards reply threading and sanitizes automatic reply delivery failures", async () => {
+  it("forwards reply threading and sanitizes directed message delivery failures", async () => {
     const adapterSend = vi.fn(async () => ({
       ok: false as const,
       error: "Telegram API 400 chat_id=chat-42: raw provider response",
@@ -4157,7 +4345,7 @@ describe("adapter lifecycle handlers", () => {
     });
   });
 
-  it("rechecks the linked actor before delivering an automatic reply", async () => {
+  it("rechecks the linked actor before delivering a directed message", async () => {
     const adapterSend = vi.fn(async () => ({ ok: true as const, messageId: "msg-3" }));
     const getLink = vi.fn(() => null);
     const ctx = makeContext({ CHANNEL_TELEGRAM: { adapterSend } }, {

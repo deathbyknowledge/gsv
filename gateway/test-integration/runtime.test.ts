@@ -149,9 +149,9 @@ describe("gateway runtime integration", () => {
         (event as Record<string, unknown>).type
       )).toEqual([
         "start",
-        "text_start",
-        "text_delta",
-        "text_end",
+        "toolcall_start",
+        "toolcall_delta",
+        "toolcall_end",
         "done",
       ]);
       expect(streamPayloads.map(({ seq }) => seq)).toEqual([1, 2, 3, 4, 5]);
@@ -162,15 +162,17 @@ describe("gateway runtime integration", () => {
       expect(runSignals).toEqual(expect.arrayContaining([
         "proc.run.started",
         "proc.run.stream",
-        "proc.run.output",
         "proc.run.finished",
       ]));
       expect(signals).toContainEqual(expect.objectContaining({
-        signal: "proc.run.output",
+        signal: "message.committed",
         payload: expect.objectContaining({
-          pid: spawned.pid,
-          runId,
-          text: INTEGRATION_REPLY,
+          directed: true,
+          message: expect.objectContaining({
+            processId: spawned.pid,
+            runId,
+            text: INTEGRATION_REPLY,
+          }),
         }),
       }));
       expect(signals).toContainEqual(expect.objectContaining({
@@ -179,8 +181,8 @@ describe("gateway runtime integration", () => {
           pid: spawned.pid,
           runId,
           status: "ok",
-          reason: "turn.complete",
-          text: INTEGRATION_REPLY,
+          reason: "message.sent",
+          text: null,
         }),
       }));
     }
@@ -202,15 +204,45 @@ describe("gateway runtime integration", () => {
     expect(history).toMatchObject({
       ok: true,
       pid: spawned.pid,
-      messageCount: 4,
+      messageCount: 6,
       activeRunId: null,
     });
     if (!history.ok) throw new Error(history.error);
-    expect(history.messages.map(({ role, content, runId }) => ({ role, content, runId }))).toEqual([
-      { role: "user", content: "first deterministic message", runId: first.runId },
-      { role: "assistant", content: INTEGRATION_REPLY, runId: first.runId },
-      { role: "user", content: "second deterministic message", runId: second.runId },
-      { role: "assistant", content: INTEGRATION_REPLY, runId: second.runId },
+    expect(history.messages).toEqual([
+      expect.objectContaining({
+        role: "user",
+        content: "first deterministic message",
+        runId: first.runId,
+      }),
+      expect.objectContaining({
+        role: "assistant",
+        runId: first.runId,
+        content: expect.objectContaining({
+          toolCalls: [expect.objectContaining({ name: "Message" })],
+        }),
+      }),
+      expect.objectContaining({
+        role: "toolResult",
+        runId: first.runId,
+        content: expect.objectContaining({ toolName: "Message" }),
+      }),
+      expect.objectContaining({
+        role: "user",
+        content: "second deterministic message",
+        runId: second.runId,
+      }),
+      expect.objectContaining({
+        role: "assistant",
+        runId: second.runId,
+        content: expect.objectContaining({
+          toolCalls: [expect.objectContaining({ name: "Message" })],
+        }),
+      }),
+      expect.objectContaining({
+        role: "toolResult",
+        runId: second.runId,
+        content: expect.objectContaining({ toolName: "Message" }),
+      }),
     ]);
     expect(history.messages[0]).toMatchObject({
       origin: {
@@ -227,7 +259,7 @@ describe("gateway runtime integration", () => {
           provider: "custom",
           model: "integration-model",
           responseId: expect.stringMatching(/^chatcmpl-integration-/),
-          stopReason: "stop",
+          stopReason: "toolUse",
         },
         usage: {
           inputTokens: 10,
@@ -243,9 +275,9 @@ describe("gateway runtime integration", () => {
     expect(reset).toMatchObject({
       ok: true,
       pid: spawned.pid,
-      archivedMessages: 4,
+      archivedMessages: 6,
       archivedTo: expect.stringMatching(/\.history\.gen-1\.jsonl\.gz$/),
-      archives: [expect.objectContaining({ generation: 1, messages: 4 })],
+      archives: [expect.objectContaining({ generation: 1, messages: 6 })],
     });
     if (!reset.ok || !reset.archivedTo) throw new Error("proc.reset did not archive history");
     await expectArchive(harness, client, reset.archivedTo);
@@ -276,10 +308,10 @@ describe("gateway runtime integration", () => {
     expect(killed).toMatchObject({
       ok: true,
       pid: spawned.pid,
-      archivedMessages: 2,
+      archivedMessages: 3,
       archivedTo: expect.stringMatching(/\.history\.gen-2\.jsonl\.gz$/),
       archives: expect.arrayContaining([
-        expect.objectContaining({ generation: 2, messages: 2 }),
+        expect.objectContaining({ generation: 2, messages: 3 }),
       ]),
     });
     if (!killed.ok || !killed.archivedTo) throw new Error("proc.kill did not archive history");
@@ -395,7 +427,7 @@ describe("gateway runtime integration", () => {
           },
         }],
       },
-      { kind: "text", chunks: ["work direct line ready"] },
+      { kind: "message", text: "work direct line ready" },
     );
     const workTarget = inboundResult(await sendServiceFrame(harness, inboundFrame({
       id: "work-target",
@@ -522,7 +554,7 @@ describe("gateway runtime integration", () => {
     });
 
     const routedHistory = await client.proc.history({ pid: target.pid });
-    expect(routedHistory).toMatchObject({ ok: true, messageCount: 4 });
+    expect(routedHistory).toMatchObject({ ok: true, messageCount: 6 });
     if (!routedHistory.ok) throw new Error(routedHistory.error);
     expect(routedHistory.messages[0]).toMatchObject({
       role: "user",
@@ -540,17 +572,31 @@ describe("gateway runtime integration", () => {
     });
     expect(routedHistory.messages[1]).toMatchObject({
       role: "assistant",
-      content: INTEGRATION_REPLY,
+      content: expect.objectContaining({
+        toolCalls: [expect.objectContaining({ name: "Message" })],
+      }),
       runId: firstNormal.delivered?.runId,
     });
     expect(routedHistory.messages[2]).toMatchObject({
+      role: "toolResult",
+      content: expect.objectContaining({ toolName: "Message" }),
+      runId: firstNormal.delivered?.runId,
+    });
+    expect(routedHistory.messages[3]).toMatchObject({
       role: "user",
       content: "second routed adapter message",
       runId: secondNormal.delivered?.runId,
     });
-    expect(routedHistory.messages[3]).toMatchObject({
+    expect(routedHistory.messages[4]).toMatchObject({
       role: "assistant",
-      content: INTEGRATION_REPLY,
+      content: expect.objectContaining({
+        toolCalls: [expect.objectContaining({ name: "Message" })],
+      }),
+      runId: secondNormal.delivered?.runId,
+    });
+    expect(routedHistory.messages[5]).toMatchObject({
+      role: "toolResult",
+      content: expect.objectContaining({ toolName: "Message" }),
       runId: secondNormal.delivered?.runId,
     });
 
@@ -560,12 +606,14 @@ describe("gateway runtime integration", () => {
     );
     expect(await client.proc.history({ pid: target.pid })).toMatchObject({
       ok: true,
-      messageCount: 4,
+      messageCount: 6,
       messages: [
         expect.objectContaining({ content: "first routed adapter message" }),
-        expect.objectContaining({ content: INTEGRATION_REPLY }),
+        expect.objectContaining({ role: "assistant" }),
+        expect.objectContaining({ role: "toolResult" }),
         expect.objectContaining({ content: "second routed adapter message" }),
-        expect.objectContaining({ content: INTEGRATION_REPLY }),
+        expect.objectContaining({ role: "assistant" }),
+        expect.objectContaining({ role: "toolResult" }),
       ],
     });
 
@@ -577,7 +625,7 @@ describe("gateway runtime integration", () => {
     expect(await listOutbound(harness, ACCOUNT_ID)).toHaveLength(twoOutbound.length);
     expect(await client.proc.history({ pid: target.pid })).toMatchObject({
       ok: true,
-      messageCount: 4,
+      messageCount: 6,
     });
 
     const returnHomeFrame = inboundFrame({

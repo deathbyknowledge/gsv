@@ -45,6 +45,7 @@ import { buildGitProxyRequest, getBasicAuth, matchGitPath } from "./git";
 
 export { Kernel } from "./kernel/do";
 export { Process } from "./process/do";
+export { Conversation } from "./conversation/do";
 
 export default {
   async fetch(request, env): Promise<Response> {

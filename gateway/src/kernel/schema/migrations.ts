@@ -48,6 +48,7 @@ import {
 import {
   KERNEL_V025_ADD_PRIVATE_ADAPTER_DESTINATIONS,
 } from "./v025_add_private_adapter_destinations";
+import { KERNEL_V026_ADD_CONVERSATIONS } from "./v026_add_conversations";
 
 // Used by Kernel DO startup before the individual stores initialize.
 export const KERNEL_SCHEMA_COMPONENT = "kernel";
@@ -78,6 +79,7 @@ export const KERNEL_MIGRATIONS: readonly SqlMigration[] = [
   KERNEL_V023_ADD_PERSONAL_CONTROLLER_SLOT,
   KERNEL_V024_ADD_SURFACE_ROUTE_MODES,
   KERNEL_V025_ADD_PRIVATE_ADAPTER_DESTINATIONS,
+  KERNEL_V026_ADD_CONVERSATIONS,
 ];
 
 export function runKernelSqlMigrations(storage: DurableObjectStorage): void {

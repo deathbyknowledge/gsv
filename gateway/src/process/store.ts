@@ -689,6 +689,18 @@ export class ProcessStore {
     )].map(messageRecordFromRow);
   }
 
+  getRunInputMessageId(runId: string): number | null {
+    const row = this.sql.exec<{ id: number }>(
+      `SELECT id FROM messages
+        WHERE generation = ? AND run_id = ? AND role = 'user'
+        ORDER BY id ASC
+        LIMIT 1`,
+      this.getHistoryGeneration(),
+      runId,
+    ).toArray()[0];
+    return row?.id ?? null;
+  }
+
   getMessagesForGenerationAfter(opts: {
     generation: number;
     afterMessageId: number;
@@ -872,7 +884,7 @@ export class ProcessStore {
         case "system": {
           messages.push({
             role: "user",
-            content: `[Process Event]:\n${r.content}`,
+            content: `[GSV EVENT]\n${r.content}`,
             timestamp: r.createdAt,
           } satisfies UserMessage);
           break;

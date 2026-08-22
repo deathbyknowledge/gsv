@@ -89,6 +89,8 @@ import type {
   ProcessAdapterDeliverResponseFrame,
   ProcessInboundFrame,
   ProcessMailReceivedRuntimeEvent,
+  ProcessMessageCommitRequestFrame,
+  ProcessMessageStreamSignal,
   ProcessRequestFrame,
   ProcessRuntimeEvent,
   ProcessRuntimeEventDeliverArgs,
@@ -239,12 +241,17 @@ import {
 
 type RunState = {
   runId: string;
+  returnToCaller?: boolean;
+  conversationId?: string;
+  inputMessageId?: string;
   tickGeneration?: number;
   pendingMediaMessageId?: number;
   pendingRuntimeEvents?: number;
   notifyOnly?: boolean;
   offeredToolNames?: string[];
   unofferedToolRounds?: number;
+  terminalCorrectionRounds?: number;
+  terminalActionFailures?: number;
   config?: AiConfigResult;
   aiTextGenerateConfig?: AiTextGenerateConfig;
   tools?: ToolDefinition[];
@@ -260,6 +267,13 @@ type RunState = {
 type ProcessRunEventSink = {
   emit(seq: number, event: AssistantMessageEvent): Promise<void>;
   close(): Promise<void>;
+};
+
+type MessageStreamProjection = {
+  id: string;
+  started: boolean;
+  text: string;
+  aborted: boolean;
 };
 
 type RunOutputMedia = ProcMediaInput & {
@@ -388,11 +402,46 @@ const SHELL_SESSION_TARGET_KEY_PREFIX = "shellSessionTarget:";
 const UNKNOWN_SHELL_SESSION_TARGET_MESSAGE =
   "Shell session continuation requires an explicit target because this process does not know which device owns the session";
 const USER_INTERRUPTED_TOOL_MESSAGE = "User interrupted tool execution";
+const MESSAGE_TOOL_NAME = "Message";
+const SILENCE_TOOL_NAME = "Silence";
+const MAX_TERMINAL_CORRECTION_ROUNDS = 1;
+const MAX_TERMINAL_ACTION_FAILURES = 2;
+const TERMINAL_TOOLS: Tool[] = [
+  {
+    name: MESSAGE_TOOL_NAME,
+    description: "Commit the one message the user should see and finish this interaction. Use only after all other tool work is complete. The text is the user-visible message; ordinary assistant text is Process activity and is not delivered.",
+    parameters: {
+      type: "object",
+      properties: {
+        text: {
+          type: "string",
+          description: "The complete message to send to the user.",
+        },
+      },
+      required: ["text"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: SILENCE_TOOL_NAME,
+    description: "Finish this interaction without sending a user-visible message. Use when no response or notification is useful.",
+    parameters: {
+      type: "object",
+      properties: {
+        reason: {
+          type: "string",
+          description: "A short Process-visible reason for choosing silence.",
+        },
+      },
+      additionalProperties: false,
+    },
+  },
+];
 const USER_SUPERSEDED_TOOL_MESSAGE =
   "Cancelled for this agent run because a newer user message arrived; the underlying operation may still complete";
 const TOOL_EXECUTION_DENIED_BY_USER_MESSAGE = "Tool execution denied by user";
 const RUNTIME_EVENT_WAKE_MESSAGE =
-  "A runtime event arrived while you were busy. Review the process event above and continue.";
+  "A runtime event arrived while you were busy. Review the GSV event above and continue.";
 const MAX_PROCESS_MEDIA_READ_BYTES = 25 * 1024 * 1024;
 const CODE_MODE_NESTED_SYSCALL_TIMEOUT_MS = 55_000;
 const CODE_MODE_APPROVAL_TIMEOUT_MS = 55_000;
@@ -1120,6 +1169,7 @@ export class Process extends Host<Env> {
   private readonly runAbortControllers = new Map<string, AbortController>();
   private readonly activeTickRunIds = new Set<string>();
   private readonly deferredTickRunIds = new Set<string>();
+  private readonly messageStreamProjections = new Map<string, MessageStreamProjection>();
   private readonly mediaWriteAdmissions = new Map<string, Promise<void>>();
   private readonly mediaUploadAbortControllers = new Map<string, AbortController>();
   private taskTitleAbortController: AbortController | null = null;
@@ -1382,6 +1432,9 @@ export class Process extends Host<Env> {
         case "proc.send":
           data = await this.handleProcSend(
             frame.args as ProcSendArgs,
+            frame.args.interaction
+              ? `run:${frame.args.interaction.messageId}`
+              : undefined,
           );
           break;
         case "proc.ipc.deliver":
@@ -1536,6 +1589,17 @@ export class Process extends Host<Env> {
     if (args.media?.some((item) => "data" in item)) {
       return { ok: false, error: "proc.send media.data was removed; use proc.media.write" };
     }
+    if (
+      args.interaction
+      && (
+        typeof args.interaction.conversationId !== "string"
+        || !args.interaction.conversationId
+        || typeof args.interaction.messageId !== "string"
+        || !args.interaction.messageId
+      )
+    ) {
+      return { ok: false, error: "proc.send interaction is invalid" };
+    }
     const identity = this.identity;
     const pid = this.pid;
     const mediaPrefix = processMediaPrefix(identity.uid, pid);
@@ -1593,6 +1657,12 @@ export class Process extends Host<Env> {
             this.store.enqueue(runId, args.message, {
               media: media ?? undefined,
               origin: origin ?? undefined,
+              ...(args.interaction
+                ? {
+                    kind: "conversation.message",
+                    provenance: JSON.stringify(args.interaction),
+                  }
+                : {}),
             });
             this.maybeStartTaskTitleGeneration(args.message);
             await this.emitProcChanged(["queue"], { enqueuedRunId: runId });
@@ -1605,7 +1675,15 @@ export class Process extends Host<Env> {
             origin: origin ?? undefined,
           });
           this.maybeStartTaskTitleGeneration(args.message);
-          this.currentRun = { runId };
+          this.currentRun = {
+            runId,
+            ...(args.interaction
+              ? {
+                  conversationId: args.interaction.conversationId,
+                  inputMessageId: args.interaction.messageId,
+                }
+              : {}),
+          };
           this.ctx.waitUntil(this.scheduleTick(runId).catch(async (error) => {
             if (this.handleRunStopped(runId)) {
               return;
@@ -1668,6 +1746,12 @@ export class Process extends Host<Env> {
       this.maybeStartTaskTitleGeneration(args.message);
       this.currentRun = {
         runId,
+        ...(args.interaction
+          ? {
+              conversationId: args.interaction.conversationId,
+              inputMessageId: args.interaction.messageId,
+            }
+          : {}),
         ...(hasMedia ? { pendingMediaMessageId: messageId } : {}),
       };
       if (activeRun) {
@@ -2094,6 +2178,7 @@ export class Process extends Host<Env> {
         if (this.currentRun) {
           this.store.enqueue(runId, renderedMessage, {
             origin: origin ?? undefined,
+            ...(args.call ? { kind: "ipc.call" } : {}),
           });
           this.maybeStartTaskTitleGeneration(message);
           this.ctx.waitUntil(this.emitProcChanged(["queue"], {
@@ -2114,7 +2199,10 @@ export class Process extends Host<Env> {
           origin: origin ?? undefined,
         });
         this.maybeStartTaskTitleGeneration(message);
-        this.currentRun = { runId };
+        this.currentRun = {
+          runId,
+          ...(args.call ? { returnToCaller: true } : {}),
+        };
         this.ctx.waitUntil(this.scheduleTick(runId)
           .then(() => this.announceRun(runId, "proc.ipc.deliver"))
           .catch((error) => this.finishRun(runId, {
@@ -2381,6 +2469,7 @@ export class Process extends Host<Env> {
 
   private async handleProcHistory(args: ProcHistoryArgs): Promise<ProcHistoryResult> {
     const pid = this.pid;
+    const includeMessages = args.includeMessages !== false;
     const limit = args.limit ?? 200;
     const offset = args.offset ?? 0;
     const beforeMessageId = args.beforeMessageId;
@@ -2410,13 +2499,15 @@ export class Process extends Host<Env> {
     }
 
     const total = this.store.messageCount();
-    const records = this.store.getMessages({
-      limit,
-      offset,
-      beforeMessageId,
-      afterMessageId,
-      tail,
-    });
+    const records = includeMessages
+      ? this.store.getMessages({
+          limit,
+          offset,
+          beforeMessageId,
+          afterMessageId,
+          tail,
+        })
+      : [];
     const firstMessageId = records[0]?.id ?? null;
     const lastMessageId = records[records.length - 1]?.id ?? null;
     const hasMoreBefore = firstMessageId === null
@@ -3359,9 +3450,16 @@ export class Process extends Host<Env> {
     const pid = this.pid;
     const archiveDir = this.historyArchiveDir();
     const segmentId = normalizeOptionalString(args.segmentId);
-    const throughMessageId = args.throughMessageId;
-    if (Boolean(segmentId) === (throughMessageId !== undefined)) {
-      return { ok: false, error: "history export requires exactly one of segmentId or throughMessageId" };
+    let throughMessageId = args.throughMessageId;
+    const throughRunId = normalizeOptionalString(args.throughRunId);
+    const selectionCount = Number(Boolean(segmentId))
+      + Number(throughMessageId !== undefined)
+      + Number(Boolean(throughRunId));
+    if (selectionCount !== 1) {
+      return {
+        ok: false,
+        error: "history export requires exactly one of segmentId, throughMessageId, or throughRunId",
+      };
     }
     if (throughMessageId !== undefined && !isPositiveInteger(throughMessageId)) {
       return { ok: false, error: "history export throughMessageId must be a positive integer" };
@@ -3377,6 +3475,12 @@ export class Process extends Host<Env> {
         signal?.throwIfAborted();
         if (this.killed) {
           return { ok: false, error: "Process no longer exists" };
+        }
+        if (throughRunId) {
+          throughMessageId = this.store.getRunInputMessageId(throughRunId) ?? undefined;
+          if (throughMessageId === undefined) {
+            return { ok: false, error: `History run not found: ${throughRunId}` };
+          }
         }
         if (segmentId) {
           segment = this.store.getHistorySegment(segmentId);
@@ -4616,11 +4720,14 @@ export class Process extends Host<Env> {
     }
 
     // Step 4: Build pi-ai Context
-    const tools: Tool[] = (run.tools ?? []).map((t) => ({
-      name: t.name,
-      description: t.description,
-      parameters: t.inputSchema as Tool["parameters"],
-    }));
+    const tools: Tool[] = (run.tools ?? [])
+      .filter((tool) => !isTerminalToolName(tool.name))
+      .map((tool) => ({
+        name: tool.name,
+        description: tool.description,
+        parameters: tool.inputSchema as Tool["parameters"],
+      }))
+      .concat(TERMINAL_TOOLS);
     run.offeredToolNames = [...new Set(tools.map((tool) => tool.name))];
     this.currentRun = run;
     const buildGenerationContext = async (): Promise<Context> => {
@@ -4998,18 +5105,27 @@ export class Process extends Host<Env> {
       (b): b is ToolCall => b.type === "toolCall",
     );
     const offeredToolNames = new Set(run.offeredToolNames ?? []);
+    const terminalToolCalls = returnedToolCalls.filter((toolCall) => (
+      isTerminalToolName(toolCall.name)
+    ));
     const toolCalls = returnedToolCalls.filter((toolCall) => (
-      offeredToolNames.has(toolCall.name)
+      offeredToolNames.has(toolCall.name) && !isTerminalToolName(toolCall.name)
     ));
     const unofferedToolCalls = returnedToolCalls.filter((toolCall) => (
       !offeredToolNames.has(toolCall.name)
     ));
+    const terminalCombinationInvalid = terminalToolCalls.length > 1
+      || (terminalToolCalls.length === 1 && (
+        toolCalls.length > 0 || unofferedToolCalls.length > 0
+      ));
     if (unofferedToolCalls.length > 0) {
       run.unofferedToolRounds = (run.unofferedToolRounds ?? 0) + 1;
       this.currentRun = run;
     }
 
-    let outputMedia = returnedToolCalls.length === 0 && this.currentRun?.runId === runId
+    let outputMedia = toolCalls.length === 0
+      && unofferedToolCalls.length === 0
+      && this.currentRun?.runId === runId
       ? this.currentRun.outputMedia ?? []
       : [];
 
@@ -5055,6 +5171,17 @@ export class Process extends Host<Env> {
         }
       }
       for (const toolCall of toolCalls) {
+        if (terminalCombinationInvalid) {
+          this.store.appendToolResult(
+            toolCall.id,
+            TOOL_TO_SYSCALL[toolCall.name] ?? toolCall.name,
+            "Message and Silence are terminal actions and cannot be combined with other actions",
+            true,
+            runId,
+            "failed",
+          );
+          continue;
+        }
         const syscall = TOOL_TO_SYSCALL[toolCall.name] as SyscallName | undefined;
         const prepared = syscall
           ? this.prepareToolArgs(syscall, toolCall.arguments)
@@ -5082,6 +5209,18 @@ export class Process extends Host<Env> {
           "failed",
         );
       }
+      if (terminalCombinationInvalid) {
+        for (const toolCall of terminalToolCalls) {
+          this.store.appendToolResult(
+            toolCall.id,
+            toolCall.name,
+            "Message and Silence are terminal actions and cannot be combined with other actions",
+            true,
+            runId,
+            "failed",
+          );
+        }
+      }
     });
     if (outputMedia.length > 0) {
       const stagedKeys = this.currentRun?.runId === runId
@@ -5096,6 +5235,31 @@ export class Process extends Host<Env> {
       }
     }
 
+    let terminalResult: {
+      ok: boolean;
+      action: "message" | "silence";
+      text: string;
+      error?: string;
+    } | null = null;
+    const terminalToolCall = terminalCombinationInvalid ? null : terminalToolCalls[0] ?? null;
+    if (terminalToolCall) {
+      terminalResult = await this.executeTerminalAction(runId, terminalToolCall, outputMedia);
+      this.store.appendToolResult(
+        terminalToolCall.id,
+        terminalToolCall.name,
+        terminalResult.ok
+          ? terminalResult.action === "message"
+            ? "Message committed"
+            : "Interaction completed silently"
+          : terminalResult.error ?? "Terminal action failed",
+        !terminalResult.ok,
+        runId,
+        terminalResult.ok ? "completed" : "failed",
+      );
+      await this.emitProcChanged(["messages"], { runId });
+      if (this.handleRunStopped(runId)) return;
+    }
+
     context = await buildGenerationContext();
     if (this.handleRunStopped(runId)) {
       return;
@@ -5105,7 +5269,34 @@ export class Process extends Host<Env> {
       return;
     }
 
-    if (toolCalls.length > 0) {
+    if (terminalResult?.ok) {
+      const returnToCaller = this.currentRun?.runId === runId
+        && this.currentRun.returnToCaller === true;
+      await this.finishRun(runId, {
+        reason: terminalResult.action === "message" ? "message.sent" : "message.silenced",
+        status: "ok",
+        text: returnToCaller && terminalResult.action === "message"
+          ? terminalResult.text
+          : null,
+        usage: response.usage,
+      });
+    } else if (terminalResult && !terminalResult.ok) {
+      run.terminalActionFailures = (run.terminalActionFailures ?? 0) + 1;
+      this.currentRun = run;
+      if (run.terminalActionFailures >= MAX_TERMINAL_ACTION_FAILURES) {
+        await this.finishRun(runId, {
+          reason: "message.action.failed",
+          status: "error",
+          text: null,
+          error: terminalResult.error ?? "Terminal message action failed",
+          usage: response.usage,
+        });
+      } else {
+        await this.scheduleTick(runId);
+      }
+    } else if (terminalCombinationInvalid) {
+      await this.requireTerminalAction(runId, response.usage, text);
+    } else if (toolCalls.length > 0) {
       const pendingHil = await this.processToolCalls(runId);
       if (this.handleRunStopped(runId)) {
         return;
@@ -5133,12 +5324,7 @@ export class Process extends Host<Env> {
         await this.scheduleTick(runId);
       }
     } else {
-      await this.finishRun(runId, {
-        reason: "turn.complete",
-        status: "ok",
-        text,
-        usage: response.usage,
-      });
+      await this.requireTerminalAction(runId, response.usage, text);
     }
   }
 
@@ -5171,6 +5357,130 @@ export class Process extends Host<Env> {
       attribution.logicalRequestId,
     );
     return result.message as unknown as AssistantMessage;
+  }
+
+  private async executeTerminalAction(
+    runId: string,
+    toolCall: ToolCall,
+    media: RunOutputMedia[],
+  ): Promise<{
+    ok: boolean;
+    action: "message" | "silence";
+    text: string;
+    error?: string;
+  }> {
+    if (toolCall.name === SILENCE_TOOL_NAME) {
+      const projection = this.messageStreamProjections.get(runId);
+      if (projection) {
+        await this.abortMessageStream(runId, projection, "Interaction completed silently");
+      }
+      await this.emitMessageStream(
+        runId,
+        projection ?? this.messageStreamProjection(runId),
+        "silenced",
+      );
+      return {
+        ok: true,
+        action: "silence",
+        text: terminalSilenceReason(toolCall) ?? "",
+      };
+    }
+
+    const text = terminalMessageText(toolCall);
+    if (text === null || (!text.trim() && media.length === 0)) {
+      return {
+        ok: false,
+        action: "message",
+        text: "",
+        error: "Message requires non-empty text or attached media",
+      };
+    }
+    try {
+      await this.completeMessageStream(runId, text);
+      const run = this.currentRun;
+      if (!run || run.runId !== runId) {
+        return {
+          ok: false,
+          action: "message",
+          text,
+          error: "Message run is no longer active",
+        };
+      }
+      if (run.returnToCaller) {
+        return { ok: true, action: "message", text };
+      }
+      const request: ProcessMessageCommitRequestFrame = {
+        type: "req",
+        id: crypto.randomUUID(),
+        call: "proc.message.commit",
+        args: {
+          runId,
+          ...(run.conversationId ? { conversationId: run.conversationId } : {}),
+          text,
+          ...(media.length > 0 ? { media } : {}),
+        },
+      };
+      const response = await sendFrameToKernel(this.installationId, this.pid, request);
+      if (!response || response.type !== "res" || response.id !== request.id) {
+        throw new Error("Kernel returned no valid message response");
+      }
+      if (!response.ok) throw new Error(response.error.message);
+      return { ok: true, action: "message", text };
+    } catch (error) {
+      const projection = this.messageStreamProjections.get(runId);
+      if (projection) {
+        await this.abortMessageStream(
+          runId,
+          projection,
+          "Message could not be committed",
+        );
+      }
+      return {
+        ok: false,
+        action: "message",
+        text,
+        error: error instanceof Error ? error.message : String(error),
+      };
+    }
+  }
+
+  private async requireTerminalAction(
+    runId: string,
+    usage: AssistantMessage["usage"],
+    draftText: string,
+  ): Promise<void> {
+    const run = this.currentRun;
+    if (!run || run.runId !== runId) return;
+    const projection = this.messageStreamProjections.get(runId);
+    if (projection) {
+      await this.abortMessageStream(
+        runId,
+        projection,
+        "The model did not complete a valid Message action",
+      );
+    }
+    if ((run.terminalCorrectionRounds ?? 0) >= MAX_TERMINAL_CORRECTION_ROUNDS) {
+      await this.finishRun(runId, {
+        reason: "message.action.missing",
+        status: "error",
+        text: draftText || null,
+        error: "The model did not choose Message or Silence after correction",
+        usage,
+      });
+      return;
+    }
+    run.terminalCorrectionRounds = (run.terminalCorrectionRounds ?? 0) + 1;
+    this.currentRun = run;
+    const message = [
+      "This interaction is not complete. Ordinary assistant text is Process activity and is not sent to the user. Finish with exactly one Message action, or choose Silence if no user-visible response is useful.",
+    ].join("\n");
+    this.store.appendMessage("system", message, { runId });
+    await this.emitProcChanged(["messages"], {
+      runId,
+      role: "system",
+      content: message,
+    });
+    if (!this.handleRunStopped(runId)) await this.scheduleTick(runId);
   }
 
   private async generateAssistantResponseLocally(options: {
@@ -5208,6 +5518,7 @@ export class Process extends Host<Env> {
     }
 
     const eventSink = await this.openRunEventSink(options.runId);
+    const messageStream = this.messageStreamProjection(options.runId);
     try {
       let seq = options.streamSeq?.value ?? 0;
       let response: AssistantMessage | null = null;
@@ -5217,6 +5528,7 @@ export class Process extends Host<Env> {
           options.streamSeq.value = seq;
         }
         await eventSink?.emit(seq, event);
+        await this.projectMessageStreamEvent(options.runId, event, messageStream);
         if (event.type === "done") {
           response = event.message;
         } else if (event.type === "error") {
@@ -5366,6 +5678,7 @@ export class Process extends Host<Env> {
       this.emitRunFinished(run, options);
       this.currentRun = null;
       this.runAbortControllers.delete(runId);
+      this.messageStreamProjections.delete(runId);
       this.store.clearPendingHil();
       console.log(`[Process] Finished run ${runId}`);
 
@@ -6058,6 +6371,109 @@ export class Process extends Host<Env> {
     };
   }
 
+  private messageStreamProjection(runId: string): MessageStreamProjection {
+    let projection = this.messageStreamProjections.get(runId);
+    if (!projection) {
+      projection = {
+        id: `draft:${runId}`,
+        started: false,
+        text: "",
+        aborted: false,
+      };
+      this.messageStreamProjections.set(runId, projection);
+    }
+    return projection;
+  }
+
+  private async projectMessageStreamEvent(
+    runId: string,
+    event: AssistantMessageEvent,
+    projection: MessageStreamProjection,
+  ): Promise<void> {
+    if (projection.aborted || !event.type.startsWith("toolcall_")) return;
+    const partial = "partial" in event ? event.partial : null;
+    const contentIndex = "contentIndex" in event ? event.contentIndex : -1;
+    const content = partial?.content[contentIndex];
+    if (!content || content.type !== "toolCall") return;
+    if (content.name !== MESSAGE_TOOL_NAME) {
+      if (projection.started && event.type === "toolcall_end") {
+        await this.abortMessageStream(runId, projection, "Message action changed while streaming");
+      }
+      return;
+    }
+    if (!projection.started) {
+      projection.started = true;
+      await this.emitMessageStream(runId, projection, "started");
+    }
+    const text = terminalMessageText(content);
+    if (text === null || text === projection.text) return;
+    if (!text.startsWith(projection.text)) {
+      await this.abortMessageStream(runId, projection, "Message text changed while streaming");
+      return;
+    }
+    const delta = text.slice(projection.text.length);
+    projection.text = text;
+    if (delta) await this.emitMessageStream(runId, projection, "delta", delta);
+  }
+
+  private async completeMessageStream(runId: string, text: string): Promise<void> {
+    const projection = this.messageStreamProjection(runId);
+    if (projection.aborted) return;
+    if (!projection.started) {
+      projection.started = true;
+      await this.emitMessageStream(runId, projection, "started");
+    }
+    if (text === projection.text) return;
+    if (!text.startsWith(projection.text)) {
+      await this.abortMessageStream(runId, projection, "Committed message differs from its stream");
+      return;
+    }
+    const delta = text.slice(projection.text.length);
+    projection.text = text;
+    if (delta) await this.emitMessageStream(runId, projection, "delta", delta);
+  }
+
+  private async abortMessageStream(
+    runId: string,
+    projection: MessageStreamProjection,
+    reason: string,
+  ): Promise<void> {
+    if (!projection.started || projection.aborted) return;
+    projection.aborted = true;
+    await this.emitMessageStream(runId, projection, "aborted", undefined, reason);
+  }
+
+  private async emitMessageStream(
+    runId: string,
+    projection: MessageStreamProjection,
+    phase: "started" | "delta" | "aborted" | "silenced",
+    delta?: string,
+    reason?: string,
+  ): Promise<void> {
+    const run = this.currentRun;
+    if (!run || run.runId !== runId || this.killed) return;
+    if (run.returnToCaller) return;
+    const frame: ProcessMessageStreamSignal = {
+      type: "sig",
+      signal: "proc.message.stream",
+      payload: {
+        pid: this.pid,
+        runId,
+        ...(run.conversationId ? { conversationId: run.conversationId } : {}),
+        messageId: projection.id,
+        phase,
+        ...(delta === undefined ? {} : { delta }),
+        ...(reason === undefined ? {} : { reason }),
+        timestamp: Date.now(),
+      },
+    };
+    try {
+      await sendFrameToKernel(this.installationId, this.pid, frame);
+    } catch {
+      projection.aborted = true;
+    }
+  }
+
   private async emitRunRetrying(
     runId: string,
     attempt: number,
@@ -6205,7 +6621,7 @@ export class Process extends Host<Env> {
         this.removePendingRunFinish(runId);
         const messageId = this.store.appendMessage(
           "system",
-          "Automatic reply delivery stopped after repeated transport failures. The completed answer remains in this process history.",
+          "Run completion signaling stopped after repeated transport failures. The completed activity remains in this process history.",
           { runId },
         );
         this.ctx.waitUntil(this.emitProcChanged(["messages"], {
@@ -6499,7 +6915,7 @@ export class Process extends Host<Env> {
       const contextLines = [
         ...(shouldRenderSource ? [`[From: ${source}]`] : []),
         ...(shouldRenderReplyDestination
-          ? [`[Reply destination: ${replyDestination.description}.]`]
+          ? [`[Directed endpoint: ${replyDestination.description}.]`]
           : []),
       ];
       messages[index] = prefixUserMessageContent(message, contextLines.join("\n"));
@@ -6650,7 +7066,7 @@ export class Process extends Host<Env> {
   }
 
   /**
-   * Move final reply attachments out of the executor-scoped live-media area
+   * Move canonical Message attachments out of the executor-scoped live-media area
    * before they enter assistant history or a durable finish notification.
    * The resulting content-addressed files live in the run-as agent's reserved,
    * read-only archive namespace, so retries and later compaction cannot race
@@ -7653,6 +8069,9 @@ export class Process extends Host<Env> {
       pid: this.pid,
       requestId: record.requestId,
       runId: record.runId,
+      ...(this.currentRun?.runId === record.runId && this.currentRun.conversationId
+        ? { conversationId: this.currentRun.conversationId }
+        : {}),
       callId: record.toolCallId,
       toolName: record.toolName,
       syscall: record.syscall,
@@ -7771,6 +8190,8 @@ export class Process extends Host<Env> {
     this.currentRun = {
       runId: next.runId,
       ...(next.kind === "mail.received" ? { notifyOnly: true } : {}),
+      ...(next.kind === "ipc.call" ? { returnToCaller: true } : {}),
+      ...conversationRunState(next.kind, next.provenance),
     };
     return next;
   }
@@ -7796,6 +8217,52 @@ export class Process extends Host<Env> {
 
 function snapshotAssistantMessageEvent<T extends AssistantMessageEvent>(event: T): T {
   return JSON.parse(JSON.stringify(event)) as T;
+}
+
+function conversationRunState(
+  kind: string,
+  provenance: string | null | undefined,
+): Pick<RunState, "conversationId" | "inputMessageId"> {
+  if (kind !== "conversation.message" || !provenance) return {};
+  try {
+    const value: unknown = JSON.parse(provenance);
+    if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+    const record = value as Record<string, unknown>;
+    if (
+      typeof record.conversationId !== "string"
+      || !record.conversationId
+      || typeof record.messageId !== "string"
+      || !record.messageId
+    ) {
+      return {};
+    }
+    return {
+      conversationId: record.conversationId,
+      inputMessageId: record.messageId,
+    };
+  } catch {
+    return {};
+  }
+}
+
+function isTerminalToolName(name: string): boolean {
+  return name === MESSAGE_TOOL_NAME || name === SILENCE_TOOL_NAME;
+}
+
+function terminalMessageText(toolCall: ToolCall): string | null {
+  if (toolCall.name !== MESSAGE_TOOL_NAME) return null;
+  const args = toolCall.arguments;
+  if (!args || typeof args !== "object" || Array.isArray(args)) return null;
+  const text = (args as Record<string, unknown>).text;
+  return typeof text === "string" ? text : null;
+}
+
+function terminalSilenceReason(toolCall: ToolCall): string | null {
+  if (toolCall.name !== SILENCE_TOOL_NAME) return null;
+  const args = toolCall.arguments;
+  if (!args || typeof args !== "object" || Array.isArray(args)) return null;
+  const reason = (args as Record<string, unknown>).reason;
+  return typeof reason === "string" ? reason : null;
 }
 
 function orderMessagesForProvider(messages: Message[]): Message[] {
@@ -8105,26 +8572,26 @@ function formatReplyDestinationForContext(
         surface.id,
         surface.threadId ?? "",
       ]),
-      description: `automatic to this ${titleCase(adapterDestination.adapter)} ${surfaceLabel}`,
+      description: `this ${titleCase(adapterDestination.adapter)} ${surfaceLabel}`,
     };
   }
   if (origin.kind === "scheduler") return PROCESS_REPLY_DESTINATION;
   if (origin.kind === "client") {
     return {
       key: `client:${origin.connectionId}`,
-      description: "automatic to this GSV client",
+      description: "this GSV client",
     };
   }
   if (origin.kind === "process") {
     return {
       key: `process:${origin.sourcePid}`,
-      description: "automatic to the calling GSV process",
+      description: "the calling GSV process",
     };
   }
   if (origin.kind === "device") {
     return {
       key: `device:${origin.deviceId}`,
-      description: "automatic to this GSV device client",
+      description: "this GSV device client",
     };
   }
   throw new Error("Interaction origin has no reply destination");

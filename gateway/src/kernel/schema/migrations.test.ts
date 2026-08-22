@@ -31,7 +31,7 @@ function createTableStatement(name: string): string {
 describe("kernel schema migrations", () => {
   it("starts the kernel component at a v1 baseline", () => {
     expect(KERNEL_SCHEMA_COMPONENT).toBe("kernel");
-    expect(KERNEL_MIGRATIONS).toHaveLength(25);
+    expect(KERNEL_MIGRATIONS).toHaveLength(26);
     expect(KERNEL_MIGRATIONS[0]).toMatchObject({
       id: 1,
       name: "initial_kernel_schema",
@@ -132,6 +132,10 @@ describe("kernel schema migrations", () => {
       id: 25,
       name: "add_private_adapter_destinations",
     });
+    expect(KERNEL_MIGRATIONS[25]).toMatchObject({
+      id: 26,
+      name: "add_conversations",
+    });
   });
 
   it("creates the current kernel table set", () => {
@@ -221,6 +225,22 @@ describe("kernel schema migrations", () => {
     expect(normalizedStatements()).toContain(
       "CREATE TABLE private_adapter_destinations ( uid INTEGER PRIMARY KEY, adapter TEXT NOT NULL, account_id TEXT NOT NULL, actor_id TEXT NOT NULL, surface_id TEXT NOT NULL, thread_id TEXT NOT NULL DEFAULT '', message_id TEXT NOT NULL, updated_at INTEGER NOT NULL )",
     );
+  });
+
+  it("adds canonical conversations independently of process history", () => {
+    const statements = normalizedStatements();
+    expect(statements.some((statement) => (
+      statement.startsWith("CREATE TABLE conversations")
+      && statement.includes("kind TEXT NOT NULL CHECK (kind IN ('home', 'work', 'group'))")
+      && statement.includes("handler_pid TEXT NOT NULL")
+    ))).toBe(true);
+    expect(statements).toContain(
+      "CREATE UNIQUE INDEX conversations_home_owner_idx ON conversations (owner_uid) WHERE kind = 'home'",
+    );
+    expect(statements.some((statement) => statement.startsWith("CREATE TABLE conversation_members")))
+      .toBe(true);
+    expect(statements.some((statement) => statement.startsWith("CREATE TABLE conversation_surfaces")))
+      .toBe(true);
   });
 
   it("removes the parallel conversation registry", () => {

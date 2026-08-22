@@ -13,6 +13,8 @@ export type ProcMediaInput = {
   type: "image" | "audio" | "video" | "document";
   mimeType: string;
   key?: string;
+  /** Set for immutable media owned by a canonical conversation message. */
+  conversationId?: string;
   /** Server-derived read-only filesystem path for a process-scoped media key. */
   path?: string;
   url?: string;
@@ -69,6 +71,10 @@ export type ProcSendArgs = {
   message: string;
   media?: ProcMediaInput[];
   origin?: InteractionOrigin;
+  interaction?: {
+    conversationId: string;
+    messageId: string;
+  };
 };
 
 export type ProcAbortArgs = {
@@ -93,6 +99,7 @@ export type ProcHilRequest = {
   pid: string;
   requestId: string;
   runId: string;
+  conversationId?: string;
   callId: string;
   toolName: string;
   syscall: string;
@@ -186,6 +193,7 @@ export type ProcIpcCallResult =
 
 export type ProcHistoryArgs = {
   pid?: string;
+  includeMessages?: boolean;
   limit?: number;
   offset?: number;
   beforeMessageId?: number;
@@ -499,6 +507,7 @@ export type ProcForkArgs = {
   pid?: string;
   segmentId?: string;
   throughMessageId?: number;
+  throughRunId?: string;
   label?: string;
   includeLiveSuffix?: boolean;
 };
@@ -550,6 +559,7 @@ export type ProcHistorySegmentsResult =
 export type ProcHistoryExportArgs = {
   segmentId?: string;
   throughMessageId?: number;
+  throughRunId?: string;
   includeLiveSuffix?: boolean;
 };
 
@@ -613,6 +623,12 @@ export type ProcListEntry = {
 export type ProcListResult = {
   processes: ProcListEntry[];
 };
+
+export type ProcObserveArgs = { pid: string };
+export type ProcObserveResult = { ok: true; pid: string; observing: boolean };
+
+export type ProcUnobserveArgs = { pid: string };
+export type ProcUnobserveResult = { ok: true; pid: string; observing: boolean };
 
 // Kernel-only: sets process identity. Sent by the kernel to Process DOs
 // at spawn time and never routed from user/device connections.

@@ -3007,7 +3007,7 @@ describe("native administration shell commands", () => {
     expect(setWakeScheduleId).toHaveBeenCalledWith("sched-2", "wake-1");
   });
 
-  it("distinguishes the automatic reply from intentional extra messages", async () => {
+  it("distinguishes the directed endpoint from intentional separate messages", async () => {
     const ctx = makeContext({
       capabilities: ["shell.exec", "adapter.send"],
       processRunId: "run-telegram",
@@ -3024,15 +3024,15 @@ describe("native administration shell commands", () => {
     }, ctx);
 
     expect(current).toMatchObject({ status: "completed", exitCode: 0 });
-    expect(current.stdout).toContain("automatic reply: Telegram direct message");
-    expect(current.stdout).toContain("create additional outbound messages");
+    expect(current.stdout).toContain("directed endpoint: Telegram direct message");
+    expect(current.stdout).toContain("creates a separate outbound message");
     const destinationId = JSON.parse(currentJson.stdout).destinationId as string;
     expect(destinationId).toMatch(/^message-destination:[0-9a-f]{64}$/);
     expect(current.stdout).toContain(`destination: ${destinationId}`);
     expect(current.stdout).not.toContain("chat-42");
     expect(currentJson.stdout).not.toContain("chat-42");
     expect(duplicate.status).toBe("failed");
-    expect(duplicate.stderr).toContain("automatic reply destination");
+    expect(duplicate.stderr).toContain("directed endpoint");
     expect(duplicate.stderr).toContain("--also");
     expect(intentional).toMatchObject({ status: "completed", exitCode: 0 });
     expect(intentional.stdout).toContain("sent=true");
@@ -3474,7 +3474,7 @@ describe("native administration shell commands", () => {
     expect(result.stderr).toContain("retry with --delivery-id using this value");
   });
 
-  it("stages files on the active run's automatic final reply", async () => {
+  it("stages files for the active run's terminal Message", async () => {
     const ctx = makeContext({
       capabilities: ["shell.exec", "proc.media.write", "fs.write"],
       processRunId: "run-native-file",

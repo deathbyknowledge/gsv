@@ -22,7 +22,7 @@ describe("gateway process controls integration", () => {
             arguments: { path },
           }],
         },
-        { kind: "text", chunks: ["ban", "ana"] },
+        { kind: "message", text: "banana" },
       );
 
       const process = await runtime.spawn("deterministic read journey");
@@ -49,19 +49,13 @@ describe("gateway process controls integration", () => {
       const streamEvents = runtime.signals
         .filter(({ signal, payload }) => signal === "proc.run.stream" && payload.runId === sent.runId)
         .map(({ payload }) => asRecord(payload.event)?.type);
-      expect(streamEvents).toEqual(expect.arrayContaining([
-        "toolcall_start",
-        "toolcall_delta",
-        "toolcall_end",
-        "text_start",
-        "text_delta",
-        "text_end",
-        "done",
-      ]));
+      expect(streamEvents.filter((type) => type === "toolcall_start")).toHaveLength(2);
+      expect(streamEvents.filter((type) => type === "toolcall_end")).toHaveLength(2);
+      expect(streamEvents.filter((type) => type === "done")).toHaveLength(2);
 
       const history = await processHistory(runtime, process.pid);
       expect(history).toMatchObject({
-        messageCount: 4,
+        messageCount: 5,
         activeRunId: null,
         pendingHil: null,
       });
@@ -97,7 +91,21 @@ describe("gateway process controls integration", () => {
         expect.objectContaining({
           role: "assistant",
           runId: sent.runId,
-          content: "banana",
+          content: expect.objectContaining({
+            toolCalls: [expect.objectContaining({
+              name: "Message",
+              arguments: { text: "banana" },
+            })],
+          }),
+        }),
+        expect.objectContaining({
+          role: "toolResult",
+          runId: sent.runId,
+          content: expect.objectContaining({
+            toolName: "Message",
+            outcome: "completed",
+            output: "Message committed",
+          }),
         }),
       ]);
 
@@ -172,7 +180,7 @@ describe("gateway process controls integration", () => {
       await withRuntime(async (runtime) => {
         runtime.ai.enqueue(
           { kind: "tool-calls", calls: [scenario.toolCall] },
-          { kind: "text", chunks: [scenario.finalText] },
+          { kind: "message", text: scenario.finalText },
         );
 
         const process = await runtime.spawn(`HIL ${scenario.decision} journey`);
@@ -228,10 +236,23 @@ describe("gateway process controls integration", () => {
             output: expect.stringContaining(scenario.expectedToolOutput),
           }),
         });
-        expect(history.messages.at(-1)).toMatchObject({
+        expect(history.messages.at(-2)).toMatchObject({
           role: "assistant",
           runId: sent.runId,
-          content: scenario.finalText,
+          content: expect.objectContaining({
+            toolCalls: [expect.objectContaining({
+              name: "Message",
+              arguments: { text: scenario.finalText },
+            })],
+          }),
+        });
+        expect(history.messages.at(-1)).toMatchObject({
+          role: "toolResult",
+          runId: sent.runId,
+          content: expect.objectContaining({
+            toolName: "Message",
+            output: "Message committed",
+          }),
         });
         expect(runtime.ai.requests).toHaveLength(2);
         expect(runtime.ai.requests[1]?.messages).toEqual(expect.arrayContaining([
@@ -247,16 +268,17 @@ describe("gateway process controls integration", () => {
   it("queues process IPC while the target generation is blocked", async () => {
     await withRuntime(async (runtime) => {
       const held = runtime.ai.hold({
-        kind: "text",
-        chunks: ["foreground complete"],
+        kind: "message",
+        text: "foreground complete",
       });
       runtime.ai.enqueue({
-        kind: "text",
-        chunks: ["queued complete"],
+        kind: "message",
+        text: "queued complete",
       });
 
       const target = await runtime.spawn("blocked IPC target");
       const sender = await runtime.spawn("IPC sender");
+      await runtime.client.proc.observe({ pid: target.pid });
       await runtime.configureAi(target.pid);
       const foreground = await runtime.client.proc.send({
         pid: target.pid,
@@ -321,7 +343,7 @@ describe("gateway process controls integration", () => {
       const history = await processHistory(runtime, target.pid);
       expect(history).toMatchObject({
         activeRunId: null,
-        messageCount: 4,
+        messageCount: 6,
       });
       expect(history.messages[0]).toMatchObject({
         role: "user",
@@ -331,9 +353,16 @@ describe("gateway process controls integration", () => {
       expect(history.messages[1]).toMatchObject({
         role: "assistant",
         runId: foreground.runId,
-        content: "foreground complete",
+        content: expect.objectContaining({
+          toolCalls: [expect.objectContaining({ name: "Message" })],
+        }),
       });
       expect(history.messages[2]).toMatchObject({
+        role: "toolResult",
+        runId: foreground.runId,
+        content: expect.objectContaining({ toolName: "Message" }),
+      });
+      expect(history.messages[3]).toMatchObject({
         role: "user",
         runId: queuedRunId,
         content: expect.stringContaining(ipcMessage),
@@ -342,10 +371,17 @@ describe("gateway process controls integration", () => {
           sourcePid: sender.pid,
         }),
       });
-      expect(history.messages[3]).toMatchObject({
+      expect(history.messages[4]).toMatchObject({
         role: "assistant",
         runId: queuedRunId,
-        content: "queued complete",
+        content: expect.objectContaining({
+          toolCalls: [expect.objectContaining({ name: "Message" })],
+        }),
+      });
+      expect(history.messages[5]).toMatchObject({
+        role: "toolResult",
+        runId: queuedRunId,
+        content: expect.objectContaining({ toolName: "Message" }),
       });
       expect(runtime.ai.requests).toHaveLength(2);
       expect(runtime.ai.requests[1]?.messages).toEqual(expect.arrayContaining([

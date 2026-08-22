@@ -223,6 +223,7 @@ describe("managed installation routing integration", () => {
     );
     const pid = (spawned.data as { pid: string }).pid;
     const finished = nextManagedSignal(socket, "proc.run.finished");
+    const committed = nextManagedSignal(socket, "message.committed");
     const sent = await expectManagedRpcOk(socket, "send-process-inference", "proc.send", {
       pid,
       message: "run managed inference",
@@ -236,9 +237,22 @@ describe("managed installation routing integration", () => {
         pid,
         runId,
         status: "ok",
-        text: expect.stringMatching(
-          `^managed:inst_integration_first:uid:[0-9]+:pid:${pid}:run:${runId}$`,
-        ),
+        reason: "message.sent",
+        text: null,
+      },
+    });
+    await expect(committed).resolves.toMatchObject({
+      type: "sig",
+      signal: "message.committed",
+      payload: {
+        directed: true,
+        message: {
+          processId: pid,
+          runId,
+          text: expect.stringMatching(
+            `^managed:inst_integration_first:uid:[0-9]+:pid:${pid}:run:${runId}$`,
+          ),
+        },
       },
     });
     socket.close(1000, "test complete");

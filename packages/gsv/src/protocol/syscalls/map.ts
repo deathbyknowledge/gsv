@@ -63,6 +63,8 @@ import type {
   ProcKillResult,
   ProcListArgs,
   ProcListResult,
+  ProcObserveArgs,
+  ProcObserveResult,
   ProcMediaReadArgs,
   ProcMediaReadResult,
   ProcMediaDeleteArgs,
@@ -77,6 +79,8 @@ import type {
   ProcSetIdentityResult,
   ProcSpawnArgs,
   ProcSpawnResult,
+  ProcUnobserveArgs,
+  ProcUnobserveResult,
 } from "./proc";
 import type {
   RepoApplyArgs,
@@ -228,6 +232,20 @@ import type {
   MailStatusArgs,
   MailStatusResult,
 } from "./mail";
+import type {
+  ConversationForProcessArgs,
+  ConversationForProcessResult,
+  ConversationHistoryArgs,
+  ConversationHistoryResult,
+  ConversationHomeArgs,
+  ConversationHomeResult,
+  ConversationListArgs,
+  ConversationListResult,
+  ConversationMediaReadArgs,
+  ConversationMediaReadResult,
+  ConversationSendArgs,
+  ConversationSendResult,
+} from "./conversation";
 
 export type SyscallDomains = {
   "fs.read": { args: FsReadArgs; result: FsReadResult };
@@ -250,9 +268,18 @@ export type SyscallDomains = {
   "mail.send": { args: MailSendArgs; result: MailSendResult };
   "mail.status": { args: MailStatusArgs; result: MailStatusResult };
 
+  "conversation.home": { args: ConversationHomeArgs; result: ConversationHomeResult };
+  "conversation.forProcess": { args: ConversationForProcessArgs; result: ConversationForProcessResult };
+  "conversation.list": { args: ConversationListArgs; result: ConversationListResult };
+  "conversation.history": { args: ConversationHistoryArgs; result: ConversationHistoryResult };
+  "conversation.send": { args: ConversationSendArgs; result: ConversationSendResult };
+  "conversation.media.read": { args: ConversationMediaReadArgs; result: ConversationMediaReadResult };
+
   "proc.spawn": { args: ProcSpawnArgs; result: ProcSpawnResult };
   "proc.kill": { args: ProcKillArgs; result: ProcKillResult };
   "proc.list": { args: ProcListArgs; result: ProcListResult };
+  "proc.observe": { args: ProcObserveArgs; result: ProcObserveResult };
+  "proc.unobserve": { args: ProcUnobserveArgs; result: ProcUnobserveResult };
   "proc.send": { args: ProcSendArgs; result: ProcSendResult };
   "proc.ipc.send": { args: ProcIpcSendArgs; result: ProcIpcSendResult };
   "proc.ipc.call": { args: ProcIpcCallArgs; result: ProcIpcCallResult };

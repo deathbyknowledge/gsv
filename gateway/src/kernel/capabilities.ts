@@ -22,6 +22,7 @@ const DEFAULT_CAPABILITIES: [number, string[]][] = [
     "net.fetch",
     "mail.send",
     "mail.status",
+    "conversation.*",
     "proc.*",
     "signal.*",
     "repo.apply",

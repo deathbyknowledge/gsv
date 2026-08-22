@@ -29,6 +29,11 @@ describe("user-facing signal policy", () => {
   it("advertises all user connection signals", () => {
     expect(USER_CONNECTION_SIGNALS).toEqual(expect.arrayContaining(USER_PROCESS_SIGNALS));
     expect(USER_CONNECTION_SIGNALS).toEqual(expect.arrayContaining([
+      "conversation.changed",
+      "message.started",
+      "message.delta",
+      "message.committed",
+      "message.aborted",
       "device.status",
       "adapter.status",
       "mcp.changed",

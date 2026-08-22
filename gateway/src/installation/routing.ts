@@ -14,11 +14,17 @@ import {
 } from "./identity";
 
 const PROCESS_DURABLE_OBJECT_PREFIX = "process:";
+const CONVERSATION_DURABLE_OBJECT_PREFIX = "conversation:";
 const MAX_DURABLE_OBJECT_NAME_BYTES = 1_024;
 
 export type ProcessDurableObjectIdentity = {
   installationId: string;
   pid: string;
+};
+
+export type ConversationDurableObjectIdentity = {
+  installationId: string;
+  conversationId: string;
 };
 
 export function processDurableObjectName(
@@ -81,6 +87,72 @@ function parseProcessId(value: unknown): string {
 function assertProcessDurableObjectNameLength(name: string): void {
   if (new TextEncoder().encode(name).byteLength > MAX_DURABLE_OBJECT_NAME_BYTES) {
     throw new Error("Process Durable Object name is too long");
+  }
+}
+
+export function conversationDurableObjectName(
+  installationId: string,
+  conversationId: string,
+): string {
+  const parsedInstallationId = parseInstallationId(installationId);
+  const parsedConversationId = parseConversationId(conversationId);
+  if (parsedInstallationId === SINGLETON_INSTALLATION_ID) {
+    if (parsedConversationId.startsWith(CONVERSATION_DURABLE_OBJECT_PREFIX)) {
+      throw new Error("Standalone conversation id conflicts with managed Conversation addressing");
+    }
+    assertDurableObjectNameLength(parsedConversationId);
+    return parsedConversationId;
+  }
+  const name = `${CONVERSATION_DURABLE_OBJECT_PREFIX}${encodeURIComponent(parsedInstallationId)}:${encodeURIComponent(parsedConversationId)}`;
+  assertDurableObjectNameLength(name);
+  return name;
+}
+
+export function parseConversationDurableObjectName(
+  name: string | undefined,
+): ConversationDurableObjectIdentity {
+  if (!name) {
+    throw new Error("Conversation Durable Objects must be accessed by name");
+  }
+  if (!name.startsWith(CONVERSATION_DURABLE_OBJECT_PREFIX)) {
+    const conversationId = parseConversationId(name);
+    assertDurableObjectNameLength(name);
+    return { installationId: SINGLETON_INSTALLATION_ID, conversationId };
+  }
+  const separator = name.indexOf(":", CONVERSATION_DURABLE_OBJECT_PREFIX.length);
+  if (separator === -1) {
+    throw new Error("Conversation Durable Object name is invalid");
+  }
+  try {
+    const installationId = parseManagedInstallationId(decodeURIComponent(
+      name.slice(CONVERSATION_DURABLE_OBJECT_PREFIX.length, separator),
+    ));
+    const conversationId = parseConversationId(decodeURIComponent(name.slice(separator + 1)));
+    if (conversationDurableObjectName(installationId, conversationId) !== name) {
+      throw new Error("Conversation Durable Object name is not canonical");
+    }
+    return { installationId, conversationId };
+  } catch (error) {
+    if (
+      error instanceof Error
+      && error.message === "Conversation Durable Object name is not canonical"
+    ) {
+      throw error;
+    }
+    throw new Error("Conversation Durable Object name is invalid");
+  }
+}
+
+function parseConversationId(value: unknown): string {
+  if (typeof value !== "string" || value.length === 0) {
+    throw new Error("conversationId must be a non-empty string");
+  }
+  return value;
+}
+
+function assertDurableObjectNameLength(name: string): void {
+  if (new TextEncoder().encode(name).byteLength > MAX_DURABLE_OBJECT_NAME_BYTES) {
+    throw new Error("Durable Object name is too long");
   }
 }
 

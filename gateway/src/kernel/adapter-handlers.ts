@@ -40,6 +40,7 @@ import type {
   BinaryBody,
   ProcMediaInput,
   ProcessIdentity,
+  ConversationMessageOrigin,
 } from "@humansandmachines/gsv/protocol";
 import {
   cancelBinaryBody,
@@ -59,7 +60,7 @@ import type {
   ProcessRuntimeEventDeliverRequestFrame,
   ProcessRuntimeEventDeliverResponseFrame,
 } from "../protocol/process-frames";
-import { sendFrameToProcess } from "../shared/utils";
+import { getConversationById, sendFrameToProcess } from "../shared/utils";
 import { stableOpaqueId } from "../shared/stable-id";
 import { ensurePersonalAgent } from "./agents";
 import { ensurePersonalController } from "./personal-controller";
@@ -143,6 +144,9 @@ type AdapterIngressProcessRecovery = {
   runId: string;
   media: ProcMediaInput[];
   origin: InteractionOrigin;
+  conversationId?: string;
+  inputMessageId?: string;
+  messageCreatedAt?: number;
 };
 type AdapterIngressHilRecovery = {
   kind: "hil_decision";
@@ -621,7 +625,7 @@ export async function handleAdapterSend(
   if (!args.also && isCurrentAutomaticReplyDestination(ctx, adapter, accountId, surface)) {
     return rejectAdapterSend(
       body,
-      "This target is the current run's automatic reply destination. Return the text normally, or use --also to intentionally send an additional message.",
+      "This target is the current run's directed endpoint. Finish with Message, or use --also to intentionally send a separate message.",
     );
   }
   if (!canSendToAdapterSurface(ctx, adapter, accountId, surface)) {
@@ -638,7 +642,7 @@ export async function handleAdapterSend(
 }
 
 /**
- * Deliver the terminal output for a run to its trusted reply destination.
+ * Deliver a committed message for a run to its trusted directed endpoint.
  * This deliberately bypasses the explicit-send duplicate guard while still
  * rechecking that the linked actor belongs to the route owner.
  */
@@ -1278,6 +1282,7 @@ async function resolveClaimedAdapterInbound(input: {
       message,
       ctx,
       recovery,
+      checkpoint: { receiptId, claimToken },
     });
   }
   if (recovery?.kind === "hil_decision") {
@@ -1564,6 +1569,23 @@ async function deliverAdapterInboundToProcess(input: {
       input.body,
       ctx.requestSignal,
     );
+    const conversation = conversationForAdapterInbound(
+      input.uid,
+      input.pid,
+      adapter,
+      accountId,
+      message,
+      ctx,
+    );
+    await getConversationById(ctx.installationId, conversation.id).initialize({
+      ownerUid: conversation.ownerUid,
+      kind: conversation.kind,
+    });
+    const inputMessageId = await stableOpaqueId("msg", [
+      conversation.id,
+      input.checkpoint.receiptId,
+      "input",
+    ]);
     recovery = {
       kind: "process_delivery",
       uid: input.uid,
@@ -1571,6 +1593,9 @@ async function deliverAdapterInboundToProcess(input: {
       runId,
       media: media ?? [],
       origin: adapterInteractionOrigin(adapter, accountId, message, actorId),
+      conversationId: conversation.id,
+      inputMessageId,
+      messageCreatedAt: normalizeAdapterMessageCreatedAt(message.timestamp),
     };
     ctx.adapters.ingressReceipts.checkpoint(
       input.checkpoint.receiptId,
@@ -1579,8 +1604,80 @@ async function deliverAdapterInboundToProcess(input: {
     );
   }
 
+  if (!hasConversationRecovery(recovery)) {
+    if (!input.checkpoint) {
+      throw new Error("Legacy adapter ingress recovery is missing claim state");
+    }
+    const conversation = conversationForAdapterInbound(
+      recovery.uid,
+      recovery.pid,
+      adapter,
+      accountId,
+      message,
+      ctx,
+    );
+    await getConversationById(ctx.installationId, conversation.id).initialize({
+      ownerUid: conversation.ownerUid,
+      kind: conversation.kind,
+    });
+    recovery = {
+      ...recovery,
+      conversationId: conversation.id,
+      inputMessageId: await stableOpaqueId("msg", [
+        conversation.id,
+        input.checkpoint.receiptId,
+        "input",
+      ]),
+      messageCreatedAt: normalizeAdapterMessageCreatedAt(message.timestamp),
+    };
+    ctx.adapters.ingressReceipts.checkpoint(
+      input.checkpoint.receiptId,
+      input.checkpoint.claimToken,
+      recovery,
+    );
+  }
+  if (!hasConversationRecovery(recovery)) {
+    throw new Error("Adapter ingress recovery is missing conversation state");
+  }
+
   const { uid, pid, runId, origin } = recovery;
   const media = recovery.media.length > 0 ? recovery.media : undefined;
+  const conversation = ctx.conversations.get(recovery.conversationId);
+  if (!conversation || conversation.ownerUid !== uid) {
+    throw new Error("Adapter ingress conversation is unavailable");
+  }
+  const appended = await getConversationById(ctx.installationId, conversation.id).append({
+    messageId: recovery.inputMessageId,
+    idempotencyKey: `adapter-input:${runId}`,
+    author: { kind: "user", uid },
+    text: message.text?.trim() || "",
+    ...(media ? { media } : {}),
+    mediaOwner: (() => {
+      const process = ctx.procs.get(pid);
+      if (!process) throw new Error("Adapter ingress process is unavailable");
+      return {
+        pid,
+        uid: process.uid,
+        gid: process.gid,
+        home: process.home,
+      };
+    })(),
+    origin: adapterConversationOrigin(adapter, accountId, actorId, message),
+    processId: pid,
+    runId,
+    createdAt: recovery.messageCreatedAt,
+  });
+  ctx.conversations.recordSequence(conversation.id, appended.message.sequence);
+  if (appended.created) {
+    ctx.broadcastToUserUid(uid, "message.committed", {
+      message: appended.message,
+      directed: false,
+    });
+    ctx.broadcastToUserUid(uid, "conversation.changed", {
+      conversationId: conversation.id,
+      latestSequence: appended.message.sequence,
+    });
+  }
   if (message.surface.kind !== "dm") {
     ctx.adapters.surfaceRoutes.setRoute({
       adapter,
@@ -1621,6 +1718,10 @@ async function deliverAdapterInboundToProcess(input: {
       message: message.text?.trim() || "",
       media,
       origin,
+      interaction: {
+        conversationId: conversation.id,
+        messageId: appended.message.id,
+      },
     },
   } as ProcessAdapterDeliverRequestFrame);
 
@@ -1670,6 +1771,15 @@ function normalizeAdapterIngressRecovery(value: unknown): AdapterIngressRecovery
       return recovery as AdapterIngressHilRecovery;
     }
   } else if (recovery.kind === "process_delivery") {
+    const hasConversationId = recovery.conversationId !== undefined;
+    const hasInputMessageId = recovery.inputMessageId !== undefined;
+    const hasMessageCreatedAt = recovery.messageCreatedAt !== undefined;
+    const hasAnyConversationField = hasConversationId || hasInputMessageId || hasMessageCreatedAt;
+    const hasValidConversationFields = typeof recovery.conversationId === "string"
+      && typeof recovery.inputMessageId === "string"
+      && typeof recovery.messageCreatedAt === "number"
+      && Number.isSafeInteger(recovery.messageCreatedAt)
+      && recovery.messageCreatedAt > 0;
     if (
       Number.isSafeInteger(recovery.uid)
       && typeof recovery.pid === "string"
@@ -1678,6 +1788,7 @@ function normalizeAdapterIngressRecovery(value: unknown): AdapterIngressRecovery
       && recovery.origin
       && typeof recovery.origin === "object"
       && recovery.origin.kind === "adapter"
+      && (!hasAnyConversationField || hasValidConversationFields)
     ) {
       return recovery as AdapterIngressProcessRecovery;
     }
@@ -1701,6 +1812,87 @@ function normalizeAdapterIngressRecovery(value: unknown): AdapterIngressRecovery
     }
   }
   throw new Error("Invalid adapter ingress recovery checkpoint");
+}
+
+function hasConversationRecovery(
+  recovery: AdapterIngressProcessRecovery,
+): recovery is AdapterIngressProcessRecovery & {
+  conversationId: string;
+  inputMessageId: string;
+  messageCreatedAt: number;
+} {
+  return typeof recovery.conversationId === "string"
+    && typeof recovery.inputMessageId === "string"
+    && typeof recovery.messageCreatedAt === "number";
+}
+
+function conversationForAdapterInbound(
+  uid: number,
+  pid: string,
+  adapter: string,
+  accountId: string,
+  message: AdapterInboundMessage,
+  ctx: KernelContext,
+) {
+  const process = ctx.procs.get(pid);
+  if (!process || process.ownerUid !== uid || !process.interactive) {
+    throw new Error("Adapter conversation handler is unavailable");
+  }
+  if (message.surface.kind === "dm") {
+    return process.isPersonalController
+      ? ctx.conversations.ensureHome(uid, pid)
+      : ctx.conversations.ensureWork(uid, pid, process.label);
+  }
+  return ctx.conversations.ensureGroup(
+    uid,
+    pid,
+    message.surface.name?.trim()
+      || message.surface.handle?.trim()
+      || `${adapter} ${message.surface.kind}`,
+    adapterConversationSurfaceKey(adapter, accountId, message),
+  );
+}
+
+function adapterConversationSurfaceKey(
+  adapter: string,
+  accountId: string,
+  message: AdapterInboundMessage,
+): string {
+  return JSON.stringify([
+    adapter,
+    accountId,
+    message.surface.kind,
+    message.surface.id,
+    message.surface.threadId ?? "",
+  ]);
+}
+
+function adapterConversationOrigin(
+  adapter: string,
+  accountId: string,
+  actorId: string,
+  message: AdapterInboundMessage,
+): ConversationMessageOrigin {
+  return {
+    kind: "adapter",
+    adapter,
+    accountId,
+    actorId,
+    surface: {
+      kind: message.surface.kind,
+      id: message.surface.id,
+      ...(message.surface.threadId ? { threadId: message.surface.threadId } : {}),
+    },
+    providerMessageId: message.messageId,
+  };
+}
+
+function normalizeAdapterMessageCreatedAt(timestamp: number | undefined): number {
+  if (typeof timestamp !== "number" || !Number.isFinite(timestamp) || timestamp <= 0) {
+    return Date.now();
+  }
+  const milliseconds = timestamp < 10_000_000_000 ? timestamp * 1_000 : timestamp;
+  return Math.max(1, Math.min(Date.now() + 5 * 60 * 1_000, Math.floor(milliseconds)));
 }
 
 async function storeAdapterInboundMedia(

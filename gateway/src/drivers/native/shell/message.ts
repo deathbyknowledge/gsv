@@ -266,11 +266,11 @@ async function showCurrentReplyDestination(
     }, null, 2)}\n`);
   }
   return completed([
-    `automatic reply: ${current.label}`,
+    `directed endpoint: ${current.label}`,
     `transport: ${current.transport}`,
     ...(destinationId ? [`destination: ${destinationId}`] : []),
-    "Explicit `message send` commands create additional outbound messages.",
-    "Return the current answer normally unless an additional or cross-channel message was requested.",
+    "Finish with Message to send the run's user-visible response here, or Silence.",
+    "`message send` creates a separate outbound message or cross-channel delivery.",
     "",
   ].join("\n"));
 }
@@ -681,7 +681,7 @@ function currentRunRoute(ctx: KernelContext): RunRoute | null {
 function describeCurrentRoute(route: RunRoute | null): {
   kind: "adapter" | "client" | "process";
   label: string;
-  transport: "automatic";
+  transport: "directed";
 } {
   if (route?.kind === "adapter") {
     const { adapter, surface } = route.destination;
@@ -692,13 +692,13 @@ function describeCurrentRoute(route: RunRoute | null): {
     return {
       kind: "adapter",
       label: `${adapterLabel} ${surfaceLabel}`,
-      transport: "automatic",
+      transport: "directed",
     };
   }
   if (route?.kind === "connection") {
-    return { kind: "client", label: "the GSV client that started this run", transport: "automatic" };
+    return { kind: "client", label: "the GSV client that started this run", transport: "directed" };
   }
-  return { kind: "process", label: "this GSV process history", transport: "automatic" };
+  return { kind: "process", label: "this GSV process history", transport: "directed" };
 }
 
 function parseOnlyFlags(args: string[], allowed: Set<string>): Set<string> {
@@ -728,10 +728,10 @@ function messageUsage(): string {
     "  message attach PATH... [--mime TYPE]",
     "  message send --to DESTINATION [--message TEXT] [--attach PATH [--mime TYPE]] [--delivery-id ID] [--also]",
     "",
-    "The current run's final response is delivered automatically.",
-    "`message attach` includes files in that same final response.",
-    "`message send` creates an additional outbound message. Use --to here --also only when an",
-    "extra message on the current reply surface is intentional.",
+    "Finish the current run with Message to send one user-visible response, or Silence.",
+    "`message attach` adds files to the eventual Message action.",
+    "`message send` creates a separate outbound message. Use --to here --also only when a",
+    "second message on the current directed endpoint is intentional.",
     "Use `message destinations` and copy its opaque GSV id; do not use provider ids.",
     "Use `message route` to inspect routing, open a private-DM work direct line from personal,",
     "or manage groups, channels, and threads.",
@@ -753,7 +753,7 @@ function messageRouteUsage(): string {
     "intelligence can use `set` to open a direct line to owned non-personal work.",
     "Use /home inside the DM to return to personal intelligence.",
     "The destination defaults to the current adapter chat. Changes affect future inbound messages;",
-    "the current run's final response still returns to the surface that started it.",
+    "the current run's Message remains directed to the endpoint that started it.",
     "",
   ].join("\n");
 }
