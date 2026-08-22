@@ -116,10 +116,10 @@ async function fetchFromOptions(
   const init: RoutedRequestInit = {
     method: options.headOnly ? "HEAD" : options.method,
     headers,
-    ...(options.body !== undefined ? { body: options.body } : {}),
     signal,
-    ...(options.timeoutMs !== undefined ? { timeoutMs: options.timeoutMs } : {}),
   };
+  if (options.body !== undefined) init.body = options.body;
+  if (options.timeoutMs !== undefined) init.timeoutMs = options.timeoutMs;
   return await fetch(options.url, init);
 }
 

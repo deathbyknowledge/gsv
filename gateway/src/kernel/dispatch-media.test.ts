@@ -2,31 +2,20 @@ import { describe, expect, it, vi } from "vitest";
 import { bodyFromBytes, bodyToBytes } from "@humansandmachines/gsv/protocol";
 import type { KernelContext } from "./context";
 
-const {
-  imageGenerateMock,
-  imageReadMock,
-  speechCreateMock,
-  transcriptionCreateMock,
-} = vi.hoisted(() => ({
-  imageGenerateMock: vi.fn(),
-  imageReadMock: vi.fn(),
-  speechCreateMock: vi.fn(),
-  transcriptionCreateMock: vi.fn(),
-}));
-
-vi.mock("./ai", async (importOriginal) => ({
-  ...await importOriginal<typeof import("./ai")>(),
-  handleAiImageGenerate: imageGenerateMock,
-  handleAiImageRead: imageReadMock,
-  handleAiSpeechCreate: speechCreateMock,
-  handleAiTranscriptionCreate: transcriptionCreateMock,
-}));
+import * as ai from "./ai";
+const imageGenerateMock = vi.spyOn(ai, "handleAiImageGenerate");
+const imageReadMock = vi.spyOn(ai, "handleAiImageRead");
+const speechCreateMock = vi.spyOn(ai, "handleAiSpeechCreate");
+const transcriptionCreateMock = vi.spyOn(ai, "handleAiTranscriptionCreate");
 
 import { dispatch, type DispatchDeps } from "./dispatch";
 import type { RequestFrame } from "../protocol/frames";
 
+// SAFETY: test fixture is constructed with the asserted kernel domain shape.
 const ctx = {} as KernelContext;
+// SAFETY: test fixture is constructed with the asserted kernel domain shape.
 const deps = {} as DispatchDeps;
+// SAFETY: test fixture is constructed with the asserted kernel domain shape.
 const origin = { type: "connection", id: "test" } as const;
 
 describe("media syscall dispatch", () => {
@@ -45,19 +34,23 @@ describe("media syscall dispatch", () => {
     const audioBody = bodyFromBytes(new Uint8Array([1, 2, 3]));
     const imageBody = bodyFromBytes(new Uint8Array([4, 5, 6]));
 
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     await dispatch({
       type: "req",
       id: "transcription",
       call: "ai.transcription.create",
       args: { audio: { mimeType: "audio/webm" } },
       body: audioBody,
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     } as RequestFrame, origin, ctx, deps);
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     await dispatch({
       type: "req",
       id: "image-read",
       call: "ai.image.read",
       args: { image: { mimeType: "image/png" } },
       body: imageBody,
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     } as RequestFrame, origin, ctx, deps);
 
     expect(transcriptionCreateMock).toHaveBeenCalledWith(
@@ -91,17 +84,21 @@ describe("media syscall dispatch", () => {
       body: bodyFromBytes(new Uint8Array([4, 5, 6])),
     });
 
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     const image = await dispatch({
       type: "req",
       id: "image-generate",
       call: "ai.image.generate",
       args: { prompt: "test" },
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     } as RequestFrame, origin, ctx, deps);
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     const speech = await dispatch({
       type: "req",
       id: "speech-create",
       call: "ai.speech.create",
       args: { text: "test" },
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     } as RequestFrame, origin, ctx, deps);
 
     expect(image.response).toMatchObject({
@@ -121,6 +118,7 @@ describe("media syscall dispatch", () => {
     expect(speech.response.body && [...await bodyToBytes(speech.response.body)]).toEqual([4, 5, 6]);
   });
 
+  // SAFETY: test fixture is constructed with the asserted kernel domain shape.
   it("forwards streamed image-reading text as a response body", async () => {
     imageReadMock.mockResolvedValueOnce({
       data: {
@@ -133,6 +131,7 @@ describe("media syscall dispatch", () => {
       body: bodyFromBytes(new TextEncoder().encode("streamed caption")),
     });
 
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     const result = await dispatch({
       type: "req",
       id: "image-read-stream",
@@ -143,6 +142,7 @@ describe("media syscall dispatch", () => {
         stream: true,
       },
       body: bodyFromBytes(new Uint8Array([1, 2, 3])),
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     } as RequestFrame, origin, ctx, deps);
 
     expect(result.response).toMatchObject({

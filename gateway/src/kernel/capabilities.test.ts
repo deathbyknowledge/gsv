@@ -79,7 +79,7 @@ describe("isValidCapability", () => {
 
 describe("CapabilityStore", () => {
   const storeTest = it.extend<{ store: CapabilityStore }>({
-    store: async ({}, use) => {
+    store: async ({ task: _task }, use) => {
       await runWithRealKernelSql((sql) => {
         sql.exec("DELETE FROM group_capabilities");
         return use(new CapabilityStore(sql));

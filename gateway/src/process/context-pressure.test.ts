@@ -36,6 +36,7 @@ describe("context pressure", () => {
     expect(estimateContextInputTokens(context)).toBeGreaterThan(0);
   });
 
+  // SAFETY: test fixture is constructed with the asserted domain shape.
   it("does not count image bytes as text tokens", () => {
     const contextWithImageData = (data: string): Context => ({
       systemPrompt: "You are a test process.",
@@ -93,6 +94,8 @@ describe("context pressure", () => {
     expect(state.source).toBe("provider");
   });
 
+// SAFETY: test fixture is constructed with the asserted domain shape.
+
   it("includes normalized usage totals when provided", () => {
     const usageState = {
       inputTokens: 920,
@@ -106,7 +109,9 @@ describe("context pressure", () => {
         cacheRead: 0,
         cacheWrite: 0,
         total: 0.00058,
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         currency: "USD" as const,
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         source: "model-pricing" as const,
       },
     };

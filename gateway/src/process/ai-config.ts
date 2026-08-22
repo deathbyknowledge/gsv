@@ -1,7 +1,9 @@
 import type {
+  JsonValue,
   ProcAiConfigProfileRef,
   ProcAiConfigSnapshot,
 } from "@humansandmachines/gsv/protocol";
+import { z } from "zod";
 
 export const PROCESS_AI_CONFIG_STORE_KEY = "aiConfigSnapshot";
 export const PROCESS_AI_CONFIG_KEY_PREFIX = "config/ai/";
@@ -52,10 +54,40 @@ export const PROCESS_AI_CONFIG_SECRET_KEYS = new Set<string>(
 export type ProcessAiModelProfile = {
   id: string;
   name: string;
-  values: Record<string, string>;
+  values: ProcAiConfigSnapshot["values"];
   createdAt: number;
   updatedAt: number;
 };
+
+type ProcessAiConfigValues = ProcAiConfigSnapshot["values"];
+type ProcessAiProfileInput = {
+  id?: JsonValue;
+  name?: JsonValue;
+  appliedAt?: JsonValue;
+};
+
+const positiveTimestampSchema = z.number().finite().positive();
+const processAiJsonValueSchema: z.ZodType<JsonValue> = z.json();
+const processAiJsonObjectSchema = z.record(z.string(), processAiJsonValueSchema);
+const storedProcessAiConfigSnapshotSchema = z.object({
+  values: processAiJsonObjectSchema.optional().catch(undefined),
+  updatedAt: positiveTimestampSchema.optional().catch(undefined),
+  profile: z.object({
+    id: processAiJsonValueSchema.optional(),
+    name: processAiJsonValueSchema.optional(),
+    appliedAt: processAiJsonValueSchema.optional(),
+  }).optional().catch(undefined),
+}).passthrough();
+const storedProcessAiModelProfileSchema = z.object({
+  id: processAiJsonValueSchema.optional(),
+  name: processAiJsonValueSchema.optional(),
+  values: processAiJsonObjectSchema.optional().catch(undefined),
+  createdAt: processAiJsonValueSchema.optional(),
+  updatedAt: processAiJsonValueSchema.optional(),
+}).passthrough();
+const storedProcessAiModelProfilesSchema = z.object({
+  profiles: z.array(processAiJsonValueSchema).optional().catch(undefined),
+}).passthrough();
 
 const PROCESS_AI_ROOT_FILES = [
   "effective.json",
@@ -76,7 +108,7 @@ export function processAiConfigSuffix(key: string): string {
 
 export function processAiPathToConfigKey(parts: string[]): string | null {
   const suffix = parts.filter(Boolean).join("/");
-  if (!suffix || PROCESS_AI_ROOT_FILES.includes(suffix as typeof PROCESS_AI_ROOT_FILES[number])) {
+  if (!suffix || PROCESS_AI_ROOT_FILES.some((rootFile) => rootFile === suffix)) {
     return null;
   }
   const key = `${PROCESS_AI_CONFIG_KEY_PREFIX}${suffix}`;
@@ -109,8 +141,10 @@ export function processAiConfigDirEntries(parts: string[] = []): string[] {
   return [...entries].sort();
 }
 
-export function normalizeProcessAiConfigValues(raw: Record<string, unknown>): Record<string, string> {
-  const values: Record<string, string> = {};
+export function normalizeProcessAiConfigValues(
+  raw: Readonly<Record<string, JsonValue>>,
+): ProcessAiConfigValues {
+  const values: ProcessAiConfigValues = {};
   for (const [key, value] of Object.entries(raw)) {
     if (!isProcessAiConfigKey(key)) {
       continue;
@@ -125,8 +159,8 @@ export function normalizeProcessAiConfigValues(raw: Record<string, unknown>): Re
 }
 
 export function createProcessAiConfigSnapshot(
-  values: Record<string, unknown>,
-  profile?: { id?: unknown; name?: unknown },
+  values: ProcessAiConfigValues,
+  profile?: Pick<ProcAiConfigProfileRef, "id" | "name">,
   now = Date.now(),
 ): ProcAiConfigSnapshot {
   const snapshot: ProcAiConfigSnapshot = {
@@ -141,23 +175,21 @@ export function createProcessAiConfigSnapshot(
   return snapshot;
 }
 
-export function normalizeProcessAiConfigSnapshot(raw: unknown): ProcAiConfigSnapshot | null {
-  if (!raw || typeof raw !== "object") {
+export function parseProcessAiConfigSnapshot(raw: string): ProcAiConfigSnapshot | null {
+  const parsed = storedProcessAiConfigSnapshotSchema.safeParse(JSON.parse(raw));
+  if (!parsed.success) {
     return null;
   }
-  const record = raw as Record<string, unknown>;
-  const values = record.values && typeof record.values === "object" && !Array.isArray(record.values)
-    ? normalizeProcessAiConfigValues(record.values as Record<string, unknown>)
+  const values = parsed.data.values
+    ? normalizeProcessAiConfigValues(parsed.data.values)
     : {};
-  const updatedAt = typeof record.updatedAt === "number" && Number.isFinite(record.updatedAt) && record.updatedAt > 0
-    ? record.updatedAt
-    : Date.now();
+  const updatedAt = parsed.data.updatedAt ?? Date.now();
   const snapshot: ProcAiConfigSnapshot = {
     version: 1,
     values,
     updatedAt,
   };
-  const profile = normalizeProfileRef(record.profile, updatedAt);
+  const profile = normalizeProfileRef(parsed.data.profile, updatedAt);
   if (profile) {
     snapshot.profile = profile;
   }
@@ -174,16 +206,16 @@ export function redactProcessAiConfigSnapshot(snapshot: ProcAiConfigSnapshot | n
   };
 }
 
-export function redactProcessAiConfigValues(values: Record<string, string>): Record<string, string> {
-  const redacted: Record<string, string> = {};
+export function redactProcessAiConfigValues(values: ProcessAiConfigValues): ProcessAiConfigValues {
+  const redacted: ProcessAiConfigValues = {};
   for (const [key, value] of Object.entries(values)) {
     redacted[key] = redactProcessAiConfigValue(key, value);
   }
   return redacted;
 }
 
-export function omitProcessAiConfigSecrets(values: Record<string, string>): Record<string, string> {
-  const visible: Record<string, string> = {};
+export function omitProcessAiConfigSecrets(values: ProcessAiConfigValues): ProcessAiConfigValues {
+  const visible: ProcessAiConfigValues = {};
   for (const [key, value] of Object.entries(values)) {
     if (!PROCESS_AI_CONFIG_SECRET_KEYS.has(key)) {
       visible[key] = value;
@@ -199,27 +231,25 @@ export function redactProcessAiConfigValue(key: string, value: string | null | u
   return PROCESS_AI_CONFIG_SECRET_KEYS.has(key) ? "redacted" : value;
 }
 
-function normalizeProfileRef(raw: unknown, fallbackAppliedAt: number): ProcAiConfigProfileRef | null {
-  if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
-    return null;
-  }
-  const record = raw as Record<string, unknown>;
-  const id = normalizeOptionalText(record.id);
-  const name = normalizeOptionalText(record.name);
+function normalizeProfileRef(
+  raw: ProcessAiProfileInput | undefined,
+  fallbackAppliedAt: number,
+): ProcAiConfigProfileRef | null {
+  const id = normalizeOptionalText(raw?.id);
+  const name = normalizeOptionalText(raw?.name);
   if (!id && !name) {
     return null;
   }
-  const appliedAt = typeof record.appliedAt === "number" && Number.isFinite(record.appliedAt) && record.appliedAt > 0
-    ? record.appliedAt
-    : fallbackAppliedAt;
-  return {
-    ...(id ? { id } : {}),
-    ...(name ? { name } : {}),
-    appliedAt,
+  const appliedAt = positiveTimestampSchema.safeParse(raw?.appliedAt);
+  const profile: ProcAiConfigProfileRef = {
+    appliedAt: appliedAt.success ? appliedAt.data : fallbackAppliedAt,
   };
+  if (id) profile.id = id;
+  if (name) profile.name = name;
+  return profile;
 }
 
-function normalizeOptionalText(value: unknown): string | undefined {
+function normalizeOptionalText(value: JsonValue | undefined): string | undefined {
   const normalized = String(value ?? "").trim();
   return normalized.length > 0 ? normalized : undefined;
 }
@@ -234,9 +264,11 @@ export function parseProcessAiModelProfiles(
   }
 
   try {
-    const payload = JSON.parse(raw) as { profiles?: unknown[] };
-    const profiles = Array.isArray(payload.profiles) ? payload.profiles : [];
-    return profiles
+    const payload = storedProcessAiModelProfilesSchema.safeParse(JSON.parse(raw));
+    if (!payload.success) {
+      return [];
+    }
+    return (payload.data.profiles ?? [])
       .map(normalizeProcessAiModelProfile)
       .filter((profile): profile is ProcessAiModelProfile => profile !== null)
       .map((profile) => getConfigValue
@@ -272,28 +304,30 @@ export function processAiModelProfileSecretConfigKey(
   return `users/${ownerUid}/ai/model_profiles/${profileId}/${processAiConfigSuffix(configKey)}`;
 }
 
-function normalizeProcessAiModelProfile(raw: unknown): ProcessAiModelProfile | null {
-  if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+function normalizeProcessAiModelProfile(raw: JsonValue): ProcessAiModelProfile | null {
+  const parsed = storedProcessAiModelProfileSchema.safeParse(raw);
+  if (!parsed.success) {
     return null;
   }
-  const record = raw as Record<string, unknown>;
-  const id = normalizeProfileText(record.id).toLowerCase().replace(/[^a-z0-9_-]/g, "");
-  const name = normalizeProfileText(record.name);
+  const id = normalizeProfileText(parsed.data.id).toLowerCase().replace(/[^a-z0-9_-]/g, "");
+  const name = normalizeProfileText(parsed.data.name);
   if (!id || !name) {
     return null;
   }
   return {
     id,
     name,
-    values: record.values && typeof record.values === "object" && !Array.isArray(record.values)
-      ? normalizeProcessAiModelProfileValues(record.values as Record<string, unknown>)
+    values: parsed.data.values
+      ? normalizeProcessAiModelProfileValues(parsed.data.values)
       : {},
-    createdAt: normalizeProfileTimestamp(record.createdAt),
-    updatedAt: normalizeProfileTimestamp(record.updatedAt),
+    createdAt: normalizeProfileTimestamp(parsed.data.createdAt),
+    updatedAt: normalizeProfileTimestamp(parsed.data.updatedAt),
   };
 }
 
-function normalizeProcessAiModelProfileValues(raw: Record<string, unknown>): Record<string, string> {
+function normalizeProcessAiModelProfileValues(
+  raw: Readonly<Record<string, JsonValue>>,
+): ProcessAiConfigValues {
   const values = normalizeProcessAiConfigValues(raw);
   for (const key of PROCESS_AI_MODEL_PROFILE_EXCLUDED_KEYS) {
     delete values[key];
@@ -316,10 +350,11 @@ function hydrateProcessAiModelProfileSecrets(
   return { ...profile, values };
 }
 
-function normalizeProfileText(value: unknown): string {
+function normalizeProfileText(value: JsonValue | undefined): string {
   return String(value ?? "").trim().replace(/\s+/g, " ");
 }
 
-function normalizeProfileTimestamp(value: unknown): number {
-  return typeof value === "number" && Number.isFinite(value) && value > 0 ? value : 0;
+function normalizeProfileTimestamp(value: JsonValue | undefined): number {
+  const timestamp = positiveTimestampSchema.safeParse(value);
+  return timestamp.success ? timestamp.data : 0;
 }

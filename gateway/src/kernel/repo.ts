@@ -31,18 +31,24 @@ import { RipgitClient, type RipgitApplyOp, type RipgitRepoRef } from "../fs/ripg
 import { accountHomeRepoRef } from "../fs/ripgit/repos";
 import { isRepoPublic, repoVisibilityConfigKey, setRepoVisibility } from "./repo-visibility";
 import { canOwnerDelegateRunAs } from "./account-access";
+import * as z from "zod/mini";
 
 const TEXT_DECODER = new TextDecoder();
 const STRICT_TEXT_DECODER = new TextDecoder("utf-8", { fatal: true, ignoreBOM: false });
 const TEXT_ENCODER = new TextEncoder();
 const DEFAULT_REF = "main";
+const repoRefSchema = z.object({
+  owner: z.string(),
+  repo: z.string(),
+  branch: z.optional(z.string()),
+});
 
 export function handleRepoList(
   args: RepoListArgs | undefined,
   ctx: KernelContext,
 ): RepoListResult {
   const identity = requireIdentity(ctx);
-  const requestedOwner = typeof args?.owner === "string" && args.owner.trim().length > 0
+  const requestedOwner = args?.owner?.trim()
     ? normalizeRepoOwner(args.owner)
     : null;
   const repos = new Map<string, RepoSummary>();
@@ -66,8 +72,8 @@ export function handleRepoList(
       writable: existing.writable || summary.writable,
       public: existing.public || summary.public,
       kind: existing.kind === "user" ? summary.kind : existing.kind,
-      ...(ref ? { ref } : {}),
-      ...(baseRef ? { baseRef } : {}),
+      ref,
+      baseRef,
       updatedAt: Math.max(existing.updatedAt ?? 0, summary.updatedAt ?? 0) || undefined,
     });
   };
@@ -303,9 +309,7 @@ export async function handleRepoApply(
     message,
     ops,
     {
-      expectedHead: typeof args.expectedHead === "string" && args.expectedHead.trim().length > 0
-        ? args.expectedHead.trim()
-        : undefined,
+      expectedHead: args.expectedHead?.trim() || undefined,
       allowEmpty: args.allowEmpty === true,
     },
   );
@@ -326,7 +330,7 @@ export async function handleRepoImport(
   assertCanWriteRepo(repo, ctx);
   const ref = normalizeRef(args.ref);
   const remoteUrl = String(args.remoteUrl ?? "").trim();
-  const remoteRef = typeof args.remoteRef === "string" && args.remoteRef.trim().length > 0
+  const remoteRef = args.remoteRef?.trim()
     ? args.remoteRef.trim()
     : remoteUrl
       ? ref
@@ -353,9 +357,9 @@ export async function handleRepoImport(
   };
   if (imported.trackingRef) result.trackingRef = imported.trackingRef;
   if (imported.upstreamHead) result.upstreamHead = imported.upstreamHead;
-  if (typeof imported.upstreamChanged === "boolean") result.upstreamChanged = imported.upstreamChanged;
-  if (typeof imported.localChanged === "boolean") result.localChanged = imported.localChanged;
-  if (typeof imported.diverged === "boolean") result.diverged = imported.diverged;
+  if (imported.upstreamChanged !== undefined) result.upstreamChanged = imported.upstreamChanged;
+  if (imported.localChanged !== undefined) result.localChanged = imported.localChanged;
+  if (imported.diverged !== undefined) result.diverged = imported.diverged;
   return result;
 }
 
@@ -471,14 +475,16 @@ function toSummary(
 }
 
 function parseRepoSlug(raw: string | RipgitRepoRef): RipgitRepoRef {
-  if (typeof raw !== "string") {
+  const text = z.string().safeParse(raw);
+  if (!text.success) {
+    const parsed = repoRefSchema.parse(raw);
     return {
-      owner: normalizeRepoOwner(raw.owner),
-      repo: normalizeRepoName(raw.repo),
-      branch: raw.branch,
+      owner: normalizeRepoOwner(parsed.owner),
+      repo: normalizeRepoName(parsed.repo),
+      branch: parsed.branch,
     };
   }
-  const repo = raw.trim().replace(/^\/+|\/+$/g, "");
+  const repo = text.data.trim().replace(/^\/+|\/+$/g, "");
   const [owner, name, extra] = repo.split("/");
   if (!owner || !name || extra) {
     throw new Error("repo must be '<owner>/<name>'");
@@ -510,7 +516,7 @@ function repoSlug(repo: Pick<RipgitRepoRef, "owner" | "repo">): string {
 }
 
 function normalizeRef(ref: string | undefined): string {
-  const value = typeof ref === "string" && ref.trim().length > 0 ? ref.trim() : DEFAULT_REF;
+  const value = ref?.trim() || DEFAULT_REF;
   if (!/^(refs\/heads\/)?[A-Za-z0-9._/-]+$/.test(value) || value.includes("..")) {
     throw new Error(`Invalid branch ref: ${value}`);
   }
@@ -518,7 +524,7 @@ function normalizeRef(ref: string | undefined): string {
 }
 
 function normalizeReadRef(ref: string | undefined): string {
-  const value = typeof ref === "string" && ref.trim().length > 0 ? ref.trim() : DEFAULT_REF;
+  const value = ref?.trim() || DEFAULT_REF;
   if (value.includes("..") || value.includes("\0")) {
     throw new Error(`Invalid ref: ${value}`);
   }
@@ -526,7 +532,7 @@ function normalizeReadRef(ref: string | undefined): string {
 }
 
 function normalizeRepoPath(path: string | undefined, allowEmpty: boolean): string {
-  const raw = typeof path === "string" ? path.trim() : "";
+  const raw = path?.trim() ?? "";
   const parts: string[] = [];
   for (const segment of raw.split("/")) {
     if (!segment || segment === ".") {
@@ -550,14 +556,14 @@ function normalizeApplyOps(ops: RepoApplyArgs["ops"]): RipgitApplyOp[] {
   }
   return ops.map((op): RipgitApplyOp => {
     if (op.type === "put") {
-      if (typeof op.content === "string" && typeof op.contentBase64 === "string") {
+      if (op.content !== undefined && op.contentBase64 !== undefined) {
         throw new Error(`put ${op.path} cannot specify both content and contentBase64`);
       }
       return {
         type: "put",
         path: normalizeRepoPath(op.path, false),
         contentBytes: Array.from(
-          typeof op.contentBase64 === "string"
+          op.contentBase64 !== undefined
             ? decodeBase64(op.contentBase64)
             : TEXT_ENCODER.encode(op.content ?? ""),
         ),
@@ -584,7 +590,7 @@ function normalizeApplyOps(ops: RepoApplyArgs["ops"]): RipgitApplyOp[] {
         to: normalizeRepoPath(op.to, false),
       };
     }
-    throw new Error(`Unsupported repo op: ${(op as { type?: string }).type ?? "unknown"}`);
+    throw new Error("Unsupported repo op: unknown");
   });
 }
 
@@ -661,21 +667,21 @@ function toDiffFiles(files: Array<{
 }
 
 function clampRepoLimit(limit: number | undefined): number {
-  if (typeof limit !== "number" || !Number.isFinite(limit)) {
+  if (limit === undefined || !Number.isFinite(limit)) {
     return 30;
   }
   return Math.max(1, Math.min(100, Math.trunc(limit)));
 }
 
 function clampRepoOffset(offset: number | undefined): number {
-  if (typeof offset !== "number" || !Number.isFinite(offset)) {
+  if (offset === undefined || !Number.isFinite(offset)) {
     return 0;
   }
   return Math.max(0, Math.trunc(offset));
 }
 
 function clampContext(context: number | undefined): number {
-  if (typeof context !== "number" || !Number.isFinite(context)) {
+  if (context === undefined || !Number.isFinite(context)) {
     return 3;
   }
   return Math.max(0, Math.min(20, Math.trunc(context)));
@@ -692,8 +698,9 @@ export function registerRepo(
     ctx.config.set(createdKey, now);
   }
   ctx.config.set(repoConfigKey(repo, "updated_at"), now);
-  if (typeof description === "string" && description.trim().length > 0) {
-    ctx.config.set(repoConfigKey(repo, "description"), description.trim());
+  const normalizedDescription = description?.trim();
+  if (normalizedDescription) {
+    ctx.config.set(repoConfigKey(repo, "description"), normalizedDescription);
   }
 }
 

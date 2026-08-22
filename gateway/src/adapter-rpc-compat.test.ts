@@ -3,6 +3,11 @@ import { describe, expect, it, vi } from "vitest";
 import { GatewayEntrypoint } from "./index";
 import type { Frame } from "./protocol/frames";
 
+type TrackedBody = { stream: ReadableStream<Uint8Array> };
+type TrackedBodyFixture = { frame: Frame; body: TrackedBody; cancelled: () => string | undefined };
+type GatewayTestEnv = Partial<Env>;
+type ServiceFrameArguments = (...values: unknown[]) => Promise<Frame | null>;
+
 function requestFrame(id: string): Frame {
   return {
     type: "req",
@@ -12,16 +17,12 @@ function requestFrame(id: string): Frame {
   };
 }
 
-function requestFrameWithTrackedBody(id: string): {
-  frame: Frame;
-  body: { stream: ReadableStream<Uint8Array> };
-  cancelled: () => unknown;
-} {
-  let cancelled: unknown;
+function requestFrameWithTrackedBody(id: string): TrackedBodyFixture {
+  let cancelled: string | undefined;
   const body = {
     stream: new ReadableStream<Uint8Array>({
       cancel(reason) {
-        cancelled = reason;
+        cancelled = reason instanceof Error ? reason.message : String(reason);
       },
     }),
   };
@@ -32,7 +33,8 @@ function requestFrameWithTrackedBody(id: string): {
   };
 }
 
-function gatewayWithEnv(value: object): GatewayEntrypoint {
+function gatewayWithEnv(value: GatewayTestEnv): GatewayEntrypoint {
+  // SAFETY: The prototype instance is used to exercise the entrypoint with an injected test environment.
   const gateway = Object.create(GatewayEntrypoint.prototype) as GatewayEntrypoint;
   Object.defineProperty(gateway, "env", { value });
   return gateway;
@@ -42,9 +44,8 @@ async function callServiceFrame(
   gateway: GatewayEntrypoint,
   ...args: unknown[]
 ): Promise<Frame | null> {
-  const serviceFrame = gateway.serviceFrame as unknown as (
-    ...values: unknown[]
-  ) => Promise<Frame | null>;
+  // SAFETY: The compatibility test deliberately invokes the overloaded method with malformed argument lists.
+  const serviceFrame = gateway.serviceFrame as ServiceFrameArguments;
   return await serviceFrame.apply(gateway, args);
 }
 

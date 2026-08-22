@@ -11,6 +11,7 @@ import {
 import type {
   Frame,
   FrameBody,
+  FrameError,
   RequestFrame,
   ResponseOkFrame,
   ResponseFrame,
@@ -36,6 +37,7 @@ import type {
   InstallationDirectoryService,
   InstallationOnboardingAuthorization,
   InstallationOnboardingService,
+  JsonValue,
   ManagedInboundMailAccepted,
   ManagedInboundMailCompletion,
   ManagedInboundMailMetadata,
@@ -46,10 +48,13 @@ import type {
   UnlinkManagedTelegramIdentityResult,
   NetFetchArgs,
   ProcessIdentity,
+  ProcMediaInput,
   ScheduleRecord,
   ScheduleRunResult,
   SchedulerRunArgs,
   SchedulerRunResult,
+  ShellExecResult,
+  SysDeviceDeleteResult,
   SysSetupResult,
   ConversationMessage,
   ConversationMessageOrigin,
@@ -73,7 +78,11 @@ import {
   type RouteOrigin,
 } from "./routing";
 import { ShellSessionStore, type ShellSessionStatus } from "./shell-sessions";
-import { ProcessRegistry, type ProcessState } from "./processes";
+import {
+  ProcessRegistry,
+  type ProcessRuntimePatch,
+  type ProcessState,
+} from "./processes";
 import { ConversationRegistry } from "./conversations";
 import { AdapterStore } from "./adapter-store";
 import { RunRouteStore, type AdapterRunRoute } from "./run-routes";
@@ -81,7 +90,7 @@ import { OAuthStore } from "./oauth-store";
 import { McpServerStore } from "./mcp-store";
 import { MailboxStore } from "./mailbox-store";
 import { SignalWatchStore, type SignalWatchRecord } from "./signal-watches";
-import { isUserProcessSignal } from "./user-signals";
+import { isUserProcessSignal, USER_PROCESS_SIGNALS } from "./user-signals";
 import { IpcCallStore, type IpcCallRecord } from "./ipc-calls";
 import {
   assertCanManageSchedule,
@@ -100,6 +109,7 @@ import { bindStreamToAbort } from "../shared/streams";
 import { raceWithAbort } from "../shared/abort";
 import type { KernelContext } from "./context";
 import { getConversationById, sendFrameToProcess } from "../shared/utils";
+import type { ConversationAppendRequest } from "../conversation/do";
 import { stableOpaqueId } from "../shared/stable-id";
 import {
   MAX_MESSAGE_MEDIA_ITEMS,
@@ -117,7 +127,6 @@ import { installMcpDiscoveryCompatibility } from "./mcp-compat";
 import { oauthCallbackHtmlResponse } from "../oauth-http";
 import { isInternalOnlySyscall } from "./syscall-exposure";
 import {
-  handleAdapterSend,
   deliverAdapterReply,
   normalizeAdapterHilRequest,
   prefixAdapterDmProcessReply,
@@ -192,7 +201,7 @@ type AdapterSignalDeliveryRetry = {
   runId: string;
   processId: string;
   signal: string;
-  payload?: unknown;
+  payload?: JsonValue;
   attempt: number;
 };
 
@@ -206,6 +215,11 @@ type ProcessDeliveryNoticeRetry = {
   message: string;
   cleanupRunRoute: boolean;
 };
+
+type ProcessDeliveryNoticePayload = Omit<
+  ProcessDeliveryNoticeRetry,
+  "processId" | "cleanupRunRoute"
+>;
 
 class ScheduleTargetDispatchError extends Error {
   constructor(message: string, readonly retryable: boolean) {
@@ -234,6 +248,88 @@ type ProcessNetFetchOptions = {
   internalPurpose?: "model-transport";
   body?: FrameBody;
   requestId?: string;
+};
+
+type DeviceRequestOptions = {
+  ttlMs?: number;
+  body?: FrameBody;
+  id?: string;
+  signal?: AbortSignal;
+};
+
+type FrameCancellationReason = string | Error;
+type CancellableFrameBody = {
+  cancel(reason?: FrameCancellationReason): Promise<void>;
+};
+type ConnectionMessageStreamPayload = {
+  conversationId?: string;
+  messageId: string;
+  processId: string;
+  runId: string;
+  timestamp: number;
+  delta?: string;
+  reason?: string;
+};
+
+type IpcCompletionResponse = {
+  text: string | null;
+  usage: JsonValue;
+  media?: ProcMediaInput[];
+};
+
+type IpcDeliverySignalPayload = {
+  callId: string;
+  sourcePid: string;
+  sourceRunId?: string;
+  targetPid: string;
+  runId: string;
+  deadlineAt: number;
+  createdAt: number;
+  status: IpcCallRecord["status"];
+  response?: IpcCallRecord["response"];
+  error?: string;
+};
+
+type AdapterCommittedReply = {
+  deliveryId: string;
+  text: string;
+  media?: AdapterMedia[];
+};
+
+type SignalWatchDelivery = {
+  id: string;
+  key?: string;
+  state?: SignalWatchRecord["state"];
+  createdAt: number;
+};
+
+type ScheduleExecutionResult = {
+  kind?: "command.exec" | "process.spawn" | "adapter.send" | "process.event" | "unknown";
+  error?: string;
+  command?: string;
+  exitCode?: number;
+  stdout?: string;
+  stderr?: string;
+  truncated?: boolean;
+  pid?: string;
+  runId?: string;
+  adapter?: string;
+  accountId?: string;
+  surfaceId?: string;
+  messageId?: string;
+  deliveryState?: string;
+};
+
+type PendingKernelResponse = {
+  promise: Promise<ResponseFrame>;
+  cleanup: () => void;
+};
+
+type AmbientProcessChangePayload = {
+  pid: string;
+  changes: string[];
+  queuedCount?: number;
+  timestamp?: number;
 };
 
 type AuthorizeGitHttpInput = {
@@ -267,13 +363,27 @@ type PendingManagedOnboardingCompletion = {
 type KernelTask =
   | { callback: "onAdapterSignalDelivery"; payload: AdapterSignalDeliveryRetry }
   | { callback: "onIpcCallDelivery"; payload: string }
-  | { callback: "onIpcCallTimeout"; payload: string | IpcCallTimeout }
+  | { callback: "onIpcCallTimeout"; payload: IpcCallTimeout }
   | { callback: "onManagedOutboundEnqueue"; payload: string }
   | { callback: "onProcessDeliveryNotice"; payload: ProcessDeliveryNoticeRetry }
   | { callback: "onRouteExpired"; payload: string }
   | { callback: "onScheduleDue"; payload: string };
 
 type KernelTaskCallback = KernelTask["callback"];
+
+const ipcCallTimeoutPayloadSchema = z.union([
+  z.string().transform((callId): IpcCallTimeout => ({ callId })),
+  z.object({
+    callId: z.string(),
+    terminateTargetOnTimeout: z.boolean().optional(),
+  }),
+]);
+const execStatusPayloadSchema = z.object({
+  sessionId: z.string().trim().min(1),
+  event: z.string().optional().default(""),
+  exitCode: z.number().optional(),
+  signal: z.string().optional(),
+});
 
 const KERNEL_TASK_SCHEMA = z.discriminatedUnion("callback", [
   z.object({
@@ -289,13 +399,7 @@ const KERNEL_TASK_SCHEMA = z.discriminatedUnion("callback", [
   z.object({ callback: z.literal("onIpcCallDelivery"), payload: z.string() }),
   z.object({
     callback: z.literal("onIpcCallTimeout"),
-    payload: z.union([
-      z.string(),
-      z.object({
-        callId: z.string(),
-        terminateTargetOnTimeout: z.boolean().optional(),
-      }),
-    ]),
+    payload: ipcCallTimeoutPayloadSchema,
   }),
   z.object({ callback: z.literal("onManagedOutboundEnqueue"), payload: z.string() }),
   z.object({
@@ -314,6 +418,85 @@ const KERNEL_TASK_SCHEMA = z.discriminatedUnion("callback", [
   z.object({ callback: z.literal("onRouteExpired"), payload: z.string() }),
   z.object({ callback: z.literal("onScheduleDue"), payload: z.string() }),
 ]);
+const requestCancelPayloadSchema = z.object({
+  id: z.string(),
+  reason: z.string().optional(),
+});
+const processMessageStreamSignalSchema = z.object({
+  type: z.literal("sig"),
+  signal: z.literal("proc.message.stream"),
+  payload: z.object({
+    pid: z.string(),
+    runId: z.string(),
+    conversationId: z.string().optional(),
+    messageId: z.string(),
+    phase: z.enum(["started", "delta", "aborted", "silenced"]),
+    delta: z.string().optional(),
+    reason: z.string().optional(),
+    timestamp: z.number(),
+  }),
+});
+const procMediaInputSchema = z.object({
+  type: z.enum(["image", "audio", "video", "document"]),
+  mimeType: z.string(),
+  key: z.string().optional(),
+  conversationId: z.string().optional(),
+  path: z.string().optional(),
+  url: z.string().optional(),
+  filename: z.string().optional(),
+  size: z.number().optional(),
+  duration: z.number().optional(),
+  transcription: z.string().optional(),
+});
+const adapterConversationMessageSchema = z.object({
+  id: z.string(),
+  conversationId: z.string(),
+  text: z.string(),
+  media: z.array(procMediaInputSchema).optional(),
+  processId: z.string().optional(),
+  runId: z.string().optional(),
+});
+const userProcessSignalPayloadSchema = z.object({
+  pid: z.string().optional(),
+  runId: z.string().optional(),
+  conversationId: z.string().optional(),
+  queuedCount: z.number().finite().optional(),
+  timestamp: z.number().finite().optional(),
+  changes: z.array(z.string()).optional(),
+  title: z.string().optional(),
+  status: z.string().optional(),
+  reason: z.string().optional(),
+  text: z.string().nullable().optional(),
+  error: z.string().optional(),
+  usage: z.json().optional(),
+  media: z.array(procMediaInputSchema).optional(),
+}).catchall(z.json());
+const userProcessSignalFrameSchema = z.object({
+  type: z.literal("sig"),
+  signal: z.enum(USER_PROCESS_SIGNALS),
+  payload: userProcessSignalPayloadSchema.optional(),
+  seq: z.number().optional(),
+});
+const processSignalFrameSchema = z.object({
+  type: z.literal("sig"),
+  signal: z.string(),
+  payload: z.json().optional(),
+  seq: z.number().optional(),
+});
+const managedTelegramUnlinkSchema = z.object({
+  installationId: z.string(),
+  operationId: z.string().min(1),
+  actorId: z.string().regex(/^[1-9][0-9]{0,19}$/),
+  surfaceId: z.string(),
+  expectedLocalUid: z.number().int().nonnegative(),
+  expectedGeneration: z.string().min(1),
+});
+
+const serviceBindingArgsSchema = z.object({
+  adapter: z.string().trim().min(1).optional(),
+});
+
+type UserProcessSignalFrame = z.infer<typeof userProcessSignalFrameSchema>;
 
 const MANAGED_ONBOARDING_COMPLETION_KEY = "managed_onboarding_completion";
 
@@ -348,7 +531,7 @@ export class Kernel extends DurableObject<Env> {
   private readonly frameBodyChannels = new Map<string, BinaryBodyChannel>();
   private readonly routedBodies = new Map<
     string,
-    { cancel(reason?: unknown): Promise<void> }
+    CancellableFrameBody
   >();
   private readonly activeRequests = new Map<
     string,
@@ -456,6 +639,8 @@ export class Kernel extends DurableObject<Env> {
   }
 
   createMcpOAuthProvider(callbackUrl: string): AgentMcpOAuthProvider {
+    // SAFETY: the Agents SDK provider implements AgentMcpOAuthProvider; the
+    // intersection exposes its supported dynamic client metadata extension.
     const provider = (
       new DurableObjectOAuthClientProvider(this.ctx.storage, this.installationId, callbackUrl)
     ) as AgentMcpOAuthProvider & { clientMetadataUrl?: string };
@@ -474,8 +659,8 @@ export class Kernel extends DurableObject<Env> {
     if (!this.installationIdentity) {
       const identity: StoredInstallationIdentity = {
         canonicalOrigin: input.canonicalOrigin,
-        ...(input.handle !== undefined ? { handle: input.handle } : {}),
       };
+      if (input.handle !== undefined) identity.handle = input.handle;
       this.ctx.storage.kv.put("install_identity", identity);
       this.installationIdentity = {
         ...identity,
@@ -631,17 +816,18 @@ export class Kernel extends DurableObject<Env> {
       authProvider.serverId = serverId;
     }
 
+    const transport = input.transport.headers
+      ? {
+          authProvider,
+          type: input.transport.type,
+          requestInit: { headers: input.transport.headers },
+        }
+      : { authProvider, type: input.transport.type };
     await this.mcp.registerServer(serverId, {
       url: input.url,
       name: serverName,
       callbackUrl,
-      transport: {
-        authProvider,
-        type: input.transport.type,
-        ...(input.transport.headers
-          ? { requestInit: { headers: input.transport.headers } }
-          : {}),
-      },
+      transport,
     });
 
     let result: MCPConnectionResult;
@@ -790,9 +976,9 @@ export class Kernel extends DurableObject<Env> {
     if (connection.state?.step !== "connected") {
       return;
     }
-    const payload = asRecord(frame.payload);
-    const requestId = typeof payload?.id === "string" ? payload.id : "";
-    const reason = typeof payload?.reason === "string" ? payload.reason : undefined;
+    const parsed = requestCancelPayloadSchema.safeParse(frame.payload);
+    if (!parsed.success) return;
+    const { id: requestId, reason } = parsed.data;
     this.cancelRequest(
       { type: "connection", id: connection.id },
       requestId,
@@ -840,18 +1026,33 @@ export class Kernel extends DurableObject<Env> {
 
     if (frame.type === "sig") {
       if (frame.signal === "proc.message.stream") {
-        await this.deliverProcessMessageStream(processId, frame as ProcessMessageStreamSignal);
+        const parsed = processMessageStreamSignalSchema.safeParse(frame);
+        if (!parsed.success) return null;
+        await this.deliverProcessMessageStream(processId, parsed.data);
         return null;
       }
-      const runId = this.extractRunId(frame.payload);
-      if (!this.updateProcessRuntimeFromSignal(processId, frame, runId)) {
+      const parsed = processSignalFrameSchema.safeParse(frame);
+      if (!parsed.success) return null;
+      const processFrame = parsed.data;
+      const userFrame = isUserProcessSignal(processFrame.signal)
+        ? userProcessSignalFrameSchema.safeParse(processFrame)
+        : null;
+      if (userFrame && !userFrame.success) return null;
+      const typedUserFrame = userFrame?.data;
+      const runId = typedUserFrame?.payload?.runId?.trim() || null;
+      if (
+        typedUserFrame
+        && !this.updateProcessRuntimeFromSignal(processId, typedUserFrame, runId)
+      ) {
         if (frame.signal === "proc.run.finished" && runId) {
           this.runRoutes.delete(runId);
         }
         return null;
       }
-      const delivered = this.enqueueProcessSignal(processId, frame);
-      this.completeIpcCallsForProcessSignal(processId, frame);
+      const delivered = this.enqueueProcessSignal(processId, processFrame, typedUserFrame);
+      if (typedUserFrame) {
+        this.completeIpcCallsForProcessSignal(processId, typedUserFrame);
+      }
       if (
         frame.signal === "proc.run.finished"
         || frame.signal === "proc.run.hil.requested"
@@ -872,10 +1073,9 @@ export class Kernel extends DurableObject<Env> {
   ): Promise<ConversationMessage> {
     const process = this.procs.get(processId);
     if (!process) throw new Error("Unknown process");
-    if (!args || typeof args.runId !== "string" || !args.runId) {
+    if (!args.runId) {
       throw new Error("Message runId is invalid");
     }
-    if (typeof args.text !== "string") throw new Error("Message text is invalid");
     let conversation = args.conversationId
       ? this.conversations.get(args.conversationId)
       : null;
@@ -906,12 +1106,11 @@ export class Kernel extends DurableObject<Env> {
       pid: processId,
       runId: args.runId,
     };
-    const appended = await stub.append({
+    const appendInput: ConversationAppendRequest = {
       messageId,
       idempotencyKey: `output:${processId}:${args.runId}`,
       author: { kind: "process", pid: processId, uid: process.uid },
       text: args.text,
-      ...(args.media?.length ? { media: args.media } : {}),
       mediaOwner: {
         pid: processId,
         uid: process.uid,
@@ -922,7 +1121,9 @@ export class Kernel extends DurableObject<Env> {
       processId,
       runId: args.runId,
       createdAt: Date.now(),
-    });
+    };
+    if (args.media?.length) appendInput.media = args.media;
+    const appended = await stub.append(appendInput);
     const { message } = appended;
     this.conversations.recordSequence(conversation.id, message.sequence);
 
@@ -979,8 +1180,6 @@ export class Kernel extends DurableObject<Env> {
       !process
       || !payload
       || payload.pid !== processId
-      || typeof payload.runId !== "string"
-      || typeof payload.messageId !== "string"
     ) {
       return;
     }
@@ -1011,15 +1210,18 @@ export class Kernel extends DurableObject<Env> {
       : payload.phase === "delta"
         ? "message.delta"
         : "message.aborted";
-    this.sendSignalToConnection(route.connectionId, signal, {
-      conversationId: payload.conversationId,
+    const signalPayload: ConnectionMessageStreamPayload = {
       messageId: payload.messageId,
       processId,
       runId: payload.runId,
       timestamp: payload.timestamp,
-      ...(payload.phase === "delta" ? { delta: payload.delta ?? "" } : {}),
-      ...(payload.phase === "aborted" ? { reason: payload.reason ?? "aborted" } : {}),
-    });
+    };
+    if (payload.conversationId !== undefined) {
+      signalPayload.conversationId = payload.conversationId;
+    }
+    if (payload.phase === "delta") signalPayload.delta = payload.delta ?? "";
+    if (payload.phase === "aborted") signalPayload.reason = payload.reason ?? "aborted";
+    this.sendSignalToConnection(route.connectionId, signal, signalPayload);
   }
 
   async acceptProcessRunStream(
@@ -1069,17 +1271,18 @@ export class Kernel extends DurableObject<Env> {
       if (options.requestId) {
         controller = this.registerActiveRequest(origin, options.requestId);
       }
+      const requestOptions: DeviceRequestOptions = {};
+      if (options.ttlMs !== undefined) requestOptions.ttlMs = options.ttlMs;
+      if (options.body !== undefined) requestOptions.body = options.body;
+      if (options.requestId !== undefined) requestOptions.id = options.requestId;
+      if (controller) requestOptions.signal = controller.signal;
       const response = await this.requestDevice(
         device.targetId,
         "net.fetch",
         args,
-        {
-          ttlMs: options.ttlMs,
-          ...(options.body ? { body: options.body } : {}),
-          ...(options.requestId ? { id: options.requestId } : {}),
-          ...(controller ? { signal: controller.signal } : {}),
-        },
+        requestOptions,
       );
+      // SAFETY: requestDevice preserves the result type for the net.fetch call.
       return response as ResponseOkFrame<"net.fetch">;
     } finally {
       if (options.requestId && controller) {
@@ -1174,34 +1377,25 @@ export class Kernel extends DurableObject<Env> {
   async unlinkManagedTelegramIdentity(
     input: UnlinkManagedTelegramIdentityInput,
   ): Promise<UnlinkManagedTelegramIdentityResult> {
-    if (input?.installationId !== this.installationId) {
+    const parsed = managedTelegramUnlinkSchema.parse(input);
+    if (parsed.installationId !== this.installationId) {
       throw new Error("Managed Telegram installation identity mismatch");
     }
-    if (
-      typeof input.operationId !== "string"
-      || !input.operationId.trim()
-      || typeof input.actorId !== "string"
-      || !/^[1-9][0-9]{0,19}$/.test(input.actorId)
-      || input.surfaceId !== input.actorId
-      || !Number.isSafeInteger(input.expectedLocalUid)
-      || input.expectedLocalUid < 0
-      || typeof input.expectedGeneration !== "string"
-      || !input.expectedGeneration
-    ) {
+    if (parsed.surfaceId !== parsed.actorId) {
       throw new Error("Managed Telegram unlink input is invalid");
     }
-    const link = this.adapters.identityLinks.get("telegram", "managed", input.actorId);
+    const link = this.adapters.identityLinks.get("telegram", "managed", parsed.actorId);
     if (
       !link
-      || link.uid !== input.expectedLocalUid
+      || link.uid !== parsed.expectedLocalUid
       || link.metadata?.managed !== true
-      || link.metadata?.surfaceId !== input.surfaceId
-      || link.metadata?.routeGeneration !== input.expectedGeneration
+      || link.metadata?.surfaceId !== parsed.surfaceId
+      || link.metadata?.routeGeneration !== parsed.expectedGeneration
     ) {
       return { removed: false };
     }
     return {
-      removed: this.adapters.identityLinks.unlink("telegram", "managed", input.actorId),
+      removed: this.adapters.identityLinks.unlink("telegram", "managed", parsed.actorId),
     };
   }
 
@@ -1270,23 +1464,27 @@ export class Kernel extends DurableObject<Env> {
   /**
    * Relay process signals using deterministic run route lookups.
    */
-  private async handleProcessSignal(processId: string, frame: SignalFrame): Promise<void> {
+  private async handleProcessSignal(
+    processId: string,
+    frame: SignalFrame<JsonValue>,
+    userFrame?: UserProcessSignalFrame,
+  ): Promise<void> {
     const ownerUid = this.procs.getOwnerUid(processId);
     if (ownerUid === null) {
       console.warn(`[Kernel] Signal from unknown process ${processId}`);
       return;
     }
 
-    const runId = this.extractRunId(frame.payload);
+    const runId = userFrame?.payload?.runId?.trim() || null;
 
     // Signal watches are scoped to the process owner, not the run-as account.
     await this.dispatchSignalWatches(ownerUid, processId, frame);
 
-    if (!isUserProcessSignal(frame.signal)) return;
+    if (!userFrame) return;
 
     let route = runId ? this.runRoutes.get(runId) : null;
 
-    this.broadcastProcessSignal(ownerUid, processId, route, frame);
+    this.broadcastProcessSignal(ownerUid, processId, route, userFrame);
 
     if (frame.signal === "proc.run.finished") {
       const process = this.procs.get(processId);
@@ -1303,9 +1501,7 @@ export class Kernel extends DurableObject<Env> {
       && runId
       && frame.signal === "proc.run.hil.requested"
       && !(
-        frame.payload
-        && typeof frame.payload === "object"
-        && typeof (frame.payload as { conversationId?: unknown }).conversationId === "string"
+        userFrame.payload?.conversationId
       )
     ) {
       route = this.materializePersonalAdapterFallback(processId, runId, ownerUid);
@@ -1330,14 +1526,12 @@ export class Kernel extends DurableObject<Env> {
       // HIL admission waits only for a durable outbox write, never for provider
       // delivery. This prevents a Kernel crash during the first provider call
       // from losing the approval notification after Process has entered HIL.
-      await this.queueAdapterSignalDelivery(route, frame, 1);
+      await this.queueAdapterSignalDelivery(route, userFrame, 1);
       return;
     }
     if (frame.signal === "proc.run.finished") {
-      const payload = frame.payload && typeof frame.payload === "object"
-        ? frame.payload as Record<string, unknown>
-        : {};
-      if (payload.reason !== "message.sent") {
+      const payload = userFrame.payload;
+      if (payload?.reason !== "message.sent") {
         this.runRoutes.delete(runId);
         await setAdapterActivityForKernel(
           this.bindings,
@@ -1350,7 +1544,7 @@ export class Kernel extends DurableObject<Env> {
       }
       return;
     }
-    await this.deliverSignalToAdapter(route, frame);
+    await this.deliverSignalToAdapter(route, userFrame);
   }
 
   private materializePersonalAdapterFallback(
@@ -1445,16 +1639,18 @@ export class Kernel extends DurableObject<Env> {
     frame: SignalFrame,
     attempt: number,
   ): Promise<void> {
+    const payload = frame.payload === undefined ? undefined : z.json().parse(frame.payload);
+    const retry: AdapterSignalDeliveryRetry = {
+      runId: route.runId,
+      processId: route.processId,
+      signal: frame.signal,
+      attempt,
+    };
+    if (payload !== undefined) retry.payload = payload;
     await this.schedule(
       new Date(Date.now() + (attempt === 1 ? 10 : adapterSignalRetryDelayMs(attempt - 1))),
       "onAdapterSignalDelivery",
-      {
-        runId: route.runId,
-        processId: route.processId,
-        signal: frame.signal,
-        payload: frame.payload,
-        attempt,
-      } satisfies AdapterSignalDeliveryRetry,
+      retry,
       {
         idempotent: true,
         retry: { maxAttempts: 10, baseDelayMs: 1_000, maxDelayMs: 30_000 },
@@ -1463,16 +1659,6 @@ export class Kernel extends DurableObject<Env> {
   }
 
   async onAdapterSignalDelivery(input: AdapterSignalDeliveryRetry): Promise<void> {
-    if (
-      !input
-      || typeof input.runId !== "string"
-      || typeof input.processId !== "string"
-      || typeof input.signal !== "string"
-      || !Number.isSafeInteger(input.attempt)
-      || input.attempt < 1
-    ) {
-      return;
-    }
     const route = this.runRoutes.get(input.runId);
     if (!route || route.kind !== "adapter" || route.processId !== input.processId) {
       return;
@@ -1498,18 +1684,12 @@ export class Kernel extends DurableObject<Env> {
     if (!response || response.type !== "res" || !response.ok) {
       throw new Error(`Unable to verify pending approval ${requestId}`);
     }
-    const data = response.data && typeof response.data === "object"
-      ? response.data as Record<string, unknown>
-      : null;
-    if (!data || data.ok !== true) {
+    const data = response.data;
+    if (!data?.ok) {
       throw new Error(`Unable to verify pending approval ${requestId}`);
     }
-    const pendingValue = data.pendingHil;
-    const pending = normalizeAdapterHilRequest(pendingValue);
-    const pendingRecord = pendingValue && typeof pendingValue === "object"
-      ? pendingValue as Record<string, unknown>
-      : null;
-    return pending?.requestId === requestId && pendingRecord?.runId === runId;
+    const pending = data.pendingHil;
+    return pending?.requestId === requestId && pending.runId === runId;
   }
 
   private async queueProcessDeliveryNotice(
@@ -1530,19 +1710,20 @@ export class Kernel extends DurableObject<Env> {
       requestId ?? "",
       outcome.state,
     ]);
+    const notice: ProcessDeliveryNoticeRetry = {
+      noticeId,
+      runId: route.runId,
+      processId: route.processId,
+      deliveryKind,
+      state: outcome.state,
+      message: outcome.message,
+      cleanupRunRoute: deliveryKind === "final",
+    };
+    if (requestId) notice.requestId = requestId;
     await this.schedule(
       new Date(Date.now() + 10),
       "onProcessDeliveryNotice",
-      {
-        noticeId,
-        runId: route.runId,
-        processId: route.processId,
-        deliveryKind,
-        ...(requestId ? { requestId } : {}),
-        state: outcome.state,
-        message: outcome.message,
-        cleanupRunRoute: deliveryKind === "final",
-      } satisfies ProcessDeliveryNoticeRetry,
+      notice,
       {
         idempotent: true,
         retry: { maxAttempts: 10, baseDelayMs: 1_000, maxDelayMs: 30_000 },
@@ -1551,19 +1732,6 @@ export class Kernel extends DurableObject<Env> {
   }
 
   async onProcessDeliveryNotice(input: ProcessDeliveryNoticeRetry): Promise<void> {
-    if (
-      !input
-      || typeof input.noticeId !== "string"
-      || typeof input.runId !== "string"
-      || typeof input.processId !== "string"
-      || typeof input.message !== "string"
-      || (input.deliveryKind === "hil" && (
-        typeof input.requestId !== "string"
-        || input.requestId.length === 0
-      ))
-    ) {
-      return;
-    }
     const route = this.runRoutes.get(input.runId);
     if (!route || route.kind !== "adapter" || route.processId !== input.processId) {
       return;
@@ -1578,17 +1746,18 @@ export class Kernel extends DurableObject<Env> {
         return;
       }
     }
+    const payload: ProcessDeliveryNoticePayload = {
+      noticeId: input.noticeId,
+      runId: input.runId,
+      deliveryKind: input.deliveryKind,
+      state: input.state,
+      message: input.message,
+    };
+    if (requestId) payload.requestId = requestId;
     await sendFrameToProcess(this.installationId, input.processId, {
       type: "sig",
       signal: "proc.delivery.notice",
-      payload: {
-        noticeId: input.noticeId,
-        runId: input.runId,
-        deliveryKind: input.deliveryKind,
-        ...(requestId ? { requestId } : {}),
-        state: input.state,
-        message: input.message,
-      },
+      payload,
     });
     if (input.cleanupRunRoute) {
       this.runRoutes.delete(input.runId);
@@ -1597,18 +1766,12 @@ export class Kernel extends DurableObject<Env> {
 
   private updateProcessRuntimeFromSignal(
     processId: string,
-    frame: SignalFrame,
+    frame: UserProcessSignalFrame,
     runId: string | null,
   ): boolean {
-    const payload = frame.payload && typeof frame.payload === "object"
-      ? frame.payload as Record<string, unknown>
-      : {};
-    const queuedCount = typeof payload.queuedCount === "number" && Number.isFinite(payload.queuedCount)
-      ? payload.queuedCount
-      : undefined;
-    const timestamp = typeof payload.timestamp === "number" && Number.isFinite(payload.timestamp)
-      ? payload.timestamp
-      : Date.now();
+    const payload = frame.payload;
+    const queuedCount = payload?.queuedCount;
+    const timestamp = payload?.timestamp ?? Date.now();
     const current = this.procs.get(processId);
     if (!current) {
       return false;
@@ -1631,12 +1794,13 @@ export class Kernel extends DurableObject<Env> {
     }
 
     const patchForActive = (state: ProcessState) => {
-      this.procs.updateRuntimeState(processId, {
+      const patch: ProcessRuntimePatch = {
         state,
-        ...(runId ? { activeRunId: runId } : {}),
-        ...(queuedCount !== undefined ? { queuedCount } : {}),
         lastActiveAt: timestamp,
-      });
+      };
+      if (runId) patch.activeRunId = runId;
+      if (queuedCount !== undefined) patch.queuedCount = queuedCount;
+      this.procs.updateRuntimeState(processId, patch);
     };
 
     switch (frame.signal) {
@@ -1655,18 +1819,20 @@ export class Kernel extends DurableObject<Env> {
         patchForActive("waiting_hil");
         return true;
       case "proc.run.finished":
-        this.procs.updateRuntimeState(processId, {
-          state: queuedCount && queuedCount > 0 ? "queued" : "idle",
-          activeRunId: null,
-          ...(queuedCount !== undefined ? { queuedCount } : {}),
-          lastActiveAt: timestamp,
-        });
+        {
+          const patch: ProcessRuntimePatch = {
+            state: queuedCount && queuedCount > 0 ? "queued" : "idle",
+            activeRunId: null,
+            lastActiveAt: timestamp,
+          };
+          if (queuedCount !== undefined) patch.queuedCount = queuedCount;
+          this.procs.updateRuntimeState(processId, patch);
+        }
         return true;
       case "proc.changed":
         if (
-          Array.isArray(payload.changes)
-          && payload.changes.includes("title")
-          && typeof payload.title === "string"
+          payload?.changes?.includes("title")
+          && payload.title
         ) {
           const title = Array.from(payload.title.trim()).slice(0, 80).join("");
           if (title) {
@@ -1676,8 +1842,7 @@ export class Kernel extends DurableObject<Env> {
         if (
           runId
           && current.activeRunId === runId
-          && Array.isArray(payload.changes)
-          && payload.changes.includes("messages")
+          && payload?.changes?.includes("messages")
         ) {
           patchForActive("running");
           return true;
@@ -1694,9 +1859,13 @@ export class Kernel extends DurableObject<Env> {
     }
   }
 
-  private enqueueProcessSignal(processId: string, frame: SignalFrame): Promise<void> {
+  private enqueueProcessSignal(
+    processId: string,
+    frame: SignalFrame<JsonValue>,
+    userFrame?: UserProcessSignalFrame,
+  ): Promise<void> {
     const previous = this.pendingProcessSignals.get(processId) ?? Promise.resolve();
-    const delivery = previous.then(() => this.handleProcessSignal(processId, frame));
+    const delivery = previous.then(() => this.handleProcessSignal(processId, frame, userFrame));
     const queued = delivery
       .catch((error) => {
         const message = error instanceof Error ? error.message : String(error);
@@ -1711,11 +1880,14 @@ export class Kernel extends DurableObject<Env> {
     return delivery;
   }
 
-  private completeIpcCallsForProcessSignal(processId: string, frame: SignalFrame): void {
+  private completeIpcCallsForProcessSignal(
+    processId: string,
+    frame: UserProcessSignalFrame,
+  ): void {
     if (frame.signal !== "proc.run.finished") {
       return;
     }
-    const runId = this.extractRunId(frame.payload);
+    const runId = frame.payload?.runId?.trim() || null;
     if (!runId) {
       return;
     }
@@ -1724,19 +1896,15 @@ export class Kernel extends DurableObject<Env> {
       return;
     }
 
-    const payload = frame.payload && typeof frame.payload === "object"
-      ? frame.payload as Record<string, unknown>
-      : {};
-    const response = {
-      text: typeof payload.text === "string" ? payload.text : null,
-      usage: payload.usage ?? null,
-      ...(Array.isArray(payload.media) && payload.media.length > 0
-        ? { media: payload.media }
-        : {}),
+    const payload = frame.payload;
+    const response: IpcCompletionResponse = {
+      text: payload?.text ?? null,
+      usage: payload?.usage ?? null,
     };
-    const status = typeof payload.status === "string" ? payload.status : "ok";
-    const reason = typeof payload.reason === "string" ? payload.reason : null;
-    const error = typeof payload.error === "string"
+    if (payload?.media?.length) response.media = payload.media;
+    const status = payload?.status ?? "ok";
+    const reason = payload?.reason ?? null;
+    const error = payload?.error
       ? payload.error
       : status === "aborted"
         ? `Target run was aborted${reason ? `: ${reason}` : ""}`
@@ -1794,21 +1962,22 @@ export class Kernel extends DurableObject<Env> {
   }
 
   private async deliverIpcCallSignal(call: IpcCallRecord): Promise<void> {
+    const payload: IpcDeliverySignalPayload = {
+      callId: call.callId,
+      sourcePid: call.sourcePid,
+      targetPid: call.targetPid,
+      runId: call.targetRunId,
+      deadlineAt: call.deadlineAt,
+      createdAt: call.createdAt,
+      status: call.status,
+    };
+    if (call.sourceRunId) payload.sourceRunId = call.sourceRunId;
+    if (call.status === "completed") payload.response = call.response;
+    if (call.error) payload.error = call.error;
     await sendFrameToProcess(this.installationId, call.sourcePid, {
       type: "sig",
       signal: call.status === "timed_out" ? "ipc.timeout" : "ipc.reply",
-      payload: {
-        callId: call.callId,
-        sourcePid: call.sourcePid,
-        ...(call.sourceRunId ? { sourceRunId: call.sourceRunId } : {}),
-        targetPid: call.targetPid,
-        runId: call.targetRunId,
-        deadlineAt: call.deadlineAt,
-        createdAt: call.createdAt,
-        status: call.status,
-        ...(call.status === "completed" ? { response: call.response } : {}),
-        ...(call.error ? { error: call.error } : {}),
-      },
+      payload,
     });
   }
 
@@ -1863,10 +2032,9 @@ export class Kernel extends DurableObject<Env> {
     }
 
     if (frame.signal === "message.committed") {
-      const payload = frame.payload && typeof frame.payload === "object"
-        ? frame.payload as { message?: ConversationMessage }
-        : {};
-      const message = payload.message;
+      const parsed = z.object({ message: adapterConversationMessageSchema }).safeParse(frame.payload);
+      if (!parsed.success) return { state: "skipped" };
+      const message = parsed.data.message;
       if (!message || message.processId !== route.processId || message.runId !== route.runId) {
         return { state: "skipped" };
       }
@@ -1878,11 +2046,12 @@ export class Kernel extends DurableObject<Env> {
         if (!message.text.trim() && attachmentBundle.media.length === 0) {
           return { state: "delivered" };
         }
-        return await this.deliverAdapterRouteReply(route, {
+        const reply: AdapterCommittedReply = {
           deliveryId: message.id,
           text: message.text,
-          ...(attachmentBundle.media.length > 0 ? { media: attachmentBundle.media } : {}),
-        }, attachmentBundle.body);
+        };
+        if (attachmentBundle.media.length > 0) reply.media = attachmentBundle.media;
+        return await this.deliverAdapterRouteReply(route, reply, attachmentBundle.body);
       } finally {
         await setAdapterActivityForKernel(
           this.bindings,
@@ -1963,13 +2132,10 @@ export class Kernel extends DurableObject<Env> {
 
   private async bundleConversationReplyMedia(
     conversationId: string,
-    value: unknown,
+    value: ProcMediaInput[] | undefined,
   ): Promise<{ media: AdapterMedia[]; body?: BinaryBody }> {
     if (value === undefined) {
       return { media: [] };
-    }
-    if (!Array.isArray(value)) {
-      throw new AdapterReplyMediaError("Process reply media must be an array");
     }
     if (value.length > MAX_MESSAGE_MEDIA_ITEMS) {
       throw new AdapterReplyMediaError(
@@ -1980,19 +2146,12 @@ export class Kernel extends DurableObject<Env> {
     const parts: AdapterMediaPart[] = [];
     let totalBytes = 0;
     try {
-      for (const raw of value) {
-        if (!raw || typeof raw !== "object") {
-          throw new AdapterReplyMediaError("Process reply media entries must be objects");
-        }
-        const item = raw as Record<string, unknown>;
-        const key = typeof item.key === "string" ? item.key.trim() : "";
+      for (const item of value) {
+        const key = item.key?.trim() ?? "";
         if (!key || item.conversationId !== conversationId) {
           throw new AdapterReplyMediaError("Message media is outside its conversation");
         }
-        if (!(["image", "audio", "video", "document"] as unknown[]).includes(item.type)) {
-          throw new AdapterReplyMediaError("Process reply media has an invalid type");
-        }
-        const mimeType = typeof item.mimeType === "string" ? item.mimeType.trim() : "";
+        const mimeType = item.mimeType.trim();
         if (!mimeType) {
           throw new AdapterReplyMediaError("Process reply media requires mimeType");
         }
@@ -2016,21 +2175,18 @@ export class Kernel extends DurableObject<Env> {
             `Message media descriptor does not match stored data: ${key}`,
           );
         }
-        parts.push({
-          media: {
-            type: item.type as AdapterMedia["type"],
+        const media: AdapterMedia = {
+            type: item.type,
             mimeType,
             size: object.size,
-            ...(typeof item.filename === "string" && item.filename
-              ? { filename: item.filename }
-              : {}),
-            ...(typeof item.duration === "number" && Number.isFinite(item.duration)
-              ? { duration: item.duration }
-              : {}),
-            ...(typeof item.transcription === "string" && item.transcription
-              ? { transcription: item.transcription }
-              : {}),
-          },
+        };
+        if (item.filename) media.filename = item.filename;
+        if (item.duration !== undefined && Number.isFinite(item.duration)) {
+          media.duration = item.duration;
+        }
+        if (item.transcription) media.transcription = item.transcription;
+        parts.push({
+          media,
           body: { stream: object.stream, length: object.size },
         });
       }
@@ -2135,7 +2291,7 @@ export class Kernel extends DurableObject<Env> {
     if (!state) throw new Error("Connection state is missing");
     return this.buildKernelContext({
       connection,
-      identity: state.identity as ConnectionIdentity | undefined,
+      identity: state.identity,
     });
   }
 
@@ -2312,7 +2468,7 @@ export class Kernel extends DurableObject<Env> {
     ttlMs: number;
   }): Promise<{
     cancel: () => void;
-    attachBody: (body: { cancel(reason?: unknown): Promise<void> }) => void;
+    attachBody: (body: CancellableFrameBody) => void;
   }> {
     const scheduleId = (await this.schedule(
       route.ttlMs / 1000,
@@ -2561,22 +2717,17 @@ export class Kernel extends DurableObject<Env> {
 
   private async requestDevice(
     deviceId: string,
-    call: string,
-    args: unknown,
-    options: {
-      ttlMs?: number;
-      body?: FrameBody;
-      id?: string;
-      signal?: AbortSignal;
-    } = {},
-  ): Promise<Extract<ResponseFrame, { ok: true }>> {
+    call: "net.fetch",
+    args: NetFetchArgs,
+    options: DeviceRequestOptions = {},
+  ): Promise<ResponseOkFrame<"net.fetch">> {
     const id = options.id ?? crypto.randomUUID();
     let cleanupPending: (() => void) | null = null;
     let route: { cancel: () => void } | null = null;
     let outgoing: OutgoingBinaryBody | null = null;
     let onAbort: (() => void) | null = null;
     let requestSent = false;
-    let completionReason: unknown = "Device request completed";
+    let completionReason: FrameCancellationReason = "Device request completed";
 
     try {
       if (options.signal?.aborted) {
@@ -2599,7 +2750,7 @@ export class Kernel extends DurableObject<Env> {
       cleanupPending = pending.cleanup;
       route = await this.registerRouteWithExpiry({
         id,
-        call: call as SyscallName,
+        call,
         origin: { type: "kernel", id },
         deviceId,
         driverConnectionId: deviceConn.id,
@@ -2609,13 +2760,15 @@ export class Kernel extends DurableObject<Env> {
         throw requestAbortError(options.signal.reason);
       }
 
-      outgoing = this.sendWebSocketFrame(deviceConn, {
+      // SAFETY: dispatch supplies args from the syscall schema associated with call.
+      const requestFrame = {
         type: "req",
         id,
         call,
         args,
-        ...(options.body ? { body: options.body } : {}),
-      } as RequestFrame);
+      } as RequestFrame;
+      if (options.body) requestFrame.body = options.body;
+      outgoing = this.sendWebSocketFrame(deviceConn, requestFrame);
       requestSent = true;
       const frame = options.signal
         ? await Promise.race([
@@ -2642,9 +2795,10 @@ export class Kernel extends DurableObject<Env> {
       if (!frame.ok) {
         throw new Error(frame.error.message);
       }
-      return frame;
+      // SAFETY: the pending route was registered for the net.fetch request above.
+      return frame as ResponseOkFrame<"net.fetch">;
     } catch (error) {
-      completionReason = error;
+      completionReason = error instanceof Error ? error : String(error);
       throw error;
     } finally {
       if (onAbort) {
@@ -2762,7 +2916,7 @@ export class Kernel extends DurableObject<Env> {
     }
 
     try {
-      const state = connection.state as ConnectionState | undefined;
+      const state = connection.state;
 
       if (
         frame.call !== "sys.setup"
@@ -2790,12 +2944,12 @@ export class Kernel extends DurableObject<Env> {
       }
 
       if (frame.call === "sys.setup.assist") {
-        await this.handleSysSetupAssist(connection, frame as RequestFrame<"sys.setup.assist">);
+        await this.handleSysSetupAssist(connection, frame);
         return;
       }
 
       if (frame.call === "sys.setup") {
-        await this.handleSysSetup(connection, frame as RequestFrame<"sys.setup">);
+        await this.handleSysSetup(connection, frame);
         return;
       }
 
@@ -2834,9 +2988,7 @@ export class Kernel extends DurableObject<Env> {
       }
 
       if (frame.call === "proc.observe" || frame.call === "proc.unobserve") {
-        const pid = typeof (frame.args as { pid?: unknown })?.pid === "string"
-          ? (frame.args as { pid: string }).pid.trim()
-          : "";
+        const pid = frame.args.pid.trim();
         const process = pid ? this.procs.get(pid) : null;
         if (!process || process.ownerUid !== state.identity.process.uid) {
           this.sendError(connection, frame.id, 404, `Process not found: ${pid || "(missing)"}`);
@@ -2885,11 +3037,10 @@ export class Kernel extends DurableObject<Env> {
   }
 
   private buildServiceBindingIdentity(frame: RequestFrame): ConnectionIdentity | null {
-    const args = frame.args as Record<string, unknown>;
-    const adapterHint =
-      typeof args.adapter === "string" && args.adapter.trim().length > 0
-        ? args.adapter.trim().toLowerCase()
-        : "service-binding";
+    const args = serviceBindingArgsSchema.safeParse(frame.args);
+    const adapterHint = args.success && args.data.adapter
+      ? args.data.adapter.toLowerCase()
+      : "service-binding";
 
     const root = this.auth.getPasswdByUid(0);
     if (!root) {
@@ -2915,13 +3066,9 @@ export class Kernel extends DurableObject<Env> {
     if (!response.ok) return;
 
     if (frame.call === "sys.device.delete") {
-      const data = (response as {
-        data?: {
-          deleted?: unknown;
-          deviceId?: unknown;
-        };
-      }).data;
-      if (data?.deleted === true && typeof data.deviceId === "string") {
+      // SAFETY: dispatch preserves the syscall's request/result correlation.
+      const data = response.data as SysDeviceDeleteResult | undefined;
+      if (data?.deleted) {
         this.disconnectDeviceConnections(data.deviceId, "Machine forgotten");
       }
     }
@@ -2957,18 +3104,20 @@ export class Kernel extends DurableObject<Env> {
       throw new Error(`Process signal watch ${watch.watchId} is missing target process`);
     }
 
+    const watchDelivery: SignalWatchDelivery = {
+      id: watch.watchId,
+      createdAt: watch.createdAt,
+    };
+    if (watch.key) watchDelivery.key = watch.key;
+    if (watch.state !== undefined) watchDelivery.state = watch.state;
+
     await sendFrameToProcess(this.installationId, watch.targetProcessId, {
       type: "sig",
       signal: frame.signal,
       payload: {
         watched: true,
         sourcePid: processId,
-        watch: {
-          id: watch.watchId,
-          ...(watch.key ? { key: watch.key } : {}),
-          ...(watch.state === undefined ? {} : { state: watch.state }),
-          createdAt: watch.createdAt,
-        },
+        watch: watchDelivery,
         payload: frame.payload,
       },
     });
@@ -3034,7 +3183,7 @@ export class Kernel extends DurableObject<Env> {
       return;
     }
     for (const [connectionId, existing] of this.connections) {
-      const existingState = existing.state as ConnectionState | undefined;
+      const existingState = existing.state;
       if (
         existing !== connection &&
         existingState?.step === "connected" &&
@@ -3053,7 +3202,7 @@ export class Kernel extends DurableObject<Env> {
     connection: KernelConnection<ConnectionState>,
     frame: RequestFrame<"sys.setup">,
   ): Promise<void> {
-    const state = connection.state as ConnectionState | undefined;
+    const state = connection.state;
     if (state && state.step !== "pending") {
       this.sendError(
         connection,
@@ -3090,7 +3239,7 @@ export class Kernel extends DurableObject<Env> {
     connection: KernelConnection<ConnectionState>,
     frame: RequestFrame<"sys.setup.assist">,
   ): Promise<void> {
-    const state = connection.state as ConnectionState | undefined;
+    const state = connection.state;
     if (state && state.step !== "pending") {
       this.sendError(
         connection,
@@ -3244,9 +3393,9 @@ export class Kernel extends DurableObject<Env> {
   }
 
   private async authorizeManagedInstallationOnboarding(
-    token: unknown,
+    token: string | undefined,
   ): Promise<InstallationOnboardingAuthorization> {
-    if (typeof token !== "string") return { ok: false };
+    if (!token) return { ok: false };
     const directory = this.managedOnboardingService();
     const installation = this.installationIdentity;
     if (!directory || !installation) return { ok: false };
@@ -3303,12 +3452,14 @@ export class Kernel extends DurableObject<Env> {
   private managedOnboardingService(): (
     InstallationDirectoryService & InstallationOnboardingService
   ) | null {
+    // SAFETY: managed deployments add this service binding to Wrangler's Env contract.
     return (this.env as Env & {
       INSTALLATION_DIRECTORY?: InstallationDirectoryService & InstallationOnboardingService;
     }).INSTALLATION_DIRECTORY ?? null;
   }
 
   private async managedWorkGate() {
+    // SAFETY: managed deployments add lifecycle bindings to Wrangler's Env contract.
     return await managedInstallationWorkGate(
       this.env as Env & ManagedInstallationLifecycleBindings,
       this.installationId,
@@ -3373,7 +3524,11 @@ export class Kernel extends DurableObject<Env> {
     }
 
     if (route.call === "shell.exec") {
-      this.recordShellSessionFromResponse(route.deviceId, frame);
+      // SAFETY: decodeWireResponse validated frame against route.call above.
+      this.recordShellSessionFromResponse(
+        route.deviceId,
+        frame as ResponseFrame<"shell.exec">,
+      );
     }
 
     this.deliverToOrigin(route.origin, frame);
@@ -3390,7 +3545,7 @@ export class Kernel extends DurableObject<Env> {
     connection: KernelConnection<ConnectionState>,
     frame: SignalFrame,
   ): void {
-    const state = connection.state as ConnectionState | undefined;
+    const state = connection.state;
     const targetId = state?.identity?.role === "driver"
       ? state.identity.device
       : null;
@@ -3399,12 +3554,13 @@ export class Kernel extends DurableObject<Env> {
     }
 
     if (frame.signal === "device.ping") {
-      this.sendWebSocketFrame(connection, {
+      const pong: SignalFrame = {
         type: "sig",
         signal: "device.pong",
-        ...(frame.payload === undefined ? {} : { payload: frame.payload }),
-        ...(frame.seq === undefined ? {} : { seq: frame.seq }),
-      });
+      };
+      if (frame.payload !== undefined) pong.payload = frame.payload;
+      if (frame.seq !== undefined) pong.seq = frame.seq;
+      this.sendWebSocketFrame(connection, pong);
       return;
     }
 
@@ -3412,34 +3568,38 @@ export class Kernel extends DurableObject<Env> {
       return;
     }
 
-    const payload = asRecord(frame.payload);
-    const sessionId = typeof payload?.sessionId === "string" ? payload.sessionId.trim() : "";
-    if (!sessionId) {
+    const parsed = execStatusPayloadSchema.safeParse(frame.payload);
+    if (!parsed.success) {
       return;
     }
+    const payload = parsed.data;
 
-    const status = shellStatusFromEvent(typeof payload?.event === "string" ? payload.event : "");
-    this.shellSessions.rememberDeviceSession(sessionId, targetId, status, {
-      exitCode: typeof payload?.exitCode === "number" ? payload.exitCode : null,
-      error: typeof payload?.signal === "string" ? payload.signal : null,
+    const status = shellStatusFromEvent(payload.event);
+    this.shellSessions.rememberDeviceSession(payload.sessionId, targetId, status, {
+      exitCode: payload.exitCode ?? null,
+      error: payload.signal ?? null,
     });
   }
 
-  private recordShellSessionFromResponse(deviceId: string, frame: ResponseFrame): void {
+  private recordShellSessionFromResponse(
+    deviceId: string,
+    frame: ResponseFrame<"shell.exec">,
+  ): void {
     if (!frame.ok) {
       return;
     }
 
-    const data = asRecord(frame.data);
-    const sessionId = typeof data?.sessionId === "string" ? data.sessionId.trim() : "";
+    const data: ShellExecResult | undefined = frame.data;
+    if (!data) return;
+    const sessionId = data.sessionId?.trim() ?? "";
     if (!sessionId) {
       return;
     }
 
-    const status = shellStatusFromResult(typeof data?.status === "string" ? data.status : "");
+    const status = shellStatusFromResult(data.status);
     this.shellSessions.rememberDeviceSession(sessionId, deviceId, status, {
-      exitCode: typeof data?.exitCode === "number" ? data.exitCode : null,
-      error: typeof data?.error === "string" ? data.error : null,
+      exitCode: data.status === "running" ? null : data.exitCode ?? null,
+      error: data.status === "failed" ? data.error : null,
     });
   }
 
@@ -3468,12 +3628,13 @@ export class Kernel extends DurableObject<Env> {
   }
 
   async onIpcCallTimeout(input: string | IpcCallTimeout): Promise<void> {
-    const callId = typeof input === "string" ? input : input.callId;
+    const timeout = ipcCallTimeoutPayloadSchema.parse(input);
+    const callId = timeout.callId;
     const call = this.ipcCalls.get(callId);
     const timedOut = this.ipcCalls.timeout(callId);
     if (!timedOut) return;
     this.queueIpcCallDelivery(callId);
-    if (typeof input !== "string" && input.terminateTargetOnTimeout && call) {
+    if (timeout.terminateTargetOnTimeout && call) {
       await this.terminateTimedOutIpcTarget(call).catch((error) => {
         console.warn(`[Kernel] Failed to terminate timed-out delegated process ${call.targetPid}:`, error);
       });
@@ -3488,7 +3649,7 @@ export class Kernel extends DurableObject<Env> {
       id: crypto.randomUUID(),
       call: "proc.kill",
       args: { pid: call.targetPid, archive: false },
-    } as RequestFrame, ctx);
+    }, ctx);
   }
 
   async onIpcCallDelivery(callId: string): Promise<void> {
@@ -3503,9 +3664,9 @@ export class Kernel extends DurableObject<Env> {
     );
   }
 
-  async onScheduleDue(scheduleId: string, wake?: { id?: unknown }): Promise<void> {
+  async onScheduleDue(scheduleId: string, wake?: { id?: string }): Promise<void> {
     const record = this.schedules.getStored(scheduleId);
-    const wakeId = typeof wake?.id === "string" ? wake.id : null;
+    const wakeId = wake?.id ?? null;
     if (wakeId && record?.wakeScheduleId !== wakeId) {
       return;
     }
@@ -3597,7 +3758,7 @@ export class Kernel extends DurableObject<Env> {
 
     let status: "ok" | "error" = "ok";
     let error: string | undefined;
-    let result: unknown;
+    let result: ScheduleExecutionResult;
     let retryableFailure = false;
     const oneShot = running.expression.kind === "at" || running.expression.kind === "after";
     const occurrenceKey = this.schedules.occurrenceKey(
@@ -3662,14 +3823,15 @@ export class Kernel extends DurableObject<Env> {
       this.schedules.setWakeScheduleId(updated.id, null);
     }
 
-    return {
+    const runResult: ScheduleRunResult = {
       scheduleId: record.id,
       status,
-      ...(error ? { error } : {}),
       summary: scheduleResultSummary(record, result),
       durationMs: Math.max(0, finishedAtMs - startedAtMs),
       nextRunAtMs: updated?.state.nextRunAtMs ?? null,
     };
+    if (error) runResult.error = error;
+    return runResult;
   }
 
   private async dispatchScheduleTarget(
@@ -3677,7 +3839,7 @@ export class Kernel extends DurableObject<Env> {
     scheduledAtMs: number | null,
     firedAtMs: number,
     occurrenceKey: string,
-  ): Promise<unknown> {
+  ): Promise<ScheduleExecutionResult> {
     const target = record.target;
     const ctx = {
       ...this.buildScheduleContext(record),
@@ -3721,14 +3883,15 @@ export class Kernel extends DurableObject<Env> {
         throw new Error("Permission denied: proc.spawn");
       }
       const runAs = this.resolveScheduledSpawnRunAs(record, target.runAs);
-      const result = await handleProcSpawn({
+      const spawnArgs: Parameters<typeof handleProcSpawn>[0] = {
         interactive: false,
         label: target.label ?? record.name,
         prompt: target.prompt,
         parentPid: target.parentPid,
         cwd: target.cwd,
-        ...(runAs ? { runAs } : {}),
-      }, ctx);
+      };
+      if (runAs) spawnArgs.runAs = runAs;
+      const result = await handleProcSpawn(spawnArgs, ctx);
       if (!result.ok) {
         throw new Error(result.error);
       }
@@ -3907,7 +4070,7 @@ export class Kernel extends DurableObject<Env> {
     }
 
     if (origin.type === "process") {
-      sendFrameToProcess(this.installationId, origin.id, frame).catch((err: unknown) => {
+      sendFrameToProcess(this.installationId, origin.id, frame).catch((err) => {
         void body?.stream.cancel(err).catch(() => {});
         console.error(`[Kernel] Failed to deliver frame to process ${origin.id}:`, err);
       });
@@ -3923,10 +4086,7 @@ export class Kernel extends DurableObject<Env> {
     }
   }
 
-  private createPendingKernelResponse(id: string): {
-    promise: Promise<ResponseFrame>;
-    cleanup: () => void;
-  } {
+  private createPendingKernelResponse(id: string): PendingKernelResponse {
     let settled = false;
     const promise = new Promise<ResponseFrame>((resolve) => {
       this.pendingKernelResponses.set(id, (frame) => {
@@ -4022,7 +4182,7 @@ export class Kernel extends DurableObject<Env> {
         type: "sig",
         signal: "identity.changed",
         payload: { identity: fresh },
-      }).catch((err: unknown) => {
+      }).catch((err) => {
         console.error(`[Kernel] Failed to send identity.changed to ${proc.processId}:`, err);
       });
     }
@@ -4031,7 +4191,7 @@ export class Kernel extends DurableObject<Env> {
   /**
    * Broadcast a signal to active user WebSockets belonging to a UID.
    */
-  broadcastToUserUid(uid: number, signal: string, payload?: unknown): void {
+  broadcastToUserUid(uid: number, signal: string, payload?: JsonValue): void {
     const frame: SignalFrame = {
       type: "sig",
       signal,
@@ -4053,7 +4213,7 @@ export class Kernel extends DurableObject<Env> {
     uid: number,
     processId: string,
     route: ReturnType<RunRouteStore["get"]>,
-    frame: SignalFrame,
+    frame: UserProcessSignalFrame,
   ): void {
     const json = JSON.stringify(frame);
     const ambient = frame.signal === "proc.changed"
@@ -4081,7 +4241,7 @@ export class Kernel extends DurableObject<Env> {
     uid: number,
     excludedConnectionId: string,
     signal: string,
-    payload?: unknown,
+    payload?: JsonValue,
   ): void {
     const json = JSON.stringify({ type: "sig", signal, payload } satisfies SignalFrame);
     for (const [connectionId, connection] of this.connections) {
@@ -4099,27 +4259,11 @@ export class Kernel extends DurableObject<Env> {
   private sendSignalToConnection(
     connectionId: string,
     signal: string,
-    payload?: unknown,
+    payload?: JsonValue,
   ): void {
     const connection = this.connections.get(connectionId);
     if (!connection) return;
     connection.send(JSON.stringify({ type: "sig", signal, payload } satisfies SignalFrame));
-  }
-
-  private broadcastToRole(role: ConnectionIdentity["role"], signal: string, payload?: unknown): void {
-    const frame: SignalFrame = {
-      type: "sig",
-      signal,
-      payload,
-    };
-    const json = JSON.stringify(frame);
-
-    for (const [, conn] of this.connections) {
-      const state = conn.state;
-      if (!state?.identity) continue;
-      if (state.identity.role !== role) continue;
-      conn.send(json);
-    }
   }
 
   private broadcastDeviceStatus(
@@ -4207,16 +4351,10 @@ export class Kernel extends DurableObject<Env> {
     return null;
   }
 
-  private extractRunId(payload: unknown): string | null {
-    if (!payload || typeof payload !== "object") return null;
-    const maybe = (payload as Record<string, unknown>).runId;
-    return typeof maybe === "string" && maybe.trim().length > 0 ? maybe : null;
-  }
-
   private sendOk(
     connection: KernelConnection<ConnectionState>,
     id: string,
-    data?: unknown,
+    data?: JsonValue,
   ): void {
     connection.send(JSON.stringify({ type: "res", id, ok: true, data }));
   }
@@ -4226,45 +4364,38 @@ export class Kernel extends DurableObject<Env> {
     id: string,
     code: number,
     message: string,
-    details?: unknown,
+    details?: JsonValue,
   ): void {
+    const error: FrameError = {
+      code,
+      message,
+    };
+    if (details !== undefined) error.details = details;
     connection.send(
       JSON.stringify({
         type: "res",
         id,
         ok: false,
-        error: {
-          code,
-          message,
-          ...(details === undefined ? {} : { details }),
-        },
+        error,
       }),
     );
   }
 }
 
-function ambientProcessChangeFrame(processId: string, frame: SignalFrame): SignalFrame {
-  const source = frame.payload && typeof frame.payload === "object"
-    ? frame.payload as Record<string, unknown>
-    : {};
-  const changes = Array.isArray(source.changes)
-    ? source.changes.filter((change): change is string => typeof change === "string")
-    : [];
-  const queuedCount = typeof source.queuedCount === "number" && Number.isSafeInteger(source.queuedCount)
-    ? source.queuedCount
-    : undefined;
-  const timestamp = typeof source.timestamp === "number" && Number.isFinite(source.timestamp)
-    ? source.timestamp
-    : undefined;
+function ambientProcessChangeFrame(
+  processId: string,
+  frame: UserProcessSignalFrame,
+): SignalFrame {
+  const payload: AmbientProcessChangePayload = {
+    pid: processId,
+    changes: frame.payload?.changes ?? [],
+  };
+  if (frame.payload?.queuedCount !== undefined) payload.queuedCount = frame.payload.queuedCount;
+  if (frame.payload?.timestamp !== undefined) payload.timestamp = frame.payload.timestamp;
   return {
     type: "sig",
     signal: "proc.changed",
-    payload: {
-      pid: processId,
-      changes,
-      ...(queuedCount === undefined ? {} : { queuedCount }),
-      ...(timestamp === undefined ? {} : { timestamp }),
-    },
+    payload,
   };
 }
 
@@ -4278,7 +4409,7 @@ function errFrame(id: string, code: number, message: string): ResponseFrame {
   return { type: "res", id, ok: false, error: { code, message } };
 }
 
-function requestAbortError(reason: unknown): Error {
+function requestAbortError(reason: FrameCancellationReason | undefined): Error {
   return reason instanceof Error ? reason : new Error("Device request cancelled");
 }
 
@@ -4291,10 +4422,6 @@ function normalizeRequestCancelReason(reason: string | undefined): string {
   return (normalized || "Request cancelled").slice(0, MAX_REQUEST_CANCEL_REASON_LENGTH);
 }
 
-function asRecord(value: unknown): Record<string, unknown> | null {
-  return value && typeof value === "object" ? value as Record<string, unknown> : null;
-}
-
 function decodeKernelTask(callback: string, payloadJson: string): KernelTask {
   return KERNEL_TASK_SCHEMA.parse({
     callback,
@@ -4302,24 +4429,23 @@ function decodeKernelTask(callback: string, payloadJson: string): KernelTask {
   });
 }
 
-function scheduleResultSummary(record: ScheduleRecord, result: unknown): string {
-  const value = asRecord(result);
+function scheduleResultSummary(record: ScheduleRecord, result: ScheduleExecutionResult): string {
   if (record.target.kind === "command.exec") {
-    return typeof value?.exitCode === "number"
-      ? `command exited ${value.exitCode}`
+    return result.exitCode !== undefined
+      ? `command exited ${result.exitCode}`
       : "command failed";
   }
-  if (record.target.kind === "process.spawn" && typeof value?.pid === "string") {
-    return `spawned process ${value.pid}`;
+  if (record.target.kind === "process.spawn" && result.pid) {
+    return `spawned process ${result.pid}`;
   }
   if (record.target.kind === "process.event") {
     return `delivered event to process ${record.target.pid}`;
   }
   if (record.target.kind === "adapter.send") {
-    if (value?.deliveryState === "ambiguous") {
+    if (result.deliveryState === "ambiguous") {
       return `message delivery through ${record.target.destination.adapter} is ambiguous`;
     }
-    if (value?.deliveryState === "deduplicated") {
+    if (result.deliveryState === "deduplicated") {
       return `message through ${record.target.destination.adapter} was already delivered`;
     }
     return `sent message through ${record.target.destination.adapter}`;
@@ -4353,7 +4479,8 @@ function envWithInstallationResources(
     get(target, property) {
       if (property === "STORAGE") return storage;
       if (property === "RIPGIT") return ripgit;
-      return Reflect.get(target, property, target);
+      // SAFETY: Proxy keys outside these overrides are ordinary Env properties.
+      return target[property as keyof Env];
     },
   });
 }

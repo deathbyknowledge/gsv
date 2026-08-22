@@ -1,4 +1,8 @@
 import type { AdapterSurfaceKind } from "../adapter-interface";
+import { z } from "zod";
+
+const surfaceKindSchema = z.enum(["dm", "group", "channel", "thread"]);
+const routeModeSchema = z.enum(["legacy", "work", "surface"]);
 
 export type SurfaceRouteMode = "legacy" | "work" | "surface";
 
@@ -50,19 +54,20 @@ export class SurfaceRouteStore {
       input.updatedByUid,
     );
 
-    return {
+    const record: SurfaceRouteRecord = {
       adapter: input.adapter,
       accountId: input.accountId,
       actorId: input.actorId,
       surfaceKind: input.surfaceKind,
       surfaceId: input.surfaceId,
-      ...(threadId ? { threadId } : {}),
       uid: input.uid,
       pid: input.pid,
       mode: input.mode,
       updatedAt: now,
       updatedByUid: input.updatedByUid,
     };
+    if (threadId) record.threadId = threadId;
+    return record;
   }
 
   clearRouteIfMatches(input: {
@@ -156,7 +161,7 @@ export class SurfaceRouteStore {
     surfaceId: string;
     threadId?: string;
   }): SurfaceRouteRecord | null {
-    const rows = this.sql.exec<RowShape>(
+    const rows = this.sql.exec<SurfaceRouteRow>(
       `SELECT adapter, account_id, actor_id, surface_kind, surface_id, thread_id,
               uid, pid, route_mode, updated_at, updated_by_uid
        FROM surface_routes
@@ -175,8 +180,8 @@ export class SurfaceRouteStore {
   }
 
   list(uid?: number): SurfaceRouteRecord[] {
-    if (typeof uid === "number") {
-      return this.sql.exec<RowShape>(
+    if (uid !== undefined) {
+      return this.sql.exec<SurfaceRouteRow>(
         `SELECT adapter, account_id, actor_id, surface_kind, surface_id, thread_id,
                 uid, pid, route_mode, updated_at, updated_by_uid
          FROM surface_routes
@@ -186,7 +191,7 @@ export class SurfaceRouteStore {
       ).toArray().map(toRecord);
     }
 
-    return this.sql.exec<RowShape>(
+    return this.sql.exec<SurfaceRouteRow>(
       `SELECT adapter, account_id, actor_id, surface_kind, surface_id, thread_id,
               uid, pid, route_mode, updated_at, updated_by_uid
        FROM surface_routes
@@ -195,7 +200,7 @@ export class SurfaceRouteStore {
   }
 }
 
-type RowShape = {
+type SurfaceRouteRow = {
   adapter: string;
   account_id: string;
   actor_id: string;
@@ -209,17 +214,17 @@ type RowShape = {
   updated_by_uid: number;
 };
 
-function toRecord(row: RowShape): SurfaceRouteRecord {
+function toRecord(row: SurfaceRouteRow): SurfaceRouteRecord {
   return {
     adapter: row.adapter,
     accountId: row.account_id,
     actorId: row.actor_id,
-    surfaceKind: row.surface_kind as AdapterSurfaceKind,
+    surfaceKind: surfaceKindSchema.parse(row.surface_kind),
     surfaceId: row.surface_id,
     threadId: row.thread_id || undefined,
     uid: row.uid,
     pid: row.pid,
-    mode: row.route_mode as SurfaceRouteMode,
+    mode: routeModeSchema.parse(row.route_mode),
     updatedAt: row.updated_at,
     updatedByUid: row.updated_by_uid,
   };

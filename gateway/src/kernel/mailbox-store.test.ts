@@ -128,6 +128,7 @@ describe("MailboxStore", () => {
       store.recordMessage(messageInput());
       const summary = {
         summary: "Mike replied about the contract.",
+        // SAFETY: test fixture is constructed with the asserted kernel domain shape.
         category: "work" as const,
         requiresAttention: true,
         confidence: 0.91,

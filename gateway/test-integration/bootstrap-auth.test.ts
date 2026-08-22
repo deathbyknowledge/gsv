@@ -50,6 +50,7 @@ describe("gateway authentication integration", () => {
       protocol: 2,
       client: {
         ...clientInfo("user", "invalid-role"),
+        // SAFETY: This intentionally malformed role exercises the protocol validator.
         role: "invalid" as ConnectArgs["client"]["role"],
       },
     })).rejects.toMatchObject({
@@ -365,10 +366,13 @@ describe("gateway authentication integration", () => {
     return client;
   }
 
-  function connectOnce(args: ConnectArgs): Promise<unknown> {
+  function connectOnce(args: ConnectArgs): Promise<never> {
     const client = new GSVClient();
     return client.requestOnce(webSocketUrl(baseUrl), "sys.connect", args)
-      .catch((error: unknown) => {
+      .then(() => {
+        throw new Error("expected connection to fail");
+      })
+      .catch((error: Error) => {
         expect(error).toBeInstanceOf(GsvClientError);
         throw error;
       });

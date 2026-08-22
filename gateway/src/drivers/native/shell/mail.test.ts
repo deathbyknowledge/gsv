@@ -13,17 +13,16 @@ import type { KernelContext } from "../../../kernel/context";
 import { MailboxStore, type RecordMailMessageInput } from "../../../kernel/mailbox-store";
 import { runWithRealKernelSql } from "../../../test-support/real-kernel-sql";
 import { buildMailCommand } from "./mail";
+import * as outboundMail from "../../../kernel/outbound-mail";
+import * as outboundStatus from "../../../kernel/outbound-status";
 
-const handleMailSend = vi.hoisted(() => vi.fn());
-const handleMailStatus = vi.hoisted(() => vi.fn());
+const handleMailSend = vi.spyOn(outboundMail, "handleMailSend");
+const handleMailStatus = vi.spyOn(outboundStatus, "handleMailStatus");
 
-vi.mock("../../../kernel/outbound-mail", () => ({
-  handleMailSend,
-}));
-
-vi.mock("../../../kernel/outbound-status", () => ({
-  handleMailStatus,
-}));
+function emptyFs(): GsvFs {
+  // SAFETY: these command tests exercise argument and capability handling before filesystem access.
+  return {} as GsvFs;
+}
 
 describe("mail shell command", () => {
   beforeEach(() => {
@@ -111,6 +110,7 @@ describe("mail shell command", () => {
         { fetch: async () => new Response("not found", { status: 404 }) },
         personalAgent,
         {
+          // SAFETY: this fixture implements the auth methods used by AccountHomeBackend.
           auth: auth as never,
           ownerUid: 1000,
           isRoot: false,
@@ -125,6 +125,7 @@ describe("mail shell command", () => {
         accountHomes,
       );
       const readFile = vi.spyOn(fs, "readFile");
+      // SAFETY: this fixture supplies the KernelContext fields used by the command.
       const ctx = {
         env: { STORAGE: env.STORAGE },
         identity: {
@@ -136,7 +137,8 @@ describe("mail shell command", () => {
         auth,
         mailboxes,
         procs: { getOwnerUid: () => 1000 },
-      } as unknown as KernelContext;
+      // SAFETY: this fixture supplies the KernelContext fields used by the command.
+      } as KernelContext;
       const command = buildMailCommand(fs, ctx);
 
       const listed = await command.execute(["list"]);
@@ -167,6 +169,7 @@ describe("mail shell command", () => {
   });
 
   it("sends new mail and replies with deterministic per-frame delivery ids", async () => {
+    // SAFETY: this fixture supplies the filesystem methods used by the command.
     const fs = {
       stat: vi.fn(async () => ({
         isFile: true,
@@ -176,7 +179,8 @@ describe("mail shell command", () => {
       readFile: vi.fn(async (path: string) => (
         path === "/draft.txt" ? "Reply from a file.\n" : `contents:${path}`
       )),
-    } as unknown as GsvFs;
+    // SAFETY: this fixture supplies the filesystem methods used by the command.
+    } as GsvFs;
     const ctx = commandContext("shell-frame-7");
     handleMailSend.mockImplementation(async (input: MailSendArgs): Promise<MailSendResult> => ({
       ok: true,
@@ -225,7 +229,7 @@ describe("mail shell command", () => {
   });
 
   it("preserves explicit delivery ids while ordinals track every outbound command", async () => {
-    const fs = {} as GsvFs;
+    const fs = emptyFs();
     const ctx = commandContext("shell-frame-explicit");
     handleMailSend.mockImplementation(async (input: MailSendArgs): Promise<MailSendResult> => ({
       ok: true,
@@ -267,7 +271,7 @@ describe("mail shell command", () => {
   });
 
   it("requires an outer request id for an implicit delivery id", async () => {
-    const command = buildMailCommand({} as GsvFs, commandContext());
+    const command = buildMailCommand(emptyFs(), commandContext());
 
     const result = await command.execute([
       "send",
@@ -300,7 +304,7 @@ describe("mail shell command", () => {
         completedAt: Date.parse("2026-08-13T12:00:02.000Z"),
       },
     } satisfies MailStatusResult);
-    const command = buildMailCommand({} as GsvFs, ctx);
+    const command = buildMailCommand(emptyFs(), ctx);
 
     const result = await command.execute(["status", "delivery-1"]);
 
@@ -316,7 +320,7 @@ describe("mail shell command", () => {
 
   it("reports missing outbound delivery status without disclosing ownership", async () => {
     handleMailStatus.mockReturnValue({ outbound: null } satisfies MailStatusResult);
-    const command = buildMailCommand({} as GsvFs, commandContext("shell-status-missing"));
+    const command = buildMailCommand(emptyFs(), commandContext("shell-status-missing"));
 
     const result = await command.execute(["status", "missing-or-foreign"]);
 
@@ -326,7 +330,7 @@ describe("mail shell command", () => {
 
   it("requires mail.status capability before reading delivery status", async () => {
     const command = buildMailCommand(
-      {} as GsvFs,
+      emptyFs(),
       commandContext("shell-status-denied", ["shell.exec", "mail.send"]),
     );
 
@@ -339,7 +343,7 @@ describe("mail shell command", () => {
 
   it("requires mail.send capability before sending", async () => {
     const command = buildMailCommand(
-      {} as GsvFs,
+      emptyFs(),
       commandContext("shell-frame-denied", ["shell.exec"]),
     );
 
@@ -359,6 +363,7 @@ describe("mail shell command", () => {
   });
 
   it("rejects oversized body files before reading them", async () => {
+    // SAFETY: this fixture supplies the filesystem methods used by the command.
     const fs = {
       stat: vi.fn(async () => ({
         isFile: true,
@@ -366,7 +371,8 @@ describe("mail shell command", () => {
         size: 1024 * 1024 + 1,
       })),
       readFile: vi.fn(),
-    } as unknown as GsvFs;
+    // SAFETY: this fixture supplies the filesystem methods used by the command.
+    } as GsvFs;
     const command = buildMailCommand(fs, commandContext("shell-frame-large"));
 
     const result = await command.execute([
@@ -390,7 +396,7 @@ describe("mail shell command", () => {
     const controller = new AbortController();
     controller.abort(new Error("shell request cancelled"));
     const command = buildMailCommand(
-      {} as GsvFs,
+      emptyFs(),
       commandContext("shell-frame-cancelled"),
     );
 
@@ -416,7 +422,7 @@ describe("mail shell command", () => {
       error: "mail queue is unavailable",
       retryable: true,
     } satisfies MailSendResult);
-    const command = buildMailCommand({} as GsvFs, ctx);
+    const command = buildMailCommand(emptyFs(), ctx);
 
     const result = await command.execute([
       "reply",
@@ -433,7 +439,7 @@ describe("mail shell command", () => {
   });
 
   it("rejects ambiguous compose input before calling the Kernel", async () => {
-    const command = buildMailCommand({} as GsvFs, commandContext("shell-frame-invalid"));
+    const command = buildMailCommand(emptyFs(), commandContext("shell-frame-invalid"));
 
     const result = await command.execute([
       "send",
@@ -457,6 +463,7 @@ function commandContext(
   requestId?: string,
   capabilities = ["shell.exec", "mail.send", "mail.status"],
 ): KernelContext {
+  // SAFETY: this fixture supplies the KernelContext fields used by mail commands.
   return {
     identity: {
       role: "user",
@@ -470,12 +477,13 @@ function commandContext(
       },
       capabilities,
     },
-    ...(requestId ? { requestId } : {}),
+    requestId,
     procs: { getOwnerUid: () => null },
-  } as unknown as KernelContext;
+  } as KernelContext;
 }
 
 function shellCommandContext(signal?: AbortSignal): CommandContext {
+  // SAFETY: this fixture supplies the CommandContext fields used by mail commands.
   return {
     cwd: "/",
     env: new Map(),
@@ -483,8 +491,8 @@ function shellCommandContext(signal?: AbortSignal): CommandContext {
     fs: {
       resolvePath: (_cwd: string, path: string) => path,
     },
-    ...(signal ? { signal } : {}),
-  } as unknown as CommandContext;
+    signal,
+  } as CommandContext;
 }
 
 function messageInput(

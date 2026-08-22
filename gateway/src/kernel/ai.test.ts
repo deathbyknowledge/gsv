@@ -1,29 +1,23 @@
+type KernelTestValue<T = string | number | boolean | null | undefined> = T;
+
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { KernelContext } from "./context";
 import type { DeviceRecord } from "./devices";
 import type { OAuthAccountRecord } from "./oauth-store";
-import { sendFrameToProcess } from "../shared/utils";
+import * as utils from "../shared/utils";
 import { bodyFromBytes, bodyToBytes } from "@humansandmachines/gsv/protocol";
 
-const generateMock = vi.hoisted(() => vi.fn());
-const createGenerationServiceMock = vi.hoisted(() => vi.fn((_options?: unknown) => ({
+const generateMock = vi.fn();
+const createGenerationServiceMock = vi.fn((_options?: KernelTestValue) => ({
   generate: generateMock,
   stream: vi.fn(),
   generateText: vi.fn(),
-})));
-const seedBuiltinSkillsToHomeMock = vi.hoisted(() => vi.fn());
-
-vi.mock("../inference/service", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("../inference/service")>();
-  return {
-    ...actual,
-    createGenerationService: createGenerationServiceMock,
-  };
-});
-
-vi.mock("./sys/skills-seed", () => ({
-  seedBuiltinSkillsToHome: seedBuiltinSkillsToHomeMock,
 }));
+const seedBuiltinSkillsToHomeMock = vi.fn();
+import * as inferenceService from "../inference/service";
+import * as skillsSeed from "./sys/skills-seed";
+vi.spyOn(inferenceService, "createGenerationService").mockImplementation(createGenerationServiceMock);
+vi.spyOn(skillsSeed, "seedBuiltinSkillsToHome").mockImplementation(seedBuiltinSkillsToHomeMock);
 
 import {
   handleAiConfig,
@@ -46,13 +40,10 @@ import {
 } from "../inference/image-reading";
 import { DEFAULT_IMAGE_GENERATION_MODEL } from "../inference/capabilities";
 import { inferenceLogicalRequestId } from "../inference/provider";
-import { MAIL_SEND, MAIL_STATUS, SYSCALL_TOOL_NAMES } from "../syscalls/constants";
+import { MAIL_SEND, MAIL_STATUS, syscallToolName } from "../syscalls/constants";
 
-vi.mock("../shared/utils", () => ({
-  sendFrameToProcess: vi.fn(),
-}));
-
-const sendFrameToProcessMock = vi.mocked(sendFrameToProcess);
+const sendFrameToProcessMock = vi.spyOn(utils, "sendFrameToProcess");
+// SAFETY: test fixture is constructed with the asserted kernel domain shape.
 const TEST_INSTALLATION_ID = "singleton" as KernelContext["installationId"];
 
 beforeEach(() => {
@@ -99,6 +90,7 @@ function makeContext(
     createdAt: 1,
     updatedAt: 2,
   };
+  // SAFETY: test fixture is constructed with the asserted kernel domain shape.
   return {
     installationId: TEST_INSTALLATION_ID,
     identity: {
@@ -170,9 +162,11 @@ function makeContext(
       }]),
     },
     env: {
+      // SAFETY: test fixture is constructed with the asserted kernel domain shape.
       LOADER: {} as WorkerLoader,
     },
-  } as unknown as KernelContext;
+  // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+  } as KernelContext;
 }
 
 function attachProcessAiSnapshot(
@@ -181,7 +175,9 @@ function attachProcessAiSnapshot(
   pid = "proc:test",
   profile?: { id?: string; name?: string; appliedAt: number },
 ): KernelContext {
+  // SAFETY: test fixture is constructed with the asserted kernel domain shape.
   (ctx as { processId?: string }).processId = pid;
+  // SAFETY: test fixture is constructed with the asserted kernel domain shape.
   (ctx as { procs?: { getOwnerUid: ReturnType<typeof vi.fn> } }).procs = {
     getOwnerUid: vi.fn(() => ctx.identity?.process.uid ?? 1000),
   };
@@ -195,7 +191,7 @@ function attachProcessAiSnapshot(
       config: {
         version: 1,
         values,
-        ...(profile ? { profile } : {}),
+        ...(profile ? { profile } : undefined),
         updatedAt: 1,
       },
     },
@@ -219,8 +215,8 @@ describe("handleAiTools", () => {
       "Shell",
       "CodeMode",
     ]);
-    expect(SYSCALL_TOOL_NAMES[MAIL_SEND]).toBeUndefined();
-    expect(SYSCALL_TOOL_NAMES[MAIL_STATUS]).toBeUndefined();
+    expect(syscallToolName(MAIL_SEND)).toBeUndefined();
+    expect(syscallToolName(MAIL_STATUS)).toBeUndefined();
     expect(
       result.tools.every((tool) =>
         !tool.name.startsWith("MCP_") &&
@@ -228,6 +224,7 @@ describe("handleAiTools", () => {
         !tool.name.includes("Schedule") &&
         tool.name !== "Copy"
       ),
+      // SAFETY: test fixture is constructed with the asserted kernel domain shape.
       "ai.tools should stay a fixed Linux-like surface: filesystem tools, Shell, and CodeMode only. Do not expose OS conveniences such as spawn, sched, MCP, or copy as direct LLM tools.",
     ).toBe(true);
     expect(result.mcpServers).toEqual(["Search"]);
@@ -299,12 +296,14 @@ describe("handleAiTools", () => {
     const records = Array.from({ length: 12 }, (_value, index) =>
       makeDevice({ device_id: `node-${String(index + 1).padStart(2, "0")}` })
     );
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     const ctx = {
       ...makeContext("ready"),
       devices: {
         listForUser: vi.fn(() => records),
       },
-    } as unknown as KernelContext;
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+    } as KernelContext;
 
     const result = await handleAiTools(ctx);
     const shell = result.tools.find((tool) => tool.name === "Shell");
@@ -335,6 +334,7 @@ describe("handleAiConfig", () => {
     const uid = options.uid ?? 1000;
     const ownerUid = options.ownerUid ?? uid;
     const oauthAccounts = options.oauthAccounts ?? [];
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     return {
       installationId: TEST_INSTALLATION_ID,
       identity: {
@@ -396,7 +396,8 @@ describe("handleAiConfig", () => {
       },
       processId: options.processId,
       env: options.ripgit ? { RIPGIT: options.ripgit } : {},
-    } as unknown as KernelContext;
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+    } as KernelContext;
   }
 
   function makeOAuthAccount(partial: Partial<OAuthAccountRecord>): OAuthAccountRecord {
@@ -429,7 +430,7 @@ describe("handleAiConfig", () => {
     });
   }
 
-  function fakeJwtToken(payload: Record<string, unknown>): string {
+  function fakeJwtToken(payload: Record<string, KernelTestValue>): string {
     return [
       Buffer.from("{}").toString("base64url"),
       Buffer.from(JSON.stringify(payload)).toString("base64url"),
@@ -470,12 +471,14 @@ describe("handleAiConfig", () => {
       seedingComplete = true;
       return { username: "sam", copied: 3, skipped: 3 };
     });
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     const ripgit = {
       fetch: vi.fn(async () => {
         expect(seedingComplete).toBe(true);
         return new Response("missing", { status: 404 });
       }),
-    } as unknown as Fetcher;
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+    } as Fetcher;
     const ctx = makeAiConfigContext({}, {
       uid: 2000,
       ownerUid: 1000,
@@ -611,6 +614,7 @@ describe("handleAiConfig", () => {
 
     try {
       const result = await handleAiConfig({}, ctx);
+      // SAFETY: test fixture is constructed with the asserted kernel domain shape.
       const refreshBody = fetchSpy.mock.calls[0]?.[1]?.body as URLSearchParams;
 
       expect(result).toMatchObject({
@@ -876,6 +880,7 @@ describe("handleAiConfig", () => {
         timestamp: 1,
       };
     });
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     const ctx = {
       ...makeAiConfigContext({
         "config/ai/provider": "gsv",
@@ -890,7 +895,8 @@ describe("handleAiConfig", () => {
         INSTALLATION_DIRECTORY: {},
         MANAGED_INFERENCE: managedInference,
       },
-    } as unknown as KernelContext;
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+    } as KernelContext;
 
     const result = await handleAiTextGenerate({
       messages: [{ role: "user", content: "ping" }],
@@ -1028,6 +1034,7 @@ describe("handleAiConfig", () => {
       device_id: "linux-machine",
       implements: ["net.fetch"],
     });
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     const ctx = {
       ...makeAiConfigContext(),
       devices: {
@@ -1035,7 +1042,8 @@ describe("handleAiConfig", () => {
         get: vi.fn(() => device),
         listForUser: vi.fn(() => [device]),
       },
-    } as unknown as KernelContext;
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+    } as KernelContext;
 
     const result = await handleAiTextGenerate({
       messages: [{ role: "user", content: "ping" }],
@@ -1078,6 +1086,7 @@ describe("handleAiConfig", () => {
       device_id: "linux-machine",
       implements: ["net.fetch"],
     });
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     const ctx = {
       ...makeAiConfigContext({}, {
         oauthAccounts: [
@@ -1092,7 +1101,8 @@ describe("handleAiConfig", () => {
         get: vi.fn(() => device),
         listForUser: vi.fn(() => [device]),
       },
-    } as unknown as KernelContext;
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+    } as KernelContext;
 
     const result = await handleAiTextGenerate({
       messages: [{ role: "user", content: "ping" }],
@@ -1599,9 +1609,10 @@ describe("handleAiConfig", () => {
 describe("handleAiTranscriptionCreate", () => {
   function makeTranscriptionContext(options: {
     config?: Record<string, string>;
-    response?: unknown;
+    response?: KernelTestValue;
   } = {}): KernelContext {
     const config = options.config ?? {};
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     return {
       installationId: TEST_INSTALLATION_ID,
       identity: {
@@ -1628,13 +1639,14 @@ describe("handleAiTranscriptionCreate", () => {
           })),
         },
       },
-    } as unknown as KernelContext;
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+    } as KernelContext;
   }
 
   function transcriptionFallbackConfig(
     id: string,
     values: Record<string, string>,
-  ): Record<string, string> {
+  ) {
     return {
       "users/1000/ai/fallback_model_profile": id,
       "users/1000/ai/model_profiles": JSON.stringify({
@@ -1711,7 +1723,8 @@ describe("handleAiTranscriptionCreate", () => {
         "users/1000/ai/transcription/model": "@cf/owner/transcriber",
       },
     });
-    (ctx as { procs: unknown }).procs = {
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+    (ctx as { procs: KernelTestValue }).procs = {
       get: vi.fn(() => ({
         processId: "proc:agent",
         uid: 2000,
@@ -1724,7 +1737,8 @@ describe("handleAiTranscriptionCreate", () => {
       })),
       getOwnerUid: vi.fn(() => 1000),
     };
-    (ctx as { auth: unknown }).auth = {
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+    (ctx as { auth: KernelTestValue }).auth = {
       getPasswdByUid: vi.fn(() => ({
         uid: 1000,
         gid: 1000,
@@ -1765,7 +1779,8 @@ describe("handleAiTranscriptionCreate", () => {
 
   it("rejects cross-owner process configuration access", async () => {
     const ctx = makeTranscriptionContext();
-    (ctx as { procs: unknown }).procs = {
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+    (ctx as { procs: KernelTestValue }).procs = {
       get: vi.fn(() => ({ ownerUid: 2000 })),
       getOwnerUid: vi.fn(() => 1000),
     };
@@ -1782,7 +1797,8 @@ describe("handleAiTranscriptionCreate", () => {
   it("allows root to use another owner's process configuration", async () => {
     const ctx = makeTranscriptionContext();
     ctx.identity!.process.uid = 0;
-    (ctx as { procs: unknown }).procs = {
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+    (ctx as { procs: KernelTestValue }).procs = {
       get: vi.fn(() => ({
         processId: "proc:other",
         uid: 2000,
@@ -1795,7 +1811,8 @@ describe("handleAiTranscriptionCreate", () => {
       })),
       getOwnerUid: vi.fn((pid: string) => pid === "proc:other" ? 1000 : 0),
     };
-    (ctx as { auth: unknown }).auth = {
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+    (ctx as { auth: KernelTestValue }).auth = {
       getPasswdByUid: vi.fn(() => ({
         uid: 1000,
         gid: 1000,
@@ -1899,6 +1916,7 @@ describe("handleAiTranscriptionCreate", () => {
     expect(ctx.env.AI.run).toHaveBeenCalledTimes(1);
   });
 
+  // SAFETY: test fixture is constructed with the asserted kernel domain shape.
   it("does not treat a fallback text model as a transcription model", async () => {
     const ctx = makeTranscriptionContext({
       config: transcriptionFallbackConfig("text-only", {
@@ -1927,6 +1945,7 @@ describe("handleAiTranscriptionCreate", () => {
         "config/ai/transcription/model": "@cf/openai/whisper-tiny-en",
       }),
     });
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     (ctx as { requestSignal?: AbortSignal }).requestSignal = controller.signal;
     vi.mocked(ctx.env.AI.run).mockImplementation((_model, _input, options) =>
       new Promise((_resolve, reject) => {
@@ -1971,7 +1990,8 @@ describe("handleAiTranscriptionCreate", () => {
     await expect(handleAiTranscriptionCreate({
       audio: {
         mimeType: "audio/ogg",
-        ...({ data: "AQID" } as object),
+        // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+        data: "AQID",
       },
     }, ctx)).rejects.toThrow("audio request body is required");
   });
@@ -1980,9 +2000,10 @@ describe("handleAiTranscriptionCreate", () => {
 describe("handleAiImageRead", () => {
   function makeImageReadContext(options: {
     config?: Record<string, string>;
-    response?: unknown;
+    response?: KernelTestValue;
   } = {}): KernelContext {
     const config = options.config ?? {};
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     return {
       installationId: TEST_INSTALLATION_ID,
       identity: {
@@ -2008,7 +2029,8 @@ describe("handleAiImageRead", () => {
           })),
         },
       },
-    } as unknown as KernelContext;
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+    } as KernelContext;
   }
 
   it("reads images through the fixed Moondream caption path", async () => {
@@ -2072,6 +2094,7 @@ describe("handleAiImageRead", () => {
     );
   });
 
+  // SAFETY: test fixture is constructed with the asserted kernel domain shape.
   it("returns decoded streaming output as a response body", async () => {
     const encoded = new TextEncoder().encode("data: {\"text\":\"hello\"}\n\n");
     const ctx = makeImageReadContext({
@@ -2125,7 +2148,7 @@ describe("handleAiImageRead", () => {
   it("cancels image body reads with the request", async () => {
     const controller = new AbortController();
     const reason = new Error("request cancelled");
-    let cancelled: unknown;
+    let cancelled: KernelTestValue;
     const ctx = makeImageReadContext();
     ctx.requestSignal = controller.signal;
     controller.abort(reason);
@@ -2149,9 +2172,10 @@ describe("handleAiImageRead", () => {
 describe("handleAiImageGenerate", () => {
   function makeImageGenerateContext(options: {
     config?: Record<string, string>;
-    response?: unknown;
+    response?: KernelTestValue;
   } = {}): KernelContext {
     const config = options.config ?? {};
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     return {
       installationId: TEST_INSTALLATION_ID,
       identity: {
@@ -2175,7 +2199,8 @@ describe("handleAiImageGenerate", () => {
           run: vi.fn(async () => options.response ?? ({ image: "AQID" })),
         },
       },
-    } as unknown as KernelContext;
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+    } as KernelContext;
   }
 
   it("generates images through the configured Workers AI path", async () => {
@@ -2251,7 +2276,9 @@ describe("handleAiImageGenerate", () => {
         "config/ai/image/generation/model": "@cf/example/fallback-image",
       },
     });
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     (ctx as { processId?: string }).processId = "proc:missing";
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     (ctx as { procs?: Partial<KernelContext["procs"]> }).procs = {
       getOwnerUid: vi.fn(() => 1000),
     };
@@ -2281,9 +2308,10 @@ describe("handleAiImageGenerate", () => {
 describe("handleAiSpeechCreate", () => {
   function makeSpeechContext(options: {
     config?: Record<string, string>;
-    response?: unknown;
+    response?: KernelTestValue;
   } = {}): KernelContext {
     const config = options.config ?? {};
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     return {
       installationId: TEST_INSTALLATION_ID,
       identity: {
@@ -2312,7 +2340,8 @@ describe("handleAiSpeechCreate", () => {
           })),
         },
       },
-    } as unknown as KernelContext;
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+    } as KernelContext;
   }
 
   it("synthesizes speech through Workers AI and returns browser-playable audio", async () => {

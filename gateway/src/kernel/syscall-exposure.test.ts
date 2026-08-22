@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { isInternalOnlySyscall } from "./syscall-exposure";
 
 describe("internal syscall exposure", () => {
+  // SAFETY: test fixture is constructed with the asserted kernel domain shape.
   it("marks ai bootstrap syscalls as internal-only", () => {
     expect(isInternalOnlySyscall("ai.config")).toBe(true);
     expect(isInternalOnlySyscall("ai.tools")).toBe(true);

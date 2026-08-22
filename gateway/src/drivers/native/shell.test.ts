@@ -10,7 +10,8 @@ import {
   handleFsTransferStat,
   handleFsWrite,
 } from "./fs";
-import { sendFrameToProcess } from "../../shared/utils";
+import * as inferenceService from "../../inference/service";
+import * as sharedUtils from "../../shared/utils";
 import type { KernelContext } from "../../kernel/context";
 import type { DeviceRecord } from "../../kernel/devices";
 import type { ProcessRecord } from "../../kernel/processes";
@@ -19,39 +20,27 @@ import {
   bodyFromText,
   bodyToBytes,
   bodyToText,
+  jsonObjectSchema,
+  type JsonObject,
   type ProcessIdentity,
 } from "@humansandmachines/gsv/protocol";
 import type { RequestFrame, ResponseFrame } from "../../protocol/frames";
 import type { InstallationIdentity } from "../../installation/identity";
 import { stableOpaqueId } from "../../shared/stable-id";
+import * as z from "zod/mini";
 
-const generateMock = vi.hoisted(() => vi.fn());
-
-vi.mock("../../inference/service", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("../../inference/service")>();
-  return {
-    ...actual,
-    createGenerationService: () => ({
-      generate: generateMock,
-      stream: vi.fn(),
-      generateText: vi.fn(),
-    }),
-  };
-});
-
-vi.mock("../../shared/utils", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("../../shared/utils")>();
-  return {
-    ...actual,
-    sendFrameToProcess: vi.fn(),
-  };
-});
-
-const sendFrameToProcessMock = vi.mocked(sendFrameToProcess);
-const TEST_INSTALLATION_ID = "inst_shell_test" as KernelContext["installationId"];
+const generateMock = vi.fn();
+const createGenerationServiceMock = vi.spyOn(inferenceService, "createGenerationService");
+const sendFrameToProcessMock = vi.spyOn(sharedUtils, "sendFrameToProcess");
+const TEST_INSTALLATION_ID: KernelContext["installationId"] = "inst_shell_test";
 const TEST_INSTALLATION_CONTEXT = { installationId: TEST_INSTALLATION_ID };
 
 beforeEach(() => {
+  createGenerationServiceMock.mockReturnValue({
+    generate: generateMock,
+    stream: vi.fn(),
+    generateText: vi.fn(),
+  });
   sendFrameToProcessMock.mockReset();
   sendFrameToProcessMock.mockImplementation(async (_installationId, _pid, frame) => (
     frame.type === "req" && frame.call === "proc.setidentity"
@@ -69,6 +58,44 @@ const IDENTITY: ProcessIdentity = {
   home: "/home/sam",
   cwd: "/home/sam",
 };
+
+type ShellAiInput = {
+  task?: string;
+  audio?: string;
+  text?: string;
+  prompt?: string;
+};
+type ShellAiResult =
+  | { caption: string }
+  | { text: string }
+  | { image: string }
+  | ReadableStream<Uint8Array>
+  | null;
+
+function focusedFixture<T extends object>(value: Partial<T>): T {
+  // SAFETY: Shell tests use focused doubles whose supplied members are checked
+  // against the owning interface; unimplemented members are never exercised.
+  return value as T;
+}
+
+function responseFixture(frame: ResponseFrame): ResponseFrame {
+  return frame;
+}
+
+const currentDestinationOutputSchema = z.object({
+  destinationId: z.string(),
+});
+const destinationListOutputSchema = z.object({
+  destinations: z.array(z.object({ id: z.string() })),
+});
+const wikiApplyBodySchema = z.object({
+  message: z.optional(z.string()),
+  ops: z.optional(z.array(z.object({
+    type: z.optional(z.string()),
+    path: z.optional(z.string()),
+    contentBytes: z.optional(z.array(z.number())),
+  }))),
+});
 
 function makeDevice(partial: Partial<DeviceRecord> & { device_id: string }): DeviceRecord {
   const now = 1_800_000_000_000;
@@ -116,17 +143,17 @@ function makeContext(options?: {
   capabilities?: string[];
   config?: Record<string, string>;
   procs?: Partial<KernelContext["procs"]>;
-  devices?: KernelContext["devices"];
-  auth?: KernelContext["auth"];
-  caps?: KernelContext["caps"];
-  schedules?: KernelContext["schedules"];
-  ipcCalls?: KernelContext["ipcCalls"];
-  oauth?: KernelContext["oauth"];
+  devices?: Partial<KernelContext["devices"]>;
+  auth?: Partial<KernelContext["auth"]>;
+  caps?: Partial<KernelContext["caps"]>;
+  schedules?: Partial<KernelContext["schedules"]>;
+  ipcCalls?: Partial<KernelContext["ipcCalls"]>;
+  oauth?: Partial<KernelContext["oauth"]>;
   scheduleIpcCallTimeout?: KernelContext["scheduleIpcCallTimeout"];
   scheduleScheduleWake?: KernelContext["scheduleScheduleWake"];
   processRunId?: string;
   identity?: ProcessIdentity;
-  aiRun?: (model: string, input: Record<string, unknown>) => Promise<unknown>;
+  aiRun?: (model: string, input: ShellAiInput) => Promise<ShellAiResult>;
   ripgit?: Fetcher;
 }): KernelContext {
   const identity = options?.identity ?? IDENTITY;
@@ -159,24 +186,28 @@ function makeContext(options?: {
       : null),
     getPersonalAgentUid: vi.fn(() => null),
     resolveGids: vi.fn(() => [...identity.gids]),
-  } as unknown as KernelContext["auth"];
-  return {
-    env: {
-      STORAGE: env.STORAGE,
-      RIPGIT: options?.ripgit ?? {} as Fetcher,
-      LOADER: { get() { throw new Error("LOADER should not be used in shell tests"); } },
-      ...(options?.aiRun ? { AI: { run: vi.fn(options.aiRun) } } : {}),
-    } as unknown as Env,
+  };
+  const testEnv = focusedFixture<Env>({
+    STORAGE: env.STORAGE,
+    RIPGIT: options?.ripgit ?? focusedFixture<Fetcher>({}),
+    LOADER: { get() { throw new Error("LOADER should not be used in shell tests"); } },
+  });
+  if (options?.aiRun) {
+    testEnv.AI = { run: vi.fn(options.aiRun) };
+  }
+  return focusedFixture<KernelContext>({
+    env: testEnv,
     installationId: installationIdentity.installationId,
     installationIdentity,
-    auth: {
+    auth: focusedFixture<KernelContext["auth"]>({
       ...defaultAuth,
       ...options?.auth,
-    } as KernelContext["auth"],
-    caps: options?.caps ?? {
+    }),
+    caps: focusedFixture<KernelContext["caps"]>({
       resolve: vi.fn(() => []),
-    } as unknown as KernelContext["caps"],
-    config: {
+      ...options?.caps,
+    }),
+    config: focusedFixture<KernelContext["config"]>({
       get(key: string) {
         if (key === "config/server/name") return "gsv";
         if (key === "config/server/version") return "0.4.1";
@@ -198,9 +229,9 @@ function makeContext(options?: {
           .map(([key, value]) => ({ key, value }))
           .sort((left, right) => left.key.localeCompare(right.key));
       },
-    } as never,
-    devices: options?.devices ?? null as never,
-    procs: {
+    }),
+    devices: focusedFixture<KernelContext["devices"]>(options?.devices ?? {}),
+    procs: focusedFixture<KernelContext["procs"]>({
       get() {
         return {
           profile: "task",
@@ -211,25 +242,29 @@ function makeContext(options?: {
         return identity.uid;
       },
       ...options?.procs,
-    } as never,
-    oauth: options?.oauth ?? {
+    }),
+    oauth: focusedFixture<KernelContext["oauth"]>({
       listAccounts: vi.fn(() => []),
       listFlows: vi.fn(() => []),
       deleteAccount: vi.fn(() => false),
-    } as unknown as KernelContext["oauth"],
-    adapters: {
+      ...options?.oauth,
+    }),
+    adapters: focusedFixture<KernelContext["adapters"]>({
       identityLinks: { list: vi.fn(() => []) },
       status: {
         list: vi.fn(() => []),
         listAll: vi.fn(() => []),
         listByOwner: vi.fn(() => []),
       },
-    } as unknown as KernelContext["adapters"],
-    runRoutes: null as never,
-    schedules: options?.schedules,
-    ipcCalls: options?.ipcCalls ?? {
+    }),
+    runRoutes: focusedFixture<KernelContext["runRoutes"]>({}),
+    schedules: options?.schedules
+      ? focusedFixture<KernelContext["schedules"]>(options.schedules)
+      : undefined,
+    ipcCalls: focusedFixture<KernelContext["ipcCalls"]>({
       findPendingByTargetRun: vi.fn(() => null),
-    } as unknown as KernelContext["ipcCalls"],
+      ...options?.ipcCalls,
+    }),
     connection: null,
     identity: {
       role: "user",
@@ -241,7 +276,7 @@ function makeContext(options?: {
     serverVersion: "0.4.1",
     scheduleIpcCallTimeout: options?.scheduleIpcCallTimeout,
     scheduleScheduleWake: options?.scheduleScheduleWake,
-  } as KernelContext;
+  });
 }
 
 function makeSkillFetcher(
@@ -250,7 +285,7 @@ function makeSkillFetcher(
 ): Fetcher {
   const encoder = new TextEncoder();
   const names = Object.keys(files).sort();
-  return {
+  return focusedFixture<Fetcher>({
     async fetch(input: RequestInfo | URL) {
       const url = new URL(input instanceof Request ? input.url : String(input));
       if (url.pathname !== "/hyperspace/repos/sam/home/read") {
@@ -274,7 +309,7 @@ function makeSkillFetcher(
         headers: { "X-Blob-Size": String(encoder.encode(content).byteLength) },
       });
     },
-  } as unknown as Fetcher;
+  });
 }
 
 function enableTelegramMessaging(ctx: KernelContext) {
@@ -300,18 +335,18 @@ function enableTelegramMessaging(ctx: KernelContext) {
     updatedAt: 3,
   };
   const adapterSend = vi.fn(async (
-    _installation: unknown,
+    _installation: string,
     _accountId: string,
-    _message: unknown,
+    _message: JsonObject,
     body?: { stream: ReadableStream<Uint8Array>; length?: number },
   ) => {
     const bytes = body ? await bodyToBytes(body) : undefined;
-    return { ok: true as const, messageId: bytes ? `bytes-${bytes.byteLength}` : "msg-1" };
+    return { ok: true, messageId: bytes ? `bytes-${bytes.byteLength}` : "msg-1" };
   });
-  Object.assign(ctx.env as unknown as Record<string, unknown>, {
+  Object.assign(ctx.env, {
     CHANNEL_TELEGRAM: { adapterSend },
   });
-  ctx.adapters = {
+  ctx.adapters = focusedFixture<KernelContext["adapters"]>({
     identityLinks: {
       list: vi.fn(() => [link]),
       get: vi.fn((adapter: string, accountId: string, actorId: string) =>
@@ -336,8 +371,8 @@ function enableTelegramMessaging(ctx: KernelContext) {
       listAll: vi.fn(() => [status]),
       listByOwner: vi.fn(() => [status]),
     },
-  } as unknown as KernelContext["adapters"];
-  ctx.runRoutes = {
+  });
+  ctx.runRoutes = focusedFixture<KernelContext["runRoutes"]>({
     get: vi.fn((runId: string) => runId === ctx.processRunId
       ? {
           kind: "adapter",
@@ -356,7 +391,7 @@ function enableTelegramMessaging(ctx: KernelContext) {
           expiresAt: Date.now() + 60_000,
         }
       : null),
-  } as unknown as KernelContext["runRoutes"];
+  });
   return { adapterSend, link, status };
 }
 
@@ -380,7 +415,7 @@ function enableMessageRouteStore(
     setRoute,
     clearRoute,
   });
-  ctx.procs = {
+  ctx.procs = focusedFixture<KernelContext["procs"]>({
     getOwnerUid: vi.fn(() => IDENTITY.uid),
     getPersonalController: vi.fn((ownerUid: number) => (
       ownerUid === IDENTITY.uid
@@ -389,7 +424,7 @@ function enableMessageRouteStore(
     )),
     list: vi.fn(() => processes),
     get: vi.fn((pid: string) => processes.find((process) => process.processId === pid) ?? null),
-  } as unknown as KernelContext["procs"];
+  });
   return { setRoute, clearRoute };
 }
 
@@ -410,20 +445,22 @@ function enablePrivateDmHandoff(
     uid: 1001,
   });
   const destination = {
-    kind: "adapter" as const,
+    kind: "adapter",
     adapter: "telegram",
     accountId: "bot",
     actorId: "chat-42",
-    surface: { kind: "dm" as const, id: "chat-42" },
+    surface: { kind: "dm", id: "chat-42" },
   };
-  ctx.adapters.privateDestinations = {
+  ctx.adapters.privateDestinations = focusedFixture<
+    KernelContext["adapters"]["privateDestinations"]
+  >({
     get: vi.fn(() => ({
       uid: IDENTITY.uid,
       destination,
       messageId: latestMessageId,
       updatedAt: 1,
     })),
-  } as unknown as KernelContext["adapters"]["privateDestinations"];
+  });
   const routeStore = enableMessageRouteStore(ctx, [controller, target]);
   return { controller, target, destination, ...routeStore };
 }
@@ -756,7 +793,7 @@ describe("native shell capability discovery", () => {
         platform: "darwin",
         implements: ["shell.exec", "fs.*"],
       })]),
-    } as unknown as KernelContext["devices"];
+    };
     const visible = await handleShellExec(
       { input: "man --search -- 'work on studio macbook'" },
       makeContext({ capabilities: ["shell.exec", "sys.device.list"], devices }),
@@ -774,7 +811,7 @@ describe("native shell capability discovery", () => {
 });
 
 describe("oauth native command", () => {
-  function oauthAccount(metadata: Record<string, unknown> = {}) {
+  function oauthAccount(metadata: JsonObject = {}) {
     return {
       accountId: "acct-codex",
       uid: 1000,
@@ -799,7 +836,7 @@ describe("oauth native command", () => {
       listAccounts: vi.fn(() => [oauthAccount({ chatgptAccountId: "chatgpt-account-1" })]),
       listFlows: vi.fn(() => []),
       deleteAccount: vi.fn(),
-    } as unknown as KernelContext["oauth"];
+    };
 
     const result = await handleShellExec(
       { input: "oauth list" },
@@ -818,7 +855,7 @@ describe("oauth native command", () => {
       listAccounts: vi.fn(() => [oauthAccount()]),
       listFlows: vi.fn(() => []),
       deleteAccount: vi.fn(),
-    } as unknown as KernelContext["oauth"];
+    };
 
     const result = await handleShellExec(
       { input: "oauth codex status" },
@@ -837,7 +874,7 @@ describe("oauth native command", () => {
       listAccounts: vi.fn(() => []),
       listFlows: vi.fn(() => []),
       deleteAccount,
-    } as unknown as KernelContext["oauth"];
+    };
 
     const result = await handleShellExec(
       { input: "oauth forget acct-codex" },
@@ -942,7 +979,7 @@ describe("media native commands", () => {
       canAccess: vi.fn(() => true),
       get: vi.fn(() => device),
       listForUser: vi.fn(() => [device]),
-    } as unknown as KernelContext["devices"];
+    };
     const requestDevice = vi.fn();
 
     const result = await handleShellExec(
@@ -1009,10 +1046,10 @@ describe("media native commands", () => {
           if (input.task === "caption") {
             return { caption: "terminal screenshot" };
           }
-          if (typeof input.audio === "string") {
+          if (input.audio !== undefined) {
             return { text: "hello audio" };
           }
-          if (typeof input.text === "string") {
+          if (input.text !== undefined) {
             return new ReadableStream({
               start(controller) {
                 controller.enqueue(new Uint8Array([4, 5, 6]));
@@ -1020,7 +1057,7 @@ describe("media native commands", () => {
               },
             });
           }
-          if (typeof input.prompt === "string") {
+          if (input.prompt !== undefined) {
             return { image: "AQID" };
           }
           return null;
@@ -1040,7 +1077,7 @@ describe("media native commands", () => {
 
   it("preserves generated image MIME when the output extension differs", async () => {
     const key = "home/sam/generated-jpeg.png";
-    let imageReadInput: Record<string, unknown> | undefined;
+    let imageReadInput: ShellAiInput | undefined;
     await env.STORAGE.delete(key);
 
     const result = await handleShellExec(
@@ -1054,7 +1091,7 @@ describe("media native commands", () => {
             imageReadInput = input;
             return { caption: "a green square" };
           }
-          if (typeof input.prompt === "string") {
+          if (input.prompt !== undefined) {
             return { image: "/9j/4AAQSkZJRgABAQAAAQABAAD/2Q==" };
           }
           return null;
@@ -1091,7 +1128,7 @@ describe("targets native command", () => {
     ];
     const devices = {
       listForUser: vi.fn(() => records),
-    } as unknown as KernelContext["devices"];
+    };
 
     const result = await handleShellExec(
       { input: "targets list --limit 2" },
@@ -1130,7 +1167,7 @@ describe("targets native command", () => {
           disconnected_at: 1_800_000_000_000,
         }),
       ]),
-    } as unknown as KernelContext["devices"];
+    };
     const ctx = makeContext({ capabilities: ["sys.device.list"], devices });
 
     const result = await handleShellExec({ input: "targets list" }, ctx);
@@ -1154,10 +1191,10 @@ describe("targets native command", () => {
     const devices = {
       canAccess: vi.fn(() => true),
       get: vi.fn(() => record),
-    } as unknown as KernelContext["devices"];
+    };
     const auth = {
       getPasswdByUid: vi.fn(() => ({ username: "sam" })),
-    } as unknown as KernelContext["auth"];
+    };
 
     const result = await handleShellExec(
       { input: "targets show macbook" },
@@ -1191,10 +1228,10 @@ describe("proc native command", () => {
         get: vi.fn((pid: string) => pid === process.processId ? process : null),
         getOwnerUid: vi.fn(() => IDENTITY.uid),
         kill,
-      } as Partial<KernelContext["procs"]>,
+      },
       ipcCalls: {
         cancelBySourcePid,
-      } as unknown as KernelContext["ipcCalls"],
+      },
     });
     Object.assign(ctx, {
       failIpcCallsByTarget,
@@ -1221,14 +1258,14 @@ describe("proc native command", () => {
       getGroupByGid: vi.fn((gid: number) => ({ name: passwd.find((u) => u.uid === gid)?.username ?? "g", gid, members: [] })),
       getGroupByName: vi.fn(() => null),
       getShadowByUsername: vi.fn((username: string) => ({ username, hash: username === "sam-agent" ? "!" : "x" })),
-    } as unknown as KernelContext["auth"];
+    };
 
     const result = await handleShellExec(
       { input: "proc agents" },
       makeContext({
         capabilities: ["account.list"],
         auth,
-        procs: { getOwnerUid: () => 1000 } as unknown as KernelContext["procs"],
+        procs: { getOwnerUid: () => 1000 },
       }),
     );
 
@@ -1260,7 +1297,7 @@ describe("proc native command", () => {
             };
           },
           spawn,
-        } as never,
+        },
       }),
     );
 
@@ -1291,7 +1328,7 @@ describe("proc native command", () => {
     const ctx = makeContext({
       identity: rootIdentity,
       capabilities: ["proc.spawn"],
-      procs: { spawn } as Partial<KernelContext["procs"]>,
+      procs: { spawn },
     });
     ctx.processId = undefined;
 
@@ -1335,7 +1372,7 @@ describe("proc native command", () => {
       { input: 'proc spawn --label facts "Generate a fact" --timeout 1m' },
       makeContext({
         capabilities: ["proc.spawn"],
-        procs: { spawn } as Partial<KernelContext["procs"]>,
+        procs: { spawn },
       }),
     );
 
@@ -1372,7 +1409,7 @@ describe("proc native command", () => {
           get: vi.fn((pid: string) => pid === parent.processId ? parent : null),
           getOwnerUid: vi.fn(() => IDENTITY.uid),
           spawn,
-        } as Partial<KernelContext["procs"]>,
+        },
       }),
     );
 
@@ -1492,7 +1529,8 @@ describe("proc native command", () => {
     const scheduleIpcCallTimeout = vi.fn(async () => "timeout-schedule");
 
     sendFrameToProcessMock.mockImplementation(async (_installationId, pid, frame) => {
-      const req = frame as any;
+      if (frame.type !== "req") throw new Error("expected process request frame");
+      const req = frame;
       if (req.call === "proc.setidentity") {
         return { type: "res", id: req.id, ok: true, data: { ok: true } };
       }
@@ -1540,8 +1578,8 @@ describe("proc native command", () => {
           },
           getOwnerUid: vi.fn(() => IDENTITY.uid),
           spawn,
-        } as unknown as KernelContext["procs"],
-        ipcCalls: ipcCalls as unknown as KernelContext["ipcCalls"],
+        },
+        ipcCalls,
         scheduleIpcCallTimeout,
         processRunId: "parent-run",
       }),
@@ -1581,7 +1619,7 @@ describe("proc native command", () => {
     const spawn = vi.fn();
     const ctx = makeContext({
       capabilities: ["proc.spawn", "proc.ipc.call"],
-      procs: { spawn } as Partial<KernelContext["procs"]>,
+      procs: { spawn },
     });
     ctx.processId = undefined;
 
@@ -1659,8 +1697,8 @@ describe("proc native command", () => {
         getOwnerUid: vi.fn(() => IDENTITY.uid),
         spawn,
         kill,
-      } as unknown as KernelContext["procs"],
-      ipcCalls: ipcCalls as unknown as KernelContext["ipcCalls"],
+      },
+      ipcCalls,
       scheduleIpcCallTimeout: vi.fn(async () => "timeout-schedule"),
       processRunId: "parent-run",
     });
@@ -1669,7 +1707,8 @@ describe("proc native command", () => {
       runRoutes: { clearForProcess: vi.fn() },
     });
     sendFrameToProcessMock.mockImplementation(async (_installationId, _pid, frame) => {
-      const req = frame as RequestFrame;
+      if (frame.type !== "req") throw new Error("expected process request frame");
+      const req = frame;
       if (req.call === "proc.setidentity") {
         return { type: "res", id: req.id, ok: true, data: { ok: true } };
       }
@@ -1750,7 +1789,7 @@ describe("proc native command", () => {
             }
             return null;
           }),
-        } as Partial<KernelContext["procs"]>,
+        },
       }),
     );
 
@@ -1821,7 +1860,7 @@ describe("proc native command", () => {
             }
             return null;
           }),
-        } as Partial<KernelContext["procs"]>,
+        },
       }),
     );
 
@@ -1944,11 +1983,11 @@ describe("fs copy", () => {
       httpMetadata: { contentType: "text/plain; charset=utf-8" },
       customMetadata: { uid: "1000", gid: "1000", mode: "644" },
     });
-    const ctx = makeContext() as KernelContext;
-    ctx.devices = {
+    const ctx = makeContext();
+    ctx.devices = focusedFixture<KernelContext["devices"]>({
       canAccess: vi.fn(() => true),
       canHandle: vi.fn(() => true),
-    } as never;
+    });
     let received = "";
 
     const result = await handleFsCopy({
@@ -1989,12 +2028,12 @@ describe("fs copy", () => {
 
   it("cancels a device copy request", async () => {
     const controller = new AbortController();
-    const ctx = makeContext() as KernelContext;
+    const ctx = makeContext();
     ctx.requestSignal = controller.signal;
-    ctx.devices = {
+    ctx.devices = focusedFixture<KernelContext["devices"]>({
       canAccess: vi.fn(() => true),
       canHandle: vi.fn(() => true),
-    } as never;
+    });
     let requestSignal: AbortSignal | undefined;
     const request = handleFsCopy({
       source: { target: "gsv", path: "/tmp/source.txt" },
@@ -2026,11 +2065,11 @@ describe("fs copy", () => {
       httpMetadata: { contentType: "text/plain; charset=utf-8" },
       customMetadata: { uid: "1000", gid: "1000", mode: "644" },
     });
-    const ctx = makeContext() as KernelContext;
-    ctx.devices = {
+    const ctx = makeContext();
+    ctx.devices = focusedFixture<KernelContext["devices"]>({
       canAccess: vi.fn(() => true),
       canHandle: vi.fn(() => true),
-    } as never;
+    });
     const result = await handleFsCopy({
       source: { target: "gsv", path: "/home/sam/copy-test/device-send-fail.txt" },
       destination: { target: "rearden", path: "/tmp/device-destination.txt" },
@@ -2058,11 +2097,11 @@ describe("fs copy", () => {
   it("streams device files to gsv", async () => {
     const destinationKey = "home/sam/copy-test/from-device.txt";
     await env.STORAGE.delete(destinationKey);
-    const ctx = makeContext() as KernelContext;
-    ctx.devices = {
+    const ctx = makeContext();
+    ctx.devices = focusedFixture<KernelContext["devices"]>({
       canAccess: vi.fn(() => true),
       canHandle: vi.fn(() => true),
-    } as never;
+    });
 
     const result = await handleFsCopy({
       source: { target: "rearden", path: "/tmp/source.txt" },
@@ -2109,11 +2148,11 @@ describe("fs copy", () => {
   });
 
   it("returns device send failures when copying to gsv", async () => {
-    const ctx = makeContext() as KernelContext;
-    ctx.devices = {
+    const ctx = makeContext();
+    ctx.devices = focusedFixture<KernelContext["devices"]>({
       canAccess: vi.fn(() => true),
       canHandle: vi.fn(() => true),
-    } as never;
+    });
     const result = await handleFsCopy({
       source: { target: "rearden", path: "/tmp/source.txt" },
       destination: { target: "gsv", path: "/home/sam/copy-test/from-device-fail.txt" },
@@ -2139,11 +2178,11 @@ describe("fs copy", () => {
   });
 
   it("streams device files directly to another device", async () => {
-    const ctx = makeContext() as KernelContext;
-    ctx.devices = {
+    const ctx = makeContext();
+    ctx.devices = focusedFixture<KernelContext["devices"]>({
       canAccess: vi.fn(() => true),
       canHandle: vi.fn(() => true),
-    } as never;
+    });
     let received = "";
 
     const result = await handleFsCopy({
@@ -2260,7 +2299,7 @@ describe("native administration shell commands", () => {
           data: {
             ok: true,
             kind: "text",
-            path: (frame.args as { path: string }).path,
+            path: frame.args.path,
             size: 5,
             contentType: "text/plain; charset=utf-8",
           },
@@ -2339,7 +2378,7 @@ describe("native administration shell commands", () => {
           ok: true,
           data: {
             ok: true,
-            deliveryId: (frame.args as { deliveryId: string }).deliveryId,
+            deliveryId: frame.args.deliveryId,
           },
         };
       }
@@ -2429,7 +2468,7 @@ describe("native administration shell commands", () => {
   });
 
   it("lists MCP servers through the native shell command", async () => {
-    const ctx = makeContext({ capabilities: ["sys.mcp.list"] }) as KernelContext;
+    const ctx = makeContext({ capabilities: ["sys.mcp.list"] });
     Object.assign(ctx, {
       mcpServers: {
         list: () => [{
@@ -2453,7 +2492,7 @@ describe("native administration shell commands", () => {
           callback_url: "",
           server_options: JSON.stringify({ transport: { type: "auto" } }),
         }],
-        listTools: () => [{ name: "lookup", description: "Lookup", inputSchema: {} }],
+        listTools: () => [{ name: "lookup", description: "Lookup", inputSchema: { type: "object" } }],
         listResources: () => [],
         listPrompts: () => [],
       },
@@ -2471,7 +2510,7 @@ describe("native administration shell commands", () => {
   });
 
   it("lists MCP tools with CodeMode function names", async () => {
-    const ctx = makeContext({ capabilities: ["sys.mcp.list"] }) as KernelContext;
+    const ctx = makeContext({ capabilities: ["sys.mcp.list"] });
     Object.assign(ctx, {
       mcpServers: {
         list: () => [{
@@ -2495,7 +2534,7 @@ describe("native administration shell commands", () => {
           callback_url: "",
           server_options: JSON.stringify({ transport: { type: "auto" } }),
         }],
-        listTools: () => [{ name: "lookup-record", description: "Lookup records", inputSchema: { required: ["query"] } }],
+        listTools: () => [{ name: "lookup-record", description: "Lookup records", inputSchema: { type: "object", required: ["query"] } }],
         listResources: () => [],
         listPrompts: () => [],
       },
@@ -2516,7 +2555,7 @@ describe("native administration shell commands", () => {
   });
 
   it("calls MCP tools through the native shell command", async () => {
-    const ctx = makeContext({ capabilities: ["sys.mcp.call"] }) as KernelContext;
+    const ctx = makeContext({ capabilities: ["sys.mcp.call"] });
     const controller = new AbortController();
     ctx.requestSignal = controller.signal;
     const callMcpTool = vi.fn(async () => ({
@@ -2547,7 +2586,7 @@ describe("native administration shell commands", () => {
           callback_url: "",
           server_options: JSON.stringify({ transport: { type: "auto" } }),
         }],
-        listTools: () => [{ name: "lookup", description: "Lookup", inputSchema: {} }],
+        listTools: () => [{ name: "lookup", description: "Lookup", inputSchema: { type: "object" } }],
         listResources: () => [],
         listPrompts: () => [],
       },
@@ -2693,13 +2732,13 @@ describe("native administration shell commands", () => {
         ? { username: "sam", uid: IDENTITY.uid, gid: IDENTITY.gid, gecos: "", home: IDENTITY.home, shell: "/bin/init" }
         : null),
       resolveGids: vi.fn(() => IDENTITY.gids),
-    } as unknown as KernelContext["auth"];
+    };
     const ctx = makeContext({
       capabilities: ["sched.add", "sched.remove", "sched.list"],
       auth,
       caps: {
         resolve: vi.fn(() => ["shell.*"]),
-      } as unknown as KernelContext["caps"],
+      },
       schedules: {
         create,
         setWakeScheduleId,
@@ -2732,7 +2771,7 @@ describe("native administration shell commands", () => {
         linkCronFileSchedule: vi.fn((path: string, scheduleId: string) => {
           links.set(path, [...(links.get(path) ?? []), scheduleId]);
         }),
-      } as unknown as KernelContext["schedules"],
+      },
       scheduleScheduleWake: wake,
     });
     await env.STORAGE.put(
@@ -2861,17 +2900,17 @@ describe("native administration shell commands", () => {
         return null;
       }),
       resolveGids: vi.fn((username: string) => username === agent.username ? agent.gids : IDENTITY.gids),
-    } as unknown as KernelContext["auth"];
+    };
     const ctx = makeContext({
       identity: agent,
       capabilities: ["sched.add", "sched.remove", "sched.list"],
       auth,
       caps: {
         resolve: vi.fn(() => ["shell.exec"]),
-      } as unknown as KernelContext["caps"],
+      },
       procs: {
         getOwnerUid: vi.fn(() => IDENTITY.uid),
-      } as Partial<KernelContext["procs"]>,
+      },
       schedules: {
         create,
         setWakeScheduleId: vi.fn(),
@@ -2911,7 +2950,7 @@ describe("native administration shell commands", () => {
         linkCronFileSchedule: vi.fn((path: string, scheduleId: string) => {
           links.set(path, [...(links.get(path) ?? []), scheduleId]);
         }),
-      } as unknown as KernelContext["schedules"],
+      },
       scheduleScheduleWake: wake,
     });
     await env.STORAGE.put(
@@ -2984,11 +3023,11 @@ describe("native administration shell commands", () => {
             uid: IDENTITY.uid,
             ownerUid: IDENTITY.uid,
           })),
-        } as Partial<KernelContext["procs"]>,
+        },
         schedules: {
           create,
           setWakeScheduleId,
-        } as unknown as KernelContext["schedules"],
+        },
         scheduleScheduleWake: wake,
       }),
     );
@@ -3026,7 +3065,12 @@ describe("native administration shell commands", () => {
     expect(current).toMatchObject({ status: "completed", exitCode: 0 });
     expect(current.stdout).toContain("directed endpoint: Telegram direct message");
     expect(current.stdout).toContain("creates a separate outbound message");
-    const destinationId = JSON.parse(currentJson.stdout).destinationId as string;
+    const currentOutput = currentDestinationOutputSchema.safeParse(
+      JSON.parse(currentJson.stdout),
+    );
+    expect(currentOutput.success).toBe(true);
+    if (!currentOutput.success) throw new Error("invalid message current output");
+    const { destinationId } = currentOutput.data;
     expect(destinationId).toMatch(/^message-destination:[0-9a-f]{64}$/);
     expect(current.stdout).toContain(`destination: ${destinationId}`);
     expect(current.stdout).not.toContain("chat-42");
@@ -3061,7 +3105,12 @@ describe("native administration shell commands", () => {
 
     const listed = await handleShellExec({ input: "message destinations --json" }, ctx);
     expect(listed).toMatchObject({ status: "completed", exitCode: 0 });
-    const destinationId = JSON.parse(listed.stdout).destinations[0].id as string;
+    const listedOutput = destinationListOutputSchema.safeParse(JSON.parse(listed.stdout));
+    expect(listedOutput.success).toBe(true);
+    if (!listedOutput.success || !listedOutput.data.destinations[0]) {
+      throw new Error("invalid message destinations output");
+    }
+    const destinationId = listedOutput.data.destinations[0].id;
     expect(destinationId).toMatch(/^message-destination:[0-9a-f]{64}$/);
     expect(listed.stdout).toContain("Telegram direct message");
     expect(listed.stdout).not.toContain("chat-42");
@@ -3092,7 +3141,7 @@ describe("native administration shell commands", () => {
     });
     const { link } = enableTelegramMessaging(ctx);
     link.metadata = { surfaceKind: "group", surfaceId: "group-42" };
-    ctx.runRoutes = {
+    ctx.runRoutes = focusedFixture<KernelContext["runRoutes"]>({
       get: vi.fn(() => ({
         kind: "adapter",
         runId: ctx.processRunId!,
@@ -3106,7 +3155,7 @@ describe("native administration shell commands", () => {
           surface: { kind: "group", id: "group-42" },
         },
       })),
-    } as unknown as KernelContext["runRoutes"];
+    });
     const target = makeProcess({
       processId: "proc:groceries",
       label: "groceries",
@@ -3398,8 +3447,8 @@ describe("native administration shell commands", () => {
     enableTelegramMessaging(ctx);
     const adapterSend = vi.fn()
       .mockRejectedValueOnce(new Error("service binding disconnected"))
-      .mockResolvedValueOnce({ ok: true as const, messageId: "msg-retried" });
-    Object.assign(ctx.env as unknown as Record<string, unknown>, {
+      .mockResolvedValueOnce({ ok: true, messageId: "msg-retried" });
+    Object.assign(ctx.env, {
       CHANNEL_TELEGRAM: { adapterSend },
     });
 
@@ -3410,7 +3459,7 @@ describe("native administration shell commands", () => {
     expect(result).toMatchObject({ status: "completed", exitCode: 0 });
     expect(result.stdout).toContain("delivery_id=logical-send-1");
     expect(adapterSend).toHaveBeenCalledTimes(2);
-    expect(adapterSend.mock.calls.map((call) => (call[2] as any).deliveryId)).toEqual([
+    expect(adapterSend.mock.calls.map((call) => call[2].deliveryId)).toEqual([
       "logical-send-1",
       "logical-send-1",
     ]);
@@ -3422,10 +3471,10 @@ describe("native administration shell commands", () => {
       processRunId: "run-telegram-ambiguous",
     });
     enableTelegramMessaging(ctx);
-    Object.assign(ctx.env as unknown as Record<string, unknown>, {
+    Object.assign(ctx.env, {
       CHANNEL_TELEGRAM: {
         adapterSend: vi.fn(async () => ({
-          ok: false as const,
+          ok: false,
           error: "provider outcome unknown",
           ambiguous: true,
         })),
@@ -3451,16 +3500,16 @@ describe("native administration shell commands", () => {
     enableTelegramMessaging(ctx);
     await handleFsWrite({ path: "/tmp/retry-share.png", content: "PNG" }, ctx);
     const adapterSend = vi.fn(async (
-      _installation: unknown,
+      _installation: string,
       _accountId: string,
-      _message: unknown,
+      _message: JsonObject,
       body?: { stream: ReadableStream<Uint8Array>; length?: number },
     ) => {
       if (body) await bodyToBytes(body);
       await env.STORAGE.delete("tmp/retry-share.png");
-      return { ok: false as const, error: "retry safely", retryable: true };
+      return { ok: false, error: "retry safely", retryable: true };
     });
-    Object.assign(ctx.env as unknown as Record<string, unknown>, {
+    Object.assign(ctx.env, {
       CHANNEL_TELEGRAM: { adapterSend },
     });
 
@@ -3487,7 +3536,7 @@ describe("native administration shell commands", () => {
       if (frame.call === "proc.media.write") {
         stagedBytes = frame.body ? await bodyToBytes(frame.body) : undefined;
         stagedKey = `var/media/1000/task:shell/${frame.args.mediaId}`;
-        return {
+        return responseFixture({
           type: "res",
           id: frame.id,
           ok: true,
@@ -3502,15 +3551,15 @@ describe("native administration shell commands", () => {
               size: 3,
             },
           },
-        } as any;
+        });
       }
       if (frame.call === "proc.run.attach") {
-        return {
+        return responseFixture({
           type: "res",
           id: frame.id,
           ok: true,
           data: { ok: true, runId: frame.args.runId, media: frame.args.media },
-        } as any;
+        });
       }
       return null;
     });
@@ -3546,7 +3595,7 @@ describe("native administration shell commands", () => {
       if (frame.call === "proc.media.write") {
         await frame.body?.stream.cancel("test does not need the bytes");
         key = `var/media/1000/task:shell/${frame.args.mediaId}`;
-        return {
+        return responseFixture({
           type: "res",
           id: frame.id,
           ok: true,
@@ -3561,18 +3610,23 @@ describe("native administration shell commands", () => {
               size: 3,
             },
           },
-        } as any;
+        });
       }
       if (frame.call === "proc.run.attach") {
-        return {
+        return responseFixture({
           type: "res",
           id: frame.id,
           ok: true,
           data: { ok: false, error: "the process run is no longer active" },
-        } as any;
+        });
       }
       if (frame.call === "proc.media.delete") {
-        return { type: "res", id: frame.id, ok: true, data: { ok: true, key } } as any;
+        return responseFixture({
+          type: "res",
+          id: frame.id,
+          ok: true,
+          data: { ok: true, key },
+        });
       }
       return null;
     });
@@ -3621,11 +3675,11 @@ describe("native administration shell commands", () => {
           ownerUid: IDENTITY.uid,
         })),
         getOwnerUid: vi.fn(() => IDENTITY.uid),
-      } as Partial<KernelContext["procs"]>,
+      },
       schedules: {
         create,
         setWakeScheduleId: vi.fn(),
-      } as unknown as KernelContext["schedules"],
+      },
       scheduleScheduleWake: vi.fn(async () => "wake-adapter-here"),
     });
     enableTelegramMessaging(ctx);
@@ -3679,7 +3733,7 @@ describe("native administration shell commands", () => {
       schedules: {
         create,
         setWakeScheduleId: vi.fn(),
-      } as unknown as KernelContext["schedules"],
+      },
       scheduleScheduleWake: vi.fn(async () => "wake-adapter-direct"),
     });
     enableTelegramMessaging(ctx);
@@ -3755,17 +3809,17 @@ describe("native administration shell commands", () => {
         procs: {
           get: vi.fn((pid: string) => [worker, caller].find((proc) => proc.processId === pid) ?? null),
           getOwnerUid: vi.fn(() => IDENTITY.uid),
-        } as Partial<KernelContext["procs"]>,
+        },
         ipcCalls: {
           findPendingByTargetRun: vi.fn(() => ({
             sourcePid: caller.processId,
             sourceRunId: null,
           })),
-        } as unknown as KernelContext["ipcCalls"],
+        },
         schedules: {
           create,
           setWakeScheduleId,
-        } as unknown as KernelContext["schedules"],
+        },
         scheduleScheduleWake: wake,
         processRunId: "run-worker",
       }),
@@ -3862,11 +3916,11 @@ describe("native administration shell commands", () => {
             ownerUid: IDENTITY.uid,
           })),
           getOwnerUid: vi.fn(() => IDENTITY.uid),
-        } as Partial<KernelContext["procs"]>,
+        },
         schedules: {
           create,
           setWakeScheduleId: vi.fn(),
-        } as unknown as KernelContext["schedules"],
+        },
         scheduleScheduleWake: vi.fn(async () => "wake-expression"),
       }),
     );
@@ -3886,7 +3940,7 @@ describe("native administration shell commands", () => {
     const create = vi.fn();
     const ctx = makeContext({
       capabilities: ["sched.add", "proc.send"],
-      schedules: { create } as Partial<KernelContext["schedules"]> as KernelContext["schedules"],
+      schedules: { create },
     });
     ctx.processId = undefined;
 
@@ -3906,7 +3960,7 @@ describe("native administration shell commands", () => {
     const create = vi.fn();
     const ctx = makeContext({
       capabilities: ["sched.add", "proc.send"],
-      schedules: { create } as Partial<KernelContext["schedules"]> as KernelContext["schedules"],
+      schedules: { create },
     });
 
     const ambiguous = await handleShellExec(
@@ -3984,7 +4038,7 @@ describe("native administration shell commands", () => {
               },
             }],
           })),
-        } as unknown as KernelContext["schedules"],
+        },
       }),
     );
 
@@ -3994,8 +4048,8 @@ describe("native administration shell commands", () => {
   });
 
   it("initializes wiki databases through the native wiki command", async () => {
-    const applyBodies: unknown[] = [];
-    const ripgit = {
+    const applyBodies: JsonObject[] = [];
+    const ripgit = focusedFixture<Fetcher>({
       async fetch(input: RequestInfo | URL, init?: RequestInit) {
         const url = new URL(String(input));
         if (url.pathname === "/hyperspace/repos/sam/memory/refs") {
@@ -4005,13 +4059,13 @@ describe("native administration shell commands", () => {
           return new Response("missing", { status: 404 });
         }
         if (url.pathname === "/hyperspace/repos/sam/memory/apply") {
-          const body = typeof init?.body === "string" ? JSON.parse(init.body) : {};
-          applyBodies.push(body);
+          const parsed = jsonObjectSchema.safeParse(JSON.parse(String(init?.body ?? "{}")));
+          applyBodies.push(parsed.success ? parsed.data : {});
           return Response.json({ ok: true, head: `head-${applyBodies.length}` });
         }
         return new Response(`unexpected ${url.pathname}`, { status: 500 });
       },
-    } as Fetcher;
+    });
 
     const result = await handleShellExec(
       { input: 'wiki db init memory --title "Sam Memory"' },
@@ -4022,10 +4076,10 @@ describe("native administration shell commands", () => {
     expect(result.exitCode).toBe(0);
     expect(result.stdout).toContain("created /src/repos/sam/memory");
     expect(applyBodies).toHaveLength(2);
-    const initBody = applyBodies[1] as {
-      message?: string;
-      ops?: Array<{ type?: string; path?: string; contentBytes?: number[] }>;
-    };
+    const parsedInitBody = wikiApplyBodySchema.safeParse(applyBodies[1]);
+    expect(parsedInitBody.success).toBe(true);
+    if (!parsedInitBody.success) throw new Error("invalid wiki apply body");
+    const initBody = parsedInitBody.data;
     expect(initBody.message).toBe("wiki: init memory");
     expect(initBody.ops).toEqual(
       expect.arrayContaining([
@@ -4041,7 +4095,7 @@ describe("native administration shell commands", () => {
   });
 
   it("searches wiki collections and returns source repo file refs", async () => {
-    const ripgit = {
+    const ripgit = focusedFixture<Fetcher>({
       async fetch(input: RequestInfo | URL) {
         const url = new URL(String(input));
         if (url.pathname.endsWith("/read")) {
@@ -4072,7 +4126,7 @@ describe("native administration shell commands", () => {
         }
         return new Response(`unexpected ${url.pathname}`, { status: 500 });
       },
-    } as Fetcher;
+    });
 
     const result = await handleShellExec(
       { input: "wiki search auth --prefix gsv-manual" },
@@ -4094,7 +4148,7 @@ describe("native administration shell commands", () => {
 
   it("preserves explicit wiki index search prefixes", async () => {
     const searchPrefixes: Array<string | null> = [];
-    const ripgit = {
+    const ripgit = focusedFixture<Fetcher>({
       async fetch(input: RequestInfo | URL) {
         const url = new URL(String(input));
         if (url.pathname.endsWith("/read")) {
@@ -4126,7 +4180,7 @@ describe("native administration shell commands", () => {
         }
         return new Response(`unexpected ${url.pathname}`, { status: 500 });
       },
-    } as Fetcher;
+    });
 
     const result = await handleShellExec(
       { input: "wiki search auth --prefix gsv-manual/index.md" },

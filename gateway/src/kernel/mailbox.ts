@@ -8,10 +8,12 @@ import type {
   ManagedMailSummary,
   ProcessIdentity,
 } from "@humansandmachines/gsv/protocol";
+import { binaryBodySchema } from "@humansandmachines/gsv/protocol";
+import { z } from "zod";
 import { isLocked } from "../auth/shadow";
 import type {
   ProcessRuntimeEventDeliverRequestFrame,
-  ProcessRuntimeEventDeliverResult,
+  ProcessRuntimeEventDeliverResponseFrame,
 } from "../protocol/process-frames";
 import { stableOpaqueId } from "../shared/stable-id";
 import { sendFrameToProcess } from "../shared/utils";
@@ -23,6 +25,70 @@ const MAX_RAW_MAIL_BYTES = 25 * 1024 * 1024;
 const MAX_PARSED_MAIL_TEXT_BYTES = 4 * 1024 * 1024;
 const MAX_MAIL_ATTACHMENTS = 256;
 const TEXT_ENCODER = new TextEncoder();
+
+const mailAddressSchema = z.strictObject({
+  address: z.string(),
+  name: z.string().optional(),
+});
+const mailAttachmentSchema = z.strictObject({
+  mimeType: z.string(),
+  size: z.number(),
+  filename: z.string().optional(),
+  disposition: z.enum(["attachment", "inline"]).optional(),
+  contentId: z.string().optional(),
+});
+const mailSummarySchema = z.strictObject({
+  summary: z.string(),
+  category: z.enum([
+    "personal",
+    "work",
+    "transactional",
+    "newsletter",
+    "spam",
+    "suspicious",
+    "other",
+  ]),
+  requiresAttention: z.boolean(),
+  confidence: z.number().min(0).max(1),
+});
+const inboundMailMetadataSchema = z.strictObject({
+  version: z.literal(1),
+  intakeId: z.string(),
+  digest: z.string(),
+  receivedAt: z.number(),
+  rawSize: z.number(),
+  envelope: z.strictObject({ from: z.string(), to: z.string() }),
+  rfcMessageId: z.string().optional(),
+  sentAt: z.number().optional(),
+  from: mailAddressSchema.optional(),
+  to: z.array(mailAddressSchema),
+  cc: z.array(mailAddressSchema),
+  replyTo: z.array(mailAddressSchema),
+  subject: z.string().optional(),
+  text: z.string().optional(),
+  html: z.string().optional(),
+  attachments: z.array(mailAttachmentSchema),
+});
+const inboundMailCompletionSchema = z.strictObject({
+  version: z.literal(1),
+  intakeId: z.string(),
+  messageId: z.string(),
+  summary: mailSummarySchema,
+});
+
+export type MailboxNotificationDependencies = {
+  ensurePersonalController(ownerUid: number, ctx: KernelContext): Promise<string>;
+  sendRuntimeEvent(
+    installationId: string,
+    pid: string,
+    frame: ProcessRuntimeEventDeliverRequestFrame,
+  ): Promise<ProcessRuntimeEventDeliverResponseFrame | null>;
+};
+
+const mailboxNotificationDependencies: MailboxNotificationDependencies = {
+  ensurePersonalController,
+  sendRuntimeEvent: sendFrameToProcess,
+};
 
 export async function acceptManagedInboundMail(
   metadataValue: ManagedInboundMailMetadata,
@@ -99,6 +165,7 @@ export async function acceptManagedInboundMail(
 export async function completeManagedInboundMail(
   completionValue: ManagedInboundMailCompletion,
   ctx: KernelContext,
+  dependencies: MailboxNotificationDependencies = mailboxNotificationDependencies,
 ): Promise<void> {
   const completion = normalizeCompletion(completionValue);
   const accepted = ctx.mailboxes.assertIntakeMessage(
@@ -113,7 +180,7 @@ export async function completeManagedInboundMail(
 
   const mailbox = ctx.mailboxes.getMailbox(summarized.mailboxId);
   if (!mailbox) throw new Error("Mail message belongs to an unknown mailbox");
-  const pid = await ensurePersonalController(mailbox.ownerUid, ctx);
+  const pid = await dependencies.ensurePersonalController(mailbox.ownerUid, ctx);
   const frame: ProcessRuntimeEventDeliverRequestFrame = {
     type: "req",
     id: crypto.randomUUID(),
@@ -131,12 +198,12 @@ export async function completeManagedInboundMail(
       },
     },
   };
-  const response = await sendFrameToProcess(ctx.installationId, pid, frame);
+  const response = await dependencies.sendRuntimeEvent(ctx.installationId, pid, frame);
   if (!response || response.type !== "res" || response.id !== frame.id) {
     throw new Error("Personal intelligence returned no valid response");
   }
   if (!response.ok) throw new Error(response.error.message);
-  const result = response.data as ProcessRuntimeEventDeliverResult | undefined;
+  const result = response.data;
   if (!result || result.eventId !== summarized.messageId) {
     throw new Error("Personal intelligence admitted an unexpected mail event");
   }
@@ -254,107 +321,73 @@ function requireHumanIdentity(ctx: KernelContext, uid: number): ProcessIdentity 
 function normalizeInboundMetadata(
   value: ManagedInboundMailMetadata,
 ): ManagedInboundMailMetadata {
-  if (!value || typeof value !== "object" || value.version !== 1) {
-    throw new Error("Managed mail metadata version is invalid");
-  }
-  const intakeId = boundedIdentifier(value.intakeId, "intakeId", 256);
-  if (!/^sha256:[0-9a-f]{64}$/.test(value.digest)) {
+  const parsed = inboundMailMetadataSchema.parse(value);
+  const intakeId = boundedIdentifier(parsed.intakeId, "intakeId", 256);
+  if (!/^sha256:[0-9a-f]{64}$/.test(parsed.digest)) {
     throw new Error("Managed mail digest is invalid");
   }
-  const receivedAt = validTimestamp(value.receivedAt, "receivedAt");
+  const receivedAt = validTimestamp(parsed.receivedAt, "receivedAt");
   if (
-    !Number.isSafeInteger(value.rawSize)
-    || value.rawSize <= 0
-    || value.rawSize > MAX_RAW_MAIL_BYTES
+    !Number.isSafeInteger(parsed.rawSize)
+    || parsed.rawSize <= 0
+    || parsed.rawSize > MAX_RAW_MAIL_BYTES
   ) {
     throw new Error("Managed mail raw size is invalid");
   }
-  if (!value.envelope || typeof value.envelope !== "object") {
-    throw new Error("Managed mail envelope is invalid");
-  }
   const envelope = {
-    from: normalizeEnvelopeAddress(value.envelope.from, "envelope.from"),
-    to: normalizeEnvelopeAddress(value.envelope.to, "envelope.to"),
+    from: normalizeEnvelopeAddress(parsed.envelope.from, "envelope.from"),
+    to: normalizeEnvelopeAddress(parsed.envelope.to, "envelope.to"),
   };
   const text = optionalBoundedText(
-    value.text,
+    parsed.text,
     "text",
     MAX_PARSED_MAIL_TEXT_BYTES,
     false,
   );
   const html = optionalBoundedText(
-    value.html,
+    parsed.html,
     "html",
     MAX_PARSED_MAIL_TEXT_BYTES,
     false,
   );
-  return {
+  const normalized: ManagedInboundMailMetadata = {
     version: 1,
     intakeId,
-    digest: value.digest,
+    digest: parsed.digest,
     receivedAt,
-    rawSize: value.rawSize,
+    rawSize: parsed.rawSize,
     envelope,
-    ...(value.rfcMessageId === undefined
-      ? {}
-      : { rfcMessageId: boundedText(value.rfcMessageId, "rfcMessageId", 2_048, true) }),
-    ...(value.sentAt === undefined
-      ? {}
-      : { sentAt: validTimestamp(value.sentAt, "sentAt") }),
-    ...(value.from === undefined ? {} : { from: normalizeMailAddress(value.from, "from") }),
-    to: normalizeAddressList(value.to, "to"),
-    cc: normalizeAddressList(value.cc, "cc"),
-    replyTo: normalizeAddressList(value.replyTo, "replyTo"),
-    ...(value.subject === undefined
-      ? {}
-      : { subject: boundedText(value.subject, "subject", 4_096, true) }),
-    ...(text === undefined ? {} : { text }),
-    ...(html === undefined ? {} : { html }),
-    attachments: normalizeAttachments(value.attachments, value.rawSize),
+    to: normalizeAddressList(parsed.to, "to"),
+    cc: normalizeAddressList(parsed.cc, "cc"),
+    replyTo: normalizeAddressList(parsed.replyTo, "replyTo"),
+    attachments: normalizeAttachments(parsed.attachments, parsed.rawSize),
   };
+  if (parsed.rfcMessageId !== undefined) {
+    normalized.rfcMessageId = boundedText(parsed.rfcMessageId, "rfcMessageId", 2_048, true);
+  }
+  if (parsed.sentAt !== undefined) normalized.sentAt = validTimestamp(parsed.sentAt, "sentAt");
+  if (parsed.from !== undefined) normalized.from = normalizeMailAddress(parsed.from, "from");
+  if (parsed.subject !== undefined) {
+    normalized.subject = boundedText(parsed.subject, "subject", 4_096, true);
+  }
+  if (text !== undefined) normalized.text = text;
+  if (html !== undefined) normalized.html = html;
+  return normalized;
 }
 
 function normalizeCompletion(
   value: ManagedInboundMailCompletion,
 ): ManagedInboundMailCompletion {
-  if (!value || typeof value !== "object" || value.version !== 1) {
-    throw new Error("Managed mail completion version is invalid");
-  }
+  const parsed = inboundMailCompletionSchema.parse(value);
   return {
     version: 1,
-    intakeId: boundedIdentifier(value.intakeId, "intakeId", 256),
-    messageId: boundedIdentifier(value.messageId, "messageId", 256),
-    summary: normalizeSummary(value.summary),
+    intakeId: boundedIdentifier(parsed.intakeId, "intakeId", 256),
+    messageId: boundedIdentifier(parsed.messageId, "messageId", 256),
+    summary: normalizeSummary(parsed.summary),
   };
 }
 
 function normalizeSummary(value: ManagedMailSummary): ManagedMailSummary {
-  if (!value || typeof value !== "object") {
-    throw new Error("Managed mail summary is invalid");
-  }
-  const categories = new Set([
-    "personal",
-    "work",
-    "transactional",
-    "newsletter",
-    "spam",
-    "suspicious",
-    "other",
-  ]);
-  if (!categories.has(value.category)) {
-    throw new Error("Managed mail summary category is invalid");
-  }
-  if (typeof value.requiresAttention !== "boolean") {
-    throw new Error("Managed mail attention flag is invalid");
-  }
-  if (
-    typeof value.confidence !== "number"
-    || !Number.isFinite(value.confidence)
-    || value.confidence < 0
-    || value.confidence > 1
-  ) {
-    throw new Error("Managed mail confidence is invalid");
-  }
   return {
     summary: boundedText(value.summary, "summary", 280, false),
     category: value.category,
@@ -371,15 +404,13 @@ function normalizeAddressList(value: ManagedMailAddress[], name: string): Manage
 }
 
 function normalizeMailAddress(value: ManagedMailAddress, name: string): ManagedMailAddress {
-  if (!value || typeof value !== "object") {
-    throw new Error(`Managed mail ${name} address is invalid`);
-  }
-  return {
+  const normalized: ManagedMailAddress = {
     address: normalizeEnvelopeAddress(value.address, `${name}.address`),
-    ...(value.name === undefined
-      ? {}
-      : { name: boundedText(value.name, `${name}.name`, 512, true) }),
   };
+  if (value.name !== undefined) {
+    normalized.name = boundedText(value.name, `${name}.name`, 512, true);
+  }
+  return normalized;
 }
 
 function normalizeAttachments(
@@ -390,9 +421,6 @@ function normalizeAttachments(
     throw new Error("Managed mail attachments are invalid");
   }
   return value.map((attachment, index) => {
-    if (!attachment || typeof attachment !== "object") {
-      throw new Error(`Managed mail attachment ${index} is invalid`);
-    }
     if (
       !Number.isSafeInteger(attachment.size)
       || attachment.size < 0
@@ -407,22 +435,35 @@ function normalizeAttachments(
     ) {
       throw new Error(`Managed mail attachment ${index} disposition is invalid`);
     }
-    return {
+    const normalized: ManagedMailAttachmentMetadata = {
       mimeType: boundedText(attachment.mimeType, `attachments[${index}].mimeType`, 256, false),
       size: attachment.size,
-      ...(attachment.filename === undefined
-        ? {}
-        : { filename: boundedText(attachment.filename, `attachments[${index}].filename`, 1_024, true) }),
-      ...(attachment.disposition === undefined ? {} : { disposition: attachment.disposition }),
-      ...(attachment.contentId === undefined
-        ? {}
-        : { contentId: boundedText(attachment.contentId, `attachments[${index}].contentId`, 1_024, true) }),
     };
+    if (attachment.filename !== undefined) {
+      normalized.filename = boundedText(
+        attachment.filename,
+        `attachments[${index}].filename`,
+        1_024,
+        true,
+      );
+    }
+    if (attachment.disposition !== undefined) {
+      normalized.disposition = attachment.disposition;
+    }
+    if (attachment.contentId !== undefined) {
+      normalized.contentId = boundedText(
+        attachment.contentId,
+        `attachments[${index}].contentId`,
+        1_024,
+        true,
+      );
+    }
+    return normalized;
   });
 }
 
 function assertInboundBody(body: BinaryBody, rawSize: number): void {
-  if (!body || typeof body !== "object" || !(body.stream instanceof ReadableStream)) {
+  if (!binaryBodySchema.safeParse(body).success) {
     throw new Error("Managed mail body is invalid");
   }
   if (body.stream.locked) throw new Error("Managed mail body is already locked");
@@ -431,7 +472,7 @@ function assertInboundBody(body: BinaryBody, rawSize: number): void {
   }
 }
 
-function normalizeEnvelopeAddress(value: unknown, name: string): string {
+function normalizeEnvelopeAddress(value: string, name: string): string {
   const address = boundedText(value, name, 512, false).toLowerCase();
   const separator = address.lastIndexOf("@");
   if (separator <= 0 || separator === address.length - 1 || /\s/.test(address)) {
@@ -440,23 +481,23 @@ function normalizeEnvelopeAddress(value: unknown, name: string): string {
   return address;
 }
 
-function boundedIdentifier(value: unknown, name: string, maxBytes: number): string {
+function boundedIdentifier(value: string, name: string, maxBytes: number): string {
   const normalized = boundedText(value, name, maxBytes, false).trim();
-  if (/[\u0000-\u001f\u007f]/.test(normalized)) {
+  if ([...normalized].some((character) => {
+    const code = character.codePointAt(0) ?? 0;
+    return code <= 0x1f || code === 0x7f;
+  })) {
     throw new Error(`Managed mail ${name} is invalid`);
   }
   return normalized;
 }
 
 function boundedText(
-  value: unknown,
+  value: string,
   name: string,
   maxBytes: number,
   allowEmpty: boolean,
 ): string {
-  if (typeof value !== "string") {
-    throw new Error(`Managed mail ${name} must be a string`);
-  }
   if ((!allowEmpty && value.length === 0) || TEXT_ENCODER.encode(value).byteLength > maxBytes) {
     throw new Error(`Managed mail ${name} is invalid`);
   }
@@ -464,7 +505,7 @@ function boundedText(
 }
 
 function optionalBoundedText(
-  value: unknown,
+  value: string | undefined,
   name: string,
   maxBytes: number,
   allowEmpty: boolean,
@@ -474,10 +515,9 @@ function optionalBoundedText(
     : boundedText(value, name, maxBytes, allowEmpty);
 }
 
-function validTimestamp(value: unknown, name: string): number {
+function validTimestamp(value: number, name: string): number {
   if (
-    typeof value !== "number"
-    || !Number.isSafeInteger(value)
+    !Number.isSafeInteger(value)
     || value < 0
     || value > 8_640_000_000_000_000
   ) {

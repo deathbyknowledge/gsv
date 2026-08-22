@@ -166,6 +166,7 @@ async function clearHomeStorage(): Promise<void> {
 
 function createDelegatingBackend() {
   return createAccountHomeBackend(env.STORAGE, fakeRipgit, ALICE, {
+    // SAFETY: The test auth double implements only the methods exercised by this backend.
     auth: auth as never,
     ownerUid: ALICE.uid,
     isRoot: false,
@@ -174,6 +175,7 @@ function createDelegatingBackend() {
 
 function createPersonalAgentBackend() {
   return createAccountHomeBackend(env.STORAGE, fakeRipgit, PERSONAL_AGENT, {
+    // SAFETY: The test auth double implements only the methods exercised by this backend.
     auth: auth as never,
     ownerUid: ALICE.uid,
     isRoot: false,
@@ -236,6 +238,7 @@ describe("AccountHomeMountBackend delegated routing", () => {
       },
     } satisfies Fetcher;
     const backend = createAccountHomeBackend(env.STORAGE, ripgit, ALICE, {
+      // SAFETY: The test auth double implements only the methods exercised by this backend.
       auth: auth as never,
       ownerUid: ALICE.uid,
       isRoot: false,
@@ -298,6 +301,7 @@ describe("AccountHomeMountBackend delegated routing", () => {
     await expect(fs.readdir("/home/bob")).rejects.toThrow("EACCES");
 
     const rootBackend = createAccountHomeBackend(env.STORAGE, fakeRipgit, ROOT, {
+      // SAFETY: The test auth double implements only the methods exercised by this backend.
       auth: auth as never,
       ownerUid: ROOT.uid,
       isRoot: true,
@@ -325,6 +329,7 @@ describe("AccountHomeMountBackend delegated routing", () => {
     const ripgit = {
       async fetch(_input: RequestInfo | URL, init?: RequestInit) {
         if (init?.method === "POST") {
+          // SAFETY: The ripgit request body is produced by the backend's known operation encoder.
           const body = JSON.parse(String(init.body)) as { ops: Array<{ contentBytes: number[] }> };
           applied = body.ops[0].contentBytes;
           return Response.json({ ok: true, head: "test" });
@@ -429,6 +434,7 @@ describe("AccountHomeMountBackend delegated routing", () => {
       .rejects
       .toThrow("EACCES");
     expect(cancelled).toBeInstanceOf(Error);
+    // SAFETY: The cancelled promise is asserted to reject with the backend's Error contract.
     expect((cancelled as Error).message).toContain("EACCES");
     await expect(env.STORAGE.get(archiveKey).then((object) => object?.arrayBuffer()))
       .resolves

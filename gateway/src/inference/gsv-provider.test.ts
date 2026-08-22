@@ -52,13 +52,17 @@ describe("GSV inference provider", () => {
       abort: vi.fn(),
     };
 
+    // SAFETY: The fixture implements the Env binding consumed by provider registration.
     expect(gsvInferenceProviderFactoryFromEnv({
       MANAGED_INFERENCE: service,
     } as Env)).toMatchObject({ id: "gsv" });
+    // SAFETY: The fixture implements the Env binding consumed by provider registration.
     expect(gsvInferenceFeaturesFromEnv({
       MANAGED_INFERENCE: service,
     } as Env)).toEqual([GSV_INFERENCE_FEATURE]);
+    // SAFETY: An empty Env fixture represents an absent optional binding.
     expect(gsvInferenceProviderFactoryFromEnv({} as Env)).toBeUndefined();
+    // SAFETY: An empty Env fixture represents an absent optional binding.
     expect(gsvInferenceFeaturesFromEnv({} as Env)).toEqual([]);
   });
 

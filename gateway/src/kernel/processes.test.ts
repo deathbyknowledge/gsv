@@ -5,7 +5,7 @@ import { runWithRealKernelSql } from "../test-support/real-kernel-sql";
 
 describe("ProcessRegistry", () => {
   const registryTest = it.extend<{ registry: ProcessRegistry }>({
-    registry: async ({}, use) => {
+    registry: async ({ task: _task }, use) => {
       await runWithRealKernelSql((sql) => use(new ProcessRegistry(sql)));
     },
   });

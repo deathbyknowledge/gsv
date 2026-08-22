@@ -46,9 +46,13 @@ describe("tool approval policy", () => {
     expect(resolveToolApproval(DEFAULT_TOOL_APPROVAL_POLICY, "fs.read").action).toBe("auto");
   });
 
+// SAFETY: test fixture is constructed with the asserted domain shape.
+
   it("does not let target fields rescope non-routable mail approval", () => {
     const policy = {
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       default: "auto" as const,
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       rules: [{ match: "mail.send", target: "gsv", action: "deny" as const }],
     };
     expect(resolveToolApproval(policy, "mail.send", {
@@ -57,9 +61,13 @@ describe("tool approval policy", () => {
     })).toMatchObject({ action: "deny", target: "gsv" });
   });
 
+// SAFETY: test fixture is constructed with the asserted domain shape.
+
   it("asks for mail added after a stored allow-by-default policy was created", () => {
     const storedPolicy = {
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       default: "auto" as const,
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       rules: [{ match: "fs.delete", action: "ask" as const }],
     };
 

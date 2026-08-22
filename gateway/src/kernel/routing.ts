@@ -86,7 +86,9 @@ export class RoutingTable {
 
     const row = rows[0];
     return {
+      // SAFETY: routing rows are written only with the RouteOrigin discriminator contract.
       origin: { type: row.origin_type as RouteOrigin["type"], id: row.origin_id },
+      // SAFETY: routing rows are written only with the registered syscall contract.
       call: row.call as SyscallName,
       deviceId: row.device_id,
       driverConnectionId: row.driver_connection_id,
@@ -115,7 +117,9 @@ export class RoutingTable {
     const row = rows[0];
     return {
       id: row.id,
+      // SAFETY: routing rows are written only with the registered syscall contract.
       call: row.call as SyscallName,
+      // SAFETY: routing rows are written only with the RouteOrigin discriminator contract.
       origin: { type: row.origin_type as RouteOrigin["type"], id: row.origin_id },
       deviceId: row.device_id,
       driverConnectionId: row.driver_connection_id,
@@ -144,6 +148,7 @@ export class RoutingTable {
 
     return rows.map((row) => ({
       id: row.id,
+      // SAFETY: routing rows are written only with the RouteOrigin discriminator contract.
       origin: { type: row.origin_type as RouteOrigin["type"], id: row.origin_id },
       deviceId: row.device_id,
       scheduleId: row.schedule_id,
@@ -172,6 +177,7 @@ export class RoutingTable {
 
     return rows.map((row) => ({
       id: row.id,
+      // SAFETY: routing rows are written only with the RouteOrigin discriminator contract.
       origin: { type: row.origin_type as RouteOrigin["type"], id: row.origin_id },
       deviceId: row.device_id,
       scheduleId: row.schedule_id,

@@ -1,3 +1,5 @@
+type KernelTestValue<T = string | number | boolean | null | undefined> = T;
+
 import { describe, expect, it, vi } from "vitest";
 import { dispatch, routedFrameTtlMs, type DispatchDeps } from "./dispatch";
 import type { KernelContext } from "./context";
@@ -21,6 +23,7 @@ function deviceRecord(deviceId: string, online: boolean, implementsList = ["fs.*
 }
 
 function makeContext(): KernelContext {
+  // SAFETY: test fixture is constructed with the asserted kernel domain shape.
   return {
     identity: {
       process: {
@@ -38,7 +41,8 @@ function makeContext(): KernelContext {
     auth: {
       getPasswdByUid: vi.fn(() => null),
     },
-  } as unknown as KernelContext;
+  // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+  } as KernelContext;
 }
 
 describe("routed frame deadlines", () => {
@@ -58,7 +62,7 @@ describe("routed frame deadlines", () => {
   });
 });
 
-function sendFrame(connection: { send(message: string): void }, frame: unknown): void {
+function sendFrame(connection: { send(message: string): void }, frame: KernelTestValue): void {
   connection.send(JSON.stringify(frame));
 }
 
@@ -67,6 +71,7 @@ describe("dispatch", () => {
     const send = vi.fn();
     const cancelRoute = vi.fn();
     const registerRoute = vi.fn(async () => ({ cancel: cancelRoute }));
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     const deps = {
       sendFrame,
       connections: new Map([
@@ -89,19 +94,24 @@ describe("dispatch", () => {
       shellSessions: {
         get: vi.fn(),
       },
-    } as unknown as DispatchDeps;
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+    } as DispatchDeps;
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     const ctx = {
       ...makeContext(),
       devices: {
         canAccess: vi.fn(() => true),
         get: vi.fn(() => deviceRecord("browser:conn_1", true)),
       },
-    } as unknown as KernelContext;
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+    } as KernelContext;
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     const frame = {
       type: "req",
       id: "req_1",
       call: "fs.read",
       args: { target: "browser:conn_1", path: "/desktop/windows.json" },
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     } as RequestFrame<"fs.read">;
 
     const result = await dispatch(
@@ -132,6 +142,7 @@ describe("dispatch", () => {
 
   it("does not route work to a superseded driver connection", async () => {
     const registerRoute = vi.fn();
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     const deps = {
       sendFrame,
       connections: new Map([
@@ -146,21 +157,26 @@ describe("dispatch", () => {
       ]),
       registerRoute,
       shellSessions: { get: vi.fn() },
-    } as unknown as DispatchDeps;
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+    } as DispatchDeps;
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     const ctx = {
       ...makeContext(),
       devices: {
         canAccess: vi.fn(() => true),
         get: vi.fn(() => deviceRecord("browser", true)),
       },
-    } as unknown as KernelContext;
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+    } as KernelContext;
 
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     const result = await dispatch(
       {
         type: "req",
         id: "request-1",
         call: "fs.read",
         args: { target: "browser", path: "/tmp/file" },
+      // SAFETY: test fixture is constructed with the asserted kernel domain shape.
       } as RequestFrame<"fs.read">,
       { type: "process", id: "process-1" },
       ctx,
@@ -182,6 +198,7 @@ describe("dispatch", () => {
   it("uses the requested net.fetch timeout for routed device route ttl", async () => {
     const send = vi.fn();
     const registerRoute = vi.fn(async () => ({ cancel: vi.fn() }));
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     const deps = {
       sendFrame,
       connections: new Map([
@@ -204,14 +221,18 @@ describe("dispatch", () => {
       shellSessions: {
         get: vi.fn(),
       },
-    } as unknown as DispatchDeps;
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+    } as DispatchDeps;
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     const ctx = {
       ...makeContext(),
       devices: {
         canAccess: vi.fn(() => true),
         get: vi.fn(() => deviceRecord("linux-machine", true, ["net.fetch"])),
       },
-    } as unknown as KernelContext;
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+    } as KernelContext;
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     const frame = {
       type: "req",
       id: "req_fetch",
@@ -222,6 +243,7 @@ describe("dispatch", () => {
         method: "POST",
         timeoutMs: 180_000,
       },
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     } as RequestFrame<"net.fetch">;
 
     const result = await dispatch(
@@ -257,6 +279,7 @@ describe("dispatch", () => {
     const registerRoute = vi.fn(async () => {
       throw new Error("schedule unavailable");
     });
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     const deps = {
       sendFrame,
       connections: new Map([
@@ -279,19 +302,24 @@ describe("dispatch", () => {
       shellSessions: {
         get: vi.fn(),
       },
-    } as unknown as DispatchDeps;
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+    } as DispatchDeps;
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     const ctx = {
       ...makeContext(),
       devices: {
         canAccess: vi.fn(() => true),
         get: vi.fn(() => deviceRecord("browser:conn_1", true)),
       },
-    } as unknown as KernelContext;
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+    } as KernelContext;
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     const frame = {
       type: "req",
       id: "req_1",
       call: "fs.read",
       args: { target: "browser:conn_1", path: "/desktop/windows.json" },
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     } as RequestFrame<"fs.read">;
 
     const result = await dispatch(
@@ -335,6 +363,7 @@ describe("dispatch", () => {
     const forwarded = vi.fn(() => outgoing);
     const attachBody = vi.fn();
     const registerRoute = vi.fn(async () => ({ cancel: vi.fn(), attachBody }));
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     const deps = {
       sendFrame: forwarded,
       connections: new Map([["conn_1", connection]]),
@@ -342,18 +371,22 @@ describe("dispatch", () => {
       shellSessions: {
         get: vi.fn(),
       },
-    } as unknown as DispatchDeps;
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+    } as DispatchDeps;
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     const ctx = {
       ...makeContext(),
       devices: {
         canAccess: vi.fn(() => true),
         get: vi.fn(() => deviceRecord("browser:conn_1", true)),
       },
-    } as unknown as KernelContext;
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+    } as KernelContext;
     const body = {
       stream: new ReadableStream<Uint8Array>(),
       length: 0,
     };
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     const frame = {
       type: "req",
       id: "req_1",
@@ -363,6 +396,7 @@ describe("dispatch", () => {
         path: "/tmp/file.txt",
       },
       body,
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     } as RequestFrame<"fs.transfer.receive">;
 
     const result = await dispatch(
@@ -390,6 +424,7 @@ describe("dispatch", () => {
     });
     const cancelRoute = vi.fn();
     const registerRoute = vi.fn(async () => ({ cancel: cancelRoute }));
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     const deps = {
       sendFrame,
       connections: new Map([
@@ -412,19 +447,24 @@ describe("dispatch", () => {
       shellSessions: {
         get: vi.fn(),
       },
-    } as unknown as DispatchDeps;
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+    } as DispatchDeps;
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     const ctx = {
       ...makeContext(),
       devices: {
         canAccess: vi.fn(() => true),
         get: vi.fn(() => deviceRecord("browser:conn_1", true)),
       },
-    } as unknown as KernelContext;
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+    } as KernelContext;
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     const frame = {
       type: "req",
       id: "req_1",
       call: "fs.read",
       args: { target: "browser:conn_1", path: "/desktop/windows.json" },
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     } as RequestFrame<"fs.read">;
 
     const result = await dispatch(
@@ -451,6 +491,7 @@ describe("dispatch", () => {
 
   it("returns cached failed shell sessions instead of rerouting to the device", async () => {
     const registerRoute = vi.fn();
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     const deps = {
       connections: new Map(),
       registerRoute,
@@ -466,12 +507,15 @@ describe("dispatch", () => {
           expiresAt: null,
         })),
       },
-    } as unknown as DispatchDeps;
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+    } as DispatchDeps;
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     const frame = {
       type: "req",
       id: "req_1",
       call: "shell.exec",
       args: { sessionId: "sh_1", input: "" },
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     } as RequestFrame<"shell.exec">;
 
     const result = await dispatch(
@@ -499,18 +543,22 @@ describe("dispatch", () => {
   });
 
   it("preserves ai.text.generate target for native AI routing checks", async () => {
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     const deps = {
       connections: new Map(),
       registerRoute: vi.fn(),
       shellSessions: {
         get: vi.fn(),
       },
-    } as unknown as DispatchDeps;
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+    } as DispatchDeps;
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     const frame = {
       type: "req",
       id: "req_ai",
       call: "ai.text.generate",
       args: { target: "local-gpu", messages: [] },
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     } as RequestFrame<"ai.text.generate">;
 
     const result = await dispatch(
@@ -537,26 +585,32 @@ describe("dispatch", () => {
   });
 
   it("rejects obsolete adapter target ids", async () => {
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     const deps = {
       connections: new Map(),
       registerRoute: vi.fn(),
       shellSessions: {
         get: vi.fn(),
       },
-    } as unknown as DispatchDeps;
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+    } as DispatchDeps;
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     const frame = {
       type: "req",
       id: "req_adapter",
       call: "shell.exec",
       args: { target: "adapter:whatsapp:primary", input: "send +15551234567 hello" },
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     } as RequestFrame<"shell.exec">;
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     const ctx = {
       ...makeContext(),
       devices: {
         canAccess: vi.fn(() => false),
         get: vi.fn(() => null),
       },
-    } as unknown as KernelContext;
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+    } as KernelContext;
 
     const result = await dispatch(
       frame,

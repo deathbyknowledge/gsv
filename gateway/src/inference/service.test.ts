@@ -5,27 +5,32 @@ const streamPiAiSimpleMock = vi.hoisted(() => vi.fn());
 const completeWithOpenAiCodexFetchMock = vi.hoisted(() => vi.fn());
 const streamWithOpenAiCodexFetchMock = vi.hoisted(() => vi.fn());
 
-vi.mock("./pi-ai", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("./pi-ai")>();
-  return {
-    ...actual,
-    completePiAiSimple: completePiAiSimpleMock,
-    streamPiAiSimple: streamPiAiSimpleMock,
-  };
-});
-
-vi.mock("./openai-codex", () => ({
-  completeWithOpenAiCodexFetch: completeWithOpenAiCodexFetchMock,
-  streamWithOpenAiCodexFetch: streamWithOpenAiCodexFetchMock,
-}));
-
 import {
-  createGenerationService,
+  createGenerationService as createProductionGenerationService,
   describeGeneratedTextFailure,
   extractGeneratedText,
   resolveGenerationOptions,
   resolveGenerationTimeoutMs,
 } from "./service";
+
+function createGenerationService(
+  options: Parameters<typeof createProductionGenerationService>[0] = {},
+) {
+  return createProductionGenerationService({
+    ...options,
+    transports: {
+      completePiAiSimple: completePiAiSimpleMock,
+      streamPiAiSimple: streamPiAiSimpleMock,
+      completeWithOpenAiCodexFetch: completeWithOpenAiCodexFetchMock,
+      streamWithOpenAiCodexFetch: streamWithOpenAiCodexFetchMock,
+    },
+  });
+}
+
+function makeFetchFixture(): typeof fetch {
+  // SAFETY: This fetch fixture is only passed through routing options and never called.
+  return vi.fn() as typeof fetch;
+}
 import {
   encodeManagedInferenceStreamEvent,
   GSV_INFERENCE_MODEL,
@@ -279,7 +284,7 @@ describe("createGenerationService", () => {
 
   it("passes a routed fetch to built-in provider completions", async () => {
     const message = assistantMessage([{ type: "text", text: "pong" }]);
-    const fetchImpl = vi.fn() as unknown as typeof fetch;
+    const fetchImpl = makeFetchFixture();
     completePiAiSimpleMock.mockResolvedValueOnce(message);
 
     await createGenerationService({ fetch: fetchImpl }).generate({
@@ -297,7 +302,7 @@ describe("createGenerationService", () => {
 
   it("passes a request fetch to built-in provider streams", () => {
     const message = assistantMessage([{ type: "text", text: "pong" }]);
-    const fetchImpl = vi.fn() as unknown as typeof fetch;
+    const fetchImpl = makeFetchFixture();
     const providerStream = {
       result: vi.fn(() => Promise.resolve(message)),
     };
@@ -319,7 +324,7 @@ describe("createGenerationService", () => {
   });
 
   it("rejects a routed fetch for binding-backed Workers AI", async () => {
-    const fetchImpl = vi.fn() as unknown as typeof fetch;
+    const fetchImpl = makeFetchFixture();
 
     await expect(createGenerationService({ fetch: fetchImpl }).generate({
       config: {
@@ -382,7 +387,7 @@ describe("createGenerationService", () => {
 
   it("uses the routed OpenAI Codex transport when a fetch implementation is provided", async () => {
     const message = assistantMessage([{ type: "text", text: "pong" }]);
-    const fetchImpl = vi.fn() as unknown as typeof fetch;
+    const fetchImpl = makeFetchFixture();
     completeWithOpenAiCodexFetchMock.mockResolvedValueOnce(message);
 
     await createGenerationService({ fetch: fetchImpl }).generate({
@@ -412,7 +417,7 @@ describe("createGenerationService", () => {
 
   it("does not route OpenAI Codex through the generic custom-provider path when custom fields are set", async () => {
     const message = assistantMessage([{ type: "text", text: "pong" }]);
-    const fetchImpl = vi.fn() as unknown as typeof fetch;
+    const fetchImpl = makeFetchFixture();
     completeWithOpenAiCodexFetchMock.mockResolvedValueOnce(message);
 
     await createGenerationService({ fetch: fetchImpl }).generate({
@@ -444,7 +449,7 @@ describe("createGenerationService", () => {
     const controller = new AbortController();
     let providerSignal: AbortSignal | undefined;
     completePiAiSimpleMock.mockImplementationOnce((
-      _model: unknown,
+      _model: string,
       _context: Context,
       options?: { signal?: AbortSignal },
     ) => {
@@ -470,7 +475,7 @@ describe("createGenerationService", () => {
   it("combines caller cancellation with the stream timeout signal", async () => {
     const controller = new AbortController();
     let providerSignal: AbortSignal | undefined;
-    let rejectResult: (reason: unknown) => void = () => {};
+    let rejectResult: (reason: Error) => void = () => {};
     const result = new Promise<AssistantMessage>((_resolve, reject) => {
       rejectResult = reject;
     });
@@ -478,7 +483,7 @@ describe("createGenerationService", () => {
       result: vi.fn(() => result),
     };
     streamPiAiSimpleMock.mockImplementationOnce((
-      _model: unknown,
+      _model: string,
       _context: Context,
       options?: { signal?: AbortSignal },
     ) => {
@@ -567,6 +572,7 @@ describe("resolveGenerationTimeoutMs", () => {
   it("defaults legacy persisted configs without a generation timeout", () => {
     const { generationTimeoutMs: _generationTimeoutMs, ...legacyConfig } = CONFIG;
 
+    // SAFETY: Removing the optional timeout preserves the persisted AiConfigResult contract.
     expect(resolveGenerationTimeoutMs(legacyConfig as AiConfigResult)).toBe(180000);
   });
 });

@@ -3,6 +3,7 @@ import {
   DEFAULT_AUDIO_TRANSCRIPTION_TIMEOUT_MS,
   transcribeAudioWithWorkersAi,
 } from "./transcription";
+import type { AudioTranscriptionBinding } from "./transcription";
 
 afterEach(() => {
   vi.useRealTimers();
@@ -12,7 +13,7 @@ describe("Workers AI transcription", () => {
   it("propagates caller cancellation to the binding", async () => {
     const controller = new AbortController();
     let bindingSignal: AbortSignal | undefined;
-    const run = vi.fn((_model: string, _input: unknown, options?: { signal?: AbortSignal }) => {
+    const run = vi.fn((_model: string, _input: Parameters<AudioTranscriptionBinding["run"]>[1], options?: { signal?: AbortSignal }) => {
       bindingSignal = options?.signal;
       return new Promise<never>(() => {});
     });
@@ -33,7 +34,7 @@ describe("Workers AI transcription", () => {
   it("aborts a transcription that exceeds its bounded timeout", async () => {
     vi.useFakeTimers();
     let bindingSignal: AbortSignal | undefined;
-    const run = vi.fn((_model: string, _input: unknown, options?: { signal?: AbortSignal }) => {
+    const run = vi.fn((_model: string, _input: Parameters<AudioTranscriptionBinding["run"]>[1], options?: { signal?: AbortSignal }) => {
       bindingSignal = options?.signal;
       return new Promise<never>(() => {});
     });

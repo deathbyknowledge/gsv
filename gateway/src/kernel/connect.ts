@@ -14,6 +14,7 @@ import type {
   ConnectArgs,
   ConnectResult,
   ConnectionIdentity,
+  JsonValue,
   ProcessIdentity,
 } from "@humansandmachines/gsv/protocol";
 import type { AuthTokenRole } from "./auth-store";
@@ -28,14 +29,15 @@ import { gsvInferenceFeaturesFromEnv } from "../inference/gsv-provider";
 
 export type ConnectOutcome =
   | { ok: true; identity: ConnectionIdentity; result: ConnectResult }
-  | { ok: false; code: number; message: string; details?: unknown };
+  | { ok: false; code: number; message: string; details?: JsonValue };
 
 export const SETUP_REQUIRED_ERROR_CODE = 425;
+type SetupRequiredDetails = { setupMode: true; next: "sys.setup" };
 
 const DRIVER_CONNECTION_CAPABILITIES: string[] = [];
 const SERVICE_CAPABILITY_GIDS = [102];
 
-export function setupRequiredDetails(): { setupMode: true; next: "sys.setup" } {
+export function setupRequiredDetails(): SetupRequiredDetails {
   return { setupMode: true, next: "sys.setup" };
 }
 
@@ -104,6 +106,7 @@ export async function handleConnect(
   await ensureKernelBootstrapped(ctx);
 
   if (auth.isSetupMode()) {
+    // SAFETY: the Workers environment may expose the managed installation binding at runtime.
     if ((ctx.env as Env & { INSTALLATION_DIRECTORY?: unknown }).INSTALLATION_DIRECTORY) {
       return {
         ok: false,
@@ -201,15 +204,15 @@ export async function handleConnect(
     server: {
       version: serverVersion,
       release: SERVER_RELEASE,
-      ...(serverFeatures.length > 0
-        ? { features: serverFeatures }
-        : {}),
       connectionId: ctx.connection.id,
     },
     identity: connectionIdentity,
     syscalls: capabilities,
     signals: buildSignalList(role),
   };
+  if (serverFeatures.length > 0) {
+    result.server.features = serverFeatures;
+  }
 
   return { ok: true, identity: connectionIdentity, result };
 }
@@ -267,6 +270,7 @@ async function resolveIdentity(
     if (!hasToken) {
       return { ok: false, error: "Token required for machine connections" };
     }
+    // SAFETY: role is narrowed to a machine role by the enclosing branch.
     const machineRole = role as AuthTokenRole;
 
     const result = await auth.authenticateToken(username, args.auth.token!, {

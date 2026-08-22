@@ -1,39 +1,93 @@
 import type { StoredProcessMedia } from "./media";
 import {
+  jsonObjectSchema,
+  jsonValueSchema,
+  type JsonObject,
+  type JsonValue,
+} from "@humansandmachines/gsv/protocol";
+import {
   binaryDataFromBase64,
   encodeBase64Bytes,
 } from "../shared/base64";
+import { z } from "zod";
 
 const STORED_TOOL_RESULT_VERSION = 1;
 const MAX_TOOL_RESULT_DEPTH = 64;
 const MAX_LEGACY_TOOL_RESULT_IMAGE_BYTES = 25 * 1024 * 1024;
 const MAX_LEGACY_TOOL_RESULT_IMAGES = 20;
 
+type ToolResultValue = JsonValue;
+type ToolResultRecord = JsonObject;
+type ToolResultImage = ToolResultRecord & {
+  type: "image";
+  data: string;
+  mimeType: string;
+};
+type UnwrappedToolResult = {
+  output: ToolResultValue;
+  media: StoredProcessMedia[];
+};
+type ExtractedToolResult = {
+  output: ToolResultValue;
+  images: ExtractedToolResultImage[];
+};
+
+const toolResultRecordSchema = jsonObjectSchema;
+const imageContentSchema = z.object({
+  type: z.literal("image"),
+  data: z.string(),
+  mimeType: z.string(),
+}).catchall(jsonValueSchema);
+const storedMediaSchema = z.object({
+  type: z.enum(["image", "audio", "video", "document"]),
+  mimeType: z.string(),
+  key: z.string().optional(),
+  path: z.string().optional(),
+  url: z.string().optional(),
+  filename: z.string().optional(),
+  size: z.number().optional(),
+  duration: z.number().optional(),
+  transcription: z.string().optional(),
+});
+const storedToolResultSchema = z.object({
+  __gsvStoredToolResult: z.literal(STORED_TOOL_RESULT_VERSION),
+  output: z.json(),
+  media: z.array(storedMediaSchema),
+});
+
 export type ExtractedToolResultImage = {
   bytes: Uint8Array;
   mimeType: string;
-  placeholder: Record<string, unknown>;
+  placeholder: ToolResultRecord;
 };
 
 export type StoredToolResultEnvelope = {
   __gsvStoredToolResult: typeof STORED_TOOL_RESULT_VERSION;
-  output: unknown;
+  output: ToolResultValue;
   media: StoredProcessMedia[];
 };
 
 export function extractToolResultImages(
-  value: unknown,
+  value: ToolResultValue,
   limits: { maxImages: number; maxBytes: number },
-): { output: unknown; images: ExtractedToolResultImage[] } {
+): ExtractedToolResult {
   const images: ExtractedToolResultImage[] = [];
   let totalBytes = 0;
   const ancestors = new WeakSet<object>();
 
-  const visit = (candidate: unknown, depth: number): unknown => {
+  const visit = (candidate: ToolResultValue, depth: number): ToolResultValue => {
     if (depth > MAX_TOOL_RESULT_DEPTH) {
       throw new Error("Tool result nesting exceeds the supported depth");
     }
-    if (!candidate || typeof candidate !== "object") {
+    if (candidate === null) {
+      return candidate;
+    }
+
+    if (Array.isArray(candidate)) {
+      return candidate.map((item) => visit(item, depth + 1));
+    }
+
+    if (!isToolResultRecord(candidate)) {
       return candidate;
     }
 
@@ -56,7 +110,7 @@ export function extractToolResultImages(
       }
 
       const { data: _data, ...metadata } = candidate;
-      const placeholder: Record<string, unknown> = {
+      const placeholder = {
         ...metadata,
         type: "image",
         mimeType: binary.mimeType,
@@ -74,10 +128,7 @@ export function extractToolResultImages(
     }
     ancestors.add(candidate);
     try {
-      if (Array.isArray(candidate)) {
-        return candidate.map((item) => visit(item, depth + 1));
-      }
-      const output: Record<string, unknown> = {};
+      const output: ToolResultRecord = {};
       for (const [key, item] of Object.entries(candidate)) {
         output[key] = visit(item, depth + 1);
       }
@@ -94,7 +145,7 @@ export function extractToolResultImages(
 }
 
 export function wrapStoredToolResult(
-  output: unknown,
+  output: ToolResultValue,
   media: StoredProcessMedia[],
 ): StoredToolResultEnvelope {
   return {
@@ -104,24 +155,14 @@ export function wrapStoredToolResult(
   };
 }
 
-export function unwrapStoredToolResult(value: unknown): {
-  output: unknown;
-  media: unknown[];
-} {
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
-    return { output: value, media: [] };
-  }
-  const record = value as Record<string, unknown>;
-  if (
-    record.__gsvStoredToolResult !== STORED_TOOL_RESULT_VERSION
-    || !("output" in record)
-    || !Array.isArray(record.media)
-  ) {
+export function unwrapStoredToolResult(value: ToolResultValue): UnwrappedToolResult {
+  const parsed = storedToolResultSchema.safeParse(value);
+  if (!parsed.success) {
     return { output: value, media: [] };
   }
   return {
-    output: record.output,
-    media: record.media,
+    output: parsed.data.output,
+    media: parsed.data.media,
   };
 }
 
@@ -136,9 +177,9 @@ export function materializeLegacyToolResultImages(
   | { type: "text"; text: string }
   | { type: "image"; data: string; mimeType: string }
 > | null {
-  let parsed: unknown;
+  let parsed: JsonValue;
   try {
-    parsed = JSON.parse(content);
+    parsed = jsonValueSchema.parse(JSON.parse(content));
   } catch {
     return null;
   }
@@ -166,11 +207,10 @@ export function materializeLegacyToolResultImages(
   ];
 }
 
-function isImageContent(
-  value: object,
-): value is { type: "image"; data: string; mimeType: string; [key: string]: unknown } {
-  const candidate = value as Record<string, unknown>;
-  return candidate.type === "image"
-    && typeof candidate.data === "string"
-    && typeof candidate.mimeType === "string";
+function isToolResultRecord(value: ToolResultValue): value is ToolResultRecord {
+  return toolResultRecordSchema.safeParse(value).success;
+}
+
+function isImageContent(value: ToolResultRecord): value is ToolResultImage {
+  return imageContentSchema.safeParse(value).success;
 }

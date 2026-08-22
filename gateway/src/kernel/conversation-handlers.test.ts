@@ -2,21 +2,11 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { ConversationMessage, ConversationSummary } from "@humansandmachines/gsv/protocol";
 import type { KernelContext } from "./context";
 
-const { getConversationByIdMock, sendFrameToProcessMock, ensurePersonalControllerMock } = vi.hoisted(() => ({
-  getConversationByIdMock: vi.fn(),
-  sendFrameToProcessMock: vi.fn(),
-  ensurePersonalControllerMock: vi.fn(),
-}));
-
-vi.mock("../shared/utils", async (importOriginal) => ({
-  ...await importOriginal<typeof import("../shared/utils")>(),
-  getConversationById: getConversationByIdMock,
-  sendFrameToProcess: sendFrameToProcessMock,
-}));
-
-vi.mock("./personal-controller", () => ({
-  ensurePersonalController: ensurePersonalControllerMock,
-}));
+import * as utils from "../shared/utils";
+import * as personalController from "./personal-controller";
+const getConversationByIdMock = vi.spyOn(utils, "getConversationById");
+const sendFrameToProcessMock = vi.spyOn(utils, "sendFrameToProcess");
+const ensurePersonalControllerMock = vi.spyOn(personalController, "ensurePersonalController");
 
 import {
   handleConversationHistory,
@@ -48,6 +38,7 @@ const PROCESS = {
 };
 
 function context(ownerUid = 1000): KernelContext {
+  // SAFETY: test fixture is constructed with the asserted kernel domain shape.
   return {
     installationId: "singleton",
     identity: {
@@ -80,7 +71,8 @@ function context(ownerUid = 1000): KernelContext {
       delete: vi.fn(),
     },
     broadcastToUserUid: vi.fn(),
-  } as unknown as KernelContext;
+  // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+  } as KernelContext;
 }
 
 function canonicalMessage(input: any): ConversationMessage {
@@ -90,10 +82,10 @@ function canonicalMessage(input: any): ConversationMessage {
     sequence: 1,
     author: input.author,
     text: input.text,
-    ...(input.media ? { media: input.media } : {}),
+    ...(input.media ? { media: input.media } : undefined),
     origin: input.origin,
     processId: input.processId,
-    ...(input.runId ? { runId: input.runId } : {}),
+    ...(input.runId ? { runId: input.runId } : undefined),
     createdAt: input.createdAt,
   };
 }

@@ -12,6 +12,7 @@
 
 
 const CAPABILITY_PATTERN = /^(\*|[a-z][a-z0-9]*(?:\.[a-z][a-z0-9]*)*\.(?:[a-z][a-z0-9]*|\*))$/;
+type CapabilityMutationResult = { ok: boolean; error?: string };
 
 const DEFAULT_CAPABILITIES: [number, string[]][] = [
   [0,   ["*"]],                                           // root
@@ -112,7 +113,7 @@ export class CapabilityStore {
     return rows.map((r) => r.capability);
   }
 
-  grant(gid: number, capability: string): { ok: boolean; error?: string } {
+  grant(gid: number, capability: string): CapabilityMutationResult {
     if (!isValidCapability(capability)) {
       return { ok: false, error: `Invalid capability format: ${capability}` };
     }
@@ -126,7 +127,7 @@ export class CapabilityStore {
     return { ok: true };
   }
 
-  revoke(gid: number, capability: string): { ok: boolean; error?: string } {
+  revoke(gid: number, capability: string): CapabilityMutationResult {
     this.sql.exec(
       `DELETE FROM group_capabilities WHERE gid = ? AND capability = ?`,
       gid,

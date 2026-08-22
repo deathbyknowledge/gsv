@@ -1,4 +1,4 @@
-import { bodyToText } from "@humansandmachines/gsv/protocol";
+import { bodyToText, type JsonObject } from "@humansandmachines/gsv/protocol";
 import { describe, expect, it, vi } from "vitest";
 import {
   decodeMoondreamStream,
@@ -247,7 +247,7 @@ describe("readImage", () => {
   });
 
   it("rejects promptly on cancellation and cancels a late response stream", async () => {
-    let resolveRun!: (value: unknown) => void;
+    let resolveRun!: (value: ReadableStream<Uint8Array>) => void;
     const cancel = vi.fn();
     const controller = new AbortController();
     const reading = readImage({
@@ -316,7 +316,7 @@ function byteStream(chunks: string[]): ReadableStream<Uint8Array> {
   });
 }
 
-function workersAiResult(result: Record<string, unknown>): Record<string, unknown> {
+function workersAiResult(result: JsonObject): JsonObject {
   return {
     result,
     usage: {

@@ -26,6 +26,17 @@ type SetupTiming = {
   ms: number;
 };
 
+type SetupIdentity = {
+  username: string;
+  password: string;
+};
+
+type SetupNodeConfig = {
+  deviceId: string;
+  label?: string;
+  expiresAt?: number;
+};
+
 async function timeSetupStep<T>(
   timings: SetupTiming[],
   label: string,
@@ -46,10 +57,7 @@ function formatSetupTimings(timings: SetupTiming[]): string {
   return timings.map((timing) => `${timing.label}=${timing.ms}ms`).join(", ");
 }
 
-function readRequiredString(value: unknown, name: string): string {
-  if (typeof value !== "string") {
-    throw new Error(`${name} is required`);
-  }
+function readRequiredString(value: string, name: string): string {
   const trimmed = value.trim();
   if (!trimmed) {
     throw new Error(`${name} is required`);
@@ -57,15 +65,15 @@ function readRequiredString(value: unknown, name: string): string {
   return trimmed;
 }
 
-function readOptionalString(value: unknown): string | undefined {
-  if (typeof value !== "string") return undefined;
+function readOptionalString(value: string | undefined): string | undefined {
+  if (value === undefined) return undefined;
   const trimmed = value.trim();
   return trimmed ? trimmed : undefined;
 }
 
-function parseOptionalFutureTimestamp(value: unknown): number | undefined {
-  if (value === undefined || value === null) return undefined;
-  if (typeof value !== "number" || !Number.isFinite(value)) {
+function parseOptionalFutureTimestamp(value: number | undefined): number | undefined {
+  if (value === undefined) return undefined;
+  if (!Number.isFinite(value)) {
     throw new Error("node.expiresAt must be a unix timestamp in milliseconds");
   }
   const ts = Math.floor(value);
@@ -81,19 +89,18 @@ function ensureSingleUserBootstrap(passwd: PasswdEntry[]): void {
   }
 }
 
-function parseSetupIdentity(args: SysSetupArgs): { username: string; password: string } {
-  const raw = args as Record<string, unknown>;
-  if (typeof raw.username !== "string" || !raw.username.trim()) {
+function parseSetupIdentity(args: SysSetupArgs): SetupIdentity {
+  if (!args.username.trim()) {
     throw new Error("username is required");
   }
   // Validate the raw (untrimmed) value so padded names like " alice " are
   // rejected at the syscall boundary, not only in the web wizard.
-  if (!USERNAME_RE.test(raw.username)) {
+  if (!USERNAME_RE.test(args.username)) {
     throw new Error("username must match ^[a-z_][a-z0-9_-]{0,31}$");
   }
-  const username = raw.username;
+  const username = args.username;
 
-  const password = readRequiredString(raw.password, "password");
+  const password = readRequiredString(args.password, "password");
   if (password.length < 8) {
     throw new Error("password must be at least 8 characters");
   }
@@ -103,10 +110,10 @@ function parseSetupIdentity(args: SysSetupArgs): { username: string; password: s
 
 function parseSetupAgentName(
   auth: KernelContext["auth"],
-  value: unknown,
+  value: string | undefined,
   username: string,
 ): string | undefined {
-  if (typeof value !== "string" || !value.trim()) return undefined;
+  if (!value?.trim()) return undefined;
   // Validate the raw (untrimmed) value so padded names are rejected here too.
   if (!USERNAME_RE.test(value)) {
     throw new Error("agentName must match ^[a-z_][a-z0-9_-]{0,31}$");
@@ -128,15 +135,13 @@ type SetupAiConfig = {
 };
 
 function parseAiConfig(args: SysSetupArgs): SetupAiConfig {
-  const raw = args as Record<string, unknown>;
-  if (!raw.ai || typeof raw.ai !== "object") {
+  if (!args.ai) {
     return {};
   }
-  const ai = raw.ai as Record<string, unknown>;
   return {
-    provider: readOptionalString(ai.provider),
-    model: readOptionalString(ai.model),
-    apiKey: typeof ai.apiKey === "string" ? ai.apiKey : undefined,
+    provider: readOptionalString(args.ai.provider),
+    model: readOptionalString(args.ai.model),
+    apiKey: args.ai.apiKey,
   };
 }
 
@@ -174,8 +179,7 @@ function resolveSetupAiConfig(
 }
 
 function parseTimezone(args: SysSetupArgs): string | undefined {
-  const raw = args as Record<string, unknown>;
-  const timezone = readOptionalString(raw.timezone);
+  const timezone = readOptionalString(args.timezone);
   if (!timezone) {
     return undefined;
   }
@@ -187,22 +191,30 @@ function parseTimezone(args: SysSetupArgs): string | undefined {
   return timezone;
 }
 
-function parseNodeConfig(args: SysSetupArgs): {
-  deviceId: string;
-  label?: string;
-  expiresAt?: number;
-} | null {
-  const raw = args as Record<string, unknown>;
-  if (!raw.node || typeof raw.node !== "object") {
+function parseNodeConfig(args: SysSetupArgs): SetupNodeConfig | null {
+  if (!args.node) {
     return null;
   }
-  const node = raw.node as Record<string, unknown>;
-  const deviceId = readRequiredString(node.deviceId, "node.deviceId");
+  const deviceId = readRequiredString(args.node.deviceId, "node.deviceId");
   return {
     deviceId,
-    label: readOptionalString(node.label),
-    expiresAt: parseOptionalFutureTimestamp(node.expiresAt),
+    label: readOptionalString(args.node.label),
+    expiresAt: parseOptionalFutureTimestamp(args.node.expiresAt),
   };
+}
+
+function setupServerBuild(
+  ctx: KernelContext,
+  features: string[],
+): SysSetupResult["server"] {
+  const server: SysSetupResult["server"] = {
+    version: ctx.serverVersion,
+    release: SERVER_RELEASE,
+  };
+  if (features.length > 0) {
+    server.features = features;
+  }
+  return server;
 }
 
 export async function handleSysSetup(
@@ -210,7 +222,7 @@ export async function handleSysSetup(
   ctx: KernelContext,
 ): Promise<SysSetupResult> {
   const { auth, config } = ctx;
-  const requestedUsername = typeof args.username === "string" && args.username.trim().length > 0
+  const requestedUsername = args.username.trim().length > 0
     ? args.username.trim()
     : "<unknown>";
   const startedAt = Date.now();
@@ -229,7 +241,7 @@ export async function handleSysSetup(
   );
   const timezone = parseTimezone(args);
   const node = parseNodeConfig(args);
-  const rootPassword = readOptionalString((args as Record<string, unknown>).rootPassword);
+  const rootPassword = readOptionalString(args.rootPassword);
   if (rootPassword && rootPassword.length < 8) {
     throw new Error("rootPassword must be at least 8 characters");
   }
@@ -239,7 +251,7 @@ export async function handleSysSetup(
   if (auth.getPasswdByUsername(username)) {
     throw new Error(`User already exists: ${username}`);
   }
-  const agentName = parseSetupAgentName(auth, (args as Record<string, unknown>).agentName, username);
+  const agentName = parseSetupAgentName(auth, args.agentName, username);
 
   const uid = auth.nextUid();
   // User Private Group (UPG): each user gets a unique primary group with gid = uid.
@@ -409,13 +421,7 @@ export async function handleSysSetup(
     );
 
     return {
-      server: {
-        version: ctx.serverVersion,
-        release: SERVER_RELEASE,
-        ...(serverFeatures.length > 0
-          ? { features: serverFeatures }
-          : {}),
-      },
+      server: setupServerBuild(ctx, serverFeatures),
       user: processIdentity,
       rootLocked,
       bootstrap,
@@ -484,13 +490,7 @@ export async function recoverCompletedSysSetup(
   const rootShadow = ctx.auth.getShadowByUsername("root");
   const serverFeatures = gsvInferenceFeaturesFromEnv(ctx.env);
   return {
-    server: {
-      version: ctx.serverVersion,
-      release: SERVER_RELEASE,
-      ...(serverFeatures.length > 0
-        ? { features: serverFeatures }
-        : {}),
-    },
+    server: setupServerBuild(ctx, serverFeatures),
     user: {
       ...authenticated.identity,
       cwd: authenticated.identity.home,

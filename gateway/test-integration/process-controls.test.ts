@@ -1,9 +1,25 @@
 import { describe, expect, it } from "vitest";
 import type { ProcHistoryResult } from "@humansandmachines/gsv/protocol";
+import { z } from "zod";
 import {
   startProcessRuntimeHarness,
   type ProcessRuntimeHarness,
 } from "./process-runtime-harness";
+import type { ScriptedOpenAiToolCall } from "./openai-fixture";
+
+const runtimeEventSchema = z.object({ type: z.string().optional() });
+const shellResultSchema = z.object({ output: z.string().optional() });
+
+type HilCase = {
+  title: string;
+  decision: "approve" | "deny";
+  toolCall: ScriptedOpenAiToolCall;
+  pendingInput: string;
+  expectedToolName: string;
+  expectedOutcome: string;
+  expectedToolOutput: string;
+  finalText: string;
+};
 
 describe("gateway process controls integration", () => {
   it("executes a deterministic Read tool call before the final response", async () => {
@@ -48,7 +64,7 @@ describe("gateway process controls integration", () => {
       }));
       const streamEvents = runtime.signals
         .filter(({ signal, payload }) => signal === "proc.run.stream" && payload.runId === sent.runId)
-        .map(({ payload }) => asRecord(payload.event)?.type);
+        .map(({ payload }) => runtimeEventType(payload.event));
       expect(streamEvents.filter((type) => type === "toolcall_start")).toHaveLength(2);
       expect(streamEvents.filter((type) => type === "toolcall_end")).toHaveLength(2);
       expect(streamEvents.filter((type) => type === "done")).toHaveLength(2);
@@ -140,7 +156,7 @@ describe("gateway process controls integration", () => {
     });
   });
 
-  const hilCases = [
+  const hilCases: HilCase[] = [
     {
       title: "approves a Shell syscall nested in CodeMode",
       decision: "approve" as const,
@@ -308,7 +324,10 @@ describe("gateway process controls integration", () => {
           output: expect.stringContaining("queued=true"),
         }),
       });
-      const output = String(asRecord(delivered.status === "completed" ? delivered.result : null)?.output ?? "");
+      const parsedResult = shellResultSchema.safeParse(
+        delivered.status === "completed" ? delivered.result : null,
+      );
+      const output = parsedResult.success ? parsedResult.data.output ?? "" : "";
       const queuedRunId = /run_id=([^\s]+)/.exec(output)?.[1];
       expect(queuedRunId).toEqual(expect.any(String));
       if (!queuedRunId) throw new Error("proc send did not report the queued run id");
@@ -471,8 +490,9 @@ async function processHistory(
   return history;
 }
 
-function asRecord(value: unknown): Record<string, unknown> | null {
-  return value && typeof value === "object" && !Array.isArray(value)
-    ? value as Record<string, unknown>
-    : null;
+function runtimeEventType(
+  value: Parameters<typeof runtimeEventSchema.safeParse>[0],
+): string | undefined {
+  const parsed = runtimeEventSchema.safeParse(value);
+  return parsed.success ? parsed.data.type : undefined;
 }

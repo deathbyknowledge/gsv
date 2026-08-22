@@ -4,13 +4,18 @@ import type {
   ManagedOutboundMailClaimOutcome,
   ManagedOutboundMailCommand,
   ManagedOutboundMailCompletion,
+  ManagedOutboundMailDraft,
   ManagedOutboundMailReference,
 } from "@humansandmachines/gsv/protocol";
 import { isLocked } from "../auth/shadow";
 import { stableOpaqueId } from "../shared/stable-id";
 import { resolveCallerOwnerUid, type KernelContext } from "./context";
 import { managedMailAddressForOwner } from "./mailbox";
-import type { MailMessageRecord, MailOutboundRecord } from "./mailbox-store";
+import type {
+  MailMessageRecord,
+  MailOutboundRecord,
+  RecordMailOutboundInput,
+} from "./mailbox-store";
 
 const MAX_OUTBOUND_TEXT_BYTES = 1024 * 1024;
 const MAX_OUTBOUND_SUBJECT_BYTES = 998;
@@ -43,7 +48,7 @@ export async function handleMailSend(
   let outboundId: string | undefined;
   try {
     ctx.requestSignal?.throwIfAborted();
-    const queue = (ctx.env as Env & ManagedOutboundBindings).MANAGED_MAIL_OUTBOUND;
+    const queue = managedOutboundQueue(ctx);
     if (!queue || !ctx.installationIdentity?.handle) {
       throw new MailSendError("Managed outbound mail is not available", false);
     }
@@ -76,7 +81,7 @@ export async function handleMailSend(
     }));
     ctx.requestSignal?.throwIfAborted();
     const bodyPath = `${owner.home}/.gsv/mail/outbox/${outboundId}/${fingerprint.slice(7)}/message.txt`;
-    const input = {
+    const input: RecordMailOutboundInput = {
       version: 1 as const,
       outboundId,
       ownerUid,
@@ -89,12 +94,10 @@ export async function handleMailSend(
       bodyPath,
       textSize: normalized.textSize,
       createdAt: Date.now(),
-      ...(normalized.replyToMessageId
-        ? { replyToMessageId: normalized.replyToMessageId }
-        : {}),
-      ...(normalized.inReplyTo ? { inReplyTo: normalized.inReplyTo } : {}),
-      ...(normalized.references ? { references: normalized.references } : {}),
     };
+    if (normalized.replyToMessageId) input.replyToMessageId = normalized.replyToMessageId;
+    if (normalized.inReplyTo) input.inReplyTo = normalized.inReplyTo;
+    if (normalized.references) input.references = normalized.references;
     const existing = ctx.mailboxes.getOutboundForDelivery(ownerUid, deliveryId);
     let ensured: ReturnType<typeof ctx.mailboxes.ensureOutbound>;
     if (existing) {
@@ -157,7 +160,7 @@ export async function handleMailSend(
       throw new MailSendError("Outbound mail did not finish staging", true);
     }
 
-    return {
+    const result: Extract<MailSendResult, { ok: true }> = {
       ok: true,
       deliveryId: outbound.deliveryId,
       outboundId: outbound.outboundId,
@@ -165,20 +168,22 @@ export async function handleMailSend(
       from: outbound.from,
       to: outbound.to,
       subject: outbound.subject,
-      ...(outbound.errorCode ? { errorCode: outbound.errorCode } : {}),
       replayed: !ensured.created,
     };
+    if (outbound.errorCode) result.errorCode = outbound.errorCode;
+    return result;
   } catch (error) {
     const failure = error instanceof MailSendError
       ? error
       : new MailSendError(errorMessage(error), false);
-    return {
+    const result: Extract<MailSendResult, { ok: false }> = {
       ok: false,
       error: failure.message,
       retryable: failure.retryable,
-      ...(deliveryId ? { deliveryId } : {}),
-      ...(outboundId ? { outboundId } : {}),
     };
+    if (deliveryId) result.deliveryId = deliveryId;
+    if (outboundId) result.outboundId = outboundId;
+    return result;
   }
 }
 
@@ -250,7 +255,7 @@ export async function recoverManagedOutboundEnqueue(
     const command = await prepareManagedOutboundEnqueue(current.outboundId, ctx);
     if (!command) return ctx.mailboxes.getOutbound(current.outboundId);
 
-    const queue = (ctx.env as Env & ManagedOutboundBindings).MANAGED_MAIL_OUTBOUND;
+    const queue = managedOutboundQueue(ctx);
     if (!queue) return ctx.mailboxes.getOutbound(current.outboundId);
     const claimed = ctx.mailboxes.beginOutboundEnqueue(
       current.outboundId,
@@ -317,9 +322,6 @@ function normalizeMailSend(
   ownerUid: number,
   ctx: KernelContext,
 ): NormalizedMailSend {
-  if (!value || typeof value !== "object") {
-    throw new MailSendError("mail.send requires an object argument", false);
-  }
   const deliveryId = normalizeIdentifier(
     value.deliveryId,
     "deliveryId",
@@ -339,15 +341,19 @@ function normalizeMailSend(
       ? replySubject(source.subject)
       : normalizeSubject(value.subject);
     const inReplyTo = optionalThreadHeader(source.headerMessageId);
-    return {
+    const reply: NormalizedMailSend = {
       deliveryId,
       text,
       textSize,
       to,
       subject,
       replyToMessageId,
-      ...(inReplyTo ? { inReplyTo, references: inReplyTo } : {}),
     };
+    if (inReplyTo) {
+      reply.inReplyTo = inReplyTo;
+      reply.references = inReplyTo;
+    }
+    return reply;
   }
 
   if (value.replyToMessageId !== undefined) {
@@ -365,7 +371,7 @@ function normalizeMailSend(
 }
 
 function normalizeReference(value: ManagedOutboundMailReference): ManagedOutboundMailReference {
-  if (!value || typeof value !== "object" || value.version !== 1) {
+  if (value.version !== 1) {
     throw new Error("Outbound mail reference version is invalid");
   }
   const outboundId = normalizeIdentifier(value.outboundId, "outboundId");
@@ -393,12 +399,13 @@ function normalizeCompletion(
   if (value.state !== "accepted" && (!errorCode || providerMessageId)) {
     throw new Error("Failed or unknown outbound mail requires only an error code");
   }
-  return {
+  const completion: ManagedOutboundMailCompletion = {
     ...reference,
     state: value.state,
-    ...(providerMessageId ? { providerMessageId } : {}),
-    ...(errorCode ? { errorCode } : {}),
   };
+  if (providerMessageId) completion.providerMessageId = providerMessageId;
+  if (errorCode) completion.errorCode = errorCode;
+  return completion;
 }
 
 function requireActiveHuman(ownerUid: number, ctx: KernelContext) {
@@ -443,8 +450,7 @@ function truncateSubject(value: string): string {
   return normalizeSubject(`${new TextDecoder().decode(bytes.subarray(0, written))}${suffix}`);
 }
 
-function normalizeAddress(value: unknown): string {
-  if (typeof value !== "string") throw new MailSendError("to must be a string", false);
+function normalizeAddress(value: string): string {
   const source = value.trim();
   const separator = source.lastIndexOf("@");
   const address = separator > 0
@@ -456,7 +462,8 @@ function normalizeAddress(value: unknown): string {
     || separator <= 0
     || separator === address.length - 1
     || address.indexOf("@") !== separator
-    || /[\s\u0000-\u001f\u007f<>(),;:"]/.test(address)
+    || containsAsciiControl(address)
+    || /[\s<>(),;:"]/.test(address)
     || address.includes("..")
   ) {
     throw new MailSendError("to is not a valid single email address", false);
@@ -464,21 +471,19 @@ function normalizeAddress(value: unknown): string {
   return address;
 }
 
-function normalizeSubject(value: unknown): string {
-  if (typeof value !== "string") throw new MailSendError("subject must be a string", false);
+function normalizeSubject(value: string): string {
   const subject = value.trim();
   if (
     !subject
     || TEXT_ENCODER.encode(subject).byteLength > MAX_OUTBOUND_SUBJECT_BYTES
-    || /[\u0000-\u001f\u007f]/.test(subject)
+    || containsAsciiControl(subject)
   ) {
     throw new MailSendError("subject is invalid", false);
   }
   return subject;
 }
 
-function normalizeText(value: unknown): string {
-  if (typeof value !== "string") throw new MailSendError("text must be a string", false);
+function normalizeText(value: string): string {
   const size = TEXT_ENCODER.encode(value).byteLength;
   if (!value || size > MAX_OUTBOUND_TEXT_BYTES || value.includes("\0")) {
     throw new MailSendError("text is invalid or exceeds the outbound mail limit", false);
@@ -486,28 +491,25 @@ function normalizeText(value: unknown): string {
   return value;
 }
 
-function normalizeIdentifier(value: unknown, name: string): string {
-  if (typeof value !== "string") {
-    throw new MailSendError(`${name} is required`, false);
-  }
+function normalizeIdentifier(value: string, name: string): string {
   const normalized = value.trim();
   if (
     !normalized
     || TEXT_ENCODER.encode(normalized).byteLength > MAX_OUTBOUND_IDENTIFIER_BYTES
-    || /[\u0000-\u001f\u007f]/.test(normalized)
+    || containsAsciiControl(normalized)
   ) {
     throw new MailSendError(`${name} is invalid`, false);
   }
   return normalized;
 }
 
-function optionalIdentifier(value: unknown, name: string): string | undefined {
+function optionalIdentifier(value: string | undefined, name: string): string | undefined {
   return value === undefined ? undefined : normalizeIdentifier(value, name);
 }
 
 function optionalThreadHeader(value: string | null): string | undefined {
   return value
-    && !/[\u0000-\u001f\u007f]/.test(value)
+    && !containsAsciiControl(value)
     && TEXT_ENCODER.encode(value).byteLength <= MAX_OUTBOUND_HEADER_BYTES
     ? value
     : undefined;
@@ -563,8 +565,8 @@ async function sha256Bytes(value: BufferSource): Promise<string> {
   return `sha256:${hex}`;
 }
 
-function outboundDraft(outbound: MailOutboundRecord) {
-  return {
+function outboundDraft(outbound: MailOutboundRecord): ManagedOutboundMailDraft {
+  const draft: ManagedOutboundMailDraft = {
     version: 1 as const,
     outboundId: outbound.outboundId,
     fingerprint: outbound.fingerprint,
@@ -574,12 +576,11 @@ function outboundDraft(outbound: MailOutboundRecord) {
     bodyDigest: outbound.bodyDigest,
     textSize: outbound.textSize,
     createdAt: outbound.createdAt,
-    ...(outbound.replyToMessageId
-      ? { replyToMessageId: outbound.replyToMessageId }
-      : {}),
-    ...(outbound.inReplyTo ? { inReplyTo: outbound.inReplyTo } : {}),
-    ...(outbound.references ? { references: outbound.references } : {}),
   };
+  if (outbound.replyToMessageId) draft.replyToMessageId = outbound.replyToMessageId;
+  if (outbound.inReplyTo) draft.inReplyTo = outbound.inReplyTo;
+  if (outbound.references) draft.references = outbound.references;
+  return draft;
 }
 
 function outboundCompletion(
@@ -592,16 +593,15 @@ function outboundCompletion(
   ) {
     throw new Error("Outbound mail is not terminal");
   }
-  return {
+  const completion: ManagedOutboundMailCompletion = {
     version: 1,
     outboundId: outbound.outboundId,
     fingerprint: outbound.fingerprint,
     state: outbound.state,
-    ...(outbound.providerMessageId
-      ? { providerMessageId: outbound.providerMessageId }
-      : {}),
-    ...(outbound.errorCode ? { errorCode: outbound.errorCode } : {}),
   };
+  if (outbound.providerMessageId) completion.providerMessageId = outbound.providerMessageId;
+  if (outbound.errorCode) completion.errorCode = outbound.errorCode;
+  return completion;
 }
 
 function settleUnavailableOutbound(
@@ -628,8 +628,21 @@ function pathToStorageKey(path: string): string {
   return path.slice(1);
 }
 
-function errorMessage(error: unknown): string {
+function errorMessage<ErrorValue>(error: ErrorValue): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+function containsAsciiControl(value: string): boolean {
+  return [...value].some((character) => {
+    const codePoint = character.codePointAt(0) ?? 0;
+    return codePoint <= 0x1f || codePoint === 0x7f;
+  });
+}
+
+function managedOutboundQueue(ctx: KernelContext): Queue<ManagedOutboundMailCommand> | undefined {
+  // SAFETY: managed mail deployment adds this optional binding to the shared
+  // Gateway Env; its absence is the supported standalone configuration.
+  return (ctx.env as Env & ManagedOutboundBindings).MANAGED_MAIL_OUTBOUND;
 }
 
 class MailSendError extends Error {

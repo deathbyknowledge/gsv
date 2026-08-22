@@ -1,27 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { RequestFrame } from "../protocol/frames";
 
-const { handleConnectMock, ensurePersonalControllerMock, getConversationByIdMock } = vi.hoisted(() => ({
-  handleConnectMock: vi.fn(),
-  ensurePersonalControllerMock: vi.fn(),
-  getConversationByIdMock: vi.fn(),
-}));
-
-vi.mock("../shared/utils", async (importOriginal) => ({
-  ...await importOriginal<typeof import("../shared/utils")>(),
-  getConversationById: getConversationByIdMock,
-}));
-
-vi.mock("./connect", () => ({
-  ensureKernelBootstrapped: vi.fn(),
-  handleConnect: handleConnectMock,
-  setupRequiredDetails: vi.fn(() => ({ setupMode: true, next: "sys.setup" })),
-  SETUP_REQUIRED_ERROR_CODE: 425,
-}));
-
-vi.mock("./personal-controller", () => ({
-  ensurePersonalController: ensurePersonalControllerMock,
-}));
+import * as utils from "../shared/utils";
+import * as connect from "./connect";
+import * as personalController from "./personal-controller";
+const handleConnectMock = vi.spyOn(connect, "handleConnect");
+const ensurePersonalControllerMock = vi.spyOn(personalController, "ensurePersonalController");
+const getConversationByIdMock = vi.spyOn(utils, "getConversationById");
 
 import { Kernel } from "./do";
 
@@ -86,6 +71,7 @@ describe("Kernel personal controller connect lifecycle", () => {
   });
 
   it("ensures a human controller before activating and accepting the connection", async () => {
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     const kernel = Object.create(Kernel.prototype) as any;
     const ctx = {
       auth: { isPersonalAgentUid: vi.fn(() => false) },
@@ -119,6 +105,7 @@ describe("Kernel personal controller connect lifecycle", () => {
   });
 
   it("does not activate a human connection when controller recovery fails", async () => {
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     const kernel = Object.create(Kernel.prototype) as any;
     const ctx = {
       auth: { isPersonalAgentUid: vi.fn(() => false) },

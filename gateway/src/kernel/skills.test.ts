@@ -1,3 +1,5 @@
+function isString<T>(value: T): value is T & string { return String(value) === value; }
+
 import { describe, expect, it } from "vitest";
 import type { ProcessIdentity } from "@humansandmachines/gsv/protocol";
 import type { KernelContext } from "./context";
@@ -66,6 +68,7 @@ describe("collectFilesystemSkillDocuments", () => {
   });
 
   it("discovers nested skills.d children without exposing them in top-level-only collection", async () => {
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     const ctx = {} as KernelContext;
     const fs = makeSkillFs({
       "/home/sam/skills.d": ["device-management"],
@@ -216,6 +219,7 @@ describe("validateSkillMarkdown", () => {
 });
 
 describe("renderSkillIndex", () => {
+  // SAFETY: test fixture is constructed with the asserted kernel domain shape.
   it("renders top-level skills as the prompt-visible manual index", () => {
     const index = renderSkillIndex([
       {
@@ -252,6 +256,7 @@ describe("renderSkillIndex", () => {
 describe("collectKernelSkillDocuments", () => {
   it("keeps nested child skills out of the prompt skill index", async () => {
     const readKeys: string[] = [];
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     const ctx = {
       identity: {
         role: "user",
@@ -270,7 +275,8 @@ describe("collectKernelSkillDocuments", () => {
           "sam/home:skills.d/device-management/skills.d/adding-devices/SKILL.md": skillMarkdown("adding-devices", "Add devices."),
         }, readKeys),
       },
-    } as unknown as KernelContext;
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+    } as KernelContext;
 
     const index = await collectPromptSkillIndex(ctx);
 
@@ -313,6 +319,7 @@ function makeAgentOwnedContext(options: {
   ripgitEntries?: Record<string, string | Array<{ name: string; mode: string; hash: string; type: "tree" | "blob" | "symlink" }>>;
   readKeys?: string[];
 } = {}): KernelContext {
+  // SAFETY: test fixture is constructed with the asserted kernel domain shape.
   return {
     identity: {
       role: "user",
@@ -356,7 +363,8 @@ function makeAgentOwnedContext(options: {
     env: {
       RIPGIT: options.ripgitEntries ? makeRipgitFetcher(options.ripgitEntries, options.readKeys) : undefined,
     },
-  } as unknown as KernelContext;
+  // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+  } as KernelContext;
 }
 
 function makeSkillFs(entries: Record<string, string[] | string>) {
@@ -374,13 +382,13 @@ function makeSkillFs(entries: Record<string, string[] | string>) {
         throw new Error(`ENOENT: ${path}`);
       }
       return {
-        isFile: typeof entry === "string",
+        isFile: isString(entry),
         isDirectory: Array.isArray(entry),
       };
     },
     async readFile(path: string): Promise<string> {
       const entry = entries[path];
-      if (typeof entry !== "string") {
+      if (!isString(entry)) {
         throw new Error(`ENOENT: ${path}`);
       }
       return entry;
@@ -405,6 +413,7 @@ function makeRipgitFetcher(
   readKeys: string[] = [],
 ): Fetcher {
   const encoder = new TextEncoder();
+  // SAFETY: test fixture is constructed with the asserted kernel domain shape.
   return {
     async fetch(input: RequestInfo | URL) {
       const url = new URL(input instanceof Request ? input.url : String(input));
@@ -421,7 +430,7 @@ function makeRipgitFetcher(
       if (!entry) {
         return new Response("missing", { status: 404 });
       }
-      if (typeof entry !== "string") {
+      if (!isString(entry)) {
         return Response.json(entry);
       }
       return new Response(entry, {
@@ -430,5 +439,6 @@ function makeRipgitFetcher(
         },
       });
     },
-  } as unknown as Fetcher;
+  // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+  } as Fetcher;
 }

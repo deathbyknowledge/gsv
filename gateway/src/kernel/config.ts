@@ -45,6 +45,14 @@ const WORKER_TOOL_APPROVAL_POLICY = JSON.stringify({
   ],
 });
 
+type SystemConfigDefaults = { readonly [key: string]: string };
+
+function defineSystemConfigDefaults<T extends SystemConfigDefaults>(
+  defaults: T,
+): SystemConfigDefaults & T {
+  return defaults;
+}
+
 const DEFAULT_ROOT_MODEL_PROFILES = JSON.stringify({
   version: 1,
   profiles: [{
@@ -64,7 +72,7 @@ const DEFAULT_ROOT_MODEL_PROFILES = JSON.stringify({
   }],
 });
 
-export const SYSTEM_CONFIG_DEFAULTS: Record<string, string> = {
+export const SYSTEM_CONFIG_DEFAULTS = defineSystemConfigDefaults({
   // -- AI / LLM ---------------------------------------------------------------
   // The LLM provider to use (workers-ai, anthropic, openai, google, mistral, etc.)
   "config/ai/provider": "workers-ai",
@@ -146,7 +154,7 @@ export const SYSTEM_CONFIG_DEFAULTS: Record<string, string> = {
   // with a default action and ordered rules matching exact syscalls or domain
   // wildcards. Per-account overrides live under `users/<uid>/ai/tools/approval`.
   "config/ai/tools/approval": WORKER_TOOL_APPROVAL_POLICY,
-};
+});
 
 // Per-user config keys follow the same structure under "users/{uid}/ai/*".
 // e.g. "users/1000/ai/provider" overrides "config/ai/provider" for uid 1000.

@@ -34,6 +34,9 @@ const TEXT_ENCODER = new TextEncoder();
 const PROC_HISTORY_PAGE_SIZE = 500;
 const SCHEDULER_VIEW_PAGE_SIZE = 500;
 const SCHEDULER_LOG_HISTORY_LIMIT = 50;
+const PROCESS_AI_CONFIG_KEY_SET = new Set<string>(PROCESS_AI_CONFIG_KEYS);
+
+type ProcessAiConfigValues = Record<string, string>;
 
 export class KernelMountBackend implements MountBackend {
   constructor(
@@ -91,22 +94,22 @@ export class KernelMountBackend implements MountBackend {
       throw new Error(`EPERM: cannot write to virtual device '${p}'`);
     }
     if (p.startsWith("/proc/")) {
-      await this.writeProc(p, typeof content === "string" ? content : new TextDecoder().decode(content));
+      await this.writeProc(p, fileContentText(content));
       return;
     }
     if (p.startsWith("/sys/")) {
-      this.writeSys(p, typeof content === "string" ? content : new TextDecoder().decode(content));
+      this.writeSys(p, fileContentText(content));
       return;
     }
     if (isCronWritablePath(p)) {
-      await this.writeCronFile(p, typeof content === "string" ? content : new TextDecoder().decode(content));
+      await this.writeCronFile(p, fileContentText(content));
       return;
     }
     if (isVarViewPath(p)) {
       throw new Error(`EPERM: /var runtime views are read-only`);
     }
     if (isEtcAuth(p)) {
-      this.writeEtcAuth(p, typeof content === "string" ? content : new TextDecoder().decode(content));
+      this.writeEtcAuth(p, fileContentText(content));
       return;
     }
     throw new Error(`ENOENT: no such file or directory, open '${p}'`);
@@ -117,7 +120,7 @@ export class KernelMountBackend implements MountBackend {
     if (p === "/dev/null") return;
     if (isCronWritablePath(p)) {
       const existing = await this.readVirtual(p) ?? "";
-      await this.writeCronFile(p, existing + (typeof content === "string" ? content : new TextDecoder().decode(content)));
+      await this.writeCronFile(p, existing + fileContentText(content));
       return;
     }
     if (p.startsWith("/dev/") || p.startsWith("/proc/") || p.startsWith("/sys/") || isVarViewPath(p) || isEtcCronPath(p)) {
@@ -125,7 +128,7 @@ export class KernelMountBackend implements MountBackend {
     }
     if (isEtcAuth(p)) {
       const existing = this.readEtcAuth(p) ?? "";
-      const appended = typeof content === "string" ? existing + content : existing + new TextDecoder().decode(content);
+      const appended = existing + fileContentText(content);
       this.writeEtcAuth(p, appended);
       return;
     }
@@ -409,10 +412,10 @@ export class KernelMountBackend implements MountBackend {
 
   private buildProcAiEffectiveValues(
     proc: ProcessRecord,
-    localValues: Record<string, string>,
+    localValues: ProcessAiConfigValues,
     profile: ProcAiConfigSnapshot["profile"] | null | undefined,
-  ): Record<string, string> {
-    const values: Record<string, string> = {};
+  ) {
+    const values: ProcessAiConfigValues = {};
     const accountUids = proc.ownerUid === proc.uid ? [proc.uid] : [proc.uid, proc.ownerUid];
 
     for (const key of PROCESS_AI_CONFIG_KEYS) {
@@ -440,7 +443,7 @@ export class KernelMountBackend implements MountBackend {
     }
 
     for (const [key, value] of Object.entries(localValues)) {
-      if (PROCESS_AI_CONFIG_KEYS.includes(key as typeof PROCESS_AI_CONFIG_KEYS[number])) {
+      if (PROCESS_AI_CONFIG_KEY_SET.has(key)) {
         values[key] = value;
       }
     }
@@ -666,10 +669,7 @@ export class KernelMountBackend implements MountBackend {
   ): Promise<ResultOf<S> | null> {
     if (!this.kernel?.processRequest) return null;
     try {
-      const result = await this.kernel.processRequest(pid, call, args);
-      if (!result || typeof result !== "object") return null;
-      if ((result as { ok?: unknown }).ok === false) return null;
-      return result;
+      return await this.kernel.processRequest(pid, call, args);
     } catch {
       return null;
     }
@@ -1098,7 +1098,13 @@ function cronFileStat(content: string, mode: number, uid: number, gid: number): 
   };
 }
 
-function jsonText(value: unknown): string {
+function fileContentText(content: FileContent): string {
+  return content instanceof Uint8Array ? new TextDecoder().decode(content) : content;
+}
+
+type JsonTextValue = Parameters<typeof JSON.stringify>[0];
+
+function jsonText(value: JsonTextValue): string {
   return `${JSON.stringify(value, null, 2)}\n`;
 }
 

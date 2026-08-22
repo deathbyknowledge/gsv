@@ -29,7 +29,7 @@ function createMockSqlStorage(options: { failOn?: string } = {}): MockSqlStorage
     return { toArray: () => rows };
   }
 
-  function exec<T = Record<string, unknown>>(query: string, ...bindings: unknown[]): Cursor<T> {
+  function exec<T = AppliedSqlMigration>(query: string, ...bindings: unknown[]): Cursor<T> {
     const normalized = query.trim().replace(/\s+/g, " ");
     statements.push(normalized);
 
@@ -38,11 +38,14 @@ function createMockSqlStorage(options: { failOn?: string } = {}): MockSqlStorage
     }
 
     if (normalized.startsWith("SELECT component, id, name, checksum, applied_at FROM _gsv_schema_migrations")) {
+      // SAFETY: the test invokes this SQL branch only with the migration row contract.
       const [component] = bindings as [string];
+      // SAFETY: the selected rows are AppliedSqlMigration values in this typed fake.
       return cursor(applied.filter((migration) => migration.component === component) as T[]);
     }
 
     if (normalized.startsWith("INSERT INTO _gsv_schema_migrations")) {
+      // SAFETY: the test invokes this SQL branch with the five typed migration bindings.
       const [component, id, name, checksum, appliedAt] = bindings as [
         string,
         number,
@@ -63,6 +66,7 @@ function createMockSqlStorage(options: { failOn?: string } = {}): MockSqlStorage
     return cursor<T>();
   }
 
+  // SAFETY: this object implements the SqlStorage surface used by the migration runner.
   return { exec, applied, statements } as MockSqlStorage;
 }
 

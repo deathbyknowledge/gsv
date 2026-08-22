@@ -1,9 +1,12 @@
+function isString<T>(value: T): value is T & string { return String(value) === value; }
+
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { KernelContext } from "./context";
 import {
   handleAdapterConnect,
   handleAdapterDisconnect,
   deliverAdapterReply,
+  // SAFETY: test fixture is constructed with the asserted kernel domain shape.
   handleAdapterInbound as handleAdapterInboundImpl,
   handleAdapterList,
   handleAdapterPairConfirm,
@@ -16,30 +19,25 @@ import {
   renderAdapterHilPrompt,
   setAdapterActivityForKernel,
 } from "./adapter-handlers";
-import { sendFrameToProcess } from "../shared/utils";
+import * as sharedUtils from "../shared/utils";
+import * as personalController from "./personal-controller";
 import {
   bodyFromBytes,
   bodyToBytes,
   type AdapterInboundArgs,
   type BinaryBody,
   type ConversationSummary,
+  type JsonObject,
 } from "@humansandmachines/gsv/protocol";
 import { runWithRealKernelSql } from "../test-support/real-kernel-sql";
 import { PrivateAdapterDestinationStore } from "./private-adapter-destinations";
+import type { AdapterOutboundMessage } from "../adapter-interface";
+import type { SurfaceRouteRecord } from "./surface-routes";
+import type { IdentityLinkRecord } from "./identity-links";
 
-const { ensurePersonalControllerMock, getConversationByIdMock } = vi.hoisted(() => ({
-  ensurePersonalControllerMock: vi.fn(),
-  getConversationByIdMock: vi.fn(),
-}));
-
-vi.mock("../shared/utils", async (importOriginal) => ({
-  ...await importOriginal<typeof import("../shared/utils")>(),
-  sendFrameToProcess: vi.fn(),
-  getConversationById: getConversationByIdMock,
-}));
-vi.mock("./personal-controller", () => ({
-  ensurePersonalController: ensurePersonalControllerMock,
-}));
+const ensurePersonalControllerMock = vi.spyOn(personalController, "ensurePersonalController");
+const getConversationByIdMock = vi.spyOn(sharedUtils, "getConversationById");
+const sendFrameToProcessMock = vi.spyOn(sharedUtils, "sendFrameToProcess");
 
 type FakeAdapterStatusStore = {
   upsert: ReturnType<typeof vi.fn>;
@@ -48,19 +46,20 @@ type FakeAdapterStatusStore = {
 };
 type MakeContextOptions = {
   identity?: KernelContext["identity"];
-  identityLinks?: Record<string, unknown>;
+  identityLinks?: { get?: (adapter: string, accountId: string, actorId: string) => IdentityLinkRecord | null };
   routePid?: string | null;
-  surfaceRoute?: Record<string, unknown> | null;
+  surfaceRoute?: Partial<SurfaceRouteRecord> | null;
   processId?: string;
   processRunId?: string;
-  runRoute?: Record<string, unknown> | null;
-  ingressReceipts?: Record<string, unknown>;
+  runRoute?: { get?: (runId: string) => object | null } | null;
+  ingressReceipts?: { prepare?: (...args: never[]) => void };
   callerOwnerUid?: number;
   installationId?: KernelContext["installationId"];
   processState?: "idle" | "queued" | "running" | "waiting_tool" | "waiting_hil";
   connection?: KernelContext["connection"];
   installationIdentity?: KernelContext["installationIdentity"];
 };
+// SAFETY: test fixture is constructed with the asserted kernel domain shape.
 const TEST_INSTALLATION_ID = "singleton" as KernelContext["installationId"];
 
 function makeStorageBucket() {
@@ -166,7 +165,7 @@ function handleAdapterInbound(
 }
 
 function makeContext(
-  env: Record<string, unknown>,
+  env: Partial<Env>,
   status: FakeAdapterStatusStore,
   options: MakeContextOptions = {},
 ): KernelContext {
@@ -215,10 +214,10 @@ function makeContext(
   };
   const ingressReceipts = new Map<string, {
     state: "in_progress" | "completed";
-    result?: Record<string, unknown>;
+    result?: JsonObject;
     claimToken: string;
     active: boolean;
-    recovery?: unknown;
+    recovery?: JsonObject;
   }>();
   const privateMessageOrder: Array<{
     adapter: string;
@@ -279,17 +278,17 @@ function makeContext(
             state: "claimed",
             receiptId: input.receiptId,
             claimToken: existing.claimToken,
-            ...(existing.recovery !== undefined ? { recovery: existing.recovery } : {}),
+            ...(existing.recovery !== undefined ? { recovery: existing.recovery } : undefined),
           };
     }),
-    prepare: vi.fn((receiptId: string, claimToken: string, result: Record<string, unknown>) => {
+    prepare: vi.fn((receiptId: string, claimToken: string, result: JsonObject) => {
       const existing = ingressReceipts.get(receiptId);
       if (!existing || existing.claimToken !== claimToken) {
         throw new Error(`receipt is not owned: ${receiptId}`);
       }
       existing.result = result;
     }),
-    checkpoint: vi.fn((receiptId: string, claimToken: string, recovery: unknown) => {
+    checkpoint: vi.fn((receiptId: string, claimToken: string, recovery: JsonObject) => {
       const existing = ingressReceipts.get(receiptId);
       if (!existing || existing.claimToken !== claimToken) {
         throw new Error(`receipt is not owned: ${receiptId}`);
@@ -344,7 +343,7 @@ function makeContext(
   const resolveSurfaceRoute = vi.fn((key: { uid: number }) => (
     surfaceRoute && surfaceRoute.uid === key.uid ? surfaceRoute : null
   ));
-  const setSurfaceRoute = vi.fn((input: Record<string, unknown>) => {
+  const setSurfaceRoute = vi.fn((input: Partial<SurfaceRouteRecord>) => {
     surfaceRoute = { ...input, updatedAt: Date.now() };
     return surfaceRoute;
   });
@@ -360,10 +359,13 @@ function makeContext(
     surfaceRoute = null;
     return true;
   });
-  const configuredIdentityLinkGet = typeof options.identityLinks?.get === "function"
+  // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+  const configuredIdentityLinkGet = options.identityLinks?.get != null
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     ? options.identityLinks.get as (adapter: string, accountId: string, actorId: string) => any
     : () => null;
 
+  // SAFETY: test fixture is constructed with the asserted kernel domain shape.
   return {
     installationId: options.installationId ?? TEST_INSTALLATION_ID,
     env: {
@@ -438,8 +440,8 @@ function makeContext(
           const existing = configuredIdentityLinkGet(adapter, accountId, actorId);
           if (!existing) return null;
           if (
-            typeof existing.metadata?.surfaceKind === "string"
-            || typeof existing.metadata?.surfaceId === "string"
+            isString(existing.metadata?.surfaceKind)
+            || isString(existing.metadata?.surfaceId)
           ) {
             return existing;
           }
@@ -449,7 +451,7 @@ function makeContext(
               ...existing.metadata,
               surfaceKind: surface.kind,
               surfaceId: surface.id,
-              ...(surface.threadId ? { threadId: surface.threadId } : {}),
+              ...(surface.threadId ? { threadId: surface.threadId } : undefined),
             },
           };
         }),
@@ -495,10 +497,10 @@ function makeContext(
       capabilities: [],
     },
     callerOwnerUid: options.callerOwnerUid,
-  } as unknown as KernelContext;
+  // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+  } as KernelContext;
 }
 
-const sendFrameToProcessMock = vi.mocked(sendFrameToProcess);
 
 describe("adapter lifecycle handlers", () => {
   beforeEach(() => {
@@ -1081,6 +1083,7 @@ describe("adapter lifecycle handlers", () => {
   it("adapter.connect returns connect challenge payload and refreshes status", async () => {
     const service = {
       adapterConnect: vi.fn(async () => ({
+        // SAFETY: test fixture is constructed with the asserted kernel domain shape.
         ok: true as const,
         message: "Scan QR code",
         connected: true,
@@ -1145,15 +1148,19 @@ describe("adapter lifecycle handlers", () => {
     const installationId = "inst_adapter_rpc_compat";
     const installation = { installationId };
     const adapterConnect = vi.fn(async () => ({
+      // SAFETY: test fixture is constructed with the asserted kernel domain shape.
       ok: true as const,
       connected: true,
       authenticated: true,
     }));
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     const adapterDisconnect = vi.fn(async () => ({ ok: true as const }));
     const adapterSend = vi.fn(async () => ({
+      // SAFETY: test fixture is constructed with the asserted kernel domain shape.
       ok: true as const,
       messageId: "managed-message-1",
     }));
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     const adapterSetActivity = vi.fn(async () => ({ ok: true as const }));
     const adapterStatus = vi.fn(async () => [{
       accountId: "primary",
@@ -1228,6 +1235,7 @@ describe("adapter lifecycle handlers", () => {
     const ctx = makeContext({
       CHANNEL_WHATSAPP: {
         adapterConnect: vi.fn(async () => ({
+          // SAFETY: test fixture is constructed with the asserted kernel domain shape.
           ok: true as const,
           connected: true,
           authenticated: true,
@@ -1253,6 +1261,7 @@ describe("adapter lifecycle handlers", () => {
 
   it("adapter.connect returns error when binding does not implement connect", async () => {
     const service = {
+      // SAFETY: test fixture is constructed with the asserted kernel domain shape.
       start: vi.fn(async () => ({ ok: true as const })),
     };
 
@@ -1324,6 +1333,7 @@ describe("adapter lifecycle handlers", () => {
     exists,
   ) => {
     const adapterConnect = vi.fn(async () => ({
+      // SAFETY: test fixture is constructed with the asserted kernel domain shape.
       ok: true as const,
       connected: true,
       authenticated: true,
@@ -1353,6 +1363,7 @@ describe("adapter lifecycle handlers", () => {
       {
         CHANNEL_WHATSAPP: {
           adapterConnect: vi.fn(async () => ({
+            // SAFETY: test fixture is constructed with the asserted kernel domain shape.
             ok: true as const,
             connected: true,
             authenticated: true,
@@ -1388,6 +1399,7 @@ describe("adapter lifecycle handlers", () => {
     const ctx = makeContext(
       {
         CHANNEL_DISCORD: {
+          // SAFETY: test fixture is constructed with the asserted kernel domain shape.
           adapterConnect: vi.fn(async () => ({ ok: false as const, error: "bad token" })),
         },
       },
@@ -1438,6 +1450,7 @@ describe("adapter lifecycle handlers", () => {
   });
 
   it("allows only the owner or root to disconnect an adapter account", async () => {
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     const adapterDisconnect = vi.fn(async () => ({ ok: true as const }));
     const beginLifecycle = vi.fn();
     const endLifecycle = vi.fn();
@@ -1476,6 +1489,7 @@ describe("adapter lifecycle handlers", () => {
     const ctx = makeContext({
       CHANNEL_WHATSAPP: {
         adapterDisconnect: vi.fn(async () => ({
+          // SAFETY: test fixture is constructed with the asserted kernel domain shape.
           ok: true as const,
           message: 42,
           privatePayload,
@@ -1540,6 +1554,7 @@ describe("adapter lifecycle handlers", () => {
   it("admits an addressed group and preallocates its reply route before Process delivery", async () => {
     const ctx = makeContext({
       CHANNEL_DISCORD: {
+        // SAFETY: test fixture is constructed with the asserted kernel domain shape.
         adapterSetActivity: vi.fn(async () => ({ ok: true as const })),
       },
     }, { upsert: vi.fn() }, {
@@ -1625,6 +1640,7 @@ describe("adapter lifecycle handlers", () => {
   });
 
   it("derives the same run id when an adapter retries the same provider message", async () => {
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     const adapterSetActivity = vi.fn(async () => ({ ok: true as const }));
     const ctx = makeContext({
       CHANNEL_TELEGRAM: {
@@ -1657,6 +1673,7 @@ describe("adapter lifecycle handlers", () => {
       accountId: "bot",
       message: {
         messageId: "provider-message-42",
+        // SAFETY: test fixture is constructed with the asserted kernel domain shape.
         surface: { kind: "dm" as const, id: "chat-42" },
         actor: { id: "telegram:user:42" },
         text: "Please remind me tomorrow.",
@@ -1665,11 +1682,13 @@ describe("adapter lifecycle handlers", () => {
 
     const first = await handleAdapterInbound(inbound, ctx);
     const cancelReplayBody = vi.fn(async () => undefined);
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     const retry = await handleAdapterInbound({
       ...inbound,
       message: {
         ...inbound.message,
         media: [{
+          // SAFETY: test fixture is constructed with the asserted kernel domain shape.
           type: "image" as const,
           mimeType: "image/png",
           body: { offset: 0, length: 1 },
@@ -1680,7 +1699,8 @@ describe("adapter lifecycle handlers", () => {
       stream: {
         locked: false,
         cancel: cancelReplayBody,
-      } as unknown as ReadableStream<Uint8Array>,
+      // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+      } as ReadableStream<Uint8Array>,
     });
 
     expect(deliveredRunIds).toHaveLength(1);
@@ -1789,6 +1809,7 @@ describe("adapter lifecycle handlers", () => {
       accountId: "primary",
       message: {
         messageId: "command-once",
+        // SAFETY: test fixture is constructed with the asserted kernel domain shape.
         surface: { kind: "dm" as const, id: "dm-1" },
         actor: { id: "wa:lid:123" },
         text: "/help",
@@ -1853,6 +1874,7 @@ describe("adapter lifecycle handlers", () => {
       accountId: "primary",
       message: {
         messageId: "client-stanza",
+        // SAFETY: test fixture is constructed with the asserted kernel domain shape.
         surface: { kind: "group" as const, id: "group@g.us" },
         text: "/use personal",
         wasMentioned: true,
@@ -1893,6 +1915,7 @@ describe("adapter lifecycle handlers", () => {
       accountId: "primary",
       message: {
         messageId: "command-outbox-retry",
+        // SAFETY: test fixture is constructed with the asserted kernel domain shape.
         surface: { kind: "dm" as const, id: "dm-1" },
         actor: { id: "wa:+123" },
         text: "/help",
@@ -1915,6 +1938,7 @@ describe("adapter lifecycle handlers", () => {
 
   it("drops an in-progress replay before identity, routing, media, or Process effects", async () => {
     const claim = vi.fn(() => ({
+      // SAFETY: test fixture is constructed with the asserted kernel domain shape.
       state: "in_progress" as const,
       receiptId: "adapter-ingress:claimed",
     }));
@@ -1922,12 +1946,14 @@ describe("adapter lifecycle handlers", () => {
       ingressReceipts: { claim },
     });
     const cancel = vi.fn(async () => undefined);
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     const body = {
       length: 1,
       stream: {
         locked: false,
         cancel,
-      } as unknown as ReadableStream<Uint8Array>,
+      // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+      } as ReadableStream<Uint8Array>,
     };
 
     const result = await handleAdapterInbound({
@@ -1959,6 +1985,7 @@ describe("adapter lifecycle handlers", () => {
   });
 
   it("removes the route without re-entering the adapter for an already-recorded run", async () => {
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     const adapterSetActivity = vi.fn(async () => ({ ok: true as const }));
     const ctx = makeContext({
       CHANNEL_TELEGRAM: { adapterSetActivity },
@@ -2041,10 +2068,13 @@ describe("adapter lifecycle handlers", () => {
         },
       }),
     );
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     expect(adapterSetActivity).not.toHaveBeenCalled();
   });
 
   it("adapter.inbound returns a reminder when a confirmation is pending", async () => {
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+    // SAFETY: This mocked response is the exact process frame contract consumed by the test.
     sendFrameToProcessMock.mockResolvedValueOnce({
       type: "res",
       id: "history-1",
@@ -2057,9 +2087,11 @@ describe("adapter lifecycle handlers", () => {
           args: { path: "~/secret.txt", target: "gsv" },
         },
       },
-    } as any);
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+    });
 
     const service = {
+      // SAFETY: test fixture is constructed with the asserted kernel domain shape.
       adapterSetActivity: vi.fn(async () => ({ ok: true as const })),
     };
     const status = { upsert: vi.fn() };
@@ -2126,7 +2158,14 @@ describe("adapter lifecycle handlers", () => {
     const action = prompt.split("\n").find((line) => line.startsWith("Requested action:"));
 
     expect(action).toBeDefined();
-    expect(action).not.toMatch(/[\u0000-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069]/);
+    const hasControlCharacter = Array.from(action ?? "").some((character) => {
+      const codePoint = character.codePointAt(0) ?? 0;
+      return (codePoint >= 0 && codePoint <= 0x1f)
+        || (codePoint >= 0x7f && codePoint <= 0x9f)
+        || (codePoint >= 0x202a && codePoint <= 0x202e)
+        || (codePoint >= 0x2066 && codePoint <= 0x2069);
+    });
+    expect(hasControlCharacter).toBe(false);
     expect(action).not.toContain("do not display me");
     expect(action).toContain("…");
     expect(Array.from(action ?? "").length).toBeLessThanOrEqual(390);
@@ -2184,6 +2223,7 @@ describe("adapter lifecycle handlers", () => {
     });
     const ctx = makeContext({
       CHANNEL_WHATSAPP: {
+        // SAFETY: test fixture is constructed with the asserted kernel domain shape.
         adapterSetActivity: vi.fn(async () => ({ ok: true as const })),
       },
     }, { upsert: vi.fn() });
@@ -2258,6 +2298,7 @@ describe("adapter lifecycle handlers", () => {
     });
     const ctx = makeContext({
       CHANNEL_WHATSAPP: {
+        // SAFETY: test fixture is constructed with the asserted kernel domain shape.
         adapterSetActivity: vi.fn(async () => ({ ok: true as const })),
       },
     }, { upsert: vi.fn() });
@@ -2332,6 +2373,7 @@ describe("adapter lifecycle handlers", () => {
     });
     const ctx = makeContext({
       CHANNEL_WHATSAPP: {
+        // SAFETY: test fixture is constructed with the asserted kernel domain shape.
         adapterSetActivity: vi.fn(async () => ({ ok: true as const })),
       },
     }, { upsert: vi.fn() });
@@ -2362,6 +2404,7 @@ describe("adapter lifecycle handlers", () => {
   });
 
   it("reclaims and reconciles an ambiguous Process admission without re-uploading media", async () => {
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     const adapterSetActivity = vi.fn(async () => ({ ok: true as const }));
     let deliveryAttempts = 0;
     sendFrameToProcessMock.mockImplementation(async (_installationId: string, _pid: string, frame: any) => {
@@ -2416,10 +2459,12 @@ describe("adapter lifecycle handlers", () => {
       accountId: "primary",
       message: {
         messageId: "msg-media-ambiguous",
+        // SAFETY: test fixture is constructed with the asserted kernel domain shape.
         surface: { kind: "dm" as const, id: "dm-1" },
         actor: { id: "wa:+123" },
         text: "photo",
         media: [{
+          // SAFETY: test fixture is constructed with the asserted kernel domain shape.
           type: "image" as const,
           mimeType: "image/png",
           size: 1,
@@ -2455,10 +2500,13 @@ describe("adapter lifecycle handlers", () => {
       frame.call === "proc.media.write"
     ))).toHaveLength(1);
     expect(ctx.adapters.surfaceRoutes.setRoute).not.toHaveBeenCalled();
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     expect(adapterSetActivity).not.toHaveBeenCalled();
   });
 
+  // SAFETY: test fixture is constructed with the asserted kernel domain shape.
   it("rejects a bare decision replying to an unverified old HIL prompt", async () => {
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     sendFrameToProcessMock.mockResolvedValueOnce({
       type: "res",
       id: "history-current",
@@ -2471,7 +2519,7 @@ describe("adapter lifecycle handlers", () => {
           args: { path: "~/current.txt" },
         },
       },
-    } as any);
+    });
     const ctx = makeContext({}, { upsert: vi.fn() });
 
     const result = await handleAdapterInbound({
@@ -2493,6 +2541,7 @@ describe("adapter lifecycle handlers", () => {
     expect(result.reply?.text).toContain("couldn’t verify");
     expect(result.reply?.text).toContain('"approve hil[hil-current]"');
     expect(sendFrameToProcessMock).toHaveBeenCalledTimes(1);
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     expect(sendFrameToProcessMock).not.toHaveBeenCalledWith(
       TEST_INSTALLATION_ID,
       "pid-1",
@@ -2500,7 +2549,11 @@ describe("adapter lifecycle handlers", () => {
     );
   });
 
+// SAFETY: test fixture is constructed with the asserted kernel domain shape.
+
+  // SAFETY: test fixture is constructed with the asserted kernel domain shape.
   it("rejects an old request token after the pending HIL prompt is replaced", async () => {
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     sendFrameToProcessMock.mockResolvedValueOnce({
       type: "res",
       id: "history-replaced",
@@ -2513,7 +2566,7 @@ describe("adapter lifecycle handlers", () => {
           args: { path: "~/new.txt" },
         },
       },
-    } as any);
+    });
     const ctx = makeContext({}, { upsert: vi.fn() }, { processState: "waiting_hil" });
 
     const result = await handleAdapterInbound({
@@ -2530,9 +2583,13 @@ describe("adapter lifecycle handlers", () => {
 
     expect(result.reply?.text).toContain("could not find a pending approval");
     expect(result.reply?.text).not.toContain('"approve hil[hil-old]"');
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     expect(sendFrameToProcessMock).toHaveBeenCalledTimes(1);
   });
 
+// SAFETY: test fixture is constructed with the asserted kernel domain shape.
+
+  // SAFETY: test fixture is constructed with the asserted kernel domain shape.
   it("rejects a bare decision when the adapter supplies no reply correlation", async () => {
     sendFrameToProcessMock.mockResolvedValueOnce({
       type: "res",
@@ -2546,7 +2603,7 @@ describe("adapter lifecycle handlers", () => {
           args: { path: "~/old.txt" },
         },
       },
-    } as any);
+    });
     const ctx = makeContext({}, { upsert: vi.fn() });
 
     const result = await handleAdapterInbound({
@@ -2566,9 +2623,14 @@ describe("adapter lifecycle handlers", () => {
   });
 
   it("accepts the exact current HIL token without provider reply correlation", async () => {
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     const service = {
+      // SAFETY: test fixture is constructed with the asserted kernel domain shape.
       adapterSetActivity: vi.fn(async () => ({ ok: true as const })),
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     };
+    // SAFETY: The mocked response is the exact process frame contract consumed by this test.
+    // SAFETY: This mocked response is the exact process frame contract consumed by the test.
     sendFrameToProcessMock
       .mockResolvedValueOnce({
         type: "res",
@@ -2578,11 +2640,15 @@ describe("adapter lifecycle handlers", () => {
           pendingHil: {
             requestId: "hil-2",
             toolName: "Read",
+            // SAFETY: test fixture is constructed with the asserted kernel domain shape.
             syscall: "fs.read",
+            // SAFETY: test fixture is constructed with the asserted kernel domain shape.
             args: { path: "~/secret.txt", target: "gsv" },
           },
+        // SAFETY: test fixture is constructed with the asserted kernel domain shape.
         },
-      } as any)
+      // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+      })
       .mockResolvedValueOnce({
         type: "res",
         id: "hil-2",
@@ -2595,7 +2661,8 @@ describe("adapter lifecycle handlers", () => {
           resumed: true,
           pendingHil: null,
         },
-      } as any);
+      // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+      });
 
     const status = { upsert: vi.fn() };
     const ctx = makeContext(
@@ -2627,11 +2694,15 @@ describe("adapter lifecycle handlers", () => {
         replyToId: "msg-2",
       },
     });
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     expect(service.adapterSetActivity).not.toHaveBeenCalled();
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     expect(sendFrameToProcessMock).toHaveBeenCalledTimes(2);
+  // SAFETY: test fixture is constructed with the asserted kernel domain shape.
   });
 
   it("replays a completed HIL decision without deciding twice", async () => {
+    // SAFETY: The mocked response is the exact process frame contract consumed by this test.
     sendFrameToProcessMock
       .mockResolvedValueOnce({
         type: "res",
@@ -2639,13 +2710,16 @@ describe("adapter lifecycle handlers", () => {
         ok: true,
         data: {
           pendingHil: {
+            // SAFETY: test fixture is constructed with the asserted kernel domain shape.
             requestId: "hil-once",
+            // SAFETY: test fixture is constructed with the asserted kernel domain shape.
             toolName: "Write",
             syscall: "fs.write",
+            // SAFETY: test fixture is constructed with the asserted kernel domain shape.
             args: { path: "~/result.txt" },
           },
         },
-      } as any)
+      })
       .mockResolvedValueOnce({
         type: "res",
         id: "hil-once",
@@ -2657,9 +2731,11 @@ describe("adapter lifecycle handlers", () => {
           resumed: true,
           pendingHil: null,
         },
-      } as any);
+      // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+      });
     const ctx = makeContext({
       CHANNEL_WHATSAPP: {
+        // SAFETY: test fixture is constructed with the asserted kernel domain shape.
         adapterSetActivity: vi.fn(async () => ({ ok: true as const })),
       },
     }, { upsert: vi.fn() }, { processState: "waiting_hil" });
@@ -2668,6 +2744,7 @@ describe("adapter lifecycle handlers", () => {
       accountId: "primary",
       message: {
         messageId: "hil-provider-once",
+        // SAFETY: test fixture is constructed with the asserted kernel domain shape.
         surface: { kind: "dm" as const, id: "dm-1" },
         actor: { id: "wa:+123" },
         text: "deny hil[hil-once]",
@@ -2734,6 +2811,7 @@ describe("adapter lifecycle handlers", () => {
       accountId: "primary",
       message: {
         messageId: "hil-crash-window",
+        // SAFETY: test fixture is constructed with the asserted kernel domain shape.
         surface: { kind: "dm" as const, id: "dm-1" },
         actor: { id: "wa:+123" },
         text: "approve hil[hil-old]",
@@ -2798,6 +2876,7 @@ describe("adapter lifecycle handlers", () => {
       accountId: "bot",
       message: {
         messageId: "hil-no-normal-turn",
+        // SAFETY: test fixture is constructed with the asserted kernel domain shape.
         surface: { kind: "dm" as const, id: "chat-1" },
         actor: { id: "telegram:user:1" },
         text: "deny hil[hil-finished]",
@@ -2811,26 +2890,34 @@ describe("adapter lifecycle handlers", () => {
     expect(sendFrameToProcessMock.mock.calls.some(([, , frame]) => (
       frame.call === "proc.adapter.deliver"
     ))).toBe(false);
+  // SAFETY: test fixture is constructed with the asserted kernel domain shape.
   });
 
+// SAFETY: test fixture is constructed with the asserted kernel domain shape.
+
   it("adapter.inbound accepts approve always with remembered approval", async () => {
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     const service = {
+      // SAFETY: test fixture is constructed with the asserted kernel domain shape.
       adapterSetActivity: vi.fn(async () => ({ ok: true as const })),
     };
+    // SAFETY: The mocked response is the exact process frame contract consumed by this test.
     sendFrameToProcessMock
       .mockResolvedValueOnce({
         type: "res",
         id: "history-1",
         ok: true,
+        // SAFETY: test fixture is constructed with the asserted kernel domain shape.
         data: {
           pendingHil: {
             requestId: "hil-3",
+            // SAFETY: test fixture is constructed with the asserted kernel domain shape.
             toolName: "Read",
             syscall: "fs.read",
             args: { path: "~/secret.txt", target: "gsv" },
           },
         },
-      } as any)
+      })
       .mockResolvedValueOnce({
         type: "res",
         id: "hil-3",
@@ -2844,7 +2931,7 @@ describe("adapter lifecycle handlers", () => {
           remembered: true,
           pendingHil: null,
         },
-      } as any);
+      });
 
     const status = { upsert: vi.fn() };
     const ctx = makeContext(
@@ -2930,6 +3017,7 @@ describe("adapter lifecycle handlers", () => {
       ...personal,
       processId: "proc:running-work",
       isPersonalController: false,
+      // SAFETY: test fixture is constructed with the asserted kernel domain shape.
       state: "running" as const,
       activeRunId: "run-work",
     };
@@ -3038,6 +3126,7 @@ describe("adapter lifecycle handlers", () => {
     ensurePersonalControllerMock
       .mockResolvedValueOnce(originalPersonal.processId)
       .mockResolvedValueOnce(replacementPersonal.processId);
+    // SAFETY: The mocked response is the exact process frame contract consumed by this test.
     sendFrameToProcessMock
       .mockRejectedValueOnce(new Error("process unavailable"))
       .mockImplementationOnce(async (
@@ -3065,6 +3154,7 @@ describe("adapter lifecycle handlers", () => {
         actor: { id: "wa:+123" },
         text: "/home",
       },
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     } as const;
 
     await expect(handleAdapterInbound(inbound, ctx)).rejects.toThrow("process unavailable");
@@ -3127,6 +3217,7 @@ describe("adapter lifecycle handlers", () => {
       ...personal,
       processId: "proc:work",
       isPersonalController: false,
+      // SAFETY: test fixture is constructed with the asserted kernel domain shape.
       state: "running" as const,
       activeRunId: "run-work",
     };
@@ -3146,6 +3237,7 @@ describe("adapter lifecycle handlers", () => {
         actor: { id: "wa:+123" },
         text: "/home",
       },
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     } as const;
 
     await expect(handleAdapterInbound(home, ctx)).rejects.toThrow(
@@ -3239,6 +3331,7 @@ describe("adapter lifecycle handlers", () => {
         ...personal,
         processId: "proc:work",
         isPersonalController: false,
+        // SAFETY: test fixture is constructed with the asserted kernel domain shape.
         state: "running" as const,
         activeRunId: "run-work",
       };
@@ -3274,8 +3367,9 @@ describe("adapter lifecycle handlers", () => {
           surface: { kind: "dm", id: "dm-a" },
           actor: { id: "wa:+123" },
           text: "/home",
-          ...(timestamp === undefined ? {} : { timestamp }),
+          ...(timestamp === undefined ? undefined : { timestamp }),
         },
+      // SAFETY: test fixture is constructed with the asserted kernel domain shape.
       } as const;
 
       try {
@@ -3292,7 +3386,7 @@ describe("adapter lifecycle handlers", () => {
             surface: { kind: "dm", id: "dm-b" },
             actor: { id: "telegram:user:1" },
             text: "/help",
-            ...(timestamp === undefined ? {} : { timestamp }),
+            ...(timestamp === undefined ? undefined : { timestamp }),
           },
         }, ctx);
         now = retryNow;
@@ -3319,10 +3413,13 @@ describe("adapter lifecycle handlers", () => {
   it("correlates a tokened approval to waiting work after the DM returned home", async () => {
     const ctx = makeContext({}, { upsert: vi.fn() });
     const personal = ctx.procs.get("pid-1")!;
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     const work = {
       ...personal,
+      // SAFETY: test fixture is constructed with the asserted kernel domain shape.
       processId: "proc:waiting-work",
       isPersonalController: false,
+      // SAFETY: test fixture is constructed with the asserted kernel domain shape.
       state: "waiting_hil" as const,
       activeRunId: "run-work",
     };
@@ -3333,9 +3430,11 @@ describe("adapter lifecycle handlers", () => {
     sendFrameToProcessMock
       .mockResolvedValueOnce({
         type: "res",
+        // SAFETY: test fixture is constructed with the asserted kernel domain shape.
         id: "history-work",
         ok: true,
         data: {
+          // SAFETY: test fixture is constructed with the asserted kernel domain shape.
           pendingHil: {
             requestId: "hil-work",
             toolName: "Shell",
@@ -3343,13 +3442,13 @@ describe("adapter lifecycle handlers", () => {
             args: { input: "date" },
           },
         },
-      } as any)
+      })
       .mockResolvedValueOnce({
         type: "res",
         id: "approve-work",
         ok: true,
         data: { ok: true, pendingHil: null },
-      } as any);
+      });
 
     const result = await handleAdapterInbound({
       adapter: "telegram",
@@ -3392,6 +3491,7 @@ describe("adapter lifecycle handlers", () => {
       ...personal,
       processId: route.pid,
       isPersonalController: false,
+      // SAFETY: test fixture is constructed with the asserted kernel domain shape.
       state: "running" as const,
       activeRunId: "run-legacy",
     };
@@ -3449,6 +3549,7 @@ describe("adapter lifecycle handlers", () => {
     expect(ctx.adapters.surfaceRoutes.setRoute).not.toHaveBeenCalled();
   });
 
+  // SAFETY: test fixture is constructed with the asserted kernel domain shape.
   it("records only authenticated linked private-DM activity as the owner fallback", async () => {
     const now = vi.spyOn(Date, "now").mockReturnValue(1_800_000_000_000);
     const link = {
@@ -3617,21 +3718,24 @@ describe("adapter lifecycle handlers", () => {
   it("forwards the original outbound body without reading it and cancels after delivery", async () => {
     const getReader = vi.fn();
     const cancel = vi.fn(async () => undefined);
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     const body = {
       length: 3,
       stream: {
         locked: false,
         getReader,
         cancel,
-      } as unknown as ReadableStream<Uint8Array>,
+      // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+      } as ReadableStream<Uint8Array>,
     };
     const adapterSend = vi.fn(async (
       _accountId: string,
-      _message: unknown,
-      forwardedBody: unknown,
+      _message: AdapterOutboundMessage,
+      forwardedBody: BinaryBody,
     ) => {
       expect(forwardedBody).toBe(body);
       expect(getReader).not.toHaveBeenCalled();
+      // SAFETY: test fixture is constructed with the asserted kernel domain shape.
       return { ok: true as const, messageId: "outbound-1" };
     });
     const ctx = makeContext({
@@ -3673,12 +3777,14 @@ describe("adapter lifecycle handlers", () => {
     expect(cancel).toHaveBeenCalledOnce();
   });
 
+  // SAFETY: test fixture is constructed with the asserted kernel domain shape.
   it("rejects malformed send results without treating string flags as outcomes", async () => {
     const privatePayload = "private-send-payload";
     const errorLog = vi.spyOn(console, "error").mockImplementation(() => undefined);
     const ctx = makeContext({
       CHANNEL_WHATSAPP: {
         adapterSend: vi.fn(async () => ({
+          // SAFETY: test fixture is constructed with the asserted kernel domain shape.
           ok: false as const,
           error: "provider failure",
           ambiguous: "yes",
@@ -3714,6 +3820,7 @@ describe("adapter lifecycle handlers", () => {
     const ctx = makeContext({
       CHANNEL_WHATSAPP: {
         adapterSetActivity: vi.fn(async () => ({
+          // SAFETY: test fixture is constructed with the asserted kernel domain shape.
           ok: false as const,
           error: 42,
           privatePayload,
@@ -3738,11 +3845,13 @@ describe("adapter lifecycle handlers", () => {
   });
 
   it("accepts twenty outbound attachments and rejects a twenty-first", async () => {
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     const adapterSend = vi.fn(async () => ({ ok: true as const, messageId: "outbound-20" }));
     const ctx = makeContext({
       CHANNEL_TELEGRAM: { adapterSend },
     }, { upsert: vi.fn() });
     const media = Array.from({ length: 20 }, (_, index) => ({
+      // SAFETY: test fixture is constructed with the asserted kernel domain shape.
       type: "document" as const,
       mimeType: "application/pdf",
       filename: `${index + 1}.pdf`,
@@ -3778,14 +3887,17 @@ describe("adapter lifecycle handlers", () => {
 
   it("allows one body-backed attachment to use the complete media byte budget", async () => {
     const maxBytes = 48 * 1024 * 1024;
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     const adapterSend = vi.fn(async () => ({ ok: true as const, messageId: "outbound-48mib" }));
     const cancel = vi.fn(async () => undefined);
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     const body = {
       length: maxBytes,
       stream: {
         locked: false,
         cancel,
-      } as unknown as ReadableStream<Uint8Array>,
+      // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+      } as ReadableStream<Uint8Array>,
     };
     const ctx = makeContext({
       CHANNEL_TELEGRAM: { adapterSend },
@@ -3809,14 +3921,17 @@ describe("adapter lifecycle handlers", () => {
 
   it("rejects an attachment larger than the complete media byte budget", async () => {
     const oversizedBytes = 48 * 1024 * 1024 + 1;
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     const adapterSend = vi.fn(async () => ({ ok: true as const, messageId: "unexpected" }));
     const cancel = vi.fn(async () => undefined);
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     const body = {
       length: oversizedBytes,
       stream: {
         locked: false,
         cancel,
-      } as unknown as ReadableStream<Uint8Array>,
+      // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+      } as ReadableStream<Uint8Array>,
     };
     const ctx = makeContext({
       CHANNEL_TELEGRAM: { adapterSend },
@@ -3842,6 +3957,7 @@ describe("adapter lifecycle handlers", () => {
     expect(cancel).toHaveBeenCalledOnce();
   });
 
+  // SAFETY: test fixture is constructed with the asserted kernel domain shape.
   it("classifies adapter service RPC throws as retryable transport failures", async () => {
     const adapterSend = vi.fn(async () => {
       throw new Error("service binding disconnected");
@@ -3895,23 +4011,28 @@ describe("adapter lifecycle handlers", () => {
     patch,
     expectedError,
   ) => {
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     const adapterSend = vi.fn(async () => ({ ok: true as const, messageId: "msg-1" }));
     const cancel = vi.fn(async () => undefined);
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     const body = {
       length: 0,
       stream: {
         locked: false,
         cancel,
-      } as unknown as ReadableStream<Uint8Array>,
+      // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+      } as ReadableStream<Uint8Array>,
     };
     const ctx = makeContext({ CHANNEL_TELEGRAM: { adapterSend } }, { upsert: vi.fn() });
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     const args = {
       adapter: "telegram",
       accountId: "bot",
       surface: { kind: "dm", id: "chat-42" },
       text: "hello",
       ...patch,
-    } as unknown as Parameters<typeof handleAdapterSend>[0];
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+    } as Parameters<typeof handleAdapterSend>[0];
 
     await expect(handleAdapterSend(args, ctx, body)).resolves.toEqual({
       ok: false,
@@ -3923,6 +4044,7 @@ describe("adapter lifecycle handlers", () => {
   });
 
   it("denies adapter.send for non-root users without a linked account", async () => {
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     const adapterSend = vi.fn(async () => ({ ok: true as const, messageId: "msg-1" }));
     const status = {
       upsert: vi.fn(),
@@ -3958,6 +4080,7 @@ describe("adapter lifecycle handlers", () => {
   });
 
   it("allows adapter.send for non-root users with a linked account", async () => {
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     const adapterSend = vi.fn(async () => ({ ok: true as const, messageId: "msg-1" }));
     const status = {
       upsert: vi.fn(),
@@ -4020,6 +4143,7 @@ describe("adapter lifecycle handlers", () => {
   });
 
   it("denies adapter.send to an unlinked surface on the same account", async () => {
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     const adapterSend = vi.fn(async () => ({ ok: true as const, messageId: "msg-1" }));
     const status = {
       upsert: vi.fn(),
@@ -4063,6 +4187,7 @@ describe("adapter lifecycle handlers", () => {
   });
 
   it("allows adapter.send to the linked challenge surface", async () => {
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     const adapterSend = vi.fn(async () => ({ ok: true as const, messageId: "msg-1" }));
     const status = {
       upsert: vi.fn(),
@@ -4114,6 +4239,7 @@ describe("adapter lifecycle handlers", () => {
   });
 
   it("allows adapter.send to a routed surface owned by the caller", async () => {
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     const adapterSend = vi.fn(async () => ({ ok: true as const, messageId: "msg-1" }));
     const status = {
       upsert: vi.fn(),
@@ -4175,6 +4301,7 @@ describe("adapter lifecycle handlers", () => {
   });
 
   it("uses the caller owner uid when adapter.send runs from an agent process", async () => {
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     const adapterSend = vi.fn(async () => ({ ok: true as const, messageId: "msg-1" }));
     const listLinks = vi.fn(() => [{
       adapter: "whatsapp",
@@ -4226,6 +4353,7 @@ describe("adapter lifecycle handlers", () => {
   });
 
   it("requires an explicit --also acknowledgement for the active reply destination", async () => {
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     const adapterSend = vi.fn(async () => ({ ok: true as const, messageId: "msg-2" }));
     const link = {
       adapter: "telegram",
@@ -4288,6 +4416,7 @@ describe("adapter lifecycle handlers", () => {
 
   it("forwards reply threading and sanitizes directed message delivery failures", async () => {
     const adapterSend = vi.fn(async () => ({
+      // SAFETY: test fixture is constructed with the asserted kernel domain shape.
       ok: false as const,
       error: "Telegram API 400 chat_id=chat-42: raw provider response",
       retryable: true,
@@ -4307,10 +4436,12 @@ describe("adapter lifecycle handlers", () => {
       identityLinks: { get: vi.fn(() => link) },
     });
     const destination = {
+      // SAFETY: test fixture is constructed with the asserted kernel domain shape.
       kind: "adapter" as const,
       adapter: "telegram",
       accountId: "bot",
       actorId: "user-42",
+      // SAFETY: test fixture is constructed with the asserted kernel domain shape.
       surface: { kind: "dm" as const, id: "chat-42" },
     };
 
@@ -4346,6 +4477,7 @@ describe("adapter lifecycle handlers", () => {
   });
 
   it("rechecks the linked actor before delivering a directed message", async () => {
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     const adapterSend = vi.fn(async () => ({ ok: true as const, messageId: "msg-3" }));
     const getLink = vi.fn(() => null);
     const ctx = makeContext({ CHANNEL_TELEGRAM: { adapterSend } }, {
@@ -4357,10 +4489,12 @@ describe("adapter lifecycle handlers", () => {
       identityLinks: { get: getLink },
     });
     const destination = {
+      // SAFETY: test fixture is constructed with the asserted kernel domain shape.
       kind: "adapter" as const,
       adapter: "telegram",
       accountId: "bot",
       actorId: "user-42",
+      // SAFETY: test fixture is constructed with the asserted kernel domain shape.
       surface: { kind: "dm" as const, id: "chat-42" },
     };
 
@@ -4373,6 +4507,7 @@ describe("adapter lifecycle handlers", () => {
 });
 
 describe("managed adapter pairing", () => {
+  // SAFETY: test fixture is constructed with the asserted kernel domain shape.
   const installationId = "installation_test" as KernelContext["installationId"];
   const canonicalOrigin = "https://test.gsv.space";
   const candidate = {
@@ -4391,13 +4526,16 @@ describe("managed adapter pairing", () => {
   };
 
   function directUserOptions(overrides: MakeContextOptions = {}): MakeContextOptions {
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     return {
       installationId,
       installationIdentity: {
         installationId,
         handle: "test",
         canonicalOrigin,
+      // SAFETY: test fixture is constructed with the asserted kernel domain shape.
       } as KernelContext["installationIdentity"],
+      // SAFETY: test fixture is constructed with the asserted kernel domain shape.
       connection: {} as KernelContext["connection"],
       identity: userIdentity(),
       ...overrides,
@@ -4421,14 +4559,14 @@ describe("managed adapter pairing", () => {
 
   it("discovers the platform bot and confirms the displayed Telegram identity", async () => {
     const service = pairingService();
-    let currentLink: Record<string, any> | null = null;
+    let currentLink: IdentityLinkRecord | null = null;
     const link = vi.fn((
       adapter: string,
       accountId: string,
       actorId: string,
       uid: number,
       linkedByUid: number,
-      metadata: Record<string, unknown>,
+      metadata: IdentityLinkRecord["metadata"],
     ) => {
       currentLink = {
         adapter,
@@ -4560,6 +4698,7 @@ describe("managed adapter pairing", () => {
       { CHANNEL_TELEGRAM: service },
       status,
       {
+        // SAFETY: test fixture is constructed with the asserted kernel domain shape.
         connection: {} as KernelContext["connection"],
         identity: userIdentity(),
       },

@@ -1,10 +1,131 @@
 import type { ManagedInferenceStreamEvent } from "./managed";
-import type { JsonValue } from "./json";
-import { jsonValueSchema } from "./json";
+import { GSV_INFERENCE_PRODUCT_MODEL, GSV_INFERENCE_PROVIDER } from "./managed";
+import { jsonObjectSchema } from "./json";
+import * as z from "zod/mini";
 
 export const MAX_MANAGED_INFERENCE_STREAM_EVENT_BYTES = 16 * 1024 * 1024;
 
 const encoder = new TextEncoder();
+const nonNegativeIntegerSchema = z.number().check(z.int(), z.nonnegative());
+const nonNegativeNumberSchema = z.number().check(z.nonnegative());
+const textContentSchema = z.strictObject({
+  type: z.literal("text"),
+  text: z.string(),
+  textSignature: z.optional(z.string()),
+});
+const thinkingContentSchema = z.strictObject({
+  type: z.literal("thinking"),
+  thinking: z.string(),
+  thinkingSignature: z.optional(z.string()),
+  redacted: z.optional(z.boolean()),
+});
+const toolCallSchema = z.strictObject({
+  type: z.literal("toolCall"),
+  id: z.string(),
+  name: z.string(),
+  arguments: jsonObjectSchema,
+  thoughtSignature: z.optional(z.string()),
+});
+const contentSchema = z.discriminatedUnion("type", [
+  textContentSchema,
+  thinkingContentSchema,
+  toolCallSchema,
+]);
+const usageSchema = z.strictObject({
+  input: nonNegativeIntegerSchema,
+  output: nonNegativeIntegerSchema,
+  cacheRead: nonNegativeIntegerSchema,
+  cacheWrite: nonNegativeIntegerSchema,
+  cacheWrite1h: z.optional(nonNegativeIntegerSchema),
+  totalTokens: nonNegativeIntegerSchema,
+  cost: z.strictObject({
+    input: nonNegativeNumberSchema,
+    output: nonNegativeNumberSchema,
+    cacheRead: nonNegativeNumberSchema,
+    cacheWrite: nonNegativeNumberSchema,
+    total: nonNegativeNumberSchema,
+  }),
+});
+const managedMessageFields = {
+  role: z.literal("assistant"),
+  content: z.array(contentSchema),
+  api: z.literal("gsv-inference"),
+  provider: z.literal(GSV_INFERENCE_PROVIDER),
+  model: z.literal(GSV_INFERENCE_PRODUCT_MODEL),
+  responseModel: z.optional(z.string()),
+  responseId: z.optional(z.string()),
+  usage: usageSchema,
+  errorMessage: z.optional(z.string()),
+  timestamp: nonNegativeIntegerSchema,
+};
+const managedInferenceResultSchema = z.strictObject({
+  ...managedMessageFields,
+  stopReason: z.enum(["stop", "length", "toolUse", "error", "aborted"]),
+});
+const managedInferencePartialSchema = z.strictObject({
+  ...managedMessageFields,
+  stopReason: z.enum(["pending", "stop", "length", "toolUse", "error", "aborted"]),
+});
+
+export const managedInferenceStreamEventSchema = z.discriminatedUnion("type", [
+  z.strictObject({ type: z.literal("start"), partial: managedInferencePartialSchema }),
+  z.strictObject({
+    type: z.literal("text_start"),
+    contentIndex: nonNegativeIntegerSchema,
+    content: textContentSchema,
+  }),
+  z.strictObject({
+    type: z.literal("text_delta"),
+    contentIndex: nonNegativeIntegerSchema,
+    delta: z.string(),
+  }),
+  z.strictObject({
+    type: z.literal("text_end"),
+    contentIndex: nonNegativeIntegerSchema,
+    content: textContentSchema,
+  }),
+  z.strictObject({
+    type: z.literal("thinking_start"),
+    contentIndex: nonNegativeIntegerSchema,
+    content: thinkingContentSchema,
+  }),
+  z.strictObject({
+    type: z.literal("thinking_delta"),
+    contentIndex: nonNegativeIntegerSchema,
+    delta: z.string(),
+  }),
+  z.strictObject({
+    type: z.literal("thinking_end"),
+    contentIndex: nonNegativeIntegerSchema,
+    content: thinkingContentSchema,
+  }),
+  z.strictObject({
+    type: z.literal("toolcall_start"),
+    contentIndex: nonNegativeIntegerSchema,
+    toolCall: toolCallSchema,
+  }),
+  z.strictObject({
+    type: z.literal("toolcall_delta"),
+    contentIndex: nonNegativeIntegerSchema,
+    delta: z.string(),
+    toolCall: toolCallSchema,
+  }),
+  z.strictObject({
+    type: z.literal("toolcall_end"),
+    contentIndex: nonNegativeIntegerSchema,
+    toolCall: toolCallSchema,
+  }),
+  z.strictObject({
+    type: z.literal("done"),
+    reason: z.enum(["stop", "length", "toolUse"]),
+    message: managedInferenceResultSchema,
+  }).check(z.refine((event) => event.message.stopReason === event.reason)),
+  z.strictObject({
+    type: z.literal("error"),
+    reason: z.enum(["error", "aborted"]),
+    error: managedInferenceResultSchema,
+  }).check(z.refine((event) => event.error.stopReason === event.reason)),
+]);
 
 export function encodeManagedInferenceStreamEvent(
   event: ManagedInferenceStreamEvent,
@@ -22,7 +143,7 @@ export function encodeManagedInferenceStreamEvent(
 export async function* decodeManagedInferenceStream(
   stream: ReadableStream<Uint8Array>,
   signal?: AbortSignal,
-): AsyncGenerator<JsonValue> {
+): AsyncGenerator<ManagedInferenceStreamEvent> {
   const reader = stream.getReader();
   const parts: Uint8Array[] = [];
   let eventBytes = 0;
@@ -81,7 +202,7 @@ function appendPart(
   if (part.byteLength > 0) parts.push(part);
 }
 
-function parseEvent(parts: Uint8Array[], byteLength: number): JsonValue {
+function parseEvent(parts: Uint8Array[], byteLength: number): ManagedInferenceStreamEvent {
   const payload = new Uint8Array(byteLength);
   let offset = 0;
   for (const part of parts) {
@@ -94,11 +215,20 @@ function parseEvent(parts: Uint8Array[], byteLength: number): JsonValue {
   } catch {
     throw new Error("Managed inference stream event is not UTF-8");
   }
+  let decoded: Parameters<typeof managedInferenceStreamEventSchema.safeParse>[0];
   try {
-    return jsonValueSchema.parse(JSON.parse(json));
+    decoded = JSON.parse(json);
   } catch {
     throw new Error("Managed inference stream event is not valid JSON");
   }
+  const parsed = managedInferenceStreamEventSchema.safeParse(decoded);
+  if (!parsed.success) {
+    const issues = parsed.error.issues
+      .map((issue) => `${issue.path.join(".") || "event"}: ${issue.code}`)
+      .join(", ");
+    throw new Error(`Managed inference stream event does not match the protocol (${issues})`);
+  }
+  return parsed.data;
 }
 
 function abortError(): Error {

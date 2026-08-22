@@ -1,8 +1,14 @@
 import { defineCommand, type Command, type CommandContext, type ExecResult } from "just-bash";
 import {
   bodyToText,
+  jsonObjectSchema,
   type AiImageReadArgs,
+  type AiImageReadResult,
   type AiImageReadResponseFormat,
+  type JsonObject,
+  type AiImageGenerateArgs,
+  type AiSpeechCreateArgs,
+  type AiTranscriptionCreateResult,
 } from "@humansandmachines/gsv/protocol";
 import type { GsvFs } from "../../../fs/gsv-fs";
 import {
@@ -16,6 +22,20 @@ import { openFsSource, type FsDeviceTransport } from "../fs";
 import { requireCommandCapability, requireShellOptionValue } from "./common";
 import { parseShellFsEndpoint } from "./fs-path";
 
+export type MediaHandlers = {
+  imageGenerate: typeof handleAiImageGenerate;
+  imageRead: typeof handleAiImageRead;
+  speechCreate: typeof handleAiSpeechCreate;
+  transcriptionCreate: typeof handleAiTranscriptionCreate;
+};
+
+const DEFAULT_MEDIA_HANDLERS: MediaHandlers = {
+  imageGenerate: handleAiImageGenerate,
+  imageRead: handleAiImageRead,
+  speechCreate: handleAiSpeechCreate,
+  transcriptionCreate: handleAiTranscriptionCreate,
+};
+
 type ParsedArgs = {
   options: Map<string, string | true>;
   positionals: string[];
@@ -27,18 +47,52 @@ type ParseSpec = {
   aliases?: Record<string, string>;
 };
 
+type ImageReadCommon = {
+  image: { mimeType: string; filename?: string };
+  maxTokens?: number;
+  temperature?: number;
+  topP?: number;
+};
+
+type Img2TxtMode = "caption" | "query" | "ocr" | "point" | "detect";
+type Img2TxtModeResult = { value: Img2TxtMode; explicit: boolean };
+type JsonOutput =
+  | JsonObject
+  | string
+  | number
+  | boolean
+  | null
+  | JsonOutput[]
+  | AiImageReadResult
+  | AiTranscriptionCreateResult;
+type ModeOptionSet = {
+  "--prompt"?: string;
+  "--target"?: string;
+  "--response-format"?: string;
+  "--schema"?: JsonObject;
+  "--reasoning"?: boolean;
+  "--max-objects"?: number;
+  "--stream"?: boolean;
+  "--max-tokens"?: number;
+  "--temperature"?: number;
+  "--top-p"?: number;
+};
+
+export type MediaFs = Pick<GsvFs, "resolvePath" | "openFile" | "writeFileStream">;
+
 export function buildMediaCommands(
-  fs: GsvFs,
+  fs: MediaFs,
   ctx: KernelContext,
   fsTransport?: FsDeviceTransport,
+  handlers: MediaHandlers = DEFAULT_MEDIA_HANDLERS,
 ): Command[] {
   return [
     defineMediaCommand("img2txt", (args, shellCtx) => (
-      runImg2Txt(args, shellCtx, fs, ctx, fsTransport)
+      runImg2Txt(args, shellCtx, fs, ctx, fsTransport, handlers)
     )),
-    defineMediaCommand("txt2img", (args, shellCtx) => runTxt2Img(args, shellCtx, fs, ctx)),
-    defineMediaCommand("stt", (args, shellCtx) => runStt(args, shellCtx, fs, ctx)),
-    defineMediaCommand("tts", (args, shellCtx) => runTts(args, shellCtx, fs, ctx)),
+    defineMediaCommand("txt2img", (args, shellCtx) => runTxt2Img(args, shellCtx, fs, ctx, handlers)),
+    defineMediaCommand("stt", (args, shellCtx) => runStt(args, shellCtx, fs, ctx, handlers)),
+    defineMediaCommand("tts", (args, shellCtx) => runTts(args, shellCtx, fs, ctx, handlers)),
   ];
 }
 
@@ -59,9 +113,10 @@ function defineMediaCommand(
 async function runImg2Txt(
   args: string[],
   shellCtx: CommandContext,
-  fs: GsvFs,
+  fs: MediaFs,
   ctx: KernelContext,
   fsTransport?: FsDeviceTransport,
+  handlers: MediaHandlers = DEFAULT_MEDIA_HANDLERS,
 ): Promise<ExecResult> {
   const mode = parseImg2TxtMode(args[0]);
   const parsed = parseArgs(mode.explicit ? args.slice(1) : args, {
@@ -110,20 +165,20 @@ async function runImg2Txt(
     if (!mimeType) {
       throw new Error(`cannot infer image MIME type for ${source.path}; pass --mime image/...`);
     }
-    const common = {
+    const common: ImageReadCommon = {
       image: {
         mimeType,
         filename: pathName(source.path),
       },
-      ...(maxTokens !== undefined ? { maxTokens } : {}),
-      ...(temperature !== undefined ? { temperature } : {}),
-      ...(topP !== undefined ? { topP } : {}),
     };
+    if (maxTokens !== undefined) common.maxTokens = maxTokens;
+    if (temperature !== undefined) common.temperature = temperature;
+    if (topP !== undefined) common.topP = topP;
     const request = buildImg2TxtRequest(mode.value, parsed, common, {
       maxObjects,
       stream: streamOutput,
     });
-    return handleAiImageRead(request, requestCtx, opened.body);
+    return handlers.imageRead(request, requestCtx, opened.body);
   });
 
   const result = response.data;
@@ -146,8 +201,9 @@ async function runImg2Txt(
 async function runTxt2Img(
   args: string[],
   shellCtx: CommandContext,
-  fs: GsvFs,
+  fs: MediaFs,
   ctx: KernelContext,
+  handlers: MediaHandlers,
 ): Promise<ExecResult> {
   const parsed = parseArgs(args, {
     boolean: ["help", "json"],
@@ -163,14 +219,15 @@ async function runTxt2Img(
   const timeoutMs = parsePositiveIntOption(optionValue(parsed, "timeout-ms"), "--timeout-ms");
 
   const requestCtx = withShellSignal(ctx, shellCtx);
-  const response = await handleAiImageGenerate({
+  const request: AiImageGenerateArgs = {
     prompt,
     model: optionValue(parsed, "model"),
     size: optionValue(parsed, "size"),
     quality: optionValue(parsed, "quality"),
     format: optionValue(parsed, "format"),
-    ...(timeoutMs !== undefined ? { timeoutMs } : {}),
-  }, requestCtx);
+  };
+  if (timeoutMs !== undefined) request.timeoutMs = timeoutMs;
+  const response = await handlers.imageGenerate(request, requestCtx);
   const result = response.data;
   const body = response.body;
   if (!body || result.image.size <= 0) {
@@ -190,14 +247,15 @@ async function runTxt2Img(
   });
 
   if (hasOption(parsed, "json")) {
-    return okJson({
+    const output: JsonObject = {
       output: outputPath,
       mimeType: result.image.mimeType,
       size: result.image.size,
       provider: result.provider,
       model: result.model,
-      ...(result.revisedPrompt ? { revisedPrompt: result.revisedPrompt } : {}),
-    });
+    };
+    if (result.revisedPrompt) output.revisedPrompt = result.revisedPrompt;
+    return okJson(output);
   }
   return ok(`${outputPath}\n`);
 }
@@ -205,8 +263,9 @@ async function runTxt2Img(
 async function runStt(
   args: string[],
   shellCtx: CommandContext,
-  fs: GsvFs,
+  fs: MediaFs,
   ctx: KernelContext,
+  handlers: MediaHandlers,
 ): Promise<ExecResult> {
   const parsed = parseArgs(args, {
     boolean: ["help", "json", "translate"],
@@ -235,7 +294,7 @@ async function runStt(
     if (!mimeType) {
       throw new Error(`cannot infer audio MIME type for ${path}; pass --mime audio/...`);
     }
-    return handleAiTranscriptionCreate({
+    return handlers.transcriptionCreate({
       audio: {
         mimeType,
         filename: pathName(path),
@@ -255,8 +314,9 @@ async function runStt(
 async function runTts(
   args: string[],
   shellCtx: CommandContext,
-  fs: GsvFs,
+  fs: MediaFs,
   ctx: KernelContext,
+  handlers: MediaHandlers,
 ): Promise<ExecResult> {
   const parsed = parseArgs(args, {
     boolean: ["help", "json", "plain", "markdown"],
@@ -274,7 +334,7 @@ async function runTts(
   const encoding = optionValue(parsed, "encoding") ?? optionValue(parsed, "format");
 
   const requestCtx = withShellSignal(ctx, shellCtx);
-  const response = await handleAiSpeechCreate({
+  const request: AiSpeechCreateArgs = {
     text,
     textFormat: hasOption(parsed, "plain") ? "plain" : hasOption(parsed, "markdown") ? "markdown" : undefined,
     model: optionValue(parsed, "model"),
@@ -282,9 +342,10 @@ async function runTts(
     language: optionValue(parsed, "language"),
     encoding,
     container: optionValue(parsed, "container"),
-    ...(sampleRate !== undefined ? { sampleRate } : {}),
-    ...(bitRate !== undefined ? { bitRate } : {}),
-  }, requestCtx);
+  };
+  if (sampleRate !== undefined) request.sampleRate = sampleRate;
+  if (bitRate !== undefined) request.bitRate = bitRate;
+  const response = await handlers.speechCreate(request, requestCtx);
   const result = response.data;
   if (result.skipped) {
     return hasOption(parsed, "json")
@@ -307,16 +368,17 @@ async function runTts(
   });
 
   if (hasOption(parsed, "json")) {
-    return okJson({
+    const output: JsonObject = {
       output: outputPath,
       mimeType: result.audio.mimeType,
       size: result.audio.size,
       provider: result.provider,
       model: result.model,
-      ...(result.voice ? { voice: result.voice } : {}),
-      ...(result.encoding ? { encoding: result.encoding } : {}),
-      ...(result.container ? { container: result.container } : {}),
-    });
+    };
+    if (result.voice) output.voice = result.voice;
+    if (result.encoding) output.encoding = result.encoding;
+    if (result.container) output.container = result.container;
+    return okJson(output);
   }
   return ok(`${outputPath}\n`);
 }
@@ -379,7 +441,9 @@ function hasOption(parsed: ParsedArgs, name: string): boolean {
 
 function optionValue(parsed: ParsedArgs, name: string): string | undefined {
   const value = parsed.options.get(name);
-  return typeof value === "string" && value.trim().length > 0 ? value.trim() : undefined;
+  if (value === undefined || value === true) return undefined;
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : undefined;
 }
 
 function requireOption(parsed: ParsedArgs, name: string, label: string): string {
@@ -417,10 +481,7 @@ function parseNumberOption(
   return parsed;
 }
 
-function parseImg2TxtMode(value: string | undefined): {
-  value: "caption" | "query" | "ocr" | "point" | "detect";
-  explicit: boolean;
-} {
+function parseImg2TxtMode(value: string | undefined): Img2TxtModeResult {
   if (
     value === "caption"
     || value === "query"
@@ -434,14 +495,9 @@ function parseImg2TxtMode(value: string | undefined): {
 }
 
 function buildImg2TxtRequest(
-  mode: "caption" | "query" | "ocr" | "point" | "detect",
+  mode: Img2TxtMode,
   parsed: ParsedArgs,
-  common: {
-    image: { mimeType: string; filename?: string };
-    maxTokens?: number;
-    temperature?: number;
-    topP?: number;
-  },
+  common: ImageReadCommon,
   options: {
     maxObjects?: number;
     stream: boolean;
@@ -463,12 +519,13 @@ function buildImg2TxtRequest(
       "--reasoning": reasoning,
       "--max-objects": options.maxObjects,
     });
-    return {
+    const request = {
       ...common,
       mode,
-      ...(captionLength ? { captionLength } : {}),
-      ...(options.stream ? { stream: true } : {}),
     };
+    if (captionLength) Object.assign(request, { captionLength });
+    if (options.stream) Object.assign(request, { stream: true });
+    return request;
   }
   if (captionLength) {
     throw new Error("--length is supported only for caption mode");
@@ -481,15 +538,16 @@ function buildImg2TxtRequest(
       "--target": target,
       "--max-objects": options.maxObjects,
     });
-    return {
+    const request = {
       ...common,
       mode,
       prompt,
-      ...(reasoning ? { reasoning: true } : {}),
-      ...(responseFormat ? { responseFormat } : {}),
-      ...(schema ? { schema } : {}),
-      ...(options.stream ? { stream: true } : {}),
     };
+    if (reasoning) Object.assign(request, { reasoning: true });
+    if (responseFormat) Object.assign(request, { responseFormat });
+    if (schema) Object.assign(request, { schema });
+    if (options.stream) Object.assign(request, { stream: true });
+    return request;
   }
   if (mode === "ocr") {
     rejectModeOptions(mode, {
@@ -497,14 +555,15 @@ function buildImg2TxtRequest(
       "--reasoning": reasoning,
       "--max-objects": options.maxObjects,
     });
-    return {
+    const request = {
       ...common,
       mode,
-      ...(prompt ? { prompt } : {}),
-      ...(responseFormat ? { responseFormat } : {}),
-      ...(schema ? { schema } : {}),
-      ...(options.stream ? { stream: true } : {}),
     };
+    if (prompt) Object.assign(request, { prompt });
+    if (responseFormat) Object.assign(request, { responseFormat });
+    if (schema) Object.assign(request, { schema });
+    if (options.stream) Object.assign(request, { stream: true });
+    return request;
   }
 
   if (!target) {
@@ -520,17 +579,18 @@ function buildImg2TxtRequest(
     "--temperature": common.temperature,
     "--top-p": common.topP,
   });
-  return {
+  const request = {
     image: common.image,
     mode,
     target,
-    ...(options.maxObjects ? { maxObjects: options.maxObjects } : {}),
   };
+  if (options.maxObjects !== undefined) Object.assign(request, { maxObjects: options.maxObjects });
+  return request;
 }
 
 function rejectModeOptions(
   mode: string,
-  options: Record<string, unknown>,
+  options: ModeOptionSet,
 ): void {
   const unsupported = Object.entries(options)
     .find(([, value]) => value !== undefined && value !== false);
@@ -564,20 +624,21 @@ function normalizeResponseFormatOption(
   throw new Error("--response-format must be text, json, xml, markdown, or csv");
 }
 
-function parseSchemaOption(value: string | undefined): Record<string, unknown> | undefined {
+function parseSchemaOption(value: string | undefined): JsonObject | undefined {
   if (value === undefined) {
     return undefined;
   }
-  let parsed: unknown;
+  let parsed: JsonObject;
   try {
-    parsed = JSON.parse(value);
+    const validated = jsonObjectSchema.safeParse(JSON.parse(value));
+    if (!validated.success) {
+      throw new Error("invalid schema");
+    }
+    parsed = validated.data;
   } catch {
     throw new Error("--schema must be a JSON object");
   }
-  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-    throw new Error("--schema must be a JSON object");
-  }
-  return parsed as Record<string, unknown>;
+  return parsed;
 }
 
 function readTextArgument(positionals: string[], ctx: CommandContext, label: string): string {
@@ -644,7 +705,7 @@ function ok(stdout: string): ExecResult {
   return { stdout, stderr: "", exitCode: 0 };
 }
 
-function okJson(value: unknown): ExecResult {
+function okJson(value: JsonOutput): ExecResult {
   return ok(`${JSON.stringify(value, null, 2)}\n`);
 }
 

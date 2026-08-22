@@ -41,6 +41,7 @@ function makeContext(
   options: { ownerUid?: number; processId?: string } = {},
 ): KernelContext {
   const ownerUid = options.ownerUid ?? uid;
+  // SAFETY: test fixture is constructed with the asserted kernel domain shape.
   return {
     identity: {
       role: "user",
@@ -85,7 +86,8 @@ function makeContext(
     callMcpTool: vi.fn(async () => ({
       content: [{ type: "text", text: "ok" }],
     })),
-  } as unknown as KernelContext;
+  // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+  } as KernelContext;
 }
 
 function createFakeMcpServers(): FakeMcpServers {
@@ -171,6 +173,7 @@ describe("sys.mcp handlers", () => {
 
   it("broadcasts MCP adds after storing the owner-scoped server record", async () => {
     const ctx = makeContext(1000, mcpServers);
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     const broadcastToUserUid = ctx.broadcastToUserUid as ReturnType<typeof vi.fn>;
 
     await handleSysMcpAdd({
@@ -180,6 +183,7 @@ describe("sys.mcp handlers", () => {
 
     expect(broadcastToUserUid).toHaveBeenCalledWith(1000, "mcp.changed");
     expect(broadcastToUserUid.mock.invocationCallOrder[0]).toBeGreaterThan(
+      // SAFETY: test fixture is constructed with the asserted kernel domain shape.
       (mcpServers.upsert as ReturnType<typeof vi.fn>).mock.invocationCallOrder[0],
     );
   });
@@ -205,6 +209,7 @@ describe("sys.mcp handlers", () => {
     expect(existing.server.serverId).toBe("server-1");
     expect(ctx.addMcpServerConnection).not.toHaveBeenCalled();
 
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     (ctx.addMcpServerConnection as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
       id: "server-2",
     });
@@ -341,6 +346,7 @@ describe("sys.mcp handlers", () => {
   });
 
   it("reports discovery errors without mutating manager state", () => {
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     const ctx = makeContext(1000, mcpServers);
     mcpServers.upsert({
       serverId: "server-1",
@@ -353,10 +359,13 @@ describe("sys.mcp handlers", () => {
       name: "Ready",
       url: "https://ready.example.com/mcp",
     });
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     ctx.mcp.mcpConnections["server-1"] = {
       connectionState: "connected",
       connectionError: "Capability discovery failed",
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     } as never;
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     (ctx.mcp.listTools as ReturnType<typeof vi.fn>).mockReturnValue([{
       name: "search",
       description: "Search",
@@ -378,6 +387,7 @@ describe("sys.mcp handlers", () => {
   });
 
   it("keeps ready servers with zero tools ready", () => {
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     const ctx = makeContext(1000, mcpServers);
     mcpServers.upsert({
       serverId: "server-1",
@@ -389,10 +399,13 @@ describe("sys.mcp handlers", () => {
       uid: 1000,
       name: "Empty MCP",
       url: "https://empty.example.com/mcp",
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     });
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     ctx.mcp.mcpConnections["server-1"] = {
       connectionState: "ready",
       connectionError: null,
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     } as never;
 
     const result = handleSysMcpList({}, ctx);

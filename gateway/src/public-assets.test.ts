@@ -126,15 +126,16 @@ function resolveRange(request: OpenFileRangeRequest | undefined, total: number):
 describe("public asset serving", () => {
   it("creates the public directory marker during storage setup", async () => {
     const writes: Array<{ key: string; metadata: Record<string, string> | undefined }> = [];
+    // SAFETY: This fixture supplies the STORAGE methods consumed by the layout initializer.
     const env = {
       STORAGE: {
         head: async () => null,
-        put: async (key: string, _value: unknown, options?: { customMetadata?: Record<string, string> }) => {
+        put: async <T>(key: string, _value: T, options?: { customMetadata?: Record<string, string> }) => {
           writes.push({ key, metadata: options?.customMetadata });
           return null;
         },
       },
-    } as unknown as Pick<Env, "STORAGE">;
+    } as Pick<Env, "STORAGE">;
 
     await ensurePublicAssetStorageLayout(env);
 
@@ -172,11 +173,12 @@ describe("public asset serving", () => {
       cacheControl: "private, max-age=0",
     });
     const match = matchPublicAssetPath("/public/gsv/assets/app-logo.bin");
+    if (!match) throw new Error("Expected a public asset path match");
 
     const response = await servePublicAssetRequest(
       new Request("https://gsv.test/public/gsv/assets/app-logo.bin"),
       fs,
-      match!,
+      match,
     );
 
     expect(response.status).toBe(200);

@@ -1,20 +1,22 @@
-import type {
-  SysMcpAddArgs,
-  SysMcpAddResult,
-  SysMcpCallArgs,
-  SysMcpCallResult,
-  SysMcpConnectionState,
-  SysMcpListArgs,
-  SysMcpListResult,
-  SysMcpRefreshArgs,
-  SysMcpRefreshResult,
-  SysMcpRemoveArgs,
-  SysMcpRemoveResult,
-  SysMcpServerSummary,
-  SysMcpToolSummary,
-  SysMcpTransportType,
+import {
+  jsonObjectSchema,
+  type SysMcpAddArgs,
+  type SysMcpAddResult,
+  type SysMcpCallArgs,
+  type SysMcpCallResult,
+  type SysMcpConnectionState,
+  type SysMcpListArgs,
+  type SysMcpListResult,
+  type SysMcpRefreshArgs,
+  type SysMcpRefreshResult,
+  type SysMcpRemoveArgs,
+  type SysMcpRemoveResult,
+  type SysMcpServerSummary,
+  type SysMcpToolSummary,
+  type SysMcpTransportType,
 } from "@humansandmachines/gsv/protocol";
-import type { Tool } from "@modelcontextprotocol/sdk/types.js";
+import { ToolSchema, type Tool } from "@modelcontextprotocol/sdk/types.js";
+import { z } from "zod";
 import { resolveCallerOwnerUid, type KernelContext } from "../context";
 import type { McpServerRecord } from "../mcp-store";
 
@@ -44,6 +46,27 @@ type SdkMcpServerRow = {
 };
 
 const MCP_TRANSPORT_TYPES = new Set<SysMcpTransportType>(["auto", "streamable-http", "sse"]);
+const sdkMcpServerRowSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  server_url: z.string(),
+  client_id: z.string().nullable(),
+  auth_url: z.string().nullable(),
+  callback_url: z.string(),
+  server_options: z.string().nullable(),
+});
+const sdkMcpServerRowsSchema = z.array(sdkMcpServerRowSchema);
+const sdkMcpToolsSchema = z.array(ToolSchema);
+const mcpCallResultProjectionSchema = z.object({
+  content: z.json().optional(),
+  structuredContent: z.json().optional(),
+  isError: z.boolean().optional(),
+});
+const sdkTransportOptionsSchema = z.object({
+  transport: z.object({
+    type: z.enum(["auto", "streamable-http", "sse"]),
+  }),
+});
 
 export async function handleSysMcpAdd(
   args: SysMcpAddArgs,
@@ -132,32 +155,30 @@ export async function handleSysMcpCall(
   if (!record || record.uid !== effectiveUid) {
     throw new Error("MCP server not found");
   }
-  const result = await ctx.callMcpTool(
+  const providerResult = await ctx.callMcpTool(
     serverId,
     toolName,
-    isRecord(args.arguments) ? args.arguments : {},
+    args.arguments ?? {},
     ctx.requestSignal,
-  ) as {
-    content?: unknown;
-    structuredContent?: unknown;
-    isError?: boolean;
-  };
-  return {
-    ...(result.content !== undefined ? { content: result.content } : {}),
-    ...(result.structuredContent !== undefined ? { structuredContent: result.structuredContent } : {}),
-    ...(result.isError !== undefined ? { isError: result.isError } : {}),
-  };
+  );
+  const result = mcpCallResultProjectionSchema.parse(providerResult);
+  const response: SysMcpCallResult = {};
+  if (result.content !== undefined) response.content = result.content;
+  if (result.structuredContent !== undefined) {
+    response.structuredContent = result.structuredContent;
+  }
+  if (result.isError !== undefined) response.isError = result.isError;
+  return response;
 }
 
 export function summarizeServer(record: McpServerRecord, ctx: KernelContext): SysMcpServerSummary {
   const server = findSdkMcpServer(ctx, record.serverId);
   const connection = ctx.mcp.mcpConnections[record.serverId];
-  const tools = ctx.mcp.listTools({ serverId: record.serverId }) as Tool[];
+  const tools = sdkMcpToolsSchema.parse(ctx.mcp.listTools({ serverId: record.serverId }));
   const resources = ctx.mcp.listResources({ serverId: record.serverId });
   const prompts = ctx.mcp.listPrompts({ serverId: record.serverId });
-  const error = typeof connection?.connectionError === "string"
-    ? connection.connectionError
-    : null;
+  const error = connection?.connectionError ?? null;
+  const capabilities = jsonObjectSchema.safeParse(connection?.serverCapabilities);
   const state = connection
     ? parseConnectionState(connection.connectionState)
     : server?.auth_url ? "authenticating" : "not-connected";
@@ -169,10 +190,10 @@ export function summarizeServer(record: McpServerRecord, ctx: KernelContext): Sy
     url: server?.server_url ?? "",
     transport: parseSdkServerTransport(server),
     state: error && state === "connected" ? "failed" : state,
-    authUrl: typeof server?.auth_url === "string" ? server.auth_url : null,
+    authUrl: server?.auth_url ?? null,
     error,
-    instructions: typeof connection?.instructions === "string" ? connection.instructions : null,
-    capabilities: isRecord(connection?.serverCapabilities) ? connection.serverCapabilities : null,
+    instructions: connection?.instructions ?? null,
+    capabilities: capabilities.success ? capabilities.data : null,
     tools: tools.map(summarizeTool),
     resourceCount: resources.length,
     promptCount: prompts.length,
@@ -197,7 +218,7 @@ function findUserMcpServerByNameUrl(
 }
 
 function findSdkMcpServer(ctx: KernelContext, serverId: string): SdkMcpServerRow | undefined {
-  return (ctx.mcp.listServers() as SdkMcpServerRow[])
+  return sdkMcpServerRowsSchema.parse(ctx.mcp.listServers())
     .find((item) => item.id === serverId);
 }
 
@@ -206,47 +227,40 @@ function parseSdkServerTransport(server: SdkMcpServerRow | undefined): SysMcpTra
     return "auto";
   }
   try {
-    const options = JSON.parse(server.server_options) as unknown;
-    if (!isRecord(options) || !isRecord(options.transport)) {
-      return "auto";
-    }
-    const type = options.transport.type;
-    return typeof type === "string" && MCP_TRANSPORT_TYPES.has(type as SysMcpTransportType)
-      ? type as SysMcpTransportType
-      : "auto";
+    const options = sdkTransportOptionsSchema.safeParse(JSON.parse(server.server_options));
+    return options.success ? options.data.transport.type : "auto";
   } catch {
     return "auto";
   }
 }
 
 function summarizeTool(tool: Tool): SysMcpToolSummary {
+  const inputSchema = jsonObjectSchema.safeParse(tool.inputSchema);
+  const outputSchema = jsonObjectSchema.safeParse(tool.outputSchema);
   return {
     name: tool.name,
-    description: typeof tool.description === "string" ? tool.description : null,
-    inputSchema: isRecord(tool.inputSchema) ? tool.inputSchema : null,
-    outputSchema: isRecord(tool.outputSchema) ? tool.outputSchema : null,
+    description: tool.description ?? null,
+    inputSchema: inputSchema.success ? inputSchema.data : null,
+    outputSchema: outputSchema.success ? outputSchema.data : null,
   };
 }
 
-function parseEffectiveUid(input: unknown, ctx: KernelContext, action: string): number {
+function parseEffectiveUid(input: number | undefined, ctx: KernelContext, action: string): number {
   const callerUid = ctx.identity!.process.uid;
   const ownerUid = resolveCallerOwnerUid(ctx);
-  if (input !== undefined && input !== null) {
-    if (!Number.isInteger(input) || (input as number) < 0) {
+  if (input !== undefined) {
+    if (!Number.isInteger(input) || input < 0) {
       throw new Error("uid must be a non-negative integer");
     }
     if (callerUid !== 0 && input !== callerUid && input !== ownerUid) {
       throw new Error(`Permission denied: cannot ${action} for another user`);
     }
-    return input as number;
+    return input;
   }
   return ownerUid;
 }
 
-function parseName(input: unknown): string {
-  if (typeof input !== "string") {
-    throw new Error("name is required");
-  }
+function parseName(input: string): string {
   const trimmed = input.trim();
   if (trimmed.length === 0 || trimmed.length > 80) {
     throw new Error("name must be 1-80 characters");
@@ -254,17 +268,14 @@ function parseName(input: unknown): string {
   return trimmed;
 }
 
-function parseId(input: unknown, field: string): string {
-  if (typeof input !== "string" || input.trim().length === 0) {
+function parseId(input: string, field: string): string {
+  if (input.trim().length === 0) {
     throw new Error(`${field} is required`);
   }
   return input.trim();
 }
 
-function parseServerUrl(input: unknown): string {
-  if (typeof input !== "string") {
-    throw new Error("url is required");
-  }
+function parseServerUrl(input: string): string {
   const url = new URL(input);
   if (!isSecureOrLoopbackUrl(url)) {
     throw new Error("url must use https, except localhost development URLs");
@@ -272,12 +283,9 @@ function parseServerUrl(input: unknown): string {
   return url.href;
 }
 
-function parseOptionalCallbackHost(input: unknown): string | undefined {
-  if (input === undefined || input === null || input === "") {
+function parseOptionalCallbackHost(input: string | undefined): string | undefined {
+  if (input === undefined || input === "") {
     return undefined;
-  }
-  if (typeof input !== "string") {
-    throw new Error("callbackHost must be a URL origin");
   }
   const url = new URL(input);
   if (url.pathname !== "/" || url.search || url.hash) {
@@ -301,43 +309,24 @@ function isSecureOrLoopbackUrl(url: URL): boolean {
   );
 }
 
-function parseTransport(input: unknown): McpAddConnectionInput["transport"] {
-  if (input === undefined || input === null) {
+function parseTransport(
+  input: SysMcpAddArgs["transport"],
+): McpAddConnectionInput["transport"] {
+  if (input === undefined) {
     return { type: "auto" };
   }
-  if (!isRecord(input)) {
-    throw new Error("transport must be an object");
-  }
-  const rawType = input.type;
-  const type = rawType === undefined ? "auto" : rawType;
-  if (typeof type !== "string" || !MCP_TRANSPORT_TYPES.has(type as SysMcpTransportType)) {
+  const type = input.type ?? "auto";
+  if (!MCP_TRANSPORT_TYPES.has(type)) {
     throw new Error("transport.type must be auto, streamable-http, or sse");
   }
-  const headers = parseHeaders(input.headers);
-  return {
-    type: type as SysMcpTransportType,
-    ...(headers ? { headers } : {}),
-  };
+  const transport: McpAddConnectionInput["transport"] = { type };
+  if (input.headers !== undefined) {
+    transport.headers = input.headers;
+  }
+  return transport;
 }
 
-function parseHeaders(input: unknown): Record<string, string> | undefined {
-  if (input === undefined || input === null) {
-    return undefined;
-  }
-  if (!isRecord(input)) {
-    throw new Error("transport.headers must be an object");
-  }
-  const headers: Record<string, string> = {};
-  for (const [key, value] of Object.entries(input)) {
-    if (typeof value !== "string") {
-      throw new Error("transport.headers values must be strings");
-    }
-    headers[key] = value;
-  }
-  return headers;
-}
-
-function parseConnectionState(input: unknown): SysMcpConnectionState {
+function parseConnectionState(input: string | undefined): SysMcpConnectionState {
   switch (input) {
     case "authenticating":
     case "connecting":
@@ -349,8 +338,4 @@ function parseConnectionState(input: unknown): SysMcpConnectionState {
     default:
       return "not-connected";
   }
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return !!value && typeof value === "object" && !Array.isArray(value);
 }

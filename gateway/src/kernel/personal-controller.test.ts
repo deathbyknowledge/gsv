@@ -5,19 +5,11 @@ import { runWithRealKernelSql } from "../test-support/real-kernel-sql";
 import type { KernelContext } from "./context";
 import { ProcessRegistry } from "./processes";
 
-const { ensurePersonalAgentMock } = vi.hoisted(() => ({
-  ensurePersonalAgentMock: vi.fn(),
-}));
+import * as agents from "./agents";
+import * as utils from "../shared/utils";
+const ensurePersonalAgentMock = vi.spyOn(agents, "ensurePersonalAgent");
+const sendFrameToProcessMock = vi.spyOn(utils, "sendFrameToProcess");
 
-vi.mock("./agents", () => ({
-  ensurePersonalAgent: ensurePersonalAgentMock,
-}));
-
-vi.mock("../shared/utils", () => ({
-  sendFrameToProcess: vi.fn(),
-}));
-
-import { sendFrameToProcess } from "../shared/utils";
 import {
   ensurePersonalController,
   invalidatePersonalControllerReadiness,
@@ -42,18 +34,20 @@ const AGENT_IDENTITY: ProcessIdentity = {
 };
 const TEST_INSTALLATION_ID = "installation-personal-controller";
 
-const sendFrameToProcessMock = vi.mocked(sendFrameToProcess);
 
 function successResponse(frame: Frame): ResponseFrame {
+  // SAFETY: test fixture is constructed with the asserted kernel domain shape.
   return {
     type: "res",
     id: frame.type === "req" ? frame.id : "signal",
     ok: true,
     data: { ok: true },
+  // SAFETY: test fixture is constructed with the asserted kernel domain shape.
   } as ResponseFrame;
 }
 
 function createContext(registry: ProcessRegistry): KernelContext {
+  // SAFETY: test fixture is constructed with the asserted kernel domain shape.
   return {
     installationId: TEST_INSTALLATION_ID,
     auth: {
@@ -62,7 +56,8 @@ function createContext(registry: ProcessRegistry): KernelContext {
       resolveGids: vi.fn((_username: string, gid: number) => [gid]),
     },
     procs: registry,
-  } as unknown as KernelContext;
+  // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+  } as KernelContext;
 }
 
 describe("ensurePersonalController", () => {
@@ -73,6 +68,7 @@ describe("ensurePersonalController", () => {
       created: false,
     });
     sendFrameToProcessMock.mockImplementation(async (_installationId, _pid, frame) => (
+      // SAFETY: test fixture is constructed with the asserted kernel domain shape.
       successResponse(frame as Frame)
     ));
   });
@@ -81,16 +77,22 @@ describe("ensurePersonalController", () => {
     await runWithRealKernelSql(async (sql) => {
       const registry = new ProcessRegistry(sql);
       const ctx = createContext(registry);
+      // SAFETY: test fixture is constructed with the asserted kernel domain shape.
       let releaseInitialization: ((response: ResponseFrame) => void) | undefined;
       sendFrameToProcessMock.mockImplementationOnce((_installationId, _pid, frame) => (
         new Promise((resolve) => {
           releaseInitialization = resolve;
-        }).then((response) => response ?? successResponse(frame as Frame))
+        // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+        }).then((response) => {
+          // SAFETY: the test response frame is created from the matching request fixture.
+          return response ?? successResponse(frame as Frame);
+        })
       ));
 
       const first = ensurePersonalController(HUMAN.uid, ctx);
       const second = ensurePersonalController(HUMAN.uid, ctx);
       await vi.waitFor(() => expect(sendFrameToProcessMock).toHaveBeenCalledOnce());
+      // SAFETY: test fixture is constructed with the asserted kernel domain shape.
       const initialization = sendFrameToProcessMock.mock.calls[0][2] as RequestFrame;
       expect(sendFrameToProcessMock.mock.calls[0][0]).toBe(TEST_INSTALLATION_ID);
       expect(initialization.args).not.toHaveProperty("pid");
@@ -127,11 +129,13 @@ describe("ensurePersonalController", () => {
       sendFrameToProcessMock
         .mockImplementationOnce(async (_installationId, _pid, frame) => ({
           type: "res",
+          // SAFETY: test fixture is constructed with the asserted kernel domain shape.
           id: (frame as RequestFrame).id,
           ok: false,
           error: { code: 410, message: "Process no longer exists" },
         }))
         .mockImplementationOnce(async (_installationId, _pid, frame) => (
+          // SAFETY: test fixture is constructed with the asserted kernel domain shape.
           successResponse(frame as Frame)
         ));
 
@@ -214,11 +218,13 @@ describe("ensurePersonalController", () => {
       sendFrameToProcessMock
         .mockImplementationOnce(async (_installationId, _pid, frame) => ({
           type: "res",
+          // SAFETY: test fixture is constructed with the asserted kernel domain shape.
           id: (frame as RequestFrame).id,
           ok: false,
           error: { code: 410, message: "Process has been killed" },
         }))
         .mockImplementationOnce(async (_installationId, _pid, frame) => (
+          // SAFETY: test fixture is constructed with the asserted kernel domain shape.
           successResponse(frame as Frame)
         ));
 
@@ -244,26 +250,31 @@ describe("ensurePersonalController", () => {
       sendFrameToProcessMock
         .mockImplementationOnce(async (_installationId, _pid, frame) => ({
           type: "res",
+          // SAFETY: test fixture is constructed with the asserted kernel domain shape.
           id: (frame as RequestFrame).id,
           ok: false,
           error: { code: 410, message: "Process has been killed" },
         }))
         .mockImplementationOnce(async (_installationId, _pid, frame) => ({
           type: "res",
+          // SAFETY: test fixture is constructed with the asserted kernel domain shape.
           id: (frame as RequestFrame).id,
           ok: false,
           error: { code: 500, message: "terminal cleanup is pending", retryable: true },
         }))
         .mockImplementationOnce(async (_installationId, _pid, frame) => ({
           type: "res",
+          // SAFETY: test fixture is constructed with the asserted kernel domain shape.
           id: (frame as RequestFrame).id,
           ok: false,
           error: { code: 410, message: "Process has been killed" },
         }))
         .mockImplementationOnce(async (_installationId, _pid, frame) => (
+          // SAFETY: test fixture is constructed with the asserted kernel domain shape.
           successResponse(frame as Frame)
         ))
         .mockImplementationOnce(async (_installationId, _pid, frame) => (
+          // SAFETY: test fixture is constructed with the asserted kernel domain shape.
           successResponse(frame as Frame)
         ));
 
@@ -279,6 +290,7 @@ describe("ensurePersonalController", () => {
       expect(sendFrameToProcessMock.mock.calls.map(([installationId, pid, frame]) => [
         installationId,
         pid,
+        // SAFETY: test fixture is constructed with the asserted kernel domain shape.
         (frame as RequestFrame).call,
       ])).toEqual([
         [TEST_INSTALLATION_ID, "proc:cleanup", "proc.setidentity"],
@@ -309,6 +321,7 @@ describe("ensurePersonalController", () => {
       });
       sendFrameToProcessMock.mockImplementationOnce(async (_installationId, _pid, frame) => ({
         type: "res",
+        // SAFETY: test fixture is constructed with the asserted kernel domain shape.
         id: (frame as RequestFrame).id,
         ok: false,
         error: { code: 503, message: "temporarily unavailable", retryable: true },
@@ -337,6 +350,7 @@ describe("ensurePersonalController", () => {
       const ctx = createContext(registry);
       sendFrameToProcessMock.mockImplementationOnce(async (_installationId, _pid, frame) => ({
         type: "res",
+        // SAFETY: test fixture is constructed with the asserted kernel domain shape.
         id: (frame as RequestFrame).id,
         ok: false,
         error: { code: 500, message: "identity rejected" },

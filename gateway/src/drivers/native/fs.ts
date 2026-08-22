@@ -32,14 +32,14 @@ import type {
   FsTransferStatArgs,
   FsTransferStatResult,
 } from "@humansandmachines/gsv/protocol";
-import { bodyFromText, bodyToBytes } from "@humansandmachines/gsv/protocol";
+import { bodyFromText, bodyToBytes, type JsonObject } from "@humansandmachines/gsv/protocol";
 import { createNativeFileSystem } from "./filesystem";
 
 export type FsDeviceTransport = {
   requestDevice(
     deviceId: string,
     call: string,
-    args: unknown,
+    args: JsonObject,
     options?: { ttlMs?: number; body?: FrameBody; signal?: AbortSignal },
   ): Promise<ResponseOkFrame>;
 };
@@ -49,12 +49,13 @@ export type FsOpenedSource = {
   size: number;
   contentType?: string;
 };
+type FsReadResponse = { data: FsReadResult; body?: FrameBody };
 
 export async function openFsSource(
   source: Required<FsCopyEndpoint>,
   ctx: KernelContext,
   options?: {
-    fs?: GsvFs;
+    fs?: Pick<GsvFs, "openFile">;
     transport?: FsDeviceTransport;
   },
 ): Promise<FsOpenedSource> {
@@ -156,7 +157,7 @@ function readText(
   size: number,
   offset?: number,
   limit?: number,
-): { data: FsReadResult; body?: FrameBody } {
+): FsReadResponse {
   let text: string;
   try {
     text = new TextDecoder("utf-8", { fatal: true, ignoreBOM: false }).decode(bytes);
@@ -191,7 +192,7 @@ function readImage(
   mimeType: string,
   stream: ReadableStream<Uint8Array>,
   size: number,
-): { data: FsReadResult; body?: FrameBody } {
+): FsReadResponse {
   return {
     data: {
       ok: true,
@@ -234,7 +235,7 @@ export async function handleFsTransferStat(
   ctx: KernelContext,
 ): Promise<FsTransferStatResult> {
   const fs = createNativeFileSystem(ctx);
-  const rawPath = typeof args.path === "string" ? args.path.trim() : "";
+  const rawPath = args.path.trim();
   if (!rawPath) {
     return { ok: false, error: "fs.transfer.stat requires path" };
   }
@@ -270,7 +271,7 @@ export async function handleFsTransferSend(
   frameId: string,
 ): Promise<ResponseOkFrame<"fs.transfer.send">> {
   const fs = createNativeFileSystem(ctx);
-  const rawPath = typeof args.path === "string" ? args.path.trim() : "";
+  const rawPath = args.path.trim();
   if (!rawPath) {
     return {
       type: "res",
@@ -317,7 +318,7 @@ export async function handleFsTransferReceive(
   body?: FrameBody,
 ): Promise<FsTransferReceiveResult> {
   const fs = createNativeFileSystem(ctx);
-  const rawPath = typeof args.path === "string" ? args.path.trim() : "";
+  const rawPath = args.path.trim();
   if (!rawPath) {
     await body?.stream.cancel().catch(() => {});
     return { ok: false, error: "fs.transfer.receive requires path" };
@@ -695,6 +696,7 @@ async function openDeviceSource(
     { path: source.path },
     { ttlMs: 120_000, signal },
   );
+  // SAFETY: The fs.transfer.send response is decoded by the transport contract.
   const result = response.data as FsTransferSendResult;
   if (!result.ok) {
     throw new Error(result.error);
@@ -715,9 +717,10 @@ async function requestDeviceResult<T>(
   transport: FsDeviceTransport,
   deviceId: string,
   call: string,
-  args: unknown,
+  args: JsonObject,
   options?: { ttlMs?: number; body?: FrameBody; signal?: AbortSignal },
 ): Promise<T> {
+  // SAFETY: The caller selects T from the syscall response contract for this request.
   return (await transport.requestDevice(deviceId, call, args, options)).data as T;
 }
 
@@ -761,12 +764,8 @@ function normalizeCopyEndpoint(
   endpoint: FsCopyEndpoint,
   ctx: KernelContext,
 ): Required<FsCopyEndpoint> {
-  const target =
-    typeof endpoint?.target === "string" && endpoint.target.trim()
-      ? endpoint.target.trim()
-      : "gsv";
-  const rawPath =
-    typeof endpoint?.path === "string" ? endpoint.path.trim() : "";
+  const target = endpoint.target?.trim() || "gsv";
+  const rawPath = endpoint.path?.trim() ?? "";
   if (!rawPath) {
     throw new Error("fs.copy endpoint path is required");
   }
@@ -839,7 +838,7 @@ export async function handleFsSearch(
   args: FsSearchArgs,
   ctx: KernelContext,
 ): Promise<FsSearchResult> {
-  const query = typeof args.query === "string" ? args.query.trim() : "";
+  const query = args.query.trim();
   if (!query) {
     return { ok: false, error: "Search query is required." };
   }

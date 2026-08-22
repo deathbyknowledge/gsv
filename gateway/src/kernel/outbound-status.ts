@@ -3,15 +3,21 @@ import type {
   MailStatusArgs,
   MailStatusResult,
 } from "@humansandmachines/gsv/protocol";
-import { resolveCallerOwnerUid, type KernelContext } from "./context";
-import type { MailOutboundRecord } from "./mailbox-store";
+import { resolveCallerOwnerUid, type CallerOwnerContext } from "./context";
+import type { MailboxStore, MailOutboundRecord } from "./mailbox-store";
+import * as z from "zod/mini";
 
 const MAX_OUTBOUND_IDENTIFIER_BYTES = 256;
 const TEXT_ENCODER = new TextEncoder();
+const mailStatusArgsSchema = z.object({ deliveryId: z.string() });
+
+export type MailStatusContext = CallerOwnerContext & {
+  mailboxes: MailboxStore;
+};
 
 export function handleMailStatus(
   value: MailStatusArgs,
-  ctx: KernelContext,
+  ctx: MailStatusContext,
 ): MailStatusResult {
   const deliveryId = normalizeDeliveryId(value);
   const ownerUid = resolveCallerOwnerUid(ctx);
@@ -20,17 +26,18 @@ export function handleMailStatus(
 }
 
 function normalizeDeliveryId(value: MailStatusArgs): string {
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
-    throw new Error("mail.status requires an object argument");
+  const parsed = mailStatusArgsSchema.safeParse(value);
+  if (!parsed.success) {
+    throw new Error("mail.status requires an object with a deliveryId");
   }
-  if (typeof value.deliveryId !== "string") {
-    throw new Error("deliveryId is required");
-  }
-  const deliveryId = value.deliveryId.trim();
+  const deliveryId = parsed.data.deliveryId.trim();
   if (
     !deliveryId
     || TEXT_ENCODER.encode(deliveryId).byteLength > MAX_OUTBOUND_IDENTIFIER_BYTES
-    || /[\u0000-\u001f\u007f]/.test(deliveryId)
+    || [...deliveryId].some((character) => {
+      const code = character.codePointAt(0) ?? 0;
+      return code <= 0x1f || code === 0x7f;
+    })
   ) {
     throw new Error("deliveryId is invalid");
   }
@@ -38,7 +45,7 @@ function normalizeDeliveryId(value: MailStatusArgs): string {
 }
 
 function publicOutboundStatus(outbound: MailOutboundRecord): MailOutboundStatus {
-  return {
+  const result: MailOutboundStatus = {
     deliveryId: outbound.deliveryId,
     outboundId: outbound.outboundId,
     state: outbound.state,
@@ -48,9 +55,8 @@ function publicOutboundStatus(outbound: MailOutboundRecord): MailOutboundStatus 
     createdAt: outbound.createdAt,
     queuedAt: outbound.queuedAt,
     completedAt: outbound.completedAt,
-    ...(outbound.providerMessageId
-      ? { providerMessageId: outbound.providerMessageId }
-      : {}),
-    ...(outbound.errorCode ? { errorCode: outbound.errorCode } : {}),
   };
+  if (outbound.providerMessageId) result.providerMessageId = outbound.providerMessageId;
+  if (outbound.errorCode) result.errorCode = outbound.errorCode;
+  return result;
 }

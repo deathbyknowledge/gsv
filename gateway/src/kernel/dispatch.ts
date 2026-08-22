@@ -21,6 +21,7 @@ import type { KernelContext } from "./context";
 import type { RouteOrigin } from "./routing";
 import type { KernelConnection, KernelConnectionState } from "./connection";
 import type { ShellSessionRecord, ShellSessionStore } from "./shell-sessions";
+import type { NetFetchArgs } from "@humansandmachines/gsv/protocol";
 import {
   handleFsRead,
   handleFsWrite,
@@ -137,7 +138,7 @@ export type DispatchDeps = {
   sendFrame: (
     connection: KernelConnection<KernelConnectionState>,
     frame: RequestFrame | ResponseFrame,
-  ) => { cancel(reason?: unknown): Promise<void> } | null;
+  ) => CancellableFrameBody | null;
   registerRoute: (route: {
     id: string;
     call: SyscallName;
@@ -147,20 +148,26 @@ export type DispatchDeps = {
     ttlMs: number;
   }) => Promise<{
     cancel: () => void;
-    attachBody: (body: { cancel(reason?: unknown): Promise<void> }) => void;
+    attachBody: (body: CancellableFrameBody) => void;
   }>;
   requestDevice: (
     deviceId: string,
-    call: string,
-    args: unknown,
+    call: "net.fetch",
+    args: NetFetchArgs,
     options?: { ttlMs?: number; body?: FrameBody; signal?: AbortSignal },
-  ) => Promise<ResponseOkFrame>;
+  ) => Promise<ResponseOkFrame<"net.fetch">>;
   request: (
     frame: RequestFrame,
     ctx: KernelContext,
     signal?: AbortSignal,
   ) => Promise<ResponseFrame>;
 };
+
+type FrameCancellationReason = string | Error;
+type CancellableFrameBody = {
+  cancel(reason?: FrameCancellationReason): Promise<void>;
+};
+type RoutingTargetArgs = { target?: string };
 
 export type DispatchResult =
   | { handled: true; response: ResponseFrame }
@@ -184,10 +191,12 @@ export async function dispatch(
       response: errFrame(frame.id, 499, requestCancelMessage(ctx.requestSignal)),
     };
   }
-  const raw = frame.args as Record<string, unknown>;
-  const target = raw.target as string | undefined;
-  const sessionId = frame.call === "shell.exec" && typeof raw.sessionId === "string"
-    ? raw.sessionId.trim()
+  const routingArgs = routableFrameArgs(frame);
+  const target = frame.call === "ai.text.generate"
+    ? frame.args.target
+    : routingArgs?.target;
+  const sessionId = frame.call === "shell.exec"
+    ? frame.args.sessionId?.trim() ?? ""
     : "";
 
   if (sessionId) {
@@ -217,7 +226,7 @@ export async function dispatch(
         response: failedShellSessionFrame(frame.id, session),
       };
     }
-    delete raw.target;
+    if (routingArgs) delete routingArgs.target;
     const sessionTarget = getVisibleTarget(ctx, session.deviceId, { includeOffline: true });
     if (!sessionTarget) {
       return {
@@ -229,7 +238,7 @@ export async function dispatch(
   }
 
   if (target && target !== "gsv" && isRoutableSyscall(frame.call)) {
-    delete raw.target;
+    if (routingArgs) delete routingArgs.target;
     const routedTarget = getVisibleTarget(ctx, target, { includeOffline: true });
     if (!routedTarget) {
       return {
@@ -241,7 +250,7 @@ export async function dispatch(
   }
 
   if (target && frame.call !== "ai.text.generate") {
-    delete raw.target;
+    if (routingArgs) delete routingArgs.target;
   }
 
   const result = await dispatchNative(frame, origin, ctx, deps);
@@ -615,9 +624,11 @@ async function dispatchNative(
         break;
 
       default:
-        return errFrame(frameId, 404, `Unknown syscall: ${(frame as { call: string }).call}`);
+        return errFrame(frameId, 404, "Unknown syscall");
     }
 
+    // SAFETY: each exhaustive switch branch assigns the result declared for
+    // that exact syscall before the response envelope is constructed.
     return { type: "res", id: frame.id, ok: true, data } as ResponseFrame;
   } catch (err) {
     if (ctx.requestSignal?.aborted) {
@@ -659,7 +670,7 @@ async function routeToTarget(
 
   let route: {
     cancel: () => void;
-    attachBody: (body: { cancel(reason?: unknown): Promise<void> }) => void;
+    attachBody: (body: CancellableFrameBody) => void;
   } | null = null;
   const ttlMs = routedFrameTtlMs(frame);
   try {
@@ -688,13 +699,7 @@ async function routeToTarget(
   }
 
   try {
-    const outgoing = deps.sendFrame(deviceConn, {
-      type: "req",
-      id: frame.id,
-      call: frame.call,
-      args: frame.args,
-      ...(frame.body ? { body: frame.body } : {}),
-    } as RequestFrame);
+    const outgoing = deps.sendFrame(deviceConn, frame);
     if (outgoing) {
       route.attachBody(outgoing);
     }
@@ -711,12 +716,9 @@ async function routeToTarget(
 }
 
 export function routedFrameTtlMs(frame: RequestFrame): number {
-  const timeout = frame.args && typeof frame.args === "object"
-    ? (frame.args as { timeout?: unknown; timeoutMs?: unknown })
-    : {};
   if (frame.call === "shell.exec") {
-    const requested = timeout.timeout;
-    if (typeof requested !== "number" || !Number.isFinite(requested) || requested <= 0) {
+    const requested = frame.args.timeout;
+    if (requested === undefined || !Number.isFinite(requested) || requested <= 0) {
       return DEFAULT_SHELL_DEVICE_TTL_MS;
     }
     return Math.min(
@@ -725,7 +727,7 @@ export function routedFrameTtlMs(frame: RequestFrame): number {
     );
   }
   if (frame.call === "net.fetch") {
-    return normalizeNetFetchTimeoutMs(timeout.timeoutMs);
+    return normalizeNetFetchTimeoutMs(frame.args.timeoutMs);
   }
   return DEFAULT_DEVICE_TTL_MS;
 }
@@ -735,10 +737,7 @@ function findDeviceConnection(
   connections: Map<string, KernelConnection<KernelConnectionState>>,
 ): KernelConnection<KernelConnectionState> | null {
   for (const [, conn] of connections) {
-    const state = conn.state as {
-      step?: string;
-      identity?: { role: string; device?: string };
-    } | undefined;
+    const state = conn.state;
     if (
       state?.step === "connected" &&
       state.identity?.role === "driver" &&
@@ -759,16 +758,27 @@ function requestCancelMessage(signal: AbortSignal): string {
 }
 
 function failedShellSessionFrame(id: string, session: ShellSessionRecord): ResponseFrame {
+  const data: Extract<
+    NonNullable<ResponseOkFrame<"shell.exec">["data"]>,
+    { status: "failed" }
+  > = {
+    status: "failed",
+    output: "",
+    error: session.error ?? "Shell session failed",
+    sessionId: session.sessionId,
+  };
+  if (session.exitCode !== null) data.exitCode = session.exitCode;
   return {
     type: "res",
     id,
     ok: true,
-    data: {
-      status: "failed",
-      output: "",
-      error: session.error ?? "Shell session failed",
-      ...(session.exitCode !== null ? { exitCode: session.exitCode } : {}),
-      sessionId: session.sessionId,
-    },
+    data,
   };
+}
+
+function routableFrameArgs(frame: RequestFrame): RoutingTargetArgs | null {
+  if (!isRoutableSyscall(frame.call)) return null;
+  // SAFETY: routable syscall schemas are extended with the optional string
+  // target metadata before they enter dispatch; native syscall args omit it.
+  return frame.args as typeof frame.args & RoutingTargetArgs;
 }

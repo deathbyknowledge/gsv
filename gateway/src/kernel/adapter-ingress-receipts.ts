@@ -2,8 +2,10 @@ import type {
   AdapterInboundResult,
   AdapterMessageDestination,
   AdapterSurfaceKind,
+  JsonObject,
 } from "@humansandmachines/gsv/protocol";
 import { adapterInboundResultSchema } from "@humansandmachines/gsv/protocol";
+import * as z from "zod/mini";
 
 type AdapterIngressReceiptInput = {
   adapter: string;
@@ -15,13 +17,18 @@ type AdapterIngressReceiptInput = {
   providerMessageId: string;
   providerDeliveryId: string;
 };
+type ReceiptRecovery = { kind: string } & JsonObject;
+const receiptRecoverySchema = z.intersection(
+  z.object({ kind: z.string() }),
+  z.record(z.string(), z.json()),
+);
 
 export type AdapterIngressReceiptClaim =
   | {
       state: "claimed";
       receiptId: string;
       claimToken: string;
-      recovery?: unknown;
+      recovery?: ReceiptRecovery;
     }
   | { state: "in_progress"; receiptId: string }
   | {
@@ -167,7 +174,11 @@ export class AdapterIngressReceiptStore {
     }
   }
 
-  checkpoint(receiptId: string, claimToken: string, recovery: unknown): void {
+  checkpoint<T extends { kind: string }>(
+    receiptId: string,
+    claimToken: string,
+    recovery: T,
+  ): void {
     const cursor = this.sql.exec(
       `UPDATE adapter_ingress_receipts
           SET progress_json = ?
@@ -309,14 +320,15 @@ export class AdapterIngressReceiptStore {
         result: parseAdapterInboundResult(row),
       };
     }
-    return {
+    const claim: Extract<AdapterIngressReceiptClaim, { state: "claimed" }> = {
       state: "claimed",
       receiptId: row.receipt_id,
       claimToken,
-      ...(row.progress_json !== null
-        ? { recovery: parseReceiptProgress(row) }
-        : {}),
     };
+    if (row.progress_json !== null) {
+      claim.recovery = parseReceiptProgress(row);
+    }
+    return claim;
   }
 
   private getByReceiptId(receiptId: string): AdapterIngressReceiptRow | null {
@@ -388,9 +400,11 @@ function parseAdapterInboundResult(row: AdapterIngressReceiptRow): AdapterInboun
   }
 }
 
-function parseReceiptProgress(row: AdapterIngressReceiptRow): unknown {
+function parseReceiptProgress(row: AdapterIngressReceiptRow): ReceiptRecovery {
   try {
-    return JSON.parse(row.progress_json ?? "");
+    const parsed = receiptRecoverySchema.parse(JSON.parse(row.progress_json ?? ""));
+    // SAFETY: receiptRecoverySchema validates the persisted object and its required kind discriminator.
+    return parsed as ReceiptRecovery;
   } catch {
     throw new Error(`Invalid adapter ingress receipt progress: ${row.receipt_id}`);
   }

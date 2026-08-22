@@ -72,10 +72,9 @@ describe("gateway integration", () => {
       auth: { username: USERNAME, password: PASSWORD },
     };
 
-    const setupRequired = await oneShot.requestOnce(wsUrl, "sys.connect", connectArgs)
-      .then(() => null, (error: unknown) => error);
-    expect(setupRequired).toBeInstanceOf(GsvClientError);
-    expect(setupRequired).toMatchObject({
+    const setupRequired = oneShot.requestOnce(wsUrl, "sys.connect", connectArgs);
+    await expect(setupRequired).rejects.toBeInstanceOf(GsvClientError);
+    await expect(setupRequired).rejects.toMatchObject({
       code: 425,
       message: "Setup required",
       details: { setupMode: true, next: "sys.setup" },

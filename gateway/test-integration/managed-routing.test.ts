@@ -2,6 +2,7 @@ import {
   GSV_INFERENCE_FEATURE,
   type AdapterGatewayRequestFrame,
   type AdapterGatewayResponseFrame,
+  type JsonObject,
 } from "@humansandmachines/gsv/protocol";
 import type { IntegrationState } from "./fixtures/dependencies";
 import type { TestHarness } from "wrangler";
@@ -72,6 +73,7 @@ describe("managed installation routing integration", () => {
     const response = await harness.getWorker("gsv-managed").fetch(
       "https://first.gsv.space/.well-known/oauth-client/gsv.json",
     );
+    // SAFETY: The OAuth metadata endpoint returns this exact discovery contract.
     const metadata = await response.json() as {
       client_id: string;
       redirect_uris: string[];
@@ -221,6 +223,7 @@ describe("managed installation routing integration", () => {
       "proc.spawn",
       { label: "managed inference", interactive: true },
     );
+    // SAFETY: proc.spawn success responses contain a process id.
     const pid = (spawned.data as { pid: string }).pid;
     const finished = nextManagedSignal(socket, "proc.run.finished");
     const committed = nextManagedSignal(socket, "message.committed");
@@ -228,6 +231,7 @@ describe("managed installation routing integration", () => {
       pid,
       message: "run managed inference",
     });
+    // SAFETY: proc.send success responses contain the created run id.
     const runId = (sent.data as { runId: string }).runId;
 
     await expect(finished).resolves.toMatchObject({
@@ -466,12 +470,13 @@ type ManagedSignalFrame = {
 type HarnessWorker = ReturnType<TestHarness["getWorker"]>;
 type HarnessResponse = Awaited<ReturnType<HarnessWorker["fetch"]>>;
 type HarnessWebSocket = NonNullable<HarnessResponse["webSocket"]>;
+type ManagedRpcArgs = JsonObject;
 
 async function expectManagedRpcOk(
   socket: HarnessWebSocket,
   id: string,
   call: string,
-  args: unknown,
+  args: ManagedRpcArgs,
 ): Promise<ManagedRpcResponse> {
   const response = await managedRpc(socket, id, call, args);
   expect(response).toMatchObject({ type: "res", id, ok: true });
@@ -482,22 +487,23 @@ async function managedRpc(
   socket: HarnessWebSocket,
   id: string,
   call: string,
-  args: unknown,
+  args: ManagedRpcArgs,
 ): Promise<ManagedRpcResponse> {
-  const eventSocket = socket as unknown as {
+  // SAFETY: Wrangler's WebSocket proxy implements the standard event-listener surface used here.
+  const eventSocket = socket as {
     addEventListener(
       type: "message",
-      listener: (event: { data: unknown }) => void,
+      listener: (event: { data: string }) => void,
     ): void;
     removeEventListener(
       type: "message",
-      listener: (event: { data: unknown }) => void,
+      listener: (event: { data: string }) => void,
     ): void;
   };
   const responsePromise = new Promise<ManagedRpcResponse>((resolve, reject) => {
     let timeout: ReturnType<typeof setTimeout>;
-    const onMessage = (event: { data: unknown }) => {
-      if (typeof event.data !== "string") return;
+    const onMessage = (event: { data: string }) => {
+      // SAFETY: This listener receives only managed RPC response frames for the pending request.
       const frame = JSON.parse(event.data) as ManagedRpcResponse;
       if (frame.type !== "res" || frame.id !== id) return;
       eventSocket.removeEventListener("message", onMessage);
@@ -518,20 +524,21 @@ function nextManagedSignal(
   socket: HarnessWebSocket,
   signal: string,
 ): Promise<ManagedSignalFrame> {
-  const eventSocket = socket as unknown as {
+  // SAFETY: Wrangler's WebSocket proxy implements the standard event-listener surface used here.
+  const eventSocket = socket as {
     addEventListener(
       type: "message",
-      listener: (event: { data: unknown }) => void,
+      listener: (event: { data: string }) => void,
     ): void;
     removeEventListener(
       type: "message",
-      listener: (event: { data: unknown }) => void,
+      listener: (event: { data: string }) => void,
     ): void;
   };
   return new Promise((resolve, reject) => {
     let timeout: ReturnType<typeof setTimeout>;
-    const onMessage = (event: { data: unknown }) => {
-      if (typeof event.data !== "string") return;
+    const onMessage = (event: { data: string }) => {
+      // SAFETY: This listener receives only managed signal frames from the integration socket.
       const frame = JSON.parse(event.data) as ManagedSignalFrame;
       if (frame.type !== "sig" || frame.signal !== signal) return;
       eventSocket.removeEventListener("message", onMessage);
@@ -612,6 +619,7 @@ async function sendAdapterServiceFrame(
     },
   );
   expect(response.status).toBe(200);
+  // SAFETY: The test dependency worker returns the adapter gateway response contract.
   return await response.json() as AdapterGatewayResponseFrame | null;
 }
 

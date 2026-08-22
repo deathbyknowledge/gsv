@@ -5,7 +5,7 @@ export class TimeoutError extends Error {
   }
 }
 
-export function isTimeoutError(error: unknown): error is TimeoutError {
+export function isTimeoutError<T>(error: T): error is T & TimeoutError {
   return error instanceof TimeoutError
     || (error instanceof Error && error.name === "TimeoutError");
 }

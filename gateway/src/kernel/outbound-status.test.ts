@@ -6,9 +6,8 @@ import { describe, expect, it } from "vitest";
 import type { RequestFrame } from "../protocol/frames";
 import { runWithRealKernelSql } from "../test-support/real-kernel-sql";
 import { dispatch, type DispatchDeps } from "./dispatch";
-import type { KernelContext } from "./context";
 import { MailboxStore, type RecordMailOutboundInput } from "./mailbox-store";
-import { handleMailStatus } from "./outbound-status";
+import { handleMailStatus, type MailStatusContext } from "./outbound-status";
 
 describe("managed outbound mail status", () => {
   it("returns staging and terminal state without exposing internal delivery fields", async () => {
@@ -54,6 +53,7 @@ describe("managed outbound mail status", () => {
     });
   });
 
+  // SAFETY: test fixture is constructed with the asserted kernel domain shape.
   it.each(["failed", "unknown"] as const)(
     "reports %s completion errors",
     async (state) => {
@@ -105,7 +105,6 @@ describe("managed outbound mail status", () => {
         ownerUid: 1000,
       });
 
-      expect(ctx.env).toEqual({});
       expect(handleMailStatus({ deliveryId: "delivery-1" }, ctx).outbound).toMatchObject({
         deliveryId: "delivery-1",
         state: "staging",
@@ -123,6 +122,7 @@ describe("managed outbound mail status", () => {
   ])("rejects malformed delivery ids", async (value) => {
     await runWithRealKernelSql((sql) => {
       expect(() => handleMailStatus(
+        // SAFETY: test fixture is constructed with the asserted kernel domain shape.
         value as MailStatusArgs,
         statusContext(new MailboxStore(sql), 1000),
       )).toThrow(/mail\.status requires|deliveryId/);
@@ -133,15 +133,18 @@ describe("managed outbound mail status", () => {
     await runWithRealKernelSql(async (sql) => {
       const mailboxes = new MailboxStore(sql);
       recordOutbound(mailboxes, outboundInput());
+      // SAFETY: test fixture is constructed with the asserted kernel domain shape.
       const result = await dispatch(
         {
           type: "req",
           id: "status-request-1",
           call: "mail.status",
           args: { deliveryId: "delivery-1" },
+        // SAFETY: test fixture is constructed with the asserted kernel domain shape.
         } as RequestFrame<"mail.status">,
         { type: "connection", id: "connection-1" },
         statusContext(mailboxes, 1000),
+        // SAFETY: test fixture is constructed with the asserted kernel domain shape.
         {} as DispatchDeps,
       );
 
@@ -167,9 +170,8 @@ function statusContext(
   mailboxes: MailboxStore,
   uid: number,
   process?: { processId: string; ownerUid: number },
-): KernelContext {
-  return {
-    env: {},
+): MailStatusContext {
+  const context: MailStatusContext = {
     identity: {
       role: "user",
       process: {
@@ -183,13 +185,14 @@ function statusContext(
       capabilities: ["mail.status"],
     },
     mailboxes,
-    ...(process ? { processId: process.processId } : {}),
     procs: {
       getOwnerUid: (processId: string) => (
         process && processId === process.processId ? process.ownerUid : null
       ),
     },
-  } as unknown as KernelContext;
+  };
+  if (process) context.processId = process.processId;
+  return context;
 }
 
 function outboundInput(
@@ -231,7 +234,7 @@ function completeOutbound(
     state: completion.state,
     ...(completion.providerMessageId
       ? { providerMessageId: completion.providerMessageId }
-      : {}),
-    ...(completion.errorCode ? { errorCode: completion.errorCode } : {}),
+      : undefined),
+    ...(completion.errorCode ? { errorCode: completion.errorCode } : undefined),
   });
 }

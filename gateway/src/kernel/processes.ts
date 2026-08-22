@@ -142,7 +142,7 @@ export class ProcessRegistry {
   }
 
   get(processId: string): ProcessRecord | null {
-    const rows = [...this.sql.exec<RowShape>(
+    const rows = [...this.sql.exec<ProcessRow>(
       "SELECT * FROM processes WHERE process_id = ?",
       processId,
     )];
@@ -152,7 +152,7 @@ export class ProcessRegistry {
   }
 
   getPersonalController(ownerUid: number): ProcessRecord | null {
-    const rows = [...this.sql.exec<RowShape>(
+    const rows = [...this.sql.exec<ProcessRow>(
       `SELECT * FROM processes
        WHERE owner_uid = ? AND is_personal_controller = 1
        LIMIT 1`,
@@ -256,7 +256,7 @@ export class ProcessRegistry {
    * List children of a given process.
    */
   children(parentPid: string): ProcessRecord[] {
-    return [...this.sql.exec<RowShape>(
+    return [...this.sql.exec<ProcessRow>(
       "SELECT * FROM processes WHERE parent_pid = ? ORDER BY created_at DESC",
       parentPid,
     )].map(toRecord);
@@ -265,13 +265,13 @@ export class ProcessRegistry {
   /** List processes owned by a uid (owner_uid), or all processes when omitted. */
   list(ownerUid?: number): ProcessRecord[] {
     if (ownerUid !== undefined) {
-      return [...this.sql.exec<RowShape>(
+      return [...this.sql.exec<ProcessRow>(
         "SELECT * FROM processes WHERE owner_uid = ? ORDER BY created_at DESC",
         ownerUid,
       )].map(toRecord);
     }
 
-    return [...this.sql.exec<RowShape>(
+      return [...this.sql.exec<ProcessRow>(
       "SELECT * FROM processes ORDER BY created_at DESC",
     )].map(toRecord);
   }
@@ -282,7 +282,7 @@ export class ProcessRegistry {
   }
 }
 
-type RowShape = {
+type ProcessRow = {
   process_id: string;
   parent_pid: string | null;
   uid: number;
@@ -302,7 +302,7 @@ type RowShape = {
   created_at: number;
 };
 
-function toRecord(row: RowShape): ProcessRecord {
+function toRecord(row: ProcessRow): ProcessRecord {
   return {
     processId: row.process_id,
     parentPid: row.parent_pid,

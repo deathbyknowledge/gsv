@@ -1,5 +1,7 @@
 import { createServer, type Server, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
+import { z } from "zod";
+import type { JsonObject, JsonValue } from "@humansandmachines/gsv/protocol";
 
 export const INTEGRATION_REPLY = "deterministic integration reply";
 
@@ -10,14 +12,14 @@ export type RecordedGenerationRequest = {
   stream: boolean;
   messageCount: number;
   toolCount: number;
-  messages: unknown[];
-  tools: unknown[];
+  messages: JsonValue[];
+  tools: JsonValue[];
 };
 
 export type ScriptedOpenAiToolCall = {
   id: string;
   name: string;
-  arguments: Record<string, unknown>;
+  arguments: JsonObject;
 };
 
 export type ScriptedOpenAiResponse =
@@ -87,13 +89,13 @@ export async function startOpenAiFixture(): Promise<OpenAiFixture> {
       return;
     }
 
-    let body: Record<string, unknown>;
+    let body: JsonObject;
     try {
       const chunks: Buffer[] = [];
       for await (const chunk of request) {
         chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
       }
-      body = JSON.parse(Buffer.concat(chunks).toString("utf8")) as Record<string, unknown>;
+      body = z.record(z.string(), z.json()).parse(JSON.parse(Buffer.concat(chunks).toString("utf8")));
     } catch {
       writeJsonError(response, 400, "Fixture received invalid JSON");
       return;
@@ -104,7 +106,7 @@ export async function startOpenAiFixture(): Promise<OpenAiFixture> {
     const requestNumber = requests.push({
       path: request.url,
       usesFixtureCredential: request.headers.authorization === "Bearer fixture-only",
-      model: typeof body.model === "string" ? body.model : undefined,
+      model: z.string().optional().parse(body.model),
       stream: body.stream === true,
       messageCount: messages.length,
       toolCount: tools.length,
@@ -145,6 +147,7 @@ export async function startOpenAiFixture(): Promise<OpenAiFixture> {
     });
   });
 
+  // SAFETY: listen(0, 127.0.0.1) resolves to a TCP AddressInfo before fixture use.
   const address = server.address() as AddressInfo;
   return {
     baseUrl: `http://127.0.0.1:${address.port}/v1`,
@@ -254,16 +257,12 @@ function writeJsonError(
     "cache-control": "no-store",
     "content-type": "application/json",
   });
-  response.end(JSON.stringify({
-    error: {
-      message,
-      type: "fixture_error",
-      ...(code ? { code } : {}),
-    },
-  }));
+  const error: JsonObject = { message, type: "fixture_error" };
+  if (code) error.code = code;
+  response.end(JSON.stringify({ error }));
 }
 
-function copyArray(value: unknown): unknown[] {
+function copyArray(value: JsonValue | undefined): JsonValue[] {
   return Array.isArray(value) ? structuredClone(value) : [];
 }
 
@@ -287,7 +286,7 @@ function deferred(): Deferred {
   };
 }
 
-function fixtureUsage(): Record<string, number> {
+function fixtureUsage(): JsonObject {
   return {
     prompt_tokens: 10,
     completion_tokens: 3,
@@ -299,7 +298,7 @@ function delay(delayMs: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, delayMs));
 }
 
-function openAiChunk(payload: Record<string, unknown>): string {
+function openAiChunk(payload: JsonObject): string {
   return `data: ${JSON.stringify(payload)}\n\n`;
 }
 

@@ -1,4 +1,4 @@
-export function abortError(reason: unknown): Error {
+export function abortError(reason: Error | string | null | undefined): Error {
   return reason instanceof Error ? reason : new Error("The operation was aborted");
 }
 
@@ -42,7 +42,7 @@ export function bindStreamToAbort(
         value.error(error);
       }
     },
-    async cancel(reason) {
+    async cancel(reason: Error | string | null | undefined) {
       await reader.cancel(reason).catch(() => {});
       finish();
     },

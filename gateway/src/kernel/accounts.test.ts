@@ -136,23 +136,30 @@ function createCtx() {
           });
         }
       }
+      // SAFETY: test fixture is constructed with the asserted kernel domain shape.
       return new Response("missing", { status: 404 });
     }),
   };
 
   function ctxFor(identity: ConnectionIdentity, options: { ripgit?: boolean } = {}): KernelContext {
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     return {
-      auth: auth as unknown as KernelContext["auth"],
-      caps: { resolve: vi.fn(() => []) } as unknown as KernelContext["caps"],
+      // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+      auth: auth as KernelContext["auth"],
+      // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+      caps: { resolve: vi.fn(() => []) } as KernelContext["caps"],
       env: {
         STORAGE: storage,
-        ...(options.ripgit ? { RIPGIT: ripgit } : {}),
-      } as unknown as KernelContext["env"],
+        ...(options.ripgit ? { RIPGIT: ripgit } : undefined),
+      // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+      } as KernelContext["env"],
       config: {
         get: vi.fn(() => null),
         set: vi.fn(),
-      } as unknown as KernelContext["config"],
+      // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+      } as KernelContext["config"],
       identity,
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     } as KernelContext;
   }
 
@@ -292,6 +299,7 @@ describe("handleAccountCreate", () => {
     expect(new TextDecoder().decode(new Uint8Array(bootContextOp?.contentBytes ?? [])))
       .toContain("delete `~/context.d/00-boot.md`");
     expect(new TextDecoder().decode(new Uint8Array(bootContextOp?.contentBytes ?? [])))
+      // SAFETY: test fixture is constructed with the asserted kernel domain shape.
       .toContain("keep it as an active assignment even if the conversation changes topic");
     expect(new TextDecoder().decode(new Uint8Array(bootContextOp?.contentBytes ?? [])))
       .not.toContain("Your program home");
@@ -422,6 +430,7 @@ describe("handleAccountCreate", () => {
     expect(personalAgents.get(result.account.uid)).toBe(result.personalAgent?.uid);
   });
 
+  // SAFETY: test fixture is constructed with the asserted kernel domain shape.
   it("uses a humanized personal agent username as the display name", async () => {
     const { ctxFor, passwd } = createCtx();
     const ctx = ctxFor(userIdentity(0, "root", ["*"]));

@@ -14,6 +14,7 @@ describe("SurfaceRouteStore", () => {
       const sharedSurface = {
         adapter: "discord",
         accountId: "bot",
+        // SAFETY: test fixture is constructed with the asserted kernel domain shape.
         surfaceKind: "group" as const,
         surfaceId: "channel-1",
       };
@@ -76,6 +77,7 @@ describe("SurfaceRouteStore", () => {
         adapter: "telegram",
         accountId: "bot",
         actorId: "telegram:user:alice",
+        // SAFETY: test fixture is constructed with the asserted kernel domain shape.
         surfaceKind: "dm" as const,
         surfaceId: "chat-1",
       };

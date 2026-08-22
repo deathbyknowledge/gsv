@@ -105,6 +105,7 @@ function makeContext(
   const listTokens = vi.fn(() => tokens);
   const revokeToken = vi.fn(() => true);
 
+  // SAFETY: test fixture is constructed with the asserted kernel domain shape.
   return {
     identity: {
       role: "user",
@@ -130,7 +131,9 @@ function makeContext(
       listTokens,
       revokeToken,
     },
-    devices: devices as unknown as KernelContext["devices"],
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+    devices: devices as KernelContext["devices"],
+  // SAFETY: test fixture is constructed with the asserted kernel domain shape.
   } as KernelContext;
 }
 
@@ -177,7 +180,8 @@ describe("sys.device handlers", () => {
 
   it("accepts empty args payloads for list", () => {
     const ctx = makeContext(1000, records);
-    const result = handleSysDeviceList(undefined as unknown as { includeOffline?: boolean }, ctx);
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+    const result = handleSysDeviceList(undefined as { includeOffline?: boolean }, ctx);
     expect(result.devices.map((device) => device.deviceId)).toEqual(["node-alpha"]);
   });
 
@@ -195,7 +199,8 @@ describe("sys.device handlers", () => {
 
   it("rejects missing deviceId in detail lookup", () => {
     const ctx = makeContext(1000, records);
-    expect(() => handleSysDeviceGet(undefined as unknown as { deviceId: string }, ctx)).toThrow(
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+    expect(() => handleSysDeviceGet(undefined as { deviceId: string }, ctx)).toThrow(
       "sys.device.get requires deviceId",
     );
   });

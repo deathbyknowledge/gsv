@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { env } from "cloudflare:workers";
 import { Type } from "@earendil-works/pi-ai";
 import type { Context } from "@earendil-works/pi-ai";
+import type { JsonValue } from "@humansandmachines/gsv/protocol";
 import {
   DEFAULT_WORKERS_AI_MODEL,
   buildWorkersAiInput,
@@ -14,6 +15,14 @@ import {
   streamWithWorkersAi,
 } from "./workers-ai";
 import { DEFAULT_WORKERS_AI_FALLBACK_MODEL } from "./default-models";
+
+type TestAiRun = (...args: never[]) => Promise<JsonValue | ReadableStream<Uint8Array>>;
+type TestEnvironment = typeof env & { AI: { run: TestAiRun } };
+
+function installAi(run: TestAiRun): void {
+  // SAFETY: The Workers test environment exposes the AI binding used by these fixtures.
+  (env as TestEnvironment).AI = { run };
+}
 
 describe("contextToWorkersAiMessages", () => {
   it("serializes system, assistant tool calls, and tool results", () => {
@@ -269,7 +278,7 @@ describe("completeWithWorkersAi", () => {
     const run = vi.fn()
       .mockRejectedValueOnce(new Error("tool schema unsupported"))
       .mockResolvedValueOnce({ response: "fallback response" });
-    (env as unknown as { AI: { run: typeof run } }).AI = { run };
+    installAi(run);
 
     const response = await completeWithWorkersAi({
       modelName: DEFAULT_WORKERS_AI_MODEL,
@@ -289,11 +298,11 @@ describe("completeWithWorkersAi", () => {
   it("does not retry timed-out tool requests without tools", async () => {
     vi.useFakeTimers();
     let bindingSignal: AbortSignal | undefined;
-    const run = vi.fn((_model: string, _input: unknown, options?: { signal?: AbortSignal }) => {
+    const run = vi.fn((_model: string, _input: JsonValue, options?: { signal?: AbortSignal }) => {
       bindingSignal = options?.signal;
       return new Promise(() => {});
     });
-    (env as unknown as { AI: { run: typeof run } }).AI = { run };
+    installAi(run);
 
     try {
       const promise = completeWithWorkersAi({
@@ -323,13 +332,13 @@ describe("completeWithWorkersAi", () => {
   it("cancels the binding and skips the tool fallback when the caller aborts", async () => {
     const controller = new AbortController();
     let bindingSignal: AbortSignal | undefined;
-    const run = vi.fn((_model: string, _input: unknown, options?: { signal?: AbortSignal }) => {
+    const run = vi.fn((_model: string, _input: JsonValue, options?: { signal?: AbortSignal }) => {
       bindingSignal = options?.signal;
       return new Promise((_resolve, reject) => {
         bindingSignal?.addEventListener("abort", () => reject(bindingSignal?.reason), { once: true });
       });
     });
-    (env as unknown as { AI: { run: typeof run } }).AI = { run };
+    installAi(run);
 
     const completion = completeWithWorkersAi({
       modelName: DEFAULT_WORKERS_AI_MODEL,
@@ -355,7 +364,7 @@ describe("streamWithWorkersAi", () => {
       "data: {\"response\":\"lo\",\"usage\":{\"prompt_tokens\":10,\"completion_tokens\":2,\"total_tokens\":12}}\n\n",
       "data: [DONE]\n\n",
     ]));
-    (env as unknown as { AI: { run: typeof run } }).AI = { run };
+    installAi(run);
 
     const stream = streamWithWorkersAi({
       modelName: DEFAULT_WORKERS_AI_MODEL,
@@ -398,7 +407,7 @@ describe("streamWithWorkersAi", () => {
       "data: {\"choices\":[{\"delta\":{\"reasoning_content\":\"more\",\"content\":\"a tool.\",\"tool_calls\":[{},{\"index\":0,\"function\":{\"arguments\":\":\\\"README.md\\\"}\"}}]},\"finish_reason\":\"tool_calls\"}]}\n\n",
       "data: [DONE]\n\n",
     ]));
-    (env as unknown as { AI: { run: typeof run } }).AI = { run };
+    installAi(run);
 
     const stream = streamWithWorkersAi({
       modelName: DEFAULT_WORKERS_AI_MODEL,
@@ -433,7 +442,7 @@ describe("streamWithWorkersAi", () => {
       "data: {\"choices\":[{\"delta\":{\"reasoning_content\":\"thinking only\"},\"finish_reason\":\"stop\"}]}\n\n",
       "data: [DONE]\n\n",
     ]));
-    (env as unknown as { AI: { run: typeof run } }).AI = { run };
+    installAi(run);
 
     const stream = streamWithWorkersAi({
       modelName: DEFAULT_WORKERS_AI_MODEL,
@@ -475,11 +484,11 @@ describe("streamWithWorkersAi", () => {
         cancelledWith = reason;
       },
     });
-    const run = vi.fn((_model: string, _input: unknown, options?: { signal?: AbortSignal }) => {
+    const run = vi.fn((_model: string, _input: JsonValue, options?: { signal?: AbortSignal }) => {
       bindingSignal = options?.signal;
       return Promise.resolve(body);
     });
-    (env as unknown as { AI: { run: typeof run } }).AI = { run };
+    installAi(run);
 
     const stream = streamWithWorkersAi({
       modelName: DEFAULT_WORKERS_AI_MODEL,

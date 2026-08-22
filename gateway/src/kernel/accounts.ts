@@ -23,6 +23,8 @@ import type { PasswdEntry } from "../auth/passwd";
 
 const TEXT_ENCODER = new TextEncoder();
 
+type AccountNameCandidate = string | undefined;
+
 export const ACCOUNT_USERNAME_RE = /^[a-z_][a-z0-9_-]{0,31}$/;
 export const MIN_PASSWORD_LENGTH = 8;
 
@@ -35,9 +37,8 @@ export function isUsernameAvailable(auth: AuthStore, name: string): boolean {
  * Validate and normalize a candidate username. Returns null when the name is
  * malformed or already taken.
  */
-export function normalizeAccountName(auth: AuthStore, value: unknown): string | null {
-  if (typeof value !== "string") return null;
-  const name = value.trim().toLowerCase();
+export function normalizeAccountName(auth: AuthStore, value: AccountNameCandidate): string | null {
+  const name = value?.trim().toLowerCase() ?? "";
   if (!ACCOUNT_USERNAME_RE.test(name)) return null;
   if (!isUsernameAvailable(auth, name)) return null;
   return name;

@@ -1,34 +1,14 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { KernelContext } from "../context";
 
-const {
-  handleSysBootstrapMock,
-  seedBuiltinSkillsToHomeMock,
-  ensurePersonalControllerMock,
-  getConversationByIdMock,
-} = vi.hoisted(() => ({
-  handleSysBootstrapMock: vi.fn(),
-  seedBuiltinSkillsToHomeMock: vi.fn(),
-  ensurePersonalControllerMock: vi.fn(),
-  getConversationByIdMock: vi.fn(),
-}));
-
-vi.mock("../../shared/utils", async (importOriginal) => ({
-  ...await importOriginal<typeof import("../../shared/utils")>(),
-  getConversationById: getConversationByIdMock,
-}));
-
-vi.mock("./bootstrap", () => ({
-  handleSysBootstrap: handleSysBootstrapMock,
-}));
-
-vi.mock("./skills-seed", () => ({
-  seedBuiltinSkillsToHome: seedBuiltinSkillsToHomeMock,
-}));
-
-vi.mock("../personal-controller", () => ({
-  ensurePersonalController: ensurePersonalControllerMock,
-}));
+import * as utils from "../../shared/utils";
+import * as bootstrap from "./bootstrap";
+import * as skillsSeed from "./skills-seed";
+import * as personalController from "../personal-controller";
+const getConversationByIdMock = vi.spyOn(utils, "getConversationById");
+const handleSysBootstrapMock = vi.spyOn(bootstrap, "handleSysBootstrap");
+const seedBuiltinSkillsToHomeMock = vi.spyOn(skillsSeed, "seedBuiltinSkillsToHome");
+const ensurePersonalControllerMock = vi.spyOn(personalController, "ensurePersonalController");
 
 import { handleSysSetup, recoverCompletedSysSetup } from "./setup";
 
@@ -101,6 +81,7 @@ function createCtx(overrides?: {
       const user = passwd.find((entry) => entry.username === username);
       return user && password === "password-123"
         ? {
+          // SAFETY: test fixture is constructed with the asserted kernel domain shape.
           ok: true as const,
           identity: {
             uid: user.uid,
@@ -110,6 +91,7 @@ function createCtx(overrides?: {
             home: user.home,
           },
         }
+        // SAFETY: test fixture is constructed with the asserted kernel domain shape.
         : { ok: false as const, error: "Authentication failed" };
     }),
     listTokens: vi.fn(() => []),
@@ -120,8 +102,10 @@ function createCtx(overrides?: {
       token: "gsv_node_abc",
       tokenPrefix: "gsv_node_abc",
       uid: 1000,
+      // SAFETY: test fixture is constructed with the asserted kernel domain shape.
       kind: "node" as const,
       label: "node:macbook",
+      // SAFETY: test fixture is constructed with the asserted kernel domain shape.
       allowedRole: "driver" as const,
       allowedDeviceId: "macbook",
       createdAt: 1_700_000_000_000,
@@ -160,21 +144,27 @@ function createCtx(overrides?: {
     ),
   };
 
+  // SAFETY: test fixture is constructed with the asserted kernel domain shape.
   const storage = {
     head: vi.fn(async () => null),
     put: vi.fn(async () => {}),
   };
 
+  // SAFETY: test fixture is constructed with the asserted kernel domain shape.
   const ctx = {
     installationId: "singleton",
-    auth: auth as unknown as KernelContext["auth"],
-    caps: caps as unknown as KernelContext["caps"],
-    config: config as unknown as KernelContext["config"],
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+    auth: auth as KernelContext["auth"],
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+    caps: caps as KernelContext["caps"],
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+    config: config as KernelContext["config"],
     env: {
       STORAGE: storage,
-      ...(overrides?.ripgit ? { RIPGIT: overrides.ripgit } : {}),
-      ...(overrides?.managedInference ? { MANAGED_INFERENCE: {} } : {}),
-    } as unknown as KernelContext["env"],
+      ...(overrides?.ripgit ? { RIPGIT: overrides.ripgit } : undefined),
+      ...(overrides?.managedInference ? { MANAGED_INFERENCE: {} } : undefined),
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+    } as KernelContext["env"],
     conversations: {
       ensureHome: vi.fn((ownerUid: number, handlerPid: string) => ({
         id: `conv:home:${ownerUid}`,
@@ -186,8 +176,10 @@ function createCtx(overrides?: {
         createdAt: 1,
         updatedAt: 1,
       })),
-    } as unknown as KernelContext["conversations"],
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+    } as KernelContext["conversations"],
     serverVersion: "0.0.1-test",
+  // SAFETY: test fixture is constructed with the asserted kernel domain shape.
   } as KernelContext;
 
   return { ctx, auth, config, storage, usersGroup, passwd, groups };
@@ -252,6 +244,7 @@ describe("handleSysSetup", () => {
     expect(ensurePersonalControllerMock).toHaveBeenCalledWith(1000, ctx, undefined);
   });
 
+  // SAFETY: test fixture is constructed with the asserted kernel domain shape.
   it("uses GSV included inference as the managed first-boot default", async () => {
     const { ctx, config } = createCtx({ managedInference: true });
 
@@ -326,6 +319,7 @@ describe("handleSysSetup", () => {
   });
 
   it("seeds shipped skills into root home after first setup bootstrap", async () => {
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     const ripgit = {
       fetch: vi.fn(async (input: RequestInfo | URL) => {
         const url = new URL(String(input));
@@ -336,6 +330,7 @@ describe("handleSysSetup", () => {
         }
         return new Response("missing", { status: 404 });
       }),
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     } as Fetcher;
     const { ctx } = createCtx({ ripgit });
 

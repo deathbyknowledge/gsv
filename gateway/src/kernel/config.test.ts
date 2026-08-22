@@ -10,7 +10,7 @@ import { MAIL_STATUS } from "../syscalls/constants";
 
 describe("ConfigStore", () => {
   const configuredStoreTest = it.extend<{ store: ConfigStore }>({
-    store: async ({}, use) => {
+    store: async ({ task: _task }, use) => {
       await runWithRealKernelSql(async (sql) => {
         const store = new ConfigStore(sql);
         store.set("config/ai/provider", "anthropic");
@@ -73,8 +73,10 @@ describe("ConfigStore", () => {
   it("ships a Workers AI primary model and root fallback profile", () =>
     runWithRealKernelSql((sql) => {
       const store = new ConfigStore(sql);
+      // SAFETY: test fixture is constructed with the asserted kernel domain shape.
       const rootProfiles = JSON.parse(
         store.get("users/0/ai/model_profiles") ?? "{}",
+      // SAFETY: test fixture is constructed with the asserted kernel domain shape.
       ) as {
         profiles?: Array<{ id?: string; values?: Record<string, string> }>;
       };
@@ -121,6 +123,7 @@ describe("ConfigStore", () => {
       SYSTEM_CONFIG_DEFAULTS["config/ai/context.d/20-discovery.md"];
     expect(discovery).toContain("man --search -- '<plain-language goal>'");
     expect(discovery).toContain("the `mcp` command");
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     expect(discovery).toContain("CodeMode as `mcpTools`");
     expect(discovery).toContain("Load the relevant skill");
     expect(SYSTEM_CONFIG_DEFAULTS["config/ai/skills/index_mode"]).toBe(

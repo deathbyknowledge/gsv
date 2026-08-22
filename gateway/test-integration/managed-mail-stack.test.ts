@@ -6,6 +6,7 @@ import {
   expect,
   it,
 } from "vitest";
+import type { JsonValue } from "@humansandmachines/gsv/protocol";
 import { createManagedMailStackTestHarness } from "./harness";
 
 const ACCOUNTS_WORKER = "gsv-accounts-test";
@@ -44,6 +45,7 @@ describe("managed mail stack integration", () => {
       },
     );
     expect(createdResponse.status).toBe(201);
+    // SAFETY: The account-service fixture returns this onboarding response contract.
     const created = await createdResponse.json() as {
       installation: { installationId: string };
       onboarding: { onboardingUrl: string };
@@ -254,7 +256,7 @@ describe("managed mail stack integration", () => {
       });
 
       const inactiveDeadline = Date.now() + 20_000;
-      let inactiveRows: Record<string, unknown>[] = [];
+      let inactiveRows: MailOutboundRow[] = [];
       while (Date.now() < inactiveDeadline) {
         inactiveRows = await kernelStorage.exec(
           `SELECT state, error_code, completed_at
@@ -329,7 +331,7 @@ describe("managed mail stack integration", () => {
       });
 
       const missingBodyDeadline = Date.now() + 20_000;
-      let missingBodyRows: Record<string, unknown>[] = [];
+      let missingBodyRows: MailOutboundRow[] = [];
       while (Date.now() < missingBodyDeadline) {
         missingBodyRows = await kernelStorage.exec(
           `SELECT state, error_code, completed_at
@@ -374,7 +376,7 @@ describe("managed mail stack integration", () => {
           name: absentInstallationId,
         });
       const absentDeadline = Date.now() + 20_000;
-      let absentRows: Record<string, unknown>[] = [];
+      let absentRows: MailOutboundRow[] = [];
       while (Date.now() < absentDeadline) {
         absentRows = await absentStorage.exec(
           `SELECT expected_from, state, error_code, claim_attempts,
@@ -408,7 +410,7 @@ type RpcResponse = {
   type: "res";
   id: string;
   ok: boolean;
-  data?: unknown;
+  data?: { outbound?: MailStatus | null };
   error?: { code?: number; message: string };
 };
 
@@ -418,6 +420,23 @@ type MailStatus = {
   from: string;
   to: string;
   providerMessageId?: string;
+};
+
+type MailOutboundRow = {
+  state?: string;
+  error_code?: string | null;
+  completed_at?: number | null;
+  expected_from?: string | null;
+  claim_attempts?: number;
+  callback_attempts?: number;
+  callback_next_attempt_at?: number | null;
+  callback_completed_at?: number | null;
+};
+
+type RpcArgs = Record<string, JsonValue>;
+type RpcSocket = {
+  addEventListener(type: "message", listener: (event: { data: string }) => void): void;
+  removeEventListener(type: "message", listener: (event: { data: string }) => void): void;
 };
 
 interface ManagedMailKernelRpc extends Rpc.DurableObjectBranded {
@@ -442,7 +461,7 @@ async function expectRpcOk(
   socket: HarnessWebSocket,
   id: string,
   call: string,
-  args: unknown,
+  args: RpcArgs,
 ): Promise<RpcResponse> {
   const response = await rpc(socket, id, call, args);
   expect(response).toMatchObject({ type: "res", id, ok: true });
@@ -453,22 +472,14 @@ async function rpc(
   socket: HarnessWebSocket,
   id: string,
   call: string,
-  args: unknown,
+  args: RpcArgs,
 ): Promise<RpcResponse> {
-  const eventSocket = socket as unknown as {
-    addEventListener(
-      type: "message",
-      listener: (event: { data: unknown }) => void,
-    ): void;
-    removeEventListener(
-      type: "message",
-      listener: (event: { data: unknown }) => void,
-    ): void;
-  };
+  // SAFETY: The Workers test WebSocket exposes string message events.
+  const eventSocket = socket as RpcSocket;
   const response = new Promise<RpcResponse>((resolve, reject) => {
     let timeout: ReturnType<typeof setTimeout>;
-    const onMessage = (event: { data: unknown }) => {
-      if (typeof event.data !== "string") return;
+    const onMessage = (event: { data: string }) => {
+      // SAFETY: The managed gateway sends JSON-encoded RPC response frames.
       const frame = JSON.parse(event.data) as RpcResponse;
       if (frame.type !== "res" || frame.id !== id) return;
       eventSocket.removeEventListener("message", onMessage);
@@ -500,7 +511,7 @@ async function waitForAccepted(
       "mail.status",
       { deliveryId },
     );
-    const status = (response.data as { outbound?: MailStatus | null }).outbound;
+    const status = response.data?.outbound;
     if (status?.state === "accepted") return status;
     if (status && status.state !== "queued" && status.state !== "staging") {
       throw new Error(`Managed mail reached unexpected state ${status.state}`);

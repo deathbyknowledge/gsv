@@ -1,11 +1,15 @@
 import type { Context, Usage } from "@earendil-works/pi-ai";
 import type { ProcContextPressureLevel, ProcContextState, ProcUsageState } from "@humansandmachines/gsv/protocol";
+import { z } from "zod";
 
 const TOKEN_ESTIMATE_CHARS_PER_TOKEN = 4;
 const TOKEN_ESTIMATE_SAFETY_FACTOR = 1.15;
 const IMAGE_DATA_ESTIMATE_PLACEHOLDER = "[image omitted from estimate]";
 const WARN_PRESSURE = 0.75;
 const CRITICAL_PRESSURE = 0.9;
+const contextValueSchema = z.unknown();
+type ContextWireValue = z.input<typeof contextValueSchema>;
+const imageContentSchema = z.object({ type: z.literal("image"), data: z.string(), mimeType: z.string() });
 
 export function estimateContextInputTokens(context: Context): number {
   const serialized = JSON.stringify(context, estimateContextReplacer);
@@ -17,7 +21,7 @@ export function estimateContextInputTokens(context: Context): number {
   );
 }
 
-function estimateContextReplacer(_: string, value: unknown): unknown {
+function estimateContextReplacer(_: string, value: ContextWireValue): ContextWireValue {
   if (isImageContent(value)) {
     return {
       type: "image",
@@ -28,14 +32,8 @@ function estimateContextReplacer(_: string, value: unknown): unknown {
   return value;
 }
 
-function isImageContent(value: unknown): value is { type: "image"; data: string; mimeType: string } {
-  if (!value || typeof value !== "object") {
-    return false;
-  }
-  const candidate = value as Record<string, unknown>;
-  return candidate.type === "image"
-    && typeof candidate.data === "string"
-    && typeof candidate.mimeType === "string";
+function isImageContent(value: ContextWireValue): value is z.infer<typeof imageContentSchema> {
+  return imageContentSchema.safeParse(value).success;
 }
 
 export function buildProcContextState(input: {
@@ -69,27 +67,28 @@ export function buildProcContextState(input: {
     : Math.max(1, contextWindowTokens - maxOutputTokens);
   const pressure = availableInputTokens === null ? null : inputTokens / availableInputTokens;
 
-  return {
-    ...(input.runId ? { runId: input.runId } : {}),
-    ...(typeof input.messageCount === "number" ? { messageCount: input.messageCount } : {}),
-    ...(input.lastMessageId !== undefined ? { lastMessageId: input.lastMessageId } : {}),
+  const state: ProcContextState = {
     provider: input.provider,
     model: input.model,
-    ...(input.reasoning?.trim() ? { reasoning: input.reasoning.trim() } : {}),
     contextWindowTokens,
     maxOutputTokens,
     estimatedInputTokens,
     inputTokens,
-    ...(providerOutputTokens !== null ? { outputTokens: providerOutputTokens } : {}),
-    ...(providerTotalTokens !== null ? { totalTokens: providerTotalTokens } : {}),
-    ...(input.usageState ? { usage: input.usageState } : {}),
-    ...(input.historyUsage ? { historyUsage: input.historyUsage } : {}),
     availableInputTokens,
     pressure,
     level: levelForPressure(pressure),
     source: providerInputTokens !== null ? "provider" : "estimate",
     updatedAt: input.updatedAt ?? Date.now(),
   };
+  if (input.runId) state.runId = input.runId;
+  if (input.messageCount !== undefined) state.messageCount = input.messageCount;
+  if (input.lastMessageId !== undefined) state.lastMessageId = input.lastMessageId;
+  if (input.reasoning?.trim()) state.reasoning = input.reasoning.trim();
+  if (providerOutputTokens !== null) state.outputTokens = providerOutputTokens;
+  if (providerTotalTokens !== null) state.totalTokens = providerTotalTokens;
+  if (input.usageState) state.usage = input.usageState;
+  if (input.historyUsage) state.historyUsage = input.historyUsage;
+  return state;
 }
 
 function levelForPressure(pressure: number | null): ProcContextPressureLevel {
@@ -108,10 +107,9 @@ function levelForPressure(pressure: number | null): ProcContextPressureLevel {
   return "ok";
 }
 
-function normalizePositiveInt(value: unknown): number | null {
-  if (typeof value !== "number" || !Number.isFinite(value)) {
-    return null;
-  }
-  const normalized = Math.trunc(value);
+function normalizePositiveInt(value: ContextWireValue): number | null {
+  const parsed = z.number().finite().safeParse(value);
+  if (!parsed.success) return null;
+  const normalized = Math.trunc(parsed.data);
   return normalized > 0 ? normalized : null;
 }

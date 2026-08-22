@@ -1,5 +1,5 @@
 type AbortablePromiseOptions<T> = {
-  abortReason?: () => unknown;
+  abortReason?: () => Error | string;
   onAbort?: () => void;
   onLateResolve?: (value: T) => void;
 };

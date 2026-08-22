@@ -139,7 +139,8 @@ describe("Kernel installation identity", () => {
 });
 
 function buildKernelContext(kernel: Kernel): KernelContext {
-  return (kernel as unknown as {
+  // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+  return (kernel as {
     buildKernelContext(options: {
       identity: NonNullable<KernelContext["identity"]>;
     }): KernelContext;

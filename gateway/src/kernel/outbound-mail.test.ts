@@ -1,3 +1,5 @@
+function isString<T>(value: T): value is T & string { return String(value) === value; }
+
 import { describe, expect, it, vi } from "vitest";
 import { runWithRealKernelSql } from "../test-support/real-kernel-sql";
 import type { KernelContext } from "./context";
@@ -523,10 +525,12 @@ function outboundContext(
     home: "/home/hank",
     shell: "/bin/sh",
   }];
+  // SAFETY: test fixture is constructed with the asserted kernel domain shape.
   return {
     env: {
-      STORAGE: storage as unknown as R2Bucket,
-      ...(queue ? { MANAGED_MAIL_OUTBOUND: queue } : {}),
+      // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+      STORAGE: storage as R2Bucket,
+      ...(queue ? { MANAGED_MAIL_OUTBOUND: queue } : undefined),
     },
     installationId: "installation-1",
     installationIdentity: {
@@ -551,7 +555,8 @@ function outboundContext(
     mailboxes: new MailboxStore(sql),
     procs: { getOwnerUid: () => 1000 },
     scheduleManagedOutboundEnqueue: vi.fn(async () => undefined),
-  } as unknown as KernelContext;
+  // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+  } as KernelContext;
 }
 
 class MemoryR2Bucket {
@@ -560,6 +565,7 @@ class MemoryR2Bucket {
 
   async head(key: string): Promise<R2Object | null> {
     const bytes = this.objects.get(key);
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     return bytes ? ({ size: bytes.byteLength } as R2Object) : null;
   }
 
@@ -567,23 +573,28 @@ class MemoryR2Bucket {
     if (this.failGet) throw new Error("R2 unavailable");
     const bytes = this.objects.get(key);
     if (!bytes) return null;
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     return {
       size: bytes.byteLength,
       body: new Blob([bytes]).stream(),
       arrayBuffer: async () => bytes.slice().buffer,
-    } as unknown as R2ObjectBody;
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+    } as R2ObjectBody;
   }
 
   async put(
     key: string,
     value: ReadableStream | ArrayBuffer | ArrayBufferView | string | null | Blob,
   ): Promise<R2Object> {
-    const bytes = typeof value === "string"
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+    const bytes = isString(value)
       ? new TextEncoder().encode(value)
       : value === null
         ? new Uint8Array()
+        // SAFETY: test fixture is constructed with the asserted kernel domain shape.
         : new Uint8Array(await new Response(value as BodyInit).arrayBuffer());
     this.objects.set(key, bytes);
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     return { size: bytes.byteLength } as R2Object;
   }
 

@@ -229,6 +229,7 @@ function toIpcCallRecord(row: IpcCallRow): IpcCallRecord {
     sourceRunId: row.source_run_id,
     targetPid: row.target_pid,
     targetRunId: row.target_run_id,
+    // SAFETY: SQLite status values are constrained by the IPC call schema.
     status: row.status as IpcCallStatus,
     deadlineAt: row.deadline_at,
     createdAt: row.created_at,

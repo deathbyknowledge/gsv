@@ -82,11 +82,7 @@ describe("managed inference service RPC", () => {
       events.push(event);
     }
 
-    expect(events.map((event) => (
-      event instanceof Object && "type" in event
-        ? event.type
-        : null
-    ))).toEqual([
+    expect(events.map((event) => event.type)).toEqual([
       "start",
       "text_start",
       "text_delta",

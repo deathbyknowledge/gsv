@@ -88,22 +88,23 @@ export class RunRouteStore {
       expiresAt,
     });
 
-    return {
+    const route: AdapterRunRoute = {
       kind: "adapter",
       runId: input.runId,
       processId: input.processId,
       uid: input.uid,
       destination,
-      ...(input.replyToId === undefined ? {} : { replyToId: input.replyToId }),
       createdAt: now,
       expiresAt,
     };
+    if (input.replyToId !== undefined) route.replyToId = input.replyToId;
+    return route;
   }
 
   get(runId: string): RunRoute | null {
     this.pruneExpired();
 
-    const rows = this.sql.exec<RowShape>(
+    const rows = this.sql.exec<RunRouteRow>(
       `SELECT run_id, route_kind, process_id, uid, connection_id, adapter, account_id,
               actor_id, surface_kind, surface_id, thread_id, reply_to_id, created_at, expires_at
        FROM run_routes
@@ -182,7 +183,7 @@ export class RunRouteStore {
   }
 }
 
-type RowShape = {
+type RunRouteRow = {
   run_id: string;
   route_kind: string;
   process_id: string | null;
@@ -199,7 +200,7 @@ type RowShape = {
   expires_at: number;
 };
 
-function toRoute(row: RowShape): RunRoute {
+function toRoute(row: RunRouteRow): RunRoute {
   if (row.route_kind === "adapter") {
     return {
       kind: "adapter",
@@ -210,6 +211,7 @@ function toRoute(row: RowShape): RunRoute {
         adapter: row.adapter ?? "",
         accountId: row.account_id ?? "",
         actorId: row.actor_id ?? "",
+        // SAFETY: surface kinds are constrained by the persisted run-route schema.
         surfaceKind: (row.surface_kind ?? "dm") as AdapterSurfaceKind,
         surfaceId: row.surface_id ?? "",
         threadId: row.thread_id ?? undefined,
@@ -239,15 +241,18 @@ function adapterDestinationFromColumns(input: {
   surfaceId: string;
   threadId?: string;
 }): AdapterMessageDestination {
+  const surface: DestinationSurface = {
+    kind: input.surfaceKind,
+    id: input.surfaceId,
+  };
+  if (input.threadId !== undefined) surface.threadId = input.threadId;
   return {
     kind: "adapter",
     adapter: input.adapter,
     accountId: input.accountId,
     actorId: input.actorId,
-    surface: {
-      kind: input.surfaceKind,
-      id: input.surfaceId,
-      ...(input.threadId === undefined ? {} : { threadId: input.threadId }),
-    },
+    surface,
   };
 }
+
+type DestinationSurface = { kind: AdapterSurfaceKind; id: string; threadId?: string };

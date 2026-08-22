@@ -8,8 +8,11 @@
  *   - process_kv: key-value metadata (processId, archiveId, etc.)
  */
 
-import { SYSCALL_TOOL_NAMES } from "../syscalls/constants";
+import { isToolSyscallName, syscallToolName } from "../syscalls/constants";
+import type { SyscallName } from "../syscalls";
 import type {
+  JsonObject,
+  JsonValue,
   ProcAiConfigSnapshot,
   ProcContextState,
   ProcMessageMetadata,
@@ -17,8 +20,11 @@ import type {
   ProcMessageProviderMetadata,
   ProcToolResultOutcome,
   ProcUsageCost,
-  ProcUsageCostSource,
   ProcUsageState,
+} from "@humansandmachines/gsv/protocol";
+import {
+  jsonObjectSchema,
+  jsonValueSchema,
 } from "@humansandmachines/gsv/protocol";
 import type {
   Message,
@@ -41,9 +47,10 @@ import {
 } from "./history";
 import {
   PROCESS_AI_CONFIG_STORE_KEY,
-  normalizeProcessAiConfigSnapshot,
+  parseProcessAiConfigSnapshot,
 } from "./ai-config";
 import { materializeLegacyToolResultImages } from "./tool-result-media";
+import { z } from "zod";
 
 const DEFAULT_MESSAGE_READ_LIMIT = 200;
 
@@ -53,9 +60,9 @@ export type ToolCallRecord = {
   id: string;
   dispatchId: string;
   call: string;
-  args: unknown;
+  args: JsonValue;
   status: ToolCallStatus;
-  result: unknown;
+  result: JsonValue;
   error: string | null;
   outcome: ProcToolResultOutcome | null;
 };
@@ -64,7 +71,7 @@ export type PendingToolCallRecord = {
   runId: string;
   callId: string;
   call: string;
-  args: unknown;
+  args: JsonValue;
   status: "registered" | "pending";
 };
 
@@ -133,10 +140,145 @@ export type PendingHilRecord = {
   ownerDispatchId?: string;
   toolCallId: string;
   toolName: string;
-  syscall: string;
-  args: Record<string, unknown>;
+  syscall: SyscallName;
+  args: JsonObject;
   createdAt: number;
 };
+
+type MessageStats = {
+  count: number;
+  firstMessageId: number | null;
+  lastMessageId: number | null;
+};
+
+type ToolResultMetadata = {
+  toolName: string;
+  isError: boolean;
+  outcome?: ProcToolResultOutcome;
+};
+
+const toolCallStatusSchema = z.enum([
+  "registered",
+  "pending",
+  "completed",
+  "error",
+]);
+const messageRoleSchema = z.enum(["user", "assistant", "system", "toolResult"]);
+const nonEmptyStringSchema = z.string().trim().min(1);
+const optionalNonEmptyStringSchema = nonEmptyStringSchema.optional().catch(undefined);
+const optionalNonNegativeNumberSchema = z.number().finite().nonnegative().optional().catch(undefined);
+const optionalPositiveIntegerSchema = z.number().finite().positive().transform(Math.trunc).optional().catch(undefined);
+const usageCostSourceSchema = z.enum(["provider", "model-pricing", "mixed"]);
+const usageCostInputSchema = z.object({
+  input: optionalNonNegativeNumberSchema,
+  output: optionalNonNegativeNumberSchema,
+  cacheRead: optionalNonNegativeNumberSchema,
+  cacheWrite: optionalNonNegativeNumberSchema,
+  total: optionalNonNegativeNumberSchema,
+  source: usageCostSourceSchema.optional().catch(undefined),
+});
+const usageStateInputSchema = z.object({
+  inputTokens: optionalNonNegativeNumberSchema,
+  input: optionalNonNegativeNumberSchema,
+  outputTokens: optionalNonNegativeNumberSchema,
+  output: optionalNonNegativeNumberSchema,
+  cacheReadTokens: optionalNonNegativeNumberSchema,
+  cacheRead: optionalNonNegativeNumberSchema,
+  cacheWriteTokens: optionalNonNegativeNumberSchema,
+  cacheWrite: optionalNonNegativeNumberSchema,
+  totalTokens: optionalNonNegativeNumberSchema,
+  generations: optionalPositiveIntegerSchema,
+  costIncomplete: z.literal(true).optional().catch(undefined),
+  updatedAt: optionalNonNegativeNumberSchema,
+  cost: usageCostInputSchema.nullable().optional().catch(undefined),
+});
+const usageCostSchema = z.object({
+  input: z.number().nonnegative(),
+  output: z.number().nonnegative(),
+  cacheRead: z.number().nonnegative(),
+  cacheWrite: z.number().nonnegative(),
+  total: z.number().nonnegative(),
+  currency: z.literal("USD"),
+  source: usageCostSourceSchema,
+});
+const usageStateSchema = z.object({
+  inputTokens: z.number().nonnegative(),
+  outputTokens: z.number().nonnegative(),
+  cacheReadTokens: z.number().nonnegative(),
+  cacheWriteTokens: z.number().nonnegative(),
+  totalTokens: z.number().nonnegative(),
+  cost: usageCostSchema.nullable(),
+  generations: z.number().int().nonnegative().optional(),
+  costIncomplete: z.literal(true).optional(),
+  updatedAt: z.number().nonnegative().optional(),
+});
+const contextStateSchema = z.object({
+  runId: z.string().optional(),
+  messageCount: z.number().int().nonnegative().optional(),
+  lastMessageId: z.number().int().nonnegative().nullable().optional(),
+  provider: z.string(),
+  model: z.string(),
+  reasoning: z.string().optional(),
+  contextWindowTokens: z.number().nonnegative().nullable(),
+  maxOutputTokens: z.number().nonnegative(),
+  estimatedInputTokens: z.number().nonnegative(),
+  inputTokens: z.number().nonnegative(),
+  outputTokens: z.number().nonnegative().optional(),
+  totalTokens: z.number().nonnegative().optional(),
+  usage: usageStateSchema.optional(),
+  historyUsage: usageStateSchema.optional(),
+  availableInputTokens: z.number().nullable(),
+  pressure: z.number().nullable(),
+  level: z.enum(["unknown", "ok", "warn", "critical", "full"]),
+  source: z.enum(["estimate", "provider"]),
+  updatedAt: z.number().nonnegative(),
+});
+const providerMetadataSchema = z.object({
+  api: optionalNonEmptyStringSchema,
+  provider: optionalNonEmptyStringSchema,
+  model: optionalNonEmptyStringSchema,
+  responseModel: optionalNonEmptyStringSchema,
+  responseId: optionalNonEmptyStringSchema,
+  stopReason: optionalNonEmptyStringSchema,
+});
+const modelMetadataSchema = z.object({
+  provider: optionalNonEmptyStringSchema,
+  model: optionalNonEmptyStringSchema,
+});
+const fallbackMetadataSchema = z.object({
+  used: z.literal(true).optional().catch(undefined),
+  from: z.unknown().optional(),
+  to: z.unknown().optional(),
+  reason: optionalNonEmptyStringSchema,
+});
+const messageMetadataInputSchema = z.object({
+  provider: z.unknown().optional(),
+  fallback: z.unknown().optional(),
+  usage: z.unknown().optional(),
+});
+const thinkingContentSchema = z.object({
+  type: z.literal("thinking"),
+  thinking: z.string(),
+  thinkingSignature: z.string().optional(),
+  redacted: z.boolean().optional(),
+});
+const toolCallSchema = z.object({
+  type: z.literal("toolCall"),
+  id: z.string(),
+  name: z.string(),
+  arguments: jsonObjectSchema,
+  thoughtSignature: z.string().optional(),
+});
+const assistantMessageMetaSchema = z.object({
+  thinking: z.array(thinkingContentSchema).optional(),
+  toolCalls: z.array(toolCallSchema).optional(),
+});
+const toolResultMetaSchema = z.object({
+  toolName: z.string().optional(),
+  isError: z.boolean().optional(),
+  outcome: z.enum(["completed", "failed", "cancelled", "denied"]).optional(),
+});
+const failedToolResultSchema = z.object({ status: z.literal("failed") });
 
 function normalizeStoredToolResultOutcome(value: string | null): ProcToolResultOutcome | null {
   if (
@@ -150,16 +292,8 @@ function normalizeStoredToolResultOutcome(value: string | null): ProcToolResultO
   return null;
 }
 
-export function resolvedToolResultOutcome(result: unknown): "completed" | "failed" {
-  if (
-    result
-    && typeof result === "object"
-    && !Array.isArray(result)
-    && (result as { status?: unknown }).status === "failed"
-  ) {
-    return "failed";
-  }
-  return "completed";
+export function resolvedToolResultOutcome(result: JsonValue): "completed" | "failed" {
+  return failedToolResultSchema.safeParse(result).success ? "failed" : "completed";
 }
 
 export class ProcessStore {
@@ -346,7 +480,7 @@ export class ProcessStore {
     id: string,
     runId: string,
     call: string,
-    args: unknown,
+    args: JsonValue,
   ): void {
     this.sql.exec(
       `INSERT INTO pending_tool_calls (
@@ -363,7 +497,7 @@ export class ProcessStore {
 
   resolve(
     dispatchId: string,
-    result: unknown,
+    result: JsonValue,
     outcome: "completed" | "failed" = resolvedToolResultOutcome(result),
   ): boolean {
     const cursor = this.sql.exec(
@@ -421,7 +555,9 @@ export class ProcessStore {
       runId: rows[0].run_id,
       callId: rows[0].id,
       call: rows[0].call,
-      args: rows[0].args_json ? JSON.parse(rows[0].args_json) : null,
+      args: rows[0].args_json
+        ? jsonValueSchema.parse(JSON.parse(rows[0].args_json))
+        : null,
       status: rows[0].status,
     };
   }
@@ -456,9 +592,11 @@ export class ProcessStore {
       id: row.id,
       dispatchId: row.dispatch_id,
       call: row.call,
-      args: JSON.parse(row.args_json),
-      status: row.status as ToolCallStatus,
-      result: row.result_json ? JSON.parse(row.result_json) : null,
+      args: jsonValueSchema.parse(JSON.parse(row.args_json)),
+      status: toolCallStatusSchema.parse(row.status),
+      result: row.result_json
+        ? jsonValueSchema.parse(JSON.parse(row.result_json))
+        : null,
       error: row.error,
       outcome: normalizeStoredToolResultOutcome(row.outcome),
     }));
@@ -510,16 +648,22 @@ export class ProcessStore {
     ];
     if (rows.length === 0) return null;
     const row = rows[0];
-    return {
+    if (!isToolSyscallName(row.syscall)) {
+      throw new Error(`Stored approval references an unsupported syscall: ${row.syscall}`);
+    }
+    const record: PendingHilRecord = {
       requestId: row.request_id,
       runId: row.run_id,
-      ...(row.owner_dispatch_id ? { ownerDispatchId: row.owner_dispatch_id } : {}),
       toolCallId: row.tool_call_id,
       toolName: row.tool_name,
       syscall: row.syscall,
-      args: JSON.parse(row.args_json) as Record<string, unknown>,
+      args: jsonObjectSchema.parse(JSON.parse(row.args_json)),
       createdAt: row.created_at,
     };
+    if (row.owner_dispatch_id) {
+      record.ownerDispatchId = row.owner_dispatch_id;
+    }
+    return record;
   }
 
   getPendingHilForRun(runId: string): PendingHilRecord | null {
@@ -731,11 +875,7 @@ export class ProcessStore {
     return rows[0]?.cnt ?? 0;
   }
 
-  messageStats(): {
-    count: number;
-    firstMessageId: number | null;
-    lastMessageId: number | null;
-  } {
+  messageStats(): MessageStats {
     const rows = [...this.sql.exec<{ cnt: number; first_id: number | null; last_id: number | null }>(
       "SELECT COUNT(*) as cnt, MIN(id) as first_id, MAX(id) as last_id FROM messages",
     )];
@@ -784,7 +924,7 @@ export class ProcessStore {
       return null;
     }
     try {
-      return normalizeProcessAiConfigSnapshot(JSON.parse(raw));
+      return parseProcessAiConfigSnapshot(raw);
     } catch {
       return null;
     }
@@ -804,10 +944,7 @@ export class ProcessStore {
       return null;
     }
     try {
-      const parsed = JSON.parse(raw) as unknown;
-      return parsed && typeof parsed === "object" && !Array.isArray(parsed)
-        ? parsed as ProcContextState
-        : null;
+      return contextStateSchema.parse(JSON.parse(raw));
     } catch {
       return null;
     }
@@ -903,31 +1040,37 @@ export class ProcessStore {
           if (meta.toolCalls) {
             content.push(...meta.toolCalls);
           }
-          messages.push({
+          const message: AssistantMessage = {
             role: "assistant",
             content,
             api: metadata?.provider?.api ?? "",
             provider: metadata?.provider?.provider ?? "",
             model: metadata?.provider?.model ?? "",
-            ...(metadata?.provider?.responseModel ? { responseModel: metadata.provider.responseModel } : {}),
-            ...(metadata?.provider?.responseId ? { responseId: metadata.provider.responseId } : {}),
             usage: usageStateToPiUsage(metadata?.usage),
             stopReason: normalizeAssistantStopReason(metadata?.provider?.stopReason),
             timestamp: r.createdAt,
-          } as AssistantMessage);
+          };
+          if (metadata?.provider?.responseModel) {
+            message.responseModel = metadata.provider.responseModel;
+          }
+          if (metadata?.provider?.responseId) {
+            message.responseId = metadata.provider.responseId;
+          }
+          messages.push(message);
           break;
         }
 
         case "toolResult": {
-          const meta: { toolName?: string; isError?: boolean } =
-            r.toolCalls ? JSON.parse(r.toolCalls) : {};
+          const meta = r.toolCalls
+            ? toolResultMetaSchema.parse(JSON.parse(r.toolCalls))
+            : {};
           const media = parseStoredProcessMedia(r.media);
           const legacyImageContent = media.length === 0
             ? materializeLegacyToolResultImages(r.content)
             : null;
           messages.push({
             role: "toolResult",
-            toolCallId: r.toolCallId!,
+            toolCallId: requiredToolCallId(r),
             toolName: meta.toolName ?? "unknown",
             content: legacyImageContent ?? [
               { type: "text", text: r.content },
@@ -957,16 +1100,19 @@ export class ProcessStore {
     outcome?: ProcToolResultOutcome,
     media?: string,
   ): number {
-    const toolName = SYSCALL_TOOL_NAMES[syscallName] ?? syscallName;
+    const toolName = syscallToolName(syscallName) ?? syscallName;
+    const toolResultMeta: ToolResultMetadata = {
+      toolName,
+      isError,
+    };
+    if (outcome) {
+      toolResultMeta.outcome = outcome;
+    }
     return this.appendMessage("toolResult", content, {
       runId,
       toolCallId,
       media,
-      toolCalls: JSON.stringify({
-        toolName,
-        isError,
-        ...(outcome ? { outcome } : {}),
-      }),
+      toolCalls: JSON.stringify(toolResultMeta),
     });
   }
 
@@ -1130,7 +1276,7 @@ function messageRecordFromRow(row: MessageRow): MessageRecord {
     id: row.id,
     generation: row.generation,
     runId: row.run_id,
-    role: row.role as MessageRole,
+    role: messageRoleSchema.parse(row.role),
     content: row.content,
     toolCalls: row.tool_calls,
     toolCallId: row.tool_call_id,
@@ -1139,6 +1285,13 @@ function messageRecordFromRow(row: MessageRow): MessageRecord {
     metadata: row.metadata_json ?? null,
     createdAt: row.created_at,
   };
+}
+
+function requiredToolCallId(record: MessageRecord): string {
+  if (record.toolCallId === null) {
+    throw new Error(`Stored tool result message ${record.id} has no tool call id`);
+  }
+  return record.toolCallId;
 }
 
 function queuedMessageRole(value: string): QueuedMessageRole {
@@ -1165,133 +1318,135 @@ export function stringifyMessageMetadata(
   if (metadata === undefined || metadata === null) {
     return null;
   }
-  if (typeof metadata === "string") {
-    const normalized = parseMessageMetadata(metadata);
+  const serialized = z.string().safeParse(metadata);
+  if (serialized.success) {
+    const normalized = parseMessageMetadata(serialized.data);
     return normalized ? JSON.stringify(normalized) : null;
   }
-  const normalized = normalizeMessageMetadata(metadata);
+  const objectMetadata = messageMetadataInputSchema.safeParse(metadata);
+  if (!objectMetadata.success) {
+    return null;
+  }
+  const normalized = normalizeMessageMetadata(objectMetadata.data);
   return normalized ? JSON.stringify(normalized) : null;
 }
 
-export function normalizeMessageMetadata(value: unknown): MessageMetadata | null {
-  const record = asRecord(value);
-  if (!record) {
+export function normalizeMessageMetadata(
+  value: Parameters<typeof messageMetadataInputSchema.safeParse>[0],
+): MessageMetadata | null {
+  const parsed = messageMetadataInputSchema.safeParse(value);
+  if (!parsed.success) {
     return null;
   }
-  const provider = normalizeProviderMetadata(record.provider);
-  const fallback = normalizeFallbackMetadata(record.fallback);
-  const usage = normalizeUsageState(record.usage);
+  const provider = normalizeProviderMetadata(parsed.data.provider);
+  const fallback = normalizeFallbackMetadata(parsed.data.fallback);
+  const usage = normalizeUsageState(parsed.data.usage);
   if (!provider && !fallback && !usage) {
     return null;
   }
-  return {
-    ...(provider ? { provider } : {}),
-    ...(fallback ? { fallback } : {}),
-    ...(usage ? { usage } : {}),
-  };
+  const metadata: MessageMetadata = {};
+  if (provider) metadata.provider = provider;
+  if (fallback) metadata.fallback = fallback;
+  if (usage) metadata.usage = usage;
+  return metadata;
 }
 
-function normalizeProviderMetadata(value: unknown): MessageProviderMetadata | null {
-  const record = asRecord(value);
-  if (!record) {
+function normalizeProviderMetadata(
+  value: Parameters<typeof providerMetadataSchema.safeParse>[0],
+): MessageProviderMetadata | null {
+  const parsed = providerMetadataSchema.safeParse(value);
+  if (!parsed.success) {
     return null;
   }
   const provider: MessageProviderMetadata = {};
-  const api = normalizeOptionalNonEmptyString(record.api);
-  const providerName = normalizeOptionalNonEmptyString(record.provider);
-  const model = normalizeOptionalNonEmptyString(record.model);
-  const responseModel = normalizeOptionalNonEmptyString(record.responseModel);
-  const responseId = normalizeOptionalNonEmptyString(record.responseId);
-  const stopReason = normalizeOptionalNonEmptyString(record.stopReason);
-  if (api) provider.api = api;
-  if (providerName) provider.provider = providerName;
-  if (model) provider.model = model;
-  if (responseModel) provider.responseModel = responseModel;
-  if (responseId) provider.responseId = responseId;
-  if (stopReason) provider.stopReason = stopReason;
+  if (parsed.data.api) provider.api = parsed.data.api;
+  if (parsed.data.provider) provider.provider = parsed.data.provider;
+  if (parsed.data.model) provider.model = parsed.data.model;
+  if (parsed.data.responseModel) provider.responseModel = parsed.data.responseModel;
+  if (parsed.data.responseId) provider.responseId = parsed.data.responseId;
+  if (parsed.data.stopReason) provider.stopReason = parsed.data.stopReason;
   return Object.keys(provider).length > 0 ? provider : null;
 }
 
-function normalizeFallbackMetadata(value: unknown): MessageMetadata["fallback"] | null {
-  const record = asRecord(value);
-  if (!record) {
+function normalizeFallbackMetadata(
+  value: Parameters<typeof fallbackMetadataSchema.safeParse>[0],
+): MessageMetadata["fallback"] | null {
+  const parsed = fallbackMetadataSchema.safeParse(value);
+  if (!parsed.success) {
     return null;
   }
-  const from = normalizeModelMetadata(record.from);
-  const to = normalizeModelMetadata(record.to);
-  const reason = normalizeOptionalNonEmptyString(record.reason);
-  if (!from && !to && !reason && record.used !== true) {
+  const from = normalizeModelMetadata(parsed.data.from);
+  const to = normalizeModelMetadata(parsed.data.to);
+  if (!from && !to && !parsed.data.reason && parsed.data.used !== true) {
     return null;
   }
-  return {
-    used: true,
-    ...(from ? { from } : {}),
-    ...(to ? { to } : {}),
-    ...(reason ? { reason } : {}),
-  };
+  const fallback: NonNullable<MessageMetadata["fallback"]> = { used: true };
+  if (from) fallback.from = from;
+  if (to) fallback.to = to;
+  if (parsed.data.reason) fallback.reason = parsed.data.reason;
+  return fallback;
 }
 
-function normalizeModelMetadata(value: unknown): ProcMessageModelMetadata | null {
-  const record = asRecord(value);
-  if (!record) {
+function normalizeModelMetadata(
+  value: Parameters<typeof modelMetadataSchema.safeParse>[0],
+): ProcMessageModelMetadata | null {
+  const parsed = modelMetadataSchema.safeParse(value);
+  if (!parsed.success) {
     return null;
   }
-  const provider = normalizeOptionalNonEmptyString(record.provider);
-  const model = normalizeOptionalNonEmptyString(record.model);
-  if (!provider && !model) {
+  if (!parsed.data.provider && !parsed.data.model) {
     return null;
   }
-  return {
-    ...(provider ? { provider } : {}),
-    ...(model ? { model } : {}),
-  };
+  const model: ProcMessageModelMetadata = {};
+  if (parsed.data.provider) model.provider = parsed.data.provider;
+  if (parsed.data.model) model.model = parsed.data.model;
+  return model;
 }
 
-export function normalizeUsageState(value: unknown): ProcUsageState | null {
-  const record = asRecord(value);
-  if (!record) {
+export function normalizeUsageState(
+  value: Parameters<typeof usageStateInputSchema.safeParse>[0],
+): ProcUsageState | null {
+  const parsed = usageStateInputSchema.safeParse(value);
+  if (!parsed.success) {
     return null;
   }
-  const inputTokens = normalizeNonNegativeNumber(record.inputTokens ?? record.input) ?? 0;
-  const outputTokens = normalizeNonNegativeNumber(record.outputTokens ?? record.output) ?? 0;
-  const cacheReadTokens = normalizeNonNegativeNumber(record.cacheReadTokens ?? record.cacheRead) ?? 0;
-  const cacheWriteTokens = normalizeNonNegativeNumber(record.cacheWriteTokens ?? record.cacheWrite) ?? 0;
-  const totalTokens = normalizeNonNegativeNumber(record.totalTokens)
-    ?? inputTokens + outputTokens;
-  const generations = normalizePositiveInteger(record.generations);
-  const updatedAt = normalizeNonNegativeNumber(record.updatedAt);
-
-  return {
+  const inputTokens = parsed.data.inputTokens ?? parsed.data.input ?? 0;
+  const outputTokens = parsed.data.outputTokens ?? parsed.data.output ?? 0;
+  const cacheReadTokens = parsed.data.cacheReadTokens ?? parsed.data.cacheRead ?? 0;
+  const cacheWriteTokens = parsed.data.cacheWriteTokens ?? parsed.data.cacheWrite ?? 0;
+  const usage: ProcUsageState = {
     inputTokens,
     outputTokens,
     cacheReadTokens,
     cacheWriteTokens,
-    totalTokens,
-    cost: normalizeUsageCost(record.cost),
-    ...(generations !== null ? { generations } : {}),
-    ...(record.costIncomplete === true ? { costIncomplete: true } : {}),
-    ...(updatedAt !== null ? { updatedAt } : {}),
+    totalTokens: parsed.data.totalTokens ?? inputTokens + outputTokens,
+    cost: normalizeUsageCost(parsed.data.cost),
   };
+  if (parsed.data.generations !== undefined) usage.generations = parsed.data.generations;
+  if (parsed.data.costIncomplete === true) usage.costIncomplete = true;
+  if (parsed.data.updatedAt !== undefined) usage.updatedAt = parsed.data.updatedAt;
+  return usage;
 }
 
-function normalizeUsageCost(value: unknown): ProcUsageCost | null {
-  const record = asRecord(value);
-  if (!record) {
+function normalizeUsageCost(
+  value: Parameters<typeof usageCostInputSchema.safeParse>[0],
+): ProcUsageCost | null {
+  const parsed = usageCostInputSchema.safeParse(value);
+  if (!parsed.success) {
     return null;
   }
-  const input = normalizeNonNegativeNumber(record.input) ?? 0;
-  const output = normalizeNonNegativeNumber(record.output) ?? 0;
-  const cacheRead = normalizeNonNegativeNumber(record.cacheRead) ?? 0;
-  const cacheWrite = normalizeNonNegativeNumber(record.cacheWrite) ?? 0;
-  const total = normalizeNonNegativeNumber(record.total) ?? input + output + cacheRead + cacheWrite;
+  const input = parsed.data.input ?? 0;
+  const output = parsed.data.output ?? 0;
+  const cacheRead = parsed.data.cacheRead ?? 0;
+  const cacheWrite = parsed.data.cacheWrite ?? 0;
   return {
     input,
     output,
     cacheRead,
     cacheWrite,
-    total,
+    total: parsed.data.total ?? input + output + cacheRead + cacheWrite,
     currency: "USD",
-    source: normalizeUsageCostSource(record.source) ?? "provider",
+    source: parsed.data.source ?? "provider",
   };
 }
 
@@ -1307,7 +1462,7 @@ function mergeUsageStates(
     || next.cost === null
     || (current !== null && current.cost === null);
 
-  return {
+  const merged: ProcUsageState = {
     inputTokens: (current?.inputTokens ?? 0) + next.inputTokens,
     outputTokens: (current?.outputTokens ?? 0) + next.outputTokens,
     cacheReadTokens: (current?.cacheReadTokens ?? 0) + next.cacheReadTokens,
@@ -1315,9 +1470,10 @@ function mergeUsageStates(
     totalTokens: (current?.totalTokens ?? 0) + next.totalTokens,
     cost,
     generations: currentGenerations + nextGenerations,
-    ...(costIncomplete ? { costIncomplete: true } : {}),
     updatedAt: Date.now(),
   };
+  if (costIncomplete) merged.costIncomplete = true;
+  return merged;
 }
 
 function mergeUsageCosts(
@@ -1328,7 +1484,7 @@ function mergeUsageCosts(
     return null;
   }
   if (!current) {
-    return cloneUsageCost(next!);
+    return next === null ? null : cloneUsageCost(next);
   }
   if (!next) {
     return cloneUsageCost(current);
@@ -1385,7 +1541,9 @@ function usageStateToPiUsage(usage: ProcUsageState | null | undefined): Assistan
   };
 }
 
-function normalizeAssistantStopReason(value: unknown): AssistantMessage["stopReason"] {
+function normalizeAssistantStopReason(
+  value: string | undefined,
+): AssistantMessage["stopReason"] {
   return value === "length" || value === "toolUse" || value === "error" || value === "aborted"
     ? value
     : "stop";
@@ -1396,63 +1554,19 @@ export function parseAssistantMessageMeta(raw: string | null): AssistantMessageM
     return {};
   }
 
-  let parsed: unknown;
+  let parsed: z.input<typeof assistantMessageMetaSchema>;
   try {
     parsed = JSON.parse(raw);
   } catch {
     return {};
   }
 
-  if (Array.isArray(parsed)) {
-    return { toolCalls: parsed as ToolCall[] };
+  const legacyToolCalls = z.array(toolCallSchema).safeParse(parsed);
+  if (legacyToolCalls.success) {
+    return { toolCalls: legacyToolCalls.data };
   }
-  if (!parsed || typeof parsed !== "object") {
-    return {};
-  }
-
-  const meta = parsed as Record<string, unknown>;
-  return {
-    thinking: Array.isArray(meta.thinking)
-      ? meta.thinking as ThinkingContent[]
-      : undefined,
-    toolCalls: Array.isArray(meta.toolCalls)
-      ? meta.toolCalls as ToolCall[]
-      : undefined,
-  };
-}
-
-function asRecord(value: unknown): Record<string, unknown> | null {
-  return value && typeof value === "object" && !Array.isArray(value)
-    ? value as Record<string, unknown>
-    : null;
-}
-
-function normalizeOptionalNonEmptyString(value: unknown): string | undefined {
-  return typeof value === "string" && value.trim().length > 0
-    ? value.trim()
-    : undefined;
-}
-
-function normalizeNonNegativeNumber(value: unknown): number | null {
-  if (typeof value !== "number" || !Number.isFinite(value)) {
-    return null;
-  }
-  return value >= 0 ? value : null;
-}
-
-function normalizePositiveInteger(value: unknown): number | null {
-  if (typeof value !== "number" || !Number.isFinite(value)) {
-    return null;
-  }
-  const normalized = Math.trunc(value);
-  return normalized > 0 ? normalized : null;
-}
-
-function normalizeUsageCostSource(value: unknown): ProcUsageCostSource | null {
-  if (value === "provider" || value === "model-pricing" || value === "mixed") {
-    return value;
-  }
-  return null;
+  const metadata = assistantMessageMetaSchema.safeParse(parsed);
+  return metadata.success ? metadata.data : {};
 }
 
 function buildFallbackUserContent(

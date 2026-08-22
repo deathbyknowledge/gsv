@@ -9,6 +9,7 @@ import {
   vi,
 } from "vitest";
 import { createManagedInferenceStackTestHarness } from "./harness";
+import type { JsonObject } from "@humansandmachines/gsv/protocol";
 
 const ACCOUNTS_WORKER = "gsv-accounts-test";
 const GATEWAY_WORKER = "gsv-managed-inference-stack";
@@ -51,6 +52,7 @@ describe("managed inference stack integration", () => {
       },
     );
     expect(createdResponse.status).toBe(201);
+    // SAFETY: The accounts worker returns this installation creation contract.
     const created = await createdResponse.json() as {
       installation: { installationId: string };
       onboarding: { onboardingUrl: string };
@@ -91,11 +93,7 @@ describe("managed inference stack integration", () => {
 
       const providerFetch = vi.spyOn(globalThis, "fetch").mockImplementation(
         async (input) => {
-          const url = typeof input === "string"
-            ? input
-            : input instanceof URL
-              ? input.href
-              : input.url;
+          const url = input instanceof Request ? input.url : String(input);
           expect(url).toBe("https://openrouter.ai/api/v1/chat/completions");
           return openRouterCompletion();
         },
@@ -186,6 +184,7 @@ describe("managed inference stack integration", () => {
       `http://localhost/admin/api/installations/${installationId}`,
     );
     expect(adminResponse.status).toBe(200);
+    // SAFETY: The accounts admin endpoint returns this installation summary contract.
     const admin = await adminResponse.json() as {
       installationId: string;
       inference: {
@@ -231,7 +230,7 @@ type RpcResponse = {
   type: "res";
   id: string;
   ok: boolean;
-  data?: unknown;
+  data?: JsonObject;
   error?: { code?: number; message: string };
 };
 
@@ -248,12 +247,14 @@ type AdminWorker = {
     },
   ): Promise<{ status: number }>;
 };
+type RpcArgs = JsonObject;
+type UsageRow = { total_tokens: number; cost_nano_usd: number; outcome: string; provider_response_id: string };
 
 async function expectRpcOk(
   socket: HarnessWebSocket,
   id: string,
   call: string,
-  args: unknown,
+  args: RpcArgs,
 ): Promise<RpcResponse> {
   const response = await rpc(socket, id, call, args);
   expect(response).toMatchObject({ type: "res", id, ok: true });
@@ -264,22 +265,23 @@ async function rpc(
   socket: HarnessWebSocket,
   id: string,
   call: string,
-  args: unknown,
+  args: RpcArgs,
 ): Promise<RpcResponse> {
-  const eventSocket = socket as unknown as {
+  // SAFETY: Wrangler's WebSocket proxy implements the standard event-listener surface used here.
+  const eventSocket = socket as {
     addEventListener(
       type: "message",
-      listener: (event: { data: unknown }) => void,
+      listener: (event: { data: string }) => void,
     ): void;
     removeEventListener(
       type: "message",
-      listener: (event: { data: unknown }) => void,
+      listener: (event: { data: string }) => void,
     ): void;
   };
   const response = new Promise<RpcResponse>((resolve, reject) => {
     let timeout: ReturnType<typeof setTimeout>;
-    const onMessage = (event: { data: unknown }) => {
-      if (typeof event.data !== "string") return;
+    const onMessage = (event: { data: string }) => {
+      // SAFETY: The test WebSocket only receives protocol response frames for this request.
       const frame = JSON.parse(event.data) as RpcResponse;
       if (frame.type !== "res" || frame.id !== id) return;
       eventSocket.removeEventListener("message", onMessage);
@@ -299,7 +301,7 @@ async function rpc(
 async function waitForAccountsUsage(
   accounts: { getEnv(): Promise<{ ACCOUNT_DB: D1Database }> },
   installationId: string,
-): Promise<Record<string, unknown>> {
+): Promise<UsageRow> {
   const { ACCOUNT_DB } = await accounts.getEnv();
   const deadline = Date.now() + 15_000;
   while (Date.now() < deadline) {
@@ -307,7 +309,7 @@ async function waitForAccountsUsage(
       `SELECT total_tokens, cost_nano_usd, outcome, provider_response_id
        FROM managed_inference_usage_events
        WHERE installation_id = ?`,
-    ).bind(installationId).first<Record<string, unknown>>();
+    ).bind(installationId).first<UsageRow>();
     if (row) return row;
     await new Promise((resolve) => setTimeout(resolve, 50));
   }
@@ -388,6 +390,6 @@ function openRouterCompletion(): Response {
   });
 }
 
-function sse(payload: Record<string, unknown>): string {
+function sse(payload: JsonObject): string {
   return `data: ${JSON.stringify(payload)}\n\n`;
 }

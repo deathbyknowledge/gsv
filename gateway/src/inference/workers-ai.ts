@@ -16,6 +16,13 @@ import type {
 } from "@earendil-works/pi-ai";
 import { calculateCost, createAssistantMessageEventStream } from "@earendil-works/pi-ai";
 import { getBuiltinModels } from "@earendil-works/pi-ai/providers/all";
+import {
+  jsonObjectSchema,
+  jsonValueSchema,
+  type JsonObject,
+  type JsonValue,
+} from "@humansandmachines/gsv/protocol";
+import { z } from "zod";
 import { DEFAULT_WORKERS_AI_MODEL } from "./default-models";
 import { TimeoutError, isTimeoutError, withTimeout } from "./timeout";
 
@@ -51,7 +58,7 @@ type WorkersAiTool = {
   };
 };
 
-type WorkersAiRunInput = AiTextGenerationInput & {
+type WorkersAiRunInput = Omit<AiTextGenerationInput, "messages" | "tools"> & {
   messages: WorkersAiMessage[];
   max_completion_tokens?: number;
   tools?: WorkersAiTool[];
@@ -64,7 +71,21 @@ type WorkersAiRunInput = AiTextGenerationInput & {
   };
 };
 
-type WorkersAiRunOutput = AiTextGenerationOutput & Record<string, unknown>;
+type WorkersAiUsage = {
+  prompt_tokens?: number;
+  completion_tokens?: number;
+  total_tokens?: number;
+};
+
+type WorkersAiRunOutput = {
+  response?: string;
+  output_text?: JsonValue;
+  choices?: JsonValue;
+  output?: JsonValue;
+  tool_calls?: JsonValue;
+  usage?: WorkersAiUsage;
+  [key: string]: JsonValue | WorkersAiUsage | undefined;
+};
 
 type WorkersAiStreamInput = WorkersAiRunInput & {
   stream: true;
@@ -116,6 +137,15 @@ type WorkersAiCatalogBinding = {
   }): Promise<WorkersAiCatalogModel[]>;
 };
 
+type WorkersAiBinding = DynamicWorkersAiBinding & WorkersAiCatalogBinding;
+type WorkersAiProviderValue = JsonValue | undefined;
+type WorkersAiCaughtError = Parameters<typeof isTimeoutError>[0];
+type DrainedSseEvents = { items: WorkersAiSseEvent[]; remainder: string };
+type WorkersAiAbort = { signal: AbortSignal; clear: () => void };
+
+const nonEmptyStringSchema = z.string().min(1);
+const finiteNumberSchema = z.number().finite();
+
 const workersAiContextWindowCache = new Map<string, Promise<number | null>>();
 
 type WorkersAiRequest = {
@@ -164,7 +194,7 @@ export async function resolveWorkersAiModelContextWindow(modelName: string): Pro
 export async function completeWithWorkersAi(
   request: WorkersAiRequest,
 ): Promise<AssistantMessage> {
-  const ai = env.AI as unknown as DynamicWorkersAiBinding | undefined;
+  const ai = getWorkersAiBinding();
   if (!ai) {
     throw new Error("Workers AI binding is not configured for this worker");
   }
@@ -218,7 +248,7 @@ async function pumpWorkersAiStream(
   request: WorkersAiRequest,
   stream: AssistantMessageEventStream,
 ): Promise<void> {
-  const ai = env.AI as unknown as DynamicWorkersAiBinding | undefined;
+  const ai = getWorkersAiBinding();
   if (!ai) {
     pushWorkersAiError(stream, request.modelName, "Workers AI binding is not configured for this worker");
     return;
@@ -272,7 +302,7 @@ async function streamWorkersAiResponse(
   }
 }
 
-function shouldSkipNoToolsFallback(error: unknown, signal?: AbortSignal): boolean {
+function shouldSkipNoToolsFallback(error: WorkersAiCaughtError, signal?: AbortSignal): boolean {
   return isTimeoutError(error)
     || signal?.aborted === true
     || (error instanceof Error && error.name === "AbortError");
@@ -625,7 +655,7 @@ async function readWorkersAiSse(
   }
 }
 
-function drainSseEvents(input: string): { items: WorkersAiSseEvent[]; remainder: string } {
+function drainSseEvents(input: string): DrainedSseEvents {
   const normalized = input.replace(/\r\n/g, "\n");
   const items: WorkersAiSseEvent[] = [];
   let cursor = 0;
@@ -691,7 +721,7 @@ function applyWorkersAiSseEvent(
   }
 }
 
-function extractWorkersAiStreamDelta(record: Record<string, unknown>): WorkersAiStreamDelta | null {
+function extractWorkersAiStreamDelta(record: JsonObject): WorkersAiStreamDelta | null {
   const result: WorkersAiStreamDelta = {};
 
   const responseText = asString(record.response);
@@ -749,15 +779,18 @@ function extractWorkersAiStreamDelta(record: Record<string, unknown>): WorkersAi
     : null;
 }
 
-function extractDeltaToolCalls(input: unknown): NonNullable<WorkersAiStreamDelta["toolCalls"]> {
+function extractDeltaToolCalls(
+  input: WorkersAiProviderValue,
+): NonNullable<WorkersAiStreamDelta["toolCalls"]> {
   if (!Array.isArray(input)) return [];
 
   return input.flatMap((entry, fallbackIndex) => {
     const record = asRecord(entry);
     if (!record) return [];
     const fn = asRecord(record.function);
-    const index = typeof record.index === "number" && Number.isFinite(record.index)
-      ? record.index
+    const indexValue = asOptionalNumber(record.index);
+    const index = indexValue !== undefined
+      ? indexValue
       : fallbackIndex;
     const id = asString(record.id);
     const name = asString(fn?.name) ?? asString(record.name);
@@ -785,7 +818,7 @@ function withWorkersAiAbortSignal(
 function createWorkersAiAbort(
   callerSignal: AbortSignal | undefined,
   timeoutMs: number,
-): { signal: AbortSignal; clear: () => void } {
+): WorkersAiAbort {
   const timeoutController = new AbortController();
   const timeout = Number.isFinite(timeoutMs) && timeoutMs > 0
     ? setTimeout(() => {
@@ -805,7 +838,7 @@ function createWorkersAiAbort(
 function pushWorkersAiError(
   stream: AssistantMessageEventStream,
   modelName: string,
-  error: unknown,
+  error: WorkersAiCaughtError,
   callerAborted = false,
 ): void {
   const message = error instanceof Error ? error.message : String(error);
@@ -828,7 +861,9 @@ function pushWorkersAiError(
   });
 }
 
-function normalizeWorkersAiUsage(usage: unknown): AssistantMessage["usage"] | null {
+function normalizeWorkersAiUsage(
+  usage: WorkersAiProviderValue,
+): AssistantMessage["usage"] | null {
   const record = asRecord(usage);
   if (!record) return null;
   const input = asNumber(record.prompt_tokens) || asNumber(record.input_tokens);
@@ -887,29 +922,29 @@ function emptyUsage(): AssistantMessage["usage"] {
 }
 
 function snapshotAssistantMessageEvent<T extends AssistantMessageEvent>(event: T): T {
-  return JSON.parse(JSON.stringify(event)) as T;
+  return structuredClone(event);
 }
 
 function snapshotAssistantMessage(message: AssistantMessage): AssistantMessage {
-  return JSON.parse(JSON.stringify(message)) as AssistantMessage;
+  return structuredClone(message);
 }
 
 function snapshotToolCall(toolCall: ToolCall): ToolCall {
-  return JSON.parse(JSON.stringify(toolCall)) as ToolCall;
+  return structuredClone(toolCall);
 }
 
-function parseJsonObject(input: string): Record<string, unknown> | null {
+function parseJsonObject(input: string): JsonObject | null {
   try {
-    const parsed = JSON.parse(input) as unknown;
-    return asRecord(parsed);
+    const parsed = jsonObjectSchema.safeParse(JSON.parse(input));
+    return parsed.success ? parsed.data : null;
   } catch {
     return null;
   }
 }
 
 async function lookupWorkersAiModelContextWindow(modelName: string): Promise<number | null> {
-  const ai = env.AI as unknown as WorkersAiCatalogBinding | undefined;
-  if (!ai || typeof ai.models !== "function") {
+  const ai = getWorkersAiBinding();
+  if (!ai) {
     return null;
   }
 
@@ -1016,7 +1051,7 @@ export function buildWorkersAiInput(
   options?: { disableTools?: boolean },
 ): WorkersAiRunInput {
   const input: WorkersAiRunInput = {
-    messages: contextToWorkersAiMessages(request.context) as unknown as WorkersAiRunInput["messages"],
+    messages: contextToWorkersAiMessages(request.context),
     max_completion_tokens: request.maxTokens,
   };
 
@@ -1230,7 +1265,8 @@ function convertToolResultMessage(message: ToolResultMessage): WorkersAiMessage 
 }
 
 function convertTool(tool: Tool): WorkersAiTool {
-  const schema = sanitizeToolParameters(tool.parameters as unknown as Record<string, unknown>);
+  const parsedSchema = jsonObjectSchema.safeParse(tool.parameters);
+  const schema = sanitizeToolParameters(parsedSchema.success ? parsedSchema.data : undefined);
   return {
     type: "function",
     function: {
@@ -1245,8 +1281,9 @@ function convertTool(tool: Tool): WorkersAiTool {
 function serializeUserContent(
   content: UserMessage["content"],
 ): string {
-  if (typeof content === "string") return content;
-  return serializeTextBlocks(content);
+  const text = z.string().safeParse(content);
+  if (text.success) return text.data;
+  return Array.isArray(content) ? serializeTextBlocks(content) : "";
 }
 
 function serializeTextBlocks(
@@ -1277,52 +1314,46 @@ function hasStoredImageTextFallback(text: string): boolean {
   return text.includes("\nImage description:");
 }
 
-function normalizeWorkersAiToolCalls(toolCalls: unknown): ToolCall[] {
+function normalizeWorkersAiToolCalls(toolCalls: WorkersAiProviderValue): ToolCall[] {
   if (!Array.isArray(toolCalls)) return [];
 
-  return toolCalls.flatMap((toolCall, index) => {
-    if (!toolCall || typeof toolCall !== "object") return [];
+  return toolCalls.flatMap((providerToolCall, index) => {
+    const openAiStyle = asRecord(providerToolCall);
+    if (!openAiStyle) return [];
+    const fn = asRecord(openAiStyle.function);
 
-    const openAiStyle = toolCall as {
-      id?: unknown;
-      function?: {
-        name?: unknown;
-        arguments?: unknown;
-      };
-      name?: unknown;
-      arguments?: unknown;
-    };
-
-    const name = asString(openAiStyle.function?.name) ?? asString(openAiStyle.name);
+    const name = asString(fn?.name) ?? asString(openAiStyle.name);
     if (!name) return [];
 
     const id = asString(openAiStyle.id) ?? `workers-ai-tool-${index + 1}`;
-    const argumentsInput = openAiStyle.function?.arguments ?? openAiStyle.arguments;
+    const argumentsInput = fn?.arguments ?? openAiStyle.arguments;
 
-    return [{
+    const normalizedToolCall: ToolCall = {
       type: "toolCall",
       id,
       name,
       arguments: parseToolArguments(argumentsInput),
-    }];
+    };
+    return [normalizedToolCall];
   });
 }
 
 function extractWorkersAiText(response: WorkersAiRunOutput): string {
-  if (typeof response.response === "string" && response.response.length > 0) {
-    return response.response;
+  const responseText = asString(response.response);
+  if (responseText) {
+    return responseText;
   }
 
-  if (typeof response.output_text === "string" && response.output_text.length > 0) {
-    return response.output_text;
+  const directOutputText = asString(response.output_text);
+  if (directOutputText) {
+    return directOutputText;
   }
 
   const choices = Array.isArray(response.choices) ? response.choices : [];
   const choiceText = choices
     .map((choice) => {
-      if (!choice || typeof choice !== "object") return "";
-      const message = (choice as { message?: unknown }).message;
-      return extractChoiceMessageText(message);
+      const choiceRecord = asRecord(choice);
+      return choiceRecord ? extractChoiceMessageText(choiceRecord.message) : "";
     })
     .join("");
   if (choiceText) {
@@ -1332,14 +1363,15 @@ function extractWorkersAiText(response: WorkersAiRunOutput): string {
   const output = Array.isArray(response.output) ? response.output : [];
   const outputText = output
     .flatMap((item) => {
-      if (!item || typeof item !== "object") return [];
-      const content = (item as { content?: unknown }).content;
+      const itemRecord = asRecord(item);
+      if (!itemRecord) return [];
+      const content = itemRecord.content;
       if (!Array.isArray(content)) return [];
       return content.flatMap((entry) => {
-        if (!entry || typeof entry !== "object") return [];
-        const type = (entry as { type?: unknown }).type;
-        const text = (entry as { text?: unknown }).text;
-        if (type === "output_text" && typeof text === "string") {
+        const entryRecord = asRecord(entry);
+        if (!entryRecord || entryRecord.type !== "output_text") return [];
+        const text = asString(entryRecord.text);
+        if (text) {
           return [text];
         }
         return [];
@@ -1354,9 +1386,8 @@ function extractWorkersAiThinking(response: WorkersAiRunOutput): string {
   const choices = Array.isArray(response.choices) ? response.choices : [];
   const choiceReasoning = choices
     .map((choice) => {
-      if (!choice || typeof choice !== "object") return "";
-      const message = (choice as { message?: unknown }).message;
-      return extractChoiceMessageThinking(message);
+      const choiceRecord = asRecord(choice);
+      return choiceRecord ? extractChoiceMessageThinking(choiceRecord.message) : "";
     })
     .join("");
   if (choiceReasoning) {
@@ -1366,17 +1397,16 @@ function extractWorkersAiThinking(response: WorkersAiRunOutput): string {
   const output = Array.isArray(response.output) ? response.output : [];
   const outputReasoning = output
     .flatMap((item) => {
-      if (!item || typeof item !== "object") return [];
-      const type = (item as { type?: unknown }).type;
-      if (type !== "reasoning") return [];
+      const itemRecord = asRecord(item);
+      if (!itemRecord || itemRecord.type !== "reasoning") return [];
 
-      const content = (item as { content?: unknown }).content;
+      const content = itemRecord.content;
       if (Array.isArray(content)) {
         const contentReasoning = content.flatMap((entry) => {
-          if (!entry || typeof entry !== "object") return [];
-          const entryType = (entry as { type?: unknown }).type;
-          const text = (entry as { text?: unknown }).text;
-          if (entryType === "reasoning_text" && typeof text === "string") {
+          const entryRecord = asRecord(entry);
+          if (!entryRecord || entryRecord.type !== "reasoning_text") return [];
+          const text = asString(entryRecord.text);
+          if (text) {
             return [text];
           }
           return [];
@@ -1386,13 +1416,13 @@ function extractWorkersAiThinking(response: WorkersAiRunOutput): string {
         }
       }
 
-      const summary = (item as { summary?: unknown }).summary;
+      const summary = itemRecord.summary;
       if (Array.isArray(summary)) {
         const summaryReasoning = summary.flatMap((entry) => {
-          if (!entry || typeof entry !== "object") return [];
-          const entryType = (entry as { type?: unknown }).type;
-          const text = (entry as { text?: unknown }).text;
-          if (entryType === "summary_text" && typeof text === "string") {
+          const entryRecord = asRecord(entry);
+          if (!entryRecord || entryRecord.type !== "summary_text") return [];
+          const text = asString(entryRecord.text);
+          if (text) {
             return [text];
           }
           return [];
@@ -1417,10 +1447,9 @@ function extractWorkersAiToolCalls(response: WorkersAiRunOutput): ToolCall[] {
 
   const choices = Array.isArray(response.choices) ? response.choices : [];
   const fromChoices = choices.flatMap((choice) => {
-    if (!choice || typeof choice !== "object") return [];
-    const message = (choice as { message?: unknown }).message;
-    if (!message || typeof message !== "object") return [];
-    return normalizeWorkersAiToolCalls((message as { tool_calls?: unknown }).tool_calls);
+    const choiceRecord = asRecord(choice);
+    const message = choiceRecord ? asRecord(choiceRecord.message) : null;
+    return message ? normalizeWorkersAiToolCalls(message.tool_calls) : [];
   });
   if (fromChoices.length > 0) {
     return fromChoices;
@@ -1428,39 +1457,40 @@ function extractWorkersAiToolCalls(response: WorkersAiRunOutput): ToolCall[] {
 
   const output = Array.isArray(response.output) ? response.output : [];
   const fromOutput = output.flatMap((item) => {
-    if (!item || typeof item !== "object") return [];
-    const type = (item as { type?: unknown }).type;
-    if (type !== "function_call") return [];
-    const id = asString((item as { call_id?: unknown }).call_id)
-      ?? asString((item as { id?: unknown }).id)
+    const itemRecord = asRecord(item);
+    if (!itemRecord || itemRecord.type !== "function_call") return [];
+    const id = asString(itemRecord.call_id)
+      ?? asString(itemRecord.id)
       ?? "workers-ai-tool-1";
-    const name = asString((item as { name?: unknown }).name);
-    const argumentsInput = (item as { arguments?: unknown }).arguments;
+    const name = asString(itemRecord.name);
+    const argumentsInput = itemRecord.arguments;
     if (!name) return [];
-    return [{
-      type: "toolCall" as const,
+    const toolCall: ToolCall = {
+      type: "toolCall",
       id,
       name,
       arguments: parseToolArguments(argumentsInput),
-    }];
+    };
+    return [toolCall];
   });
 
   return fromOutput;
 }
 
-function extractChoiceMessageText(message: unknown): string {
-  if (!message || typeof message !== "object") return "";
-
-  const content = (message as { content?: unknown }).content;
-  if (typeof content === "string") {
-    return content;
+function extractChoiceMessageText(message: WorkersAiProviderValue): string {
+  const messageRecord = asRecord(message);
+  if (!messageRecord) return "";
+  const content = messageRecord.content;
+  const textContent = asString(content);
+  if (textContent) {
+    return textContent;
   }
   if (Array.isArray(content)) {
     return content.flatMap((entry) => {
-      if (!entry || typeof entry !== "object") return [];
-      const type = (entry as { type?: unknown }).type;
-      const text = (entry as { text?: unknown }).text;
-      if (type === "text" && typeof text === "string") {
+      const entryRecord = asRecord(entry);
+      if (!entryRecord || entryRecord.type !== "text") return [];
+      const text = asString(entryRecord.text);
+      if (text) {
         return [text];
       }
       return [];
@@ -1470,37 +1500,42 @@ function extractChoiceMessageText(message: unknown): string {
   return "";
 }
 
-function extractChoiceMessageThinking(message: unknown): string {
-  if (!message || typeof message !== "object") return "";
-
-  const reasoningContent = (message as { reasoning_content?: unknown }).reasoning_content;
-  if (typeof reasoningContent === "string") {
+function extractChoiceMessageThinking(message: WorkersAiProviderValue): string {
+  const messageRecord = asRecord(message);
+  if (!messageRecord) return "";
+  const reasoningContent = asString(messageRecord.reasoning_content);
+  if (reasoningContent) {
     return reasoningContent;
   }
 
-  const reasoning = (message as { reasoning?: unknown }).reasoning;
-  if (typeof reasoning === "string") {
-    return reasoning;
+  const reasoning = messageRecord.reasoning;
+  const reasoningText = asString(reasoning);
+  if (reasoningText) {
+    return reasoningText;
   }
   if (Array.isArray(reasoning)) {
     return reasoning.flatMap((entry) => {
-      if (typeof entry === "string") return [entry];
-      if (!entry || typeof entry !== "object") return [];
-      const text = (entry as { text?: unknown }).text;
-      return typeof text === "string" ? [text] : [];
+      const directText = asString(entry);
+      if (directText) return [directText];
+      const entryRecord = asRecord(entry);
+      const text = entryRecord ? asString(entryRecord.text) : undefined;
+      return text ? [text] : [];
     }).join("");
   }
-  if (reasoning && typeof reasoning === "object") {
-    const summary = (reasoning as { summary?: unknown }).summary;
-    if (typeof summary === "string") {
-      return summary;
+  const reasoningRecord = asRecord(reasoning);
+  if (reasoningRecord) {
+    const summary = reasoningRecord.summary;
+    const summaryText = asString(summary);
+    if (summaryText) {
+      return summaryText;
     }
     if (Array.isArray(summary)) {
       return summary.flatMap((entry) => {
-        if (typeof entry === "string") return [entry];
-        if (!entry || typeof entry !== "object") return [];
-        const text = (entry as { text?: unknown }).text;
-        return typeof text === "string" ? [text] : [];
+        const directText = asString(entry);
+        if (directText) return [directText];
+        const entryRecord = asRecord(entry);
+        const text = entryRecord ? asString(entryRecord.text) : undefined;
+        return text ? [text] : [];
       }).join("");
     }
   }
@@ -1509,7 +1544,7 @@ function extractChoiceMessageThinking(message: unknown): string {
 }
 
 function sanitizeToolParameters(
-  schema: Record<string, unknown> | undefined,
+  schema: JsonObject | undefined,
 ): WorkersAiTool["function"]["parameters"] | undefined {
   if (!schema || schema.type !== "object") return undefined;
 
@@ -1517,15 +1552,18 @@ function sanitizeToolParameters(
   const requiredInput = schema.required;
   const properties: NonNullable<WorkersAiTool["function"]["parameters"]>["properties"] = {};
 
-  if (propertiesInput && typeof propertiesInput === "object" && !Array.isArray(propertiesInput)) {
-    for (const [key, value] of Object.entries(propertiesInput)) {
-      if (!value || typeof value !== "object" || Array.isArray(value)) continue;
-      const property = value as { type?: unknown; description?: unknown };
-      if (typeof property.type !== "string") continue;
-      properties[key] = {
-        type: property.type,
-        description: typeof property.description === "string" ? property.description : undefined,
+  const propertyRecords = asRecord(propertiesInput);
+  if (propertyRecords) {
+    for (const [key, value] of Object.entries(propertyRecords)) {
+      const property = asRecord(value);
+      const propertyType = property ? asString(property.type) : undefined;
+      if (!property || !propertyType) continue;
+      const description = asString(property.description);
+      const parameter: NonNullable<WorkersAiTool["function"]["parameters"]>["properties"][string] = {
+        type: propertyType,
       };
+      if (description) parameter.description = description;
+      properties[key] = parameter;
     }
   }
 
@@ -1533,41 +1571,53 @@ function sanitizeToolParameters(
     type: "object",
     properties,
     required: Array.isArray(requiredInput)
-      ? requiredInput.filter((value): value is string => typeof value === "string")
+      ? requiredInput.flatMap((value) => {
+          const parsed = z.string().safeParse(value);
+          return parsed.success ? [parsed.data] : [];
+        })
       : [],
   };
 }
 
-function parseToolArguments(input: unknown): Record<string, unknown> {
-  if (!input) return {};
-  if (typeof input === "object" && !Array.isArray(input)) {
-    return input as Record<string, unknown>;
-  }
-  if (typeof input !== "string") {
+function parseToolArguments(input: WorkersAiProviderValue): JsonObject {
+  if (input === undefined || input === null) return {};
+  const inputRecord = asRecord(input);
+  if (inputRecord) return inputRecord;
+  const serialized = z.string().safeParse(input);
+  if (!serialized.success) {
     return { value: input };
   }
 
   try {
-    const parsed = JSON.parse(input) as unknown;
-    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
-      return parsed as Record<string, unknown>;
-    }
+    const parsed = jsonValueSchema.parse(JSON.parse(serialized.data));
+    const parsedRecord = asRecord(parsed);
+    if (parsedRecord) return parsedRecord;
     return { value: parsed };
   } catch {
-    return { value: input };
+    return { value: serialized.data };
   }
 }
 
-function asString(value: unknown): string | undefined {
-  return typeof value === "string" && value.length > 0 ? value : undefined;
+function asString(value: WorkersAiProviderValue): string | undefined {
+  const parsed = nonEmptyStringSchema.safeParse(value);
+  return parsed.success ? parsed.data : undefined;
 }
 
-function asNumber(value: unknown): number {
-  return typeof value === "number" && Number.isFinite(value) ? value : 0;
+function asNumber(value: WorkersAiProviderValue): number {
+  return asOptionalNumber(value) ?? 0;
 }
 
-function asRecord(value: unknown): Record<string, unknown> | null {
-  return value && typeof value === "object" && !Array.isArray(value)
-    ? value as Record<string, unknown>
-    : null;
+function asOptionalNumber(value: WorkersAiProviderValue): number | undefined {
+  const parsed = finiteNumberSchema.safeParse(value);
+  return parsed.success ? parsed.data : undefined;
+}
+
+function asRecord(value: WorkersAiProviderValue): JsonObject | null {
+  const parsed = jsonObjectSchema.safeParse(value);
+  return parsed.success ? parsed.data : null;
+}
+
+function getWorkersAiBinding(): WorkersAiBinding | undefined {
+  // SAFETY: The configured AI binding owns the documented run/models RPC surface.
+  return env.AI as WorkersAiBinding | undefined;
 }

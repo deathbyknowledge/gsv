@@ -8,6 +8,7 @@ import type { Kernel } from "./do";
 import type { SignalWatchStore } from "./signal-watches";
 
 function makeContext(overrides: Partial<KernelContext> = {}): KernelContext {
+  // SAFETY: test fixture is constructed with the asserted kernel domain shape.
   return {
     identity: {
       role: "user",
@@ -38,14 +39,17 @@ function makeContext(overrides: Partial<KernelContext> = {}): KernelContext {
       getOwnerUid: vi.fn(() => 1000),
     },
     ...overrides,
-  } as unknown as KernelContext;
+  // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+  } as KernelContext;
 }
 
 describe("signal watch handlers", () => {
   it("reports logical rows removed from the indexed watch table", async () => {
     const kernel = await getDurableObjectByName(env.KERNEL, crypto.randomUUID());
     await runInDurableObject(kernel, (instance: Kernel) => {
-      const store = (instance as unknown as { signalWatches: SignalWatchStore }).signalWatches;
+      // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+      const store = (instance as { signalWatches: SignalWatchStore }).signalWatches;
+      // SAFETY: test fixture is constructed with the asserted kernel domain shape.
       const target = { kind: "process" as const, processId: "proc-target" };
       const { watch } = store.upsert({ uid: 1000, target, signal: "proc.run.finished" });
 

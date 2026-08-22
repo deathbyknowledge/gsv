@@ -4,7 +4,7 @@ import { runWithRealKernelSql } from "../test-support/real-kernel-sql";
 
 describe("DeviceRegistry", () => {
   const registryTest = it.extend<{ registry: DeviceRegistry }>({
-    registry: async ({}, use) => {
+    registry: async ({ task: _task }, use) => {
       await runWithRealKernelSql((sql) => use(new DeviceRegistry(sql)));
     },
   });

@@ -8,6 +8,7 @@ import type { IdentityLinkRecord } from "./identity-links";
 import type { SurfaceRouteRecord } from "./surface-routes";
 import { resolveCallerOwnerUid } from "./context";
 import { stableOpaqueId } from "../shared/stable-id";
+import { z } from "zod";
 
 const SURFACE_KINDS = new Set<AdapterSurfaceKind>([
   "dm",
@@ -15,12 +16,27 @@ const SURFACE_KINDS = new Set<AdapterSurfaceKind>([
   "channel",
   "thread",
 ]);
+const bindingSchema = z.object({ adapterSend: z.function() });
+const surfaceKindSchema = z.enum(["dm", "group", "channel", "thread"]);
+const adapterSurfaceSchema = z.object({
+  kind: z.enum(["dm", "group", "channel", "thread"]),
+  id: z.string().trim().min(1),
+  threadId: z.string().optional(),
+});
 
 export type VisibleAdapterMessageDestination = {
   id: string;
   label: string;
   online: boolean;
   destination: AdapterMessageDestination;
+};
+type AdapterMessageRouteKey = {
+  adapter: string;
+  accountId: string;
+  actorId: string;
+  surfaceKind: AdapterSurfaceKind;
+  surfaceId: string;
+  threadId?: string;
 };
 
 export function normalizeAdapterMessageDestination(
@@ -44,24 +60,17 @@ export function normalizeAdapterMessageDestination(
 export function normalizeAdapterSurface(
   surface: AdapterSurface | undefined,
 ): AdapterSurface {
-  if (!surface || typeof surface !== "object") {
+  const parsed = adapterSurfaceSchema.safeParse(surface);
+  if (!parsed.success) {
     throw new Error("surface is required");
   }
-  if (!SURFACE_KINDS.has(surface.kind)) {
-    throw new Error("surface.kind is invalid");
-  }
-  if (typeof surface.id !== "string" || !surface.id.trim()) {
-    throw new Error("surface.id is required");
-  }
-  if (surface.threadId !== undefined && typeof surface.threadId !== "string") {
-    throw new Error("surface.threadId must be a string");
-  }
-  const threadId = optionalText(surface.threadId);
-  return {
-    kind: surface.kind,
-    id: surface.id.trim(),
-    ...(threadId ? { threadId } : {}),
+  const threadId = optionalText(parsed.data.threadId);
+  const normalized: AdapterSurface = {
+    kind: parsed.data.kind,
+    id: parsed.data.id,
   };
+  if (threadId) normalized.threadId = threadId;
+  return normalized;
 }
 
 export function assertAdapterMessageDestinationAccess(
@@ -145,7 +154,6 @@ export async function listVisibleAdapterMessageDestinations(
     addCandidate(link, {
       kind: route.surfaceKind,
       id: route.surfaceId,
-      ...(route.threadId ? { threadId: route.threadId } : {}),
     });
   }
 
@@ -354,23 +362,27 @@ function optionalText(value: string | undefined): string | undefined {
 }
 
 function metadataString(
-  metadata: Record<string, unknown> | null | undefined,
+  metadata: IdentityLinkRecord["metadata"],
   key: string,
 ): string {
   const value = metadata?.[key];
-  return typeof value === "string" ? value.trim() : "";
+  const parsed = z.string().safeParse(value);
+  return parsed.success ? parsed.data.trim() : "";
 }
 
 function linkedSurface(link: IdentityLinkRecord): AdapterSurface | null {
-  const kind = metadataString(link.metadata, "surfaceKind") as AdapterSurfaceKind;
+  const parsedKind = surfaceKindSchema.safeParse(metadataString(link.metadata, "surfaceKind"));
+  if (!parsedKind.success) return null;
+  const kind = parsedKind.data;
   const id = metadataString(link.metadata, "surfaceId");
   const threadId = metadataString(link.metadata, "threadId");
   if (SURFACE_KINDS.has(kind) && id) {
-    return {
+    const linked: AdapterSurface = {
       kind,
       id,
-      ...(threadId ? { threadId } : {}),
     };
+    if (threadId) linked.threadId = threadId;
+    return linked;
   }
   return null;
 }
@@ -386,32 +398,22 @@ function destinationKey(destination: AdapterMessageDestination): string {
   ].join("\0");
 }
 
-export function adapterMessageDestinationRouteKey(destination: AdapterMessageDestination): {
-  adapter: string;
-  accountId: string;
-  actorId: string;
-  surfaceKind: AdapterSurfaceKind;
-  surfaceId: string;
-  threadId?: string;
-} {
-  return {
+export function adapterMessageDestinationRouteKey(destination: AdapterMessageDestination): AdapterMessageRouteKey {
+  const key: AdapterMessageRouteKey = {
     adapter: destination.adapter,
     accountId: destination.accountId,
     actorId: destination.actorId,
     surfaceKind: destination.surface.kind,
     surfaceId: destination.surface.id,
-    ...(destination.surface.threadId ? { threadId: destination.surface.threadId } : {}),
   };
+  if (destination.surface.threadId) key.threadId = destination.surface.threadId;
+  return key;
 }
 
 function adapterSendServiceAvailable(ctx: KernelContext, adapter: string): boolean {
   const key = `CHANNEL_${adapter.toUpperCase()}`;
-  const binding = (ctx.env as unknown as Record<string, unknown>)[key];
-  return Boolean(
-    binding
-    && typeof binding === "object"
-    && typeof (binding as { adapterSend?: unknown }).adapterSend === "function",
-  );
+  const binding = Object.entries(ctx.env).find(([name]) => name === key)?.[1];
+  return bindingSchema.safeParse(binding).success;
 }
 
 function adapterDisplayName(adapter: string): string {

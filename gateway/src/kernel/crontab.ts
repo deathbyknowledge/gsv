@@ -281,11 +281,15 @@ function cronJobFromParts(
   if (!command) {
     throw new Error(`invalid crontab line ${input.lineNumber}: command is required`);
   }
-  const expression = normalizeScheduleExpression({
+  const normalized = normalizeScheduleExpression({
     kind: "cron",
     expr: input.fields.join(" "),
     timezone: input.timezone,
-  }, ctx) as Extract<ScheduleExpression, { kind: "cron" }>;
+  }, ctx);
+  if (normalized.kind !== "cron") {
+    throw new Error("cron expression normalization returned a non-cron expression");
+  }
+  const expression = normalized;
   return {
     lineNumber: input.lineNumber,
     user: input.user,

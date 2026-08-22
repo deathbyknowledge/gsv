@@ -18,9 +18,7 @@ export function handleSignalWatch(
     throw new Error("signal is required");
   }
 
-  const processId = typeof args.processId === "string" && args.processId.trim().length > 0
-    ? args.processId.trim()
-    : null;
+  const processId = args.processId?.trim() || null;
   if (processId) {
     const proc = ctx.procs.get(processId);
     if (!proc || proc.ownerUid !== ownerUid) {
@@ -35,9 +33,7 @@ export function handleSignalWatch(
   }
 
   const expiresAt = Date.now() + clampSignalWatchTtl(args.ttlMs);
-  const key = typeof args.key === "string" && args.key.trim().length > 0
-    ? args.key.trim()
-    : null;
+  const key = args.key?.trim() || null;
 
   const { watch, created } = ctx.signalWatches.upsert({
     uid: ownerUid,
@@ -65,16 +61,13 @@ export function handleSignalUnwatch(
   const target = resolveSignalWatchTarget(ctx, args);
   const uid = resolveCallerOwnerUid(ctx);
 
-  if ("watchId" in args) {
-    if (typeof args.watchId !== "string") {
-      throw new Error("signal.unwatch watchId must be a string");
-    }
+  if (args.watchId !== undefined) {
     return {
       removed: ctx.signalWatches.removeById(uid, target, args.watchId),
     };
   }
 
-  if (!("key" in args) || typeof args.key !== "string") {
+  if (!("key" in args)) {
     throw new Error("signal.unwatch requires either watchId or key");
   }
 
@@ -97,7 +90,7 @@ function resolveSignalWatchTarget(
 }
 
 function clampSignalWatchTtl(value: number | undefined): number {
-  if (typeof value !== "number" || !Number.isFinite(value)) {
+  if (value === undefined || !Number.isFinite(value)) {
     return DEFAULT_SIGNAL_WATCH_TTL_MS;
   }
   return Math.max(1_000, Math.min(MAX_SIGNAL_WATCH_TTL_MS, Math.trunc(value)));

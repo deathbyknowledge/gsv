@@ -224,7 +224,7 @@ function validateBoundedString(
   maximumBytes: number,
   singleLine: boolean,
 ): asserts value is string {
-  if (String(value) !== value) {
+  if (!isStringValue(value)) {
     throw new Error(`Managed mail summary ${field} is invalid`);
   }
   const bytes = new TextEncoder().encode(value).byteLength;
@@ -254,5 +254,9 @@ function requireExactKeys(
 }
 
 function isRecord(value: MailValue): value is Record<string, MailValue> {
-  return value !== null && value !== undefined && value.constructor === Object && !Array.isArray(value);
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function isStringValue(value: MailValue): value is string {
+  return typeof value === "string";
 }

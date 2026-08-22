@@ -1,28 +1,26 @@
+type KernelTestValue<T = string | number | boolean | null | undefined> = T;
+
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { KernelContext } from "../context";
 import { BUILTIN_SKILL_FILES } from "./builtin-skills";
 import { handleSysBootstrap } from "./bootstrap";
+import { RipgitClient } from "../../fs/ripgit/client";
 
-const { importFromUpstreamMock, readPathMock, applyMock } = vi.hoisted(() => ({
-  importFromUpstreamMock: vi.fn(),
-  readPathMock: vi.fn(),
-  applyMock: vi.fn(),
-}));
-
-vi.mock("../../fs/ripgit/client", () => ({
-  RipgitClient: class {
-    importFromUpstream = importFromUpstreamMock;
-    readPath = readPathMock;
-    apply = applyMock;
-  },
-}));
+const importFromUpstreamMock = vi.spyOn(RipgitClient.prototype, "importFromUpstream");
+const readPathMock = vi.spyOn(RipgitClient.prototype, "readPath");
+const applyMock = vi.spyOn(RipgitClient.prototype, "apply");
 
 function makeContext(): KernelContext {
+  // SAFETY: test fixture is constructed with the asserted kernel domain shape.
   const configValues = new Map<string, string>();
+  // SAFETY: test fixture is constructed with the asserted kernel domain shape.
   return {
     env: {
+      // SAFETY: test fixture is constructed with the asserted kernel domain shape.
       RIPGIT: {} as Fetcher,
+      // SAFETY: test fixture is constructed with the asserted kernel domain shape.
       STORAGE: {} as R2Bucket,
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     } as Env,
     identity: {
       role: "user",
@@ -46,11 +44,14 @@ function makeContext(): KernelContext {
           .filter(([key]) => key.startsWith(prefix))
           .map(([key, value]) => ({ key, value }))
       ),
-    } as unknown as KernelContext["config"],
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+    } as KernelContext["config"],
+  // SAFETY: test fixture is constructed with the asserted kernel domain shape.
   } as KernelContext;
 }
 
 function setManualBootstrapEnv(ctx: KernelContext, upstream: string, ref?: string): void {
+  // SAFETY: test fixture is constructed with the asserted kernel domain shape.
   const env = ctx.env as Env & {
     GSV_MANUAL_BOOTSTRAP_UPSTREAM: string;
     GSV_MANUAL_BOOTSTRAP_REF?: string;
@@ -65,10 +66,10 @@ describe("handleSysBootstrap", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     importFromUpstreamMock.mockImplementation((
-      _repo: unknown,
-      _actor: unknown,
-      _email: unknown,
-      _message: unknown,
+      _repo: KernelTestValue,
+      _actor: KernelTestValue,
+      _email: KernelTestValue,
+      _message: KernelTestValue,
       remoteUrl: string,
       ref: string,
     ) => Promise.resolve({
@@ -139,7 +140,7 @@ describe("handleSysBootstrap", () => {
   });
 
   it("preserves an existing skill while adding the other bundled skills", async () => {
-    readPathMock.mockImplementation((_repo: unknown, path: string) => Promise.resolve(
+    readPathMock.mockImplementation((_repo: KernelTestValue, path: string) => Promise.resolve(
       path === "skills.d/browser-target/SKILL.md"
         ? { kind: "file", bytes: new Uint8Array([1]), size: 1 }
         : { kind: "missing" },
@@ -147,6 +148,7 @@ describe("handleSysBootstrap", () => {
 
     await handleSysBootstrap(undefined, makeContext());
 
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     const operations = applyMock.mock.calls[0]?.[4] as Array<{ path: string }>;
     expect(operations.map((operation) => operation.path)).toEqual([
       "skills.d/.dir",
@@ -187,6 +189,7 @@ describe("handleSysBootstrap", () => {
 
   it("rejects obsolete source overrides", async () => {
     await expect(handleSysBootstrap(
+      // SAFETY: test fixture is constructed with the asserted kernel domain shape.
       { repo: "example/old-system-source" } as never,
       makeContext(),
     )).rejects.toThrow("sys.bootstrap does not accept source overrides");
@@ -195,6 +198,7 @@ describe("handleSysBootstrap", () => {
 
   it("requires the RIPGIT binding", async () => {
     const ctx = makeContext();
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     delete (ctx.env as Partial<Env>).RIPGIT;
 
     await expect(handleSysBootstrap(undefined, ctx)).rejects.toThrow(

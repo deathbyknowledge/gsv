@@ -288,16 +288,24 @@ export class ConversationStore {
 }
 
 function toMessage(conversationId: string, row: MessageRow): ConversationMessage {
-  return {
+  // SAFETY: persisted author_json is written only from ConversationMessageAuthor values.
+  const author = JSON.parse(row.author_json) as ConversationMessageAuthor;
+  // SAFETY: persisted origin_json is written only from ConversationMessageOrigin values.
+  const origin = JSON.parse(row.origin_json) as ConversationMessageOrigin;
+  const message: ConversationMessage = {
     id: row.message_id,
     conversationId,
     sequence: row.sequence,
-    author: JSON.parse(row.author_json) as ConversationMessageAuthor,
+    author,
     text: row.text,
-    ...(row.media_json ? { media: JSON.parse(row.media_json) as ProcMediaInput[] } : {}),
-    origin: JSON.parse(row.origin_json) as ConversationMessageOrigin,
-    ...(row.process_id ? { processId: row.process_id } : {}),
-    ...(row.run_id ? { runId: row.run_id } : {}),
+    origin,
     createdAt: row.created_at,
   };
+  if (row.media_json) {
+    // SAFETY: persisted media_json is written only from ProcMediaInput arrays.
+    message.media = JSON.parse(row.media_json) as ProcMediaInput[];
+  }
+  if (row.process_id) message.processId = row.process_id;
+  if (row.run_id) message.runId = row.run_id;
+  return message;
 }

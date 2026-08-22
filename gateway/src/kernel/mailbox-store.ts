@@ -5,6 +5,7 @@ import type {
   ManagedMailSummary,
   ManagedMailSummaryCategory,
 } from "@humansandmachines/gsv/protocol";
+import { z } from "zod";
 
 export type MailboxRecord = {
   mailboxId: string;
@@ -103,6 +104,30 @@ export type RecordMailOutboundInput = Omit<
   | "queuedAt"
   | "completedAt"
 >;
+
+type RecordMailMessageResult = {
+  created: boolean;
+  message: MailMessageRecord;
+};
+
+type CompleteMailSummaryResult = {
+  completed: boolean;
+  message: MailMessageRecord;
+};
+
+type EnsureMailOutboundResult = {
+  created: boolean;
+  outbound: MailOutboundRecord;
+};
+
+const storedStringArraySchema = z.array(z.string());
+const storedMailAttachmentsSchema: z.ZodType<MailAttachmentRecord[]> = z.array(z.object({
+  filename: z.string().optional(),
+  mimeType: z.string(),
+  disposition: z.string().optional(),
+  contentId: z.string().optional(),
+  size: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
+}));
 
 export class MailboxStore {
   constructor(private readonly sql: SqlStorage) {}
@@ -246,10 +271,7 @@ export class MailboxStore {
     return existing;
   }
 
-  recordMessage(input: RecordMailMessageInput): {
-    created: boolean;
-    message: MailMessageRecord;
-  } {
+  recordMessage(input: RecordMailMessageInput): RecordMailMessageResult {
     const existing = this.findMessageByDelivery(
       input.mailboxId,
       input.intakeId,
@@ -327,7 +349,7 @@ export class MailboxStore {
   completeSummary(
     messageId: string,
     summary: ManagedMailSummary,
-  ): { completed: boolean; message: MailMessageRecord } {
+  ): CompleteMailSummaryResult {
     const existing = this.getMessageById(messageId);
     if (!existing) throw new Error("Unknown mail message");
     if (existing.summarizedAt !== null) {
@@ -389,10 +411,7 @@ export class MailboxStore {
     return row ? outboundFromRow(row) : null;
   }
 
-  ensureOutbound(input: RecordMailOutboundInput): {
-    created: boolean;
-    outbound: MailOutboundRecord;
-  } {
+  ensureOutbound(input: RecordMailOutboundInput): EnsureMailOutboundResult {
     const existing = this.getOutboundForDelivery(input.ownerUid, input.deliveryId);
     if (existing) {
       assertOutboundIdentity(existing, input);
@@ -771,7 +790,7 @@ function intakeFromRow(row: MailIntakeRow): MailIntakeRecord {
 }
 
 function outboundFromRow(row: MailOutboundRow): MailOutboundRecord {
-  return {
+  const outbound: MailOutboundRecord = {
     version: 1,
     outboundId: row.outbound_id,
     ownerUid: row.owner_uid,
@@ -784,11 +803,6 @@ function outboundFromRow(row: MailOutboundRow): MailOutboundRecord {
     bodyPath: row.body_path,
     textSize: row.text_size,
     createdAt: row.created_at,
-    ...(row.reply_to_message_id === null
-      ? {}
-      : { replyToMessageId: row.reply_to_message_id }),
-    ...(row.in_reply_to_header === null ? {} : { inReplyTo: row.in_reply_to_header }),
-    ...(row.references_header === null ? {} : { references: row.references_header }),
     state: row.state,
     providerMessageId: row.provider_message_id,
     errorCode: row.error_code,
@@ -798,6 +812,10 @@ function outboundFromRow(row: MailOutboundRow): MailOutboundRecord {
     queuedAt: row.queued_at,
     completedAt: row.completed_at,
   };
+  if (row.reply_to_message_id !== null) outbound.replyToMessageId = row.reply_to_message_id;
+  if (row.in_reply_to_header !== null) outbound.inReplyTo = row.in_reply_to_header;
+  if (row.references_header !== null) outbound.references = row.references_header;
+  return outbound;
 }
 
 function assertOutboundIdentity(
@@ -817,41 +835,19 @@ function assertOutboundIdentity(
 }
 
 function parseStringArray(value: string, field: string): string[] {
-  const parsed: unknown = JSON.parse(value);
-  if (!Array.isArray(parsed) || !parsed.every((item) => typeof item === "string")) {
+  const parsed = storedStringArraySchema.safeParse(JSON.parse(value));
+  if (!parsed.success) {
     throw new Error(`Stored ${field} are invalid`);
   }
-  return parsed;
+  return parsed.data;
 }
 
 function parseAttachments(value: string): MailAttachmentRecord[] {
-  const parsed: unknown = JSON.parse(value);
-  if (
-    !Array.isArray(parsed)
-    || !parsed.every((item) => (
-      item
-      && typeof item === "object"
-      && !Array.isArray(item)
-      && typeof (item as Partial<MailAttachmentRecord>).mimeType === "string"
-      && Number.isSafeInteger((item as Partial<MailAttachmentRecord>).size)
-      && ((item as Partial<MailAttachmentRecord>).size ?? -1) >= 0
-      && (
-        (item as Partial<MailAttachmentRecord>).filename === undefined
-        || typeof (item as Partial<MailAttachmentRecord>).filename === "string"
-      )
-      && (
-        (item as Partial<MailAttachmentRecord>).disposition === undefined
-        || typeof (item as Partial<MailAttachmentRecord>).disposition === "string"
-      )
-      && (
-        (item as Partial<MailAttachmentRecord>).contentId === undefined
-        || typeof (item as Partial<MailAttachmentRecord>).contentId === "string"
-      )
-    ))
-  ) {
+  const parsed = storedMailAttachmentsSchema.safeParse(JSON.parse(value));
+  if (!parsed.success) {
     throw new Error("Stored mail attachments are invalid");
   }
-  return parsed as MailAttachmentRecord[];
+  return parsed.data;
 }
 
 function normalizePageNumber(

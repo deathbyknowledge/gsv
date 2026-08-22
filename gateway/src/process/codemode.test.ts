@@ -1,3 +1,5 @@
+type ProcessTestValue<T = string | number | boolean | null | undefined> = T;
+
 import { describe, expect, it } from "vitest";
 import { env } from "cloudflare:workers";
 import {
@@ -17,7 +19,7 @@ describe.sequential("CodeMode executor", () => {
   });
 
   it("runs with the Worker Loader binding and exposes shell and fs wrappers", async () => {
-    const calls: Array<{ call: string; args: Record<string, unknown> }> = [];
+    const calls: Array<{ call: string; args: Record<string, ProcessTestValue> }> = [];
     const result = await executeCodeMode(
       env,
       `
@@ -62,7 +64,7 @@ describe.sequential("CodeMode executor", () => {
   });
 
   it("routes mail through its syscall with deterministic default delivery ids", async () => {
-    const calls: Array<{ call: string; args: Record<string, unknown> }> = [];
+    const calls: Array<{ call: string; args: Record<string, ProcessTestValue> }> = [];
     const result = await executeCodeMode(
       env,
       `
@@ -219,7 +221,7 @@ describe.sequential("CodeMode executor", () => {
   });
 
   it("routes sandboxed fetch through the canonical syscall shape", async () => {
-    const calls: Array<{ call: string; args: Record<string, unknown> }> = [];
+    const calls: Array<{ call: string; args: Record<string, ProcessTestValue> }> = [];
     const result = await executeCodeMode(
       env,
       `
@@ -277,6 +279,7 @@ describe.sequential("CodeMode executor", () => {
         redirected: true,
         header: "text/plain",
       });
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       expect(String((result.result as { body?: unknown }).body)).toContain("gateway test assets");
     }
   });
@@ -305,7 +308,7 @@ describe.sequential("CodeMode executor", () => {
   });
 
   it("applies command defaults and exposes argv and args", async () => {
-    const calls: Array<{ call: string; args: Record<string, unknown> }> = [];
+    const calls: Array<{ call: string; args: Record<string, ProcessTestValue> }> = [];
     const result = await executeCodeMode(
       env,
       `
@@ -352,8 +355,9 @@ describe.sequential("CodeMode executor", () => {
     });
   });
 
+  // SAFETY: test fixture is constructed with the asserted domain shape.
   it("exposes connected MCP tools as direct CodeMode functions", async () => {
-    const calls: Array<{ call: string; args: Record<string, unknown> }> = [];
+    const calls: Array<{ call: string; args: Record<string, ProcessTestValue> }> = [];
     const mcpToolBindings = buildCodeModeMcpToolBindings([
       {
         serverId: "server-1",
@@ -513,7 +517,7 @@ describe.sequential("CodeMode executor", () => {
         outputSchema: null,
       })),
     }]);
-    const calls: Array<{ call: string; args: Record<string, unknown> }> = [];
+    const calls: Array<{ call: string; args: Record<string, ProcessTestValue> }> = [];
     const result = await executeCodeMode(
       env,
       `

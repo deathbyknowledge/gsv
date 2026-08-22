@@ -1,4 +1,5 @@
 import { sanitizeToolName } from "@cloudflare/codemode";
+import type { JsonObject } from "@humansandmachines/gsv/protocol";
 
 export type CodeModeMcpToolSource = {
   serverId: string;
@@ -11,8 +12,8 @@ export type CodeModeMcpToolSource = {
 export type CodeModeMcpToolSourceTool = {
   name: string;
   description: string | null;
-  inputSchema: Record<string, unknown> | null;
-  outputSchema?: Record<string, unknown> | null;
+  inputSchema: JsonObject | null;
+  outputSchema?: JsonObject | null;
 };
 
 export type CodeModeMcpToolBinding = {
@@ -21,8 +22,8 @@ export type CodeModeMcpToolBinding = {
   serverName: string;
   toolName: string;
   description: string | null;
-  inputSchema: Record<string, unknown> | null;
-  outputSchema: Record<string, unknown> | null;
+  inputSchema: JsonObject | null;
+  outputSchema: JsonObject | null;
 };
 
 const RESERVED_MCP_FUNCTION_NAMES = new Set([

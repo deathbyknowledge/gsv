@@ -7,10 +7,10 @@ import {
   getBuiltinModels,
   getBuiltinProviders,
 } from "@earendil-works/pi-ai/providers/all";
+import * as z from "zod/mini";
 
 const WORKERS_AI_REGISTRY_PROVIDER: BuiltinProvider = "cloudflare-workers-ai";
 const MODEL_THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh"] as const satisfies readonly ModelThinkingLevel[];
-const MODEL_THINKING_LEVEL_SET = new Set<string>(MODEL_THINKING_LEVELS);
 
 export function resolvePiAiModel(provider: string, modelName: string) {
   if (!isKnownPiAiProvider(provider)) {
@@ -24,18 +24,21 @@ export function resolvePiAiModel(provider: string, modelName: string) {
 }
 
 export function isKnownPiAiProvider(provider: string): provider is BuiltinProvider {
+  // SAFETY: the registry provider list is the authoritative BuiltinProvider set.
   return getBuiltinProviders().includes(provider as BuiltinProvider);
 }
 
-export function normalizeModelThinkingLevel(value: unknown): ModelThinkingLevel | null {
-  const normalized = typeof value === "string" ? value.trim().toLowerCase() : "";
-  return MODEL_THINKING_LEVEL_SET.has(normalized) ? normalized as ModelThinkingLevel : null;
+export function normalizeModelThinkingLevel<T>(value: T): ModelThinkingLevel | null {
+  const parsed = z.string().safeParse(value);
+  if (!parsed.success) return null;
+  const normalized = parsed.data.trim().toLowerCase();
+  return MODEL_THINKING_LEVELS.find((level) => level === normalized) ?? null;
 }
 
 export function resolveModelThinkingLevel(
   provider: string,
   modelName: string,
-  value: unknown,
+  value: string | null | undefined,
 ): ModelThinkingLevel | null {
   const requested = normalizeModelThinkingLevel(value);
   if (!requested) {
@@ -55,9 +58,9 @@ export function resolveModelMetadata(provider: string, modelName: string) {
 
 export function resolveModelContextWindowFromRegistry(provider: string, modelName: string): number | null {
   const model = resolveModelMetadata(provider, modelName);
-  return Number.isSafeInteger(model?.contextWindow) && model!.contextWindow > 0
-    ? model!.contextWindow
-    : null;
+  const contextWindow = model?.contextWindow;
+  if (contextWindow === undefined) return null;
+  return Number.isSafeInteger(contextWindow) && contextWindow > 0 ? contextWindow : null;
 }
 
 function registryProviderFor(provider: string): string {

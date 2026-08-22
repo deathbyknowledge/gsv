@@ -15,6 +15,15 @@ import {
   type Tool,
   type ToolCall,
 } from "@earendil-works/pi-ai";
+import {
+  jsonObjectSchema,
+  jsonValueSchema,
+  type JsonObject,
+  type JsonValue,
+} from "@humansandmachines/gsv/protocol";
+import { Stream } from "openai/core/streaming.js";
+import type { ResponseStreamEvent } from "openai/resources/responses/responses.js";
+import { z } from "zod";
 import { anthropicMessagesApi } from "@earendil-works/pi-ai/api/anthropic-messages.lazy";
 import { convertMessages } from "@earendil-works/pi-ai/api/openai-completions";
 import { openAICompletionsApi } from "@earendil-works/pi-ai/api/openai-completions.lazy";
@@ -45,6 +54,121 @@ export type CustomProviderGenerationRequest = {
 
 type RoutedRequestInit = RequestInit & { timeoutMs?: number };
 
+type OpenAIChatFunction = {
+  name?: string;
+  arguments?: string;
+};
+
+type OpenAIChatToolCallDelta = {
+  index?: number;
+  id?: string;
+  function?: OpenAIChatFunction;
+};
+
+type OpenAIChatDelta = {
+  content?: string | null;
+  reasoning_content?: string;
+  reasoning?: string;
+  reasoning_text?: string;
+  tool_calls?: OpenAIChatToolCallDelta[];
+};
+
+type OpenAIChatChoice = {
+  finish_reason?: string | null;
+  delta?: OpenAIChatDelta;
+};
+
+type OpenAIUsage = {
+  prompt_tokens?: number;
+  completion_tokens?: number;
+  prompt_cache_hit_tokens?: number;
+  prompt_tokens_details?: {
+    cached_tokens?: number;
+    cache_write_tokens?: number;
+  };
+};
+
+type OpenAIChatChunk = {
+  id?: string;
+  model?: string;
+  usage?: OpenAIUsage | null;
+  choices?: OpenAIChatChoice[];
+};
+
+type OpenAIChatTool = {
+  type: "function";
+  function: {
+    name: string;
+    description: string;
+    parameters: Tool["parameters"];
+    strict: false;
+  };
+};
+
+type OpenAIChatPayload = {
+  model: string;
+  messages: ReturnType<typeof convertMessages>;
+  stream: true;
+  max_tokens: number;
+  stream_options?: { include_usage: true };
+  tools?: OpenAIChatTool[];
+};
+
+type OpenAIResponsesPayload = {
+  model: string;
+  input: ReturnType<typeof convertResponsesMessages>;
+  stream: true;
+  store: false;
+  max_output_tokens: number;
+  tools?: ReturnType<typeof convertResponsesTools>;
+  reasoning?: {
+    effort: NonNullable<SimpleStreamOptions["reasoning"]>;
+    summary: "auto";
+  };
+  include?: ["reasoning.encrypted_content"];
+};
+
+type CustomProviderPayload = OpenAIChatPayload | OpenAIResponsesPayload;
+type CustomProviderModel =
+  | Model<"openai-completions">
+  | Model<"openai-responses">
+  | Model<"anthropic-messages">;
+
+const openAIChatFunctionSchema = z.object({
+  name: z.string().optional(),
+  arguments: z.string().optional(),
+});
+const openAIChatToolCallDeltaSchema = z.object({
+  index: z.number().int().nonnegative().optional(),
+  id: z.string().optional(),
+  function: openAIChatFunctionSchema.optional(),
+});
+const openAIChatDeltaSchema = z.object({
+  content: z.string().nullable().optional(),
+  reasoning_content: z.string().optional(),
+  reasoning: z.string().optional(),
+  reasoning_text: z.string().optional(),
+  tool_calls: z.array(openAIChatToolCallDeltaSchema).optional(),
+});
+const openAIChatChoiceSchema = z.object({
+  finish_reason: z.string().nullable().optional(),
+  delta: openAIChatDeltaSchema.optional(),
+});
+const openAIUsageSchema = z.object({
+  prompt_tokens: z.number().finite().optional(),
+  completion_tokens: z.number().finite().optional(),
+  prompt_cache_hit_tokens: z.number().finite().optional(),
+  prompt_tokens_details: z.object({
+    cached_tokens: z.number().finite().optional(),
+    cache_write_tokens: z.number().finite().optional(),
+  }).optional(),
+});
+const openAIChatChunkSchema = z.object({
+  id: z.string().optional(),
+  model: z.string().optional(),
+  usage: openAIUsageSchema.nullable().optional(),
+  choices: z.array(openAIChatChoiceSchema).optional(),
+});
 const CUSTOM_PROVIDER_ID = "custom";
 const DEFAULT_OPENAI_BASE_URL = "https://api.openai.com/v1";
 const DEFAULT_OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1";
@@ -102,13 +226,15 @@ function streamWithCustomFetch(
   const provider = normalizeProviderId(request.provider);
   const style = resolveCustomProviderStyle(provider, request.providerStyle);
   const baseUrl = resolveCustomBaseUrl(provider, style, request.baseUrl);
-  const model = customModelForRequest(request, provider, style, baseUrl);
   if (style === "anthropic-messages") {
     throw new Error("Anthropic-compatible custom providers do not support fetch-based custom transport yet");
   }
-  return style === "openai-responses"
-    ? streamOpenAIResponsesWithFetch(fetchImpl, model as Model<"openai-responses">, request)
-    : streamOpenAICompletionsWithFetch(fetchImpl, model as Model<"openai-completions">, request);
+  if (style === "openai-responses") {
+    const model = customModelForRequest(request, provider, style, baseUrl);
+    return streamOpenAIResponsesWithFetch(fetchImpl, model, request);
+  }
+  const model = customModelForRequest(request, provider, style, baseUrl);
+  return streamOpenAICompletionsWithFetch(fetchImpl, model, request);
 }
 
 function streamOpenAICompletionsWithFetch(
@@ -121,9 +247,9 @@ function streamOpenAICompletionsWithFetch(
     const output = emptyAssistantMessage(model);
     try {
       const compat = resolvedOpenAICompletionsCompat(model);
-      const payload: Record<string, unknown> = {
+      const payload: OpenAIChatPayload = {
         model: model.id,
-        messages: convertMessages(model, request.context, compat as never),
+        messages: convertMessages(model, request.context, compat),
         stream: true,
         max_tokens: request.options?.maxTokens ?? request.maxTokens,
       };
@@ -137,7 +263,8 @@ function streamOpenAICompletionsWithFetch(
       stream.push({ type: "start", partial: output });
       await consumeOpenAICompletionsEvents(response, output, stream, model, request);
     } catch (error) {
-      pushStreamError(stream, output, request, error);
+      const message = error instanceof Error ? error.message : String(error);
+      pushStreamError(stream, output, request, message);
     }
   })();
   return stream;
@@ -152,7 +279,7 @@ function streamOpenAIResponsesWithFetch(
   void (async () => {
     const output = emptyAssistantMessage(model);
     try {
-      const payload: Record<string, unknown> = {
+      const payload: OpenAIResponsesPayload = {
         model: model.id,
         input: convertResponsesMessages(model, request.context, new Set([model.provider, "openai", "opencode"])),
         stream: true,
@@ -171,8 +298,12 @@ function streamOpenAIResponsesWithFetch(
       }
       const response = await postJsonSse(fetchImpl, `${model.baseUrl}/responses`, payload, request);
       stream.push({ type: "start", partial: output });
+      const providerStream = Stream.fromSSEResponse<ResponseStreamEvent>(
+        response,
+        new AbortController(),
+      );
       await processResponsesStream(
-        parseSseJson(response) as AsyncIterable<never>,
+        providerStream,
         output,
         stream,
         model,
@@ -186,14 +317,17 @@ function streamOpenAIResponsesWithFetch(
       stream.push({ type: "done", reason: output.stopReason, message: output });
       stream.end();
     } catch (error) {
-      pushStreamError(stream, output, request, error);
+      const message = error instanceof Error ? error.message : String(error);
+      pushStreamError(stream, output, request, message);
     }
   })();
   return stream;
 }
 
-export function normalizeCustomProviderStyle(value: unknown): CustomProviderStyle | null {
-  const normalized = typeof value === "string" ? value.trim().toLowerCase() : "";
+export function normalizeCustomProviderStyle(
+  value: string | null | undefined,
+): CustomProviderStyle | null {
+  const normalized = value?.trim().toLowerCase() ?? "";
   if (
     normalized === "openai-chat-completions" ||
     normalized === "openai-completions" ||
@@ -218,10 +352,7 @@ export function normalizeCustomProviderStyle(value: unknown): CustomProviderStyl
   return null;
 }
 
-function buildCustomProviderModels(request: CustomProviderGenerationRequest): {
-  models: ReturnType<typeof createModels>;
-  model: Model<Api>;
-} {
+function buildCustomProviderModels(request: CustomProviderGenerationRequest) {
   const provider = normalizeProviderId(request.provider);
   const style = resolveCustomProviderStyle(provider, request.providerStyle);
   const baseUrl = resolveCustomBaseUrl(provider, style, request.baseUrl);
@@ -255,17 +386,40 @@ function buildCustomProviderOptions(
 function customModelForRequest(
   request: CustomProviderGenerationRequest,
   provider: string,
+  style: "openai-chat-completions",
+  baseUrl: string,
+): Model<"openai-completions">;
+function customModelForRequest(
+  request: CustomProviderGenerationRequest,
+  provider: string,
+  style: "openai-responses",
+  baseUrl: string,
+): Model<"openai-responses">;
+function customModelForRequest(
+  request: CustomProviderGenerationRequest,
+  provider: string,
+  style: "anthropic-messages",
+  baseUrl: string,
+): Model<"anthropic-messages">;
+function customModelForRequest(
+  request: CustomProviderGenerationRequest,
+  provider: string,
   style: CustomProviderStyle,
   baseUrl: string,
-): Model<Api> {
+): CustomProviderModel;
+function customModelForRequest(
+  request: CustomProviderGenerationRequest,
+  provider: string,
+  style: CustomProviderStyle,
+  baseUrl: string,
+): CustomProviderModel {
   const model = normalizeOptionalText(request.model);
   if (!model) {
     throw new Error("Custom provider model is required");
   }
-  return {
+  const base = {
     id: model,
     name: model,
-    api: apiIdForCustomProviderStyle(style),
     provider,
     baseUrl,
     reasoning: request.options?.reasoning !== undefined,
@@ -278,8 +432,40 @@ function customModelForRequest(
     },
     contextWindow: positiveInteger(request.contextWindowTokens) ?? DEFAULT_CONTEXT_WINDOW_TOKENS,
     maxTokens: positiveInteger(request.maxTokens) ?? 8192,
-    ...(compatForCustomProviderStyle(style) ? { compat: compatForCustomProviderStyle(style) } : {}),
-  } as Model<Api>;
+  } satisfies Omit<Model<Api>, "api" | "compat">;
+  if (style === "openai-chat-completions") {
+    return {
+      ...base,
+      api: "openai-completions",
+      compat: {
+        supportsStore: false,
+        supportsDeveloperRole: false,
+        supportsReasoningEffort: false,
+        supportsUsageInStreaming: false,
+        supportsStrictMode: false,
+        maxTokensField: "max_tokens",
+      },
+    };
+  }
+  if (style === "openai-responses") {
+    return {
+      ...base,
+      api: "openai-responses",
+      compat: {
+        supportsDeveloperRole: false,
+        supportsLongCacheRetention: false,
+      },
+    };
+  }
+  return {
+    ...base,
+    api: "anthropic-messages",
+    compat: {
+      supportsEagerToolInputStreaming: false,
+      supportsLongCacheRetention: false,
+      supportsCacheControlOnTools: false,
+    },
+  };
 }
 
 function apiForCustomProviderStyle(style: CustomProviderStyle): ProviderStreams {
@@ -292,44 +478,7 @@ function apiForCustomProviderStyle(style: CustomProviderStyle): ProviderStreams 
   return openAICompletionsApi();
 }
 
-function apiIdForCustomProviderStyle(style: CustomProviderStyle): Api {
-  if (style === "anthropic-messages") {
-    return "anthropic-messages";
-  }
-  if (style === "openai-responses") {
-    return "openai-responses";
-  }
-  return "openai-completions";
-}
-
-function compatForCustomProviderStyle(style: CustomProviderStyle): Model<Api>["compat"] | null {
-  if (style === "openai-chat-completions") {
-    return {
-      supportsStore: false,
-      supportsDeveloperRole: false,
-      supportsReasoningEffort: false,
-      supportsUsageInStreaming: false,
-      supportsStrictMode: false,
-      maxTokensField: "max_tokens",
-    } as Model<"openai-completions">["compat"];
-  }
-  if (style === "openai-responses") {
-    return {
-      supportsDeveloperRole: false,
-      supportsLongCacheRetention: false,
-    } as Model<"openai-responses">["compat"];
-  }
-  if (style === "anthropic-messages") {
-    return {
-      supportsEagerToolInputStreaming: false,
-      supportsLongCacheRetention: false,
-      supportsCacheControlOnTools: false,
-    } as Model<"anthropic-messages">["compat"];
-  }
-  return null;
-}
-
-function emptyAssistantMessage(model: Model<Api>): AssistantMessage {
+function emptyAssistantMessage(model: CustomProviderModel): AssistantMessage {
   return {
     role: "assistant",
     content: [],
@@ -358,7 +507,7 @@ function emptyAssistantMessage(model: Model<Api>): AssistantMessage {
 async function postJsonSse(
   fetchImpl: typeof fetch,
   url: string,
-  payload: Record<string, unknown>,
+  payload: CustomProviderPayload,
   request: CustomProviderGenerationRequest,
 ): Promise<Response> {
   const headers = new Headers({
@@ -374,8 +523,10 @@ async function postJsonSse(
     headers,
     body: JSON.stringify(payload),
     signal: request.options?.signal,
-    ...(request.options?.timeoutMs !== undefined ? { timeoutMs: request.options.timeoutMs } : {}),
   };
+  if (request.options?.timeoutMs !== undefined) {
+    init.timeoutMs = request.options.timeoutMs;
+  }
   const response = await fetchImpl(url, init);
   if (!response.ok) {
     const body = await response.text().catch(() => "");
@@ -397,6 +548,8 @@ async function consumeOpenAICompletionsEvents(
   };
   type StreamingBlock = TextContent | ThinkingContent | StreamingToolCall;
 
+  // SAFETY: this function creates and exclusively mutates the assistant content
+  // blocks, and each inserted block is one of the three streaming variants.
   const blocks = output.content as StreamingBlock[];
   let textBlock: TextContent | null = null;
   let thinkingBlock: ThinkingContent | null = null;
@@ -420,16 +573,17 @@ async function consumeOpenAICompletionsEvents(
     }
     return thinkingBlock;
   };
-  const ensureToolCallBlock = (delta: Record<string, unknown>, index: number): StreamingToolCall => {
+  const ensureToolCallBlock = (
+    delta: OpenAIChatToolCallDelta,
+    index: number,
+  ): StreamingToolCall => {
     let block = toolCallBlocksByIndex.get(index);
     if (!block) {
-      const fn = typeof delta.function === "object" && delta.function !== null
-        ? delta.function as Record<string, unknown>
-        : {};
+      const fn = delta.function;
       block = {
         type: "toolCall",
-        id: typeof delta.id === "string" ? delta.id : "",
-        name: typeof fn.name === "string" ? fn.name : "",
+        id: delta.id ?? "",
+        name: fn?.name ?? "",
         arguments: {},
         partialArgs: "",
         streamIndex: index,
@@ -442,59 +596,54 @@ async function consumeOpenAICompletionsEvents(
   };
 
   for await (const event of parseSseJson(response)) {
-    if (!event || typeof event !== "object") continue;
-    const chunk = event as Record<string, unknown>;
-    if (typeof chunk.id === "string") {
+    const parsedChunk = openAIChatChunkSchema.safeParse(event);
+    if (!parsedChunk.success) continue;
+    const chunk: OpenAIChatChunk = parsedChunk.data;
+    if (chunk.id !== undefined) {
       output.responseId ||= chunk.id;
     }
-    if (typeof chunk.model === "string" && chunk.model.length > 0 && chunk.model !== model.id) {
+    if (chunk.model && chunk.model !== model.id) {
       output.responseModel ||= chunk.model;
     }
-    if (chunk.usage && typeof chunk.usage === "object") {
-      output.usage = parseOpenAIUsage(chunk.usage as Record<string, unknown>, model);
+    if (chunk.usage) {
+      output.usage = parseOpenAIUsage(chunk.usage, model);
     }
-    const choices = Array.isArray(chunk.choices) ? chunk.choices : [];
-    const choice = choices[0] && typeof choices[0] === "object"
-      ? choices[0] as Record<string, unknown>
-      : null;
+    const choice = chunk.choices?.[0];
     if (!choice) continue;
-    if (typeof choice.finish_reason === "string") {
+    if (choice.finish_reason) {
       finishReason = choice.finish_reason;
     }
-    const delta = choice.delta && typeof choice.delta === "object"
-      ? choice.delta as Record<string, unknown>
-      : {};
+    const delta = choice.delta ?? {};
     const content = delta.content;
-    if (typeof content === "string" && content.length > 0) {
+    if (content) {
       const block = ensureTextBlock();
       block.text += content;
       stream.push({ type: "text_delta", contentIndex: contentIndex(block), delta: content, partial: output });
     }
-    for (const key of ["reasoning_content", "reasoning", "reasoning_text"]) {
-      const value = delta[key];
-      if (typeof value === "string" && value.length > 0) {
+    const reasoningFields = [
+      ["reasoning_content", delta.reasoning_content],
+      ["reasoning", delta.reasoning],
+      ["reasoning_text", delta.reasoning_text],
+    ] as const;
+    for (const [key, value] of reasoningFields) {
+      if (value) {
         const block = ensureThinkingBlock(key);
         block.thinking += value;
         stream.push({ type: "thinking_delta", contentIndex: contentIndex(block), delta: value, partial: output });
         break;
       }
     }
-    const toolCalls = Array.isArray(delta.tool_calls) ? delta.tool_calls : [];
-    for (const toolCall of toolCalls) {
-      if (!toolCall || typeof toolCall !== "object") continue;
-      const record = toolCall as Record<string, unknown>;
-      const index = typeof record.index === "number" ? record.index : toolCallBlocksByIndex.size;
-      const block = ensureToolCallBlock(record, index);
-      if (!block.id && typeof record.id === "string") {
-        block.id = record.id;
+    for (const toolCall of delta.tool_calls ?? []) {
+      const index = toolCall.index ?? toolCallBlocksByIndex.size;
+      const block = ensureToolCallBlock(toolCall, index);
+      if (!block.id && toolCall.id) {
+        block.id = toolCall.id;
       }
-      const fn = typeof record.function === "object" && record.function !== null
-        ? record.function as Record<string, unknown>
-        : {};
-      if (!block.name && typeof fn.name === "string") {
+      const fn = toolCall.function;
+      if (!block.name && fn?.name) {
         block.name = fn.name;
       }
-      const args = typeof fn.arguments === "string" ? fn.arguments : "";
+      const args = fn?.arguments ?? "";
       if (args) {
         block.partialArgs = (block.partialArgs ?? "") + args;
         block.arguments = parseJsonObject(block.partialArgs);
@@ -531,7 +680,7 @@ async function consumeOpenAICompletionsEvents(
   stream.end();
 }
 
-async function* parseSseJson(response: Response): AsyncIterable<unknown> {
+async function* parseSseJson(response: Response): AsyncIterable<JsonValue> {
   if (!response.body) {
     yield* parseSseJsonText(await response.text());
     return;
@@ -570,7 +719,7 @@ async function* parseSseJson(response: Response): AsyncIterable<unknown> {
   }
 }
 
-function* parseSseJsonText(body: string): Iterable<unknown> {
+function* parseSseJsonText(body: string): Iterable<JsonValue> {
   let buffer = body;
   let boundary = findSseEventBoundary(buffer);
   while (boundary) {
@@ -600,7 +749,7 @@ function findSseEventBoundary(buffer: string): { index: number; length: number }
   return candidates[0] ?? null;
 }
 
-function parseSseJsonEvent(event: string): unknown | undefined {
+function parseSseJsonEvent(event: string): JsonValue | undefined {
   const data = event
     .split(/\r\n|\r|\n/)
     .filter((line) => line.startsWith("data:"))
@@ -610,22 +759,22 @@ function parseSseJsonEvent(event: string): unknown | undefined {
   if (!data || data === "[DONE]") {
     return undefined;
   }
-  return JSON.parse(data);
+  return jsonValueSchema.parse(JSON.parse(data));
 }
 
 function pushStreamError(
   stream: AssistantMessageEventStream,
   output: AssistantMessage,
   request: CustomProviderGenerationRequest,
-  error: unknown,
+  errorMessage: string,
 ): void {
   output.stopReason = request.options?.signal?.aborted ? "aborted" : "error";
-  output.errorMessage = error instanceof Error ? error.message : String(error);
+  output.errorMessage = errorMessage;
   stream.push({ type: "error", reason: output.stopReason, error: output });
   stream.end();
 }
 
-function convertChatTools(tools: Tool[]): unknown[] {
+function convertChatTools(tools: Tool[]): OpenAIChatTool[] {
   return tools.map((tool) => ({
     type: "function",
     function: {
@@ -638,14 +787,12 @@ function convertChatTools(tools: Tool[]): unknown[] {
 }
 
 function parseOpenAIUsage(
-  rawUsage: Record<string, unknown>,
+  rawUsage: OpenAIUsage,
   model: Model<"openai-completions">,
 ): AssistantMessage["usage"] {
   const promptTokens = numericField(rawUsage.prompt_tokens);
   const completionTokens = numericField(rawUsage.completion_tokens);
-  const promptDetails = rawUsage.prompt_tokens_details && typeof rawUsage.prompt_tokens_details === "object"
-    ? rawUsage.prompt_tokens_details as Record<string, unknown>
-    : {};
+  const promptDetails = rawUsage.prompt_tokens_details ?? {};
   const cacheRead = numericField(promptDetails.cached_tokens) || numericField(rawUsage.prompt_cache_hit_tokens);
   const cacheWrite = numericField(promptDetails.cache_write_tokens);
   const input = Math.max(0, promptTokens - cacheRead - cacheWrite);
@@ -661,16 +808,14 @@ function parseOpenAIUsage(
   return usage;
 }
 
-function numericField(value: unknown): number {
-  return typeof value === "number" && Number.isFinite(value) ? value : 0;
+function numericField(value: number | undefined): number {
+  return value !== undefined && Number.isFinite(value) ? value : 0;
 }
 
-function parseJsonObject(value: string): Record<string, unknown> {
+function parseJsonObject(value: string): JsonObject {
   try {
-    const parsed = JSON.parse(value || "{}");
-    return parsed && typeof parsed === "object" && !Array.isArray(parsed)
-      ? parsed as Record<string, unknown>
-      : {};
+    const parsed = jsonObjectSchema.safeParse(JSON.parse(value || "{}"));
+    return parsed.success ? parsed.data : {};
   } catch {
     return {};
   }
@@ -687,7 +832,9 @@ function supportsOpenAIChatStreamingUsage(model: Model<"openai-completions">): b
   return model.provider === "openai" && model.baseUrl === DEFAULT_OPENAI_BASE_URL;
 }
 
-function resolvedOpenAICompletionsCompat(model: Model<"openai-completions">): Record<string, unknown> {
+function resolvedOpenAICompletionsCompat(
+  model: Model<"openai-completions">,
+): Parameters<typeof convertMessages>[2] {
   return {
     supportsStore: false,
     supportsDeveloperRole: false,
@@ -703,13 +850,18 @@ function resolvedOpenAICompletionsCompat(model: Model<"openai-completions">): Re
     vercelGatewayRouting: {},
     chatTemplateKwargs: {},
     zaiToolStream: false,
+    supportsOpenAIGrammarTools: false,
     supportsStrictMode: false,
     sendSessionAffinityHeaders: false,
+    sessionAffinityFormat: "openai",
     supportsLongCacheRetention: false,
   };
 }
 
-function resolveCustomProviderStyle(provider: string, providerStyle: unknown): CustomProviderStyle {
+function resolveCustomProviderStyle(
+  provider: string,
+  providerStyle: string | undefined,
+): CustomProviderStyle {
   const configured = normalizeCustomProviderStyle(providerStyle);
   if (configured) {
     return configured;
@@ -720,7 +872,7 @@ function resolveCustomProviderStyle(provider: string, providerStyle: unknown): C
 function resolveCustomBaseUrl(
   provider: string,
   style: CustomProviderStyle,
-  baseUrl: unknown,
+  baseUrl: string | undefined,
 ): string {
   const configured = normalizeBaseUrl(baseUrl);
   if (configured) {
@@ -744,7 +896,7 @@ function resolveCustomBaseUrl(
   return DEFAULT_OPENAI_BASE_URL;
 }
 
-function normalizeBaseUrl(value: unknown): string | null {
+function normalizeBaseUrl(value: string | undefined): string | null {
   const normalized = normalizeOptionalText(value);
   if (!normalized) {
     return null;
@@ -761,15 +913,18 @@ function normalizeBaseUrl(value: unknown): string | null {
   return url.toString().replace(/\/+$/, "");
 }
 
-function normalizeProviderId(value: unknown): string {
+function normalizeProviderId(value: string): string {
   const normalized = normalizeOptionalText(value)?.toLowerCase();
   return normalized || CUSTOM_PROVIDER_ID;
 }
 
-function normalizeOptionalText(value: unknown): string | undefined {
-  return typeof value === "string" && value.trim().length > 0 ? value.trim() : undefined;
+function normalizeOptionalText(value: string | null | undefined): string | undefined {
+  const normalized = value?.trim();
+  return normalized ? normalized : undefined;
 }
 
-function positiveInteger(value: unknown): number | null {
-  return typeof value === "number" && Number.isSafeInteger(value) && value > 0 ? value : null;
+function positiveInteger(value: number | null | undefined): number | null {
+  return value !== null && value !== undefined && Number.isSafeInteger(value) && value > 0
+    ? value
+    : null;
 }

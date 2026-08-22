@@ -8,11 +8,46 @@ import {
   handleSchedulerRun,
   handleSchedulerUpdate,
 } from "../../../kernel/scheduler";
+import { jsonObjectSchema } from "@humansandmachines/gsv/protocol";
 import type { SchedulerAddArgs, ScheduleTarget } from "@humansandmachines/gsv/protocol";
 import { parseDurationMs, requireCommandCapability, requireShellOptionValue } from "./common";
 import { resolveVisibleAdapterMessageDestination } from "../../../kernel/adapter-destinations";
+import * as z from "zod/mini";
 
 const ISO_TIMESTAMP_WITH_ZONE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]\d{2}:\d{2})$/;
+
+const adapterDestinationSchema = z.strictObject({
+  kind: z.literal("adapter"),
+  adapter: z.string(),
+  accountId: z.string(),
+  surface: z.strictObject({
+    kind: z.enum(["dm", "group", "channel", "thread"]),
+    id: z.string(),
+    name: z.optional(z.string()),
+    handle: z.optional(z.string()),
+    threadId: z.optional(z.string()),
+  }),
+  actorId: z.string(),
+});
+const scheduleTargetSchema = z.union([
+  z.strictObject({ kind: z.literal("command.exec"), command: z.string(), cwd: z.optional(z.string()), timeoutMs: z.optional(z.number()) }),
+  z.strictObject({ kind: z.literal("process.spawn"), runAs: z.optional(z.string()), label: z.optional(z.string()), prompt: z.string(), parentPid: z.optional(z.string()), cwd: z.optional(z.string()) }),
+  z.strictObject({ kind: z.literal("process.event"), pid: z.string(), message: z.string(), data: z.optional(jsonObjectSchema), replyTo: z.optional(adapterDestinationSchema) }),
+  z.strictObject({ kind: z.literal("adapter.send"), destination: adapterDestinationSchema, text: z.string() }),
+]);
+const scheduleExpressionSchema = z.union([
+  z.strictObject({ kind: z.literal("at"), atMs: z.number() }),
+  z.strictObject({ kind: z.literal("after"), afterMs: z.number() }),
+  z.strictObject({ kind: z.literal("every"), everyMs: z.number(), anchorMs: z.optional(z.number()) }),
+  z.strictObject({ kind: z.literal("cron"), expr: z.string(), timezone: z.string() }),
+]);
+const schedulerAddArgsSchema = z.strictObject({
+  name: z.string(),
+  description: z.optional(z.string()),
+  enabled: z.optional(z.boolean()),
+  expression: scheduleExpressionSchema,
+  target: scheduleTargetSchema,
+});
 
 export function buildSchedCommand(ctx: KernelContext) {
   return defineCommand("sched", async (args): Promise<ExecResult> => {
@@ -106,7 +141,8 @@ async function parseSchedAddCommand(args: string[], ctx: KernelContext): Promise
     if (args.length !== 2) {
       throw new Error("--json must be the only sched add option");
     }
-    return JSON.parse(requireShellOptionValue(args[1], "--json")) as SchedulerAddArgs;
+    const parsed = JSON.parse(requireShellOptionValue(args[1], "--json"));
+    return schedulerAddArgsSchema.parse(parsed);
   }
 
   let here = false;
@@ -255,15 +291,13 @@ async function parseSchedAddCommand(args: string[], ctx: KernelContext): Promise
   const replyTo = route?.kind === "adapter" && route.processId === processId
     ? route.destination
     : undefined;
+  const target: Extract<ScheduleTarget, { kind: "process.event" }> = replyTo
+    ? { kind: "process.event", pid: processId, message, replyTo }
+    : { kind: "process.event", pid: processId, message };
   return {
     name,
     expression,
-    target: {
-      kind: "process.event",
-      pid: processId,
-      message,
-      ...(replyTo ? { replyTo } : {}),
-    },
+    target,
   };
 }
 

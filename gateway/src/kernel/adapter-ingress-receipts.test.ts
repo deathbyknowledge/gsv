@@ -7,6 +7,7 @@ const BASE_KEY = {
   adapter: "telegram",
   accountId: "bot",
   actorId: "telegram:user:1",
+  // SAFETY: test fixture is constructed with the asserted kernel domain shape.
   surfaceKind: "dm" as const,
   surfaceId: "chat-1",
   providerMessageId: "provider-message-1",
@@ -98,10 +99,12 @@ describe("AdapterIngressReceiptStore", () => {
       const store = new AdapterIngressReceiptStore(sql);
       const privateDestinations = new PrivateAdapterDestinationStore(sql);
       const destination = {
+        // SAFETY: test fixture is constructed with the asserted kernel domain shape.
         kind: "adapter" as const,
         adapter: "telegram",
         accountId: "bot",
         actorId: "telegram:user:1",
+        // SAFETY: test fixture is constructed with the asserted kernel domain shape.
         surface: { kind: "dm" as const, id: "chat-1" },
       };
       store.claim({ ...BASE_KEY, receiptId: "receipt-original" });

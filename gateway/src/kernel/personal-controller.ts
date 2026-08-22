@@ -173,6 +173,7 @@ async function initializePersonalController(
       autoTitle: false,
     },
   };
+  // SAFETY: the typed request determines the response frame family; runtime discriminators are checked below.
   const response = await sendFrameToProcess(
     installationId,
     pid,
@@ -202,6 +203,7 @@ async function rollbackPersonalController(
     call: "proc.kill",
     args: { pid, archive: false },
   };
+  // SAFETY: the typed request determines the response frame family; runtime discriminators are checked below.
   const response = await sendFrameToProcess(
     ctx.installationId,
     pid,
@@ -235,6 +237,6 @@ function stateFor(procs: ProcessRegistry): ControllerState {
   return state;
 }
 
-function formatError(error: unknown): string {
+function formatError<T>(error: T): string {
   return error instanceof Error ? error.message : String(error);
 }

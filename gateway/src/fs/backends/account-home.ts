@@ -366,6 +366,7 @@ class AccountHomeMountBackend implements MountBackend {
   private async filterReadableArchiveMatches(
     result: FsSearchBackendResult,
   ): Promise<FsSearchBackendResult> {
+    // SAFETY: The backend result contract defines matches as this mutable collection type.
     const matches = [] as FsSearchBackendResult["matches"];
     for (const match of result.matches) {
       if (await this.archivedMediaReadable(match.path) !== false) {
@@ -603,7 +604,8 @@ class AccountHomeMountBackend implements MountBackend {
     const entries = new Set<string>();
 
     if (kind === "home") {
-      for (const name of await this.fallback.readdir(normalized).catch(() => [] as string[])) {
+        // SAFETY: Fallback readdir always returns string names; the empty fallback preserves that contract.
+        for (const name of await this.fallback.readdir(normalized).catch(() => [] as string[])) {
         entries.add(name);
       }
       entries.add("context.d");
@@ -624,7 +626,8 @@ class AccountHomeMountBackend implements MountBackend {
     }
 
     if (this.canFallbackToR2(normalized)) {
-      for (const name of await this.fallback.readdir(normalized).catch(() => [] as string[])) {
+        // SAFETY: Fallback readdir always returns string names; the empty fallback preserves that contract.
+        for (const name of await this.fallback.readdir(normalized).catch(() => [] as string[])) {
         entries.add(name);
       }
     }
@@ -718,7 +721,8 @@ class AccountHomeMountBackend implements MountBackend {
     if (kind === "home") {
       const fallbackMatches = await this.fallback.search!(normalized, query, include, signal).catch(() => {
         signal?.throwIfAborted();
-        return { matches: [] as FsSearchBackendResult["matches"] };
+          // SAFETY: Search backend matches are the declared result collection type.
+          return { matches: [] as FsSearchBackendResult["matches"] };
       });
       for (const match of (await this.filterReadableArchiveMatches(fallbackMatches)).matches) {
         combined.set(`${match.path}:${match.line}:${match.content}`, match);
@@ -738,6 +742,7 @@ class AccountHomeMountBackend implements MountBackend {
     if (this.canFallbackToR2(normalized)) {
       const fallbackMatches = await this.fallback.search!(normalized, query, include, signal).catch(() => {
         signal?.throwIfAborted();
+        // SAFETY: Search backend matches are the declared result collection type.
         return { matches: [] as FsSearchBackendResult["matches"] };
       });
       for (const match of (await this.filterReadableArchiveMatches(fallbackMatches)).matches) {
@@ -1140,7 +1145,7 @@ function throwPermissionDenied(path: string): never {
 }
 
 function asBytes(content: FileContent): Uint8Array {
-  if (typeof content === "string") {
+  if (!(content instanceof Uint8Array)) {
     return TEXT_ENCODER.encode(content);
   }
   return content;

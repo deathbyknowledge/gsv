@@ -21,6 +21,12 @@ import { stableOpaqueId } from "../shared/stable-id";
 import type { KernelContext } from "./context";
 import { resolveCallerOwnerUid } from "./context";
 import { ensurePersonalController } from "./personal-controller";
+import * as z from "zod/mini";
+
+const conversationClientStateSchema = z.object({
+  clientId: z.optional(z.string()),
+  clientPlatform: z.optional(z.string()),
+});
 
 export async function handleConversationHome(
   ctx: KernelContext,
@@ -67,8 +73,8 @@ export async function handleConversationHistory(
   requireConversationClient(ctx);
   const conversation = ownedConversation(args?.conversationId, ctx);
   const history = await getConversationById(ctx.installationId, conversation.id).history({
-    ...(args.beforeSequence === undefined ? {} : { beforeSequence: args.beforeSequence }),
-    ...(args.limit === undefined ? {} : { limit: args.limit }),
+    beforeSequence: args.beforeSequence,
+    limit: args.limit,
   });
   if (history.latestSequence > conversation.latestSequence) {
     ctx.conversations.recordSequence(conversation.id, history.latestSequence);
@@ -86,7 +92,7 @@ export async function handleConversationSend(
 ): Promise<ConversationSendResult> {
   requireConversationClient(ctx);
   const conversation = ownedConversation(args?.conversationId, ctx);
-  const text = typeof args.text === "string" ? args.text : "";
+  const text = args.text;
   if (!text.trim() && !(Array.isArray(args.media) && args.media.length > 0)) {
     throw new Error("conversation.send requires text or media");
   }
@@ -107,7 +113,7 @@ export async function handleConversationSend(
     idempotencyKey,
     author: { kind: "user", uid: conversation.ownerUid },
     text,
-    ...(args.media?.length ? { media: args.media } : {}),
+    media: args.media,
     mediaOwner: processMediaOwner(conversation.handlerPid, handler),
     origin,
     processId: conversation.handlerPid,
@@ -134,8 +140,8 @@ export async function handleConversationSend(
     args: {
       pid: conversation.handlerPid,
       message: text,
-      ...(args.media?.length ? { media: args.media } : {}),
-      ...(interactionOrigin ? { origin: interactionOrigin } : {}),
+      media: args.media,
+      origin: interactionOrigin,
       interaction: {
         conversationId: conversation.id,
         messageId: message.id,
@@ -153,6 +159,7 @@ export async function handleConversationSend(
   }
   let result: Extract<ProcSendResult, { ok: true }>;
   try {
+    // SAFETY: The process RPC boundary returns a response frame for this request.
     const response = await sendFrameToProcess(
       ctx.installationId,
       conversation.handlerPid,
@@ -162,6 +169,7 @@ export async function handleConversationSend(
       throw new Error("Conversation handler returned no valid response");
     }
     if (!response.ok) throw new Error(response.error.message);
+    // SAFETY: The proc.send response is validated by the process RPC boundary.
     const responseResult = response.data as ProcSendResult | undefined;
     if (!responseResult?.ok) {
       throw new Error(responseResult?.error ?? "Conversation handler rejected the message");
@@ -178,7 +186,7 @@ export async function handleConversationSend(
     message,
     handlerPid: conversation.handlerPid,
     runId: result.runId,
-    ...(result.queued ? { queued: true } : {}),
+    queued: result.queued,
   };
 }
 
@@ -213,11 +221,13 @@ async function initializeConversation(
   });
 }
 
+type ConversationMediaOwner = { pid: string; uid: number; gid: number; home: string };
+
 export function processMediaOwner(pid: string, process: {
   uid: number;
   gid: number;
   home: string;
-}): { pid: string; uid: number; gid: number; home: string } {
+}): ConversationMediaOwner {
   return {
     pid,
     uid: process.uid,
@@ -226,7 +236,7 @@ export function processMediaOwner(pid: string, process: {
   };
 }
 
-function ownedConversation(id: unknown, ctx: KernelContext): ConversationSummary {
+function ownedConversation(id: string | undefined, ctx: KernelContext): ConversationSummary {
   const conversationId = normalizeId(id, "conversationId");
   const conversation = ctx.conversations.get(conversationId);
   const ownerUid = resolveCallerOwnerUid(ctx);
@@ -248,18 +258,11 @@ function conversationOrigin(ctx: KernelContext): ConversationMessageOrigin {
   if (identity.role === "driver") {
     return { kind: "device", deviceId: identity.device };
   }
-  const state = ctx.connection?.state as {
-    clientId?: unknown;
-    clientPlatform?: unknown;
-  } | undefined;
+  const state = conversationClientStateSchema.parse(ctx.connection?.state ?? {});
   return {
     kind: "client",
-    ...(typeof state?.clientId === "string" && state.clientId.trim()
-      ? { clientId: state.clientId.trim() }
-      : {}),
-    ...(typeof state?.clientPlatform === "string" && state.clientPlatform.trim()
-      ? { platform: state.clientPlatform.trim() }
-      : {}),
+    clientId: state.clientId?.trim() || undefined,
+    platform: state.clientPlatform?.trim() || undefined,
   };
 }
 
@@ -270,30 +273,24 @@ function processInteractionOrigin(ctx: KernelContext): InteractionOrigin | undef
     return { kind: "device", deviceId: identity.device };
   }
   if (identity.role !== "user" || !ctx.connection) return undefined;
-  const state = ctx.connection.state as {
-    clientId?: unknown;
-    clientPlatform?: unknown;
-  } | undefined;
+  const state = conversationClientStateSchema.parse(ctx.connection.state ?? {});
   return {
     kind: "client",
     connectionId: ctx.connection.id,
-    ...(typeof state?.clientId === "string" && state.clientId.trim()
-      ? { clientId: state.clientId.trim() }
-      : {}),
-    ...(typeof state?.clientPlatform === "string" && state.clientPlatform.trim()
-      ? { platform: state.clientPlatform.trim() }
-      : {}),
+    clientId: state.clientId?.trim() || undefined,
+    platform: state.clientPlatform?.trim() || undefined,
   };
 }
 
-function normalizeId(value: unknown, label: string): string {
-  if (typeof value !== "string" || !value.trim()) throw new Error(`${label} is required`);
-  return value.trim();
+function normalizeId(value: string | undefined, label: string): string {
+  const parsed = z.string().safeParse(value);
+  if (!parsed.success || !parsed.data.trim()) throw new Error(`${label} is required`);
+  return parsed.data.trim();
 }
 
-function normalizeOptionalId(value: unknown): string | undefined {
+function normalizeOptionalId(value: string | undefined): string | undefined {
   if (value === undefined) return undefined;
-  if (typeof value !== "string" || !value.trim() || value.length > 256) {
+  if (!value.trim() || value.length > 256) {
     throw new Error("idempotencyKey is invalid");
   }
   return value.trim();

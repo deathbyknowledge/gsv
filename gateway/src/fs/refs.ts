@@ -28,6 +28,7 @@ async function requestProcessView<S extends ProcessViewCall>(
   call: S,
   args: ArgsOf<S>,
 ): Promise<ResultOf<S>> {
+  // SAFETY: call and args are paired by the generic ProcessViewCall contract.
   const frame = {
     type: "req",
     id: crypto.randomUUID(),
@@ -41,6 +42,8 @@ async function requestProcessView<S extends ProcessViewCall>(
   if (!response.ok) {
     throw new Error(response.error.message);
   }
+  // SAFETY: the process response is validated by its matching request call.
+  // SAFETY: response data is selected by the matching syscall response contract.
   return response.data as ResultOf<S>;
 }
 

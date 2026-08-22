@@ -50,15 +50,21 @@ type GsvInferenceBindings = {
   MANAGED_INFERENCE?: ManagedInferenceService;
 };
 
+type AppliedManagedInferenceEvent = {
+  event: AssistantMessageEvent;
+  partial: AssistantMessage | undefined;
+  terminal: boolean;
+};
+
 export function gsvInferenceProviderFactoryFromEnv(
   env: Env,
 ): InferenceProviderFactory | undefined {
-  const service = (env as Env & GsvInferenceBindings).MANAGED_INFERENCE;
+  const service = managedInferenceServiceFromEnv(env);
   return service ? createGsvInferenceProviderFactory(service) : undefined;
 }
 
 export function gsvInferenceFeaturesFromEnv(env: Env): string[] {
-  return (env as Env & GsvInferenceBindings).MANAGED_INFERENCE
+  return managedInferenceServiceFromEnv(env)
     ? [GSV_INFERENCE_FEATURE]
     : [];
 }
@@ -127,24 +133,28 @@ function buildManagedInferenceRequest(
   context: Context,
   options?: StreamOptions | SimpleStreamOptions,
 ): ManagedInferenceRequest {
-  const reasoning = "reasoning" in (options ?? {})
-    ? (options as SimpleStreamOptions).reasoning
+  const reasoning = options && "reasoning" in options
+    ? options.reasoning
     : undefined;
-  return {
+  // SAFETY: Context messages use the same JSON message contract as managed inference.
+  const messages = context.messages as ManagedInferenceRequest["messages"];
+  const request: ManagedInferenceRequest = {
     version: 1,
     installationId: attribution.installationId,
     logicalRequestId: attribution.logicalRequestId,
     actor: attribution.actor,
     model: GSV_INFERENCE_PRODUCT_MODEL,
-    ...(context.systemPrompt ? { systemPrompt: context.systemPrompt } : {}),
-    messages: context.messages as ManagedInferenceRequest["messages"],
-    ...(context.tools && context.tools.length > 0
-      ? { tools: context.tools as ManagedInferenceRequest["tools"] }
-      : {}),
+    messages,
     maxOutputTokens: options?.maxTokens ?? GSV_INFERENCE_MODEL_METADATA.maxTokens,
-    ...(reasoning ? { reasoning } : {}),
     timeoutMs: options?.timeoutMs ?? 180_000,
   };
+  if (context.systemPrompt) request.systemPrompt = context.systemPrompt;
+  if (context.tools && context.tools.length > 0) {
+    // SAFETY: pi-ai tools and the managed protocol share the same JSON Schema contract.
+    request.tools = context.tools as ManagedInferenceRequest["tools"];
+  }
+  if (reasoning) request.reasoning = reasoning;
+  return request;
 }
 
 async function pumpGsvInference(
@@ -203,26 +213,20 @@ async function pumpGsvInference(
   }
 }
 
-function toAssistantMessage(message: ManagedInferenceResult): AssistantMessage {
-  return {
-    ...message,
-    content: message.content as AssistantMessage["content"],
-  };
+function toAssistantMessage(
+  message: ManagedInferenceResult | Extract<ManagedInferenceStreamEvent, { type: "start" }>["partial"],
+): AssistantMessage {
+  return message;
 }
 
 function applyManagedInferenceEvent(
-  raw: unknown,
+  event: ManagedInferenceStreamEvent,
   current: AssistantMessage | undefined,
-): {
-  event: AssistantMessageEvent;
-  partial: AssistantMessage | undefined;
-  terminal: boolean;
-} {
-  const event = requireManagedInferenceEvent(raw);
+): AppliedManagedInferenceEvent {
   switch (event.type) {
     case "start": {
       if (current) throw new Error("Managed inference stream started twice");
-      const partial = toAssistantMessage(event.partial as ManagedInferenceResult);
+      const partial = toAssistantMessage(event.partial);
       return { event: { type: "start", partial }, partial, terminal: false };
     }
     case "text_start": {
@@ -322,9 +326,7 @@ function applyManagedInferenceEvent(
         event: {
           type: "toolcall_end",
           contentIndex: event.contentIndex,
-          toolCall: event.toolCall as AssistantMessage["content"][number] & {
-            type: "toolCall";
-          },
+          toolCall: event.toolCall,
           partial,
         },
         partial,
@@ -352,147 +354,6 @@ function applyManagedInferenceEvent(
         terminal: true,
       };
   }
-}
-
-function requireManagedInferenceEvent(
-  value: unknown,
-): ManagedInferenceStreamEvent {
-  if (!isRecord(value) || typeof value.type !== "string") {
-    throw new Error("Managed inference stream event is invalid");
-  }
-  switch (value.type) {
-    case "start":
-      requireManagedMessage(value.partial, true);
-      break;
-    case "text_start":
-    case "text_end":
-      requireContentIndex(value.contentIndex);
-      requireContentBlock(value.content, "text");
-      break;
-    case "thinking_start":
-    case "thinking_end":
-      requireContentIndex(value.contentIndex);
-      requireContentBlock(value.content, "thinking");
-      break;
-    case "text_delta":
-    case "thinking_delta":
-      requireContentIndex(value.contentIndex);
-      requireString(value.delta);
-      break;
-    case "toolcall_start":
-    case "toolcall_end":
-      requireContentIndex(value.contentIndex);
-      requireContentBlock(value.toolCall, "toolCall");
-      break;
-    case "toolcall_delta":
-      requireContentIndex(value.contentIndex);
-      requireString(value.delta);
-      requireContentBlock(value.toolCall, "toolCall");
-      break;
-    case "done":
-      if (!isSuccessfulStopReason(value.reason)) {
-        throw new Error("Managed inference stop reason is invalid");
-      }
-      requireManagedMessage(value.message, false);
-      if ((value.message as ManagedInferenceResult).stopReason !== value.reason) {
-        throw new Error("Managed inference stop reason does not match");
-      }
-      break;
-    case "error":
-      if (value.reason !== "error" && value.reason !== "aborted") {
-        throw new Error("Managed inference stop reason is invalid");
-      }
-      requireManagedMessage(value.error, false);
-      if ((value.error as ManagedInferenceResult).stopReason !== value.reason) {
-        throw new Error("Managed inference stop reason does not match");
-      }
-      break;
-    default:
-      throw new Error("Managed inference stream event type is invalid");
-  }
-  return value as ManagedInferenceStreamEvent;
-}
-
-function requireManagedMessage(value: unknown, partial: boolean): void {
-  if (
-    !isRecord(value)
-    || value.role !== "assistant"
-    || value.api !== GSV_INFERENCE_API
-    || value.provider !== GSV_INFERENCE_PROVIDER
-    || value.model !== GSV_INFERENCE_PRODUCT_MODEL
-    || !Array.isArray(value.content)
-    || !isRecord(value.usage)
-    || !Number.isSafeInteger(value.timestamp)
-    || (value.timestamp as number) < 0
-  ) {
-    throw new Error("Managed inference message is invalid");
-  }
-  for (const block of value.content) requireContentBlock(block);
-  for (const field of ["input", "output", "cacheRead", "cacheWrite", "totalTokens"]) {
-    const count = value.usage[field];
-    if (!Number.isSafeInteger(count) || (count as number) < 0) {
-      throw new Error("Managed inference usage is invalid");
-    }
-  }
-  if (!isRecord(value.usage.cost)) {
-    throw new Error("Managed inference usage is invalid");
-  }
-  for (const field of ["input", "output", "cacheRead", "cacheWrite", "total"]) {
-    const cost = value.usage.cost[field];
-    if (typeof cost !== "number" || !Number.isFinite(cost) || cost < 0) {
-      throw new Error("Managed inference usage is invalid");
-    }
-  }
-  const stopReason = value.stopReason;
-  if (
-    partial
-      ? stopReason !== "pending" && !isTerminalStopReason(stopReason)
-      : !isTerminalStopReason(stopReason)
-  ) {
-    throw new Error("Managed inference stop reason is invalid");
-  }
-  if (value.errorMessage !== undefined) requireString(value.errorMessage);
-  if (value.responseModel !== undefined) requireString(value.responseModel);
-  if (value.responseId !== undefined) requireString(value.responseId);
-}
-
-function requireContentBlock(
-  value: unknown,
-  expected?: "text" | "thinking" | "toolCall",
-): void {
-  if (!isRecord(value) || typeof value.type !== "string") {
-    throw new Error("Managed inference content is invalid");
-  }
-  if (expected && value.type !== expected) {
-    throw new Error("Managed inference content type is invalid");
-  }
-  if (value.type === "text") {
-    requireString(value.text);
-    if (value.textSignature !== undefined) requireString(value.textSignature);
-    return;
-  }
-  if (value.type === "thinking") {
-    requireString(value.thinking);
-    if (value.thinkingSignature !== undefined) {
-      requireString(value.thinkingSignature);
-    }
-    if (value.redacted !== undefined && typeof value.redacted !== "boolean") {
-      throw new Error("Managed inference thinking block is invalid");
-    }
-    return;
-  }
-  if (value.type === "toolCall") {
-    requireString(value.id);
-    requireString(value.name);
-    if (!isRecord(value.arguments)) {
-      throw new Error("Managed inference tool call is invalid");
-    }
-    if (value.thoughtSignature !== undefined) {
-      requireString(value.thoughtSignature);
-    }
-    return;
-  }
-  throw new Error("Managed inference content type is invalid");
 }
 
 function appendContent(
@@ -530,6 +391,7 @@ function requireContent<T extends "text" | "thinking">(
   if (!content || content.type !== type) {
     throw new Error("Managed inference content sequence is invalid");
   }
+  // SAFETY: The runtime type discriminator above matches the requested generic type.
   return content as Extract<AssistantMessage["content"][number], { type: T }>;
 }
 
@@ -540,30 +402,10 @@ function requirePartial(
   return partial;
 }
 
-function requireContentIndex(value: unknown): void {
-  if (!Number.isSafeInteger(value) || (value as number) < 0) {
-    throw new Error("Managed inference content index is invalid");
-  }
-}
 
-function requireString(value: unknown): asserts value is string {
-  if (typeof value !== "string") {
-    throw new Error("Managed inference stream string is invalid");
-  }
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return !!value && typeof value === "object" && !Array.isArray(value);
-}
-
-function isSuccessfulStopReason(
-  value: unknown,
-): value is "stop" | "length" | "toolUse" {
-  return value === "stop" || value === "length" || value === "toolUse";
-}
-
-function isTerminalStopReason(value: unknown): boolean {
-  return isSuccessfulStopReason(value) || value === "error" || value === "aborted";
+function managedInferenceServiceFromEnv(value: Env): ManagedInferenceService | undefined {
+  // SAFETY: Managed deployments bind MANAGED_INFERENCE; standalone deployments omit it.
+  return (value as Env & GsvInferenceBindings).MANAGED_INFERENCE;
 }
 
 function gsvInferenceErrorEvent(

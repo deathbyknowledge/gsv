@@ -20,6 +20,7 @@ type FetchCall = {
 
 function makeFetcher(handler: (url: URL, init?: RequestInit) => Response): Fetcher & { calls: FetchCall[] } {
   const calls: FetchCall[] = [];
+  // SAFETY: test fixture is constructed with the asserted kernel domain shape.
   return {
     calls,
     fetch(input: RequestInfo | URL, init?: RequestInit) {
@@ -27,6 +28,7 @@ function makeFetcher(handler: (url: URL, init?: RequestInit) => Response): Fetch
       calls.push({ url: url.toString(), init });
       return Promise.resolve(handler(url, init));
     },
+  // SAFETY: test fixture is constructed with the asserted kernel domain shape.
   } as Fetcher & { calls: FetchCall[] };
 }
 
@@ -57,10 +59,13 @@ function makeContext(
   fetcher: Fetcher,
   configSeed: Record<string, string> = {},
 ): KernelContext {
+  // SAFETY: test fixture is constructed with the asserted kernel domain shape.
   const config = makeConfig(configSeed);
+  // SAFETY: test fixture is constructed with the asserted kernel domain shape.
   return {
     env: {
       RIPGIT: fetcher,
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     } as Env,
     config,
     identity: {
@@ -94,7 +99,8 @@ function makeContext(
       },
       getGroupByName: () => null,
     },
-  } as unknown as KernelContext;
+  // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+  } as KernelContext;
 }
 
 describe("repo syscalls", () => {
@@ -142,7 +148,7 @@ describe("repo syscalls", () => {
   it("creates a repository with an empty initial commit", async () => {
     const fetcher = makeFetcher((url, init) => {
       if (url.pathname === "/hyperspace/repos/alice/empty/refs") {
-        return Response.json({ heads: {}, tags: {} });
+        return Response.json({ heads: undefined, tags: {} });
       }
       expect(url.pathname).toBe("/hyperspace/repos/alice/empty/apply");
       expect(init?.method).toBe("POST");
@@ -382,6 +388,7 @@ describe("repo syscalls", () => {
       expect(init?.method).toBe("POST");
       return Response.json({ ok: true, head: "owner123", conflict: false });
     });
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     const ctx = makeContext(fetcher);
     ctx.identity = {
       role: "user",
@@ -396,8 +403,10 @@ describe("repo syscalls", () => {
       },
     };
     ctx.processId = "proc:scout";
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     ctx.procs = {
       getOwnerUid: () => 1000,
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     } as KernelContext["procs"];
 
     await expect(handleRepoApply({

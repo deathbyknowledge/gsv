@@ -52,7 +52,7 @@ export class PrivateAdapterDestinationStore {
   }
 
   get(uid: number): PrivateAdapterDestinationRecord | null {
-    const rows = this.sql.exec<RowShape>(
+    const rows = this.sql.exec<PrivateAdapterDestinationRow>(
       `SELECT uid, adapter, account_id, actor_id, surface_id, thread_id, message_id, updated_at
        FROM private_adapter_destinations
        WHERE uid = ?
@@ -82,7 +82,7 @@ export class PrivateAdapterDestinationStore {
   }
 }
 
-type RowShape = {
+type PrivateAdapterDestinationRow = {
   uid: number;
   adapter: string;
   account_id: string;
@@ -92,8 +92,14 @@ type RowShape = {
   message_id: string;
   updated_at: number;
 };
+type PrivateDmSurface = { kind: "dm"; id: string; threadId?: string };
 
-function toRecord(row: RowShape): PrivateAdapterDestinationRecord {
+function toRecord(row: PrivateAdapterDestinationRow): PrivateAdapterDestinationRecord {
+  const surface: PrivateDmSurface = {
+    kind: "dm",
+    id: row.surface_id,
+  };
+  if (row.thread_id) surface.threadId = row.thread_id;
   return {
     uid: row.uid,
     destination: {
@@ -101,11 +107,7 @@ function toRecord(row: RowShape): PrivateAdapterDestinationRecord {
       adapter: row.adapter,
       accountId: row.account_id,
       actorId: row.actor_id,
-      surface: {
-        kind: "dm",
-        id: row.surface_id,
-        ...(row.thread_id ? { threadId: row.thread_id } : {}),
-      },
+      surface,
     },
     messageId: row.message_id,
     updatedAt: row.updated_at,

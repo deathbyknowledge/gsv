@@ -1,13 +1,15 @@
 import { raceWithAbort } from "../shared/abort";
 import { normalizeBase64Data } from "../shared/base64";
 import { TimeoutError } from "./timeout";
+import { jsonObjectSchema, type JsonObject, type JsonValue } from "@humansandmachines/gsv/protocol";
+import * as z from "zod/mini";
 
 export type AudioTranscriptionBinding = {
   run(
     model: string,
-    input: Record<string, unknown>,
+    input: JsonObject,
     options?: { signal?: AbortSignal },
-  ): Promise<unknown>;
+  ): Promise<JsonValue>;
 };
 
 export type TranscriptionMode = "transcribe" | "translate";
@@ -32,7 +34,7 @@ export type AudioTranscriptionResult = {
   text: string;
   duration?: number;
   language?: string;
-  segments?: unknown[];
+  segments?: JsonValue[];
   provider: string;
   model: string;
 };
@@ -53,7 +55,7 @@ export async function transcribeAudioWithWorkersAi(
   }
 
   const model = request.model || DEFAULT_AUDIO_TRANSCRIPTION_MODEL;
-  const input: Record<string, unknown> = {
+  const input: JsonObject = {
     audio: normalizeBase64Data(request.data),
     task: request.mode || "transcribe",
     vad_filter: request.vadFilter ?? true,
@@ -80,15 +82,16 @@ export async function transcribeAudioWithWorkersAi(
 }
 
 function normalizeTranscriptionTimeout(value: number | undefined): number | undefined {
-  return typeof value === "number" && Number.isFinite(value) && value > 0
-    ? value
-    : undefined;
+  const parsed = z.number().safeParse(value);
+  return parsed.success && Number.isFinite(parsed.data) && parsed.data > 0 ? parsed.data : undefined;
 }
+
+type TranscriptionAbort = { signal?: AbortSignal; clear: () => void };
 
 function createTranscriptionAbort(
   callerSignal: AbortSignal | undefined,
   timeoutMs: number | undefined,
-): { signal?: AbortSignal; clear: () => void } {
+): TranscriptionAbort {
   const timeoutController = timeoutMs === undefined ? null : new AbortController();
   const timeout = timeoutController && timeoutMs !== undefined
     ? setTimeout(() => {
@@ -106,25 +109,25 @@ function createTranscriptionAbort(
   };
 }
 
-export function normalizeTranscriptionResponse(value: unknown): Omit<AudioTranscriptionResult, "provider" | "model"> | null {
-  if (!value || typeof value !== "object") {
-    return null;
-  }
-
-  const record = value as Record<string, unknown>;
-  const text = typeof record.text === "string" ? record.text.trim() : "";
+export function normalizeTranscriptionResponse(value: JsonValue): Omit<AudioTranscriptionResult, "provider" | "model"> | null {
+  const parsed = jsonObjectSchema.safeParse(value);
+  if (!parsed.success) return null;
+  const record = parsed.data;
+  const textValue = z.string().safeParse(record.text);
+  const text = textValue.success ? textValue.data.trim() : "";
   if (!text) {
     return null;
   }
 
-  const info = record.transcription_info && typeof record.transcription_info === "object"
-    ? record.transcription_info as Record<string, unknown>
-    : null;
-  const duration = typeof info?.duration === "number" && Number.isFinite(info.duration)
-    ? info.duration
+  const infoResult = jsonObjectSchema.safeParse(record.transcription_info);
+  const info = infoResult.success ? infoResult.data : undefined;
+  const durationValue = z.number().safeParse(info?.duration);
+  const duration = durationValue.success && Number.isFinite(durationValue.data)
+    ? durationValue.data
     : undefined;
-  const language = typeof info?.language === "string" && info.language.trim().length > 0
-    ? info.language.trim()
+  const languageValue = z.string().safeParse(info?.language);
+  const language = languageValue.success && languageValue.data.trim().length > 0
+    ? languageValue.data.trim()
     : undefined;
   const segments = Array.isArray(record.segments)
     ? record.segments
@@ -132,10 +135,9 @@ export function normalizeTranscriptionResponse(value: unknown): Omit<AudioTransc
       ? info.segments
       : undefined;
 
-  return {
-    text,
-    ...(duration !== undefined ? { duration } : {}),
-    ...(language ? { language } : {}),
-    ...(segments ? { segments } : {}),
-  };
+  const result: Omit<AudioTranscriptionResult, "provider" | "model"> = { text };
+  if (duration !== undefined) result.duration = duration;
+  if (language) result.language = language;
+  if (segments) result.segments = segments;
+  return result;
 }

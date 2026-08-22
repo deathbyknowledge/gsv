@@ -9,7 +9,8 @@ describe("AdapterStatusStore ownership", () => {
   it("preserves owners across service status updates", async () => {
     const kernel = await getDurableObjectByName(env.KERNEL, crypto.randomUUID());
     await runInDurableObject(kernel, (instance: Kernel) => {
-      const status = (instance as unknown as {
+      // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+      const status = (instance as {
         adapters: { status: AdapterStatusStore };
       }).adapters.status;
 

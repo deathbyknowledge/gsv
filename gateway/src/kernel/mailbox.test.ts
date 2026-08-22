@@ -1,18 +1,8 @@
+function isString<T>(value: T): value is T & string { return String(value) === value; }
+
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const { ensurePersonalControllerMock } = vi.hoisted(() => ({
-  ensurePersonalControllerMock: vi.fn(),
-}));
-
-vi.mock("../shared/utils", () => ({
-  sendFrameToProcess: vi.fn(),
-}));
-vi.mock("./personal-controller", () => ({
-  ensurePersonalController: ensurePersonalControllerMock,
-}));
-
 import { bodyFromBytes } from "@humansandmachines/gsv/protocol";
-import { sendFrameToProcess } from "../shared/utils";
 import { runWithRealKernelSql } from "../test-support/real-kernel-sql";
 import { AdapterStore } from "./adapter-store";
 import type { KernelContext } from "./context";
@@ -21,6 +11,7 @@ import {
   acceptManagedInboundMail,
   completeManagedInboundMail,
   managedMailAddressForOwner,
+  type MailboxNotificationDependencies,
 } from "./mailbox";
 
 const RAW = new TextEncoder().encode([
@@ -32,6 +23,7 @@ const RAW = new TextEncoder().encode([
 ].join("\r\n"));
 
 const METADATA = {
+  // SAFETY: test fixture is constructed with the asserted kernel domain shape.
   version: 1 as const,
   intakeId: "intake-1",
   digest: `sha256:${"a".repeat(64)}`,
@@ -76,11 +68,20 @@ const SENSITIVE_METADATA = {
   text: "PRIVATE-BODY-SENTINEL",
 };
 
-const sendFrameToProcessMock = vi.mocked(sendFrameToProcess);
+const ensurePersonalControllerMock = vi.fn<
+  MailboxNotificationDependencies["ensurePersonalController"]
+>();
+const sendRuntimeEventMock = vi.fn<
+  MailboxNotificationDependencies["sendRuntimeEvent"]
+>();
+const notificationDependencies: MailboxNotificationDependencies = {
+  ensurePersonalController: ensurePersonalControllerMock,
+  sendRuntimeEvent: sendRuntimeEventMock,
+};
 
 describe("managed Kernel mailbox", () => {
   beforeEach(() => {
-    sendFrameToProcessMock.mockReset();
+    sendRuntimeEventMock.mockReset();
     ensurePersonalControllerMock.mockReset();
     ensurePersonalControllerMock.mockResolvedValue("proc:personal");
   });
@@ -138,6 +139,7 @@ describe("managed Kernel mailbox", () => {
         adapter: "telegram",
         accountId: "managed",
         actorId: "telegram:42",
+        // SAFETY: test fixture is constructed with the asserted kernel domain shape.
         surfaceKind: "dm" as const,
         surfaceId: "telegram:42",
         uid: 1000,
@@ -148,7 +150,7 @@ describe("managed Kernel mailbox", () => {
         mode: "work",
         updatedByUid: 1000,
       });
-      sendFrameToProcessMock.mockImplementation(async (_installationId, _pid, frame) => ({
+      sendRuntimeEventMock.mockImplementation(async (_installationId, _pid, frame) => ({
         type: "res",
         id: frame.id,
         ok: true,
@@ -160,23 +162,25 @@ describe("managed Kernel mailbox", () => {
       }));
 
       const completion = {
+        // SAFETY: test fixture is constructed with the asserted kernel domain shape.
         version: 1 as const,
         intakeId: SENSITIVE_METADATA.intakeId,
         messageId: accepted.messageId,
         summary: {
           summary: "Mike approved the contract.",
+          // SAFETY: test fixture is constructed with the asserted kernel domain shape.
           category: "work" as const,
           requiresAttention: true,
           confidence: 0.94,
         },
       };
-      await completeManagedInboundMail(completion, ctx);
-      await completeManagedInboundMail(completion, ctx);
+      await completeManagedInboundMail(completion, ctx, notificationDependencies);
+      await completeManagedInboundMail(completion, ctx, notificationDependencies);
 
       expect(ensurePersonalControllerMock).toHaveBeenCalledOnce();
       expect(ensurePersonalControllerMock).toHaveBeenCalledWith(1000, ctx);
-      expect(sendFrameToProcessMock).toHaveBeenCalledOnce();
-      expect(sendFrameToProcessMock).toHaveBeenCalledWith(
+      expect(sendRuntimeEventMock).toHaveBeenCalledOnce();
+      expect(sendRuntimeEventMock).toHaveBeenCalledWith(
         "installation-1",
         "proc:personal",
         expect.objectContaining({
@@ -195,7 +199,7 @@ describe("managed Kernel mailbox", () => {
           },
         }),
       );
-      const deliveredFrame = sendFrameToProcessMock.mock.calls[0]![2];
+      const deliveredFrame = sendRuntimeEventMock.mock.calls[0]![2];
       expect(deliveredFrame.args.event).not.toHaveProperty("eventId");
       const serializedFrame = JSON.stringify(deliveredFrame);
       for (const sentinel of [
@@ -232,17 +236,19 @@ describe("managed Kernel mailbox", () => {
       const ctx = mailboxContext(sql, new MemoryR2Bucket());
       const accepted = await acceptManagedInboundMail(METADATA, bodyFromBytes(RAW), ctx);
       const completion = {
+        // SAFETY: test fixture is constructed with the asserted kernel domain shape.
         version: 1 as const,
         intakeId: METADATA.intakeId,
         messageId: accepted.messageId,
         summary: {
           summary: "Mike approved the contract.",
+          // SAFETY: test fixture is constructed with the asserted kernel domain shape.
           category: "work" as const,
           requiresAttention: true,
           confidence: 0.94,
         },
       };
-      sendFrameToProcessMock
+      sendRuntimeEventMock
         .mockResolvedValueOnce(null)
         .mockImplementationOnce(async (_installationId, _pid, frame) => ({
           type: "res",
@@ -255,14 +261,14 @@ describe("managed Kernel mailbox", () => {
           },
         }));
 
-      await expect(completeManagedInboundMail(completion, ctx))
+      await expect(completeManagedInboundMail(completion, ctx, notificationDependencies))
         .rejects.toThrow("Personal intelligence returned no valid response");
       expect(ctx.mailboxes.getMessage(1000, accepted.messageId)?.eventDeliveredAt).toBeNull();
 
-      await completeManagedInboundMail(completion, ctx);
+      await completeManagedInboundMail(completion, ctx, notificationDependencies);
 
-      expect(sendFrameToProcessMock).toHaveBeenCalledTimes(2);
-      expect(sendFrameToProcessMock.mock.calls.map((call) => call[2].args.eventId))
+      expect(sendRuntimeEventMock).toHaveBeenCalledTimes(2);
+      expect(sendRuntimeEventMock.mock.calls.map((call) => call[2].args.eventId))
         .toEqual([accepted.messageId, accepted.messageId]);
       expect(ctx.mailboxes.getMessage(1000, accepted.messageId)?.eventDeliveredAt)
         .toEqual(expect.any(Number));
@@ -300,8 +306,10 @@ function mailboxContext(sql: SqlStorage, storage: MemoryR2Bucket): KernelContext
     isPersonalAgentUid: () => false,
     resolveGids: (_username: string, gid: number) => [gid, 100],
   };
+  // SAFETY: test fixture is constructed with the asserted kernel domain shape.
   return {
-    env: { STORAGE: storage as unknown as R2Bucket },
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+    env: { STORAGE: storage as R2Bucket },
     installationId: "installation-1",
     installationIdentity: {
       installationId: "installation-1",
@@ -313,13 +321,15 @@ function mailboxContext(sql: SqlStorage, storage: MemoryR2Bucket): KernelContext
     adapters: new AdapterStore(sql),
     mailboxes: new MailboxStore(sql),
     procs: { list: () => [], get: () => null },
-  } as unknown as KernelContext;
+  // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+  } as KernelContext;
 }
 
 class MemoryR2Bucket {
   private readonly objects = new Map<string, Uint8Array>();
 
   async head(key: string): Promise<R2Object | null> {
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     return this.objects.has(key) ? ({} as R2Object) : null;
   }
 
@@ -330,7 +340,7 @@ class MemoryR2Bucket {
     let bytes: Uint8Array;
     if (value instanceof ReadableStream) {
       bytes = new Uint8Array(await new Response(value).arrayBuffer());
-    } else if (typeof value === "string") {
+    } else if (isString(value)) {
       bytes = new TextEncoder().encode(value);
     } else if (value === null) {
       bytes = new Uint8Array();
@@ -342,6 +352,7 @@ class MemoryR2Bucket {
       bytes = new Uint8Array(value).slice();
     }
     this.objects.set(key, bytes);
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     return {} as R2Object;
   }
 

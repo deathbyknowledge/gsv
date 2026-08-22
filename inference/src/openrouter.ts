@@ -71,9 +71,6 @@ export function createOpenRouterGeneration(
     return eventStream;
   };
 // SAFETY: This assertion follows boundary validation or a test fixture with the declared owner contract.
-// SAFETY: This assertion follows boundary validation or a test fixture with the declared owner contract.
-// SAFETY: This assertion follows boundary validation or a test fixture with the declared owner contract.
-// SAFETY: This assertion follows boundary validation or a test fixture with the declared owner contract.
 // SAFETY: The surrounding owner contract or fixture establishes this asserted shape.
   return {
     stream,
@@ -196,8 +193,10 @@ function toManagedInferenceResult(
   if (message.stopReason === "pending") {
     throw new Error("OpenRouter generation ended without a terminal result");
   }
-// SAFETY: This assertion follows boundary validation or a test fixture with the declared owner contract.
-  return toManagedInferenceMessage(message) as ManagedInferenceResult;
+  return {
+    ...toManagedInferenceMessage(message),
+    stopReason: message.stopReason,
+  };
 }
 
 function toManagedInferenceMessage(
@@ -211,11 +210,34 @@ function toManagedInferenceMessage(
     model: GSV_INFERENCE_PRODUCT_MODEL,
     responseModel: message.responseModel ?? message.model,
     responseId: message.responseId,
-    usage: message.usage,
+    usage: toManagedUsage(message.usage),
     stopReason: message.stopReason,
     errorMessage: message.errorMessage,
-    timestamp: message.timestamp,
+    timestamp: message.timestamp ?? Date.now(),
   };
+}
+
+function toManagedUsage(
+  usage: AssistantMessage["usage"],
+): ManagedInferenceResult["usage"] {
+  const managedUsage: ManagedInferenceResult["usage"] = {
+    input: usage.input,
+    output: usage.output,
+    cacheRead: usage.cacheRead,
+    cacheWrite: usage.cacheWrite,
+    totalTokens: usage.totalTokens,
+    cost: {
+      input: usage.cost.input,
+      output: usage.cost.output,
+      cacheRead: usage.cost.cacheRead,
+      cacheWrite: usage.cost.cacheWrite,
+      total: usage.cost.total,
+    },
+  };
+  if (usage.cacheWrite1h !== undefined) {
+    managedUsage.cacheWrite1h = usage.cacheWrite1h;
+  }
+  return managedUsage;
 }
 
 function toManagedAssistantEvent(
@@ -234,10 +256,6 @@ function toManagedAssistantEvent(
 // SAFETY: This assertion follows boundary validation or a test fixture with the declared owner contract.
       return {
         ...event,
-// SAFETY: This assertion follows boundary validation or a test fixture with the declared owner contract.
-// SAFETY: This assertion follows boundary validation or a test fixture with the declared owner contract.
-// SAFETY: This assertion follows boundary validation or a test fixture with the declared owner contract.
-// SAFETY: This assertion follows boundary validation or a test fixture with the declared owner contract.
 // SAFETY: This assertion follows boundary validation or a test fixture with the declared owner contract.
 // SAFETY: The surrounding owner contract or fixture establishes this asserted shape.
         partial: toManagedInferenceMessage(event.partial) as AssistantMessage,

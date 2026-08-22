@@ -38,6 +38,7 @@ import type {
   InferenceAttribution,
   InferenceProviderFactory,
 } from "./provider";
+import * as z from "zod/mini";
 
 const OPENROUTER_ATTR_HEADERS = {
   "HTTP-Referer": "https://gsv.space",
@@ -65,6 +66,14 @@ type GenerationService = {
 type GenerationServiceOptions = {
   fetch?: typeof fetch;
   providers?: readonly InferenceProviderFactory[];
+  transports?: Partial<GenerationTransports>;
+};
+
+export type GenerationTransports = {
+  completePiAiSimple: typeof completePiAiSimple;
+  streamPiAiSimple: typeof streamPiAiSimple;
+  completeWithOpenAiCodexFetch: typeof completeWithOpenAiCodexFetch;
+  streamWithOpenAiCodexFetch: typeof streamWithOpenAiCodexFetch;
 };
 
 type ResolvedGenerationOptions = {
@@ -78,11 +87,20 @@ type ResolvedGenerationOptions = {
   maxTokens: number;
 };
 
+type PiAiProviderModel = { models: Models; model: Model<Api> };
+
 const DEFAULT_GENERATION_TIMEOUT_MS = 180_000;
 
 export function createGenerationService(
   serviceOptions: GenerationServiceOptions = {},
 ): GenerationService {
+  const transports: GenerationTransports = {
+    completePiAiSimple,
+    streamPiAiSimple,
+    completeWithOpenAiCodexFetch,
+    streamWithOpenAiCodexFetch,
+    ...serviceOptions.transports,
+  };
   const stream = (request: GenerateRequest): AssistantMessageEventStream => {
     const options = resolveGenerationOptions(request);
     const generationFetch = request.fetch ?? serviceOptions.fetch;
@@ -146,13 +164,13 @@ export function createGenerationService(
       ? generationFetch ?? fetch
       : undefined;
     if (openAiCodexFetch) {
-      const result = streamWithOpenAiCodexFetch({
+      const result = transports.streamWithOpenAiCodexFetch({
         model: piAi.model,
         context: request.context,
         fetch: openAiCodexFetch,
         options: {
           apiKey: options.apiKey,
-          ...(options.openAiCodexAccountId ? { openAiCodexAccountId: options.openAiCodexAccountId } : {}),
+          openAiCodexAccountId: options.openAiCodexAccountId,
           reasoning: options.reasoning,
           maxTokens: options.maxTokens,
           signal: abort.signal,
@@ -166,7 +184,7 @@ export function createGenerationService(
       );
       return result;
     }
-    const result = streamPiAiSimple(piAi.model, request.context, {
+    const result = transports.streamPiAiSimple(piAi.model, request.context, {
       apiKey: options.apiKey,
       fetch: generationFetch,
       reasoning: options.reasoning,
@@ -174,9 +192,7 @@ export function createGenerationService(
       signal: abort.signal,
       timeoutMs: generationTimeoutMs,
       ...resolvePiAiTransportOptions(options.modelProvider, request.sessionAffinityKey),
-      headers: {
-        ...(options.modelProvider === "openrouter" ? OPENROUTER_ATTR_HEADERS : {}),
-      },
+      headers: options.modelProvider === "openrouter" ? OPENROUTER_ATTR_HEADERS : {},
     }, piAi.models);
     void result.result().then(
       abort.clear,
@@ -253,13 +269,13 @@ export function createGenerationService(
     try {
       if (openAiCodexFetch) {
         return await withTimeout(
-          completeWithOpenAiCodexFetch({
+          transports.completeWithOpenAiCodexFetch({
             model: piAi.model,
             context: request.context,
             fetch: openAiCodexFetch,
             options: {
               apiKey: options.apiKey,
-              ...(options.openAiCodexAccountId ? { openAiCodexAccountId: options.openAiCodexAccountId } : {}),
+              openAiCodexAccountId: options.openAiCodexAccountId,
               reasoning: options.reasoning,
               maxTokens: options.maxTokens,
               signal: abort.signal,
@@ -272,7 +288,7 @@ export function createGenerationService(
         );
       }
       return await withTimeout(
-        completePiAiSimple(piAi.model, request.context, {
+        transports.completePiAiSimple(piAi.model, request.context, {
           apiKey: options.apiKey,
           fetch: generationFetch,
           reasoning: options.reasoning,
@@ -280,9 +296,7 @@ export function createGenerationService(
           signal: abort.signal,
           timeoutMs: generationTimeoutMs,
           ...resolvePiAiTransportOptions(options.modelProvider, request.sessionAffinityKey),
-          headers: {
-            ...(options.modelProvider === "openrouter" ? OPENROUTER_ATTR_HEADERS : {}),
-          },
+          headers: options.modelProvider === "openrouter" ? OPENROUTER_ATTR_HEADERS : {},
         }, piAi.models),
         generationTimeoutMs,
         generationTimeoutMessage(generationTimeoutMs),
@@ -334,7 +348,7 @@ function resolvePiAiProviderModel(
   factory: InferenceProviderFactory | undefined,
   request: GenerateRequest,
   options: ResolvedGenerationOptions,
-): { models: Models; model: Model<Api> } {
+): PiAiProviderModel {
   if (!factory) {
     return {
       models: modelsWithProviders([]),
@@ -353,17 +367,18 @@ function resolvePiAiProviderModel(
   return { models, model };
 }
 
+type PiAiTransportOptions = { transport?: "sse"; sessionId?: string };
+
 function resolvePiAiTransportOptions(
   provider: string,
   sessionAffinityKey?: string,
-): { transport?: "sse"; sessionId?: string } {
+): PiAiTransportOptions {
   if (provider !== OPENAI_CODEX_PROVIDER) {
     return {};
   }
-  return {
-    transport: "sse",
-    ...(sessionAffinityKey ? { sessionId: sessionAffinityKey } : {}),
-  };
+  return sessionAffinityKey
+    ? { transport: "sse", sessionId: sessionAffinityKey }
+    : { transport: "sse" };
 }
 
 function assertOpenAiCodexCredential(provider: string, apiKey: string): void {
@@ -421,27 +436,27 @@ export function resolveGenerationOptions(
 ): ResolvedGenerationOptions {
   const { config } = request;
   const openAiCodexAccountId = config.openAiCodex?.accountId?.trim();
-  return {
+  const resolved: ResolvedGenerationOptions = {
     modelProvider: config.provider,
     modelName: config.model,
     apiKey: config.apiKey,
     baseUrl: config.baseUrl,
     providerStyle: config.providerStyle,
-    ...(openAiCodexAccountId ? { openAiCodexAccountId } : {}),
     reasoning: resolveGenerationReasoning(config, request.options),
     maxTokens: resolveGenerationMaxTokens(config, request.options),
   };
+  if (openAiCodexAccountId) resolved.openAiCodexAccountId = openAiCodexAccountId;
+  return resolved;
 }
 
 export function resolveGenerationTimeoutMs(
   config: AiConfigResult,
   options?: Pick<AiTextGenerateOptions, "timeoutMs">,
 ): number {
+  // SAFETY: The persisted AI config may include the optional generation timeout field.
   const timeoutMs = normalizePositiveNumber(options?.timeoutMs)
     ?? (config as Partial<AiConfigResult>).generationTimeoutMs;
-  return typeof timeoutMs === "number" && Number.isFinite(timeoutMs) && timeoutMs > 0
-    ? timeoutMs
-    : DEFAULT_GENERATION_TIMEOUT_MS;
+  return normalizePositiveNumber(timeoutMs) ?? DEFAULT_GENERATION_TIMEOUT_MS;
 }
 
 function resolveGenerationReasoning(
@@ -467,9 +482,10 @@ function resolveGenerationMaxTokens(
   return maxTokens ? Math.min(config.maxTokens, Math.floor(maxTokens)) : config.maxTokens;
 }
 
-function normalizePositiveNumber(value: unknown): number | null {
-  return typeof value === "number" && Number.isFinite(value) && value > 0
-    ? value
+function normalizePositiveNumber(value: number | null | undefined): number | null {
+  const parsed = z.number().safeParse(value);
+  return parsed.success && Number.isFinite(parsed.data) && parsed.data > 0
+    ? parsed.data
     : null;
 }
 
@@ -481,10 +497,12 @@ function generationTimeoutMessage(timeoutMs: number): string {
   return `Model generation timed out after ${timeoutMs}ms`;
 }
 
+type GenerationAbort = { signal: AbortSignal; clear: () => void };
+
 function createGenerationAbort(
   callerSignal: AbortSignal | undefined,
   timeoutMs: number,
-): { signal: AbortSignal; clear: () => void } {
+): GenerationAbort {
   const timeoutController = new AbortController();
   const timeout = setTimeout(() => {
     timeoutController.abort(new Error(generationTimeoutMessage(timeoutMs)));

@@ -291,7 +291,12 @@ async function routeAdapterServiceFrame(
           : null;
       }
     }
-    const kernel = await getKernelByInstallationId(bindings.KERNEL, installationId);
+    const kernelStub: unknown = await getKernelByInstallationId(bindings.KERNEL, installationId);
+    // SAFETY: this namespace is generated from Kernel; the narrow view avoids
+    // recursively expanding every unrelated RPC method in Cloudflare's stub type.
+    const kernel = kernelStub as {
+      serviceFrame(frame: Frame): Promise<Frame | null>;
+    };
     return await kernel.serviceFrame(frame);
   } catch (error) {
     if (body && !body.stream.locked) {

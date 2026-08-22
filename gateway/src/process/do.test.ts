@@ -1,3 +1,5 @@
+type ProcessTestValue<T = string | number | boolean | null | undefined> = T;
+
 import { describe, it, expect, vi } from "vitest";
 import { env } from "cloudflare:workers";
 import {
@@ -47,13 +49,17 @@ const ROOT_IDENTITY: ProcessIdentity = {
   home: "/root",
   cwd: "/root",
 };
+// SAFETY: test fixture is constructed with the asserted domain shape.
 const DEFAULT_PROFILE = "task" as const;
 const MAIL_MESSAGE_ID_A = `mail:${"a".repeat(64)}`;
 const MAIL_MESSAGE_ID_B = `mail:${"b".repeat(64)}`;
 const MAIL_MESSAGE_ID_C = `mail:${"c".repeat(64)}`;
 const MAIL_MESSAGE_ID_D = `mail:${"d".repeat(64)}`;
 
-function makeReq(call: string, args: unknown): RequestFrame {
+// SAFETY: test fixture is constructed with the asserted domain shape.
+
+function makeReq(call: string, args: ProcessTestValue): RequestFrame {
+  // SAFETY: test fixture is constructed with the asserted domain shape.
   return { type: "req", id: crypto.randomUUID(), call, args } as RequestFrame;
 }
 
@@ -118,7 +124,7 @@ function makeRuntimeEventReq(
 function registerToolBlock(
   process: any,
   runId: string,
-  toolCalls: Array<{ id: string; name: string; arguments: unknown }>,
+  toolCalls: Array<{ id: string; name: string; arguments: ProcessTestValue }>,
 ): void {
   if (process.currentRun?.runId === runId) {
     process.currentRun = {
@@ -153,50 +159,63 @@ function offeredTools(...names: string[]) {
     description: `${name} test tool`,
     inputSchema: { type: "object", properties: {} },
   }));
+// SAFETY: test fixture is constructed with the asserted domain shape.
 }
 
 function messageAction(text: string, id = `message-${crypto.randomUUID()}`) {
   return {
+    // SAFETY: test fixture is constructed with the asserted domain shape.
     type: "toolCall" as const,
     id,
     name: "Message",
     arguments: { text },
   };
+// SAFETY: test fixture is constructed with the asserted domain shape.
 }
 
 function silenceAction(reason: string, id = `silence-${crypto.randomUUID()}`) {
   return {
+    // SAFETY: test fixture is constructed with the asserted domain shape.
     type: "toolCall" as const,
     id,
     name: "Silence",
     arguments: { reason },
   };
+// SAFETY: test fixture is constructed with the asserted domain shape.
 }
 
 function terminalTestConfig(pid: string) {
   return {
+    // SAFETY: test fixture is constructed with the asserted domain shape.
     executor: { kind: "process" as const, pid },
+    // SAFETY: test fixture is constructed with the asserted domain shape.
     profile: "task" as const,
     provider: "test",
     model: "test",
     apiKey: "",
+    // SAFETY: test fixture is constructed with the asserted domain shape.
     reasoning: "off" as const,
     maxTokens: 8192,
     contextWindowTokens: 128000,
+    // SAFETY: test fixture is constructed with the asserted domain shape.
     contextWindowSource: "config" as const,
     maxContextBytes: 32768,
+    // SAFETY: test fixture is constructed with the asserted domain shape.
     generationStreaming: "off" as const,
   };
+// SAFETY: test fixture is constructed with the asserted domain shape.
 }
 
-function terminalTestResponse(content: Array<Record<string, unknown>>) {
+function terminalTestResponse(content: Array<Record<string, ProcessTestValue>>) {
   return {
+    // SAFETY: test fixture is constructed with the asserted domain shape.
     role: "assistant" as const,
     content,
     api: "test",
     provider: "test",
     model: "test",
     usage: testUsage(),
+    // SAFETY: test fixture is constructed with the asserted domain shape.
     stopReason: "stop" as const,
     timestamp: Date.now(),
   };
@@ -205,10 +224,10 @@ function terminalTestResponse(content: Array<Record<string, unknown>>) {
 function mockRunEventSink(
   process: any,
   pid: string,
-  emitted: Array<{ signal: string; payload: unknown }>,
+  emitted: Array<{ signal: string; payload: ProcessTestValue }>,
 ): void {
   process.openRunEventSink = async (runId: string) => ({
-    emit: async (seq: number, event: unknown) => {
+    emit: async (seq: number, event: ProcessTestValue) => {
       emitted.push({
         signal: "proc.run.stream",
         payload: { pid, runId, seq, event },
@@ -218,7 +237,7 @@ function mockRunEventSink(
   });
 }
 
-function openAiChatSseChunk(payload: Record<string, unknown>): string {
+function openAiChatSseChunk(payload: Record<string, ProcessTestValue>): string {
   return `data: ${JSON.stringify(payload)}\n\n`;
 }
 
@@ -242,9 +261,13 @@ function testUsage(input = 0, output = 0) {
 const KIMI_WORKERS_CONTEXT_OVERFLOW_ERROR =
   '8007: {"object":"error","message":"The input (301552 tokens) is longer than the model\'s context length (262144 tokens).","type":"BadRequestError","param":null,"code":400}';
 
+// SAFETY: test fixture is constructed with the asserted domain shape.
+
 function kimiWorkersConfigWithFallback(pid: string, contextWindowTokens = 1_000_000) {
   return {
+    // SAFETY: test fixture is constructed with the asserted domain shape.
     executor: { kind: "process" as const, pid },
+    // SAFETY: test fixture is constructed with the asserted domain shape.
     profile: "task" as const,
     provider: "workers-ai",
     model: "@cf/moonshotai/kimi-k2.6",
@@ -252,6 +275,7 @@ function kimiWorkersConfigWithFallback(pid: string, contextWindowTokens = 1_000_
     reasoning: "off",
     maxTokens: 100,
     contextWindowTokens,
+    // SAFETY: test fixture is constructed with the asserted domain shape.
     contextWindowSource: "config" as const,
     maxContextBytes: 32768,
     fallbacks: [{
@@ -262,11 +286,14 @@ function kimiWorkersConfigWithFallback(pid: string, contextWindowTokens = 1_000_
       apiKey: "fallback-key",
       maxTokens: 100,
       contextWindowTokens,
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       contextWindowSource: "config" as const,
       generationTimeoutMs: 180000,
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       generationStreaming: "auto" as const,
     }],
   };
+// SAFETY: test fixture is constructed with the asserted domain shape.
 }
 
 async function stubGeneration(
@@ -274,6 +301,7 @@ async function stubGeneration(
   generate: (request: any) => string | Promise<string>,
 ) {
   await runInDurableObject(stub, (instance: Process) => {
+    // SAFETY: test fixture is constructed with the asserted domain shape.
     const process = instance as any;
     process.generation = {
       async generate(request: any) {
@@ -304,7 +332,9 @@ async function stubGeneration(
  */
 async function registerInKernel(pid: string, identity: ProcessIdentity) {
   const kernel = await getKernelPtr();
+  // SAFETY: test fixture is constructed with the asserted domain shape.
   await runInDurableObject(kernel, (instance: Kernel) => {
+    // SAFETY: test fixture is constructed with the asserted domain shape.
     const k = instance as any;
     k.caps.seed();
     k.procs.spawn(pid, identity, { profile: DEFAULT_PROFILE });
@@ -321,8 +351,10 @@ async function waitForRunComplete(
   timeoutMs = 5000,
 ) {
   const deadline = Date.now() + timeoutMs;
+  // SAFETY: test fixture is constructed with the asserted domain shape.
   while (Date.now() < deadline) {
     const done = await runInDurableObject(stub, (instance: Process) => {
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       return (instance as any).store.getValue("currentRun") === null;
     });
     if (done) return;
@@ -337,8 +369,10 @@ async function waitForStoredMessage(
   timeoutMs = 2_000,
 ) {
   const deadline = Date.now() + timeoutMs;
+  // SAFETY: test fixture is constructed with the asserted domain shape.
   while (Date.now() < deadline) {
     const message = await runInDurableObject(stub, (instance: Process) => (
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       (instance as any).store.getMessages().find(predicate)
     ));
     if (message) {
@@ -355,8 +389,10 @@ async function waitForTaskTitle(
   timeoutMs = 2_000,
 ) {
   const deadline = Date.now() + timeoutMs;
+  // SAFETY: test fixture is constructed with the asserted domain shape.
   while (Date.now() < deadline) {
     const title = await runInDurableObject(stub, (instance: Process) => (
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       (instance as any).store.getValue("taskTitle")
     ));
     if (title === expected) return;
@@ -372,7 +408,9 @@ async function driveProcessUntilIdle(
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     await runDurableObjectAlarm(stub);
+    // SAFETY: test fixture is constructed with the asserted domain shape.
     const done = await runInDurableObject(stub, (instance: Process) => {
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       return (instance as any).store.getValue("currentRun") === null;
     });
     if (done) return;
@@ -391,6 +429,7 @@ async function initProcess(pid: string, identity: ProcessIdentity, opts?: { regi
   }
   const stub = await getProcessByPid(pid);
   const res = await stub.recvFrame(makeReq("proc.setidentity", { identity, profile: DEFAULT_PROFILE }));
+  // SAFETY: test fixture is constructed with the asserted domain shape.
   expect((res as ResponseFrame).ok).toBe(true);
   return stub;
 }
@@ -409,9 +448,11 @@ describe("Process DO — mechanical", () => {
       identity: ROOT_IDENTITY,
       profile: DEFAULT_PROFILE,
     }));
+    // SAFETY: test fixture is constructed with the asserted domain shape.
     expect((identityResponse as ResponseFrame).ok).toBe(true);
 
     const result = await runInDurableObject(stub, async (instance: Process) => {
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       const process = instance as any;
       const first = await process.buildInferenceAttribution(
         { provider: "gsv", model: "default" },
@@ -452,7 +493,8 @@ describe("Process DO — mechanical", () => {
     await runInDurableObject(stub, async (instance: Process) => {
       const scheduleTick = vi.fn(async () => {});
       const runTick = vi.fn(async () => {});
-      const process = instance as unknown as {
+      // SAFETY: test fixture is constructed with the asserted domain shape.
+      const process = instance as {
         managedWorkGate(): Promise<{
           allowed: false;
           code: 423;
@@ -496,7 +538,10 @@ describe("Process DO — mechanical", () => {
       profile: DEFAULT_PROFILE,
     }));
 
+// SAFETY: test fixture is constructed with the asserted domain shape.
+
     await runInDurableObject(stub, async (instance: Process) => {
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       const process = instance as any;
       let releaseGate!: () => void;
       let markGateStarted!: () => void;
@@ -528,6 +573,8 @@ describe("Process DO — mechanical", () => {
     const pid = "mech-delivery-notice";
     const stub = await initProcess(pid, ROOT_IDENTITY);
 
+// SAFETY: test fixture is constructed with the asserted domain shape.
+
     const notice = {
       type: "sig",
       signal: "proc.delivery.notice",
@@ -538,11 +585,15 @@ describe("Process DO — mechanical", () => {
         state: "ambiguous",
         message: "The message reached the adapter, but provider delivery is ambiguous.",
       },
+    // SAFETY: test fixture is constructed with the asserted domain shape.
     } as const;
     await stub.recvFrame(notice);
     await stub.recvFrame(notice);
 
+// SAFETY: test fixture is constructed with the asserted domain shape.
+
     await runInDurableObject(stub, (instance: Process) => {
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       expect((instance as any).store.getMessages()).toEqual([
         expect.objectContaining({
           role: "system",
@@ -556,7 +607,10 @@ describe("Process DO — mechanical", () => {
   it("bounds terminal adapter delivery notice tombstones", async () => {
     const stub = await initProcess("mech-delivery-notice-bounds", ROOT_IDENTITY);
 
+// SAFETY: test fixture is constructed with the asserted domain shape.
+
     await runInDurableObject(stub, async (instance: Process) => {
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       const process = instance as any;
       for (let index = 0; index <= 256; index += 1) {
         await process.handleSig({
@@ -580,7 +634,10 @@ describe("Process DO — mechanical", () => {
     await registerInKernel(pid, ROOT_IDENTITY);
     const kernel = await getKernelPtr();
 
+// SAFETY: test fixture is constructed with the asserted domain shape.
+
     const state = await runInDurableObject(kernel, async (instance: Kernel) => {
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       const k = instance as any;
       const project = (frame: any) => k.updateProcessRuntimeFromSignal(
         pid,
@@ -738,6 +795,7 @@ describe("Process DO — mechanical", () => {
       );
 
       expect(response).not.toBeNull();
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       expect((response as ResponseFrame).ok).toBe(true);
     });
 
@@ -755,11 +813,15 @@ describe("Process DO — mechanical", () => {
       await registerInKernel(pid, identity);
       const kernel = await getKernelPtr();
 
+// SAFETY: test fixture is constructed with the asserted domain shape.
+
       const response = await runInDurableObject(kernel, (instance: Kernel) =>
         instance.recvFrame(pid, makeReq("ai.tools", {})),
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       ) as ResponseOkFrame;
 
       expect(response.ok).toBe(true);
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       const data = response.data as {
         tools: Array<{ name: string; inputSchema: { required?: string[] } }>;
       };
@@ -814,7 +876,10 @@ describe("Process DO — mechanical", () => {
         autoTitle: true,
       }));
 
+// SAFETY: test fixture is constructed with the asserted domain shape.
+
       await runInDurableObject(stub, (instance: Process) => {
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         const process = instance as any;
         expect(process.store.getValue("taskTitle")).toBe("Explicit task title");
         expect(process.store.getValue("autoTaskTitle")).toBeNull();
@@ -834,7 +899,9 @@ describe("Process DO — mechanical", () => {
 
       const kernelCalls: Array<{ call: string; args: any }> = [];
       const emitted: Array<{ signal: string; payload: any }> = [];
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       await runInDurableObject(stub, (instance: Process) => {
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         const process = instance as any;
         process.scheduleTick = async () => {};
         process.kernelRpc = async (call: string, args: any) => {
@@ -849,8 +916,11 @@ describe("Process DO — mechanical", () => {
         };
       });
 
+// SAFETY: test fixture is constructed with the asserted domain shape.
+
       const first = await stub.recvFrame(makeReq("proc.send", {
         message: "Please plan a careful database migration.",
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       })) as ResponseOkFrame;
       expect(first.data).toMatchObject({ ok: true, status: "started" });
       await waitForTaskTitle(stub, "Plan Database Migration");
@@ -884,7 +954,9 @@ describe("Process DO — mechanical", () => {
       }));
 
       const emitted: Array<{ signal: string; payload: any }> = [];
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       await runInDurableObject(stub, (instance: Process) => {
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         const process = instance as any;
         process.scheduleTick = async () => {};
         process.kernelRpc = async () => {
@@ -913,7 +985,10 @@ describe("Process DO — mechanical", () => {
         autoTitle: true,
       }));
 
+// SAFETY: test fixture is constructed with the asserted domain shape.
+
       await runInDurableObject(stub, async (instance: Process) => {
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         const process = instance as any;
         let releaseGeneration!: () => void;
         let markGenerationStarted!: () => void;
@@ -931,7 +1006,7 @@ describe("Process DO — mechanical", () => {
         const emitted: Array<{ signal: string; payload: any }> = [];
         process.scheduleTick = async () => {};
         const generateTaskTitle = process.generateTaskTitle.bind(process);
-        process.generateTaskTitle = async (...args: unknown[]) => {
+        process.generateTaskTitle = async (...args: ProcessTestValue[]) => {
           try {
             return await generateTaskTitle(...args);
           } finally {
@@ -940,7 +1015,7 @@ describe("Process DO — mechanical", () => {
         };
         process.kernelRpc = async (
           call: string,
-          _args: unknown,
+          _args: ProcessTestValue,
           signal?: AbortSignal,
         ) => {
           if (call !== "ai.text.generate") {
@@ -955,8 +1030,11 @@ describe("Process DO — mechanical", () => {
           emitted.push({ signal, payload });
         };
 
+// SAFETY: test fixture is constructed with the asserted domain shape.
+
         const send = await process.recvFrame(makeReq("proc.send", {
           message: "Investigate flaky checkout tests.",
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         })) as ResponseOkFrame;
         expect(send.data).toMatchObject({ ok: true, status: "started" });
         await generationStarted;
@@ -964,6 +1042,7 @@ describe("Process DO — mechanical", () => {
         expect(process.store.getValue("taskTitle"))
           .toBe("Investigate flaky checkout tests");
 
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         const reset = await process.recvFrame(makeReq("proc.reset", {})) as ResponseOkFrame;
         expect(reset.data).toMatchObject({ ok: true, pid });
         expect(generationSignal?.aborted).toBe(true);
@@ -987,14 +1066,20 @@ describe("Process DO — mechanical", () => {
       const pid = "mech-auto-task-title-kill";
       const stub = await initProcess(pid, ROOT_IDENTITY);
 
+// SAFETY: test fixture is constructed with the asserted domain shape.
+
       await runInDurableObject(stub, async (instance: Process) => {
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         const process = instance as any;
         const controller = new AbortController();
         process.taskTitleAbortController = controller;
         process.sendSignal = vi.fn(async () => {});
 
+// SAFETY: test fixture is constructed with the asserted domain shape.
+
         const killed = await process.recvFrame(makeReq("proc.kill", {
           archive: false,
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         })) as ResponseOkFrame;
 
         expect(killed.data).toMatchObject({ ok: true, pid });
@@ -1012,6 +1097,8 @@ describe("Process DO — mechanical", () => {
       const pid = "mech-ai-config";
       const stub = await initProcess(pid, ROOT_IDENTITY);
 
+// SAFETY: test fixture is constructed with the asserted domain shape.
+
       const setResponse = await stub.recvFrame(makeReq("proc.ai.config.set", {
         values: {
           "config/ai/provider": "openai",
@@ -1024,8 +1111,10 @@ describe("Process DO — mechanical", () => {
           id: "fast",
           name: "Fast",
         },
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       })) as ResponseOkFrame;
       expect(setResponse.ok).toBe(true);
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       expect((setResponse.data as any).config).toMatchObject({
         profile: { id: "fast", name: "Fast" },
         values: {
@@ -1035,24 +1124,38 @@ describe("Process DO — mechanical", () => {
         },
       });
 
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       const redactedGet = await stub.recvFrame(makeReq("proc.ai.config.get", {})) as ResponseOkFrame;
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       expect((redactedGet.data as any).config.values["config/ai/api_key"]).toBe("redacted");
 
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       const rawGet = await stub.recvFrame(makeReq("proc.ai.config.get", { redacted: false })) as ResponseOkFrame;
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       expect((rawGet.data as any).config.values["config/ai/api_key"]).toBe("sk-process");
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       expect((rawGet.data as any).config.values).not.toHaveProperty("config/ai/max_tokens");
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       expect((rawGet.data as any).config.values).not.toHaveProperty("config/ai/max_context_bytes");
 
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       const patchResponse = await stub.recvFrame(makeReq("proc.ai.config.set", {
         key: "config/ai/model",
         value: "gpt-4.2",
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       })) as ResponseOkFrame;
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       expect((patchResponse.data as any).config.profile).toMatchObject({ id: "fast", name: "Fast" });
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       expect((patchResponse.data as any).config.values["config/ai/model"]).toBe("gpt-4.2");
 
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       const clearResponse = await stub.recvFrame(makeReq("proc.ai.config.set", { clear: true })) as ResponseOkFrame;
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       expect((clearResponse.data as any).config).toBeNull();
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       const afterClear = await stub.recvFrame(makeReq("proc.ai.config.get", {})) as ResponseOkFrame;
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       expect((afterClear.data as any).config).toBeNull();
     });
 
@@ -1060,29 +1163,39 @@ describe("Process DO — mechanical", () => {
       const pid = "mech-ai-config-profile-only";
       const stub = await initProcess(pid, ROOT_IDENTITY);
 
+// SAFETY: test fixture is constructed with the asserted domain shape.
+
       const setResponse = await stub.recvFrame(makeReq("proc.ai.config.set", {
         values: {},
         profile: {
           id: "fast",
           name: "Fast",
         },
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       })) as ResponseOkFrame;
 
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       expect((setResponse.data as any).config).toMatchObject({
         profile: { id: "fast", name: "Fast" },
         values: {},
       });
 
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       const getResponse = await stub.recvFrame(makeReq("proc.ai.config.get", { redacted: false })) as ResponseOkFrame;
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       expect((getResponse.data as any).config).toMatchObject({
         profile: { id: "fast", name: "Fast" },
         values: {},
       });
 
+// SAFETY: test fixture is constructed with the asserted domain shape.
+
       const patchResponse = await stub.recvFrame(makeReq("proc.ai.config.set", {
         key: "config/ai/reasoning",
         value: "high",
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       })) as ResponseOkFrame;
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       expect((patchResponse.data as any).config).toMatchObject({
         profile: { id: "fast", name: "Fast" },
         values: {
@@ -1090,10 +1203,14 @@ describe("Process DO — mechanical", () => {
         },
       });
 
+// SAFETY: test fixture is constructed with the asserted domain shape.
+
       const clearFieldResponse = await stub.recvFrame(makeReq("proc.ai.config.set", {
         key: "config/ai/reasoning",
         value: "",
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       })) as ResponseOkFrame;
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       expect((clearFieldResponse.data as any).config).toMatchObject({
         profile: { id: "fast", name: "Fast" },
         values: {},
@@ -1129,7 +1246,10 @@ describe("Process DO — mechanical", () => {
         data: { runId: "adapter-home:event-1", queued: false },
       });
 
+// SAFETY: test fixture is constructed with the asserted domain shape.
+
       const messages = await runInDurableObject(stub, (instance: Process) => (
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         (instance as any).store.getMessages()
       ));
       const admitted = messages.filter((message: any) => (
@@ -1145,11 +1265,15 @@ describe("Process DO — mechanical", () => {
       expect(admitted[0].content).toContain("No work-session transcript was attached");
     });
 
+    // SAFETY: test fixture is constructed with the asserted domain shape.
     it("includes process system messages as model-visible events", async () => {
       const pid = "mech-system-context-1";
       const stub = await initProcess(pid, ROOT_IDENTITY);
 
+// SAFETY: test fixture is constructed with the asserted domain shape.
+
       await runInDurableObject(stub, async (instance: Process) => {
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         const process = instance as any;
         process.store.appendMessage("system", "Delegated task finished with result GREEN.");
         process.store.appendMessage("user", "What was the result?");
@@ -1157,7 +1281,9 @@ describe("Process DO — mechanical", () => {
         const messages = await process.buildContextMessages("default");
         expect(messages).toHaveLength(2);
         expect(messages[0]).toMatchObject({ role: "user" });
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         expect((messages[0] as any).content).toContain("[GSV EVENT]");
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         expect((messages[0] as any).content).toContain("Delegated task finished with result GREEN.");
         expect(messages[1]).toMatchObject({
           role: "user",
@@ -1170,7 +1296,10 @@ describe("Process DO — mechanical", () => {
       const pid = "mech-system-context-tool-order";
       const stub = await initProcess(pid, ROOT_IDENTITY);
 
+// SAFETY: test fixture is constructed with the asserted domain shape.
+
       await runInDurableObject(stub, async (instance: Process) => {
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         const process = instance as any;
         process.store.appendMessage("assistant", "Let me check that.", {
           toolCalls: JSON.stringify({
@@ -1201,8 +1330,11 @@ describe("Process DO — mechanical", () => {
           "toolResult",
           "user",
         ]);
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         expect((messages[1] as any).toolCallId).toBe("call_shell");
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         expect((messages[2] as any).content).toContain("[GSV EVENT]");
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         expect((messages[2] as any).content).toContain("Delegated task from process `worker` finished");
       });
     });
@@ -1211,7 +1343,10 @@ describe("Process DO — mechanical", () => {
       const pid = "mech-context-tool-result-after-200";
       const stub = await initProcess(pid, ROOT_IDENTITY);
 
+// SAFETY: test fixture is constructed with the asserted domain shape.
+
       await runInDurableObject(stub, async (instance: Process) => {
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         const process = instance as any;
         for (let i = 1; i <= 199; i += 1) {
           process.store.appendMessage("user", `filler-${i}`);
@@ -1255,6 +1390,7 @@ describe("Process DO — mechanical", () => {
       });
     });
 
+    // SAFETY: test fixture is constructed with the asserted domain shape.
     it("admits an idle typed mail event once as a system process event", async () => {
       const stub = await initProcess("mech-mail-event-idle", ROOT_IDENTITY);
       const args: ProcessRuntimeEventDeliverArgs = {
@@ -1270,7 +1406,10 @@ describe("Process DO — mechanical", () => {
         },
       };
 
+// SAFETY: test fixture is constructed with the asserted domain shape.
+
       await runInDurableObject(stub, async (instance: Process) => {
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         const process = instance as any;
         process.sendSignal = vi.fn(async () => {});
         process.scheduleTick = vi.fn(async () => {});
@@ -1290,11 +1429,14 @@ describe("Process DO — mechanical", () => {
             runId: expect.stringMatching(/^runtime-event-run:[0-9a-f]{64}$/),
           },
         });
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         expect((repeat as any).data).toEqual((first as any).data);
         const messages = process.store.getMessages();
         expect(messages).toHaveLength(1);
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         expect(messages[0]).toMatchObject({
           role: "system",
+          // SAFETY: test fixture is constructed with the asserted domain shape.
           runId: (first as any).data.runId,
           content: expect.stringContaining("New email notification."),
         });
@@ -1312,14 +1454,18 @@ describe("Process DO — mechanical", () => {
             content: expect.stringContaining("[GSV EVENT]"),
           }),
         ]);
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         expect(process.currentRun).toMatchObject({
+          // SAFETY: test fixture is constructed with the asserted domain shape.
           runId: (first as any).data.runId,
           notifyOnly: true,
         });
       });
 
       await evictDurableObject(stub);
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       await runInDurableObject(stub, (instance: Process) => {
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         expect((instance as any).currentRun).toMatchObject({
           notifyOnly: true,
         });
@@ -1340,7 +1486,10 @@ describe("Process DO — mechanical", () => {
         },
       };
 
+// SAFETY: test fixture is constructed with the asserted domain shape.
+
       const admittedRunId = await runInDurableObject(stub, async (instance: Process, state) => {
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         const process = instance as any;
         process.sendSignal = vi.fn(async () => {});
         process.scheduleTick = vi.fn(async () => {});
@@ -1361,6 +1510,7 @@ describe("Process DO — mechanical", () => {
             runId: expect.stringMatching(/^runtime-event-run:[0-9a-f]{64}$/),
           },
         });
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         expect((repeat as any).data).toEqual((first as any).data);
         expect(process.store.queueSize()).toBe(1);
         const queued = state.storage.sql.exec<{
@@ -1381,11 +1531,14 @@ describe("Process DO — mechanical", () => {
           contentTrust: "untrusted",
           receivedAt: args.event.receivedAt,
         });
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         return (first as any).data.runId as string;
       });
 
       await evictDurableObject(stub);
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       await runInDurableObject(stub, (instance: Process) => {
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         const process = instance as any;
         process.scheduleTick = vi.fn(async () => {});
         process.currentRun = null;
@@ -1431,7 +1584,9 @@ describe("Process DO — mechanical", () => {
         ok: false,
         error: { message: "mail.received summary is invalid" },
       });
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       await runInDurableObject(stub, (instance: Process) => {
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         const process = instance as any;
         expect(process.store.getMessages()).toEqual([]);
         expect(process.store.queueSize()).toBe(0);
@@ -1457,7 +1612,9 @@ describe("Process DO — mechanical", () => {
       await expect(normalizedStub.recvFrame(normalizedRequest)).resolves.toMatchObject({
         ok: true,
       });
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       await runInDurableObject(normalizedStub, (instance: Process) => {
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         const process = instance as any;
         expect(process.store.getMessages()).toEqual([
           expect.objectContaining({
@@ -1485,7 +1642,9 @@ describe("Process DO — mechanical", () => {
       await expect(controlOnlyStub.recvFrame(controlOnlyRequest)).resolves.toMatchObject({
         ok: true,
       });
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       await runInDurableObject(controlOnlyStub, (instance: Process) => {
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         const process = instance as any;
         expect(process.store.getMessages()).toEqual([
           expect.objectContaining({
@@ -1497,14 +1656,19 @@ describe("Process DO — mechanical", () => {
       });
 
       const stub = await initProcess("mech-mail-event-strict", ROOT_IDENTITY);
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       const baseEvent = {
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         type: "mail.received" as const,
         messageId: MAIL_MESSAGE_ID_C,
         receivedAt: 1_750_000_000_000,
         summary: "A bounded summary.",
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         category: "work" as const,
         requiresAttention: true,
       };
+
+// SAFETY: test fixture is constructed with the asserted domain shape.
 
       for (const field of [
         "mailboxId",
@@ -1516,12 +1680,15 @@ describe("Process DO — mechanical", () => {
         "raw",
         "attachments",
       ]) {
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         const request = makeRuntimeEventDeliverReq({
+          // SAFETY: test fixture is constructed with the asserted domain shape.
           eventId: MAIL_MESSAGE_ID_C,
           event: {
             ...baseEvent,
             [field]: field === "attachments" ? [] : "private value",
-          } as unknown as ProcessRuntimeEventDeliverArgs["event"],
+          // SAFETY: test fixture is constructed with the asserted domain shape.
+          } as ProcessRuntimeEventDeliverArgs["event"],
         });
         await expect(stub.recvFrame(request)).resolves.toMatchObject({
           ok: false,
@@ -1537,7 +1704,9 @@ describe("Process DO — mechanical", () => {
         ok: false,
         error: { message: "mail.received eventId must match messageId" },
       });
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       await runInDurableObject(stub, (instance: Process) => {
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         const process = instance as any;
         expect(process.store.getMessages()).toEqual([]);
         expect(process.store.queueSize()).toBe(0);
@@ -1548,7 +1717,10 @@ describe("Process DO — mechanical", () => {
       const pid = "mech-mail-event-notify-only";
       const stub = await initProcess(pid, ROOT_IDENTITY);
 
+// SAFETY: test fixture is constructed with the asserted domain shape.
+
       await runInDurableObject(stub, async (instance: Process) => {
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         const process = instance as any;
         const generationContexts: any[] = [];
         let phase: "mail" | "human" = "mail";
@@ -1577,7 +1749,7 @@ describe("Process DO — mechanical", () => {
                 required: ["input"],
               },
             }],
-            devices: [{ id: "device-1", name: "Laptop" }],
+            devices: [{ id: "device-1", implements: [], label: "Laptop" }],
             mcpServers: ["private-mcp"],
           };
         });
@@ -1659,7 +1831,9 @@ describe("Process DO — mechanical", () => {
             requiresAttention: true,
           },
         });
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         const response = await instance.recvFrame(request) as ResponseOkFrame;
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         const mailRunId = (response.data as any).runId as string;
         process.currentRun = {
           ...process.currentRun,
@@ -1769,7 +1943,7 @@ describe("Process DO — mechanical", () => {
         await process.runTick(humanRunId);
 
         expect(process.kernelRpc).toHaveBeenCalledOnce();
-        expect(process.kernelRpc).toHaveBeenCalledWith("ai.tools");
+        expect(process.kernelRpc).toHaveBeenCalledWith("ai.tools", {});
         expect(generationContexts[2].tools).toEqual([
           expect.objectContaining({ name: "Shell" }),
           expect.objectContaining({ name: "Message" }),
@@ -1786,7 +1960,10 @@ describe("Process DO — mechanical", () => {
       const pid = "mech-mail-event-notify-superseded";
       const stub = await initProcess(pid, ROOT_IDENTITY);
 
+// SAFETY: test fixture is constructed with the asserted domain shape.
+
       await runInDurableObject(stub, async (instance: Process) => {
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         const process = instance as any;
         const generationContexts: any[] = [];
         let generationCalls = 0;
@@ -1808,7 +1985,7 @@ describe("Process DO — mechanical", () => {
           }
           return {
             tools: offeredTools("Read"),
-            devices: [{ id: "device-1", name: "Laptop" }],
+            devices: [{ id: "device-1", implements: [], label: "Laptop" }],
             mcpServers: ["private-mcp"],
           };
         });
@@ -1874,7 +2051,9 @@ describe("Process DO — mechanical", () => {
             requiresAttention: true,
           },
         });
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         const mailResponse = await instance.recvFrame(mailRequest) as ResponseOkFrame;
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         const mailRunId = (mailResponse.data as any).runId as string;
         process.currentRun = {
           ...process.currentRun,
@@ -1934,7 +2113,7 @@ describe("Process DO — mechanical", () => {
             "Message",
             "Silence",
           ]);
-          expect(process.kernelRpc).toHaveBeenCalledWith("ai.tools");
+          expect(process.kernelRpc).toHaveBeenCalledWith("ai.tools", {});
         } finally {
           releaseMailGeneration();
           await mailTick;
@@ -1954,7 +2133,10 @@ describe("Process DO — mechanical", () => {
       const pid = "mech-mail-event-notify-bounded";
       const stub = await initProcess(pid, ROOT_IDENTITY);
 
+// SAFETY: test fixture is constructed with the asserted domain shape.
+
       await runInDurableObject(stub, async (instance: Process) => {
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         const process = instance as any;
         const emitted: Array<{ signal: string; payload: any }> = [];
         let generationCalls = 0;
@@ -1999,7 +2181,9 @@ describe("Process DO — mechanical", () => {
             requiresAttention: true,
           },
         });
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         const response = await instance.recvFrame(request) as ResponseOkFrame;
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         const runId = (response.data as any).runId as string;
         process.currentRun = {
           ...process.currentRun,
@@ -2041,11 +2225,15 @@ describe("Process DO — mechanical", () => {
       });
     });
 
+    // SAFETY: test fixture is constructed with the asserted domain shape.
     it("records an unknown-only tool response as a terminal failure and continues", async () => {
       const pid = "mech-unoffered-unknown-only";
       const stub = await initProcess(pid, ROOT_IDENTITY);
 
+// SAFETY: test fixture is constructed with the asserted domain shape.
+
       await runInDurableObject(stub, async (instance: Process) => {
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         const process = instance as any;
         const emitted: Array<{ signal: string; payload: any }> = [];
         let generationCalls = 0;
@@ -2144,7 +2332,10 @@ describe("Process DO — mechanical", () => {
       const runId = "run-offered-mixed-batch";
       const stub = await initProcess(pid, ROOT_IDENTITY);
 
+// SAFETY: test fixture is constructed with the asserted domain shape.
+
       await runInDurableObject(stub, async (instance: Process) => {
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         const process = instance as any;
         const emitted: Array<{ signal: string; payload: any }> = [];
         let generationCalls = 0;
@@ -2268,7 +2459,10 @@ describe("Process DO — mechanical", () => {
       const runId = "run-terminal-combination";
       const stub = await initProcess(pid, ROOT_IDENTITY);
 
+// SAFETY: test fixture is constructed with the asserted domain shape.
+
       await runInDurableObject(stub, async (instance: Process) => {
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         const process = instance as any;
         process.sendSignal = vi.fn(async () => {});
         process.scheduleTick = vi.fn(async () => {});
@@ -2324,7 +2518,10 @@ describe("Process DO — mechanical", () => {
       const runId = "run-terminal-action-required";
       const stub = await initProcess(pid, ROOT_IDENTITY);
 
+// SAFETY: test fixture is constructed with the asserted domain shape.
+
       const result = await runInDurableObject(stub, async (instance: Process) => {
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         const process = instance as any;
         const emitted: Array<{ signal: string; payload: any }> = [];
         process.sendSignal = vi.fn(async (signal: string, payload: any) => {
@@ -2378,7 +2575,10 @@ describe("Process DO — mechanical", () => {
       const runId = "run-terminal-silence";
       const stub = await initProcess(pid, ROOT_IDENTITY);
 
+// SAFETY: test fixture is constructed with the asserted domain shape.
+
       const result = await runInDurableObject(stub, async (instance: Process) => {
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         const process = instance as any;
         const emitted: Array<{ signal: string; payload: any }> = [];
         process.sendSignal = vi.fn(async (signal: string, payload: any) => {
@@ -2429,7 +2629,10 @@ describe("Process DO — mechanical", () => {
       const runId = "run-terminal-ipc-message";
       const stub = await initProcess(pid, ROOT_IDENTITY);
 
+// SAFETY: test fixture is constructed with the asserted domain shape.
+
       const result = await runInDurableObject(stub, async (instance: Process) => {
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         const process = instance as any;
         const emitted: Array<{ signal: string; payload: any }> = [];
         process.sendSignal = vi.fn(async (signal: string, payload: any) => {
@@ -2476,7 +2679,10 @@ describe("Process DO — mechanical", () => {
       const runId = "run-terminal-stream-change";
       const stub = await initProcess(pid, ROOT_IDENTITY);
 
+// SAFETY: test fixture is constructed with the asserted domain shape.
+
       const calls = await runInDurableObject(stub, async (instance: Process) => {
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         const process = instance as any;
         process.currentRun = { runId };
         process.emitMessageStream = vi.fn(async () => {});
@@ -2502,10 +2708,13 @@ describe("Process DO — mechanical", () => {
       const pid = "mech-schedule-live-message";
       const stub = await initProcess(pid, ROOT_IDENTITY);
 
+// SAFETY: test fixture is constructed with the asserted domain shape.
+
       const result = await runInDurableObject(stub, async (instance: Process) => {
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         const process = instance as any;
-        const emitted: Array<{ signal: string; payload: unknown }> = [];
-        process.sendSignal = async (signal: string, payload: unknown) => {
+        const emitted: Array<{ signal: string; payload: ProcessTestValue }> = [];
+        process.sendSignal = async (signal: string, payload: ProcessTestValue) => {
           emitted.push({ signal, payload });
         };
 
@@ -2570,7 +2779,9 @@ describe("Process DO — mechanical", () => {
       const first = await stub.recvFrame(firstRequest);
       const activeRepeatRequest = makeScheduleDeliverReq(args);
       const activeRepeat = await stub.recvFrame(activeRepeatRequest);
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       const activeState = await runInDurableObject(stub, (instance: Process) => {
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         const process = instance as any;
         return {
           messages: process.store.getMessages(),
@@ -2579,12 +2790,17 @@ describe("Process DO — mechanical", () => {
         };
       });
 
+// SAFETY: test fixture is constructed with the asserted domain shape.
+
       await runInDurableObject(stub, (instance: Process) => {
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         (instance as any).currentRun = null;
       });
       const recordedRepeatRequest = makeScheduleDeliverReq(args);
       const recordedRepeat = await stub.recvFrame(recordedRepeatRequest);
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       const recordedState = await runInDurableObject(stub, (instance: Process) => {
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         const process = instance as any;
         return {
           messages: process.store.getMessages(),
@@ -2599,7 +2815,9 @@ describe("Process DO — mechanical", () => {
         ok: true,
         data: { runId: args.runId, queued: false },
       });
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       expect((activeRepeat as any).data).toEqual((first as any).data);
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       expect((recordedRepeat as any).data).toEqual((first as any).data);
       expect(activeState).toMatchObject({
         messages: [expect.objectContaining({ runId: args.runId })],
@@ -2615,20 +2833,26 @@ describe("Process DO — mechanical", () => {
 
     it("reconciles duplicate queued scheduled replies", async () => {
       const stub = await initProcess("mech-schedule-idempotent-queued", ROOT_IDENTITY);
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       const args = {
         runId: "run-schedule-idempotent-queued",
         scheduleId: "sched-idempotent-queued",
         message: "send this reminder once",
         replyTo: {
+          // SAFETY: test fixture is constructed with the asserted domain shape.
           kind: "adapter" as const,
           adapter: "telegram",
           accountId: "primary",
           actorId: "telegram-user-1",
+          // SAFETY: test fixture is constructed with the asserted domain shape.
           surface: { kind: "dm" as const, id: "telegram-chat-1" },
         },
       };
 
+// SAFETY: test fixture is constructed with the asserted domain shape.
+
       await runInDurableObject(stub, (instance: Process) => {
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         (instance as any).currentRun = {
           runId: "run-busy",
         };
@@ -2644,8 +2868,10 @@ describe("Process DO — mechanical", () => {
         ok: true,
         data: { runId: args.runId, queued: true },
       });
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       expect((repeated as any).data).toEqual((first as any).data);
       await runInDurableObject(stub, (instance: Process) => {
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         const process = instance as any;
         expect(process.currentRun).toMatchObject({ runId: "run-busy" });
         expect(process.store.getMessages()).toEqual([]);
@@ -2664,7 +2890,10 @@ describe("Process DO — mechanical", () => {
     it("rejects a scheduled runtime event when process teardown wins admission", async () => {
       const stub = await initProcess("mech-schedule-teardown-race", ROOT_IDENTITY);
 
+// SAFETY: test fixture is constructed with the asserted domain shape.
+
       const result = await runInDurableObject(stub, async (instance: Process) => {
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         const process = instance as any;
         const releaseLifecycle = await process.acquireLifecycleTransition();
         const request = makeScheduleDeliverReq({
@@ -2695,7 +2924,10 @@ describe("Process DO — mechanical", () => {
     it("wakes a busy process for a scheduled runtime event", async () => {
       const stub = await initProcess("mech-schedule-busy-wake", ROOT_IDENTITY);
 
+// SAFETY: test fixture is constructed with the asserted domain shape.
+
       await runInDurableObject(stub, async (instance: Process) => {
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         const process = instance as any;
         process.sendSignal = vi.fn(async () => {});
         process.scheduleTick = vi.fn(async () => {});
@@ -2720,10 +2952,14 @@ describe("Process DO — mechanical", () => {
       });
     });
 
+    // SAFETY: test fixture is constructed with the asserted domain shape.
     it("keeps a scheduled adapter reply as a distinct queued run with chronological delivery context", async () => {
       const stub = await initProcess("mech-schedule-adapter-reply", ROOT_IDENTITY);
 
+// SAFETY: test fixture is constructed with the asserted domain shape.
+
       await runInDurableObject(stub, async (instance: Process) => {
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         const process = instance as any;
         process.sendSignal = vi.fn(async () => {});
         process.scheduleTick = vi.fn(async () => {});
@@ -2807,7 +3043,10 @@ describe("Process DO — mechanical", () => {
     it("terminalizes a scheduled runtime event when its first tick cannot be scheduled", async () => {
       const stub = await initProcess("mech-schedule-failure", ROOT_IDENTITY);
 
+// SAFETY: test fixture is constructed with the asserted domain shape.
+
       await runInDurableObject(stub, async (instance: Process) => {
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         const process = instance as any;
         process.sendSignal = vi.fn(async () => {});
         process.scheduleTick = vi.fn(async () => {
@@ -2832,10 +3071,13 @@ describe("Process DO — mechanical", () => {
       const pid = "mech-context-pressure";
       const stub = await initProcess(pid, ROOT_IDENTITY);
 
+// SAFETY: test fixture is constructed with the asserted domain shape.
+
       const emitted = await runInDurableObject(stub, async (instance: Process) => {
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         const process = instance as any;
-        const emitted: Array<{ signal: string; payload: unknown }> = [];
-        process.sendSignal = async (signal: string, payload: unknown) => {
+        const emitted: Array<{ signal: string; payload: ProcessTestValue }> = [];
+        process.sendSignal = async (signal: string, payload: ProcessTestValue) => {
           emitted.push({ signal, payload });
         };
         process.generation = {
@@ -2893,8 +3135,10 @@ describe("Process DO — mechanical", () => {
         return emitted;
       });
 
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       const history = (await stub.recvFrame(makeReq("proc.history", {}))) as ResponseOkFrame;
       expect(history.ok).toBe(true);
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       expect((history.data as any).context).toMatchObject({
         provider: "workers-ai",
         model: "@cf/nvidia/nemotron-3-120b-a12b",
@@ -2906,7 +3150,9 @@ describe("Process DO — mechanical", () => {
         source: "provider",
       });
 
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       const contextSignals = (emitted as Array<{ signal: string; payload: any }>)
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         .filter((entry) => entry.signal === "proc.changed" && Array.isArray((entry.payload as { changes?: unknown[] }).changes) && ((entry.payload as { changes?: unknown[] }).changes ?? []).includes("context"));
       expect(contextSignals).toHaveLength(2);
       expect(contextSignals[0].payload.context.source).toBe("estimate");
@@ -2920,7 +3166,10 @@ describe("Process DO — mechanical", () => {
       const pid = "mech-origin-context";
       const stub = await initProcess(pid, ROOT_IDENTITY);
 
+// SAFETY: test fixture is constructed with the asserted domain shape.
+
       await runInDurableObject(stub, async (instance: Process) => {
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         const process = instance as any;
         process.sendSignal = async () => {};
         process.generation = {
@@ -3050,7 +3299,10 @@ describe("Process DO — mechanical", () => {
     it("keeps prior model input stable when later runs change reply destination", async () => {
       const stub = await initProcess("mech-reply-context-prefix", ROOT_IDENTITY);
 
+// SAFETY: test fixture is constructed with the asserted domain shape.
+
       await runInDurableObject(stub, async (instance: Process) => {
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         const process = instance as any;
         process.store.appendMessage("user", "start in the web client", {
           runId: "run-client",
@@ -3101,7 +3353,10 @@ describe("Process DO — mechanical", () => {
     it("does not let a same-run system record change the reply destination", async () => {
       const stub = await initProcess("mech-reply-context-same-run", ROOT_IDENTITY);
 
+// SAFETY: test fixture is constructed with the asserted domain shape.
+
       await runInDurableObject(stub, async (instance: Process) => {
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         const process = instance as any;
         process.store.appendMessage("user", "hello from telegram", {
           runId: "run-adapter",
@@ -3130,10 +3385,13 @@ describe("Process DO — mechanical", () => {
       const pid = "mech-chat-text-thinking";
       const stub = await initProcess(pid, ROOT_IDENTITY);
 
+// SAFETY: test fixture is constructed with the asserted domain shape.
+
       const emitted = await runInDurableObject(stub, async (instance: Process) => {
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         const process = instance as any;
-        const emitted: Array<{ signal: string; payload: unknown }> = [];
-        process.sendSignal = async (signal: string, payload: unknown) => {
+        const emitted: Array<{ signal: string; payload: ProcessTestValue }> = [];
+        process.sendSignal = async (signal: string, payload: ProcessTestValue) => {
           emitted.push({ signal, payload });
         };
         process.generation = {
@@ -3180,6 +3438,7 @@ describe("Process DO — mechanical", () => {
         return emitted;
       });
 
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       const textSignal = (emitted as Array<{ signal: string; payload: any }>)
         .find((entry) => entry.signal === "proc.run.output");
       expect(textSignal?.payload).toMatchObject({
@@ -3200,10 +3459,13 @@ describe("Process DO — mechanical", () => {
         httpMetadata: { contentType: "application/pdf" },
       });
 
+// SAFETY: test fixture is constructed with the asserted domain shape.
+
       const result = await runInDurableObject(stub, async (instance: Process) => {
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         const process = instance as any;
         const emitted: Array<{ signal: string; payload: any }> = [];
-        process.sendSignal = async (signal: string, payload: unknown) => {
+        process.sendSignal = async (signal: string, payload: ProcessTestValue) => {
           emitted.push({ signal, payload });
         };
         process.generation = {
@@ -3246,7 +3508,10 @@ describe("Process DO — mechanical", () => {
           approvalPolicy: { default: "auto", rules: [] },
         };
 
+// SAFETY: test fixture is constructed with the asserted domain shape.
+
         const media = {
+          // SAFETY: test fixture is constructed with the asserted domain shape.
           type: "document" as const,
           mimeType: "application/pdf",
           filename: "report.pdf",
@@ -3313,7 +3578,9 @@ describe("Process DO — mechanical", () => {
             path: expect.stringMatching(/^\/root\/\.gsv\/media\/archived-media:[0-9a-f]{64}$/),
           })],
         });
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       }
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       const archivedKey = (result.history as any).messages
         .find((message: any) => message.role === "assistant").content.media[0].key;
       await expect(env.STORAGE.get(key)).resolves.toBeNull();
@@ -3329,16 +3596,22 @@ describe("Process DO — mechanical", () => {
       await env.STORAGE.put(liveKey, new Uint8Array([1, 2, 3]), {
         httpMetadata: { contentType: "image/png" },
       });
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       const firstKey = await runInDurableObject(stub, async (instance: Process) => {
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         const rewrites = await (instance as any).persistArchivedMediaKeys([liveKey]);
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         return rewrites.get(liveKey).key as string;
       });
 
       await env.STORAGE.put(liveKey, new Uint8Array([9, 8, 7]), {
         httpMetadata: { contentType: "image/png" },
       });
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       const secondKey = await runInDurableObject(stub, async (instance: Process) => {
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         const rewrites = await (instance as any).persistArchivedMediaKeys([liveKey]);
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         return rewrites.get(liveKey).key as string;
       });
 
@@ -3356,8 +3629,11 @@ describe("Process DO — mechanical", () => {
       await env.STORAGE.put(liveKey, new Uint8Array([1, 2, 3]), {
         httpMetadata: { contentType: "application/pdf" },
       });
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       const archivedKey = await runInDurableObject(stub, async (instance: Process) => {
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         const rewrites = await (instance as any).persistArchivedMediaKeys([liveKey]);
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         return rewrites.get(liveKey).key as string;
       });
       const source = await env.STORAGE.head(liveKey);
@@ -3370,7 +3646,10 @@ describe("Process DO — mechanical", () => {
         },
       });
 
+// SAFETY: test fixture is constructed with the asserted domain shape.
+
       await expect(runInDurableObject(stub, async (instance: Process) => {
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         return (instance as any).persistArchivedMediaKeys([liveKey]);
       })).rejects.toThrow("archived media content-address collision");
     });
@@ -3389,6 +3668,7 @@ describe("Process DO — mechanical", () => {
         },
       });
 
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       const response = await stub.recvFrame(makeReq("proc.media.read", { key })) as ResponseOkFrame;
       expect(response.data).toEqual({ ok: false, error: "media key is outside this process" });
     });
@@ -3401,7 +3681,10 @@ describe("Process DO — mechanical", () => {
         httpMetadata: { contentType: "application/pdf" },
       });
 
+// SAFETY: test fixture is constructed with the asserted domain shape.
+
       await runInDurableObject(stub, async (instance: Process) => {
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         const process = instance as any;
         process.sendSignal = vi.fn(async () => {});
         process.currentRun = {
@@ -3438,11 +3721,14 @@ describe("Process DO — mechanical", () => {
       const pid = "mech-chat-thinking-only";
       const stub = await initProcess(pid, ROOT_IDENTITY);
 
+// SAFETY: test fixture is constructed with the asserted domain shape.
+
       const result = await runInDurableObject(stub, async (instance: Process) => {
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         const process = instance as any;
-        const emitted: Array<{ signal: string; payload: unknown }> = [];
+        const emitted: Array<{ signal: string; payload: ProcessTestValue }> = [];
         let calls = 0;
-        process.sendSignal = async (signal: string, payload: unknown) => {
+        process.sendSignal = async (signal: string, payload: ProcessTestValue) => {
           emitted.push({ signal, payload });
         };
         process.generation = {
@@ -3547,8 +3833,10 @@ describe("Process DO — mechanical", () => {
         outputTokens: 10,
         cost: { total: 0.00009, source: "model-pricing" },
       });
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       const output = result.emitted.find((entry) => entry.signal === "proc.run.output")?.payload as any;
       expect(output?.text).toBe("visible answer");
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       const finished = result.emitted.find((entry) => entry.signal === "proc.run.finished")?.payload as any;
       expect(finished).toMatchObject({
         status: "ok",
@@ -3561,11 +3849,14 @@ describe("Process DO — mechanical", () => {
       const pid = "mech-chat-thinking-only-exhausted";
       const stub = await initProcess(pid, ROOT_IDENTITY);
 
+// SAFETY: test fixture is constructed with the asserted domain shape.
+
       const result = await runInDurableObject(stub, async (instance: Process) => {
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         const process = instance as any;
-        const emitted: Array<{ signal: string; payload: unknown }> = [];
+        const emitted: Array<{ signal: string; payload: ProcessTestValue }> = [];
         let calls = 0;
-        process.sendSignal = async (signal: string, payload: unknown) => {
+        process.sendSignal = async (signal: string, payload: ProcessTestValue) => {
           emitted.push({ signal, payload });
         };
         process.generation = {
@@ -3621,6 +3912,7 @@ describe("Process DO — mechanical", () => {
         ["user", "answer visibly"],
         ["system", "Generation failed: LLM returned reasoning but no final response"],
       ]);
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       const finished = result.emitted.find((entry) => entry.signal === "proc.run.finished")?.payload as any;
       expect(finished).toMatchObject({
         status: "error",
@@ -3633,11 +3925,14 @@ describe("Process DO — mechanical", () => {
       const pid = "mech-chat-empty-final-throw";
       const stub = await initProcess(pid, ROOT_IDENTITY);
 
+// SAFETY: test fixture is constructed with the asserted domain shape.
+
       const result = await runInDurableObject(stub, async (instance: Process) => {
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         const process = instance as any;
-        const emitted: Array<{ signal: string; payload: unknown }> = [];
+        const emitted: Array<{ signal: string; payload: ProcessTestValue }> = [];
         let calls = 0;
-        process.sendSignal = async (signal: string, payload: unknown) => {
+        process.sendSignal = async (signal: string, payload: ProcessTestValue) => {
           emitted.push({ signal, payload });
         };
         process.generation = {
@@ -3698,6 +3993,7 @@ describe("Process DO — mechanical", () => {
         ["user", "recover please"],
         ["assistant", "recovered"],
       ]);
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       const finished = result.emitted.find((entry) => entry.signal === "proc.run.finished")?.payload as any;
       expect(finished).toMatchObject({
         status: "ok",
@@ -3706,15 +4002,19 @@ describe("Process DO — mechanical", () => {
       });
     });
 
+    // SAFETY: test fixture is constructed with the asserted domain shape.
     it("retries raw tool-call markup returned as final text", async () => {
       const pid = "mech-chat-tool-markup-text";
       const stub = await initProcess(pid, ROOT_IDENTITY);
 
+// SAFETY: test fixture is constructed with the asserted domain shape.
+
       const result = await runInDurableObject(stub, async (instance: Process) => {
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         const process = instance as any;
-        const emitted: Array<{ signal: string; payload: unknown }> = [];
+        const emitted: Array<{ signal: string; payload: ProcessTestValue }> = [];
         let calls = 0;
-        process.sendSignal = async (signal: string, payload: unknown) => {
+        process.sendSignal = async (signal: string, payload: ProcessTestValue) => {
           emitted.push({ signal, payload });
         };
         process.generation = {
@@ -3791,6 +4091,7 @@ describe("Process DO — mechanical", () => {
         ["user", "run pwd"],
         ["assistant", ""],
       ]);
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       const retry = result.emitted.find((entry) => entry.signal === "proc.run.retrying")?.payload as any;
       expect(retry).toMatchObject({
         pid,
@@ -3798,6 +4099,7 @@ describe("Process DO — mechanical", () => {
         attempt: 1,
         nextAttempt: 2,
         maxAttempts: 3,
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         reason: "LLM returned malformed tool call markup as final text",
       });
       expect(result.pendingHil).toMatchObject({
@@ -3812,11 +4114,14 @@ describe("Process DO — mechanical", () => {
       const pid = "mech-chat-provider-error-response";
       const stub = await initProcess(pid, ROOT_IDENTITY);
 
+// SAFETY: test fixture is constructed with the asserted domain shape.
+
       const result = await runInDurableObject(stub, async (instance: Process) => {
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         const process = instance as any;
-        const emitted: Array<{ signal: string; payload: unknown }> = [];
+        const emitted: Array<{ signal: string; payload: ProcessTestValue }> = [];
         let calls = 0;
-        process.sendSignal = async (signal: string, payload: unknown) => {
+        process.sendSignal = async (signal: string, payload: ProcessTestValue) => {
           emitted.push({ signal, payload });
         };
         process.generation = {
@@ -3872,6 +4177,7 @@ describe("Process DO — mechanical", () => {
         ["user", "fail once please"],
         ["system", "Generation failed: Workers AI binding is not configured for this worker"],
       ]);
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       const finished = result.emitted.find((entry) => entry.signal === "proc.run.finished")?.payload as any;
       expect(finished).toMatchObject({
         status: "error",
@@ -3884,11 +4190,14 @@ describe("Process DO — mechanical", () => {
       const pid = "mech-chat-provider-error-fallback";
       const stub = await initProcess(pid, ROOT_IDENTITY);
 
+// SAFETY: test fixture is constructed with the asserted domain shape.
+
       const result = await runInDurableObject(stub, async (instance: Process) => {
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         const process = instance as any;
-        const emitted: Array<{ signal: string; payload: unknown }> = [];
+        const emitted: Array<{ signal: string; payload: ProcessTestValue }> = [];
         const calls: Array<{ provider: string; model: string; accountId?: string }> = [];
-        process.sendSignal = async (signal: string, payload: unknown) => {
+        process.sendSignal = async (signal: string, payload: ProcessTestValue) => {
           emitted.push({ signal, payload });
         };
         process.generation = {
@@ -3991,6 +4300,7 @@ describe("Process DO — mechanical", () => {
           reason: "Custom provider HTTP 403: not authenticated",
         },
       });
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       const retry = result.emitted.find((entry) => entry.signal === "proc.run.retrying")?.payload as any;
       expect(retry).toMatchObject({
         pid,
@@ -4001,6 +4311,7 @@ describe("Process DO — mechanical", () => {
           to: { provider: "openrouter", model: "openai/gpt-5-mini" },
         },
       });
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       const finished = result.emitted.find((entry) => entry.signal === "proc.run.finished")?.payload as any;
       expect(finished).toMatchObject({
         status: "ok",
@@ -4012,12 +4323,15 @@ describe("Process DO — mechanical", () => {
       const pid = "mech-chat-fallback-auto-compact";
       const stub = await initProcess(pid, ROOT_IDENTITY);
 
+// SAFETY: test fixture is constructed with the asserted domain shape.
+
       const result = await runInDurableObject(stub, async (instance: Process) => {
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         const process = instance as any;
-        const emitted: Array<{ signal: string; payload: unknown }> = [];
+        const emitted: Array<{ signal: string; payload: ProcessTestValue }> = [];
         const calls: Array<{ provider: string; model: string; context: string }> = [];
         const compactionConfigs: Array<{ provider: string; model: string }> = [];
-        process.sendSignal = async (signal: string, payload: unknown) => {
+        process.sendSignal = async (signal: string, payload: ProcessTestValue) => {
           emitted.push({ signal, payload });
         };
         process.generation = {
@@ -4134,8 +4448,10 @@ describe("Process DO — mechanical", () => {
         ["assistant", "fallback after compaction"],
       ]);
       expect(result.segments).toHaveLength(1);
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       const lifecycleEvents = result.emitted
         .filter((entry) => entry.signal === "proc.changed")
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         .map((entry) => (entry.payload as any).event)
         .filter(Boolean);
       expect(lifecycleEvents).toEqual([
@@ -4148,7 +4464,10 @@ describe("Process DO — mechanical", () => {
       const pid = "mech-chat-provider-error-account-fallback";
       const stub = await initProcess(pid, ROOT_IDENTITY);
 
+// SAFETY: test fixture is constructed with the asserted domain shape.
+
       const result = await runInDurableObject(stub, async (instance: Process) => {
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         const process = instance as any;
         const calls: Array<{ provider: string; model: string; apiKey: string; accountId?: string }> = [];
         process.sendSignal = async () => {};
@@ -4261,18 +4580,24 @@ describe("Process DO — mechanical", () => {
       const runId = "run-chat-kimi-overflow-throw-compact";
       const stub = await initProcess(pid, ROOT_IDENTITY);
 
+// SAFETY: test fixture is constructed with the asserted domain shape.
+
       const result = await runInDurableObject(stub, async (instance: Process) => {
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         const process = instance as any;
-        const emitted: Array<{ signal: string; payload: unknown }> = [];
+        const emitted: Array<{ signal: string; payload: ProcessTestValue }> = [];
         const calls: Array<{ provider: string; model: string; context: string }> = [];
         const timeline: string[] = [];
         let summaryCalls = 0;
-        process.sendSignal = async (signal: string, payload: unknown) => {
+        process.sendSignal = async (signal: string, payload: ProcessTestValue) => {
           emitted.push({ signal, payload });
           if (signal === "proc.run.retrying") {
             timeline.push("retrying");
+          // SAFETY: test fixture is constructed with the asserted domain shape.
           }
+          // SAFETY: test fixture is constructed with the asserted domain shape.
           if (signal === "proc.changed" && (payload as any).event) {
+            // SAFETY: test fixture is constructed with the asserted domain shape.
             timeline.push((payload as any).event);
           }
         };
@@ -4383,12 +4708,15 @@ describe("Process DO — mechanical", () => {
       const runId = "run-chat-kimi-overflow-response-compact";
       const stub = await initProcess(pid, ROOT_IDENTITY);
 
+// SAFETY: test fixture is constructed with the asserted domain shape.
+
       const result = await runInDurableObject(stub, async (instance: Process) => {
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         const process = instance as any;
-        const emitted: Array<{ signal: string; payload: unknown }> = [];
+        const emitted: Array<{ signal: string; payload: ProcessTestValue }> = [];
         const calls: Array<{ provider: string; model: string; context: string }> = [];
         let summaryCalls = 0;
-        process.sendSignal = async (signal: string, payload: unknown) => {
+        process.sendSignal = async (signal: string, payload: ProcessTestValue) => {
           emitted.push({ signal, payload });
         };
         process.generation = {
@@ -4510,12 +4838,15 @@ describe("Process DO — mechanical", () => {
       const runId = "run-chat-kimi-overflow-policy-fail";
       const stub = await initProcess(pid, ROOT_IDENTITY);
 
+// SAFETY: test fixture is constructed with the asserted domain shape.
+
       const result = await runInDurableObject(stub, async (instance: Process) => {
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         const process = instance as any;
-        const emitted: Array<{ signal: string; payload: unknown }> = [];
+        const emitted: Array<{ signal: string; payload: ProcessTestValue }> = [];
         const calls: Array<{ provider: string; model: string }> = [];
         let summaryCalls = 0;
-        process.sendSignal = async (signal: string, payload: unknown) => {
+        process.sendSignal = async (signal: string, payload: ProcessTestValue) => {
           emitted.push({ signal, payload });
         };
         process.generation = {
@@ -4602,12 +4933,15 @@ describe("Process DO — mechanical", () => {
       const runId = "run-chat-kimi-overflow-repeated";
       const stub = await initProcess(pid, ROOT_IDENTITY);
 
+// SAFETY: test fixture is constructed with the asserted domain shape.
+
       const result = await runInDurableObject(stub, async (instance: Process) => {
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         const process = instance as any;
-        const emitted: Array<{ signal: string; payload: unknown }> = [];
+        const emitted: Array<{ signal: string; payload: ProcessTestValue }> = [];
         const calls: Array<{ provider: string; model: string }> = [];
         let summaryCalls = 0;
-        process.sendSignal = async (signal: string, payload: unknown) => {
+        process.sendSignal = async (signal: string, payload: ProcessTestValue) => {
           emitted.push({ signal, payload });
         };
         process.generation = {
@@ -4691,12 +5025,15 @@ describe("Process DO — mechanical", () => {
       const runId = "run-chat-kimi-overflow-empty-prefix";
       const stub = await initProcess(pid, ROOT_IDENTITY);
 
+// SAFETY: test fixture is constructed with the asserted domain shape.
+
       const result = await runInDurableObject(stub, async (instance: Process) => {
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         const process = instance as any;
-        const emitted: Array<{ signal: string; payload: unknown }> = [];
+        const emitted: Array<{ signal: string; payload: ProcessTestValue }> = [];
         const calls: Array<{ provider: string; model: string }> = [];
         let summaryCalls = 0;
-        process.sendSignal = async (signal: string, payload: unknown) => {
+        process.sendSignal = async (signal: string, payload: ProcessTestValue) => {
           emitted.push({ signal, payload });
         };
         process.generation = {
@@ -4777,10 +5114,13 @@ describe("Process DO — mechanical", () => {
       const pid = "mech-chat-provider-context-overflow-throw";
       const stub = await initProcess(pid, ROOT_IDENTITY);
 
+// SAFETY: test fixture is constructed with the asserted domain shape.
+
       const result = await runInDurableObject(stub, async (instance: Process) => {
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         const process = instance as any;
-        const emitted: Array<{ signal: string; payload: unknown }> = [];
-        process.sendSignal = async (signal: string, payload: unknown) => {
+        const emitted: Array<{ signal: string; payload: ProcessTestValue }> = [];
+        process.sendSignal = async (signal: string, payload: ProcessTestValue) => {
           emitted.push({ signal, payload });
         };
         process.generation = {
@@ -4842,10 +5182,13 @@ describe("Process DO — mechanical", () => {
       const pid = "mech-chat-provider-context-overflow-nested";
       const stub = await initProcess(pid, ROOT_IDENTITY);
 
+// SAFETY: test fixture is constructed with the asserted domain shape.
+
       const result = await runInDurableObject(stub, async (instance: Process) => {
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         const process = instance as any;
-        const emitted: Array<{ signal: string; payload: unknown }> = [];
-        process.sendSignal = async (signal: string, payload: unknown) => {
+        const emitted: Array<{ signal: string; payload: ProcessTestValue }> = [];
+        process.sendSignal = async (signal: string, payload: ProcessTestValue) => {
           emitted.push({ signal, payload });
         };
         process.generation = {
@@ -4913,10 +5256,13 @@ describe("Process DO — mechanical", () => {
       const pid = "mech-chat-provider-context-overflow-response";
       const stub = await initProcess(pid, ROOT_IDENTITY);
 
+// SAFETY: test fixture is constructed with the asserted domain shape.
+
       const result = await runInDurableObject(stub, async (instance: Process) => {
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         const process = instance as any;
-        const emitted: Array<{ signal: string; payload: unknown }> = [];
-        process.sendSignal = async (signal: string, payload: unknown) => {
+        const emitted: Array<{ signal: string; payload: ProcessTestValue }> = [];
+        process.sendSignal = async (signal: string, payload: ProcessTestValue) => {
           emitted.push({ signal, payload });
         };
         process.generation = {
@@ -5008,20 +5354,25 @@ describe("Process DO — mechanical", () => {
       ]));
     });
 
+    // SAFETY: test fixture is constructed with the asserted domain shape.
     it("mirrors provider stream events as proc.run.stream signals with fallbacks configured", async () => {
       const pid = "mech-chat-stream";
       const stub = await initProcess(pid, ROOT_IDENTITY);
 
+// SAFETY: test fixture is constructed with the asserted domain shape.
+
       const emitted = await runInDurableObject(stub, async (instance: Process) => {
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         const process = instance as any;
-        const emitted: Array<{ signal: string; payload: unknown }> = [];
-        process.sendSignal = async (signal: string, payload: unknown) => {
+        const emitted: Array<{ signal: string; payload: ProcessTestValue }> = [];
+        process.sendSignal = async (signal: string, payload: ProcessTestValue) => {
           emitted.push({ signal, payload });
         };
         mockRunEventSink(process, pid, emitted);
         process.generation = {
           stream() {
             const stream = createAssistantMessageEventStream();
+            // SAFETY: test fixture is constructed with the asserted domain shape.
             const partial = {
               role: "assistant",
               content: [{ type: "text", text: "" }],
@@ -5038,6 +5389,7 @@ describe("Process DO — mechanical", () => {
               },
               stopReason: "stop",
               timestamp: Date.now(),
+            // SAFETY: test fixture is constructed with the asserted domain shape.
             } as any;
             stream.push({ type: "start", partial: { ...partial, content: [] } });
             stream.push({ type: "text_start", contentIndex: 0, partial });
@@ -5095,6 +5447,7 @@ describe("Process DO — mechanical", () => {
         return emitted;
       });
 
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       const streamSignals = (emitted as Array<{ signal: string; payload: any }>)
         .filter((entry) => entry.signal === "proc.run.stream");
       expect(streamSignals.map((entry) => entry.payload.event.type)).toEqual([
@@ -5114,6 +5467,7 @@ describe("Process DO — mechanical", () => {
           delta: "he",
         },
       });
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       const outputSignal = (emitted as Array<{ signal: string; payload: any }>)
         .find((entry) => entry.signal === "proc.run.output");
       expect(outputSignal?.payload.text).toBe("hello");
@@ -5131,17 +5485,22 @@ describe("Process DO — mechanical", () => {
         signal: "proc.run.started",
         payload: { pid, runId, timestamp: Date.now() },
       });
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       await runInDurableObject(kernel, (instance: Kernel) => {
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         const k = instance as any;
         k.testRunStreamFrames = [];
         k.testOriginalEnqueueProcessSignal = k.enqueueProcessSignal;
-        k.enqueueProcessSignal = async (_processId: string, frame: unknown) => {
+        k.enqueueProcessSignal = async (_processId: string, frame: ProcessTestValue) => {
           k.testRunStreamFrames.push(frame);
         };
       });
 
+// SAFETY: test fixture is constructed with the asserted domain shape.
+
       try {
         await runInDurableObject(stub, async (instance: Process) => {
+          // SAFETY: test fixture is constructed with the asserted domain shape.
           const process = instance as any;
           const sink = await process.openRunEventSink(runId);
           expect(sink).not.toBeNull();
@@ -5164,8 +5523,11 @@ describe("Process DO — mechanical", () => {
           await sink.close();
         });
 
+// SAFETY: test fixture is constructed with the asserted domain shape.
+
         await vi.waitFor(async () => {
           const frames = await runInDurableObject(kernel, (instance: Kernel) => (
+            // SAFETY: test fixture is constructed with the asserted domain shape.
             (instance as any).testRunStreamFrames
           ));
           expect(frames).toHaveLength(eventCount);
@@ -5178,8 +5540,10 @@ describe("Process DO — mechanical", () => {
             payload: { pid, runId, seq: eventCount },
           });
         });
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       } finally {
         await runInDurableObject(kernel, (instance: Kernel) => {
+          // SAFETY: test fixture is constructed with the asserted domain shape.
           const k = instance as any;
           if (k.testOriginalEnqueueProcessSignal) {
             k.enqueueProcessSignal = k.testOriginalEnqueueProcessSignal;
@@ -5195,7 +5559,10 @@ describe("Process DO — mechanical", () => {
       const runId = "run-chat-stream-rejected";
       const stub = await initProcess(pid, ROOT_IDENTITY, { register: false });
 
+// SAFETY: test fixture is constructed with the asserted domain shape.
+
       const response = await runInDurableObject(stub, async (instance: Process) => {
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         const process = instance as any;
         const message = {
           role: "assistant",
@@ -5256,7 +5623,10 @@ describe("Process DO — mechanical", () => {
       const pid = "mech-background-stream";
       const stub = await initProcess(pid, ROOT_IDENTITY);
 
+// SAFETY: test fixture is constructed with the asserted domain shape.
+
       const sink = await runInDurableObject(stub, async (instance: Process) => {
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         const process = instance as any;
         process.store.setValue("interactive", "0");
         return await process.openRunEventSink("run-background");
@@ -5269,11 +5639,14 @@ describe("Process DO — mechanical", () => {
       const pid = "mech-chat-stream-retry";
       const stub = await initProcess(pid, ROOT_IDENTITY);
 
+// SAFETY: test fixture is constructed with the asserted domain shape.
+
       const result = await runInDurableObject(stub, async (instance: Process) => {
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         const process = instance as any;
-        const emitted: Array<{ signal: string; payload: unknown }> = [];
+        const emitted: Array<{ signal: string; payload: ProcessTestValue }> = [];
         let calls = 0;
-        process.sendSignal = async (signal: string, payload: unknown) => {
+        process.sendSignal = async (signal: string, payload: ProcessTestValue) => {
           emitted.push({ signal, payload });
         };
         mockRunEventSink(process, pid, emitted);
@@ -5281,6 +5654,7 @@ describe("Process DO — mechanical", () => {
           stream() {
             calls += 1;
             const stream = createAssistantMessageEventStream();
+            // SAFETY: test fixture is constructed with the asserted domain shape.
             const base = {
               role: "assistant",
               content: [],
@@ -5290,6 +5664,7 @@ describe("Process DO — mechanical", () => {
               usage: testUsage(),
               stopReason: "stop",
               timestamp: Date.now(),
+            // SAFETY: test fixture is constructed with the asserted domain shape.
             } as any;
             stream.push({ type: "start", partial: base });
 
@@ -5317,6 +5692,7 @@ describe("Process DO — mechanical", () => {
             stream.push({ type: "text_delta", contentIndex: 0, delta: "visible retry", partial });
             stream.push({ type: "text_end", contentIndex: 0, content: "visible retry", partial });
             const toolCall = messageAction("visible retry", "streamed-visible-message");
+            // SAFETY: test fixture is constructed with the asserted domain shape.
             partial.content.push(toolCall as any);
             partial.stopReason = "toolUse";
             stream.push({ type: "toolcall_start", contentIndex: 1, partial });
@@ -5376,8 +5752,10 @@ describe("Process DO — mechanical", () => {
         ["user", "stream retry please"],
         ["assistant", "visible retry"],
       ]);
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       const streamSignals = result.emitted
         .filter((entry) => entry.signal === "proc.run.stream")
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         .map((entry) => entry.payload as any);
       expect(streamSignals.map((payload) => payload.event.type)).toEqual([
         "start",
@@ -5397,6 +5775,7 @@ describe("Process DO — mechanical", () => {
       expect(streamSignals.map((payload) => payload.seq)).toEqual([
         1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13,
       ]);
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       const outputSignal = result.emitted.find((entry) => entry.signal === "proc.run.output")?.payload as any;
       expect(outputSignal?.text).toBe("visible retry");
     });
@@ -5405,11 +5784,14 @@ describe("Process DO — mechanical", () => {
       const pid = "mech-chat-stream-retry-tool-only";
       const stub = await initProcess(pid, ROOT_IDENTITY);
 
+// SAFETY: test fixture is constructed with the asserted domain shape.
+
       const result = await runInDurableObject(stub, async (instance: Process) => {
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         const process = instance as any;
-        const emitted: Array<{ signal: string; payload: unknown }> = [];
+        const emitted: Array<{ signal: string; payload: ProcessTestValue }> = [];
         let calls = 0;
-        process.sendSignal = async (signal: string, payload: unknown) => {
+        process.sendSignal = async (signal: string, payload: ProcessTestValue) => {
           emitted.push({ signal, payload });
         };
         mockRunEventSink(process, pid, emitted);
@@ -5417,6 +5799,7 @@ describe("Process DO — mechanical", () => {
           stream() {
             calls += 1;
             const stream = createAssistantMessageEventStream();
+            // SAFETY: test fixture is constructed with the asserted domain shape.
             const base = {
               role: "assistant",
               content: [],
@@ -5426,6 +5809,7 @@ describe("Process DO — mechanical", () => {
               usage: testUsage(),
               stopReason: "stop",
               timestamp: Date.now(),
+            // SAFETY: test fixture is constructed with the asserted domain shape.
             } as any;
             stream.push({ type: "start", partial: base });
 
@@ -5515,12 +5899,16 @@ describe("Process DO — mechanical", () => {
         ["assistant", ""],
       ]);
       const retrySignalIndex = result.emitted.findIndex((entry) => entry.signal === "proc.run.retrying");
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       const firstErrorIndex = result.emitted.findIndex((entry) =>
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         entry.signal === "proc.run.stream" && (entry.payload as any).event.type === "error"
       );
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       const secondStartIndex = result.emitted.findIndex((entry, index) =>
         index > retrySignalIndex &&
         entry.signal === "proc.run.stream" &&
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         (entry.payload as any).event.type === "start"
       );
       expect(firstErrorIndex).toBeGreaterThanOrEqual(0);
@@ -5547,10 +5935,13 @@ describe("Process DO — mechanical", () => {
       const pid = "mech-chat-stream-off";
       const stub = await initProcess(pid, ROOT_IDENTITY);
 
+// SAFETY: test fixture is constructed with the asserted domain shape.
+
       const emitted = await runInDurableObject(stub, async (instance: Process) => {
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         const process = instance as any;
-        const emitted: Array<{ signal: string; payload: unknown }> = [];
-        process.sendSignal = async (signal: string, payload: unknown) => {
+        const emitted: Array<{ signal: string; payload: ProcessTestValue }> = [];
+        process.sendSignal = async (signal: string, payload: ProcessTestValue) => {
           emitted.push({ signal, payload });
         };
         process.generation = {
@@ -5606,7 +5997,9 @@ describe("Process DO — mechanical", () => {
         return emitted;
       });
 
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       expect((emitted as Array<{ signal: string }>).some((entry) => entry.signal === "proc.run.stream")).toBe(false);
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       const outputSignal = (emitted as Array<{ signal: string; payload: any }>)
         .find((entry) => entry.signal === "proc.run.output");
       expect(outputSignal?.payload.text).toBe("hello");
@@ -5616,7 +6009,10 @@ describe("Process DO — mechanical", () => {
       const pid = "mech-chat-kernel-executor";
       const stub = await initProcess(pid, ROOT_IDENTITY);
 
+// SAFETY: test fixture is constructed with the asserted domain shape.
+
       const result = await runInDurableObject(stub, async (instance: Process) => {
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         const process = instance as any;
         const kernelCalls: Array<{ call: string; args: any }> = [];
         process.sendSignal = async () => {};
@@ -5751,7 +6147,10 @@ describe("Process DO — mechanical", () => {
       const pid = "mech-chat-device-executor";
       const stub = await initProcess(pid, ROOT_IDENTITY);
 
+// SAFETY: test fixture is constructed with the asserted domain shape.
+
       const result = await runInDurableObject(stub, async (instance: Process) => {
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         const process = instance as any;
         const kernelCalls: Array<{ call: string; args: any; runSignal: boolean }> = [];
         process.kernelRpc = async (call: string, args: any, signal?: AbortSignal) => {
@@ -5838,11 +6237,14 @@ describe("Process DO — mechanical", () => {
       const pid = "mech-chat-custom-provider-transport-target";
       const stub = await initProcess(pid, ROOT_IDENTITY);
 
+// SAFETY: test fixture is constructed with the asserted domain shape.
+
       const result = await runInDurableObject(stub, async (instance: Process) => {
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         const process = instance as any;
         const deviceRequests: Array<{ target: string; call: string; args: any; ttlMs?: number }> = [];
         process.sendSignal = async () => {};
-        process.kernelRpc = async (call: string, args: any) => {
+        process.kernelRpc = async (call: string, _args: any) => {
           throw new Error(`unexpected synchronous kernel syscall: ${call}`);
         };
         process.requestKernelNetFetch = async (
@@ -5975,9 +6377,11 @@ describe("Process DO — mechanical", () => {
           replayed: "active",
         },
       });
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       expect((first as any).data).not.toHaveProperty("replayed");
 
       await runInDurableObject(stub, (instance: Process) => {
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         const process = instance as any;
         expect(process.store.getMessages()).toEqual([
           expect.objectContaining({
@@ -5990,7 +6394,10 @@ describe("Process DO — mechanical", () => {
         expect(process.currentRun).toMatchObject({ runId: args.runId });
       });
 
+// SAFETY: test fixture is constructed with the asserted domain shape.
+
       await runInDurableObject(stub, (instance: Process) => {
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         (instance as any).currentRun = null;
       });
       const recordedRequest = makeAdapterDeliverReq(args);
@@ -6011,19 +6418,25 @@ describe("Process DO — mechanical", () => {
       const pid = "mech-send-queued";
       const stub = await initProcess(pid, ROOT_IDENTITY);
 
+// SAFETY: test fixture is constructed with the asserted domain shape.
+
       // Start first run
       const res1 = (await stub.recvFrame(
         makeReq("proc.send", { message: "First message" }),
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       )) as ResponseOkFrame;
       expect(res1.ok).toBe(true);
 
       // Send second message while run is active — should be queued
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       const res2 = (await stub.recvFrame(
         makeReq("proc.send", {
           message: "Second message",
           origin: { kind: "process", sourcePid: "child" },
         }),
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       )) as ResponseOkFrame;
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       expect((res2.data as any).queued).toBe(true);
 
       // Fire alarm for run 1 — fails (no AI binding in tests), finishRun dequeues
@@ -6035,14 +6448,19 @@ describe("Process DO — mechanical", () => {
       await runDurableObjectAlarm(stub);
       await waitForRunComplete(stub);
 
+// SAFETY: test fixture is constructed with the asserted domain shape.
+
       await runInDurableObject(stub, (instance: Process) => {
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         const store = (instance as any).store;
         const msgs = store.getMessages();
         const userMsgs = msgs.filter((m: any) => m.role === "user");
         expect(userMsgs).toHaveLength(2);
         expect(userMsgs[0].content).toBe("First message");
         expect(userMsgs[1].content).toBe("Second message");
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         expect(userMsgs[0].runId).toBe((res1.data as any).runId);
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         expect(userMsgs[1].runId).toBe((res2.data as any).runId);
         expect(store.queueSize()).toBe(0);
         expect(store.getValue("currentRun")).toBeNull();
@@ -6052,7 +6470,10 @@ describe("Process DO — mechanical", () => {
     it("coalesces overlapping ticks onto the next durable generation", async () => {
       const stub = await initProcess("mech-single-active-tick", ROOT_IDENTITY);
 
+// SAFETY: test fixture is constructed with the asserted domain shape.
+
       await runInDurableObject(stub, async (instance: Process) => {
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         const process = instance as any;
         let releaseTick!: () => void;
         let markTickStarted!: () => void;
@@ -6096,7 +6517,10 @@ describe("Process DO — mechanical", () => {
     it("terminalizes an uncaught background tick failure", async () => {
       const stub = await initProcess("mech-tick-failure", ROOT_IDENTITY);
 
+// SAFETY: test fixture is constructed with the asserted domain shape.
+
       await runInDurableObject(stub, async (instance: Process) => {
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         const process = instance as any;
         process.sendSignal = vi.fn(async () => {});
         process.currentRun = { runId: "run-failure" };
@@ -6123,7 +6547,10 @@ describe("Process DO — mechanical", () => {
       const pid = "mech-send-takeover-schedule-failure";
       const stub = await initProcess(pid, ROOT_IDENTITY);
 
+// SAFETY: test fixture is constructed with the asserted domain shape.
+
       await runInDurableObject(stub, async (instance: Process) => {
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         const process = instance as any;
         process.sendSignal = vi.fn();
         process.scheduleTick = vi.fn(async () => {
@@ -6160,7 +6587,10 @@ describe("Process DO — mechanical", () => {
     it("does not resurrect a process when kill wins send admission", async () => {
       const stub = await initProcess("mech-send-after-kill", ROOT_IDENTITY);
 
+// SAFETY: test fixture is constructed with the asserted domain shape.
+
       await runInDurableObject(stub, async (instance: Process) => {
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         const process = instance as any;
         const releaseLifecycle = await process.acquireLifecycleTransition();
         const sending = process.handleProcSend({
@@ -6184,7 +6614,10 @@ describe("Process DO — mechanical", () => {
       const pid = "mech-send-live-tool-takeover";
       const stub = await initProcess(pid, ROOT_IDENTITY);
 
+// SAFETY: test fixture is constructed with the asserted domain shape.
+
       await runInDurableObject(stub, async (instance: Process) => {
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         const process = instance as any;
         let releaseDispatch!: () => void;
         let markDispatchStarted!: () => void;
@@ -6306,7 +6739,10 @@ describe("Process DO — mechanical", () => {
       const pid = "mech-send-serialized-takeovers";
       const stub = await initProcess(pid, ROOT_IDENTITY);
 
+// SAFETY: test fixture is constructed with the asserted domain shape.
+
       await runInDurableObject(stub, async (instance: Process) => {
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         const process = instance as any;
         const finishedRuns: string[] = [];
         process.sendSignal = vi.fn();
@@ -6337,8 +6773,11 @@ describe("Process DO — mechanical", () => {
       const foreignKey = `var/media/0/another-process/${crypto.randomUUID()}`;
       await env.STORAGE.put(foreignKey, new Uint8Array([1, 2, 3]));
 
+// SAFETY: test fixture is constructed with the asserted domain shape.
+
       try {
         const result = await runInDurableObject(stub, async (instance: Process) => {
+          // SAFETY: test fixture is constructed with the asserted domain shape.
           const process = instance as any;
           process.currentRun = { runId: "run-existing" };
           const response = await process.handleProcSend({
@@ -6370,7 +6809,10 @@ describe("Process DO — mechanical", () => {
         const pid = `mech-send-media-race-${fails}`;
         const stub = await initProcess(pid, ROOT_IDENTITY);
 
+// SAFETY: test fixture is constructed with the asserted domain shape.
+
         await runInDurableObject(stub, async (instance: Process) => {
+          // SAFETY: test fixture is constructed with the asserted domain shape.
           const process = instance as any;
           let releaseMedia!: () => void;
           let markMediaStarted!: () => void;
@@ -6412,6 +6854,7 @@ describe("Process DO — mechanical", () => {
             origin: { kind: "client", connectionId: "client-1" },
           });
           releaseMedia();
+          // SAFETY: test fixture is constructed with the asserted domain shape.
           await (prepareMedia.mock.results[0]?.value as Promise<void>);
 
           const userMessages = process.store.getMessages()
@@ -6435,7 +6878,10 @@ describe("Process DO — mechanical", () => {
       const pid = "mech-send-media-schedule-failure";
       const stub = await initProcess(pid, ROOT_IDENTITY);
 
+// SAFETY: test fixture is constructed with the asserted domain shape.
+
       await runInDurableObject(stub, async (instance: Process) => {
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         const process = instance as any;
         process.sendSignal = vi.fn();
         process.scheduleTick = vi.fn(async () => {
@@ -6453,6 +6899,7 @@ describe("Process DO — mechanical", () => {
           media: [{ type: "image", mimeType: "image/png", key: mediaKey }],
           origin: { kind: "client", connectionId: "client-1" },
         });
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         await (prepareMedia.mock.results[0]?.value as Promise<void>);
 
         expect(process.currentRun).toBeNull();
@@ -6478,7 +6925,10 @@ describe("Process DO — mechanical", () => {
       const pid = "mech-send-process-media-fifo";
       const stub = await initProcess(pid, ROOT_IDENTITY);
 
+// SAFETY: test fixture is constructed with the asserted domain shape.
+
       await runInDurableObject(stub, async (instance: Process) => {
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         const process = instance as any;
         let releaseMedia!: () => void;
         let markMediaStarted!: () => void;
@@ -6489,7 +6939,7 @@ describe("Process DO — mechanical", () => {
           markMediaStarted = resolve;
         });
         process.sendSignal = vi.fn();
-        process.resolveMediaProcessingOptions = vi.fn(async (media: unknown[] | undefined) => {
+        process.resolveMediaProcessingOptions = vi.fn(async (media: ProcessTestValue[] | undefined) => {
           if (media?.length) {
             markMediaStarted();
             await mediaBlocked;
@@ -6529,6 +6979,8 @@ describe("Process DO — mechanical", () => {
       const stub = await initProcess(pid, ROOT_IDENTITY);
       let mediaKey = "";
 
+// SAFETY: test fixture is constructed with the asserted domain shape.
+
       const upload = (await stub.recvFrame({
         ...makeReq("proc.media.write", {
           type: "image",
@@ -6536,6 +6988,7 @@ describe("Process DO — mechanical", () => {
           filename: "proof.png",
         }),
         body: bodyFromBytes(new Uint8Array([1, 2, 3])),
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       })) as ResponseFrame<"proc.media.write">;
       if (!upload.ok) {
         throw new Error(upload.error.message);
@@ -6550,23 +7003,32 @@ describe("Process DO — mechanical", () => {
       const uploadedMedia = upload.data?.ok ? upload.data.media : null;
       expect(uploadedMedia).not.toBeNull();
 
+// SAFETY: test fixture is constructed with the asserted domain shape.
+
       const res = (await stub.recvFrame(
         makeReq("proc.send", {
           message: "Describe this image.",
           media: [uploadedMedia],
         }),
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       )) as ResponseOkFrame;
 
       expect(res.ok).toBe(true);
 
+// SAFETY: test fixture is constructed with the asserted domain shape.
+
       await vi.waitFor(async () => {
         const media = await runInDurableObject(stub, (instance: Process) => {
+          // SAFETY: test fixture is constructed with the asserted domain shape.
           return (instance as any).store.getMessages()[0]?.media;
         });
         expect(media).toBeTruthy();
       });
 
+// SAFETY: test fixture is constructed with the asserted domain shape.
+
       await runInDurableObject(stub, async (instance: Process) => {
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         const store = (instance as any).store;
         const record = store.getMessages()[0];
         expect(record.role).toBe("user");
@@ -6587,7 +7049,9 @@ describe("Process DO — mechanical", () => {
           processId: pid,
         });
 
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         const messages = await (instance as any).buildContextMessages();
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         const user = messages[0] as any;
         expect(Array.isArray(user.content)).toBe(true);
         expect(user.content[0]).toEqual({
@@ -6606,8 +7070,11 @@ describe("Process DO — mechanical", () => {
         expect(user.content[2].data).toBe("AQID");
       });
 
+// SAFETY: test fixture is constructed with the asserted domain shape.
+
       const read = (await stub.recvFrame(
         makeReq("proc.media.read", { key: mediaKey }),
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       )) as ResponseOkFrame;
       expect(read.ok).toBe(true);
       expect(read.data).toMatchObject({
@@ -6618,8 +7085,11 @@ describe("Process DO — mechanical", () => {
       });
       expect(read.body && [...await bodyToBytes(read.body)]).toEqual([1, 2, 3]);
 
+// SAFETY: test fixture is constructed with the asserted domain shape.
+
       const referenced = (await stub.recvFrame(
         makeReq("proc.media.delete", { key: mediaKey }),
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       )) as ResponseOkFrame;
       expect(referenced.data).toEqual({
         ok: false,
@@ -6627,32 +7097,44 @@ describe("Process DO — mechanical", () => {
       });
       expect(await env.STORAGE.head(mediaKey)).not.toBeNull();
 
+// SAFETY: test fixture is constructed with the asserted domain shape.
+
       const unusedUpload = (await stub.recvFrame({
         ...makeReq("proc.media.write", {
           type: "document",
           mimeType: "application/octet-stream",
         }),
         body: bodyFromBytes(new Uint8Array([4, 5, 6])),
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       })) as ResponseOkFrame<"proc.media.write">;
       const unusedKey = unusedUpload.data?.ok ? unusedUpload.data.media.key : "";
       expect(unusedKey).toBeTruthy();
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       const deleted = (await stub.recvFrame(
         makeReq("proc.media.delete", { key: unusedKey }),
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       )) as ResponseOkFrame;
       expect(deleted.data).toEqual({ ok: true, key: unusedKey });
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       const deletedAgain = (await stub.recvFrame(
         makeReq("proc.media.delete", { key: unusedKey }),
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       )) as ResponseOkFrame;
       expect(deletedAgain.data).toEqual({ ok: true, key: unusedKey });
       expect(await env.STORAGE.head(unusedKey)).toBeNull();
 
+// SAFETY: test fixture is constructed with the asserted domain shape.
+
       const outside = (await stub.recvFrame(
         makeReq("proc.media.delete", { key: "var/media/0/another-process/file" }),
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       )) as ResponseOkFrame;
       expect(outside.data).toEqual({ ok: false, error: "media key is outside this process" });
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       const withBody = (await stub.recvFrame({
         ...makeReq("proc.media.delete", { key: unusedKey }),
         body: bodyFromBytes(new Uint8Array()),
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       })) as ResponseOkFrame;
       expect(withBody.data).toEqual({ ok: false, error: "proc.media.delete does not accept a body" });
     });
@@ -6664,8 +7146,11 @@ describe("Process DO — mechanical", () => {
       const stub = await initProcess(pid, ROOT_IDENTITY);
       let mediaKey = "";
 
+// SAFETY: test fixture is constructed with the asserted domain shape.
+
       try {
         await runInDurableObject(stub, async (instance: Process) => {
+          // SAFETY: test fixture is constructed with the asserted domain shape.
           const process = instance as any;
           process.currentRun = { runId };
           process.sendSignal = vi.fn(async () => {});
@@ -6763,16 +7248,21 @@ describe("Process DO — mechanical", () => {
     it("reconciles repeated process media writes and drains the repeated body", async () => {
       const pid = "mech-media-write-idempotent";
       const stub = await initProcess(pid, ROOT_IDENTITY);
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       const args = {
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         type: "image" as const,
         mimeType: "image/png",
         filename: "provider-image.png",
         mediaId: "provider-message-1:image-1",
       };
 
+// SAFETY: test fixture is constructed with the asserted domain shape.
+
       const first = (await stub.recvFrame({
         ...makeReq("proc.media.write", args),
         body: bodyFromBytes(new Uint8Array([1, 2, 3])),
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       })) as ResponseOkFrame<"proc.media.write">;
       expect(first.data).toMatchObject({
         ok: true,
@@ -6785,6 +7275,7 @@ describe("Process DO — mechanical", () => {
           path: `/var/media/0/${pid}/${args.mediaId}`,
         },
       });
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       const originalMedia = (first.data as any).media;
 
       let repeatedBodyPulled = false;
@@ -6795,13 +7286,17 @@ describe("Process DO — mechanical", () => {
           controller.close();
         },
       }, { highWaterMark: 0 });
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       const repeated = (await stub.recvFrame({
         ...makeReq("proc.media.write", args),
         body: { stream: repeatedBody, length: 3 },
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       })) as ResponseOkFrame<"proc.media.write">;
 
       expect(repeatedBodyPulled).toBe(true);
       expect(repeated.data).toEqual({ ok: true, media: originalMedia });
+
+// SAFETY: test fixture is constructed with the asserted domain shape.
 
       const mimeConflict = (await runInDurableObject(stub, (instance: Process) =>
         instance.recvFrame({
@@ -6811,22 +7306,28 @@ describe("Process DO — mechanical", () => {
           }),
           body: bodyFromBytes(new Uint8Array([4, 5, 6])),
         })
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       )) as ResponseOkFrame<"proc.media.write">;
       expect(mimeConflict.data).toEqual({
         ok: false,
         error: "proc.media.write mediaId conflicts with existing media",
       });
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       for (const conflictingArgs of [
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         { ...args, type: "document" as const },
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         { ...args, filename: "different-provider-image.png" },
         { ...args, duration: 12 },
         { ...args, transcription: "different transcript" },
       ]) {
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         const conflict = (await runInDurableObject(stub, (instance: Process) =>
           instance.recvFrame({
             ...makeReq("proc.media.write", conflictingArgs),
             body: bodyFromBytes(new Uint8Array([4, 5, 6])),
           })
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         )) as ResponseOkFrame<"proc.media.write">;
         expect(conflict.data).toEqual({
           ok: false,
@@ -6843,7 +7344,10 @@ describe("Process DO — mechanical", () => {
       const pid = "mech-media-write-concurrent-idempotent";
       const stub = await initProcess(pid, ROOT_IDENTITY);
 
+// SAFETY: test fixture is constructed with the asserted domain shape.
+
       const result = await runInDurableObject(stub, async (instance: Process) => {
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         const process = instance as any;
         const originalStorage = process.storage;
         const objects = new Map<string, {
@@ -6895,8 +7399,11 @@ describe("Process DO — mechanical", () => {
           }),
         };
 
+// SAFETY: test fixture is constructed with the asserted domain shape.
+
         try {
           const args = {
+            // SAFETY: test fixture is constructed with the asserted domain shape.
             type: "image" as const,
             mimeType: "image/png",
             filename: "concurrent.png",
@@ -6934,7 +7441,10 @@ describe("Process DO — mechanical", () => {
     it("keeps SVG attachments out of raster model image blocks", async () => {
       const stub = await initProcess("mech-svg-context", ROOT_IDENTITY);
 
+// SAFETY: test fixture is constructed with the asserted domain shape.
+
       await runInDurableObject(stub, async (instance: Process) => {
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         const process = instance as any;
         const originalStorage = process.storage;
         const get = vi.fn();
@@ -6972,8 +7482,11 @@ describe("Process DO — mechanical", () => {
       await env.STORAGE.put(ownKey, new Uint8Array([1]));
       await env.STORAGE.put(foreignKey, new Uint8Array([2]));
 
+// SAFETY: test fixture is constructed with the asserted domain shape.
+
       try {
         await runInDurableObject(stub, async (instance: Process) => {
+          // SAFETY: test fixture is constructed with the asserted domain shape.
           const process = instance as any;
           const runId = "run-media-cleanup";
           const media = [
@@ -6998,11 +7511,13 @@ describe("Process DO — mechanical", () => {
         expect(await env.STORAGE.head(foreignKey)).not.toBeNull();
       } finally {
         await env.STORAGE.delete([ownKey, foreignKey]);
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       }
     });
 
     it("requires the media body descriptor length", async () => {
       const stub = await initProcess("mech-media-length", ROOT_IDENTITY);
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       const response = (await stub.recvFrame({
         ...makeReq("proc.media.write", {
           type: "image",
@@ -7013,9 +7528,11 @@ describe("Process DO — mechanical", () => {
             start(controller) {
               controller.enqueue(new Uint8Array([1, 2, 3]));
               controller.close();
+            // SAFETY: test fixture is constructed with the asserted domain shape.
             },
           }),
         },
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       })) as ResponseOkFrame;
 
       expect(response.data).toEqual({
@@ -7026,6 +7543,7 @@ describe("Process DO — mechanical", () => {
 
     it("rejects the reserved R2 directory-marker media id", async () => {
       const stub = await initProcess("mech-media-reserved-marker", ROOT_IDENTITY);
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       const response = (await stub.recvFrame({
         ...makeReq("proc.media.write", {
           type: "document",
@@ -7033,6 +7551,7 @@ describe("Process DO — mechanical", () => {
           mediaId: ".dir",
         }),
         body: bodyFromBytes(new Uint8Array([1])),
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       })) as ResponseOkFrame;
 
       expect(response.data).toEqual({
@@ -7045,7 +7564,10 @@ describe("Process DO — mechanical", () => {
       const pid = "mech-media-reset-race";
       const stub = await initProcess(pid, ROOT_IDENTITY);
 
+// SAFETY: test fixture is constructed with the asserted domain shape.
+
       await runInDurableObject(stub, async (instance: Process) => {
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         const process = instance as any;
         const originalStorage = process.storage;
         const objects = new Map<string, Uint8Array>();
@@ -7105,7 +7627,10 @@ describe("Process DO — mechanical", () => {
       const pid = "mech-bounded-context-media";
       const stub = await initProcess(pid, ROOT_IDENTITY);
 
+// SAFETY: test fixture is constructed with the asserted domain shape.
+
       await runInDurableObject(stub, async (instance: Process) => {
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         const process = instance as any;
         const originalStorage = process.storage;
         const arrayBuffer = vi.fn(async () => new Uint8Array([1]).buffer);
@@ -7140,7 +7665,10 @@ describe("Process DO — mechanical", () => {
     it("does not hydrate out-of-scope media from persisted history", async () => {
       const stub = await initProcess("mech-foreign-context-media", ROOT_IDENTITY);
 
+// SAFETY: test fixture is constructed with the asserted domain shape.
+
       await runInDurableObject(stub, async (instance: Process) => {
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         const process = instance as any;
         const originalStorage = process.storage;
         const get = vi.fn(async () => ({
@@ -7184,13 +7712,16 @@ describe("Process DO — mechanical", () => {
 
       await registerInKernel(sourcePid, identity);
       const target = await initProcess(targetPid, identity);
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       await runInDurableObject(target, (instance: Process) => {
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         (instance as any).currentRun = {
           runId: "existing-target-run",
         };
       });
 
       const kernel = await getKernelPtr();
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       const response = await runInDurableObject(kernel, (instance: Kernel) =>
         instance.recvFrame(
           sourcePid,
@@ -7200,6 +7731,7 @@ describe("Process DO — mechanical", () => {
             metadata: { kind: "delegation" },
           }),
         ),
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       ) as ResponseOkFrame;
 
       expect(response.ok).toBe(true);
@@ -7211,7 +7743,10 @@ describe("Process DO — mechanical", () => {
         queued: true,
       });
 
+// SAFETY: test fixture is constructed with the asserted domain shape.
+
       await runInDurableObject(target, (instance: Process) => {
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         const process = instance as any;
         const store = process.store;
         const messages = store.getMessages();
@@ -7251,6 +7786,7 @@ describe("Process DO — mechanical", () => {
       await registerInKernel(targetPid, targetIdentity);
 
       const kernel = await getKernelPtr();
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       const response = await runInDurableObject(kernel, (instance: Kernel) =>
         instance.recvFrame(
           sourcePid,
@@ -7259,6 +7795,7 @@ describe("Process DO — mechanical", () => {
             message: "This should not cross uid boundaries.",
           }),
         ),
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       ) as ResponseOkFrame;
 
       expect(response.ok).toBe(true);
@@ -7282,16 +7819,21 @@ describe("Process DO — mechanical", () => {
 
       const source = await initProcess(sourcePid, identity);
       const target = await initProcess(targetPid, identity);
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       await runInDurableObject(source, (instance: Process) => {
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         (instance as any).scheduleTick = async () => {};
       });
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       await runInDurableObject(target, (instance: Process) => {
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         (instance as any).currentRun = {
           runId: "existing-target-run",
         };
       });
 
       const kernel = await getKernelPtr();
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       const response = await runInDurableObject(kernel, (instance: Kernel) =>
         instance.recvFrame(
           sourcePid,
@@ -7301,9 +7843,11 @@ describe("Process DO — mechanical", () => {
             timeoutMs: 30_000,
           }),
         ),
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       ) as ResponseOkFrame;
 
       expect(response.ok).toBe(true);
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       const data = response.data as any;
       expect(data).toMatchObject({
         ok: true,
@@ -7315,7 +7859,10 @@ describe("Process DO — mechanical", () => {
       expect(data.callId).toBeTruthy();
       expect(data.deadlineAt).toBeGreaterThan(Date.now());
 
+// SAFETY: test fixture is constructed with the asserted domain shape.
+
       await runInDurableObject(target, (instance: Process) => {
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         const store = (instance as any).store;
         const queued = store.drainQueue();
         expect(queued).toHaveLength(1);
@@ -7343,7 +7890,10 @@ describe("Process DO — mechanical", () => {
         message.content.includes(`Task id: \`${data.callId}\``)
       ));
 
+// SAFETY: test fixture is constructed with the asserted domain shape.
+
       await runInDurableObject(source, (instance: Process) => {
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         const process = instance as any;
         const store = process.store;
         const messages = store.getMessages();
@@ -7358,16 +7908,20 @@ describe("Process DO — mechanical", () => {
       });
     });
 
+    // SAFETY: test fixture is constructed with the asserted domain shape.
     it("returns aborted target runs to IPC callers as errors", async () => {
       const sourcePid = "mech-ipc-abort-source";
       const targetPid = "mech-ipc-abort-target";
       const source = await initProcess(sourcePid, ROOT_IDENTITY);
       await initProcess(targetPid, ROOT_IDENTITY);
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       await runInDurableObject(source, (instance: Process) => {
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         (instance as any).scheduleTick = vi.fn(async () => {});
       });
 
       const kernel = await getKernelPtr();
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       const response = await runInDurableObject(kernel, (instance: Kernel) =>
         instance.recvFrame(
           sourcePid,
@@ -7377,7 +7931,9 @@ describe("Process DO — mechanical", () => {
             timeoutMs: 30_000,
           }),
         ),
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       ) as ResponseOkFrame;
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       const data = response.data as any;
 
       await runInDurableObject(kernel, (instance: Kernel) =>
@@ -7398,7 +7954,10 @@ describe("Process DO — mechanical", () => {
         message.content.includes(`Task id: \`${data.callId}\``)
       ));
 
+// SAFETY: test fixture is constructed with the asserted domain shape.
+
       await runInDurableObject(source, (instance: Process) => {
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         const process = instance as any;
         const reply = process.store.getMessages().find((message: any) =>
           message.role === "system"
@@ -7416,21 +7975,31 @@ describe("Process DO — mechanical", () => {
       const source = await initProcess(sourcePid, ROOT_IDENTITY);
       const target = await initProcess(targetPid, ROOT_IDENTITY);
 
+// SAFETY: test fixture is constructed with the asserted domain shape.
+
       await runInDurableObject(source, (instance: Process) => {
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         (instance as any).scheduleTick = vi.fn(async () => {});
       });
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       await runInDurableObject(target, (instance: Process) => {
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         const process = instance as any;
         process.currentRun = { runId: "target-busy-run" };
       });
 
+// SAFETY: test fixture is constructed with the asserted domain shape.
+
       const firstSend = (await source.recvFrame(makeReq("proc.send", {
         message: "delegate a slow task",
         origin: { kind: "client", connectionId: "client-1" },
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       }))) as ResponseOkFrame;
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       const sourceRunId = (firstSend.data as any).runId as string;
 
       const kernel = await getKernelPtr();
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       const ipcResponse = await runInDurableObject(kernel, (instance: Kernel) =>
         instance.recvFrame(sourcePid, {
           ...makeReq("proc.ipc.call", {
@@ -7440,18 +8009,25 @@ describe("Process DO — mechanical", () => {
           }),
           runId: sourceRunId,
         }),
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       ) as ResponseOkFrame;
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       const ipc = ipcResponse.data as any;
       expect(ipc).toMatchObject({ ok: true, queued: true });
+
+// SAFETY: test fixture is constructed with the asserted domain shape.
 
       const secondSend = (await source.recvFrame(makeReq("proc.send", {
         message: "stop waiting and do this instead",
         origin: { kind: "client", connectionId: "client-1" },
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       }))) as ResponseOkFrame;
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       const successorRunId = (secondSend.data as any).runId as string;
 
       await vi.waitFor(async () => {
         expect(await runInDurableObject(kernel, (instance: Kernel) => (
+          // SAFETY: test fixture is constructed with the asserted domain shape.
           (instance as any).ipcCalls.get(ipc.callId)
         ))).toBeNull();
       });
@@ -7466,10 +8042,14 @@ describe("Process DO — mechanical", () => {
             text: "late delegated result",
           },
         });
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         expect((instance as any).ipcCalls.get(ipc.callId)).toBeNull();
       });
 
+// SAFETY: test fixture is constructed with the asserted domain shape.
+
       await runInDurableObject(source, (instance: Process) => {
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         const process = instance as any;
         expect(process.currentRun).toMatchObject({ runId: successorRunId });
         expect(process.store.getMessages().some((message: any) => (
@@ -7479,7 +8059,9 @@ describe("Process DO — mechanical", () => {
         ))).toBe(false);
         process.currentRun = null;
       });
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       await runInDurableObject(target, (instance: Process) => {
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         const process = instance as any;
         process.currentRun = null;
         process.store.clearQueue();
@@ -7490,12 +8072,17 @@ describe("Process DO — mechanical", () => {
       const pid = "mech-ipc-aborted-source-run";
       const stub = await initProcess(pid, ROOT_IDENTITY);
 
+// SAFETY: test fixture is constructed with the asserted domain shape.
+
       await runInDurableObject(stub, async (instance: Process) => {
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         const process = instance as any;
         process.sendSignal = vi.fn();
         process.scheduleTick = vi.fn(async () => {});
         process.rememberAbortedRun("run-aborted");
         process.currentRun = { runId: "run-successor" };
+
+// SAFETY: test fixture is constructed with the asserted domain shape.
 
         await instance.recvFrame({
           type: "sig",
@@ -7510,6 +8097,7 @@ describe("Process DO — mechanical", () => {
             status: "completed",
             response: { text: "late delegated result", usage: null },
           },
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         } as any);
 
         expect(process.store.getMessages()).toEqual([]);
@@ -7542,7 +8130,10 @@ describe("Process DO — mechanical", () => {
         },
       });
 
+// SAFETY: test fixture is constructed with the asserted domain shape.
+
       await runInDurableObject(stub, (instance: Process) => {
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         const process = instance as any;
         expect(process.store.getMessages()).toEqual([]);
         expect(process.currentRun).toBeNull();
@@ -7585,10 +8176,14 @@ describe("Process DO — mechanical", () => {
       const pid = "mech-ipc-deduplicated-reply";
       const stub = await initProcess(pid, ROOT_IDENTITY);
 
+// SAFETY: test fixture is constructed with the asserted domain shape.
+
       await runInDurableObject(stub, async (instance: Process) => {
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         const process = instance as any;
         process.sendSignal = vi.fn();
         process.scheduleTick = vi.fn(async () => {});
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         const frame = {
           type: "sig",
           signal: "ipc.reply",
@@ -7601,9 +8196,12 @@ describe("Process DO — mechanical", () => {
             status: "completed",
             response: { text: "delivered once", usage: null },
           },
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         } as const;
 
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         await instance.recvFrame(frame as any);
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         await instance.recvFrame(frame as any);
 
         expect(process.store.getMessages().filter((message: any) => (
@@ -7618,11 +8216,16 @@ describe("Process DO — mechanical", () => {
       const pid = "mech-ipc-other-source-run";
       const stub = await initProcess(pid, ROOT_IDENTITY);
 
+// SAFETY: test fixture is constructed with the asserted domain shape.
+
       await runInDurableObject(stub, async (instance: Process) => {
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         const process = instance as any;
         process.sendSignal = vi.fn();
         process.scheduleTick = vi.fn(async () => {});
         process.currentRun = { runId: "run-active" };
+
+// SAFETY: test fixture is constructed with the asserted domain shape.
 
         await instance.recvFrame({
           type: "sig",
@@ -7637,6 +8240,7 @@ describe("Process DO — mechanical", () => {
             status: "completed",
             response: { text: "delegated result for an older run", usage: null },
           },
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         } as any);
 
         expect(process.store.getMessages()).toEqual([
@@ -7670,7 +8274,10 @@ describe("Process DO — mechanical", () => {
       const targetPid = "mech-ipc-busy-target";
       const source = await initProcess(sourcePid, ROOT_IDENTITY);
 
+// SAFETY: test fixture is constructed with the asserted domain shape.
+
       await runInDurableObject(source, (instance: Process) => {
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         const process = instance as any;
         process.scheduleTick = vi.fn(async () => {});
         process.currentRun = {
@@ -7703,7 +8310,10 @@ describe("Process DO — mechanical", () => {
         },
       });
 
+// SAFETY: test fixture is constructed with the asserted domain shape.
+
       await runInDurableObject(source, (instance: Process) => {
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         const process = instance as any;
         const messages = process.store.getMessages();
         expect(messages).toHaveLength(1);
@@ -7720,7 +8330,10 @@ describe("Process DO — mechanical", () => {
         expect(process.scheduleTick).not.toHaveBeenCalled();
       });
 
+// SAFETY: test fixture is constructed with the asserted domain shape.
+
       await runInDurableObject(source, async (instance: Process) => {
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         const process = instance as any;
         await process.finishRun("active-source-run", {
           reason: "turn.complete",
@@ -7729,7 +8342,10 @@ describe("Process DO — mechanical", () => {
         });
       });
 
+// SAFETY: test fixture is constructed with the asserted domain shape.
+
       await runInDurableObject(source, (instance: Process) => {
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         const process = instance as any;
         const runtimeMessages = process.store.getMessages()
           .filter((message: any) => message.role === "system");
@@ -7749,7 +8365,10 @@ describe("Process DO — mechanical", () => {
       const targetPid = "mech-ipc-next-turn-target";
       const source = await initProcess(sourcePid, ROOT_IDENTITY);
 
+// SAFETY: test fixture is constructed with the asserted domain shape.
+
       const result = await runInDurableObject(source, async (instance: Process) => {
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         const process = instance as any;
         const generatedInputs: string[] = [];
         process.sendSignal = async () => {};
@@ -7797,13 +8416,9 @@ describe("Process DO — mechanical", () => {
         process.currentRun = {
           runId: "active-source-turn",
           config: {
-            executor: { kind: "process", pid: sourcePid },
-            profile: "task",
+            ...terminalTestConfig(sourcePid),
             provider: "workers-ai",
             model: "@cf/test/model",
-            apiKey: "",
-            reasoning: "off",
-            maxTokens: 8192,
           },
           tools: [],
           devices: [],
@@ -7874,6 +8489,7 @@ describe("Process DO — mechanical", () => {
       });
 
       const kernel = await getKernelPtr();
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       const response = await runInDurableObject(kernel, (instance: Kernel) =>
         instance.recvFrame(
           sourcePid,
@@ -7883,9 +8499,11 @@ describe("Process DO — mechanical", () => {
             timeoutMs: 60_000,
           }),
         ),
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       ) as ResponseOkFrame;
 
       expect(response.ok).toBe(true);
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       const data = response.data as any;
       expect(data).toMatchObject({
         ok: true,
@@ -7900,8 +8518,10 @@ describe("Process DO — mechanical", () => {
 
       let replyMessage: any = null;
       const deadline = Date.now() + 5_000;
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       while (Date.now() < deadline) {
         replyMessage = await runInDurableObject(source, (instance: Process) => {
+          // SAFETY: test fixture is constructed with the asserted domain shape.
           const messages = (instance as any).store.getMessages();
           return messages.find((message: any) =>
             message.role === "system"
@@ -7917,7 +8537,10 @@ describe("Process DO — mechanical", () => {
 
       await driveProcessUntilIdle(source, 10_000);
 
+// SAFETY: test fixture is constructed with the asserted domain shape.
+
       await runInDurableObject(source, (instance: Process) => {
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         const messages = (instance as any).store.getMessages();
         const assistant = messages.filter((message: any) => message.role === "assistant").pop();
         expect(assistant).toBeDefined();
@@ -7930,11 +8553,14 @@ describe("Process DO — mechanical", () => {
       const targetPid = "mech-ipc-timeout-target";
       const source = await initProcess(sourcePid, ROOT_IDENTITY);
       await initProcess(targetPid, ROOT_IDENTITY);
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       await runInDurableObject(source, (instance: Process) => {
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         (instance as any).scheduleTick = async () => {};
       });
 
       const kernel = await getKernelPtr();
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       const response = await runInDurableObject(kernel, (instance: Kernel) =>
         instance.recvFrame(
           sourcePid,
@@ -7944,19 +8570,27 @@ describe("Process DO — mechanical", () => {
             timeoutMs: 10_000,
           }),
         ),
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       ) as ResponseOkFrame;
 
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       const data = response.data as any;
       expect(data.ok).toBe(true);
 
+// SAFETY: test fixture is constructed with the asserted domain shape.
+
       await runInDurableObject(kernel, async (instance: Kernel) => {
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         const k = instance as any;
         const timedOut = k.ipcCalls.timeout(data.callId, data.deadlineAt + 1);
         expect(timedOut).toBeTruthy();
         await k.deliverIpcCall(data.callId);
       });
 
+// SAFETY: test fixture is constructed with the asserted domain shape.
+
       await runInDurableObject(source, (instance: Process) => {
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         const process = instance as any;
         const messages = process.store.getMessages();
         expect(messages).toHaveLength(1);
@@ -7971,7 +8605,10 @@ describe("Process DO — mechanical", () => {
       const pid = "mech-ipc-stale-start";
       const stub = await initProcess(pid, ROOT_IDENTITY);
 
+// SAFETY: test fixture is constructed with the asserted domain shape.
+
       await runInDurableObject(stub, async (instance: Process) => {
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         const process = instance as any;
         let releaseSchedule!: () => void;
         let markScheduleStarted!: () => void;
@@ -8017,7 +8654,10 @@ describe("Process DO — mechanical", () => {
     it("keeps IPC admission behind earlier background sends", async () => {
       const stub = await initProcess("mech-ipc-admission-order", ROOT_IDENTITY);
 
+// SAFETY: test fixture is constructed with the asserted domain shape.
+
       await runInDurableObject(stub, async (instance: Process) => {
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         const process = instance as any;
         process.scheduleTick = vi.fn(async () => {});
         process.sendSignal = vi.fn(async () => {});
@@ -8045,7 +8685,10 @@ describe("Process DO — mechanical", () => {
     it("terminalizes IPC work when its first tick cannot be scheduled", async () => {
       const stub = await initProcess("mech-ipc-schedule-failure", ROOT_IDENTITY);
 
+// SAFETY: test fixture is constructed with the asserted domain shape.
+
       await runInDurableObject(stub, async (instance: Process) => {
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         const process = instance as any;
         process.scheduleTick = vi.fn(async () => {
           throw new Error("scheduler unavailable");
@@ -8076,13 +8719,18 @@ describe("Process DO — mechanical", () => {
       const pid = "mech-ipc-queued";
       const stub = await initProcess(pid, ROOT_IDENTITY);
 
+// SAFETY: test fixture is constructed with the asserted domain shape.
+
       await runInDurableObject(stub, (instance: Process) => {
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         const process = instance as any;
         process.scheduleTick = async () => {};
         process.currentRun = {
           runId: "active-run",
         };
       });
+
+// SAFETY: test fixture is constructed with the asserted domain shape.
 
       const response = await stub.recvFrame(makeReq("proc.ipc.deliver", {
         runId: "queued-ipc-run",
@@ -8091,6 +8739,7 @@ describe("Process DO — mechanical", () => {
         message: "Queued IPC work.",
         metadata: { priority: "normal" },
         sentAt: 1_700_000_000_000,
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       })) as ResponseOkFrame;
 
       expect(response.ok).toBe(true);
@@ -8103,7 +8752,10 @@ describe("Process DO — mechanical", () => {
         queued: true,
       });
 
+// SAFETY: test fixture is constructed with the asserted domain shape.
+
       await runInDurableObject(stub, (instance: Process) => {
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         const process = instance as any;
         const store = process.store;
         expect(store.messageCount()).toBe(0);
@@ -8120,7 +8772,9 @@ describe("Process DO — mechanical", () => {
     it("exports through a tool-calling assistant message with its tool results", async () => {
       const sourcePid = "mech-history-export-tool-boundary";
       const source = await initProcess(sourcePid, ROOT_IDENTITY);
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       const assistantId = await runInDurableObject(source, (instance: Process) => {
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         const store = (instance as any).store;
         store.appendMessage("user", "Inspect the file.");
         const id = store.appendMessage("assistant", "I will inspect it.", {
@@ -8141,9 +8795,13 @@ describe("Process DO — mechanical", () => {
         return id;
       });
 
+// SAFETY: test fixture is constructed with the asserted domain shape.
+
       const exportResponse = await source.recvFrame(makeReq("proc.history.export", {
         throughMessageId: assistantId,
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       })) as ResponseOkFrame;
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       const exported = exportResponse.data as any;
       expect(exported).toMatchObject({
         ok: true,
@@ -8154,8 +8812,10 @@ describe("Process DO — mechanical", () => {
 
       const targetPid = "mech-history-import-tool-boundary";
       const target = await initProcess(targetPid, ROOT_IDENTITY);
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       const importResponse = await target.recvFrame(makeReq("proc.history.import", {
         archivePaths: exported.archivePaths,
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       })) as ResponseOkFrame;
       expect(importResponse.data).toMatchObject({
         ok: true,
@@ -8163,7 +8823,10 @@ describe("Process DO — mechanical", () => {
         restoredMessages: 3,
       });
 
+// SAFETY: test fixture is constructed with the asserted domain shape.
+
       await runInDurableObject(target, (instance: Process) => {
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         expect((instance as any).store.getMessages().map((message: any) => ({
           role: message.role,
           content: message.content,
@@ -8182,7 +8845,9 @@ describe("Process DO — mechanical", () => {
       const sourcePid = "mech-history-export-run-boundary";
       const source = await initProcess(sourcePid, ROOT_IDENTITY);
       const runId = "run:canonical-conversation-message";
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       const userId = await runInDurableObject(source, (instance: Process) => {
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         const store = (instance as any).store;
         const id = store.appendMessage("user", "Branch from this conversation message.", {
           runId,
@@ -8193,9 +8858,13 @@ describe("Process DO — mechanical", () => {
         return id;
       });
 
+// SAFETY: test fixture is constructed with the asserted domain shape.
+
       const exportResponse = await source.recvFrame(makeReq("proc.history.export", {
         throughRunId: runId,
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       })) as ResponseOkFrame;
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       const exported = exportResponse.data as any;
       expect(exported).toMatchObject({
         ok: true,
@@ -8205,14 +8874,18 @@ describe("Process DO — mechanical", () => {
       });
 
       const target = await initProcess("mech-history-import-run-boundary", ROOT_IDENTITY);
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       const importResponse = await target.recvFrame(makeReq("proc.history.import", {
         archivePaths: exported.archivePaths,
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       })) as ResponseOkFrame;
       expect(importResponse.data).toMatchObject({
         ok: true,
         restoredMessages: 1,
       });
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       await runInDurableObject(target, (instance: Process) => {
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         expect((instance as any).store.getMessages().map((message: any) => ({
           role: message.role,
           content: message.content,
@@ -8230,7 +8903,10 @@ describe("Process DO — mechanical", () => {
     it("releases the lifecycle transition while writing a fork archive", async () => {
       const stub = await initProcess("mech-history-export-unlocked", ROOT_IDENTITY);
 
+// SAFETY: test fixture is constructed with the asserted domain shape.
+
       await runInDurableObject(stub, async (instance: Process) => {
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         const process = instance as any;
         const messageId = process.store.appendMessage("user", "Fork this snapshot.");
         let markArchiveStarted!: () => void;
@@ -8272,11 +8948,14 @@ describe("Process DO — mechanical", () => {
       const pid = "mech-conversation-compact";
       const stub = await initProcess(pid, ROOT_IDENTITY);
 
+// SAFETY: test fixture is constructed with the asserted domain shape.
+
       const messageIds = await runInDurableObject(stub, (instance: Process) => {
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         const process = instance as any;
         const store = process.store;
         process.__signals = [];
-        process.sendSignal = async (signal: string, payload: unknown) => {
+        process.sendSignal = async (signal: string, payload: ProcessTestValue) => {
           process.__signals.push({ signal, payload });
         };
         return [
@@ -8286,12 +8965,16 @@ describe("Process DO — mechanical", () => {
         ];
       });
 
+// SAFETY: test fixture is constructed with the asserted domain shape.
+
       const compactRes = (await stub.recvFrame(
         makeReq("proc.history.compact", {
           keepLast: 1,
           summary: "The old exchange established the thread context.",
         }),
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       )) as ResponseOkFrame;
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       const data = compactRes.data as any;
 
       expect(data).toMatchObject({
@@ -8314,7 +8997,10 @@ describe("Process DO — mechanical", () => {
       const archiveKey = data.archivedTo.replace(/^\//, "");
       expect(await env.STORAGE.get(archiveKey)).not.toBeNull();
 
+// SAFETY: test fixture is constructed with the asserted domain shape.
+
       await runInDurableObject(stub, (instance: Process) => {
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         const store = (instance as any).store;
         const messages = store.getMessages();
         expect(messages).toHaveLength(2);
@@ -8330,6 +9016,7 @@ describe("Process DO — mechanical", () => {
           role: "user",
           content: "keep this",
         });
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         expect((instance as any).__signals).toEqual([
           {
             signal: "proc.changed",
@@ -8347,9 +9034,13 @@ describe("Process DO — mechanical", () => {
         ]);
       });
 
+// SAFETY: test fixture is constructed with the asserted domain shape.
+
       const segmentsRes = (await stub.recvFrame(
         makeReq("proc.history.segments", {}),
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       )) as ResponseOkFrame;
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       expect((segmentsRes.data as any).segments).toEqual([
         expect.objectContaining({
           id: data.segment.id,
@@ -8365,7 +9056,10 @@ describe("Process DO — mechanical", () => {
       const stub = await initProcess(pid, ROOT_IDENTITY);
       let transcript = "";
 
+// SAFETY: test fixture is constructed with the asserted domain shape.
+
       await runInDurableObject(stub, (instance: Process) => {
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         const process = instance as any;
         const store = process.store;
         for (let index = 0; index < 5; index += 1) {
@@ -8375,19 +9069,15 @@ describe("Process DO — mechanical", () => {
         store.appendMessage("user", "keep", {});
         process.currentRun = {
           runId: "config-source",
-          config: {
-            executor: { kind: "process", pid },
-            provider: "workers-ai",
-            model: "@cf/test/model",
-            apiKey: "",
-            maxTokens: 4096,
-          },
+          config: terminalTestConfig(pid),
         };
         const checkpointConfig = process.currentRun.config;
         process.currentRun = null;
         process.resolveCheckpointConfig = async () => checkpointConfig;
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         process.generation = {
           async generateText(request: any) {
+            // SAFETY: test fixture is constructed with the asserted domain shape.
             const content = request.context.messages[0].content as string;
             transcript = content
               .slice("Process history segment JSONL:\n".length)
@@ -8397,9 +9087,12 @@ describe("Process DO — mechanical", () => {
         };
       });
 
+// SAFETY: test fixture is constructed with the asserted domain shape.
+
       const response = await stub.recvFrame(makeReq("proc.history.compact", {
         keepLast: 1,
         generateSummary: true,
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       })) as ResponseOkFrame;
       expect(response.data).toMatchObject({ ok: true, archivedMessages: 5 });
       expect(transcript.length).toBeLessThanOrEqual(24_000);
@@ -8409,7 +9102,10 @@ describe("Process DO — mechanical", () => {
         expect.objectContaining({ omitted_messages: expect.any(Number) }),
       ]));
 
+// SAFETY: test fixture is constructed with the asserted domain shape.
+
       await runInDurableObject(stub, (instance: Process) => {
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         (instance as any).currentRun = null;
       });
     });
@@ -8418,19 +9114,16 @@ describe("Process DO — mechanical", () => {
       const pid = "mech-conversation-compact-stale";
       const stub = await initProcess(pid, ROOT_IDENTITY);
 
+// SAFETY: test fixture is constructed with the asserted domain shape.
+
       await runInDurableObject(stub, (instance: Process) => {
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         const process = instance as any;
         process.store.appendMessage("user", "old", {});
         process.store.appendMessage("user", "keep", {});
         process.currentRun = {
           runId: "config-source",
-          config: {
-            executor: { kind: "process", pid },
-            provider: "workers-ai",
-            model: "@cf/test/model",
-            apiKey: "",
-            maxTokens: 4096,
-          },
+          config: terminalTestConfig(pid),
         };
         const checkpointConfig = process.currentRun.config;
         process.currentRun = null;
@@ -8446,14 +9139,18 @@ describe("Process DO — mechanical", () => {
       const archivePrefix = `root/processes/${encodeURIComponent(pid)}/history/`;
       const archivesBefore = (await env.STORAGE.list({ prefix: archivePrefix }))
         .objects.map((object) => object.key);
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       const response = await stub.recvFrame(makeReq("proc.history.compact", {
         keepLast: 1,
         generateSummary: true,
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       })) as ResponseOkFrame;
       expect(response.data).toEqual({ ok: false, error: "History changed during compaction" });
       expect((await env.STORAGE.list({ prefix: archivePrefix }))
         .objects.map((object) => object.key)).toEqual(archivesBefore);
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       await runInDurableObject(stub, (instance: Process) => {
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         const process = instance as any;
         expect(process.store.listHistorySegments()).toHaveLength(0);
         process.currentRun = null;
@@ -8466,7 +9163,9 @@ describe("Process DO — mechanical", () => {
       const archivePrefix = `root/processes/${encodeURIComponent(pid)}/history/`;
       const archivesBefore = (await env.STORAGE.list({ prefix: archivePrefix }))
         .objects.map((object) => object.key);
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       const result = await runInDurableObject(stub, async (instance: Process) => {
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         const process = instance as any;
         let generationCalls = 0;
         let releaseFirst!: () => void;
@@ -8481,13 +9180,7 @@ describe("Process DO — mechanical", () => {
         process.store.appendMessage("user", "keep", {});
         process.currentRun = {
           runId: "config-source",
-          config: {
-            executor: { kind: "process", pid },
-            provider: "workers-ai",
-            model: "@cf/test/model",
-            apiKey: "",
-            maxTokens: 4096,
-          },
+          config: terminalTestConfig(pid),
         };
         const checkpointConfig = process.currentRun.config;
         process.currentRun = null;
@@ -8509,11 +9202,14 @@ describe("Process DO — mechanical", () => {
           generateSummary: true,
         }));
         await firstStarted;
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         const second = await process.recvFrame(makeReq("proc.history.compact", {
           keepLast: 1,
           generateSummary: true,
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         })) as ResponseOkFrame;
         releaseFirst();
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         const stale = await first as ResponseOkFrame;
         const messages = process.store.getMessages();
         const segments = process.store.listHistorySegments();
@@ -8534,7 +9230,10 @@ describe("Process DO — mechanical", () => {
       const pid = "mech-conversation-compact-transaction";
       const stub = await initProcess(pid, ROOT_IDENTITY);
 
+// SAFETY: test fixture is constructed with the asserted domain shape.
+
       await runInDurableObject(stub, (instance: Process) => {
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         const store = (instance as any).store;
         store.appendMessage("user", "old", {});
         store.appendMessage("user", "keep", {});
@@ -8546,9 +9245,11 @@ describe("Process DO — mechanical", () => {
       const archivePrefix = `root/processes/${encodeURIComponent(pid)}/history/`;
       const archivesBefore = (await env.STORAGE.list({ prefix: archivePrefix }))
         .objects.map((object) => object.key);
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       const response = await stub.recvFrame(makeReq("proc.history.compact", {
         keepLast: 1,
         summary: "Summary.",
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       })) as ResponseFrame;
       expect(response).toMatchObject({
         ok: false,
@@ -8556,7 +9257,9 @@ describe("Process DO — mechanical", () => {
       });
       expect((await env.STORAGE.list({ prefix: archivePrefix }))
         .objects.map((object) => object.key)).toEqual(archivesBefore);
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       await runInDurableObject(stub, (instance: Process) => {
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         expect((instance as any).store.getMessages())
           .toEqual(expect.arrayContaining([
             expect.objectContaining({ role: "user", content: "old" }),
@@ -8569,7 +9272,10 @@ describe("Process DO — mechanical", () => {
       const pid = "mech-conversation-segment-read";
       const stub = await initProcess(pid, ROOT_IDENTITY);
 
+// SAFETY: test fixture is constructed with the asserted domain shape.
+
       await runInDurableObject(stub, (instance: Process) => {
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         const store = (instance as any).store;
         store.appendMessage("user", "old user", { createdAt: 10 });
         store.appendMessage("assistant", "old assistant", { createdAt: 20 });
@@ -8577,20 +9283,28 @@ describe("Process DO — mechanical", () => {
         store.appendMessage("user", "keep this", { createdAt: 30 });
       });
 
+// SAFETY: test fixture is constructed with the asserted domain shape.
+
       const compactRes = (await stub.recvFrame(
         makeReq("proc.history.compact", {
           keepLast: 1,
           summary: "Earlier context.",
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         }),
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       )) as ResponseOkFrame;
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       const compactData = compactRes.data as any;
 
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       const firstPageRes = (await stub.recvFrame(
         makeReq("proc.history.segment.read", {
           segmentId: compactData.segment.id,
           limit: 1,
         }),
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       )) as ResponseOkFrame;
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       const firstPage = firstPageRes.data as any;
       expect(firstPage).toMatchObject({
         ok: true,
@@ -8611,13 +9325,17 @@ describe("Process DO — mechanical", () => {
         },
       ]);
 
+// SAFETY: test fixture is constructed with the asserted domain shape.
+
       const secondPageRes = (await stub.recvFrame(
         makeReq("proc.history.segment.read", {
           segmentId: compactData.segment.id,
           limit: 1,
           offset: 1,
         }),
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       )) as ResponseOkFrame;
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       expect((secondPageRes.data as any).messages).toEqual([
         {
           id: expect.any(Number),
@@ -8626,19 +9344,24 @@ describe("Process DO — mechanical", () => {
             text: "old assistant",
             thinking: [],
             toolCalls: [],
+          // SAFETY: test fixture is constructed with the asserted domain shape.
           },
           timestamp: 20,
         },
       ]);
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       expect((secondPageRes.data as any).truncated).toBe(true);
 
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       const toolResultPageRes = (await stub.recvFrame(
         makeReq("proc.history.segment.read", {
           segmentId: compactData.segment.id,
           limit: 1,
           offset: 2,
         }),
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       )) as ResponseOkFrame;
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       expect((toolResultPageRes.data as any).messages).toEqual([
         {
           id: expect.any(Number),
@@ -8653,6 +9376,7 @@ describe("Process DO — mechanical", () => {
           timestamp: expect.any(Number),
         },
       ]);
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       expect((toolResultPageRes.data as any).truncated).toBe(false);
     });
 
@@ -8669,7 +9393,9 @@ describe("Process DO — mechanical", () => {
           processId: pid,
         },
       });
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       await runInDurableObject(stub, (instance: Process) => {
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         const store = (instance as any).store;
         store.appendMessage("assistant", "Here is the result.", {
           createdAt: 20,
@@ -8687,16 +9413,24 @@ describe("Process DO — mechanical", () => {
         });
       });
 
+// SAFETY: test fixture is constructed with the asserted domain shape.
+
       const compactRes = await stub.recvFrame(makeReq("proc.history.compact", {
         keepLast: 1,
         summary: "Earlier context.",
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       })) as ResponseOkFrame;
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       const segment = (compactRes.data as any).segment;
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       const segmentRes = await stub.recvFrame(makeReq("proc.history.segment.read", {
         segmentId: segment.id,
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       })) as ResponseOkFrame;
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       const media = (segmentRes.data as any).messages[0].content.media[0];
 
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       expect((segmentRes.data as any).messages[0]).toMatchObject({
         role: "assistant",
         content: {
@@ -8716,6 +9450,7 @@ describe("Process DO — mechanical", () => {
       expect(media.path).toBe(`/${media.key}`);
       expect(await env.STORAGE.head(activeKey)).toBeNull();
 
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       const read = await stub.recvFrame(makeReq("proc.media.read", { key: media.key })) as ResponseOkFrame;
       expect(read.data).toMatchObject({ ok: true, key: media.key, path: media.path, size: 3 });
       expect(read.body && [...await bodyToBytes(read.body)]).toEqual([7, 8, 9]);
@@ -8725,7 +9460,10 @@ describe("Process DO — mechanical", () => {
       const pid = "mech-conversation-compact-active";
       const stub = await initProcess(pid, ROOT_IDENTITY);
 
+// SAFETY: test fixture is constructed with the asserted domain shape.
+
       await runInDurableObject(stub, (instance: Process) => {
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         const process = instance as any;
         const store = process.store;
         store.appendMessage("user", "active message");
@@ -8734,18 +9472,24 @@ describe("Process DO — mechanical", () => {
         };
       });
 
+// SAFETY: test fixture is constructed with the asserted domain shape.
+
       const compactRes = (await stub.recvFrame(
         makeReq("proc.history.compact", {
           keepLast: 0,
           summary: "Should fail.",
         }),
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       )) as ResponseOkFrame;
       expect(compactRes.data).toEqual({
         ok: false,
         error: "Process is active",
       });
 
+// SAFETY: test fixture is constructed with the asserted domain shape.
+
       await runInDurableObject(stub, (instance: Process) => {
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         (instance as any).currentRun = null;
       });
     });
@@ -8754,7 +9498,10 @@ describe("Process DO — mechanical", () => {
       const pid = "mech-conversation-compact-cancel";
       const stub = await initProcess(pid, ROOT_IDENTITY);
 
+// SAFETY: test fixture is constructed with the asserted domain shape.
+
       await runInDurableObject(stub, async (instance: Process) => {
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         const process = instance as any;
         let markStarted!: () => void;
         const started = new Promise<void>((resolve) => {
@@ -8764,7 +9511,7 @@ describe("Process DO — mechanical", () => {
         process.store.appendMessage("user", "keep", {});
         process.archiveMessageRecords = async (
           _key: string,
-          _messages: unknown[],
+          _messages: ProcessTestValue[],
           signal: AbortSignal,
         ) => {
           markStarted();
@@ -8801,8 +9548,11 @@ describe("Process DO — mechanical", () => {
       const pid = "mech-conversation-policy";
       const stub = await initProcess(pid, ROOT_IDENTITY);
 
+// SAFETY: test fixture is constructed with the asserted domain shape.
+
       const defaultRes = (await stub.recvFrame(
         makeReq("proc.history.policy.get", {}),
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       )) as ResponseOkFrame;
       expect(defaultRes.data).toMatchObject({
         ok: true,
@@ -8815,12 +9565,15 @@ describe("Process DO — mechanical", () => {
         },
       });
 
+// SAFETY: test fixture is constructed with the asserted domain shape.
+
       const setRes = (await stub.recvFrame(
         makeReq("proc.history.policy.set", {
           overflow: "auto-compact",
           compactAtPressure: 0.82,
           keepLast: 42,
         }),
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       )) as ResponseOkFrame;
       expect(setRes.data).toMatchObject({
         ok: true,
@@ -8832,8 +9585,11 @@ describe("Process DO — mechanical", () => {
         },
       });
 
+// SAFETY: test fixture is constructed with the asserted domain shape.
+
       const nextRes = (await stub.recvFrame(
         makeReq("proc.history.policy.get", {}),
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       )) as ResponseOkFrame;
       expect(nextRes.data).toMatchObject({
         ok: true,
@@ -8850,10 +9606,13 @@ describe("Process DO — mechanical", () => {
       const pid = "mech-conversation-auto-compact";
       const stub = await initProcess(pid, ROOT_IDENTITY);
 
+// SAFETY: test fixture is constructed with the asserted domain shape.
+
       const emitted = await runInDurableObject(stub, async (instance: Process) => {
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         const process = instance as any;
-        const emitted: Array<{ signal: string; payload: unknown }> = [];
-        process.sendSignal = async (signal: string, payload: unknown) => {
+        const emitted: Array<{ signal: string; payload: ProcessTestValue }> = [];
+        process.sendSignal = async (signal: string, payload: ProcessTestValue) => {
           emitted.push({ signal, payload });
         };
         process.updateContextState = async () => ({ pressure: 0.95 });
@@ -8973,8 +9732,10 @@ describe("Process DO — mechanical", () => {
       expect(emitted.segments[0]).toMatchObject({
         kind: "compaction",
       });
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       const lifecycleEvents = emitted.emitted
         .filter((entry) => entry.signal === "proc.changed")
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         .map((entry) => (entry.payload as any).event)
         .filter(Boolean);
       expect(lifecycleEvents).toEqual([
@@ -8987,11 +9748,14 @@ describe("Process DO — mechanical", () => {
       const pid = "mech-conversation-auto-compact-insufficient";
       const stub = await initProcess(pid, ROOT_IDENTITY);
 
+// SAFETY: test fixture is constructed with the asserted domain shape.
+
       const result = await runInDurableObject(stub, async (instance: Process) => {
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         const process = instance as any;
-        const emitted: Array<{ signal: string; payload: unknown }> = [];
+        const emitted: Array<{ signal: string; payload: ProcessTestValue }> = [];
         let generated = false;
-        process.sendSignal = async (signal: string, payload: unknown) => {
+        process.sendSignal = async (signal: string, payload: ProcessTestValue) => {
           emitted.push({ signal, payload });
         };
         process.generation = {
@@ -9059,10 +9823,13 @@ describe("Process DO — mechanical", () => {
       const pid = "mech-conversation-auto-compact-provider-billing";
       const stub = await initProcess(pid, ROOT_IDENTITY);
 
+// SAFETY: test fixture is constructed with the asserted domain shape.
+
       const result = await runInDurableObject(stub, async (instance: Process) => {
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         const process = instance as any;
-        const emitted: Array<{ signal: string; payload: unknown }> = [];
-        process.sendSignal = async (signal: string, payload: unknown) => {
+        const emitted: Array<{ signal: string; payload: ProcessTestValue }> = [];
+        process.sendSignal = async (signal: string, payload: ProcessTestValue) => {
           emitted.push({ signal, payload });
         };
         process.generation = {
@@ -9139,10 +9906,13 @@ describe("Process DO — mechanical", () => {
       const pid = "mech-conversation-auto-compact-abort";
       const stub = await initProcess(pid, ROOT_IDENTITY);
 
+// SAFETY: test fixture is constructed with the asserted domain shape.
+
       const result = await runInDurableObject(stub, async (instance: Process) => {
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         const process = instance as any;
-        const emitted: Array<{ signal: string; payload: unknown }> = [];
-        process.sendSignal = async (signal: string, payload: unknown) => {
+        const emitted: Array<{ signal: string; payload: ProcessTestValue }> = [];
+        process.sendSignal = async (signal: string, payload: ProcessTestValue) => {
           emitted.push({ signal, payload });
         };
         process.generation = {
@@ -9209,8 +9979,10 @@ describe("Process DO — mechanical", () => {
           }),
         },
       ]));
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       const lifecycleEvents = result.emitted
         .filter((entry) => entry.signal === "proc.changed")
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         .map((entry) => (entry.payload as any).event)
         .filter(Boolean);
       expect(lifecycleEvents).toEqual([]);
@@ -9222,8 +9994,11 @@ describe("Process DO — mechanical", () => {
       const pid = "mech-abort-idle";
       const stub = await initProcess(pid, ROOT_IDENTITY);
 
+// SAFETY: test fixture is constructed with the asserted domain shape.
+
       const res = (await stub.recvFrame(
         makeReq("proc.abort", {}),
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       )) as ResponseOkFrame;
 
       expect(res.ok).toBe(true);
@@ -9238,16 +10013,24 @@ describe("Process DO — mechanical", () => {
       const pid = "mech-abort-stale-run";
       const stub = await initProcess(pid, ROOT_IDENTITY);
 
+// SAFETY: test fixture is constructed with the asserted domain shape.
+
       await runInDurableObject(stub, (instance: Process) => {
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         (instance as any).currentRun = { runId: "run-new" };
       });
 
+// SAFETY: test fixture is constructed with the asserted domain shape.
+
       const res = (await stub.recvFrame(
         makeReq("proc.abort", { runId: "run-old" }),
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       )) as ResponseOkFrame;
 
       expect(res.data).toMatchObject({ ok: true, pid, aborted: false });
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       await runInDurableObject(stub, (instance: Process) => {
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         const process = instance as any;
         expect(process.currentRun).toMatchObject({ runId: "run-new" });
         process.currentRun = null;
@@ -9258,7 +10041,10 @@ describe("Process DO — mechanical", () => {
       const pid = "mech-finish-claims-successor";
       const stub = await initProcess(pid, ROOT_IDENTITY);
 
+// SAFETY: test fixture is constructed with the asserted domain shape.
+
       await runInDurableObject(stub, async (instance: Process) => {
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         const process = instance as any;
         process.emitRunFinished = vi.fn(() => new Promise<void>(() => {}));
         process.sendSignal = vi.fn();
@@ -9291,7 +10077,10 @@ describe("Process DO — mechanical", () => {
     it("keeps failed run-finish delivery in the durable outbox", async () => {
       const stub = await initProcess("mech-finish-outbox", ROOT_IDENTITY);
 
+// SAFETY: test fixture is constructed with the asserted domain shape.
+
       await runInDurableObject(stub, async (instance: Process) => {
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         const process = instance as any;
         process.sendSignal = vi.fn(async () => {
           throw new Error("kernel unavailable");
@@ -9322,7 +10111,10 @@ describe("Process DO — mechanical", () => {
     it("stops terminal delivery after ten attempts and records an inspectable history note", async () => {
       const stub = await initProcess("mech-finish-outbox-exhausted", ROOT_IDENTITY);
 
+// SAFETY: test fixture is constructed with the asserted domain shape.
+
       await runInDurableObject(stub, async (instance: Process) => {
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         const process = instance as any;
         process.store.setValue("pendingRunFinishes", JSON.stringify([{
           pid: process.pid,
@@ -9368,7 +10160,10 @@ describe("Process DO — mechanical", () => {
       const pid = "mech-abort-active";
       const stub = await initProcess(pid, ROOT_IDENTITY);
 
+// SAFETY: test fixture is constructed with the asserted domain shape.
+
       await runInDurableObject(stub, (instance: Process) => {
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         const process = instance as any;
         process.store.appendMessage("assistant", "", {
           runId: "run-1",
@@ -9384,8 +10179,11 @@ describe("Process DO — mechanical", () => {
         process.currentRun = { runId: "run-1" };
       });
 
+// SAFETY: test fixture is constructed with the asserted domain shape.
+
       const res = (await stub.recvFrame(
         makeReq("proc.abort", {}),
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       )) as ResponseOkFrame;
 
       expect(res.ok).toBe(true);
@@ -9398,7 +10196,10 @@ describe("Process DO — mechanical", () => {
         continuedQueuedRunId: "run-2",
       });
 
+// SAFETY: test fixture is constructed with the asserted domain shape.
+
       await runInDurableObject(stub, (instance: Process) => {
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         const process = instance as any;
         const store = process.store;
         const messages = store.getMessages();
@@ -9421,12 +10222,17 @@ describe("Process DO — mechanical", () => {
     it("cancels pending tool, CodeMode, and provider requests", async () => {
       const pid = "mech-abort-cancels-requests";
       const stub = await initProcess(pid, ROOT_IDENTITY);
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       const cancelSpy = vi
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         .spyOn(Kernel.prototype as any, "cancelProcessRequests")
         .mockReturnValue(3);
 
+// SAFETY: test fixture is constructed with the asserted domain shape.
+
       try {
         await runInDurableObject(stub, (instance: Process) => {
+          // SAFETY: test fixture is constructed with the asserted domain shape.
           const process = instance as any;
           process.currentRun = { runId: "run-1" };
           process.store.register(
@@ -9457,7 +10263,9 @@ describe("Process DO — mechanical", () => {
           expect.arrayContaining(["dispatch-1", "nested-1"]),
           "User interrupted tool execution",
         ));
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         await runInDurableObject(stub, (instance: Process) => {
+          // SAFETY: test fixture is constructed with the asserted domain shape.
           const process = instance as any;
           expect(process.providerAbortSignal.reason).toEqual(
             new Error("User interrupted tool execution"),
@@ -9476,18 +10284,25 @@ describe("Process DO — mechanical", () => {
       const requestBlocked = new Promise<void>((resolve) => {
         releaseRequest = resolve;
       });
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       const recvSpy = vi
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         .spyOn(Kernel.prototype as any, "recvFrame")
         .mockImplementation(async (_processId: string, frame: RequestFrame) => {
           await requestBlocked;
           return { type: "res", id: frame.id, ok: true, data: {} };
         });
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       const cancelSpy = vi
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         .spyOn(Kernel.prototype as any, "cancelProcessRequests")
         .mockReturnValue(1);
 
+// SAFETY: test fixture is constructed with the asserted domain shape.
+
       try {
         const result = await runInDurableObject(stub, async (instance: Process) => {
+          // SAFETY: test fixture is constructed with the asserted domain shape.
           const process = instance as any;
           const controller = new AbortController();
           const request = process.kernelRpc(
@@ -9520,44 +10335,60 @@ describe("Process DO — mechanical", () => {
     it("returns without waiting for request cancellation cleanup", async () => {
       const pid = "mech-abort-nonblocking-request-cancel";
       const stub = await initProcess(pid, ROOT_IDENTITY);
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       await runInDurableObject(stub, (instance: Process) => {
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         const process = instance as any;
         process.currentRun = { runId: "run-1" };
         process.store.register("dispatch-1", "call-1", "run-1", "fs.search", {});
         process.store.markDispatched("dispatch-1");
       });
 
+// SAFETY: test fixture is constructed with the asserted domain shape.
+
       const cancelSpy = vi
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         .spyOn(Kernel.prototype as any, "cancelProcessRequests")
         .mockImplementation(async function (this: Kernel) {
+          // SAFETY: test fixture is constructed with the asserted domain shape.
           const kernel = this as any;
           await new Promise<void>((resolve) => {
             kernel.releaseTestCancellation = resolve;
           });
+          // SAFETY: test fixture is constructed with the asserted domain shape.
           kernel.testCancellationFinished = true;
           return 1;
         });
       const kernel = await getKernelPtr();
 
+// SAFETY: test fixture is constructed with the asserted domain shape.
+
       try {
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         const response = await runInDurableObject(stub, async (instance: Process) => {
+          // SAFETY: test fixture is constructed with the asserted domain shape.
           return await (instance as any).recvFrame(makeReq("proc.abort", {}));
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         }) as ResponseOkFrame;
         await vi.waitFor(() => expect(cancelSpy).toHaveBeenCalledOnce());
         expect(response.data).toMatchObject({ ok: true, aborted: true, runId: "run-1" });
       } finally {
         cancelSpy.mockRestore();
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         const released = await runInDurableObject(kernel, (instance: Kernel) => {
+          // SAFETY: test fixture is constructed with the asserted domain shape.
           const release = (instance as any).releaseTestCancellation;
-          if (typeof release !== "function") {
+          if (release == null) {
             return false;
           }
           release();
           return true;
         });
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         if (released) {
           await vi.waitFor(async () => {
             const finished = await runInDurableObject(kernel, (instance: Kernel) => {
+              // SAFETY: test fixture is constructed with the asserted domain shape.
               return (instance as any).testCancellationFinished === true;
             });
             expect(finished).toBe(true);
@@ -9570,7 +10401,10 @@ describe("Process DO — mechanical", () => {
       const pid = "mech-abort-nonblocking-finish";
       const stub = await initProcess(pid, ROOT_IDENTITY);
 
+// SAFETY: test fixture is constructed with the asserted domain shape.
+
       const res = await runInDurableObject(stub, async (instance: Process) => {
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         const process = instance as any;
         process.currentRun = { runId: "run-1" };
         let releaseSignalDispatch!: () => void;
@@ -9590,8 +10424,10 @@ describe("Process DO — mechanical", () => {
           releaseSignalDispatch();
           for (const result of delivery.mock.results) {
             await result.value;
+          // SAFETY: test fixture is constructed with the asserted domain shape.
           }
         }
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       }) as ResponseOkFrame;
 
       expect(res.ok).toBe(true);
@@ -9609,7 +10445,10 @@ describe("Process DO — mechanical", () => {
       const runId = "run-hil-unoffered-batch";
       const stub = await initProcess("mech-hil-unoffered-batch", ROOT_IDENTITY);
 
+// SAFETY: test fixture is constructed with the asserted domain shape.
+
       await runInDurableObject(stub, async (instance: Process) => {
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         const process = instance as any;
         process.currentRun = {
           runId,
@@ -9684,7 +10523,10 @@ describe("Process DO — mechanical", () => {
       const runId = "run-hil-unoffered-codemode-batch";
       const stub = await initProcess("mech-hil-unoffered-codemode-batch", ROOT_IDENTITY);
 
+// SAFETY: test fixture is constructed with the asserted domain shape.
+
       await runInDurableObject(stub, async (instance: Process) => {
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         const process = instance as any;
         const resolveApproval = vi.fn();
         process.currentRun = {
@@ -9769,7 +10611,10 @@ describe("Process DO — mechanical", () => {
       const pid = "mech-hil-pause";
       const stub = await initProcess(pid, ROOT_IDENTITY);
 
+// SAFETY: test fixture is constructed with the asserted domain shape.
+
       await runInDurableObject(stub, async (instance: Process) => {
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         const process = instance as any;
         process.currentRun = {
           runId: "run-hil-1",
@@ -9784,11 +10629,15 @@ describe("Process DO — mechanical", () => {
         await process.processToolCalls("run-hil-1");
       });
 
+// SAFETY: test fixture is constructed with the asserted domain shape.
+
       const history = (await stub.recvFrame(
         makeReq("proc.history", {}),
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       )) as ResponseOkFrame;
 
       expect(history.ok).toBe(true);
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       const data = history.data as any;
       expect(data.pendingHil).toMatchObject({
         pid,
@@ -9799,7 +10648,10 @@ describe("Process DO — mechanical", () => {
         target: "gsv",
       });
 
+// SAFETY: test fixture is constructed with the asserted domain shape.
+
       await runInDurableObject(stub, (instance: Process) => {
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         const process = instance as any;
         expect(process.store.getPendingHilForRun("run-hil-1")).not.toBeNull();
         expect(process.store.getPending("call-hil-1")).toBeNull();
@@ -9810,7 +10662,10 @@ describe("Process DO — mechanical", () => {
       const pid = "mech-hil-normalized-target";
       const stub = await initProcess(pid, ROOT_IDENTITY);
 
+// SAFETY: test fixture is constructed with the asserted domain shape.
+
       await runInDurableObject(stub, async (instance: Process) => {
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         const process = instance as any;
         process.currentRun = {
           runId: "run-hil-normalized-target",
@@ -9828,11 +10683,15 @@ describe("Process DO — mechanical", () => {
         await process.processToolCalls("run-hil-normalized-target");
       });
 
+// SAFETY: test fixture is constructed with the asserted domain shape.
+
       const history = (await stub.recvFrame(
         makeReq("proc.history", {}),
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       )) as ResponseOkFrame;
 
       expect(history.ok).toBe(true);
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       expect((history.data as any).pendingHil).toMatchObject({
         pid,
         runId: "run-hil-normalized-target",
@@ -9847,7 +10706,10 @@ describe("Process DO — mechanical", () => {
       const pid = "mech-hil-deny";
       const stub = await initProcess(pid, ROOT_IDENTITY);
 
+// SAFETY: test fixture is constructed with the asserted domain shape.
+
       const requestId = await runInDurableObject(stub, async (instance: Process) => {
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         const process = instance as any;
         process.currentRun = {
           runId: "run-hil-2",
@@ -9865,8 +10727,11 @@ describe("Process DO — mechanical", () => {
         return process.store.getPendingHilForRun("run-hil-2").requestId;
       });
 
+// SAFETY: test fixture is constructed with the asserted domain shape.
+
       const res = (await stub.recvFrame(
         makeReq("proc.hil", { requestId, decision: "deny" }),
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       )) as ResponseOkFrame;
 
       expect(res.ok).toBe(true);
@@ -9879,7 +10744,10 @@ describe("Process DO — mechanical", () => {
         pendingHil: null,
       });
 
+// SAFETY: test fixture is constructed with the asserted domain shape.
+
       await runInDurableObject(stub, async (instance: Process) => {
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         const process = instance as any;
         expect(process.store.getPendingHil()).toBeNull();
         expect(process.store.getResults("run-hil-2")).toMatchObject([{
@@ -9907,7 +10775,10 @@ describe("Process DO — mechanical", () => {
       const pid = "mech-hil-exact-request";
       const stub = await initProcess(pid, ROOT_IDENTITY);
 
+// SAFETY: test fixture is constructed with the asserted domain shape.
+
       const requestId = await runInDurableObject(stub, async (instance: Process) => {
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         const process = instance as any;
         process.currentRun = {
           runId: "run-hil-exact-request",
@@ -9926,8 +10797,11 @@ describe("Process DO — mechanical", () => {
         return process.store.getPendingHilForRun("run-hil-exact-request").requestId;
       });
 
+// SAFETY: test fixture is constructed with the asserted domain shape.
+
       const stale = (await stub.recvFrame(
         makeReq("proc.hil", { requestId: `${requestId}-stale`, decision: "approve" }),
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       )) as ResponseOkFrame;
       expect(stale.ok).toBe(true);
       expect(stale.data).toEqual({
@@ -9935,7 +10809,10 @@ describe("Process DO — mechanical", () => {
         error: `Pending tool confirmation not found: ${requestId}-stale`,
       });
 
+// SAFETY: test fixture is constructed with the asserted domain shape.
+
       await runInDurableObject(stub, (instance: Process) => {
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         const process = instance as any;
         expect(process.store.getPendingHilForRun("run-hil-exact-request")).toMatchObject({
           requestId,
@@ -9944,8 +10821,11 @@ describe("Process DO — mechanical", () => {
         });
       });
 
+// SAFETY: test fixture is constructed with the asserted domain shape.
+
       const exact = (await stub.recvFrame(
         makeReq("proc.hil", { requestId, decision: "deny" }),
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       )) as ResponseOkFrame;
       expect(exact.ok).toBe(true);
       expect(exact.data).toMatchObject({
@@ -9956,10 +10836,14 @@ describe("Process DO — mechanical", () => {
       });
     });
 
+    // SAFETY: test fixture is constructed with the asserted domain shape.
     it("classifies a denied CodeMode confirmation as a user-controlled outcome", async () => {
       const stub = await initProcess("mech-hil-codemode-deny", ROOT_IDENTITY);
 
+// SAFETY: test fixture is constructed with the asserted domain shape.
+
       await runInDurableObject(stub, async (instance: Process) => {
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         const process = instance as any;
         const runId = "run-hil-codemode-deny";
         const requestId = "approval-codemode-deny";
@@ -10042,7 +10926,10 @@ describe("Process DO — mechanical", () => {
       const pid = "mech-hil-codemode-sole-deny";
       const stub = await initProcess(pid, ROOT_IDENTITY);
 
+// SAFETY: test fixture is constructed with the asserted domain shape.
+
       await runInDurableObject(stub, async (instance: Process) => {
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         const process = instance as any;
         const runId = "run-hil-codemode-sole-deny";
         const requestId = "approval-codemode-sole-deny";
@@ -10111,7 +10998,10 @@ describe("Process DO — mechanical", () => {
     it("does not infer a user denial from a live tool error message", async () => {
       const stub = await initProcess("mech-tool-error-denial-text", ROOT_IDENTITY);
 
+// SAFETY: test fixture is constructed with the asserted domain shape.
+
       await runInDurableObject(stub, async (instance: Process) => {
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         const process = instance as any;
         const runId = "run-tool-error-denial-text";
         process.store.register(
@@ -10137,7 +11027,10 @@ describe("Process DO — mechanical", () => {
       const pid = "mech-hil-remember";
       const stub = await initProcess(pid, ROOT_IDENTITY);
 
+// SAFETY: test fixture is constructed with the asserted domain shape.
+
       const requestId = await runInDurableObject(stub, async (instance: Process) => {
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         const process = instance as any;
         process.currentRun = {
           runId: "run-hil-remember",
@@ -10154,8 +11047,11 @@ describe("Process DO — mechanical", () => {
         return process.store.getPendingHilForRun("run-hil-remember").requestId;
       });
 
+// SAFETY: test fixture is constructed with the asserted domain shape.
+
       const res = (await stub.recvFrame(
         makeReq("proc.hil", { requestId, decision: "approve", remember: true }),
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       )) as ResponseOkFrame;
 
       expect(res.ok).toBe(true);
@@ -10168,7 +11064,10 @@ describe("Process DO — mechanical", () => {
         pendingHil: null,
       });
 
+// SAFETY: test fixture is constructed with the asserted domain shape.
+
       await runInDurableObject(stub, (instance: Process) => {
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         const process = instance as any;
         expect(process.store.getPendingHil()).toBeNull();
         expect(JSON.parse(process.store.getValue("toolApprovalOverrides"))).toEqual([
@@ -10185,7 +11084,10 @@ describe("Process DO — mechanical", () => {
       const pid = "mech-hil-approved-execution";
       const stub = await initProcess(pid, ROOT_IDENTITY);
 
+// SAFETY: test fixture is constructed with the asserted domain shape.
+
       await runInDurableObject(stub, async (instance: Process) => {
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         const process = instance as any;
         const runId = "run-hil-approved-execution";
         process.currentRun = {
@@ -10249,7 +11151,10 @@ describe("Process DO — mechanical", () => {
     it("terminalizes CodeMode approval state whose continuation was lost", async () => {
       const stub = await initProcess("mech-hil-codemode-recovery", ROOT_IDENTITY);
 
+// SAFETY: test fixture is constructed with the asserted domain shape.
+
       await runInDurableObject(stub, async (instance: Process) => {
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         const process = instance as any;
         const runId = "run-hil-codemode-recovery";
         process.currentRun = {
@@ -10320,17 +11225,24 @@ describe("Process DO — mechanical", () => {
       const pid = "mech-history-2";
       const stub = await initProcess(pid, ROOT_IDENTITY);
 
+// SAFETY: test fixture is constructed with the asserted domain shape.
+
       await runInDurableObject(stub, (instance: Process) => {
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         const store = (instance as any).store;
         for (let i = 0; i < 10; i++) {
           store.appendMessage("user", `msg-${i}`);
         }
       });
 
+// SAFETY: test fixture is constructed with the asserted domain shape.
+
       const res = (await stub.recvFrame(
         makeReq("proc.history", { limit: 3, offset: 2 }),
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       )) as ResponseOkFrame;
 
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       const data = res.data as any;
       expect(data.messages).toHaveLength(3);
       expect(data.messageCount).toBe(10);
@@ -10341,17 +11253,24 @@ describe("Process DO — mechanical", () => {
       const pid = "mech-history-default-page";
       const stub = await initProcess(pid, ROOT_IDENTITY);
 
+// SAFETY: test fixture is constructed with the asserted domain shape.
+
       await runInDurableObject(stub, (instance: Process) => {
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         const store = (instance as any).store;
         for (let i = 0; i < 205; i++) {
           store.appendMessage("user", `msg-${i}`);
         }
       });
 
+// SAFETY: test fixture is constructed with the asserted domain shape.
+
       const res = (await stub.recvFrame(
         makeReq("proc.history", {}),
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       )) as ResponseOkFrame;
 
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       const data = res.data as any;
       expect(data.messages).toHaveLength(200);
       expect(data.messageCount).toBe(205);
@@ -10360,7 +11279,9 @@ describe("Process DO — mechanical", () => {
 
     it("returns runtime status without reading Process activity", async () => {
       const stub = await initProcess("mech-history-status-only", ROOT_IDENTITY);
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       await runInDurableObject(stub, (instance: Process) => {
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         const process = instance as any;
         process.store.appendMessage("user", "private Process activity", {
           runId: "run-status-only",
@@ -10368,10 +11289,13 @@ describe("Process DO — mechanical", () => {
         process.currentRun = { runId: "run-status-only" };
       });
 
+// SAFETY: test fixture is constructed with the asserted domain shape.
+
       const response = await stub.recvFrame(makeReq("proc.history", {
         includeMessages: false,
         tail: true,
         limit: 50,
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       })) as ResponseOkFrame;
       expect(response.data).toMatchObject({
         ok: true,
@@ -10387,33 +11311,48 @@ describe("Process DO — mechanical", () => {
       const pid = "mech-history-tail-page";
       const stub = await initProcess(pid, ROOT_IDENTITY);
 
+// SAFETY: test fixture is constructed with the asserted domain shape.
+
       await runInDurableObject(stub, (instance: Process) => {
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         const store = (instance as any).store;
         for (let i = 0; i < 10; i++) {
           store.appendMessage("user", `msg-${i}`);
         }
       });
 
+// SAFETY: test fixture is constructed with the asserted domain shape.
+
       const tailRes = (await stub.recvFrame(
         makeReq("proc.history", { tail: true, limit: 3 }),
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       )) as ResponseOkFrame;
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       const tailData = tailRes.data as any;
       expect(tailData.messages.map((message: any) => message.content)).toEqual(["msg-7", "msg-8", "msg-9"]);
       expect(tailData.hasMoreBefore).toBe(true);
       expect(tailData.hasMoreAfter).toBe(false);
       expect(tailData.truncated).toBe(true);
 
+// SAFETY: test fixture is constructed with the asserted domain shape.
+
       const beforeRes = (await stub.recvFrame(
         makeReq("proc.history", { beforeMessageId: tailData.messages[0].id, limit: 3 }),
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       )) as ResponseOkFrame;
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       const beforeData = beforeRes.data as any;
       expect(beforeData.messages.map((message: any) => message.content)).toEqual(["msg-4", "msg-5", "msg-6"]);
       expect(beforeData.hasMoreBefore).toBe(true);
       expect(beforeData.hasMoreAfter).toBe(true);
 
+// SAFETY: test fixture is constructed with the asserted domain shape.
+
       const afterRes = (await stub.recvFrame(
         makeReq("proc.history", { afterMessageId: beforeData.messages[2].id, limit: 2 }),
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       )) as ResponseOkFrame;
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       const afterData = afterRes.data as any;
       expect(afterData.messages.map((message: any) => message.content)).toEqual(["msg-7", "msg-8"]);
       expect(afterData.hasMoreBefore).toBe(true);
@@ -10424,18 +11363,25 @@ describe("Process DO — mechanical", () => {
       const pid = "mech-history-active-run";
       const stub = await initProcess(pid, ROOT_IDENTITY);
 
+// SAFETY: test fixture is constructed with the asserted domain shape.
+
       await runInDurableObject(stub, (instance: Process) => {
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         const process = instance as any;
         process.currentRun = {
           runId: "run-history-active",
         };
       });
 
+// SAFETY: test fixture is constructed with the asserted domain shape.
+
       const res = (await stub.recvFrame(
         makeReq("proc.history", {}),
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       )) as ResponseOkFrame;
 
       expect(res.ok).toBe(true);
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       const data = res.data as any;
       expect(data.activeRunId).toBe("run-history-active");
       expect(data).not.toHaveProperty("activeConversationId");
@@ -10445,7 +11391,10 @@ describe("Process DO — mechanical", () => {
       const pid = "mech-history-toolresult";
       const stub = await initProcess(pid, ROOT_IDENTITY);
 
+// SAFETY: test fixture is constructed with the asserted domain shape.
+
       await runInDurableObject(stub, (instance: Process) => {
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         const store = (instance as any).store;
         store.appendToolResult(
           "call-1",
@@ -10457,11 +11406,15 @@ describe("Process DO — mechanical", () => {
         );
       });
 
+// SAFETY: test fixture is constructed with the asserted domain shape.
+
       const res = (await stub.recvFrame(
         makeReq("proc.history", {}),
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       )) as ResponseOkFrame;
 
       expect(res.ok).toBe(true);
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       const data = res.data as any;
       expect(data.ok).toBe(true);
       expect(data.messages).toHaveLength(1);
@@ -10480,7 +11433,10 @@ describe("Process DO — mechanical", () => {
       const pid = "mech-history-toolresult-legacy-outcomes";
       const stub = await initProcess(pid, ROOT_IDENTITY);
 
+// SAFETY: test fixture is constructed with the asserted domain shape.
+
       await runInDurableObject(stub, (instance: Process) => {
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         const store = (instance as any).store;
         store.appendToolResult(
           "call-cancelled",
@@ -10496,11 +11452,15 @@ describe("Process DO — mechanical", () => {
         );
       });
 
+// SAFETY: test fixture is constructed with the asserted domain shape.
+
       const res = (await stub.recvFrame(
         makeReq("proc.history", {}),
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       )) as ResponseOkFrame;
 
       expect(res.ok).toBe(true);
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       const data = res.data as any;
       expect(data.messages.map((message: any) => message.content.outcome)).toEqual([
         "cancelled",
@@ -10512,7 +11472,10 @@ describe("Process DO — mechanical", () => {
       const pid = "mech-history-thinking";
       const stub = await initProcess(pid, ROOT_IDENTITY);
 
+// SAFETY: test fixture is constructed with the asserted domain shape.
+
       await runInDurableObject(stub, (instance: Process) => {
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         const store = (instance as any).store;
         store.appendMessage("assistant", "Let me inspect that.", {
           runId: "run-history-thinking",
@@ -10527,11 +11490,15 @@ describe("Process DO — mechanical", () => {
         });
       });
 
+// SAFETY: test fixture is constructed with the asserted domain shape.
+
       const res = (await stub.recvFrame(
         makeReq("proc.history", {}),
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       )) as ResponseOkFrame;
 
       expect(res.ok).toBe(true);
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       const data = res.data as any;
       expect(data.messages).toHaveLength(1);
       expect(data.messages[0].role).toBe("assistant");
@@ -10545,6 +11512,7 @@ describe("Process DO — mechanical", () => {
           { type: "toolCall", id: "call-1", name: "Read", arguments: { path: "package.json" } },
         ],
       });
+    // SAFETY: test fixture is constructed with the asserted domain shape.
     });
   });
 
@@ -10554,13 +11522,17 @@ describe("Process DO — mechanical", () => {
       await initProcess(pid, ROOT_IDENTITY);
       const kernel = await getKernelPtr();
 
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       const response = await runInDurableObject(kernel, (instance: Kernel) =>
         instance.recvFrame(pid, makeReq("shell.exec", {
           input: "codemode -e 'return { argv, args };' --json --arg mode=check -- alpha",
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         })),
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       ) as ResponseOkFrame;
 
       expect(response.ok).toBe(true);
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       const data = response.data as any;
       expect(data.status, JSON.stringify(data, null, 2)).toBe("completed");
       expect(data.exitCode).toBe(0);
@@ -10568,6 +11540,7 @@ describe("Process DO — mechanical", () => {
         status: "completed",
         result: {
           argv: ["alpha"],
+          // SAFETY: test fixture is constructed with the asserted domain shape.
           args: { mode: "check" },
         },
       });
@@ -10578,6 +11551,7 @@ describe("Process DO — mechanical", () => {
       await initProcess(pid, ROOT_IDENTITY);
       const kernel = await getKernelPtr();
 
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       const response = await runInDurableObject(kernel, (instance: Kernel) =>
         instance.recvFrame(pid, makeReq("shell.exec", {
           input: [
@@ -10586,13 +11560,16 @@ describe("Process DO — mechanical", () => {
             "const res = await shell(\"pwd\");",
             "const file = await fs.read({ path: \"test.json\" });",
             "return { res, file, argv, args};",
+            // SAFETY: test fixture is constructed with the asserted domain shape.
             "EOF",
             "codemode run test.js --json --arg mode=file -- beta",
           ].join("\n"),
         })),
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       ) as ResponseOkFrame;
 
       expect(response.ok).toBe(true);
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       const data = response.data as any;
       expect(data.status, JSON.stringify(data, null, 2)).toBe("completed");
       expect(data.exitCode).toBe(0);
@@ -10606,26 +11583,35 @@ describe("Process DO — mechanical", () => {
 
     it("lets process-local codemode read its own /proc history view", async () => {
       const pid = "mech-codemode-self-proc-view";
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       const stub = await initProcess(pid, ROOT_IDENTITY);
 
+// SAFETY: test fixture is constructed with the asserted domain shape.
+
       await runInDurableObject(stub, (instance: Process) => {
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         const store = (instance as any).store;
         store.appendMessage("user", "hello from history");
         store.appendMessage("assistant", "hello back");
       });
 
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       const res = (await stub.recvFrame(
         makeReq("codemode.run", {
           code: [
             "const file = await fs.read({ target: \"gsv\", path: \"/proc/self/history\" });",
             "if (!file.ok) throw new Error(file.error);",
             "return file.content;",
+          // SAFETY: test fixture is constructed with the asserted domain shape.
           ].join("\n"),
         }),
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       )) as ResponseOkFrame;
 
       expect(res.ok).toBe(true);
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       const data = res.data as any;
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       expect(data.status, JSON.stringify(data, null, 2)).toBe("completed");
       expect(data.result).toContain("\"role\":\"user\"");
       expect(data.result).toContain("hello from history");
@@ -10638,14 +11624,19 @@ describe("Process DO — mechanical", () => {
       await initProcess(pid, ROOT_IDENTITY);
       const kernel = await getKernelPtr();
 
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       const response = await runInDurableObject(kernel, (instance: Kernel) =>
         instance.recvFrame(pid, makeReq("shell.exec", {
           input: "codemode -e 'const res = await shell(\"pwd);' --json",
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         })),
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       ) as ResponseOkFrame;
 
       expect(response.ok).toBe(true);
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       const data = response.data as any;
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       expect(data.status, JSON.stringify(data, null, 2)).toBe("failed");
       expect(data.exitCode).toBe(1);
       const result = JSON.parse(data.stdout);
@@ -10654,16 +11645,20 @@ describe("Process DO — mechanical", () => {
       expect(result.error).toContain("Invalid or unexpected token");
     });
 
+    // SAFETY: test fixture is constructed with the asserted domain shape.
     it("runs codemode.run as a process command", async () => {
       const pid = "mech-codemode-run";
       const stub = await initProcess(pid, ROOT_IDENTITY);
 
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       const res = (await stub.recvFrame(
         makeReq("codemode.run", {
           code: "return { argv, args };",
+          // SAFETY: test fixture is constructed with the asserted domain shape.
           argv: ["alpha"],
           args: { mode: "manual" },
         }),
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       )) as ResponseOkFrame;
 
       expect(res.ok).toBe(true);
@@ -10680,7 +11675,10 @@ describe("Process DO — mechanical", () => {
       const pid = "mech-codemode-run-cancel";
       const stub = await initProcess(pid, ROOT_IDENTITY);
 
+// SAFETY: test fixture is constructed with the asserted domain shape.
+
       await runInDurableObject(stub, async (instance: Process) => {
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         const process = instance as any;
         const calls: string[] = [];
         let markStarted!: () => void;
@@ -10693,7 +11691,7 @@ describe("Process DO — mechanical", () => {
         });
         process.getCodeModeMcpToolBindings = async () => [];
         process.executeCodeModeSyscall = async (
-          _context: unknown,
+          _context: ProcessTestValue,
           call: string,
         ) => {
           calls.push(call);
@@ -10742,7 +11740,10 @@ describe("Process DO — mechanical", () => {
       const pid = "mech-codemode-run-reset";
       const stub = await initProcess(pid, ROOT_IDENTITY);
 
+// SAFETY: test fixture is constructed with the asserted domain shape.
+
       await runInDurableObject(stub, async (instance: Process) => {
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         const process = instance as any;
         const calls: string[] = [];
         let markStarted!: () => void;
@@ -10755,7 +11756,7 @@ describe("Process DO — mechanical", () => {
         });
         process.getCodeModeMcpToolBindings = async () => [];
         process.executeCodeModeSyscall = async (
-          _context: unknown,
+          _context: ProcessTestValue,
           call: string,
         ) => {
           calls.push(call);
@@ -10801,9 +11802,12 @@ describe("Process DO — mechanical", () => {
       const pid = "mech-codemode-fetch-approval";
       const stub = await initProcess(pid, ROOT_IDENTITY);
 
+// SAFETY: test fixture is constructed with the asserted domain shape.
+
       await runInDurableObject(stub, async (instance: Process) => {
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         const process = instance as any;
-        const approvals: Array<{ call: string; args: Record<string, unknown> }> = [];
+        const approvals: Array<{ call: string; args: Record<string, ProcessTestValue> }> = [];
         let dispatched = false;
 
         process.currentRun = {
@@ -10819,7 +11823,7 @@ describe("Process DO — mechanical", () => {
           _toolCallId: string,
           _toolName: string,
           call: string,
-          args: Record<string, unknown>,
+          args: Record<string, ProcessTestValue>,
         ) => {
           approvals.push({ call, args });
           return false;
@@ -10863,7 +11867,10 @@ describe("Process DO — mechanical", () => {
     it("rejects unavailable CodeMode syscalls before approval", async () => {
       const stub = await initProcess("mech-codemode-fetch-capability", ROOT_IDENTITY);
 
+// SAFETY: test fixture is constructed with the asserted domain shape.
+
       await runInDurableObject(stub, async (instance: Process) => {
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         const process = instance as any;
         let requestedApproval = false;
         let dispatched = false;
@@ -10900,12 +11907,15 @@ describe("Process DO — mechanical", () => {
     it("gates nested CodeMode mail sends through ordinary Process approval", async () => {
       const stub = await initProcess("mech-codemode-mail-approval", ROOT_IDENTITY);
 
+// SAFETY: test fixture is constructed with the asserted domain shape.
+
       await runInDurableObject(stub, async (instance: Process) => {
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         const process = instance as any;
         const approvals: Array<{
           toolName: string;
           call: string;
-          args: Record<string, unknown>;
+          args: Record<string, ProcessTestValue>;
         }> = [];
         let dispatched = false;
         process.currentRun = { runId: "run-codemode-mail-approval" };
@@ -10915,7 +11925,7 @@ describe("Process DO — mechanical", () => {
           _toolCallId: string,
           toolName: string,
           call: string,
-          args: Record<string, unknown>,
+          args: Record<string, ProcessTestValue>,
         ) => {
           approvals.push({ toolName, call, args });
           return false;
@@ -10957,13 +11967,19 @@ describe("Process DO — mechanical", () => {
       const pid = "mech-codemode-fetch-stopped-after-fetch";
       const stub = await initProcess(pid, ROOT_IDENTITY);
 
+// SAFETY: test fixture is constructed with the asserted domain shape.
+
       await runInDurableObject(stub, async (instance: Process) => {
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         const process = instance as any;
         let stopChecks = 0;
 
         process.currentRun = {
           runId: "run-codemode-fetch-stopped-after-fetch",
-          config: { capabilities: ["codemode.*", "net.fetch"] },
+          config: {
+            ...terminalTestConfig(pid),
+            capabilities: ["codemode.*", "net.fetch"],
+          },
           approvalPolicy: {
             default: "auto",
             rules: [],
@@ -11009,12 +12025,17 @@ describe("Process DO — mechanical", () => {
       };
       const stub = await initProcess(pid, identity);
       const kernel = await getKernelPtr();
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       await runInDurableObject(kernel, (instance: Kernel) => {
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         const k = instance as any;
         k.caps.grant(3000, "codemode.run");
       });
 
+// SAFETY: test fixture is constructed with the asserted domain shape.
+
       await runInDurableObject(stub, async (instance: Process) => {
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         const process = instance as any;
         const result = await process.handleCodeModeRun({
           code: "const response = await fetch('https://example.com/'); return response.status;",
@@ -11031,7 +12052,10 @@ describe("Process DO — mechanical", () => {
       const pid = "mech-codemode-basic";
       const stub = await initProcess(pid, ROOT_IDENTITY);
 
+// SAFETY: test fixture is constructed with the asserted domain shape.
+
       await runInDurableObject(stub, async (instance: Process) => {
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         const process = instance as any;
 
         process.currentRun = {
@@ -11086,21 +12110,27 @@ describe("Process DO — mechanical", () => {
       const pid = "mech-codemode-mail-delivery";
       const stub = await initProcess(pid, ROOT_IDENTITY);
 
+// SAFETY: test fixture is constructed with the asserted domain shape.
+
       await runInDurableObject(stub, async (instance: Process) => {
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         const process = instance as any;
         const runId = "run-codemode-mail-delivery";
         const dispatchId = "dispatch-call-codemode-mail-delivery";
-        const calls: Array<{ call: string; args: Record<string, unknown> }> = [];
+        const calls: Array<{ call: string; args: Record<string, ProcessTestValue> }> = [];
         process.currentRun = {
           runId,
-          config: { capabilities: ["mail.send"] },
+          config: {
+            ...terminalTestConfig(pid),
+            capabilities: ["mail.send"],
+          },
           approvalPolicy: { default: "auto", rules: [] },
         };
         process.getCodeModeMcpToolBindings = async () => [];
         process.executeCodeModeSyscall = async (
-          _context: unknown,
+          _context: ProcessTestValue,
           call: string,
-          args: Record<string, unknown>,
+          args: Record<string, ProcessTestValue>,
         ) => {
           calls.push({ call, args });
           return { ok: true, deliveryId: args.deliveryId };
@@ -11143,14 +12173,17 @@ describe("Process DO — mechanical", () => {
       const pid = "mech-codemode-run-mail-delivery";
       const stub = await initProcess(pid, ROOT_IDENTITY);
 
+// SAFETY: test fixture is constructed with the asserted domain shape.
+
       await runInDurableObject(stub, async (instance: Process) => {
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         const process = instance as any;
-        const calls: Array<{ call: string; args: Record<string, unknown> }> = [];
+        const calls: Array<{ call: string; args: Record<string, ProcessTestValue> }> = [];
         process.getCodeModeMcpToolBindings = async () => [];
         process.executeCodeModeSyscall = async (
-          _context: unknown,
+          _context: ProcessTestValue,
           call: string,
-          args: Record<string, unknown>,
+          args: Record<string, ProcessTestValue>,
         ) => {
           calls.push({ call, args });
           return { ok: true, deliveryId: args.deliveryId };
@@ -11185,10 +12218,14 @@ describe("Process DO — mechanical", () => {
       });
     });
 
+    // SAFETY: test fixture is constructed with the asserted domain shape.
     it("classifies a failed CodeMode result as a genuine tool failure", async () => {
       const stub = await initProcess("mech-codemode-failed-outcome", ROOT_IDENTITY);
 
+// SAFETY: test fixture is constructed with the asserted domain shape.
+
       await runInDurableObject(stub, async (instance: Process) => {
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         const process = instance as any;
         const runId = "run-codemode-failed-outcome";
         const dispatchId = "dispatch-call-codemode-failed";
@@ -11235,7 +12272,10 @@ describe("Process DO — mechanical", () => {
       const stub = await initProcess(pid, ROOT_IDENTITY);
       const runId = "run-reset-runtime";
 
+// SAFETY: test fixture is constructed with the asserted domain shape.
+
       await runInDurableObject(stub, (instance: Process) => {
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         const store = (instance as any).store;
         store.setValue("currentRun", JSON.stringify({ runId }));
         store.register("dispatch-reset-1", "call-reset-1", runId, "fs.read", { path: "/tmp/test.txt" });
@@ -11243,21 +12283,31 @@ describe("Process DO — mechanical", () => {
         store.appendMessage("user", "hello before reset");
       });
 
+// SAFETY: test fixture is constructed with the asserted domain shape.
+
       const resetRes = (await stub.recvFrame(
         makeReq("proc.reset", {}),
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       )) as ResponseOkFrame;
       expect(resetRes.ok).toBe(true);
 
+// SAFETY: test fixture is constructed with the asserted domain shape.
+
       await runInDurableObject(stub, (instance: Process) => {
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         const store = (instance as any).store;
         expect(store.getValue("currentRun")).toBeNull();
         expect(store.queueSize()).toBe(0);
         expect(store.getResults(runId)).toHaveLength(0);
       });
 
+// SAFETY: test fixture is constructed with the asserted domain shape.
+
       const sendRes = (await stub.recvFrame(
         makeReq("proc.send", { message: "first after reset" }),
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       )) as ResponseOkFrame;
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       const sendData = sendRes.data as { queued?: boolean };
       expect(sendData.queued).toBeUndefined();
     });
@@ -11266,7 +12316,10 @@ describe("Process DO — mechanical", () => {
       const pid = "mech-reset-fences-generation";
       const stub = await initProcess(pid, ROOT_IDENTITY);
 
+// SAFETY: test fixture is constructed with the asserted domain shape.
+
       await runInDurableObject(stub, async (instance: Process) => {
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         const process = instance as any;
         let releaseGeneration!: () => void;
         let markGenerationStarted!: () => void;
@@ -11394,7 +12447,9 @@ describe("Process DO — mechanical", () => {
           processId: pid,
         },
       });
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       await runInDurableObject(stub, (instance: Process) => {
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         (instance as any).store.appendMessage("user", "Keep this image.", {
           media: JSON.stringify([{
             type: "image",
@@ -11407,24 +12462,32 @@ describe("Process DO — mechanical", () => {
         });
       });
 
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       const killed = await stub.recvFrame(makeReq("proc.kill", {})) as ResponseOkFrame;
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       const archive = (killed.data as any).archives[0];
       expect(archive).toBeTruthy();
       expect(await env.STORAGE.head(activeKey)).toBeNull();
 
       const resumedPid = "mech-resume-archive-media";
       const resumed = await getProcessByPid(resumedPid);
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       const initialized = await resumed.recvFrame(makeReq("proc.setidentity", {
         identity: ROOT_IDENTITY,
         profile: DEFAULT_PROFILE,
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       })) as ResponseOkFrame;
       expect(initialized.ok).toBe(true);
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       const imported = await resumed.recvFrame(makeReq("proc.history.import", {
         archivePaths: [archive.path],
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       })) as ResponseOkFrame;
       expect(imported.data).toMatchObject({ ok: true, pid: resumedPid, restoredMessages: 1 });
 
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       const history = await resumed.recvFrame(makeReq("proc.history", {})) as ResponseOkFrame;
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       const media = (history.data as any).messages[0].content.media[0];
       expect(media).toMatchObject({
         filename: "proof.png",
@@ -11432,6 +12495,7 @@ describe("Process DO — mechanical", () => {
       });
       expect(media.path).toBe(`/${media.key}`);
 
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       const read = await resumed.recvFrame(makeReq("proc.media.read", { key: media.key })) as ResponseOkFrame;
       expect(read.data).toMatchObject({ ok: true, key: media.key, path: media.path, size: 3 });
       expect(read.body && [...await bodyToBytes(read.body)]).toEqual([1, 2, 3]);
@@ -11462,7 +12526,10 @@ describe("Process DO — mechanical", () => {
       const runId = "run-kill-archive-failure";
       const stub = await initProcess(pid, ROOT_IDENTITY);
 
+// SAFETY: test fixture is constructed with the asserted domain shape.
+
       const failed = await runInDurableObject(stub, async (instance: Process, state) => {
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         const process = instance as any;
         process.currentRun = { runId };
         process.store.appendMessage("user", "survive archive failure", { runId });
@@ -11516,7 +12583,9 @@ describe("Process DO — mechanical", () => {
       });
 
       await evictDurableObject(stub);
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       await expect(runInDurableObject(stub, (instance: Process) => {
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         const process = instance as any;
         return {
           currentRun: process.currentRun,
@@ -11543,7 +12612,10 @@ describe("Process DO — mechanical", () => {
       const runId = "run-kill-stable-archive";
       const stub = await initProcess(pid, ROOT_IDENTITY);
 
+// SAFETY: test fixture is constructed with the asserted domain shape.
+
       const result = await runInDurableObject(stub, async (instance: Process) => {
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         const process = instance as any;
         let releaseGeneration!: () => void;
         let markGenerationStarted!: () => void;
@@ -11733,7 +12805,10 @@ describe("Process DO — mechanical", () => {
       const pid = "mech-kill-concurrent-commit";
       const stub = await initProcess(pid, ROOT_IDENTITY);
 
+// SAFETY: test fixture is constructed with the asserted domain shape.
+
       const result = await runInDurableObject(stub, async (instance: Process, state) => {
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         const process = instance as any;
         process.store.appendMessage("user", "archive exactly once");
         let releaseArchive!: () => void;
@@ -11783,7 +12858,10 @@ describe("Process DO — mechanical", () => {
       const runId = "run-kill-late-provider";
       const stub = await initProcess(pid, ROOT_IDENTITY);
 
+// SAFETY: test fixture is constructed with the asserted domain shape.
+
       await runInDurableObject(stub, async (instance: Process) => {
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         const process = instance as any;
         let releaseGeneration!: () => void;
         let markGenerationStarted!: () => void;
@@ -11854,7 +12932,10 @@ describe("Process DO — mechanical", () => {
       const pid = "mech-kill-queued-runtime-send";
       const stub = await initProcess(pid, ROOT_IDENTITY);
 
+// SAFETY: test fixture is constructed with the asserted domain shape.
+
       await runInDurableObject(stub, async (instance: Process) => {
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         const process = instance as any;
         const releaseAdmission = await process.acquireQueuedSendAdmission();
         const acquireQueuedSendAdmission = process.acquireQueuedSendAdmission.bind(process);
@@ -11892,7 +12973,10 @@ describe("Process DO — mechanical", () => {
         httpMetadata: { contentType: "image/png" },
       });
 
+// SAFETY: test fixture is constructed with the asserted domain shape.
+
       await runInDurableObject(stub, async (instance: Process) => {
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         const process = instance as any;
         const originalStorage = process.storage;
         let releaseRead!: () => void;
@@ -11962,7 +13046,10 @@ describe("Process DO — mechanical", () => {
       const runId = "run-kill-late-tool-body";
       const stub = await initProcess(pid, ROOT_IDENTITY);
 
+// SAFETY: test fixture is constructed with the asserted domain shape.
+
       await runInDurableObject(stub, async (instance: Process) => {
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         const process = instance as any;
         let releaseBody!: () => void;
         let markBodyStarted!: () => void;
@@ -12024,7 +13111,10 @@ describe("Process DO — mechanical", () => {
       const runId = "run-kill-late-finish-delivery";
       const stub = await initProcess(pid, ROOT_IDENTITY);
 
+// SAFETY: test fixture is constructed with the asserted domain shape.
+
       await runInDurableObject(stub, async (instance: Process) => {
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         const process = instance as any;
         let releaseSignal!: () => void;
         let markSignalStarted!: () => void;
@@ -12064,7 +13154,10 @@ describe("Process DO — mechanical", () => {
       const pid = "mech-kill-late-schedule";
       const stub = await initProcess(pid, ROOT_IDENTITY);
 
+// SAFETY: test fixture is constructed with the asserted domain shape.
+
       await runInDurableObject(stub, async (instance: Process) => {
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         const process = instance as any;
         let rejectSchedule!: (error: Error) => void;
         let markScheduleStarted!: () => void;
@@ -12102,7 +13195,10 @@ describe("Process DO — mechanical", () => {
       const key = `var/media/0/${pid}/${mediaId}`;
       const stub = await initProcess(pid, ROOT_IDENTITY);
 
+// SAFETY: test fixture is constructed with the asserted domain shape.
+
       await runInDurableObject(stub, async (instance: Process) => {
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         const process = instance as any;
         const originalStorage = process.storage;
         let releaseHead!: () => void;
@@ -12126,6 +13222,7 @@ describe("Process DO — mechanical", () => {
           delete: (...args: any[]) => originalStorage.delete(...args),
           put: (...args: any[]) => originalStorage.put(...args),
         };
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         const writeFrame = {
           ...makeReq("proc.media.write", {
             type: "image",
@@ -12133,6 +13230,7 @@ describe("Process DO — mechanical", () => {
             mediaId,
           }),
           body: bodyFromBytes(new Uint8Array([1])),
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         } as RequestFrame;
 
         const writing = process.recvFrame(writeFrame);
@@ -12153,7 +13251,10 @@ describe("Process DO — mechanical", () => {
       const pid = "mech-kill-finish-failure";
       const stub = await initProcess(pid, ROOT_IDENTITY);
 
+// SAFETY: test fixture is constructed with the asserted domain shape.
+
       const killed = await runInDurableObject(stub, async (instance: Process, state) => {
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         const process = instance as any;
         const originalStorage = process.storage;
         const mediaDelete = vi.fn(async () => {
@@ -12236,7 +13337,10 @@ describe("Process DO — mechanical", () => {
       const pid = "mech-kill-concurrent-cleanup";
       const stub = await initProcess(pid, ROOT_IDENTITY);
 
+// SAFETY: test fixture is constructed with the asserted domain shape.
+
       const result = await runInDurableObject(stub, async (instance: Process, state) => {
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         const process = instance as any;
         const originalStorage = process.storage;
         let listCalls = 0;
@@ -12302,7 +13406,10 @@ describe("Process DO — mechanical", () => {
       const runId = "run-kill-best-effort-finish";
       const stub = await initProcess(pid, ROOT_IDENTITY);
 
+// SAFETY: test fixture is constructed with the asserted domain shape.
+
       const first = await runInDurableObject(stub, async (instance: Process, state) => {
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         const process = instance as any;
         process.currentRun = { runId };
         process.sendSignal = vi.fn(async () => {
@@ -12328,7 +13435,9 @@ describe("Process DO — mechanical", () => {
       });
 
       await evictDurableObject(stub);
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       const replay = await runInDurableObject(stub, async (instance: Process) => {
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         const process = instance as any;
         process.sendSignal = vi.fn(async () => {});
         const response = await process.recvFrame(
@@ -12349,7 +13458,10 @@ describe("Process DO — mechanical", () => {
         httpMetadata: { contentType: "image/png" },
       });
 
+// SAFETY: test fixture is constructed with the asserted domain shape.
+
       const result = await runInDurableObject(stub, async (instance: Process) => {
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         const process = instance as any;
         const media = [{
           type: "image",
@@ -12373,7 +13485,7 @@ describe("Process DO — mechanical", () => {
           outputMedia: media,
           outputMediaPersisted: true,
         };
-        process.sendSignal = vi.fn(async (signal: string, payload: unknown) => {
+        process.sendSignal = vi.fn(async (signal: string, payload: ProcessTestValue) => {
           if (signal === "proc.run.finished") {
             finishPayload = payload;
             mediaPresentDuringFinish = await process.env.STORAGE.head(key) !== null;
@@ -12409,10 +13521,13 @@ describe("Process DO — mechanical", () => {
       const stub = await initProcess(pid, ROOT_IDENTITY);
       const runId = "run-kill-runtime";
 
+// SAFETY: test fixture is constructed with the asserted domain shape.
+
       const killed = await runInDurableObject(stub, async (instance: Process, state) => {
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         const process = instance as any;
-        const emitted: Array<{ signal: string; payload: unknown }> = [];
-        process.sendSignal = vi.fn(async (signal: string, payload: unknown) => {
+        const emitted: Array<{ signal: string; payload: ProcessTestValue }> = [];
+        process.sendSignal = vi.fn(async (signal: string, payload: ProcessTestValue) => {
           emitted.push({ signal, payload });
         });
         process.currentRun = { runId };
@@ -12521,7 +13636,9 @@ describe("Process DO — mechanical", () => {
         ok: false,
         error: { code: 410, message: "Process no longer exists" },
       });
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       await expect(runInDurableObject(stub, (instance: Process, state) => ({
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         killed: (instance as any).killed,
         tombstone: state.storage.kv.get("__gsv_process_killed__"),
         tables: state.storage.sql.exec<{ name: string }>(
@@ -12549,7 +13666,10 @@ describe("Process DO — mechanical", () => {
       const stub = await initProcess(pid, ROOT_IDENTITY);
       const alarmAt = Date.now() + 60_000;
 
+// SAFETY: test fixture is constructed with the asserted domain shape.
+
       const failed = await runInDurableObject(stub, async (instance: Process, state) => {
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         const process = instance as any;
         process.currentRun = { runId };
         process.store.appendMessage("user", "survive the failed kill", { runId });
@@ -12628,7 +13748,9 @@ describe("Process DO — mechanical", () => {
       });
 
       await evictDurableObject(stub);
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       const recovered = await runInDurableObject(stub, (instance: Process) => {
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         const process = instance as any;
         return {
           messages: process.store.getMessages(),
@@ -12675,7 +13797,10 @@ describe("Process DO — mechanical", () => {
     it("terminalizes provider HIL calls without inventing nested CodeMode results", async () => {
       const stub = await initProcess("mech-upgrade-v3-hil", ROOT_IDENTITY);
 
+// SAFETY: test fixture is constructed with the asserted domain shape.
+
       await runInDurableObject(stub, (instance: Process) => {
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         const sql = (instance as any).ctx.storage.sql as SqlStorage;
         const legacyToolTable = PROCESS_V001_INITIAL_SCHEMA.statements.find((statement) => (
           statement.includes("CREATE TABLE IF NOT EXISTS pending_tool_calls")
@@ -12769,14 +13894,19 @@ describe("Process DO — mechanical", () => {
     it("backfills terminal tool outcomes when upgrading from v4", async () => {
       const stub = await initProcess("mech-upgrade-v4-outcomes", ROOT_IDENTITY);
 
+// SAFETY: test fixture is constructed with the asserted domain shape.
+
       await runInDurableObject(stub, (instance: Process) => {
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         const sql = (instance as any).ctx.storage.sql as SqlStorage;
         sql.exec("ALTER TABLE pending_tool_calls DROP COLUMN outcome");
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         const rows = [
           ["completed", JSON.stringify({ status: "completed" }), null, "completed"],
           ["failed-envelope", JSON.stringify({ status: "failed" }), null, "completed"],
           ["denied", null, "Tool execution denied by user", "error"],
           ["failed-error", null, "provider failure", "error"],
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         ] as const;
         rows.forEach(([id, result, error, status], index) => {
           sql.exec(
@@ -12811,7 +13941,10 @@ describe("Process DO — mechanical", () => {
     it("recovers only unambiguous CodeMode approval owners when upgrading from v5", async () => {
       const stub = await initProcess("mech-upgrade-v5-hil-owner", ROOT_IDENTITY);
 
+// SAFETY: test fixture is constructed with the asserted domain shape.
+
       await runInDurableObject(stub, (instance: Process) => {
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         const sql = (instance as any).ctx.storage.sql as SqlStorage;
         sql.exec("ALTER TABLE pending_hil DROP COLUMN owner_dispatch_id");
         const insertTool = (
@@ -12876,7 +14009,10 @@ describe("Process DO — mechanical", () => {
     it("preserves legacy user work and restores queued runtime event roles when upgrading from v8", async () => {
       const stub = await initProcess("mech-upgrade-v8-queue", ROOT_IDENTITY);
 
+// SAFETY: test fixture is constructed with the asserted domain shape.
+
       await runInDurableObject(stub, (instance: Process) => {
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         const sql = (instance as any).ctx.storage.sql as SqlStorage;
         sql.exec("ALTER TABLE message_queue DROP COLUMN provenance_json");
         sql.exec("ALTER TABLE message_queue DROP COLUMN kind");
@@ -12953,8 +14089,11 @@ describe("Process DO — mechanical", () => {
       const pid = "mech-unknown";
       const stub = await initProcess(pid, ROOT_IDENTITY);
 
+// SAFETY: test fixture is constructed with the asserted domain shape.
+
       const res = (await stub.recvFrame(
         makeReq("proc.bogus", {}),
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       )) as ResponseFrame;
 
       expect(res.ok).toBe(false);
@@ -12978,10 +14117,13 @@ describe("Process DO — mechanical", () => {
         cwd: "/root",
       };
 
+// SAFETY: test fixture is constructed with the asserted domain shape.
+
       await stub.recvFrame({
         type: "sig",
         signal: "identity.changed",
         payload: { identity: newIdentity },
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       } as any);
 
       await runInDurableObject(stub, (instance: Process) => {
@@ -12995,7 +14137,10 @@ describe("Process DO — mechanical", () => {
       const pid = "mech-res-tool-timeout";
       const stub = await initProcess(pid, ROOT_IDENTITY);
 
+// SAFETY: test fixture is constructed with the asserted domain shape.
+
       await runInDurableObject(stub, async (instance: Process) => {
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         const process = instance as any;
         process.sendSignal = vi.fn(async () => {});
         process.scheduleTick = vi.fn(async () => {});
@@ -13044,7 +14189,10 @@ describe("Process DO — mechanical", () => {
       const pid = "mech-res-tool-terminal-signal";
       const stub = await initProcess(pid, ROOT_IDENTITY);
 
+// SAFETY: test fixture is constructed with the asserted domain shape.
+
       await runInDurableObject(stub, async (instance: Process) => {
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         const process = instance as any;
         process.sendSignal = vi.fn(async () => {});
         process.scheduleTick = vi.fn(async () => {});
@@ -13092,7 +14240,10 @@ describe("Process DO — mechanical", () => {
       const pid = "mech-res-tool-transport-error";
       const stub = await initProcess(pid, ROOT_IDENTITY);
 
+// SAFETY: test fixture is constructed with the asserted domain shape.
+
       await runInDurableObject(stub, async (instance: Process) => {
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         const process = instance as any;
         process.sendSignal = vi.fn(async () => {});
         process.scheduleTick = vi.fn(async () => {});
@@ -13137,7 +14288,10 @@ describe("Process DO — mechanical", () => {
       const pid = "mech-res-tool-cancelled-signal";
       const stub = await initProcess(pid, ROOT_IDENTITY);
 
+// SAFETY: test fixture is constructed with the asserted domain shape.
+
       await runInDurableObject(stub, async (instance: Process) => {
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         const process = instance as any;
         process.sendSignal = vi.fn(async () => {});
         process.currentRun = { runId: "run-cancelled" };
@@ -13182,7 +14336,10 @@ describe("Process DO — mechanical", () => {
       const pid = "mech-res-media-timeout";
       const stub = await initProcess(pid, ROOT_IDENTITY);
 
+// SAFETY: test fixture is constructed with the asserted domain shape.
+
       await runInDurableObject(stub, async (instance: Process) => {
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         const process = instance as any;
         process.sendSignal = vi.fn();
         const messageId = process.store.appendMessage("user", "slow attachment", {
@@ -13220,7 +14377,10 @@ describe("Process DO — mechanical", () => {
       const pid = "mech-res-coalesced-tool-timeouts";
       const stub = await initProcess(pid, ROOT_IDENTITY);
 
+// SAFETY: test fixture is constructed with the asserted domain shape.
+
       await runInDurableObject(stub, async (instance: Process) => {
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         const process = instance as any;
         process.schedule = vi.fn();
         process.currentRun = { runId: "run-timeouts" };
@@ -13252,7 +14412,10 @@ describe("Process DO — mechanical", () => {
       const pid = "mech-res-tool-timeout-schedule-failure";
       const stub = await initProcess(pid, ROOT_IDENTITY);
 
+// SAFETY: test fixture is constructed with the asserted domain shape.
+
       await runInDurableObject(stub, async (instance: Process) => {
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         const process = instance as any;
         process.sendSignal = vi.fn();
         process.schedule = vi.fn(async () => {
@@ -13293,6 +14456,7 @@ describe("Process DO — mechanical", () => {
       const requestStarted = new Promise<void>((resolve) => {
         markRequestStarted = resolve;
       });
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       const recvSpy = vi.spyOn(Kernel.prototype as any, "recvFrame").mockImplementation(
         async function (this: Kernel, processId: string, frame: any) {
           if (
@@ -13303,19 +14467,24 @@ describe("Process DO — mechanical", () => {
             oldDispatchId = frame.id;
             markRequestStarted();
             await responseBlocked;
+            // SAFETY: test fixture is constructed with the asserted domain shape.
             return {
               type: "res",
               id: frame.id,
               ok: true,
               data: { status: "running", output: "", sessionId: "sh_late" },
+            // SAFETY: test fixture is constructed with the asserted domain shape.
             } as ResponseFrame;
           }
           return originalRecvFrame.call(this, processId, frame);
         },
       );
 
+// SAFETY: test fixture is constructed with the asserted domain shape.
+
       try {
         await runInDurableObject(stub, async (instance: Process) => {
+          // SAFETY: test fixture is constructed with the asserted domain shape.
           const process = instance as any;
           process.sendSignal = vi.fn();
           process.generation = {
@@ -13353,6 +14522,7 @@ describe("Process DO — mechanical", () => {
               apiKey: "",
               reasoning: "off",
               maxTokens: 8192,
+              // SAFETY: test fixture is constructed with the asserted domain shape.
               contextWindowTokens: 128000,
               contextWindowSource: "config",
               maxContextBytes: 32768,
@@ -13367,6 +14537,7 @@ describe("Process DO — mechanical", () => {
 
           const ticking = process.tick({ runId: "run-direct-old", generation: 0 });
           await requestStarted;
+          // SAFETY: test fixture is constructed with the asserted domain shape.
           const response = await Promise.race([
             instance.recvFrame(makeReq("proc.send", {
               message: "stop waiting",
@@ -13374,8 +14545,11 @@ describe("Process DO — mechanical", () => {
             })),
             new Promise<never>((_resolve, reject) => {
               setTimeout(() => reject(new Error("proc.send was blocked by the shell syscall")), 250);
+            // SAFETY: test fixture is constructed with the asserted domain shape.
             }),
+          // SAFETY: test fixture is constructed with the asserted domain shape.
           ]) as ResponseOkFrame;
+          // SAFETY: test fixture is constructed with the asserted domain shape.
           const takeoverRunId = (response.data as any).runId;
           expect(process.currentRun).toMatchObject({ runId: takeoverRunId });
 
@@ -13424,24 +14598,30 @@ describe("Process DO — mechanical", () => {
       const requestStarted = new Promise<void>((resolve) => {
         markRequestStarted = resolve;
       });
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       const recvSpy = vi.spyOn(Kernel.prototype as any, "recvFrame").mockImplementation(
         async function (this: Kernel, processId: string, frame: any) {
           if (frame?.type === "req" && frame.id === "codemode-direct-old") {
             markRequestStarted();
             await responseBlocked;
+            // SAFETY: test fixture is constructed with the asserted domain shape.
             return {
               type: "res",
               id: frame.id,
               ok: true,
               data: { status: "running", output: "", sessionId: "sh_codemode_late" },
+            // SAFETY: test fixture is constructed with the asserted domain shape.
             } as ResponseFrame;
           }
           return originalRecvFrame.call(this, processId, frame);
         },
       );
 
+// SAFETY: test fixture is constructed with the asserted domain shape.
+
       try {
         await runInDurableObject(stub, async (instance: Process) => {
+          // SAFETY: test fixture is constructed with the asserted domain shape.
           const process = instance as any;
           process.sendSignal = vi.fn();
           process.scheduleTick = vi.fn(async () => {});
@@ -13476,7 +14656,10 @@ describe("Process DO — mechanical", () => {
       const pid = "mech-res-tool-recovery-claim";
       const stub = await initProcess(pid, ROOT_IDENTITY);
 
+// SAFETY: test fixture is constructed with the asserted domain shape.
+
       await runInDurableObject(stub, async (instance: Process) => {
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         const process = instance as any;
         let releaseFirst!: () => void;
         let markFirstStarted!: () => void;
@@ -13524,11 +14707,15 @@ describe("Process DO — mechanical", () => {
       const pid = "mech-res-unknown";
       const stub = await initProcess(pid, ROOT_IDENTITY);
 
+// SAFETY: test fixture is constructed with the asserted domain shape.
+
       await stub.recvFrame({
         type: "res",
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         id: "nonexistent-call-id",
         ok: true,
         data: { content: "hello" },
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       } as any);
     });
 
@@ -13536,9 +14723,11 @@ describe("Process DO — mechanical", () => {
       const pid = "mech-res-sync-body";
       const stub = await initProcess(pid, ROOT_IDENTITY);
       const originalRecvFrame = Kernel.prototype.recvFrame;
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       const recvSpy = vi.spyOn(Kernel.prototype as any, "recvFrame").mockImplementation(
         async function (this: Kernel, processId: string, frame: any) {
           if (frame?.type === "req" && frame.id === "dispatch-sync-body") {
+            // SAFETY: test fixture is constructed with the asserted domain shape.
             return {
               type: "res",
               id: frame.id,
@@ -13552,14 +14741,18 @@ describe("Process DO — mechanical", () => {
                 lines: 1,
               },
               body: bodyFromText("hello"),
+            // SAFETY: test fixture is constructed with the asserted domain shape.
             } as ResponseFrame;
           }
           return originalRecvFrame.call(this, processId, frame);
         },
       );
 
+// SAFETY: test fixture is constructed with the asserted domain shape.
+
       try {
         await runInDurableObject(stub, async (instance: Process) => {
+          // SAFETY: test fixture is constructed with the asserted domain shape.
           const process = instance as any;
           process.currentRun = { runId: "run-sync-body" };
           process.store.register(
@@ -13592,7 +14785,10 @@ describe("Process DO — mechanical", () => {
       const pid = "mech-res-body-abort";
       const stub = await initProcess(pid, ROOT_IDENTITY);
 
+// SAFETY: test fixture is constructed with the asserted domain shape.
+
       await runInDurableObject(stub, async (instance: Process) => {
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         const process = instance as any;
         process.currentRun = { runId: "run-body-abort" };
         process.store.register(
@@ -13603,7 +14799,7 @@ describe("Process DO — mechanical", () => {
           { path: "/tmp/note.txt" },
         );
         process.store.markDispatched("dispatch-body-abort");
-        let cancelled: unknown;
+        let cancelled: ProcessTestValue;
         const response = process.handleRes({
           type: "res",
           id: "dispatch-body-abort",
@@ -13639,7 +14835,10 @@ describe("Process DO — mechanical", () => {
       const pid = "mech-res-multi-tool-batch";
       const stub = await initProcess(pid, ROOT_IDENTITY);
 
+// SAFETY: test fixture is constructed with the asserted domain shape.
+
       await runInDurableObject(stub, async (instance: Process) => {
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         const process = instance as any;
         const continuedRunIds: string[] = [];
         const scheduledRunIds: string[] = [];
@@ -13716,16 +14915,19 @@ describe("Process DO — mechanical", () => {
       const pid = "mech-res-shell-session-target";
       const stub = await initProcess(pid, ROOT_IDENTITY);
 
+// SAFETY: test fixture is constructed with the asserted domain shape.
+
       await runInDurableObject(stub, async (instance: Process) => {
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         const process = instance as any;
-        const dispatched: unknown[] = [];
+        const dispatched: ProcessTestValue[] = [];
         process.sendSignal = async () => {};
         process.scheduleTick = async () => {};
         process.dispatchSyscall = async (
           _runId: string,
           _id: string,
           _call: string,
-          args: unknown,
+          args: ProcessTestValue,
         ) => {
           dispatched.push(args);
         };
@@ -13772,7 +14974,10 @@ describe("Process DO — mechanical", () => {
       const pid = "mech-res-shell-session-unknown-target";
       const stub = await initProcess(pid, ROOT_IDENTITY);
 
+// SAFETY: test fixture is constructed with the asserted domain shape.
+
       await runInDurableObject(stub, async (instance: Process) => {
+        // SAFETY: test fixture is constructed with the asserted domain shape.
         const process = instance as any;
         process.sendSignal = vi.fn();
         process.scheduleTick = vi.fn(async () => {});

@@ -31,8 +31,12 @@ type NativeCommandDescriptor = Omit<
   aliases?: string[];
   synopsis?: string[];
 };
+type NativeCommandDescriptorMap = { readonly [key: string]: NativeCommandDescriptor };
+function defineNativeCommandDescriptors<T extends NativeCommandDescriptorMap>(value: T): NativeCommandDescriptorMap & T {
+  return value;
+}
 
-const NATIVE_COMMAND_DESCRIPTORS: Record<string, NativeCommandDescriptor> = {
+const NATIVE_COMMAND_DESCRIPTORS = defineNativeCommandDescriptors({
   whoami: command("Print the current program account name.", "Identify which user or agent account the shell is running as.", ["identity", "account", "username"]),
   id: command("Print the current uid, gid, and supplementary groups.", "Inspect the current program identity and group membership.", ["identity", "permissions", "groups"]),
   hostname: command("Print the native GSV server name.", "Identify the GSV instance running the native shell.", ["server", "instance", "machine"]),
@@ -103,7 +107,7 @@ const NATIVE_COMMAND_DESCRIPTORS: Record<string, NativeCommandDescriptor> = {
   ]),
   wiki: command("Search and maintain durable repo-backed knowledge.", "Remember, retrieve, or organize durable notes, facts, decisions, and reference material.", ["knowledge", "memory", "notes", "search", "wiki", "reference"]),
   flynn: command("Print the GSV version banner.", "Inspect the GSV release banner or project easter egg.", ["version", "banner", "gsv"]),
-};
+});
 
 const STOP_WORDS = new Set([
   "a", "an", "and", "are", "at", "be", "by", "can", "do", "for", "from", "how", "i", "in", "into",
@@ -132,7 +136,7 @@ export class ShellDiscoveryCatalog {
       const missing = requirements.filter((capability) =>
         !hasCapability(this.ctx.identity?.capabilities ?? [], capability)
       );
-      this.commands.set(registered.name, {
+      const entry: ShellDiscoveryEntry = {
         kind: "command",
         name: registered.name,
         summary: metadata.summary,
@@ -140,8 +144,9 @@ export class ShellDiscoveryCatalog {
         keywords: [...metadata.keywords, ...(metadata.aliases ?? [])],
         next: `man ${quoteShellWord(registered.name)}`,
         available: missing.length === 0,
-        ...(missing.length > 0 ? { requirements: missing } : {}),
-      });
+      };
+      if (missing.length > 0) entry.requirements = missing;
+      this.commands.set(registered.name, entry);
     }
   }
 
@@ -225,7 +230,8 @@ export class ShellDiscoveryCatalog {
       return [];
     }
     try {
-      return listVisibleTargets(this.ctx).map((target) => ({
+      return listVisibleTargets(this.ctx).map((target) => {
+        const entry: ShellDiscoveryEntry = {
         kind: "target" as const,
         name: target.targetId,
         summary: target.description || target.label || `${target.platform || "Connected"} target.`,
@@ -233,8 +239,10 @@ export class ShellDiscoveryCatalog {
         keywords: nonEmptyStrings([target.label, target.platform, "device", ...target.implements]),
         next: `targets show ${quoteShellWord(target.targetId)}`,
         available: target.online,
-        ...(!target.online ? { requirements: ["target online"] } : {}),
-      }));
+        };
+        if (!target.online) entry.requirements = ["target online"];
+        return entry;
+      });
     } catch {
       return [];
     }
@@ -392,14 +400,15 @@ function command(
   synopsis?: string[],
   requirements?: string[],
 ): NativeCommandDescriptor {
-  return {
+  const descriptor: NativeCommandDescriptor = {
     summary,
     useWhen,
     keywords,
-    ...(aliases.length > 0 ? { aliases } : {}),
-    ...(synopsis ? { synopsis } : {}),
-    ...(requirements ? { requirements } : {}),
   };
+  if (aliases.length > 0) descriptor.aliases = aliases;
+  if (synopsis) descriptor.synopsis = synopsis;
+  if (requirements) descriptor.requirements = requirements;
+  return descriptor;
 }
 
 function nonEmptyStrings(values: readonly (string | null | undefined)[]): string[] {

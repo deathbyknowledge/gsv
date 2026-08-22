@@ -1,7 +1,14 @@
 import { Kernel } from "../kernel/do";
 import { env } from "cloudflare:workers";
 import { Process } from "../process/do";
-import type { Frame, FrameBody, ResponseOkFrame } from "../protocol/frames";
+import type {
+  Frame,
+  FrameBody,
+  RequestFrame,
+  ResponseFrame,
+  ResponseOkFrame,
+} from "../protocol/frames";
+import type { SyscallName } from "../syscalls";
 import type {
   ProcessAdapterDeliverRequestFrame,
   ProcessAdapterDeliverResponseFrame,
@@ -68,6 +75,11 @@ export function sendFrameToKernel(
   processId: string,
   frame: ProcessMessageCommitRequestFrame,
 ): Promise<ProcessMessageCommitResponseFrame | null>;
+export function sendFrameToKernel<S extends SyscallName>(
+  installationId: string,
+  processId: string,
+  frame: RequestFrame<S>,
+): Promise<ResponseFrame<S> | null>;
 export function sendFrameToKernel(
   installationId: string,
   processId: string,
@@ -137,6 +149,11 @@ export function sendFrameToProcess(
   pid: string,
   frame: ProcessRunAttachRequestFrame,
 ): Promise<ProcessRunAttachResponseFrame | null>;
+export function sendFrameToProcess<S extends SyscallName>(
+  installationId: string,
+  pid: string,
+  frame: RequestFrame<S>,
+): Promise<ResponseFrame<S> | null>;
 export function sendFrameToProcess(
   installationId: string,
   pid: string,

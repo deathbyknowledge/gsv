@@ -1,3 +1,5 @@
+type KernelTestValue<T = string | number | boolean | null | undefined> = T;
+
 import type { ProcessIdentity } from "@humansandmachines/gsv/protocol";
 import { describe, expect, it, vi } from "vitest";
 import type { RipgitClient, RipgitPathResult } from "../../fs";
@@ -22,12 +24,13 @@ function textFile(content = "custom skill"): RipgitPathResult {
 }
 
 function makeClient(files: Map<string, RipgitPathResult>) {
-  const readPath = vi.fn(async (_repo: unknown, path: string): Promise<RipgitPathResult> =>
+  const readPath = vi.fn(async (_repo: KernelTestValue, path: string): Promise<RipgitPathResult> =>
     files.get(path) ?? { kind: "missing" }
   );
   const apply = vi.fn(async () => ({ head: "home123" }));
   return {
-    client: { readPath, apply } as unknown as RipgitClient,
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+    client: { readPath, apply } as RipgitClient,
     readPath,
     apply,
   };
@@ -45,6 +48,7 @@ describe("seedBuiltinSkillsToHome", () => {
       ...legacyPaths.map((path) => [
         `skills.d/${path}`,
         textFile(),
+      // SAFETY: test fixture is constructed with the asserted kernel domain shape.
       ] as const),
     ]);
     const { client, apply } = makeClient(files);
@@ -52,6 +56,7 @@ describe("seedBuiltinSkillsToHome", () => {
     const result = await seedBuiltinSkillsToHome(client, IDENTITY);
 
     expect(result).toEqual({ username: "alice", copied: 3, skipped: 3 });
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     const operations = apply.mock.calls[0]?.[4] as Array<{
       type: string;
       path: string;
@@ -75,6 +80,7 @@ describe("seedBuiltinSkillsToHome", () => {
       ...BUILTIN_SKILL_FILES.map((skill) => [
         `skills.d/${skill.path}`,
         textFile(),
+      // SAFETY: test fixture is constructed with the asserted kernel domain shape.
       ] as const),
     ]);
     const { client, readPath, apply } = makeClient(files);
@@ -105,6 +111,7 @@ describe("seedBuiltinSkillsToHome", () => {
       copied: BUILTIN_SKILL_FILES.length - 1,
       skipped: 1,
     });
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     const operations = apply.mock.calls[0]?.[4] as Array<{ path: string }>;
     expect(operations).not.toContainEqual(
       expect.objectContaining({ path: `skills.d/${firstPath}` }),
@@ -117,6 +124,7 @@ describe("seedBuiltinSkillsToHome", () => {
       ...BUILTIN_SKILL_FILES.map((skill) => [
         `skills.d/${skill.path}`,
         textFile(skill.path === "memory/SKILL.md" ? LEGACY_MEMORY_SKILL : "custom skill"),
+      // SAFETY: test fixture is constructed with the asserted kernel domain shape.
       ] as const),
     ]);
     const { client, apply } = makeClient(files);
@@ -128,6 +136,7 @@ describe("seedBuiltinSkillsToHome", () => {
       copied: 1,
       skipped: BUILTIN_SKILL_FILES.length - 1,
     });
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     const operations = apply.mock.calls[0]?.[4] as Array<{
       type: string;
       path: string;

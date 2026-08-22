@@ -11,17 +11,21 @@ describe("PrivateAdapterDestinationStore", () => {
     await runWithRealKernelSql((sql) => {
       const store = new PrivateAdapterDestinationStore(sql);
       const whatsapp = {
+        // SAFETY: test fixture is constructed with the asserted kernel domain shape.
         kind: "adapter" as const,
         adapter: "whatsapp",
         accountId: "primary",
         actorId: "wa:+123",
+        // SAFETY: test fixture is constructed with the asserted kernel domain shape.
         surface: { kind: "dm" as const, id: "dm-1" },
       };
       const telegram = {
+        // SAFETY: test fixture is constructed with the asserted kernel domain shape.
         kind: "adapter" as const,
         adapter: "telegram",
         accountId: "bot",
         actorId: "telegram:user:123",
+        // SAFETY: test fixture is constructed with the asserted kernel domain shape.
         surface: { kind: "dm" as const, id: "chat-2" },
       };
 
@@ -44,10 +48,12 @@ describe("PrivateAdapterDestinationStore", () => {
     await runWithRealKernelSql((sql) => {
       const store = new PrivateAdapterDestinationStore(sql);
       const destination = {
+        // SAFETY: test fixture is constructed with the asserted kernel domain shape.
         kind: "adapter" as const,
         adapter: "telegram",
         accountId: "bot",
         actorId: "telegram:user:123",
+        // SAFETY: test fixture is constructed with the asserted kernel domain shape.
         surface: { kind: "dm" as const, id: "chat-2" },
       };
       store.recordActivity(1000, destination, "tg-1", 100);

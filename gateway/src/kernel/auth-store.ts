@@ -477,7 +477,7 @@ export class AuthStore {
   }
 
   listTokens(uid?: number): AuthTokenRecord[] {
-    if (typeof uid === "number") {
+    if (uid !== undefined) {
       return this.sql.exec<{
         token_id: string;
         uid: number;
@@ -523,7 +523,7 @@ export class AuthStore {
   }
 
   revokeToken(tokenId: string, reason?: string, uid?: number): boolean {
-    const rows = typeof uid === "number"
+    const rows = uid !== undefined
       ? this.sql.exec<{ token_id: string }>(
           "SELECT token_id FROM auth_tokens WHERE token_id = ? AND uid = ? LIMIT 1",
           tokenId,
@@ -537,7 +537,7 @@ export class AuthStore {
     if (rows.length === 0) return false;
 
     const now = Date.now();
-    if (typeof uid === "number") {
+    if (uid !== undefined) {
       this.sql.exec(
         "UPDATE auth_tokens SET revoked_at = ?, revoked_reason = ? WHERE token_id = ? AND uid = ?",
         now,

@@ -1,10 +1,12 @@
+type ProcessTestValue<T = string | number | boolean | null | undefined> = T;
+
 import { describe, expect, it } from "vitest";
 import { env } from "cloudflare:workers";
 import { executeCodeMode } from "./codemode";
 
 describe.sequential("CodeMode source handling", () => {
   it("leaves home-relative fs paths for the target filesystem to expand", async () => {
-    const calls: Array<{ call: string; args: Record<string, unknown> }> = [];
+    const calls: Array<{ call: string; args: Record<string, ProcessTestValue> }> = [];
     const result = await executeCodeMode(
       env,
       `
@@ -29,7 +31,7 @@ describe.sequential("CodeMode source handling", () => {
   });
 
   it("does not prepend default cwd to Windows absolute fs paths", async () => {
-    const calls: Array<{ call: string; args: Record<string, unknown> }> = [];
+    const calls: Array<{ call: string; args: Record<string, ProcessTestValue> }> = [];
     const result = await executeCodeMode(
       env,
       `
@@ -61,7 +63,7 @@ describe.sequential("CodeMode source handling", () => {
   });
 
   it("runs script bodies without relying on the package normalizer", async () => {
-    const calls: Array<{ call: string; args: Record<string, unknown> }> = [];
+    const calls: Array<{ call: string; args: Record<string, ProcessTestValue> }> = [];
     const result = await executeCodeMode(
       env,
       [
@@ -134,7 +136,7 @@ describe.sequential("CodeMode source handling", () => {
   });
 
   it("returns failed status for source syntax errors before dispatching tools", async () => {
-    const calls: Array<{ call: string; args: Record<string, unknown> }> = [];
+    const calls: Array<{ call: string; args: Record<string, ProcessTestValue> }> = [];
     const result = await executeCodeMode(
       env,
       "const res = await shell(\"pwd);",

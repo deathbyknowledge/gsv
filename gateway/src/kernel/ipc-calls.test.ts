@@ -9,7 +9,8 @@ describe("IpcCallStore", () => {
   it("stores run correlation atomically and cancels pending calls by source run", async () => {
     const kernel = await getDurableObjectByName(env.KERNEL, crypto.randomUUID());
     await runInDurableObject(kernel, (instance: Kernel) => {
-      const calls = (instance as unknown as { ipcCalls: IpcCallStore }).ipcCalls;
+      // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+      const calls = (instance as { ipcCalls: IpcCallStore }).ipcCalls;
       const callId = crypto.randomUUID();
       calls.create({
         callId,
@@ -70,7 +71,8 @@ describe("IpcCallStore", () => {
   it("allows calls made outside an active source run", async () => {
     const kernel = await getDurableObjectByName(env.KERNEL, crypto.randomUUID());
     await runInDurableObject(kernel, (instance: Kernel) => {
-      const calls = (instance as unknown as { ipcCalls: IpcCallStore }).ipcCalls;
+      // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+      const calls = (instance as { ipcCalls: IpcCallStore }).ipcCalls;
       const callId = crypto.randomUUID();
 
       calls.create({
@@ -92,7 +94,8 @@ describe("IpcCallStore", () => {
   it("fails pending calls when their target process is killed", async () => {
     const kernel = await getDurableObjectByName(env.KERNEL, crypto.randomUUID());
     await runInDurableObject(kernel, (instance: Kernel) => {
-      const calls = (instance as unknown as { ipcCalls: IpcCallStore }).ipcCalls;
+      // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+      const calls = (instance as { ipcCalls: IpcCallStore }).ipcCalls;
       const callId = crypto.randomUUID();
       calls.create({
         callId,

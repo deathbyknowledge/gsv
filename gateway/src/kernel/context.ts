@@ -8,6 +8,8 @@
 import type { MCPClientManager } from "agents/mcp/client";
 import type {
   ConnectionIdentity,
+  JsonObject,
+  JsonValue,
   SchedulerRunArgs,
   SchedulerRunResult,
 } from "@humansandmachines/gsv/protocol";
@@ -59,7 +61,7 @@ export type KernelContext = {
   callerOwnerUid?: number;
   serverVersion: string;
   defer: (promise: Promise<unknown>) => void;
-  broadcastToUserUid: (uid: number, signal: string, payload?: unknown) => void;
+  broadcastToUserUid: (uid: number, signal: string, payload?: JsonValue) => void;
   scheduleIpcCallTimeout: (
     callId: string,
     deadlineAt: number,
@@ -83,9 +85,16 @@ export type KernelContext = {
   callMcpTool: (
     serverId: string,
     toolName: string,
-    args: Record<string, unknown>,
+    args: JsonObject,
     signal?: AbortSignal,
-  ) => Promise<unknown>;
+  ) => ReturnType<MCPClientManager["callTool"]>;
+};
+
+export type CallerOwnerContext = {
+  callerOwnerUid?: number;
+  processId?: string;
+  procs: Pick<ProcessRegistry, "getOwnerUid">;
+  identity?: ConnectionIdentity;
 };
 
 /**
@@ -96,8 +105,8 @@ export type KernelContext = {
  * authorization — distinct from `identity.process.uid`, which is the run-as
  * account.
  */
-export function resolveCallerOwnerUid(ctx: KernelContext): number {
-  if (typeof ctx.callerOwnerUid === "number" && Number.isFinite(ctx.callerOwnerUid)) {
+export function resolveCallerOwnerUid(ctx: CallerOwnerContext): number {
+  if (ctx.callerOwnerUid !== undefined && Number.isFinite(ctx.callerOwnerUid)) {
     return ctx.callerOwnerUid;
   }
   if (ctx.processId) {

@@ -37,6 +37,7 @@ type RawDeviceRow = Omit<DeviceRecord, "implements" | "online" | "label" | "desc
   label?: string | null;
   description?: string | null;
 };
+type DeviceMutationResult = { ok: boolean; error?: string };
 
 export class DeviceRegistry {
   constructor(private sql: SqlStorage) { }
@@ -49,7 +50,7 @@ export class DeviceRegistry {
     platform: string,
     version: string,
     options: DeviceRegisterOptions = {},
-  ): { ok: boolean; error?: string } {
+  ): DeviceMutationResult {
     for (const pattern of impl) {
       if (!isValidCapability(pattern)) {
         return { ok: false, error: `Invalid implements pattern: ${pattern}` };

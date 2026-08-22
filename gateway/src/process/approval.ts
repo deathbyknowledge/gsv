@@ -1,5 +1,6 @@
 import { MAIL_SEND, NET_FETCH } from "../syscalls/constants";
 import { isRoutableSyscall, type SyscallName } from "../syscalls";
+import { z } from "zod";
 
 export type ToolApprovalAction = "auto" | "ask" | "deny";
 
@@ -30,6 +31,20 @@ export const DEFAULT_TOOL_APPROVAL_POLICY: ToolApprovalPolicy = {
     { match: MAIL_SEND, action: "ask" },
   ],
 };
+const approvalActionSchema = z.enum(["auto", "ask", "deny"]);
+const approvalValueSchema = z.unknown();
+type ApprovalWireValue = z.input<typeof approvalValueSchema>;
+const approvalRuleSchema = z.object({
+  match: z.string().trim().min(1),
+  target: z.string().optional(),
+  action: approvalActionSchema,
+  when: approvalValueSchema.optional(),
+});
+const approvalPolicySchema = z.object({
+  default: approvalActionSchema.optional(),
+  rules: z.array(approvalValueSchema).optional(),
+});
+const approvalArgsSchema = z.object({ target: z.string().optional(), sessionId: z.string().optional() });
 
 export function parseToolApprovalPolicy(raw: string | null | undefined): ToolApprovalPolicy {
   if (!raw || raw.trim().length === 0) {
@@ -37,18 +52,9 @@ export function parseToolApprovalPolicy(raw: string | null | undefined): ToolApp
   }
 
   try {
-    const parsed = JSON.parse(raw) as unknown;
-    if (!parsed || typeof parsed !== "object") {
-      return DEFAULT_TOOL_APPROVAL_POLICY;
-    }
-
-    const record = parsed as {
-      default?: unknown;
-      rules?: unknown;
-    };
-
-    const defaultAction = normalizeAction(record.default) ?? DEFAULT_TOOL_APPROVAL_POLICY.default;
-    const rules = Array.isArray(record.rules)
+    const record = approvalPolicySchema.parse(JSON.parse(raw));
+    const defaultAction = record.default ?? DEFAULT_TOOL_APPROVAL_POLICY.default;
+    const rules = record.rules
       ? record.rules
           .map(parseRule)
           .filter((rule): rule is ToolApprovalRule => rule !== null)
@@ -66,7 +72,7 @@ export function parseToolApprovalPolicy(raw: string | null | undefined): ToolApp
 export function resolveToolApproval(
   policy: ToolApprovalPolicy,
   syscall: string,
-  args?: unknown,
+  args?: ApprovalWireValue,
 ): ToolApprovalResolution {
   const target = resolveToolApprovalTarget(syscall, args);
   const rules = policy.rules
@@ -121,51 +127,30 @@ function protectManagedMailApproval(policy: ToolApprovalPolicy): ToolApprovalPol
   };
 }
 
-export function resolveToolApprovalTarget(syscall: string, args?: unknown): string {
-  const record = args && typeof args === "object" && !Array.isArray(args)
-    ? args as Record<string, unknown>
-    : null;
+export function resolveToolApprovalTarget(syscall: string, args?: ApprovalWireValue): string {
+  const record = approvalArgsSchema.safeParse(args).success ? approvalArgsSchema.parse(args) : null;
+  // SAFETY: syscall routing accepts the complete syscall-name union at this boundary.
   const target = isRoutableSyscall(syscall as SyscallName)
     ? normalizeExplicitTarget(record?.target)
     : null;
   if (target) {
     return target;
   }
-  if (syscall === "shell.exec" && typeof record?.sessionId === "string" && record.sessionId.trim().length > 0) {
+  if (syscall === "shell.exec" && record?.sessionId?.trim()) {
     return "targets/*";
   }
   return "gsv";
 }
 
-function parseRule(value: unknown): ToolApprovalRule | null {
-  if (!value || typeof value !== "object") {
-    return null;
-  }
-
-  const record = value as {
-    match?: unknown;
-    target?: unknown;
-    action?: unknown;
-    when?: unknown;
-  };
-
-  const match = typeof record.match === "string" ? record.match.trim() : "";
-  const action = normalizeAction(record.action);
-  if (!match || !action) {
-    return null;
-  }
+function parseRule(value: ApprovalWireValue): ToolApprovalRule | null {
+  const record = approvalRuleSchema.safeParse(value);
+  if (!record.success) return null;
 
   return {
-    match,
-    ...normalizeTargetPatch(record.target, record.when),
-    action,
+    match: record.data.match,
+    ...normalizeTargetPatch(record.data.target, record.data.when),
+    action: record.data.action,
   };
-}
-
-function normalizeAction(value: unknown): ToolApprovalAction | null {
-  return value === "auto" || value === "ask" || value === "deny"
-    ? value
-    : null;
 }
 
 function isWildcardMatch(ruleMatch: string, syscall: string): boolean {
@@ -177,19 +162,18 @@ function isWildcardMatch(ruleMatch: string, syscall: string): boolean {
 }
 
 function normalizeTargetPatch(
-  targetValue: unknown,
-  legacyWhen: unknown,
+  targetValue: ApprovalWireValue,
+  legacyWhen: ApprovalWireValue,
 ): Pick<ToolApprovalRule, "target"> {
   const target = normalizeTargetScope(targetValue)
     ?? normalizeTargetScope(legacyWhenTarget(legacyWhen));
   return target ? { target } : {};
 }
 
-function normalizeTargetScope(value: unknown): string | undefined {
-  if (typeof value !== "string") {
-    return undefined;
-  }
-  const normalized = normalizeTargetAlias(value);
+function normalizeTargetScope(value: ApprovalWireValue): string | undefined {
+  const parsed = z.string().safeParse(value);
+  if (!parsed.success) return undefined;
+  const normalized = normalizeTargetAlias(parsed.data);
   if (!normalized || normalized === "*" || normalized === "any") {
     return undefined;
   }
@@ -199,19 +183,16 @@ function normalizeTargetScope(value: unknown): string | undefined {
   return normalized;
 }
 
-function legacyWhenTarget(value: unknown): unknown {
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
-    return undefined;
-  }
-  const target = (value as { target?: unknown }).target;
-  return target === "device" ? "targets/*" : target;
+function legacyWhenTarget(value: ApprovalWireValue): ApprovalWireValue {
+  const parsed = z.object({ target: z.string().optional() }).safeParse(value);
+  if (!parsed.success) return undefined;
+  return parsed.data.target === "device" ? "targets/*" : parsed.data.target;
 }
 
-function normalizeExplicitTarget(value: unknown): string | null {
-  if (typeof value !== "string") {
-    return null;
-  }
-  const normalized = normalizeTargetAlias(value);
+function normalizeExplicitTarget(value: ApprovalWireValue): string | null {
+  const parsed = z.string().safeParse(value);
+  if (!parsed.success) return null;
+  const normalized = normalizeTargetAlias(parsed.data);
   return normalized || null;
 }
 

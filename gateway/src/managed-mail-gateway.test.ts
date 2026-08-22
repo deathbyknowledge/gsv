@@ -7,6 +7,7 @@ describe("managed mail Gateway routing", () => {
     const getByName = vi.fn(() => {
       throw new Error("Kernel must not be addressed");
     });
+    // SAFETY: The prototype instance is used to exercise the entrypoint methods with an injected test environment.
     const gateway = Object.create(GatewayEntrypoint.prototype) as GatewayEntrypoint;
     Object.defineProperty(gateway, "env", {
       value: {
@@ -22,6 +23,7 @@ describe("managed mail Gateway routing", () => {
 
     await expect(gateway.acceptManagedInboundMail(
       { installationId: "installation-unknown" },
+      // SAFETY: The request metadata is unused by this boundary test.
       {} as never,
       body,
     )).rejects.toThrow("Managed installation is unavailable");
@@ -34,6 +36,7 @@ describe("managed mail Gateway routing", () => {
   it("rejects malformed installation ids before directory or Kernel routing", async () => {
     const resolveInstallation = vi.fn();
     const getByName = vi.fn();
+    // SAFETY: The prototype instance is used to exercise the entrypoint methods with an injected test environment.
     const gateway = Object.create(GatewayEntrypoint.prototype) as GatewayEntrypoint;
     Object.defineProperty(gateway, "env", {
       value: {
@@ -45,6 +48,7 @@ describe("managed mail Gateway routing", () => {
 
     await expect(gateway.acceptManagedInboundMail(
       { installationId: "../not-an-installation" },
+      // SAFETY: The request metadata is unused by this boundary test.
       {} as never,
       { stream: new ReadableStream({ cancel }), length: 1 },
     )).rejects.toThrow();
@@ -70,6 +74,7 @@ describe("managed mail Gateway routing", () => {
       canonicalOrigin: "https://hank.gsv.space",
     }));
     const getByName = vi.fn(() => kernel);
+    // SAFETY: The prototype instance is used to exercise the entrypoint methods with an injected test environment.
     const gateway = Object.create(GatewayEntrypoint.prototype) as GatewayEntrypoint;
     Object.defineProperty(gateway, "env", {
       value: {
@@ -105,6 +110,7 @@ describe("managed mail Gateway routing", () => {
     const getByName = vi.fn(() => {
       throw new Error("Kernel must not be addressed");
     });
+    // SAFETY: The prototype instance is used to exercise the entrypoint methods with an injected test environment.
     const gateway = Object.create(GatewayEntrypoint.prototype) as GatewayEntrypoint;
     Object.defineProperty(gateway, "env", {
       value: {
@@ -138,6 +144,7 @@ describe("managed mail Gateway routing", () => {
       canonicalOrigin: "https://other.gsv.space",
     }));
     const getByName = vi.fn();
+    // SAFETY: The prototype instance is used to exercise the entrypoint methods with an injected test environment.
     const gateway = Object.create(GatewayEntrypoint.prototype) as GatewayEntrypoint;
     Object.defineProperty(gateway, "env", {
       value: {
@@ -165,6 +172,7 @@ describe("managed mail Gateway routing", () => {
       throw new Error("directory unavailable");
     });
     const getByName = vi.fn();
+    // SAFETY: The prototype instance is used to exercise the entrypoint methods with an injected test environment.
     const gateway = Object.create(GatewayEntrypoint.prototype) as GatewayEntrypoint;
     Object.defineProperty(gateway, "env", {
       value: {

@@ -7,6 +7,7 @@ import {
 import type {
   AdapterAccountStatus,
   AdapterActivity,
+  AdapterConnectConfig,
   AdapterGatewayInterface,
   AdapterGatewayRequestFrame,
   AdapterInstallationContext,
@@ -40,8 +41,12 @@ import {
 } from "../../../adapters/shared/src/rpc-compat";
 
 type ImportRequest = {
-  remoteUrl?: unknown;
-  remoteRef?: unknown;
+  remoteUrl?: string;
+  remoteRef?: string;
+};
+
+type ApplyRequest = {
+  ops?: unknown[];
 };
 
 export type RecordedOutboundMessage = {
@@ -369,7 +374,7 @@ export default class TestDependencies
     }
 
     if (url.pathname.endsWith("/apply") && request.method === "POST") {
-      const input = await request.json<Record<string, unknown>>();
+      const input = await request.json<ApplyRequest>();
       if (!Array.isArray(input.ops)) {
         return Response.json({ ok: false, error: "ops are required" }, { status: 400 });
       }
@@ -382,10 +387,8 @@ export default class TestDependencies
         ok: true,
         head: "integration-head",
         changed: true,
-        remote_url: typeof input.remoteUrl === "string"
-          ? input.remoteUrl
-          : "https://example.invalid/gsv-manual",
-        remote_ref: typeof input.remoteRef === "string" ? input.remoteRef : "main",
+        remote_url: input.remoteUrl ?? "https://example.invalid/gsv-manual",
+        remote_ref: input.remoteRef ?? "main",
       });
     }
 
@@ -397,12 +400,12 @@ export default class TestDependencies
 
   async adapterConnect(
     accountId: string,
-    config?: Record<string, unknown>,
+    config?: AdapterConnectConfig,
   ): Promise<{ ok: true; connected: true; authenticated: true; message: string }>;
   async adapterConnect(
     installation: AdapterInstallationContext,
     accountId: string,
-    config?: Record<string, unknown>,
+    config?: AdapterConnectConfig,
   ): Promise<{ ok: true; connected: true; authenticated: true; message: string }>;
   async adapterConnect(
     ...args: AdapterConnectRpcArgs
@@ -418,7 +421,7 @@ export default class TestDependencies
   async #adapterConnectForInstallation(
     _installation: AdapterInstallationContext,
     _accountId: string,
-    _config?: Record<string, unknown>,
+    _config?: AdapterConnectConfig,
   ): Promise<{ ok: true; connected: true; authenticated: true; message: string }> {
     return {
       ok: true,
@@ -548,8 +551,8 @@ export default class TestDependencies
 
   async run(
     _model: string,
-    _input: unknown,
-    _options?: Record<string, unknown>,
+    _input: AdapterGatewayRequestFrame,
+    _options?: AdapterConnectConfig,
   ): Promise<Record<string, never>> {
     return {};
   }

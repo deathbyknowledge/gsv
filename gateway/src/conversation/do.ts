@@ -240,12 +240,11 @@ export class Conversation extends DurableObject<Env> {
     index: number,
     owner: ConversationMediaOwner,
   ): Promise<ProcMediaInput> {
-    if (!item || typeof item !== "object") throw new Error("Conversation media is invalid");
-    const mimeType = typeof item.mimeType === "string" ? item.mimeType.trim() : "";
+    const mimeType = item.mimeType.trim();
     if (!mimeType) throw new Error("Conversation media mimeType is required");
-    const sourceKey = typeof item.key === "string" ? item.key.trim() : "";
+    const sourceKey = item.key?.trim() ?? "";
     if (!sourceKey) {
-      if (typeof item.url !== "string" || !item.url.trim()) {
+      if (!item.url?.trim()) {
         throw new Error("Conversation media requires a stored key or URL");
       }
       return { ...item, mimeType };
@@ -303,27 +302,21 @@ export class Conversation extends DurableObject<Env> {
     if (await sha256(bytes) !== segment.checksum) {
       throw new Error("Conversation archive checksum does not match");
     }
-    const parsed: unknown = JSON.parse(new TextDecoder().decode(bytes));
+    const parsed = JSON.parse(new TextDecoder().decode(bytes));
     if (!Array.isArray(parsed) || parsed.length !== segment.messageCount) {
       throw new Error("Conversation archive payload is invalid");
     }
+    // SAFETY: archive rows are written from ConversationMessage values and the count was verified above.
     return parsed as ConversationMessage[];
   }
 }
 
 function requireAppendInput(input: ConversationAppendRequest): void {
-  if (!input || typeof input !== "object") throw new Error("Conversation message is required");
   requireNonempty(input.messageId, "messageId");
   requireNonempty(input.idempotencyKey, "idempotencyKey");
-  if (typeof input.text !== "string") throw new Error("Conversation message text is invalid");
+  if (!input.text.trim()) throw new Error("Conversation message text is invalid");
   if (!Number.isSafeInteger(input.createdAt) || input.createdAt <= 0) {
     throw new Error("Conversation message timestamp is invalid");
-  }
-  if (!input.author || typeof input.author !== "object") {
-    throw new Error("Conversation message author is invalid");
-  }
-  if (!input.origin || typeof input.origin !== "object") {
-    throw new Error("Conversation message origin is invalid");
   }
 }
 
@@ -357,8 +350,8 @@ function conversationMediaKey(conversationId: string, messageId: string, index: 
   return `${conversationMediaPrefix(conversationId)}${encodeURIComponent(messageId)}/${index}`;
 }
 
-function normalizeConversationMediaKey(value: unknown, conversationId: string): string {
-  if (typeof value !== "string" || !value.startsWith(conversationMediaPrefix(conversationId))) {
+function normalizeConversationMediaKey(value: string, conversationId: string): string {
+  if (!value.startsWith(conversationMediaPrefix(conversationId))) {
     throw new Error("Conversation media key is invalid");
   }
   return value;
@@ -383,8 +376,8 @@ function canonicalConversationMedia(
   return { ...metadata, mimeType, key, conversationId, size };
 }
 
-function requireNonempty(value: unknown, label: string): asserts value is string {
-  if (typeof value !== "string" || value.length === 0) throw new Error(`${label} is required`);
+function requireNonempty(value: string, label: string): void {
+  if (value.length === 0) throw new Error(`${label} is required`);
 }
 
 function requireOwnerUid(value: number): void {

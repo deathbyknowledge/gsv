@@ -1,3 +1,5 @@
+import type { JsonValue } from "../json";
+
 export type CodeModeExecArgs = {
   code: string;
 };
@@ -5,7 +7,7 @@ export type CodeModeExecArgs = {
 export type CodeModeExecResult =
   | {
       status: "completed";
-      result: unknown;
+      result: JsonValue;
       logs?: string[];
     }
   | {
@@ -20,7 +22,7 @@ export type CodeModeRunArgs = {
   target?: string;
   cwd?: string;
   argv?: string[];
-  args?: unknown;
+  args?: JsonValue;
 };
 
 export type CodeModeRunResult = CodeModeExecResult;

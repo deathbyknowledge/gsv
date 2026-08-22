@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { CommandContext } from "just-bash";
+import { InMemoryFs } from "just-bash";
 import {
   bodyFromBytes,
   bodyFromText,
@@ -9,22 +9,14 @@ import {
 import type { GsvFs } from "../../../fs/gsv-fs";
 import type { KernelContext } from "../../../kernel/context";
 import type { FsDeviceTransport } from "../fs";
+import { buildMediaCommands, type MediaFs, type MediaHandlers } from "./media";
 
-const ai = vi.hoisted(() => ({
+const ai: MediaHandlers = {
   imageGenerate: vi.fn(),
   imageRead: vi.fn(),
   speechCreate: vi.fn(),
   transcriptionCreate: vi.fn(),
-}));
-
-vi.mock("../../../kernel/ai", () => ({
-  handleAiImageGenerate: ai.imageGenerate,
-  handleAiImageRead: ai.imageRead,
-  handleAiSpeechCreate: ai.speechCreate,
-  handleAiTranscriptionCreate: ai.transcriptionCreate,
-}));
-
-import { buildMediaCommands } from "./media";
+};
 
 const IDENTITY: ProcessIdentity = {
   uid: 1000,
@@ -35,12 +27,14 @@ const IDENTITY: ProcessIdentity = {
   cwd: "/home/sam",
 };
 
+// SAFETY: media command tests exercise only identity and capability reads from this minimal context.
 const CTX = {
   identity: {
     role: "user",
     process: IDENTITY,
     capabilities: ["*"],
   },
+// SAFETY: The media command only reads the process identity and capabilities from this fixture.
 } as KernelContext;
 
 beforeEach(() => {
@@ -454,13 +448,15 @@ describe("img2txt", () => {
   });
 });
 
-function makeFs(overrides: Partial<GsvFs>): GsvFs {
+function makeFs(overrides: Partial<MediaFs>): MediaFs {
   return {
     resolvePath(base: string, path: string) {
       return path.startsWith("/") ? path : `${base}/${path}`;
     },
+    async openFile() { throw new Error("fixture must provide openFile"); },
+    async writeFileStream() { throw new Error("fixture must provide writeFileStream"); },
     ...overrides,
-  } as unknown as GsvFs;
+  };
 }
 
 function imageFs(): GsvFs {
@@ -511,27 +507,28 @@ async function run(
   ctx: KernelContext = CTX,
   transport?: FsDeviceTransport,
 ) {
-  const command = buildMediaCommands(fs, ctx, transport).find((candidate) => (
+  const command = buildMediaCommands(fs, ctx, transport, ai).find((candidate) => (
     candidate.name === name
-  ))!;
+  ));
+  if (!command) throw new Error(`Missing media command: ${name}`);
   return command.execute(args, {
-    fs,
+    fs: new InMemoryFs(),
     cwd: IDENTITY.cwd,
     env: new Map(),
     stdin: "",
     signal: new AbortController().signal,
-  } as CommandContext);
+  });
 }
 
 function targetContext(targets: string[]): KernelContext {
-  return {
+  return Object.assign({}, CTX, {
     ...CTX,
     devices: {
       canAccess: vi.fn(() => true),
       canHandle: vi.fn(() => true),
       listForUser: vi.fn(() => targets.map((device_id) => ({ device_id }))),
     },
-  } as unknown as KernelContext;
+  });
 }
 
 function remoteImageTransport(
@@ -540,7 +537,7 @@ function remoteImageTransport(
   bytes: Uint8Array,
   cancel?: () => void,
 ): FsDeviceTransport & { requestDevice: ReturnType<typeof vi.fn> } {
-  const requestDevice = vi.fn(async (deviceId: string, call: string, args: unknown) => {
+  const requestDevice = vi.fn(async (deviceId: string, call: string, args: Record<string, string>) => {
     expect(deviceId).toBe(target);
     expect(args).toEqual({ path });
     if (call === "fs.transfer.stat") {

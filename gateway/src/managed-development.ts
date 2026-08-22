@@ -16,6 +16,7 @@ export default {
     if (!url.hostname.endsWith(".localhost")) {
       return new Response("Not Found", { status: 404 });
     }
+    // SAFETY: the development gateway accepts the standard Worker fetch request shape.
     return await gateway.fetch(
       request as Parameters<typeof gateway.fetch>[0],
       env,

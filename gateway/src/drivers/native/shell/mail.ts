@@ -18,6 +18,9 @@ import {
 } from "./common";
 
 const MAX_OUTBOUND_TEXT_BYTES = 1024 * 1024;
+type MailSendOptions = { to?: string; subject?: string; message?: string; bodyPath?: string; deliveryId?: string; replyToMessageId?: string };
+type MailSearchOptions = { query: string; limit: number; offset: number };
+type MailPageOptions = { limit: number; offset: number };
 
 const MAIL_USAGE = `Usage:
   mail address
@@ -44,7 +47,7 @@ export function buildMailCommand(fs: GsvFs, ctx: KernelContext) {
         },
       );
     } catch (error) {
-      return failed(error);
+      return failed(error instanceof Error ? error : String(error));
     }
   });
 }
@@ -142,15 +145,10 @@ async function sendMail(
   }
   const deliveryId = options.deliveryId
     ?? defaultDeliveryId(ctx.requestId, invocationOrdinal);
-  const input: MailSendArgs = {
-    text,
-    deliveryId,
-    ...(options.to ? { to: options.to } : {}),
-    ...(options.subject !== undefined ? { subject: options.subject } : {}),
-    ...(options.replyToMessageId
-      ? { replyToMessageId: options.replyToMessageId }
-      : {}),
-  };
+  const input: MailSendArgs = { text, deliveryId };
+  if (options.to) input.to = options.to;
+  if (options.subject !== undefined) input.subject = options.subject;
+  if (options.replyToMessageId) input.replyToMessageId = options.replyToMessageId;
   return formatSendResult(await handleMailSend(input, requestCtx), deliveryId);
 }
 
@@ -164,14 +162,7 @@ function withShellSignal(ctx: KernelContext, shellCtx: CommandContext): KernelCo
   };
 }
 
-function parseSend(args: string[], reply: boolean): {
-  to?: string;
-  subject?: string;
-  message?: string;
-  bodyPath?: string;
-  deliveryId?: string;
-  replyToMessageId?: string;
-} {
+function parseSend(args: string[], reply: boolean): MailSendOptions {
   let to: string | undefined;
   let subject: string | undefined;
   let message: string | undefined;
@@ -225,14 +216,14 @@ function parseSend(args: string[], reply: boolean): {
   if (message !== undefined && bodyPath !== undefined) {
     throw new Error("--message and --body are mutually exclusive");
   }
-  return {
-    ...(to ? { to } : {}),
-    ...(subject !== undefined ? { subject } : {}),
-    ...(message !== undefined ? { message } : {}),
-    ...(bodyPath ? { bodyPath } : {}),
-    ...(deliveryId ? { deliveryId } : {}),
-    ...(replyToMessageId ? { replyToMessageId } : {}),
-  };
+  const parsed: MailSendOptions = {};
+  if (to) parsed.to = to;
+  if (subject !== undefined) parsed.subject = subject;
+  if (message !== undefined) parsed.message = message;
+  if (bodyPath) parsed.bodyPath = bodyPath;
+  if (deliveryId) parsed.deliveryId = deliveryId;
+  if (replyToMessageId) parsed.replyToMessageId = replyToMessageId;
+  return parsed;
 }
 
 function defaultDeliveryId(requestId: string | undefined, ordinal: number): string {
@@ -329,11 +320,7 @@ function cleanColumn(value: string): string {
   return value.replace(/[\t\r\n]+/g, " ").trim();
 }
 
-function parseSearch(args: string[]): {
-  query: string;
-  limit: number;
-  offset: number;
-} {
+function parseSearch(args: string[]): MailSearchOptions {
   const terms: string[] = [];
   const pageArgs: string[] = [];
   for (let index = 0; index < args.length; index += 1) {
@@ -352,7 +339,7 @@ function parseSearch(args: string[]): {
   return { query, ...parsePage(pageArgs) };
 }
 
-function parsePage(args: string[]): { limit: number; offset: number } {
+function parsePage(args: string[]): MailPageOptions {
   let limit = 50;
   let offset = 0;
   for (let index = 0; index < args.length; index += 1) {
@@ -379,7 +366,7 @@ function completed(stdout: string): ExecResult {
   return { stdout, stderr: "", exitCode: 0 };
 }
 
-function failed(error: unknown): ExecResult {
+function failed(error: Error | string): ExecResult {
   return {
     stdout: "",
     stderr: `mail: ${error instanceof Error ? error.message : String(error)}\n`,

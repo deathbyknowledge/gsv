@@ -1,5 +1,6 @@
 import { GSVClient } from "@humansandmachines/gsv";
 import {
+  adapterGatewayResponseFrameSchema,
   isAdapterInboundResult,
   type AdapterGatewayRequestFrame,
   type AdapterGatewayResponseFrame,
@@ -26,7 +27,11 @@ const SURFACE = { kind: "dm" as const, id: "discord:dm-42" };
 
 type RunSignal = {
   signal: string;
-  payload: Record<string, unknown>;
+  payload: {
+    runId?: string;
+    seq?: number;
+    event?: { type: string };
+  };
 };
 
 type RecordedOutboundMessage = {
@@ -101,9 +106,8 @@ describe("gateway runtime integration", () => {
 
     const signals: RunSignal[] = [];
     const stopSignals = client.onSignal((signal, payload) => {
-      if (payload && typeof payload === "object") {
-        signals.push({ signal, payload: payload as Record<string, unknown> });
-      }
+      // SAFETY: Runtime signal payloads use the fields asserted by this fixture.
+      signals.push({ signal, payload: payload as RunSignal["payload"] });
     });
     const generationRequestOffset = ai.requests.length;
 
@@ -146,7 +150,8 @@ describe("gateway runtime integration", () => {
         .filter(({ signal, payload }) => signal === "proc.run.stream" && payload.runId === runId)
         .map(({ payload }) => payload);
       expect(streamPayloads.map(({ event }) =>
-        (event as Record<string, unknown>).type
+        // SAFETY: Stream events in this fixture always carry a string type.
+        (event as { type: string }).type
       )).toEqual([
         "start",
         "toolcall_start",
@@ -290,9 +295,8 @@ describe("gateway runtime integration", () => {
 
     const thirdSignals: RunSignal[] = [];
     const stopThirdSignals = client.onSignal((signal, payload) => {
-      if (payload && typeof payload === "object") {
-        thirdSignals.push({ signal, payload: payload as Record<string, unknown> });
-      }
+      // SAFETY: Runtime signal payloads use the fields asserted by this fixture.
+      thirdSignals.push({ signal, payload: payload as RunSignal["payload"] });
     });
     const third = await client.proc.send({
       pid: spawned.pid,
@@ -693,6 +697,7 @@ async function configureDeterministicAi(
   pid: string,
   baseUrl: string,
 ): Promise<void> {
+  // SAFETY: The client command name is a stable protocol literal accepted by the test client.
   const result = await client.call<ProcAiConfigSetResult>("proc.ai.config.set" as string, {
     pid,
     values: {
@@ -806,14 +811,14 @@ async function sendServiceFrame(
   if (!response.ok) {
     throw new Error(`Test dependency service-frame endpoint returned ${response.status}`);
   }
-  return await response.json() as AdapterGatewayResponseFrame;
+  return adapterGatewayResponseFrameSchema.parse(await response.json());
 }
 
 function inboundResult(response: AdapterGatewayResponseFrame): AdapterInboundResult {
   if (!response.ok) {
     throw new Error(response.error?.message ?? "Gateway rejected adapter ingress");
   }
-  if (!isAdapterInboundResult(response.data)) {
+  if (response.data === undefined || !isAdapterInboundResult(response.data)) {
     throw new Error("Gateway returned an invalid adapter ingress result");
   }
   return response.data;
@@ -829,7 +834,10 @@ async function listOutbound(
   if (!response.ok) {
     throw new Error(`Test dependency outbound endpoint returned ${response.status}`);
   }
-  return await response.json() as RecordedOutboundMessage[];
+  const body = await response.json();
+  if (!Array.isArray(body)) throw new Error("Gateway returned invalid outbound messages");
+  // SAFETY: The test dependency endpoint returns the recorded outbound message contract.
+  return body as RecordedOutboundMessage[];
 }
 
 async function waitForOutbound(

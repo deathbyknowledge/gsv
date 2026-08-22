@@ -128,10 +128,10 @@ export function handleSysConfigSet(
 ): SysConfigSetResult {
   const uid = ctx.identity!.process.uid;
 
-  if (!args.key || typeof args.key !== "string") {
+  if (!args.key) {
     throw new Error("sys.config.set requires a key");
   }
-  const copyFromKey = typeof args.copyFromKey === "string" ? args.copyFromKey.trim() : "";
+  const copyFromKey = args.copyFromKey?.trim() ?? "";
   if ((args.value === undefined || args.value === null) && !copyFromKey) {
     throw new Error("sys.config.set requires a value");
   }

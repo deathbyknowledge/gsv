@@ -2,6 +2,7 @@ import { defineCommand } from "just-bash";
 import type { CommandContext, ExecResult } from "just-bash";
 import type {
   AdapterMessageDestination,
+  AdapterSendArgs,
   AdapterSendResult,
   ProcMediaInput,
   ProcMediaWriteResult,
@@ -191,6 +192,7 @@ async function attachToReply(
             : `no response while staging ${path}`,
         );
       }
+      // SAFETY: The proc.media.write response is validated by the syscall frame contract.
       const result = response.data as ProcMediaWriteResult | undefined;
       if (!result?.ok) {
         throw new Error(result?.error || `failed to stage ${path}`);
@@ -198,6 +200,7 @@ async function attachToReply(
       if (result.media.key !== stagedKey) {
         throw new Error(`staged media key did not match the requested id for ${path}`);
       }
+      // SAFETY: The media write result has the same attachment fields required for reply staging.
       staged.push(result.media as ReplyAttachment);
     }
 
@@ -208,9 +211,9 @@ async function attachToReply(
       args: {
         runId,
         media: staged,
-        ...(stagedKeys.length > 0 ? { stagedKeys } : {}),
       },
     };
+    if (stagedKeys.length > 0) request.args.stagedKeys = stagedKeys;
     const response = await sendFrameToProcess(ctx.installationId, pid, request);
     if (!response || response.type !== "res" || !response.ok) {
       throw new Error(
@@ -219,6 +222,7 @@ async function attachToReply(
           : "no response while attaching media to the current reply",
       );
     }
+    // SAFETY: The proc.run.attach response is validated by the syscall frame contract.
     const result = response.data as ProcessRunAttachResult | undefined;
     if (!result?.ok) {
       throw new Error(result?.error || "failed to attach media to the current reply");
@@ -241,11 +245,13 @@ async function rollbackStagedReplyMedia(
   pid: string,
   keys: string[],
 ): Promise<void> {
+  // SAFETY: Each mapped request is the exact proc.media.delete frame contract.
   await Promise.allSettled(keys.map((key) => sendFrameToProcess(installationId, pid, {
     type: "req",
     id: crypto.randomUUID(),
     call: "proc.media.delete",
     args: { pid, key },
+  // SAFETY: This request is the exact proc.media.delete frame contract.
   } as RequestFrame<"proc.media.delete">)));
 }
 
@@ -260,10 +266,10 @@ async function showCurrentReplyDestination(
     ? await adapterMessageDestinationId(route.destination, resolveCallerOwnerUid(ctx))
     : undefined;
   if (json) {
-    return completed(`${JSON.stringify({
-      ...current,
-      ...(destinationId ? { destinationId } : {}),
-    }, null, 2)}\n`);
+    // SAFETY: The payload extends the trusted route description with an optional display identifier.
+    const payload = { ...current } as RouteDescription & { destinationId?: string };
+    if (destinationId) payload.destinationId = destinationId;
+    return completed(`${JSON.stringify(payload, null, 2)}\n`);
   }
   return completed([
     `directed endpoint: ${current.label}`,
@@ -421,10 +427,11 @@ function renderMessageRoutes(routes: MessageRouteView[], json: boolean): ExecRes
   return completed(`${lines.join("\n")}\n`);
 }
 
+type MessageRouteOptions = { to: string; process?: string; json: boolean };
 function parseMessageRouteOptions(
   args: string[],
   requireProcess: boolean,
-): { to: string; process?: string; json: boolean } {
+): MessageRouteOptions {
   let to = "here";
   let process: string | undefined;
   let json = false;
@@ -449,7 +456,9 @@ function parseMessageRouteOptions(
   if (requireProcess && !process) {
     throw new Error("message route set requires --process");
   }
-  return { to, ...(process ? { process } : {}), json };
+  const parsed: MessageRouteOptions = { to, json };
+  if (process) parsed.process = process;
+  return parsed;
 }
 
 async function resolveRouteDestination(
@@ -567,15 +576,16 @@ async function sendMessage(
         + `(delivery_id=${deliveryId}; retry with --delivery-id using this value)`,
       );
     }
-    result = await handleAdapterSend({
+    const sendArgs: AdapterSendArgs = {
       adapter: destination.adapter,
       accountId: destination.accountId,
       deliveryId,
       surface: destination.surface,
       text: text?.trim() ?? "",
-      ...(attachment ? { media: [attachment.media] } : {}),
       also,
-    }, ctx, attachment?.body);
+    };
+    if (attachment) sendArgs.media = [attachment.media];
+    result = await handleAdapterSend(sendArgs, ctx, attachment?.body);
     if (result.ok || !result.retryable) break;
   }
   if (!result) {
@@ -636,7 +646,7 @@ async function openAttachment(
 
 function inferMimeType(path: string): string {
   const extension = path.toLowerCase().split(".").pop();
-  const known: Record<string, string> = {
+  const known = {
     png: "image/png",
     jpg: "image/jpeg",
     jpeg: "image/jpeg",
@@ -652,7 +662,8 @@ function inferMimeType(path: string): string {
     pdf: "application/pdf",
     txt: "text/plain",
   };
-  return known[extension ?? ""] ?? "application/octet-stream";
+  return Object.entries(known).find(([key]) => key === extension)?.[1]
+    ?? "application/octet-stream";
 }
 
 function mediaTypeForMime(mimeType: string): "image" | "audio" | "video" | "document" {
@@ -678,11 +689,12 @@ function currentRunRoute(ctx: KernelContext): RunRoute | null {
   return route?.processId === ctx.processId ? route : null;
 }
 
-function describeCurrentRoute(route: RunRoute | null): {
+type RouteDescription = {
   kind: "adapter" | "client" | "process";
   label: string;
   transport: "directed";
-} {
+};
+function describeCurrentRoute(route: RunRoute | null): RouteDescription {
   if (route?.kind === "adapter") {
     const { adapter, surface } = route.destination;
     const adapterLabel = adapter === "whatsapp"

@@ -6,12 +6,13 @@
  * proc.send/kill/history/reset — forwarded to the Process DO via recvFrame.
  */
 
-import type { FrameBody, RequestFrame, ResponseFrame } from "../protocol/frames";
+import type { FrameBody, RequestFrame } from "../protocol/frames";
 import type { ArgsOf, ResultOf, SyscallName } from "../syscalls";
 import type { KernelContext } from "./context";
 import { resolveCallerOwnerUid } from "./context";
 import type {
   InteractionOrigin,
+  JsonObject,
   ProcessIdentity,
   ProcListArgs,
   ProcListResult,
@@ -22,6 +23,7 @@ import type {
   ProcHistoryExportResult,
   ProcIpcCallArgs,
   ProcIpcCallResult,
+  ProcIpcDeliverResult,
   ProcIpcSendArgs,
   ProcIpcSendResult,
   ProcSpawnArgs,
@@ -44,6 +46,11 @@ import { invalidatePersonalControllerReadiness } from "./personal-controller";
 const DEFAULT_IPC_CALL_TIMEOUT_MS = 60_000;
 const MIN_IPC_CALL_TIMEOUT_MS = 1_000;
 const MAX_IPC_CALL_TIMEOUT_MS = 10 * 60 * 1000;
+
+type ForwardedProcessResult = {
+  data?: ResultOf<SyscallName>;
+  body?: FrameBody;
+};
 
 export function handleProcList(
   args: ProcListArgs,
@@ -86,10 +93,9 @@ export async function handleProcSpawn(
 ): Promise<ProcSpawnResult> {
   const identity = ctx.identity!;
   const pid = `proc:${crypto.randomUUID()}`;
-  const explicitRunAs = typeof args.runAs === "string" && args.runAs.trim().length > 0;
-  const label = typeof args.label === "string" && args.label.trim().length > 0
-    ? args.label.trim()
-    : undefined;
+  const runAs = args.runAs?.trim();
+  const explicitRunAs = Boolean(runAs);
+  const label = args.label?.trim() || undefined;
   const interactive = args.interactive ?? true;
 
   const callerOwnerUid = resolveCallerOwnerUid(ctx);
@@ -139,8 +145,8 @@ export async function handleProcSpawn(
       }
     : identity.process;
 
-  if (explicitRunAs) {
-    const resolved = resolveRunAsIdentity(ctx, args.runAs!, ownerUid);
+  if (runAs) {
+    const resolved = resolveRunAsIdentity(ctx, runAs, ownerUid);
     if (!resolved.ok) {
       return { ok: false, error: resolved.error };
     }
@@ -172,16 +178,17 @@ export async function handleProcSpawn(
     registered = true;
 
     const requestId = crypto.randomUUID();
+    const identityArgs: ArgsOf<"proc.setidentity"> = {
+      identity: spawnIdentity,
+      interactive,
+      autoTitle: label === undefined,
+    };
+    if (label) identityArgs.title = label;
     const response = await sendFrameToProcess(ctx.installationId, pid, {
       type: "req",
       id: requestId,
       call: "proc.setidentity",
-      args: {
-        identity: spawnIdentity,
-        interactive,
-        ...(label ? { title: label } : {}),
-        autoTitle: label === undefined,
-      },
+      args: identityArgs,
     });
     if (!response || response.type !== "res" || response.id !== requestId) {
       throw new Error("proc.setidentity returned no valid response");
@@ -189,7 +196,9 @@ export async function handleProcSpawn(
     if (!response.ok) {
       throw new Error(response.error.message);
     }
-    if ((response.data as { ok?: unknown } | undefined)?.ok !== true) {
+    // SAFETY: this response corresponds to the proc.setidentity request above.
+    const initialized = response.data as ResultOf<"proc.setidentity"> | undefined;
+    if (initialized?.ok !== true) {
       throw new Error("proc.setidentity rejected initialization");
     }
   } catch (error) {
@@ -216,15 +225,16 @@ export async function handleProcSpawn(
 
   if (args.prompt) {
     const origin = interactionOriginForContext(ctx);
+    const sendArgs: ProcSendArgs = {
+      pid,
+      message: args.prompt,
+    };
+    if (origin) sendArgs.origin = origin;
     await sendFrameToProcess(ctx.installationId, pid, {
       type: "req",
       id: crypto.randomUUID(),
       call: "proc.send",
-      args: {
-        pid,
-        message: args.prompt,
-        ...(origin ? { origin } : {}),
-      },
+      args: sendArgs,
     });
   }
 
@@ -257,22 +267,20 @@ export async function handleProcFork(
   let exported: Extract<ProcHistoryExportResult, { ok: true }> | null = null;
   let targetPid: string | null = null;
   try {
+    const exportArgs: ArgsOf<"proc.history.export"> = {};
+    if (args.segmentId !== undefined) exportArgs.segmentId = args.segmentId;
+    if (args.throughMessageId !== undefined) {
+      exportArgs.throughMessageId = args.throughMessageId;
+    }
+    if (args.throughRunId !== undefined) exportArgs.throughRunId = args.throughRunId;
+    if (args.includeLiveSuffix !== undefined) {
+      exportArgs.includeLiveSuffix = args.includeLiveSuffix;
+    }
     const exportResult = await requestProcessSyscall(
       ctx.installationId,
       sourcePid,
       "proc.history.export",
-      {
-        ...(args.segmentId !== undefined ? { segmentId: args.segmentId } : {}),
-        ...(args.throughMessageId !== undefined
-          ? { throughMessageId: args.throughMessageId }
-          : {}),
-        ...(args.throughRunId !== undefined
-          ? { throughRunId: args.throughRunId }
-          : {}),
-        ...(args.includeLiveSuffix !== undefined
-          ? { includeLiveSuffix: args.includeLiveSuffix }
-          : {}),
-      },
+      exportArgs,
       ctx.requestSignal,
     );
     if (!exportResult.ok) {
@@ -307,20 +315,21 @@ export async function handleProcFork(
       throw new Error(imported.error);
     }
 
-    return {
+    const result: Extract<ProcForkResult, { ok: true }> = {
       ok: true,
       pid: targetPid,
       label: spawned.label ?? label,
       sourcePid,
-      ...(exported.segment ? { segment: exported.segment } : {}),
-      ...(exported.throughMessageId !== undefined
-        ? { throughMessageId: exported.throughMessageId }
-        : {}),
       restoredMessages: imported.restoredMessages,
       includedLiveSuffix: exported.includedLiveSuffix,
     };
+    if (exported.segment) result.segment = exported.segment;
+    if (exported.throughMessageId !== undefined) {
+      result.throughMessageId = exported.throughMessageId;
+    }
+    return result;
   } catch (error) {
-    const message = formatError(error);
+    const message = error instanceof Error ? error.message : String(error);
     if (!targetPid) {
       return { ok: false, error: message };
     }
@@ -329,9 +338,12 @@ export async function handleProcFork(
       targetPid = null;
       return { ok: false, error: message };
     } catch (rollbackError) {
+      const rollbackMessage = rollbackError instanceof Error
+        ? rollbackError.message
+        : String(rollbackError);
       return {
         ok: false,
-        error: `${message}; rollback failed: ${formatError(rollbackError)}`,
+        error: `${message}; rollback failed: ${rollbackMessage}`,
       };
     }
   } finally {
@@ -357,12 +369,14 @@ async function requestProcessSyscall<
 ): Promise<ResultOf<S>> {
   const id = crypto.randomUUID();
   let cancellation: Promise<unknown> | undefined;
-  const responsePromise = sendFrameToProcess(installationId, pid, {
+  // SAFETY: `call` and `args` share the same syscall-map key through S.
+  const frame = {
     type: "req",
     id,
     call,
     args,
-  } as RequestFrame<S> as RequestFrame);
+  } as RequestFrame<S>;
+  const responsePromise = sendFrameToProcess(installationId, pid, frame);
   let response: Awaited<typeof responsePromise>;
   try {
     response = await raceWithAbort(responsePromise, signal, {
@@ -388,6 +402,7 @@ async function requestProcessSyscall<
   if (response.data === undefined) {
     throw new Error(`${call} returned no data`);
   }
+  // SAFETY: the response id matches the request whose syscall is S.
   return response.data as ResultOf<S>;
 }
 
@@ -412,7 +427,9 @@ async function rollbackSpawn(
     }
     throw new Error(response.error.message);
   }
-  if ((response.data as { ok?: unknown } | undefined)?.ok !== true) {
+  // SAFETY: this response corresponds to the proc.kill request above.
+  const killed = response.data as ResultOf<"proc.kill"> | undefined;
+  if (killed?.ok !== true) {
     throw new Error("proc.kill rejected rollback");
   }
   ctx.procs.kill(pid);
@@ -455,9 +472,11 @@ export function resolveRunAsIdentity(
   return { ok: true, identity: accountIdentity(auth, entry) };
 }
 
-function withProcSendOrigin(frame: RequestFrame, ctx: KernelContext): RequestFrame {
-  const args = (frame.args ?? {}) as ProcSendArgs & Record<string, unknown>;
-  const nextArgs: ProcSendArgs & Record<string, unknown> = { ...args };
+function withProcSendOrigin(
+  frame: RequestFrame<"proc.send">,
+  ctx: KernelContext,
+): RequestFrame<"proc.send"> {
+  const nextArgs: ProcSendArgs = { ...frame.args };
   const origin = interactionOriginForContext(ctx);
   if (origin) {
     nextArgs.origin = origin;
@@ -465,7 +484,15 @@ function withProcSendOrigin(frame: RequestFrame, ctx: KernelContext): RequestFra
     delete nextArgs.origin;
   }
   delete nextArgs.interaction;
-  return { ...frame, args: nextArgs } as RequestFrame;
+  const nextFrame: RequestFrame<"proc.send"> = {
+    type: "req",
+    id: frame.id,
+    call: "proc.send",
+    args: nextArgs,
+  };
+  if (frame.runId !== undefined) nextFrame.runId = frame.runId;
+  if (frame.body !== undefined) nextFrame.body = frame.body;
+  return nextFrame;
 }
 
 function interactionOriginForContext(ctx: KernelContext): InteractionOrigin | undefined {
@@ -477,40 +504,38 @@ function interactionOriginForContext(ctx: KernelContext): InteractionOrigin | un
   if (!identity) return undefined;
 
   if (identity.role === "driver") {
-    return {
+    const origin: Extract<InteractionOrigin, { kind: "device" }> = {
       kind: "device",
       deviceId: identity.device,
-      ...(identity.process.cwd ? { cwd: identity.process.cwd } : {}),
     };
+    if (identity.process.cwd) origin.cwd = identity.process.cwd;
+    return origin;
   }
 
   if (identity.role === "user") {
     const connection = ctx.connection;
     if (!connection) return undefined;
-    const state = connection.state as { clientId?: unknown; clientPlatform?: unknown } | undefined;
-    const clientId = typeof state?.clientId === "string" && state.clientId.trim()
-      ? state.clientId.trim()
-      : undefined;
-    const platform = typeof state?.clientPlatform === "string" && state.clientPlatform.trim()
-      ? state.clientPlatform.trim()
-      : undefined;
-    return {
+    const clientId = connection.state.clientId?.trim() || undefined;
+    const platform = connection.state.clientPlatform?.trim() || undefined;
+    const origin: Extract<InteractionOrigin, { kind: "client" }> = {
       kind: "client",
       connectionId: connection.id,
-      ...(clientId ? { clientId } : {}),
-      ...(platform ? { platform } : {}),
     };
+    if (clientId) origin.clientId = clientId;
+    if (platform) origin.platform = platform;
+    return origin;
   }
 
   return undefined;
 }
 
 function processInteractionOrigin(sourcePid: string, uid?: number): InteractionOrigin {
-  return {
+  const origin: Extract<InteractionOrigin, { kind: "process" }> = {
     kind: "process",
     sourcePid,
-    ...(typeof uid === "number" && Number.isFinite(uid) ? { uid } : {}),
   };
+  if (uid !== undefined && Number.isFinite(uid)) origin.uid = uid;
+  return origin;
 }
 
 export async function handleProcIpcSend(
@@ -537,15 +562,18 @@ export async function handleProcIpcSend(
   });
 
   if (response && response.type === "res") {
-    const res = response as ResponseFrame;
-    if (res.ok) {
-      const delivered = (res as { data: ProcIpcSendResult }).data;
-      if (delivered.ok && delivered.runId !== runId) {
-        return { ok: false, error: "proc.ipc.deliver returned an unexpected runId" };
-      }
-      return delivered;
+    if (!response.ok) {
+      return { ok: false, error: response.error.message };
     }
-    return { ok: false, error: (res as { error: { message: string } }).error.message };
+    // SAFETY: this response corresponds to the proc.ipc.deliver request above.
+    const delivered = response.data as ProcIpcDeliverResult | undefined;
+    if (!delivered) {
+      return { ok: false, error: "proc.ipc.deliver returned no data" };
+    }
+    if (delivered.ok && delivered.runId !== runId) {
+      return { ok: false, error: "proc.ipc.deliver returned an unexpected runId" };
+    }
+    return delivered;
   }
 
   return { ok: false, error: "proc.ipc.deliver did not return a response" };
@@ -583,10 +611,13 @@ export async function handleProcIpcCall(
     }
   } catch (error) {
     ctx.ipcCalls.remove(callId);
-    return { ok: false, error: formatError(error) };
+    return {
+      ok: false,
+      error: error instanceof Error ? error.message : String(error),
+    };
   }
 
-  let response: ResponseFrame | null;
+  let response: Awaited<ReturnType<typeof sendFrameToProcess>>;
   try {
     response = await sendFrameToProcess(ctx.installationId, resolved.args.pid, {
       type: "req",
@@ -605,10 +636,13 @@ export async function handleProcIpcCall(
           deadlineAt,
         },
       },
-    }) as ResponseFrame | null;
+    });
   } catch (error) {
     ctx.ipcCalls.remove(callId);
-    return { ok: false, error: formatError(error) };
+    return {
+      ok: false,
+      error: error instanceof Error ? error.message : String(error),
+    };
   }
 
   if (!response || response.type !== "res") {
@@ -620,7 +654,12 @@ export async function handleProcIpcCall(
     return { ok: false, error: response.error.message };
   }
 
-  const delivered = response.data as ProcIpcSendResult;
+  // SAFETY: this response corresponds to the proc.ipc.deliver request above.
+  const delivered = response.data as ProcIpcDeliverResult | undefined;
+  if (!delivered) {
+    ctx.ipcCalls.remove(callId);
+    return { ok: false, error: "proc.ipc.deliver returned no data" };
+  }
   if (!delivered.ok) {
     ctx.ipcCalls.remove(callId);
     return delivered;
@@ -638,7 +677,7 @@ export async function handleProcIpcCall(
     };
   }
 
-  return {
+  const result: Extract<ProcIpcCallResult, { ok: true }> = {
     ok: true,
     status: "started",
     callId,
@@ -646,8 +685,9 @@ export async function handleProcIpcCall(
     sourcePid: resolved.sourcePid,
     runId,
     deadlineAt,
-    ...(delivered.queued ? { queued: true } : {}),
   };
+  if (delivered.queued) result.queued = true;
+  return result;
 }
 
 /**
@@ -659,9 +699,11 @@ export async function handleProcIpcCall(
 export async function forwardToProcess(
   frame: RequestFrame,
   ctx: KernelContext,
-): Promise<{ data?: ResultOf<SyscallName>; body?: FrameBody }> {
+): Promise<ForwardedProcessResult> {
   const identity = ctx.identity!;
   const callerOwnerUid = resolveCallerOwnerUid(ctx);
+  // SAFETY: dispatch routes only Process-targeting calls here, whose syscall
+  // arguments all use the shared optional `pid` target field.
   const args = frame.args as { pid?: string };
   // A process can omit its own pid. External callers must select one explicitly.
   const pid = args.pid ?? ctx.processId;
@@ -681,9 +723,9 @@ export async function forwardToProcess(
   const processFrame = frame.call === "proc.send"
     ? withProcSendOrigin(frame, ctx)
     : frame.call === "proc.ai.config.get"
-      ? withRedactedProcAiConfigGet(frame as RequestFrame<"proc.ai.config.get">)
+      ? withRedactedProcAiConfigGet(frame)
     : frame.call === "proc.ai.config.set"
-      ? withProcAiConfigProfile(frame as RequestFrame<"proc.ai.config.set">, ctx, proc.ownerUid)
+      ? withProcAiConfigProfile(frame, ctx, proc.ownerUid)
       : frame;
   if (frame.call === "proc.kill" && proc.isPersonalController) {
     invalidatePersonalControllerReadiness(proc.ownerUid, pid, ctx.procs);
@@ -719,8 +761,7 @@ export async function forwardToProcess(
   }
 
   if (response && response.type === "res") {
-    const res = response as ResponseFrame;
-    if (res.ok) {
+    if (response.ok) {
       if (frame.call === "proc.reset" || frame.call === "proc.kill") {
         ctx.ipcCalls.cancelBySourcePid({ uid: proc.ownerUid, sourcePid: pid });
       }
@@ -734,13 +775,15 @@ export async function forwardToProcess(
       } else if (frame.call === "proc.kill") {
         reconcileKilledProcess(proc.ownerUid, pid, ctx);
       }
-      const responseData = res.data;
-      const runData = responseData as { runId?: unknown } | undefined;
+      const responseData = response.data;
+      // SAFETY: the Process response preserves the request syscall; this branch
+      // reads proc.send data only when the originating call is proc.send.
+      const runData = responseData as ResultOf<"proc.send"> | undefined;
       if (
         frame.call === "proc.send"
         && identity.role === "user"
         && ctx.connection
-        && typeof runData?.runId === "string"
+        && runData?.ok
       ) {
         ctx.runRoutes.setConnectionRoute({
           runId: runData.runId,
@@ -749,19 +792,22 @@ export async function forwardToProcess(
           connectionId: ctx.connection.id,
         });
       }
-      return {
+      const result: ForwardedProcessResult = {
         data: responseData,
-        ...(res.body ? { body: res.body } : {}),
       };
+      if (response.body !== undefined) result.body = response.body;
+      return result;
     } else {
-      if (frame.call === "proc.kill" && res.error.code === 410) {
+      if (frame.call === "proc.kill" && response.error.code === 410) {
         ctx.ipcCalls.cancelBySourcePid({ uid: proc.ownerUid, sourcePid: pid });
         reconcileKilledProcess(proc.ownerUid, pid, ctx);
       }
-      throw new Error((res as { error: { message: string } }).error.message);
+      throw new Error(response.error.message);
     }
   }
 
+  // SAFETY: non-response delivery acknowledgements use the common successful
+  // syscall result prefix and carry no syscall-specific fields.
   return {
     data: { ok: true, status: "delivered" } as ResultOf<SyscallName>,
   };
@@ -780,13 +826,10 @@ function reconcileKilledProcess(
 function withRedactedProcAiConfigGet(
   frame: RequestFrame<"proc.ai.config.get">,
 ): RequestFrame<"proc.ai.config.get"> {
-  const args = frame.args && typeof frame.args === "object"
-    ? frame.args as Record<string, unknown>
-    : {};
   return {
     ...frame,
     args: {
-      ...args,
+      ...frame.args,
       redacted: true,
     },
   };
@@ -797,19 +840,13 @@ function withProcAiConfigProfile(
   ctx: KernelContext,
   ownerUid: number,
 ): RequestFrame<"proc.ai.config.set"> {
-  const args = (frame.args ?? {}) as ProcAiConfigSetArgs & { pid?: string };
-  if (
-    !args ||
-    typeof args !== "object" ||
-    "clear" in args ||
-    "values" in args ||
-    "key" in args
-  ) {
+  const args: ProcAiConfigSetArgs = frame.args;
+  if ("clear" in args || "values" in args || "key" in args) {
     return frame;
   }
 
-  const profileId = "profileId" in args ? normalizeText(args.profileId) : "";
-  const profileName = "profileName" in args ? normalizeText(args.profileName) : "";
+  const profileId = normalizeText(args.profileId);
+  const profileName = normalizeText(args.profileName);
   const selector = profileId || profileName;
   if (!selector) {
     return frame;
@@ -836,8 +873,8 @@ function withProcAiConfigProfile(
   };
 }
 
-function normalizeText(value: unknown): string {
-  return String(value ?? "").trim();
+function normalizeText(value: string | undefined): string {
+  return value?.trim() ?? "";
 }
 
 type NormalizedIpcSendArgs =
@@ -845,7 +882,7 @@ type NormalizedIpcSendArgs =
       ok: true;
       pid: string;
       message: string;
-      metadata?: Record<string, unknown>;
+      metadata?: JsonObject;
     }
   | { ok: false; error: string };
 
@@ -905,37 +942,27 @@ function normalizeIpcSendArgs(
   args: ProcIpcSendArgs,
   syscall: "proc.ipc.send" | "proc.ipc.call",
 ): NormalizedIpcSendArgs {
-  if (!args || typeof args !== "object") {
-    return { ok: false, error: `${syscall} requires arguments` };
-  }
-  const record = args as Record<string, unknown>;
-  const pid = normalizeRequiredString(record.pid);
+  const pid = normalizeRequiredString(args.pid);
   if (!pid) {
     return { ok: false, error: `${syscall} requires pid` };
   }
 
-  const message = normalizeRequiredString(record.message);
+  const message = normalizeRequiredString(args.message);
   if (!message) {
     return { ok: false, error: `${syscall} requires message` };
   }
 
-  if (
-    record.metadata !== undefined
-    && (!record.metadata || typeof record.metadata !== "object" || Array.isArray(record.metadata))
-  ) {
-    return { ok: false, error: `${syscall} metadata must be an object` };
-  }
-
-  return {
+  const normalized: Extract<NormalizedIpcSendArgs, { ok: true }> = {
     ok: true,
     pid,
     message,
-    ...(record.metadata ? { metadata: record.metadata as Record<string, unknown> } : {}),
   };
+  if (args.metadata !== undefined) normalized.metadata = args.metadata;
+  return normalized;
 }
 
-function clampIpcCallTimeout(value: unknown): number {
-  if (typeof value !== "number" || !Number.isFinite(value)) {
+function clampIpcCallTimeout(value: number | undefined): number {
+  if (value === undefined || !Number.isFinite(value)) {
     return DEFAULT_IPC_CALL_TIMEOUT_MS;
   }
   return Math.max(
@@ -944,22 +971,18 @@ function clampIpcCallTimeout(value: unknown): number {
   );
 }
 
-function normalizeRequiredString(value: unknown): string | null {
-  return typeof value === "string" && value.trim().length > 0
-    ? value.trim()
-    : null;
-}
-
-function formatError(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
+function normalizeRequiredString(value: string | undefined): string | null {
+  const normalized = value?.trim();
+  return normalized || null;
 }
 
 function resolveSpawnCwd(
   cwd: string | undefined,
   baseIdentity: ProcessIdentity,
 ): string {
-  if (typeof cwd === "string" && cwd.trim().length > 0) {
-    return resolveUserPath(cwd, baseIdentity.home, baseIdentity.cwd);
+  const normalized = cwd?.trim();
+  if (normalized) {
+    return resolveUserPath(normalized, baseIdentity.home, baseIdentity.cwd);
   }
   return baseIdentity.cwd;
 }

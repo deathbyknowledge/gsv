@@ -98,7 +98,7 @@ function renderContextTemplate(
 }
 
 function normalizeTimezone(timezone: string | undefined): string {
-  const candidate = typeof timezone === "string" && timezone.trim() ? timezone.trim() : "UTC";
+  const candidate = timezone?.trim() || "UTC";
   try {
     new Intl.DateTimeFormat("en-US", { timeZone: candidate }).format(new Date());
     return candidate;

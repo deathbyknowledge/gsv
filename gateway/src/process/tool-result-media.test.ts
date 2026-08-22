@@ -54,8 +54,11 @@ describe("tool result media", () => {
     )).toThrow("exceed");
   });
 
+// SAFETY: test fixture is constructed with the asserted domain shape.
+
   it("wraps references without confusing legacy tool results", () => {
     const media = [{
+      // SAFETY: test fixture is constructed with the asserted domain shape.
       type: "image" as const,
       mimeType: "image/png",
       key: "var/media/0/pid/image",
@@ -72,6 +75,7 @@ describe("tool result media", () => {
     });
   });
 
+  // SAFETY: test fixture is constructed with the asserted domain shape.
   it("restores legacy JSON-stringified images as typed content", () => {
     const content = JSON.stringify({
       ok: true,

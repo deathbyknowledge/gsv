@@ -16,6 +16,15 @@ import {
   targetToDeviceSummary,
   updateTargetMetadata,
 } from "../targets";
+import { z } from "zod";
+
+const deviceArgsSchema = z.object({
+  includeOffline: z.boolean().optional(),
+  deviceId: z.string().optional(),
+  label: z.string().optional(),
+  description: z.string().optional(),
+});
+type DeviceMetadata = { label?: string; description?: string };
 
 export function handleSysDeviceList(
   args: SysDeviceListArgs,
@@ -25,7 +34,7 @@ export function handleSysDeviceList(
     throw new Error("Authentication required");
   }
 
-  const raw = (args ?? {}) as { includeOffline?: unknown };
+  const raw = deviceArgsSchema.parse(args ?? {});
   const includeOffline = raw.includeOffline === true;
 
   return {
@@ -41,8 +50,8 @@ export function handleSysDeviceGet(
     throw new Error("Authentication required");
   }
 
-  const raw = (args ?? {}) as { deviceId?: unknown };
-  const deviceId = typeof raw.deviceId === "string" ? raw.deviceId.trim() : "";
+  const raw = deviceArgsSchema.parse(args ?? {});
+  const deviceId = raw.deviceId?.trim() ?? "";
   if (!deviceId) {
     throw new Error("sys.device.get requires deviceId");
   }
@@ -62,8 +71,8 @@ export function handleSysDeviceUpdate(
     throw new Error("Authentication required");
   }
 
-  const raw = (args ?? {}) as { deviceId?: unknown; label?: unknown; description?: unknown };
-  const deviceId = typeof raw.deviceId === "string" ? raw.deviceId.trim() : "";
+  const raw = deviceArgsSchema.parse(args ?? {});
+  const deviceId = raw.deviceId?.trim() ?? "";
   if (!deviceId) {
     throw new Error("sys.device.update requires deviceId");
   }
@@ -72,20 +81,14 @@ export function handleSysDeviceUpdate(
   if (!target) {
     return { device: null };
   }
-  if (raw.label !== undefined && typeof raw.label !== "string") {
-    throw new Error("sys.device.update label must be a string");
-  }
-  if (raw.description !== undefined && typeof raw.description !== "string") {
-    throw new Error("sys.device.update description must be a string");
-  }
   if (raw.label === undefined && raw.description === undefined) {
     throw new Error("sys.device.update requires label or description");
   }
 
-  const updated = updateTargetMetadata(ctx, deviceId, {
-    ...(raw.label !== undefined ? { label: raw.label } : {}),
-    ...(raw.description !== undefined ? { description: raw.description } : {}),
-  });
+  const metadata: DeviceMetadata = {};
+  if (raw.label !== undefined) metadata.label = raw.label;
+  if (raw.description !== undefined) metadata.description = raw.description;
+  const updated = updateTargetMetadata(ctx, deviceId, metadata);
   return {
     device: updated ? targetToDeviceDetail(updated) : null,
   };
@@ -100,8 +103,8 @@ export function handleSysDeviceDelete(
     throw new Error("Authentication required");
   }
 
-  const raw = (args ?? {}) as { deviceId?: unknown };
-  const deviceId = typeof raw.deviceId === "string" ? raw.deviceId.trim() : "";
+  const raw = deviceArgsSchema.parse(args ?? {});
+  const deviceId = raw.deviceId?.trim() ?? "";
   if (!deviceId) {
     throw new Error("sys.device.delete requires deviceId");
   }

@@ -45,6 +45,8 @@ import type {
   ProcMediaInput,
   ProcessIdentity,
   ConversationMessageOrigin,
+  JsonObject,
+  JsonValue,
 } from "@humansandmachines/gsv/protocol";
 import {
   cancelBinaryBody,
@@ -54,11 +56,12 @@ import {
   adapterWorkerConnectResultSchema,
   adapterWorkerDisconnectResultSchema,
   adapterWorkerSendResultSchema,
+  adapterSurfaceSchema,
   validateAdapterMediaBody,
 } from "@humansandmachines/gsv/protocol";
 import * as z from "zod/mini";
 import { resolveCallerOwnerUid, type KernelContext } from "./context";
-import type { RequestFrame, ResponseOkFrame } from "../protocol/frames";
+import type { RequestFrame } from "../protocol/frames";
 import type {
   ProcessAdapterDeliverRequestFrame,
   ProcessAdapterDeliverResponseFrame,
@@ -66,6 +69,7 @@ import type {
   ProcessRuntimeEventDeliverResponseFrame,
 } from "../protocol/process-frames";
 import { getConversationById, sendFrameToProcess } from "../shared/utils";
+import type { ConversationAppendRequest } from "../conversation/do";
 import { stableOpaqueId } from "../shared/stable-id";
 import { ensurePersonalAgent } from "./agents";
 import { ensurePersonalController } from "./personal-controller";
@@ -113,6 +117,7 @@ type AdapterServiceBinding = Fetcher
   & Partial<AdapterWorkerInterface>
   & Partial<AdapterPairingWorkerInterface>
   & Partial<LegacyStandaloneAdapterService>;
+type AdapterBindingEnv = Env & Record<`CHANNEL_${string}`, AdapterServiceBinding | undefined>;
 const adapterStatusListSchema = z.array(adapterAccountStatusSchema);
 type AdapterCommandResult = {
   handled: boolean;
@@ -149,7 +154,7 @@ type AdapterIngressProcessRecovery = {
   pid: string;
   runId: string;
   media: ProcMediaInput[];
-  origin: InteractionOrigin;
+  origin: Extract<InteractionOrigin, { kind: "adapter" }>;
   conversationId?: string;
   inputMessageId?: string;
   messageCreatedAt?: number;
@@ -183,14 +188,134 @@ export type AdapterHilRequest = {
   requestId: string;
   toolName: string;
   syscall: string;
-  args: Record<string, unknown>;
+  args: JsonObject;
 };
 
+const pairingInfoSchema = z.object({
+  accountId: z.string().check(z.minLength(1)),
+  configured: z.boolean(),
+  botUsername: z.optional(z.string()),
+});
+const pairingCandidateSchema = z.object({
+  accountId: z.string().check(z.minLength(1)),
+  actorId: z.string().check(z.regex(/^[1-9][0-9]{0,19}$/)),
+  surfaceId: z.string(),
+  actorName: z.optional(z.string()),
+  actorHandle: z.optional(z.string()),
+  expiresAt: z.number(),
+  linked: z.boolean(),
+});
+const pairingRouteSchema = z.object({
+  installationId: z.string(),
+  localUid: z.number().check(z.int(), z.nonnegative()),
+  generation: z.string().check(
+    z.regex(/^[A-Za-z0-9](?:[A-Za-z0-9._:-]{0,190}[A-Za-z0-9])?$/),
+  ),
+});
+const pairingPreparationSchema = z.object({
+  candidate: pairingCandidateSchema,
+  route: pairingRouteSchema,
+  previousRoute: z.optional(pairingRouteSchema),
+});
+const managedIdentityLinkMetadataSchema = z.looseObject({
+  managed: z.literal(true),
+  surfaceId: z.string().check(z.minLength(1)),
+  routeGeneration: z.string().check(z.minLength(1)),
+});
+const procMediaInputSchema = z.object({
+  type: z.enum(["image", "audio", "video", "document"]),
+  mimeType: z.string(),
+  key: z.optional(z.string()),
+  conversationId: z.optional(z.string()),
+  path: z.optional(z.string()),
+  url: z.optional(z.string()),
+  filename: z.optional(z.string()),
+  size: z.optional(z.number()),
+  duration: z.optional(z.number()),
+  transcription: z.optional(z.string()),
+});
+const adapterInteractionOriginSchema = z.object({
+  kind: z.literal("adapter"),
+  adapter: z.string(),
+  accountId: z.string(),
+  surface: adapterSurfaceSchema,
+  actorId: z.string(),
+  actorLabel: z.optional(z.string()),
+  messageId: z.optional(z.string()),
+});
+const adapterIngressRecoverySchema = z.discriminatedUnion("kind", [
+  z.object({
+    kind: z.literal("hil_decision"),
+    pid: z.string(),
+    requestId: z.string(),
+    decision: z.enum(["approve", "deny"]),
+    remember: z.boolean(),
+  }),
+  z.object({
+    kind: z.literal("process_delivery"),
+    uid: z.number().check(z.int(), z.nonnegative()),
+    pid: z.string(),
+    runId: z.string(),
+    media: z.array(procMediaInputSchema),
+    origin: adapterInteractionOriginSchema,
+    conversationId: z.optional(z.string()),
+    inputMessageId: z.optional(z.string()),
+    messageCreatedAt: z.optional(z.number().check(z.int(), z.positive())),
+  }),
+  z.object({
+    kind: z.literal("work_return"),
+    uid: z.number().check(z.int(), z.nonnegative()),
+    workPid: z.string(),
+    route: z.object({
+      adapter: z.string(),
+      accountId: z.string(),
+      actorId: z.string(),
+      surfaceKind: z.literal("dm"),
+      surfaceId: z.string(),
+      threadId: z.optional(z.string()),
+      mode: z.enum(["legacy", "work", "surface"]),
+    }),
+  }),
+]);
+const adapterHilRequestSchema = z.object({
+  requestId: z.string(),
+  toolName: z.string(),
+  syscall: z.string(),
+  args: z.record(z.string(), z.json()),
+  runId: z.optional(z.string()),
+  callId: z.optional(z.string()),
+});
+type AdapterHilRequestInput = Parameters<typeof adapterHilRequestSchema.safeParse>[0];
+const adapterSurfaceKindSchema = z.enum(["dm", "group", "channel", "thread"]);
+const optionalStringSchema = z.optional(z.string());
+const optionalBooleanSchema = z.optional(z.boolean());
+
+function adapterSendBoundaryError(args: AdapterSendArgs): string | null {
+  if (!adapterSurfaceKindSchema.safeParse(args.surface?.kind).success) {
+    return "surface.kind is invalid";
+  }
+  if (!z.string().check(z.minLength(1)).safeParse(args.surface?.id).success) {
+    return "surface.id is required";
+  }
+  if (!z.string().safeParse(args.text).success) {
+    return "text must be a string";
+  }
+  if (!optionalStringSchema.safeParse(args.replyToId).success) {
+    return "replyToId must be a string";
+  }
+  if (!optionalBooleanSchema.safeParse(args.also).success) {
+    return "also must be a boolean";
+  }
+  if (!optionalStringSchema.safeParse(args.deliveryId).success) {
+    return "Adapter deliveryId is invalid";
+  }
+  return null;
+}
+
 export function resolveAdapterService(env: Env, adapter: string): AdapterServiceBinding | null {
-  const key = `CHANNEL_${adapter.trim().toUpperCase()}`;
-  const binding = (env as unknown as Record<string, unknown>)[key];
-  if (!binding) return null;
-  return binding as AdapterServiceBinding;
+  const key: `CHANNEL_${string}` = `CHANNEL_${adapter.trim().toUpperCase()}`;
+  // SAFETY: CHANNEL_* is the Wrangler service-binding namespace for adapters.
+  return (env as AdapterBindingEnv)[key] ?? null;
 }
 
 export async function handleAdapterConnect(
@@ -400,22 +525,19 @@ export async function handleAdapterPairInfo(
   requireInteractivePairingOwner(ctx, "adapter.pair.info");
   const adapter = normalizeAdapterName(args.adapter);
   const service = requirePairingService(ctx, adapter);
-  const info = await service.adapterPairingInfo!(adapterInstallationContext(ctx));
-  if (
-    !info
-    || typeof info.accountId !== "string"
-    || !info.accountId.trim()
-    || typeof info.configured !== "boolean"
-    || (info.botUsername !== undefined && typeof info.botUsername !== "string")
-  ) {
+  const info = pairingInfoSchema.safeParse(
+    await service.adapterPairingInfo(adapterInstallationContext(ctx)),
+  );
+  if (!info.success) {
     throw new Error("Adapter returned invalid pairing information");
   }
-  return {
+  const result: AdapterPairInfoResult = {
     adapter,
-    accountId: info.accountId,
-    configured: info.configured,
-    ...(info.botUsername ? { botUsername: info.botUsername } : {}),
+    accountId: info.data.accountId,
+    configured: info.data.configured,
   };
+  if (info.data.botUsername) result.botUsername = info.data.botUsername;
+  return result;
 }
 
 export async function handleAdapterPairInspect(
@@ -562,15 +684,11 @@ export async function handleAdapterPairDisconnect(
   const link = ctx.adapters.identityLinks.get(adapter, accountId, actorId);
   if (!link) return { disconnected: false, adapter, accountId, actorId };
   if (link.uid !== uid) throw new Error("Permission denied");
-  const surfaceId = typeof link.metadata?.surfaceId === "string"
-    ? link.metadata.surfaceId
-    : "";
-  const generation = typeof link.metadata?.routeGeneration === "string"
-    ? link.metadata.routeGeneration
-    : "";
-  if (link.metadata?.managed !== true || !surfaceId || !generation) {
+  const metadata = managedIdentityLinkMetadataSchema.safeParse(link.metadata);
+  if (!metadata.success) {
     throw new Error("This identity is not managed by adapter pairing");
   }
+  const { surfaceId, routeGeneration: generation } = metadata.data;
   const service = requirePairingService(ctx, adapter);
   const operationId = await stableOpaqueId("adapter-pair-disconnect", [
     adapter,
@@ -611,8 +729,11 @@ export async function handleAdapterSend(
   ctx: KernelContext,
   body?: BinaryBody,
 ): Promise<AdapterSendResult> {
-  const adapter = typeof args.adapter === "string" ? args.adapter.trim().toLowerCase() : "";
-  const accountId = typeof args.accountId === "string" ? args.accountId.trim() : "";
+  const boundaryError = adapterSendBoundaryError(args);
+  if (boundaryError) return rejectAdapterSend(body, boundaryError);
+
+  const adapter = args.adapter.trim().toLowerCase();
+  const accountId = args.accountId.trim();
 
   if (!adapter) return rejectAdapterSend(body, "adapter is required");
   if (!accountId) return rejectAdapterSend(body, "accountId is required");
@@ -624,15 +745,6 @@ export async function handleAdapterSend(
       body,
       error instanceof Error ? error.message : String(error),
     );
-  }
-  if (typeof args.text !== "string") {
-    return rejectAdapterSend(body, "text must be a string");
-  }
-  if (args.replyToId !== undefined && typeof args.replyToId !== "string") {
-    return rejectAdapterSend(body, "replyToId must be a string");
-  }
-  if (args.also !== undefined && typeof args.also !== "boolean") {
-    return rejectAdapterSend(body, "also must be a boolean");
   }
   if (!args.also && isCurrentAutomaticReplyDestination(ctx, adapter, accountId, surface)) {
     return rejectAdapterSend(
@@ -696,10 +808,6 @@ async function deliverAdapterMessage(
   const adapter = args.adapter.trim().toLowerCase();
   const accountId = args.accountId.trim();
 
-  if (args.deliveryId !== undefined && typeof args.deliveryId !== "string") {
-    await cancelBinaryBody(body, "Invalid adapter delivery id");
-    return { ok: false, error: "Adapter deliveryId is invalid", retryable: false };
-  }
   const deliveryId = args.deliveryId?.trim() || crypto.randomUUID();
   if (deliveryId.length > 200 || !/^[a-zA-Z0-9._:-]+$/.test(deliveryId)) {
     await cancelBinaryBody(body, "Invalid adapter delivery id");
@@ -707,7 +815,7 @@ async function deliverAdapterMessage(
   }
 
   const service = resolveAdapterService(ctx.env, adapter);
-  if (!service || typeof service.adapterSend !== "function") {
+  if (!service?.adapterSend) {
     await cancelBinaryBody(body, `Adapter service unavailable: ${adapter}`);
     return {
       ok: false,
@@ -737,11 +845,11 @@ async function deliverAdapterMessage(
   const outbound: AdapterOutboundMessage = {
     deliveryId,
     surface: args.surface,
-    ...(args.actorId ? { actorId: args.actorId } : {}),
     text: args.text,
     media: args.media,
     replyToId: args.replyToId,
   };
+  if (args.actorId) outbound.actorId = args.actorId;
 
   let result: AdapterWorkerSendResult;
   try {
@@ -943,10 +1051,7 @@ export function handleAdapterList(
     const adapter = adapterNameFromBindingKey(key);
     if (!adapter) continue;
 
-    const value = Reflect.get(ctx.env, key);
-    const service = value && typeof value === "object"
-      ? value as AdapterServiceBinding
-      : null;
+    const service = resolveAdapterService(ctx.env, adapter);
     entries.set(adapter, adapterListEntry(adapter, service));
   }
 
@@ -1083,57 +1188,34 @@ async function handleAdapterInboundOwned(
     throw new Error("adapter.inbound requires a service identity");
   }
 
-  const adapter = typeof args.adapter === "string" ? args.adapter.trim().toLowerCase() : "";
-  const accountId = typeof args.accountId === "string" ? args.accountId.trim() : "";
-  const providerDeliveryId = typeof args.deliveryId === "string"
-    ? args.deliveryId.trim()
-    : "";
+  const adapter = args.adapter.trim().toLowerCase();
+  const accountId = args.accountId.trim();
+  const providerDeliveryId = args.deliveryId.trim();
   const inbound = args.message;
 
   if (!adapter) return { ok: false, error: "adapter is required" };
   if (!accountId) return { ok: false, error: "accountId is required" };
   if (!providerDeliveryId) return { ok: false, error: "deliveryId is required" };
-  if (typeof inbound?.messageId !== "string" || !inbound.messageId.trim()) {
+  if (!inbound.messageId.trim()) {
     return { ok: false, error: "message.messageId is required" };
   }
-  if (typeof inbound?.surface?.id !== "string" || !inbound.surface.id.trim()) {
+  if (!inbound.surface.id.trim()) {
     return { ok: false, error: "message.surface.id is required" };
   }
-  if (
-    inbound.surface.kind !== "dm"
-    && inbound.surface.kind !== "group"
-    && inbound.surface.kind !== "channel"
-    && inbound.surface.kind !== "thread"
-  ) {
-    return { ok: false, error: "message.surface.kind is invalid" };
-  }
-  if (typeof inbound.text !== "string") {
-    return { ok: false, error: "message.text is required" };
-  }
-  if (inbound.actor && typeof inbound.actor.id !== "string") {
-    return { ok: false, error: "message.actor.id is invalid" };
-  }
-  if (inbound.surface.threadId !== undefined && typeof inbound.surface.threadId !== "string") {
-    return { ok: false, error: "message.surface.threadId is invalid" };
-  }
-  if (inbound.replyToId !== undefined && typeof inbound.replyToId !== "string") {
-    return { ok: false, error: "message.replyToId is invalid" };
-  }
+  const surface: AdapterSurface = {
+    ...inbound.surface,
+    id: inbound.surface.id.trim(),
+  };
+  const threadId = inbound.surface.threadId?.trim();
+  if (threadId) surface.threadId = threadId;
+  else delete surface.threadId;
   const message: AdapterInboundMessage = {
     ...inbound,
     messageId: inbound.messageId.trim(),
-    surface: {
-      ...inbound.surface,
-      id: inbound.surface.id.trim(),
-      ...(inbound.surface.threadId?.trim()
-        ? { threadId: inbound.surface.threadId.trim() }
-        : { threadId: undefined }),
-    },
-    ...(inbound.actor
-      ? { actor: { ...inbound.actor, id: inbound.actor.id.trim() } }
-      : {}),
+    surface,
     replyToId: inbound.replyToId?.trim() || undefined,
   };
+  if (inbound.actor) message.actor = { ...inbound.actor, id: inbound.actor.id.trim() };
 
   const actorId = resolveActorId(message);
   if (!actorId) {
@@ -1195,15 +1277,13 @@ async function handleAdapterInboundOwned(
       challenge: immediateChallenge,
       ...baseDisposition
     } = disposition;
-    const result: AdapterInboundSyscallResult = {
-      ...baseDisposition,
-      ...(immediateReply
-        ? { reply: { deliveryId: replyDeliveryId, ...immediateReply } }
-        : {}),
-      ...(immediateChallenge
-        ? { challenge: { deliveryId: challengeDeliveryId, ...immediateChallenge } }
-        : {}),
-    };
+    const result: AdapterInboundSyscallResult = { ...baseDisposition };
+    if (immediateReply) {
+      result.reply = { deliveryId: replyDeliveryId, ...immediateReply };
+    }
+    if (immediateChallenge) {
+      result.challenge = { deliveryId: challengeDeliveryId, ...immediateChallenge };
+    }
     ctx.adapters.ingressReceipts.prepare(receiptId, claimToken, result);
     ctx.adapters.ingressReceipts.complete(receiptId, claimToken);
     return result;
@@ -1216,7 +1296,7 @@ async function handleAdapterInboundOwned(
 async function resolveClaimedAdapterInbound(input: {
   receiptId: string;
   claimToken: string;
-  recovery?: unknown;
+  recovery?: JsonValue;
   adapter: string;
   accountId: string;
   actorId: string;
@@ -1346,10 +1426,9 @@ async function resolveClaimedAdapterInbound(input: {
     ctx,
   });
   if (command.handled) {
-    return {
-      ok: true,
-      ...(command.reply ? { reply: command.reply } : {}),
-    };
+    const disposition: AdapterInboundDisposition = { ok: true };
+    if (command.reply) disposition.reply = command.reply;
+    return disposition;
   }
 
   const parsedDecision = message.surface.kind === "dm"
@@ -1456,7 +1535,7 @@ async function deliverAdapterHilDecision(input: {
   reconciling: boolean;
 }): Promise<AdapterInboundDisposition> {
   const { adapter, accountId, message, ctx, recovery, reconciling } = input;
-  const response = await sendFrameToProcess(ctx.installationId, recovery.pid, {
+  const request: RequestFrame<"proc.hil"> = {
     type: "req",
     id: crypto.randomUUID(),
     call: "proc.hil",
@@ -1464,9 +1543,10 @@ async function deliverAdapterHilDecision(input: {
       pid: recovery.pid,
       requestId: recovery.requestId,
       decision: recovery.decision,
-      ...(recovery.remember ? { remember: true } : {}),
+      remember: recovery.remember,
     },
-  } as RequestFrame);
+  };
+  const response = await sendFrameToProcess(ctx.installationId, recovery.pid, request);
 
   if (!response || response.type !== "res") {
     throw new Error("No response from process");
@@ -1477,14 +1557,7 @@ async function deliverAdapterHilDecision(input: {
     throw new Error(response.error.message);
   }
 
-  const data = (response as {
-    data?: {
-      ok?: boolean;
-      error?: string;
-      resumed?: boolean;
-      pendingHil?: unknown;
-    };
-  }).data;
+  const data = response.data;
   if (data?.ok === false) {
     if (!reconciling) {
       return { ok: false, error: data.error || "Process rejected approval" };
@@ -1621,6 +1694,9 @@ async function deliverAdapterInboundToProcess(input: {
       recovery,
     );
   }
+  if (!recovery) {
+    throw new Error("Adapter ingress process delivery is missing recovery state");
+  }
 
   if (!hasConversationRecovery(recovery)) {
     if (!input.checkpoint) {
@@ -1664,12 +1740,11 @@ async function deliverAdapterInboundToProcess(input: {
   if (!conversation || conversation.ownerUid !== uid) {
     throw new Error("Adapter ingress conversation is unavailable");
   }
-  const appended = await getConversationById(ctx.installationId, conversation.id).append({
+  const appendRequest: ConversationAppendRequest = {
     messageId: recovery.inputMessageId,
     idempotencyKey: `adapter-input:${runId}`,
     author: { kind: "user", uid },
     text: message.text?.trim() || "",
-    ...(media ? { media } : {}),
     mediaOwner: (() => {
       const process = ctx.procs.get(pid);
       if (!process) throw new Error("Adapter ingress process is unavailable");
@@ -1684,7 +1759,11 @@ async function deliverAdapterInboundToProcess(input: {
     processId: pid,
     runId,
     createdAt: recovery.messageCreatedAt,
-  });
+  };
+  if (media) appendRequest.media = media;
+  const appended = await getConversationById(ctx.installationId, conversation.id).append(
+    appendRequest,
+  );
   ctx.conversations.recordSequence(conversation.id, appended.message.sequence);
   if (appended.created) {
     ctx.broadcastToUserUid(uid, "message.committed", {
@@ -1726,7 +1805,7 @@ async function deliverAdapterInboundToProcess(input: {
   // Adapter ingress is itself an RPC from the adapter. Calling activity back
   // into a stateful adapter here would re-enter its Durable Object before this
   // request can return. Process lifecycle signals own typing activity.
-  const response: ProcessAdapterDeliverResponseFrame | null = await sendFrameToProcess(ctx.installationId, pid, {
+  const request: ProcessAdapterDeliverRequestFrame = {
     type: "req",
     id: crypto.randomUUID(),
     call: "proc.adapter.deliver",
@@ -1741,7 +1820,12 @@ async function deliverAdapterInboundToProcess(input: {
         messageId: appended.message.id,
       },
     },
-  } as ProcessAdapterDeliverRequestFrame);
+  };
+  const response: ProcessAdapterDeliverResponseFrame | null = await sendFrameToProcess(
+    ctx.installationId,
+    pid,
+    request,
+  );
 
   if (!response || response.type !== "res") {
     throw new Error("No response from process");
@@ -1750,7 +1834,7 @@ async function deliverAdapterInboundToProcess(input: {
     throw new Error(response.error.message);
   }
 
-  const data = (response as ProcessAdapterDeliverResponseFrame & { ok: true }).data;
+  const data = response.data;
   if (!data.ok) {
     ctx.runRoutes.delete(runId);
     await rollbackAdapterMedia(ctx.installationId, pid, media);
@@ -1773,63 +1857,24 @@ async function deliverAdapterInboundToProcess(input: {
   };
 }
 
-function normalizeAdapterIngressRecovery(value: unknown): AdapterIngressRecovery | null {
+function normalizeAdapterIngressRecovery(value: JsonValue | undefined): AdapterIngressRecovery | null {
   if (value === undefined) return null;
-  if (!value || typeof value !== "object") {
+  const parsed = adapterIngressRecoverySchema.safeParse(value);
+  if (!parsed.success) {
     throw new Error("Invalid adapter ingress recovery checkpoint");
   }
-  const recovery = value as Partial<AdapterIngressRecovery>;
-  if (recovery.kind === "hil_decision") {
-    if (
-      typeof recovery.pid === "string"
-      && typeof recovery.requestId === "string"
-      && (recovery.decision === "approve" || recovery.decision === "deny")
-      && typeof recovery.remember === "boolean"
-    ) {
-      return recovery as AdapterIngressHilRecovery;
-    }
-  } else if (recovery.kind === "process_delivery") {
-    const hasConversationId = recovery.conversationId !== undefined;
-    const hasInputMessageId = recovery.inputMessageId !== undefined;
-    const hasMessageCreatedAt = recovery.messageCreatedAt !== undefined;
-    const hasAnyConversationField = hasConversationId || hasInputMessageId || hasMessageCreatedAt;
-    const hasValidConversationFields = typeof recovery.conversationId === "string"
-      && typeof recovery.inputMessageId === "string"
-      && typeof recovery.messageCreatedAt === "number"
-      && Number.isSafeInteger(recovery.messageCreatedAt)
-      && recovery.messageCreatedAt > 0;
-    if (
-      Number.isSafeInteger(recovery.uid)
-      && typeof recovery.pid === "string"
-      && typeof recovery.runId === "string"
-      && Array.isArray(recovery.media)
-      && recovery.origin
-      && typeof recovery.origin === "object"
-      && recovery.origin.kind === "adapter"
-      && (!hasAnyConversationField || hasValidConversationFields)
-    ) {
-      return recovery as AdapterIngressProcessRecovery;
-    }
-  } else if (recovery.kind === "work_return") {
-    const route = recovery.route && typeof recovery.route === "object"
-      ? recovery.route as Partial<AdapterIngressWorkReturnRecovery["route"]>
-      : null;
-    if (
-      Number.isSafeInteger(recovery.uid)
-      && typeof recovery.workPid === "string"
-      && route
-      && typeof route.adapter === "string"
-      && typeof route.accountId === "string"
-      && typeof route.actorId === "string"
-      && route.surfaceKind === "dm"
-      && typeof route.surfaceId === "string"
-      && (route.threadId === undefined || typeof route.threadId === "string")
-      && (route.mode === "legacy" || route.mode === "work" || route.mode === "surface")
-    ) {
-      return recovery as AdapterIngressWorkReturnRecovery;
+  const recovery: AdapterIngressRecovery = parsed.data;
+  if (recovery.kind === "process_delivery") {
+    const present = [
+      recovery.conversationId,
+      recovery.inputMessageId,
+      recovery.messageCreatedAt,
+    ].filter((field) => field !== undefined).length;
+    if (present !== 0 && present !== 3) {
+      throw new Error("Invalid adapter ingress recovery checkpoint");
     }
   }
-  throw new Error("Invalid adapter ingress recovery checkpoint");
+  return recovery;
 }
 
 function hasConversationRecovery(
@@ -1839,9 +1884,9 @@ function hasConversationRecovery(
   inputMessageId: string;
   messageCreatedAt: number;
 } {
-  return typeof recovery.conversationId === "string"
-    && typeof recovery.inputMessageId === "string"
-    && typeof recovery.messageCreatedAt === "number";
+  return recovery.conversationId !== undefined
+    && recovery.inputMessageId !== undefined
+    && recovery.messageCreatedAt !== undefined;
 }
 
 function conversationForAdapterInbound(
@@ -1891,22 +1936,23 @@ function adapterConversationOrigin(
   actorId: string,
   message: AdapterInboundMessage,
 ): ConversationMessageOrigin {
+  const surface: Extract<ConversationMessageOrigin, { kind: "adapter" }>["surface"] = {
+    kind: message.surface.kind,
+    id: message.surface.id,
+  };
+  if (message.surface.threadId) surface.threadId = message.surface.threadId;
   return {
     kind: "adapter",
     adapter,
     accountId,
     actorId,
-    surface: {
-      kind: message.surface.kind,
-      id: message.surface.id,
-      ...(message.surface.threadId ? { threadId: message.surface.threadId } : {}),
-    },
+    surface,
     providerMessageId: message.messageId,
   };
 }
 
 function normalizeAdapterMessageCreatedAt(timestamp: number | undefined): number {
-  if (typeof timestamp !== "number" || !Number.isFinite(timestamp) || timestamp <= 0) {
+  if (timestamp === undefined || !Number.isFinite(timestamp) || timestamp <= 0) {
     return Date.now();
   }
   const milliseconds = timestamp < 10_000_000_000 ? timestamp * 1_000 : timestamp;
@@ -1929,27 +1975,29 @@ async function storeAdapterInboundMedia(
       media: item,
       body: partBody,
     }) => {
-      const response = await sendFrameToProcess(installationId, pid, {
+      const mediaArgs: RequestFrame<"proc.media.write">["args"] = {
+        pid,
+        type: item.type,
+        mimeType: item.mimeType,
+        mediaId: `${runId}:${mediaIndex}`,
+      };
+      if (item.filename) mediaArgs.filename = item.filename;
+      if (item.duration !== undefined) mediaArgs.duration = item.duration;
+      if (item.transcription) mediaArgs.transcription = item.transcription;
+      const request: RequestFrame<"proc.media.write"> = {
         type: "req",
         id: crypto.randomUUID(),
         call: "proc.media.write",
-        args: {
-          pid,
-          type: item.type,
-          mimeType: item.mimeType,
-          mediaId: `${runId}:${mediaIndex}`,
-          ...(item.filename ? { filename: item.filename } : {}),
-          ...(item.duration !== undefined ? { duration: item.duration } : {}),
-          ...(item.transcription ? { transcription: item.transcription } : {}),
-        },
+        args: mediaArgs,
         body: partBody,
-      } as RequestFrame<"proc.media.write">);
+      };
+      const response = await sendFrameToProcess(installationId, pid, request);
       if (!response || response.type !== "res" || !response.ok) {
         throw new Error(response && response.type === "res" && !response.ok
           ? response.error.message
           : "No response while storing adapter media");
       }
-      const result = (response as ResponseOkFrame<"proc.media.write">).data;
+      const result = response.data;
       if (!result?.ok) {
         throw new Error(result?.error || "Failed to store adapter media");
       }
@@ -1982,7 +2030,7 @@ function validateAdapterMediaItems(
     if (!item || !["image", "audio", "video", "document"].includes(item.type)) {
       throw new Error("Adapter media has an invalid type");
     }
-    if (typeof item.mimeType !== "string" || !item.mimeType.trim()) {
+    if (!item.mimeType.trim()) {
       throw new Error("Adapter media requires mimeType");
     }
     if (item.size !== undefined && (!Number.isSafeInteger(item.size) || item.size < 0)) {
@@ -2019,14 +2067,16 @@ async function rollbackAdapterMedia(
   pid: string,
   media: ProcMediaInput[] | undefined,
 ): Promise<void> {
-  await Promise.allSettled((media ?? []).flatMap(({ key }) => key
-    ? [sendFrameToProcess(installationId, pid, {
-        type: "req",
-        id: crypto.randomUUID(),
-        call: "proc.media.delete",
-        args: { pid, key },
-      } as RequestFrame<"proc.media.delete">)]
-    : []));
+  const deletions = (media ?? []).flatMap(({ key }) => {
+    if (!key) return [];
+    return [sendFrameToProcess(installationId, pid, {
+      type: "req",
+      id: crypto.randomUUID(),
+      call: "proc.media.delete",
+      args: { pid, key },
+    })];
+  });
+  await Promise.allSettled(deletions);
 }
 
 export function handleAdapterStateUpdate(
@@ -2080,17 +2130,17 @@ function adapterListEntry(adapter: string, service: AdapterServiceBinding | null
   return {
     adapter,
     available: service !== null,
-    supportsConnect: typeof service?.adapterConnect === "function",
-    supportsDisconnect: typeof service?.adapterDisconnect === "function",
-    supportsSend: typeof service?.adapterSend === "function",
-    supportsStatus: typeof service?.adapterStatus === "function",
-    supportsActivity: typeof service?.adapterSetActivity === "function",
-    supportsPairing: typeof service?.adapterPairingInfo === "function"
-      && typeof service.adapterPairingInspect === "function"
-      && typeof service.adapterPairingPrepare === "function"
-      && typeof service.adapterPairingActivate === "function"
-      && typeof service.adapterPairingFinalize === "function"
-      && typeof service.adapterPairingDisconnect === "function",
+    supportsConnect: service?.adapterConnect !== undefined,
+    supportsDisconnect: service?.adapterDisconnect !== undefined,
+    supportsSend: service?.adapterSend !== undefined,
+    supportsStatus: service?.adapterStatus !== undefined,
+    supportsActivity: service?.adapterSetActivity !== undefined,
+    supportsPairing: service?.adapterPairingInfo !== undefined
+      && service.adapterPairingInspect !== undefined
+      && service.adapterPairingPrepare !== undefined
+      && service.adapterPairingActivate !== undefined
+      && service.adapterPairingFinalize !== undefined
+      && service.adapterPairingDisconnect !== undefined,
     accounts: [],
   };
 }
@@ -2253,7 +2303,7 @@ function callAdapterStatus(
 function requirePairingService(
   ctx: KernelContext,
   adapter: string,
-): AdapterServiceBinding & AdapterPairingWorkerInterface {
+): AdapterPairingWorkerInterface {
   if (!adapter) throw new Error("adapter is required");
   if (ctx.installationId === SINGLETON_INSTALLATION_ID) {
     throw new Error("Managed adapter pairing is not available in standalone GSV");
@@ -2261,83 +2311,74 @@ function requirePairingService(
   const service = resolveAdapterService(ctx.env, adapter);
   if (
     !service
-    || typeof service.adapterPairingInfo !== "function"
-    || typeof service.adapterPairingInspect !== "function"
-    || typeof service.adapterPairingPrepare !== "function"
-    || typeof service.adapterPairingActivate !== "function"
-    || typeof service.adapterPairingFinalize !== "function"
-    || typeof service.adapterPairingDisconnect !== "function"
+    || !service.adapterPairingInfo
+    || !service.adapterPairingInspect
+    || !service.adapterPairingPrepare
+    || !service.adapterPairingActivate
+    || !service.adapterPairingFinalize
+    || !service.adapterPairingDisconnect
   ) {
     throw new Error(`Adapter does not support managed pairing: ${adapter}`);
   }
-  return service as AdapterServiceBinding & AdapterPairingWorkerInterface;
+  return {
+    adapterPairingInfo: service.adapterPairingInfo.bind(service),
+    adapterPairingInspect: service.adapterPairingInspect.bind(service),
+    adapterPairingPrepare: service.adapterPairingPrepare.bind(service),
+    adapterPairingActivate: service.adapterPairingActivate.bind(service),
+    adapterPairingFinalize: service.adapterPairingFinalize.bind(service),
+    adapterPairingDisconnect: service.adapterPairingDisconnect.bind(service),
+  };
 }
 
 function normalizePairingCode(value: string): string {
-  const normalized = typeof value === "string"
-    ? value.trim().toUpperCase().replace(/[\s-]+/g, "")
-    : "";
+  const normalized = value.trim().toUpperCase().replace(/[\s-]+/g, "");
   if (!/^[A-HJ-NP-Z2-9]{12}$/.test(normalized)) {
     throw new Error("Pairing code is invalid");
   }
   return normalized;
 }
 
-function requirePairingCandidate(value: unknown): AdapterPairingCandidate {
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
+function requirePairingCandidate(value: AdapterPairingCandidate): AdapterPairingCandidate {
+  const parsed = pairingCandidateSchema.safeParse(value);
+  if (!parsed.success || parsed.data.surfaceId !== parsed.data.actorId) {
     throw new Error("Adapter returned an invalid pairing candidate");
   }
-  const candidate = value as Partial<AdapterPairingCandidate>;
-  if (
-    typeof candidate.accountId !== "string"
-    || !candidate.accountId.trim()
-    || typeof candidate.actorId !== "string"
-    || !/^[1-9][0-9]{0,19}$/.test(candidate.actorId)
-    || typeof candidate.surfaceId !== "string"
-    || candidate.surfaceId !== candidate.actorId
-    || !Number.isFinite(candidate.expiresAt)
-    || typeof candidate.linked !== "boolean"
-    || (candidate.actorName !== undefined && typeof candidate.actorName !== "string")
-    || (candidate.actorHandle !== undefined && typeof candidate.actorHandle !== "string")
-  ) {
-    throw new Error("Adapter returned an invalid pairing candidate");
-  }
-  return candidate as AdapterPairingCandidate;
+  return parsed.data;
 }
 
 function requirePairingPreparation(
-  value: unknown,
+  value: AdapterPairingPreparation,
   installationId: string,
   localUid: number,
 ): AdapterPairingPreparation {
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
+  const parsed = pairingPreparationSchema.safeParse(value);
+  if (!parsed.success) {
     throw new Error("Adapter returned an invalid pairing preparation");
   }
-  const preparation = value as Partial<AdapterPairingPreparation>;
+  const preparation = parsed.data;
   const candidate = requirePairingCandidate(preparation.candidate);
   const route = preparation.route;
   if (
     !route
     || route.installationId !== installationId
     || route.localUid !== localUid
-    || typeof route.generation !== "string"
-    || !/^[A-Za-z0-9](?:[A-Za-z0-9._:-]{0,190}[A-Za-z0-9])?$/.test(route.generation)
   ) {
     throw new Error("Adapter returned an invalid pairing route");
   }
   const previous = preparation.previousRoute;
   if (previous && (
-    typeof previous.installationId !== "string"
+    previous.installationId.length === 0
     || !Number.isSafeInteger(previous.localUid)
-    || typeof previous.generation !== "string"
+    || previous.generation.length === 0
   )) {
     throw new Error("Adapter returned an invalid previous pairing route");
   }
-  return {
+  const result: AdapterPairingPreparation = {
     candidate,
     route,
-    ...(previous ? { previousRoute: previous } : {}),
   };
+  if (previous) result.previousRoute = previous;
+  return result;
 }
 
 function logAdapterBoundaryFailure(
@@ -2497,10 +2538,10 @@ async function handleAdapterCommand(args: {
         actorId: selectedRoute.actorId,
         surfaceKind: "dm",
         surfaceId: selectedRoute.surfaceId,
-        ...(selectedRoute.threadId ? { threadId: selectedRoute.threadId } : {}),
         mode: selectedRoute.mode,
       },
     };
+    if (selectedRoute.threadId) recovery.route.threadId = selectedRoute.threadId;
     ctx.adapters.ingressReceipts.checkpoint(receiptId, claimToken, recovery);
     const personalPid = await deliverAdapterWorkReturnedEvent(
       recovery,
@@ -2532,12 +2573,9 @@ async function deliverAdapterWorkReturnedEvent(
     adapter: recovery.route.adapter,
     accountId: recovery.route.accountId,
     actorId: recovery.route.actorId,
-    surface: {
-      kind: "dm",
-      id: recovery.route.surfaceId,
-      ...(recovery.route.threadId ? { threadId: recovery.route.threadId } : {}),
-    },
+    surface: { kind: "dm", id: recovery.route.surfaceId },
   };
+  if (recovery.route.threadId) destination.surface.threadId = recovery.route.threadId;
   if (!ctx.adapters.ingressReceipts.isLatestPrivateMessage(destination, providerMessageId)) {
     return null;
   }
@@ -2562,8 +2600,10 @@ async function deliverAdapterWorkReturnedEvent(
       },
     },
   };
-  const response = await sendFrameToProcess(ctx.installationId, personalPid, request) as (
-    ProcessRuntimeEventDeliverResponseFrame | null
+  const response: ProcessRuntimeEventDeliverResponseFrame | null = await sendFrameToProcess(
+    ctx.installationId,
+    personalPid,
+    request,
   );
   if (
     !response
@@ -2701,7 +2741,7 @@ async function spawnAdapterAgentProcess(
       interactive: true,
       autoTitle: true,
     },
-  } as RequestFrame);
+  });
 
   return pid;
 }
@@ -2756,7 +2796,7 @@ function adapterDestinationForInbound(
 
 function adapterPrivateActivityAt(timestamp: number | undefined): number {
   const now = Date.now();
-  return typeof timestamp === "number" && Number.isSafeInteger(timestamp) && timestamp > 0
+  return timestamp !== undefined && Number.isSafeInteger(timestamp) && timestamp > 0
     ? Math.min(timestamp, now)
     : now;
 }
@@ -2785,17 +2825,19 @@ function adapterInteractionOrigin(
   accountId: string,
   message: AdapterInboundMessage,
   actorId: string,
-): InteractionOrigin {
+): Extract<InteractionOrigin, { kind: "adapter" }> {
   const actorLabel = message.actor?.handle?.trim() || message.actor?.name?.trim() || undefined;
-  return {
+  const origin: Extract<InteractionOrigin, { kind: "adapter" }> = {
     kind: "adapter",
     adapter,
     accountId,
     surface: message.surface,
     actorId,
-    ...(actorLabel ? { actorLabel } : {}),
-    ...(message.messageId?.trim() ? { messageId: message.messageId.trim() } : {}),
   };
+  if (actorLabel) origin.actorLabel = actorLabel;
+  const messageId = message.messageId.trim();
+  if (messageId) origin.messageId = messageId;
+  return origin;
 }
 
 async function getPendingHil(
@@ -2815,13 +2857,13 @@ async function inspectPendingHil(
     id: crypto.randomUUID(),
     call: "proc.history",
     args: { pid, limit: 1, offset: 0 },
-  } as RequestFrame);
+  });
 
   if (!response || response.type !== "res" || !response.ok) {
     return { ok: false };
   }
 
-  const data = (response as { data?: { ok?: boolean; pendingHil?: unknown } }).data;
+  const data = response.data;
   if (data?.ok === false) {
     return { ok: false };
   }
@@ -2867,31 +2909,20 @@ async function findPendingHilDecisionTarget(
 }
 
 export function normalizeAdapterHilRequest(
-  value: unknown,
+  value: AdapterHilRequestInput,
   source: "pending" | "signal" = "pending",
 ): AdapterHilRequest | null {
-  if (!value || typeof value !== "object") {
+  const parsed = adapterHilRequestSchema.safeParse(value);
+  if (!parsed.success) {
     return null;
   }
-  const record = value as Record<string, unknown>;
-  if (
-    typeof record.requestId !== "string"
-    || typeof record.toolName !== "string"
-    || typeof record.syscall !== "string"
-    || !record.args
-    || typeof record.args !== "object"
-    || (source === "signal" && (
-      typeof record.runId !== "string"
-      || typeof record.callId !== "string"
-    ))
-  ) {
-    return null;
-  }
+  const record = parsed.data;
+  if (source === "signal" && (!record.runId || !record.callId)) return null;
   return {
     requestId: record.requestId,
     toolName: record.toolName,
     syscall: record.syscall,
-    args: record.args as Record<string, unknown>,
+    args: record.args,
   };
 }
 
@@ -2904,11 +2935,12 @@ function parseHilDecision(text: string): ParsedHilDecision | null {
   const decision = phrase === "deny" || phrase === "reject" || phrase === "no"
     ? "deny"
     : "approve";
-  return {
+  const decisionResult: ParsedHilDecision = {
     decision,
     remember: decision === "approve" && phrase.includes("always"),
-    ...(match[2] ? { requestToken: match[2] } : {}),
   };
+  if (match[2]) decisionResult.requestToken = match[2];
+  return decisionResult;
 }
 
 function adapterHilRequestToken(requestId: string): string {
@@ -2950,8 +2982,10 @@ export function renderAdapterHilPrompt(
 }
 
 function summarizeAdapterHilRequest(pendingHil: AdapterHilRequest): string {
-  const path = typeof pendingHil.args.path === "string" ? pendingHil.args.path : "";
-  const command = typeof pendingHil.args.input === "string" ? pendingHil.args.input : "";
+  const parsedPath = z.string().safeParse(pendingHil.args.path);
+  const parsedCommand = z.string().safeParse(pendingHil.args.input);
+  const path = parsedPath.success ? parsedPath.data : "";
+  const command = parsedCommand.success ? parsedCommand.data : "";
 
   if (pendingHil.syscall === "shell.exec") {
     return command
@@ -3001,10 +3035,12 @@ function summarizeAdapterHilRequest(pendingHil: AdapterHilRequest): string {
   return `Requested action: ${pendingHil.toolName}.`;
 }
 
-function summarizeAdapterHilMailDetail(value: unknown): string | null {
-  if (typeof value !== "string") return null;
-  const singleLine = value
-    .replace(/[\u0000-\u001f\u007f-\u009f\u200b-\u200f\u202a-\u202e\u2060-\u2069\ufeff]/g, " ")
+function summarizeAdapterHilMailDetail(value: JsonValue | undefined): string | null {
+  const parsed = z.string().safeParse(value);
+  if (!parsed.success) return null;
+  const raw = parsed.data;
+  const singleLine = raw
+    .replace(/[\p{Cc}\u200b-\u200f\u202a-\u202e\u2060-\u2069\ufeff]/gu, " ")
     .replace(/\s+/g, " ")
     .trim();
   if (!singleLine) return null;
