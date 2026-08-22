@@ -84,12 +84,11 @@ export async function bundleAdapterMedia(
     throw error;
   }
 
-  return {
-    media,
-    ...(bodies.length > 0
-      ? { body: concatenateBodies(bodies, offset) }
-      : {}),
-  };
+  const bundle: AdapterMediaBundle = { media };
+  if (bodies.length > 0) {
+    bundle.body = concatenateBodies(bodies, offset);
+  }
+  return bundle;
 }
 
 /**
@@ -344,20 +343,22 @@ class AdapterMediaBodyCursor {
     }
   }
 
-  async cancel(reason?: unknown): Promise<void> {
+  async cancel(cause?: unknown): Promise<void> {
     this.ended = true;
-    await this.reader.cancel(reason).catch(() => {});
+    await this.reader.cancel(cause).catch(() => {});
   }
 }
+
+type AdapterMediaPartStream = {
+  stream: ReadableStream<Uint8Array>;
+  readonly complete: boolean;
+  readonly failure: Error | undefined;
+};
 
 function createAdapterMediaPartStream(
   cursor: AdapterMediaBodyCursor,
   descriptor: AdapterMediaBodyPlanPart,
-): {
-  stream: ReadableStream<Uint8Array>;
-  readonly complete: boolean;
-  readonly failure: Error | undefined;
-} {
+): AdapterMediaPartStream {
   let remaining = descriptor.length;
   let complete = remaining === 0;
   let failure: Error | undefined;
@@ -449,16 +450,16 @@ async function readPartBytes(
   }
 }
 
-function asError(value: unknown): Error {
-  return value instanceof Error ? value : new Error(String(value));
+function asError(cause: unknown): Error {
+  return cause instanceof Error ? cause : new Error(String(cause));
 }
 
 export async function cancelBinaryBody(
   body: BinaryBody | undefined,
-  reason?: unknown,
+  cause?: unknown,
 ): Promise<void> {
   if (body && !body.stream.locked) {
-    await body.stream.cancel(reason).catch(() => {});
+    await body.stream.cancel(cause).catch(() => {});
   }
 }
 
@@ -471,19 +472,19 @@ function concatenateBodies(
   let reader: ReadableStreamDefaultReader<Uint8Array> | null = null;
   let cancelled = false;
 
-  const cancelRemaining = async (reason?: unknown): Promise<void> => {
+  const cancelRemaining = async (cause?: unknown): Promise<void> => {
     if (cancelled) {
       return;
     }
     cancelled = true;
     if (reader) {
-      await reader.cancel(reason).catch(() => {});
+      await reader.cancel(cause).catch(() => {});
       reader.releaseLock();
       reader = null;
       bodyIndex += 1;
     }
     await Promise.allSettled(
-      bodies.slice(bodyIndex).map((body) => body.stream.cancel(reason)),
+      bodies.slice(bodyIndex).map((body) => body.stream.cancel(cause)),
     );
   };
 
@@ -530,10 +531,10 @@ function concatenateBodies(
 }
 
 function requireLength(value: number | undefined, label: string): number {
-  if (!Number.isSafeInteger(value) || (value ?? -1) < 0) {
+  if (value === undefined || !Number.isSafeInteger(value) || value < 0) {
     throw new Error(`${label} must be a non-negative safe integer`);
   }
-  return value as number;
+  return value;
 }
 
 function normalizeLimit(value: number | undefined, label: string): number {

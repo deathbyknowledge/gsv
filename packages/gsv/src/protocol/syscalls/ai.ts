@@ -1,10 +1,11 @@
 import type { ProcessIdentity } from "./system";
 import type { ProcAiConfigProfileRef } from "./proc";
+import type { JsonObject, JsonValue } from "../json";
 
 export type ToolDefinition = {
   name: string;
   description: string;
-  inputSchema: Record<string, unknown>;
+  inputSchema: JsonObject;
 };
 
 export type AiToolsArgs = Record<string, never>;
@@ -155,7 +156,7 @@ export type AiToolCall = {
   type: "toolCall";
   id: string;
   name: string;
-  arguments: Record<string, unknown>;
+  arguments: JsonObject;
   thoughtSignature?: string;
 };
 
@@ -193,7 +194,7 @@ export type AiAssistantMessage = {
   model: string;
   responseModel?: string;
   responseId?: string;
-  diagnostics?: unknown[];
+  diagnostics?: JsonValue[];
   usage: AiUsage;
   stopReason: AiStopReason;
   errorMessage?: string;
@@ -205,7 +206,7 @@ export type AiToolResultMessage = {
   toolCallId: string;
   toolName: string;
   content: Array<AiTextContent | AiImageContent>;
-  details?: unknown;
+  details?: JsonValue;
   isError: boolean;
   timestamp?: number;
 };
@@ -215,7 +216,7 @@ export type AiTextMessage = AiUserMessage | AiAssistantMessage | AiToolResultMes
 export type AiTextTool = {
   name: string;
   description: string;
-  parameters: Record<string, unknown>;
+  parameters: JsonObject;
 };
 
 export type AiTextGenerationReasoning =
@@ -275,7 +276,7 @@ export type AiTranscriptionCreateResult = {
   text: string;
   language?: string;
   duration?: number;
-  segments?: unknown[];
+  segments?: JsonValue[];
   provider: string;
   model: string;
 };
@@ -311,14 +312,14 @@ export type AiImageReadArgs =
     prompt: string;
     reasoning?: boolean;
     responseFormat?: AiImageReadResponseFormat;
-    schema?: Record<string, unknown>;
+    schema?: JsonObject;
     stream?: boolean;
   })
   | (AiImageReadGenerationArgs & {
     mode: "ocr";
     prompt?: string;
     responseFormat?: AiImageReadResponseFormat;
-    schema?: Record<string, unknown>;
+    schema?: JsonObject;
     stream?: boolean;
   })
   | (AiImageReadCommonArgs & {
@@ -381,7 +382,7 @@ export type AiImageReadResult =
     text: string;
     answer: string;
     responseFormat: AiImageReadResponseFormat;
-    structured?: unknown;
+    structured?: JsonValue;
   })
   | (AiImageReadResultMetadata & {
     mode: "point";

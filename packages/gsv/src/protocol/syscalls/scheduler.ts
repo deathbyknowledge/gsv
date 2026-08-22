@@ -1,4 +1,5 @@
 import type { AdapterMessageDestination, EventReplyTarget } from "./interaction-origin";
+import type { JsonObject, JsonValue } from "../json";
 
 export type ScheduleExpression =
   | { kind: "at"; atMs: number }
@@ -26,7 +27,7 @@ export type ScheduleTarget =
       kind: "process.event";
       pid: string;
       message: string;
-      data?: Record<string, unknown>;
+      data?: JsonObject;
       replyTo?: EventReplyTarget;
     }
   | {
@@ -77,7 +78,7 @@ export type ScheduleRunHistoryEntry = {
   finishedAtMs: number;
   status: "ok" | "error" | "skipped";
   error?: string;
-  result?: unknown;
+  result?: JsonValue;
 };
 
 export type SchedulerListArgs = {

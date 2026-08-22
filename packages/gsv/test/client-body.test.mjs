@@ -37,7 +37,7 @@ class FakeWebSocket extends EventTarget {
 
   send(data) {
     this.sent.push(data);
-    if (typeof data !== "string") {
+    if (data instanceof ArrayBuffer) {
       return;
     }
     const frame = JSON.parse(data);
@@ -91,7 +91,7 @@ class OpeningWebSocket extends EventTarget {
 
 class SignalFailingWebSocket extends FakeWebSocket {
   send(data) {
-    if (typeof data === "string" && JSON.parse(data).type === "sig") {
+    if (!(data instanceof ArrayBuffer) && JSON.parse(data).type === "sig") {
       throw new Error("send failed");
     }
     super.send(data);
@@ -177,24 +177,24 @@ test("keeps body-bearing syscalls off the data-only namespaces", () => {
   assert.equal(client.net, undefined);
   assert.equal(client.proc.media.read, undefined);
   assert.equal(client.proc.media.write, undefined);
-  assert.equal(typeof client.proc.media.delete, "function");
+  assert.equal(client.proc.media.delete instanceof Function, true);
   assert.equal(client.ai.transcription, undefined);
   assert.equal(client.ai.image, undefined);
   assert.equal(client.ai.speech, undefined);
-  assert.equal(typeof client.fs.transfer.stat, "function");
+  assert.equal(client.fs.transfer.stat instanceof Function, true);
 });
 
 test("keeps exact syscalls callable when they also own nested namespaces", () => {
   const client = new GSVClient({ WebSocket: FakeWebSocket });
 
   // proc.history is registered before its children.
-  assert.equal(typeof client.proc.history, "function");
-  assert.equal(typeof client.proc.history.compact, "function");
-  assert.equal(typeof client.proc.history.policy.get, "function");
+  assert.equal(client.proc.history instanceof Function, true);
+  assert.equal(client.proc.history.compact instanceof Function, true);
+  assert.equal(client.proc.history.policy.get instanceof Function, true);
 
   // sys.setup.assist is registered before sys.setup.
-  assert.equal(typeof client.sys.setup, "function");
-  assert.equal(typeof client.sys.setup.assist, "function");
+  assert.equal(client.sys.setup instanceof Function, true);
+  assert.equal(client.sys.setup.assist instanceof Function, true);
 });
 
 test("exposes the typed mail status namespace", async () => {
@@ -622,7 +622,7 @@ test("cancels a pending request and its outgoing body from an abort signal", asy
   await new Promise((resolve) => setTimeout(resolve, 0));
 
   const cancellation = socket.sent
-    .filter((frame) => typeof frame === "string")
+    .filter((frame) => !(frame instanceof ArrayBuffer))
     .map((frame) => JSON.parse(frame))
     .find((frame) => frame.type === "sig" && frame.payload?.id === request.id);
   assert.deepEqual(cancellation, {
@@ -633,7 +633,7 @@ test("cancels a pending request and its outgoing body from an abort signal", asy
   assert.equal(cancelledWith, reason);
   assert.equal(listeners.size, 0);
   const terminal = socket.sent
-    .filter((frame) => typeof frame !== "string")
+    .filter((frame) => frame instanceof ArrayBuffer)
     .map((frame) => parseBinaryFrame(frame))
     .find((frame) => frame.streamId === request.body.streamId);
   assert.equal(terminal.flags, BINARY_FRAME_ERROR | BINARY_FRAME_END);
@@ -787,7 +787,7 @@ test("cancels an inbound driver request without publishing the reserved signal",
   assert.match(requestSignal.reason.message, /User interrupted/);
   assert.deepEqual(published, []);
   assert.equal(socket.sent.some((data) => {
-    if (typeof data !== "string") return false;
+    if (data instanceof ArrayBuffer) return false;
     const frame = JSON.parse(data);
     return frame.type === "res" && frame.id === "inbound-1";
   }), false);
@@ -985,7 +985,7 @@ test("cancelling an inbound request stops its response body", async () => {
   socket.receive(JSON.stringify({ type: "req", id: "inbound-response", call: "shell.exec", args: {} }));
   await new Promise((resolve) => setTimeout(resolve, 0));
   const response = socket.sent
-    .filter((data) => typeof data === "string")
+    .filter((data) => !(data instanceof ArrayBuffer))
     .map((data) => JSON.parse(data))
     .find((frame) => frame.type === "res" && frame.id === "inbound-response");
   assert.ok(response?.body);

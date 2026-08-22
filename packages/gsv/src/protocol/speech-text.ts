@@ -4,8 +4,8 @@ export type SpeechTextFormat = "plain" | "markdown";
 
 const MAX_SPOKEN_TABLE_ROWS = 6;
 const MAX_SPOKEN_TABLE_COLUMNS = 4;
-const EMOJI_SEQUENCE_PATTERN = /(?:\p{Extended_Pictographic}|\p{Emoji_Presentation})(?:[\u{1F3FB}-\u{1F3FF}]|[\uFE0E\uFE0F])?(?:\u200D(?:\p{Extended_Pictographic}|\p{Emoji_Presentation})(?:[\u{1F3FB}-\u{1F3FF}]|[\uFE0E\uFE0F])?)*/gu;
-const EMOJI_MODIFIER_PATTERN = /[\u{1F1E6}-\u{1F1FF}\u{1F3FB}-\u{1F3FF}\uFE0E\uFE0F\u200D]/gu;
+const EMOJI_SEQUENCE_PATTERN = /(?:\p{Extended_Pictographic}|\p{Emoji_Presentation})(?:\p{Emoji_Modifier}|\u{FE0E}|\u{FE0F})?(?:\u{200D}(?:\p{Extended_Pictographic}|\p{Emoji_Presentation})(?:\p{Emoji_Modifier}|\u{FE0E}|\u{FE0F})?)*/gu;
+const EMOJI_MODIFIER_PATTERN = /(?:\p{Regional_Indicator}|\p{Emoji_Modifier}|\u{FE0E}|\u{FE0F}|\u{200D})/gu;
 
 export function normalizeSpeechText(
   input: string,
@@ -20,13 +20,15 @@ export function normalizeSpeechText(
   }
 
   try {
-    return normalizeSpeechWhitespace(renderBlockTokens(lexer(text) as Token[]));
+    return normalizeSpeechWhitespace(renderBlockTokens(lexer(text)));
   } catch {
     return normalizeSpeechWhitespace(markdownFallbackToSpeechText(text));
   }
 }
 
-export function normalizeSpeechTextFormat(value: unknown): SpeechTextFormat {
+export function normalizeSpeechTextFormat(
+  value: SpeechTextFormat | undefined,
+): SpeechTextFormat {
   return value === "plain" ? "plain" : "markdown";
 }
 
@@ -51,14 +53,17 @@ function renderBlockToken(token: Token): string {
     case "paragraph":
       return renderInlineTokens(token.tokens);
     case "blockquote": {
+      // SAFETY: Marked's discriminated Token union declares `blockquote` as Tokens.Blockquote.
       const quote = renderBlockTokens((token as Tokens.Blockquote).tokens);
       return quote ? `Quote: ${quote}` : "";
     }
     case "list":
+      // SAFETY: Marked's discriminated Token union declares `list` as Tokens.List.
       return renderList(token as Tokens.List);
     case "code":
       return token.text.trim() ? "Code block omitted." : "";
     case "table":
+      // SAFETY: Marked's discriminated Token union declares `table` as Tokens.Table.
       return renderTable(token as Tokens.Table);
     case "html":
       return stripHtml(token.text || token.raw);
@@ -70,7 +75,7 @@ function renderBlockToken(token: Token): string {
 }
 
 function renderList(token: Tokens.List): string {
-  const start = typeof token.start === "number" ? token.start : 1;
+  const start = token.start === "" ? 1 : token.start;
   const items = token.items
     .map((item, index) => {
       const text = renderBlockTokens(item.tokens) || item.text;
@@ -143,8 +148,8 @@ function renderInlineToken(token: Token): string {
       if ("tokens" in token && Array.isArray(token.tokens)) {
         return renderInlineTokens(token.tokens);
       }
-      if ("text" in token && typeof token.text === "string") {
-        return token.text;
+      if ("text" in token) {
+        return String(token.text);
       }
       return "";
   }

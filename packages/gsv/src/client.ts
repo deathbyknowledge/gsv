@@ -7,22 +7,24 @@ import type {
   ResultOf,
   SyscallName,
 } from "./protocol";
+import type { JsonValue } from "./protocol/json";
+import { jsonValueSchema } from "./protocol/json";
 import {
   REQUEST_CANCEL_SIGNAL,
-  type RequestCancelPayload,
 } from "./protocol/request-cancel";
 import type { BinaryFrameDescriptor } from "./protocol/binary-frame";
 import {
   BinaryBodyChannel,
   type OutgoingBinaryBody,
 } from "./protocol/binary-body-channel";
+import * as z from "zod/mini";
 
 type TimerHandle = ReturnType<typeof globalThis.setTimeout>;
 
-export type GsvErrorShape = {
+export type GsvError = {
   code: number;
   message: string;
-  details?: unknown;
+  details?: JsonValue;
   retryable?: boolean;
 };
 
@@ -30,11 +32,12 @@ export type GsvRequestFrame<S extends string = string> = {
   type: "req";
   id: string;
   call: S;
-  args?: unknown;
+  args?: JsonValue;
+  runId?: string;
   body?: BinaryFrameDescriptor;
 };
 
-export type GsvResponseFrame<T = unknown> =
+export type GsvResponseFrame<T = JsonValue> =
   | {
       type: "res";
       id: string;
@@ -46,20 +49,20 @@ export type GsvResponseFrame<T = unknown> =
       type: "res";
       id: string;
       ok: false;
-      error: GsvErrorShape;
+      error: GsvError;
     };
 
 export type GsvSignalFrame = {
   type: "sig";
   signal: string;
-  payload?: unknown;
+  payload?: JsonValue;
   seq?: number;
 };
 
 export type GsvFrame = GsvRequestFrame | GsvResponseFrame | GsvSignalFrame;
 
 type PendingRequest = {
-  resolve: (value: GsvResponse<unknown>) => void;
+  resolve: (value: GsvResponse<JsonValue>) => void;
   reject: (error: Error) => void;
   timeoutId: TimerHandle;
   call: string;
@@ -97,7 +100,11 @@ export type GsvClientNamespaces = UnionToIntersection<{
 
 export type GsvClientCall = {
   <S extends NamespaceSyscall>(call: S, ...args: SyscallArgsTuple<S>): Promise<ResultOf<S>>;
-  <T = unknown>(call: string, args?: unknown): Promise<T>;
+  <T = JsonValue>(call: string, args?: GsvRequestArguments): Promise<T>;
+};
+
+export type GsvRequestArguments = {
+  readonly [name: string]: JsonValue | undefined;
 };
 
 export type GsvClientInfo = ConnectArgs["client"];
@@ -109,7 +116,7 @@ export type GsvRequestOptions = {
   signal?: AbortSignal;
 };
 
-export type GsvResponse<T = unknown> = {
+export type GsvResponse<T = JsonValue> = {
   data: T;
   body?: GsvBody;
 };
@@ -130,7 +137,7 @@ export type GsvDriverPattern = SyscallName | `${string}.*`;
 export type GsvDriverRequest<S extends string = string> = {
   id: string;
   call: S;
-  args: S extends SyscallName ? ArgsOf<S> : unknown;
+  args: S extends SyscallName ? ArgsOf<S> : JsonValue;
   body?: GsvBody;
   raw: GsvRequestFrame<S>;
 };
@@ -139,14 +146,14 @@ export type GsvDriverContext = {
   client: GSVClient;
   connection: ConnectResult;
   abortSignal: AbortSignal;
-  sendSignal(signal: string, payload?: unknown, seq?: number): void;
+  sendSignal(signal: string, payload?: JsonValue, seq?: number): void;
 };
 
 export type GsvDriverHandler<S extends string = string> = (
   request: GsvDriverRequest<S>,
   context: GsvDriverContext,
-) => Promise<GsvResponse<S extends SyscallName ? ResultOf<S> : unknown>>
-  | GsvResponse<S extends SyscallName ? ResultOf<S> : unknown>;
+) => Promise<GsvResponse<S extends SyscallName ? ResultOf<S> : JsonValue>>
+  | GsvResponse<S extends SyscallName ? ResultOf<S> : JsonValue>;
 
 type GsvDriverAcknowledgementOptions = {
   signal?: string;
@@ -161,7 +168,7 @@ export type GsvDriverOptions = {
   keepalive?: false | {
     intervalMs?: number;
     signal?: string;
-    payload?: (nonce?: string) => unknown;
+    payload?: (nonce?: string) => JsonValue;
     acknowledgement?: false | GsvDriverAcknowledgementOptions;
   };
 };
@@ -200,10 +207,71 @@ export type GsvClientOptions = GsvConnectOptions & {
   body?: GsvBodyOptions;
 };
 
+type GsvRequestTimeoutMap = { [call: string]: number };
+type GsvNamespaceContainer = { [name: string]: GsvNamespaceContainer };
+type GsvNamespaceTarget = { call: GsvClientCall };
+type GsvSocketMessage = string | ArrayBuffer | ArrayBufferView | Blob;
+type GsvHeartbeatPayload = { at: number; nonce?: string };
+type GsvOutgoingArguments = ArgsOf<SyscallName> | GsvRequestArguments;
+type GsvMergedConnectOptions = Omit<GsvConnectOptions, "client"> & {
+  client: GsvClientInfo;
+};
+
+const binaryFrameDescriptorSchema = z.strictObject({
+  streamId: z.int().check(z.positive()),
+  length: z.optional(z.int().check(z.nonnegative())),
+});
+const gsvErrorSchema = z.strictObject({
+  code: z.number(),
+  message: z.string(),
+  details: z.optional(jsonValueSchema),
+  retryable: z.optional(z.boolean()),
+});
+const gsvRequestFrameSchema = z.strictObject({
+  type: z.literal("req"),
+  id: z.string(),
+  call: z.string(),
+  args: z.optional(jsonValueSchema),
+  runId: z.optional(z.string()),
+  body: z.optional(binaryFrameDescriptorSchema),
+});
+const gsvResponseFrameSchema = z.union([
+  z.strictObject({
+    type: z.literal("res"),
+    id: z.string(),
+    ok: z.literal(true),
+    data: z.optional(jsonValueSchema),
+    body: z.optional(binaryFrameDescriptorSchema),
+  }),
+  z.strictObject({
+    type: z.literal("res"),
+    id: z.string(),
+    ok: z.literal(false),
+    error: gsvErrorSchema,
+  }),
+]);
+const gsvSignalFrameSchema = z.strictObject({
+  type: z.literal("sig"),
+  signal: z.string(),
+  payload: z.optional(jsonValueSchema),
+  seq: z.optional(z.number()),
+});
+const gsvFrameSchema = z.union([
+  gsvRequestFrameSchema,
+  gsvResponseFrameSchema,
+  gsvSignalFrameSchema,
+]);
+const requestCancelPayloadSchema = z.strictObject({
+  id: z.string(),
+  reason: z.optional(z.string()),
+});
+const acknowledgementPayloadSchema = z.looseObject({ nonce: z.string() });
+
 export type GsvAccountNamespace = GsvClientNamespaces["account"];
 export type GsvAdapterNamespace = GsvClientNamespaces["adapter"];
 export type GsvAiNamespace = GsvClientNamespaces["ai"];
 export type GsvCodeModeNamespace = GsvClientNamespaces["codemode"];
+export type GsvConversationNamespace = GsvClientNamespaces["conversation"];
 export type GsvFsNamespace = GsvClientNamespaces["fs"];
 export type GsvMailNamespace = GsvClientNamespaces["mail"];
 export type GsvNetNamespace = never;
@@ -224,7 +292,7 @@ const DEFAULT_DRIVER_ACKNOWLEDGEMENT_TIMEOUT_MS = 10_000;
 const WEBSOCKET_CONNECTING = 0;
 const WEBSOCKET_OPEN = 1;
 
-const DEFAULT_REQUEST_TIMEOUTS_MS: Record<string, number> = {
+const DEFAULT_REQUEST_TIMEOUTS_MS = {
   "sys.setup": LONG_RUNNING_REQUEST_TIMEOUT_MS,
   "sys.setup.assist": LONG_RUNNING_REQUEST_TIMEOUT_MS,
   "sys.bootstrap": LONG_RUNNING_REQUEST_TIMEOUT_MS,
@@ -239,7 +307,7 @@ const DEFAULT_REQUEST_TIMEOUTS_MS: Record<string, number> = {
   "ai.image.read": LONG_RUNNING_REQUEST_TIMEOUT_MS,
   "ai.image.generate": LONG_RUNNING_REQUEST_TIMEOUT_MS,
   "ai.speech.create": LONG_RUNNING_REQUEST_TIMEOUT_MS,
-};
+} satisfies GsvRequestTimeoutMap;
 
 const DEFAULT_CLIENT_INFO: GsvClientInfo = {
   id: "gsv-js",
@@ -358,10 +426,10 @@ void allSyscallsCovered;
 
 export class GsvClientError extends Error {
   readonly code?: number;
-  readonly details?: unknown;
+  readonly details?: JsonValue;
   readonly retryable?: boolean;
 
-  constructor(error: GsvErrorShape) {
+  constructor(error: GsvError) {
     super(error.message);
     this.name = "GsvClientError";
     this.code = error.code;
@@ -372,10 +440,10 @@ export class GsvClientError extends Error {
 
 export class GsvRequestError extends Error {
   readonly code: number;
-  readonly details?: unknown;
+  readonly details?: JsonValue;
   readonly retryable?: boolean;
 
-  constructor(code: number, message: string, options: { details?: unknown; retryable?: boolean } = {}) {
+  constructor(code: number, message: string, options: { details?: JsonValue; retryable?: boolean } = {}) {
     super(message);
     this.name = "GsvRequestError";
     this.code = code;
@@ -385,13 +453,26 @@ export class GsvRequestError extends Error {
 }
 
 export class GSVClient {
+  declare readonly account: GsvAccountNamespace;
+  declare readonly adapter: GsvAdapterNamespace;
+  declare readonly ai: GsvAiNamespace;
+  declare readonly codemode: GsvCodeModeNamespace;
+  declare readonly conversation: GsvConversationNamespace;
+  declare readonly fs: GsvFsNamespace;
+  declare readonly mail: GsvMailNamespace;
+  declare readonly proc: GsvProcNamespace;
+  declare readonly repo: GsvRepoNamespace;
+  declare readonly sched: GsvSchedNamespace;
+  declare readonly shell: GsvShellNamespace;
+  declare readonly signal: GsvSignalNamespace;
+  declare readonly sys: GsvSysNamespace;
   readonly call: GsvClientCall;
 
   private readonly WebSocketCtor: GsvWebSocketConstructor | null;
   private readonly connectDefaults: GsvConnectOptions;
   private readonly connectTimeoutMs: number;
   private readonly defaultRequestTimeoutMs: number;
-  private readonly requestTimeoutsMs: Record<string, number>;
+  private readonly requestTimeoutsMs: GsvRequestTimeoutMap;
   private readonly bodyChannel: BinaryBodyChannel;
   private socket: WebSocket | null = null;
   private connectingSocket: WebSocket | null = null;
@@ -399,7 +480,7 @@ export class GSVClient {
   private pending = new Map<string, PendingRequest>();
   private inboundRequests = new Map<string, AbortController>();
   private inboundRequestHandler: GsvInboundRequestHandler | null = null;
-  private signalListeners = new Set<(signal: string, payload: unknown) => void>();
+  private signalListeners = new Set<(signal: string, payload: JsonValue | undefined) => void>();
   private statusListeners = new Set<(status: GsvClientStatus) => void>();
   private status: GsvClientStatus = {
     state: "disconnected",
@@ -438,7 +519,9 @@ export class GSVClient {
         socket.send(frame);
       },
     });
-    this.call = (async (call: string, args: unknown = {}) => {
+    // SAFETY: the implementation forwards the exact syscall name and returns
+    // the protocol-declared result selected by the public overload.
+    this.call = (async (call: string, args: GsvRequestArguments = {}) => {
       const response = await this.request(call, args);
       if (response.body) {
         await response.body.stream.cancel().catch(() => {});
@@ -446,7 +529,7 @@ export class GSVClient {
       }
       return response.data;
     }) as GsvClientCall;
-    assignNamespaces(this as unknown as Record<string, unknown>, this.call);
+    assignNamespaces(this, this.call);
   }
 
   getStatus(): GsvClientStatus {
@@ -457,7 +540,7 @@ export class GSVClient {
     return this.status.state === "connected" && this.socket?.readyState === WEBSOCKET_OPEN;
   }
 
-  onSignal(listener: (signal: string, payload: unknown) => void): () => void {
+  onSignal(listener: (signal: string, payload: JsonValue | undefined) => void): () => void {
     this.signalListeners.add(listener);
     return () => {
       this.signalListeners.delete(listener);
@@ -488,13 +571,13 @@ export class GSVClient {
     return new GSVDriver(this, options);
   }
 
-  sendSignal(signal: string, payload?: unknown, seq?: number): void {
+  sendSignal(signal: string, payload?: JsonValue, seq?: number): void {
     const frame: GsvSignalFrame = {
       type: "sig",
       signal,
-      ...(payload === undefined ? {} : { payload }),
-      ...(seq === undefined ? {} : { seq }),
     };
+    if (payload !== undefined) frame.payload = payload;
+    if (seq !== undefined) frame.seq = seq;
     this.sendJson(frame);
   }
 
@@ -554,15 +637,16 @@ export class GSVClient {
 
     let connectResult: ConnectResult;
     try {
-      connectResult = (await this.request("sys.connect", {
+      const connectArgs: ConnectArgs = {
         protocol: PROTOCOL_VERSION,
         client: merged.client,
-        ...(merged.driver ? { driver: merged.driver } : {}),
         auth: {
           username,
           ...(token ? { token } : { password }),
         },
-      })).data as ConnectResult;
+      };
+      if (merged.driver) connectArgs.driver = merged.driver;
+      connectResult = (await this.request("sys.connect", connectArgs)).data;
       if (connectResult.protocol !== PROTOCOL_VERSION) {
         throw new Error(
           `Gateway selected protocol ${connectResult.protocol}, expected ${PROTOCOL_VERSION}`,
@@ -627,14 +711,14 @@ export class GSVClient {
     args: ArgsOf<S>,
     options?: GsvRequestOptions,
   ): Promise<GsvResponse<ResultOf<S>>>;
-  async request<T = unknown>(
+  async request<T = JsonValue>(
     call: string,
-    args?: unknown,
+    args?: GsvRequestArguments,
     options?: GsvRequestOptions,
   ): Promise<GsvResponse<T>>;
-  async request<T = unknown>(
+  async request<T = JsonValue>(
     call: string,
-    args: unknown = {},
+    args: GsvOutgoingArguments = {},
     options: GsvRequestOptions = {},
   ): Promise<GsvResponse<T>> {
     if (options.signal?.aborted) {
@@ -646,7 +730,10 @@ export class GSVClient {
     if (!socket || socket.readyState !== WEBSOCKET_OPEN) {
       throw new Error("Not connected");
     }
-    return await this.requestFrame(socket, call, args, options) as GsvResponse<T>;
+    const response = await this.requestFrame(socket, call, args, options);
+    // SAFETY: the call overload binds T to the caller's protocol contract;
+    // requestFrame has already validated the JSON response envelope.
+    return response as GsvResponse<T>;
   }
 
   async requestOnce<S extends NamespaceSyscall>(
@@ -654,8 +741,16 @@ export class GSVClient {
     call: S,
     ...args: SyscallArgsTuple<S>
   ): Promise<ResultOf<S>>;
-  async requestOnce<T = unknown>(url: string, call: string, args?: unknown): Promise<T>;
-  async requestOnce<T = unknown>(url: string, call: string, args: unknown = {}): Promise<T> {
+  async requestOnce<T = JsonValue>(
+    url: string,
+    call: string,
+    args?: GsvRequestArguments,
+  ): Promise<T>;
+  async requestOnce<T = JsonValue>(
+    url: string,
+    call: string,
+    args: GsvOutgoingArguments = {},
+  ): Promise<T> {
     const socket = await this.openSocket(url);
     try {
       return await this.requestOverSocket<T>(socket, call, args);
@@ -664,16 +759,21 @@ export class GSVClient {
     }
   }
 
-  private mergeConnectOptions(options: GsvConnectOptions): Required<Pick<GsvConnectOptions, "client">> &
-    Omit<GsvConnectOptions, "client"> {
+  private mergeConnectOptions(options: GsvConnectOptions): GsvMergedConnectOptions {
+    const defaults = this.connectDefaults.client;
+    const override = options.client;
+    const client: GsvClientInfo = {
+      id: override?.id ?? defaults?.id ?? DEFAULT_CLIENT_INFO.id,
+      version: override?.version ?? defaults?.version ?? DEFAULT_CLIENT_INFO.version,
+      platform: override?.platform ?? defaults?.platform ?? DEFAULT_CLIENT_INFO.platform,
+      role: override?.role ?? defaults?.role ?? DEFAULT_CLIENT_INFO.role,
+    };
+    const channel = override?.channel ?? defaults?.channel;
+    if (channel !== undefined) client.channel = channel;
     return {
       ...this.connectDefaults,
       ...options,
-      client: {
-        ...DEFAULT_CLIENT_INFO,
-        ...this.connectDefaults.client,
-        ...options.client,
-      },
+      client,
       driver: options.driver ?? this.connectDefaults.driver,
     };
   }
@@ -801,20 +901,21 @@ export class GSVClient {
   private requestFrame(
     socket: WebSocket,
     call: string,
-    args: unknown,
+    args: GsvOutgoingArguments,
     options: GsvRequestOptions = {},
-  ): Promise<GsvResponse<unknown>> {
+  ): Promise<GsvResponse<JsonValue>> {
     const id = makeId();
     const body = options.body;
     const signal = options.signal;
     const outgoing = body ? this.bodyChannel.prepare(body) : undefined;
+    const wireArgs = jsonValueSchema.parse(args);
     const frame: GsvRequestFrame = {
       type: "req",
       id,
       call,
-      args,
-      ...(outgoing ? { body: outgoing.descriptor } : {}),
+      args: wireArgs,
     };
+    if (outgoing) frame.body = outgoing.descriptor;
     const timeoutMs = this.requestTimeoutMs(call);
     const bodyAbort = body ? new AbortController() : undefined;
 
@@ -883,9 +984,18 @@ export class GSVClient {
     });
   }
 
-  private requestOverSocket<T>(socket: WebSocket, call: string, args: unknown): Promise<T> {
+  private requestOverSocket<T>(
+    socket: WebSocket,
+    call: string,
+    args: GsvOutgoingArguments,
+  ): Promise<T> {
     const id = makeId();
-    const frame: GsvRequestFrame = { type: "req", id, call, args };
+    const frame: GsvRequestFrame = {
+      type: "req",
+      id,
+      call,
+      args: jsonValueSchema.parse(args),
+    };
     const timeoutMs = this.requestTimeoutMs(call);
 
     return new Promise<T>((resolve, reject) => {
@@ -917,11 +1027,9 @@ export class GSVClient {
       };
 
       const onMessage = (event: MessageEvent): void => {
-        if (typeof event.data !== "string") {
-          return;
-        }
-
-        const parsed = parseFrame(event.data);
+        const text = z.string().safeParse(event.data);
+        if (!text.success) return;
+        const parsed = parseFrame(text.data);
         if (!parsed || parsed.type !== "res" || parsed.id !== id) {
           return;
         }
@@ -933,6 +1041,8 @@ export class GSVClient {
             reject(new Error(`${call} returned a body; requestOnce() only supports JSON responses`));
             return;
           }
+          // SAFETY: requestOnce binds T to the named call at its public
+          // overload; the frame parser has validated the JSON envelope.
           resolve((parsed.data ?? {}) as T);
           return;
         }
@@ -953,30 +1063,28 @@ export class GSVClient {
     });
   }
 
-  private async handleRawMessage(raw: unknown): Promise<void> {
+  private async handleRawMessage(raw: GsvSocketMessage): Promise<void> {
     const binary = await normalizeBinaryMessage(raw);
     if (binary) {
       this.bodyChannel.handleFrame(binary);
       return;
     }
 
-    if (typeof raw !== "string") {
-      return;
-    }
-
-    const parsed = parseFrame(raw);
+    const text = z.string().safeParse(raw);
+    if (!text.success) return;
+    const parsed = parseFrame(text.data);
     if (!parsed) {
       return;
     }
 
     if (parsed.type === "sig") {
       if (parsed.signal === REQUEST_CANCEL_SIGNAL) {
-        const payload = parsed.payload as Partial<RequestCancelPayload> | null;
-        if (payload && typeof payload === "object" && typeof payload.id === "string") {
-          const controller = this.inboundRequests.get(payload.id);
+        const payload = requestCancelPayloadSchema.safeParse(parsed.payload);
+        if (payload.success) {
+          const controller = this.inboundRequests.get(payload.data.id);
           if (controller) {
-            this.inboundRequests.delete(payload.id);
-            const reason = typeof payload.reason === "string" ? payload.reason.trim() : "";
+            this.inboundRequests.delete(payload.data.id);
+            const reason = payload.data.reason?.trim() ?? "";
             controller.abort(new Error(reason || "Request cancelled"));
           }
         }
@@ -1007,10 +1115,11 @@ export class GSVClient {
 
     if (parsed.ok) {
       try {
-        pending.resolve({
-          data: parsed.data ?? {},
-          ...(parsed.body !== undefined ? { body: this.bodyChannel.receive(parsed.body) } : {}),
-        });
+        const response: GsvResponse<JsonValue> = { data: parsed.data ?? {} };
+        if (parsed.body !== undefined) {
+          response.body = this.bodyChannel.receive(parsed.body);
+        }
+        pending.resolve(response);
       } catch (error) {
         pending.reject(error instanceof Error ? error : new Error("Invalid response body"));
       }
@@ -1046,13 +1155,14 @@ export class GSVClient {
         const response = await handler(frame, body, abortController.signal);
         abortController.signal.throwIfAborted();
         outgoing = response.body ? this.bodyChannel.prepare(response.body) : undefined;
-        this.sendJson({
+        const responseFrame: GsvResponseFrame = {
           type: "res",
           id: frame.id,
           ok: true,
           data: response.data,
-          ...(outgoing ? { body: outgoing.descriptor } : {}),
-        });
+        };
+        if (outgoing) responseFrame.body = outgoing.descriptor;
+        this.sendJson(responseFrame);
         responseStarted = true;
         if (outgoing) {
           await outgoing.send(abortController.signal);
@@ -1106,8 +1216,9 @@ export class GSVClient {
   }
 
   private rejectAllPending(error: Error): void {
-    for (const id of [...this.pending.keys()]) {
-      const pending = this.takePending(id)!;
+    for (const id of this.pending.keys()) {
+      const pending = this.takePending(id);
+      if (!pending) continue;
       pending.bodyAbort?.abort(error);
       pending.reject(error);
     }
@@ -1180,12 +1291,11 @@ export class GSVDriver {
 
     const result = await this.client.connect({
       ...connectOptions,
-      client: {
-        id: deviceId.trim(),
-        role: "driver",
-        ...(platform ?? this.options.platform ? { platform: platform ?? this.options.platform } : {}),
-        ...(version ?? this.options.version ? { version: version ?? this.options.version } : {}),
-      },
+      client: buildDriverClientInfo(
+        deviceId.trim(),
+        platform ?? this.options.platform,
+        version ?? this.options.version,
+      ),
       driver: {
         implements: implementsList,
       },
@@ -1278,17 +1388,13 @@ export class GSVDriver {
     return await handler({
       id: frame.id,
       call: frame.call,
-      args: (frame.args ?? {}) as never,
+      args: frame.args ?? {},
       body,
       raw: frame,
     }, context);
   }
 
   private findHandler(call: string): GsvDriverHandler | null {
-    const exact = this.handlers.get(call as GsvDriverPattern);
-    if (exact) {
-      return exact;
-    }
     for (const [pattern, handler] of this.handlers) {
       if (patternMatches(pattern, call)) {
         return handler;
@@ -1305,10 +1411,11 @@ export class GSVDriver {
     const keepalive = this.options.keepalive ?? {};
     const intervalMs = keepalive.intervalMs ?? DEFAULT_DRIVER_KEEPALIVE_MS;
     const signal = keepalive.signal ?? "device.ping";
-    const payload = keepalive.payload ?? ((nonce?: string) => ({
-      at: Date.now(),
-      ...(nonce ? { nonce } : {}),
-    }));
+    const payload = keepalive.payload ?? ((nonce?: string) => {
+      const heartbeat: GsvHeartbeatPayload = { at: Date.now() };
+      if (nonce) heartbeat.nonce = nonce;
+      return heartbeat;
+    });
     const sendKeepalive = () => {
       if (!this.client.isConnected()) {
         return;
@@ -1342,7 +1449,6 @@ export class GSVDriver {
     }
     this.keepaliveTimer = globalThis.setInterval(sendKeepalive, intervalMs);
   }
-
   private stopKeepalive(): void {
     if (this.keepaliveTimer) {
       globalThis.clearInterval(this.keepaliveTimer);
@@ -1372,8 +1478,6 @@ export class GSVDriver {
   }
 }
 
-export interface GSVClient extends GsvClientNamespaces {}
-
 export type GsvClient = GSVClient;
 
 export function createGsvClient(options?: GsvClientOptions): GSVClient {
@@ -1382,65 +1486,57 @@ export function createGsvClient(options?: GsvClientOptions): GSVClient {
 
 export { GSVClient as GSV };
 
-function assignNamespaces(target: Record<string, unknown>, call: GsvClientCall): void {
+function buildDriverClientInfo(
+  id: string,
+  platform: string | undefined,
+  version: string | undefined,
+): Partial<GsvClientInfo> {
+  const client: Partial<GsvClientInfo> = { id, role: "driver" };
+  if (platform !== undefined) client.platform = platform;
+  if (version !== undefined) client.version = version;
+  return client;
+}
+
+function assignNamespaces(target: GsvNamespaceTarget, call: GsvClientCall): void {
+  const root: GsvNamespaceContainer = {};
   for (const syscall of SYSCALL_NAMES) {
     const parts = syscall.split(".");
-    let cursor = target;
+    let cursor = root;
 
     for (const part of parts.slice(0, -1)) {
-      const existing = cursor[part];
-      if (
-        !existing
-        || (typeof existing !== "object" && typeof existing !== "function")
-      ) {
-        cursor[part] = {};
-      }
-      cursor = cursor[part] as Record<string, unknown>;
+      const child = cursor[part] ?? {};
+      cursor[part] = child;
+      cursor = child;
     }
 
     const methodName = parts[parts.length - 1];
-    const existing = cursor[methodName];
-    const method = ((args: unknown = {}) =>
-      call(syscall, args as never)) as GsvSyscallMethod<typeof syscall>;
-    if (existing && (typeof existing === "object" || typeof existing === "function")) {
-      Object.assign(method, existing);
-    }
+    const existing = cursor[methodName] ?? {};
+    // SAFETY: SYSCALL_NAMES is checked against NamespaceSyscall above, so the
+    // selected method has the ArgsOf/ResultOf pair declared for this syscall.
+    const invoke = ((args: GsvRequestArguments = {}) => call(syscall, args)) as GsvSyscallMethod<typeof syscall>;
+    const method = Object.assign(invoke, existing);
     cursor[methodName] = method;
   }
+  Object.assign(target, root);
 }
 
 function makeId(): string {
-  if (typeof globalThis.crypto !== "undefined" && typeof globalThis.crypto.randomUUID === "function") {
+  if (globalThis.crypto?.randomUUID) {
     return globalThis.crypto.randomUUID();
   }
 
   return `req-${Date.now()}-${Math.random().toString(16).slice(2)}`;
 }
 
-function acknowledgementNonce(payload: unknown): string | null {
-  if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
-    return null;
-  }
-  const nonce = (payload as Record<string, unknown>).nonce;
-  return typeof nonce === "string" ? nonce : null;
+function acknowledgementNonce(payload: JsonValue | undefined): string | null {
+  const parsed = acknowledgementPayloadSchema.safeParse(payload);
+  return parsed.success ? parsed.data.nonce : null;
 }
 
 function parseFrame(raw: string): GsvFrame | null {
   try {
-    const parsed = JSON.parse(raw) as Partial<GsvFrame>;
-    if (!parsed || typeof parsed !== "object") {
-      return null;
-    }
-    if (parsed.type === "sig" && typeof parsed.signal === "string") {
-      return parsed as GsvSignalFrame;
-    }
-    if (parsed.type === "res" && typeof parsed.id === "string" && typeof parsed.ok === "boolean") {
-      return parsed as GsvResponseFrame;
-    }
-    if (parsed.type === "req" && typeof parsed.id === "string" && typeof parsed.call === "string") {
-      return parsed as GsvRequestFrame;
-    }
-    return null;
+    const parsed = gsvFrameSchema.safeParse(JSON.parse(raw));
+    return parsed.success ? parsed.data : null;
   } catch {
     return null;
   }
@@ -1452,12 +1548,13 @@ function closeSocket(socket: WebSocket, code: number, reason: string): void {
   }
 }
 
-function errorMessage(value: unknown, fallback: string): string {
-  if (value instanceof Error && value.message.trim().length > 0) {
-    return value.message;
+function errorMessage(cause: unknown, fallback: string): string {
+  if (cause instanceof Error && cause.message.trim().length > 0) {
+    return cause.message;
   }
-  if (typeof value === "string" && value.trim().length > 0) {
-    return value;
+  const text = z.string().safeParse(cause);
+  if (text.success && text.data.trim().length > 0) {
+    return text.data;
   }
   return fallback;
 }
@@ -1469,23 +1566,23 @@ function requestAbortError(signal: AbortSignal): Error {
   return new Error(errorMessage(signal.reason, "Request cancelled"));
 }
 
-function errorCode(value: unknown): number {
-  if (value instanceof GsvRequestError || value instanceof GsvClientError) {
-    return value.code ?? 500;
+function errorCode(cause: unknown): number {
+  if (cause instanceof GsvRequestError || cause instanceof GsvClientError) {
+    return cause.code ?? 500;
   }
   return 500;
 }
 
-function errorDetails(value: unknown): unknown {
-  if (value instanceof GsvRequestError || value instanceof GsvClientError) {
-    return value.details;
+function errorDetails(cause: unknown): JsonValue | undefined {
+  if (cause instanceof GsvRequestError || cause instanceof GsvClientError) {
+    return cause.details;
   }
   return undefined;
 }
 
-function errorRetryable(value: unknown): boolean | undefined {
-  if (value instanceof GsvRequestError || value instanceof GsvClientError) {
-    return value.retryable;
+function errorRetryable(cause: unknown): boolean | undefined {
+  if (cause instanceof GsvRequestError || cause instanceof GsvClientError) {
+    return cause.retryable;
   }
   return undefined;
 }
@@ -1494,30 +1591,33 @@ function errorFrame(
   id: string,
   code: number,
   message: string,
-  details?: unknown,
+  details?: JsonValue,
   retryable?: boolean,
 ): GsvResponseFrame {
-  return {
+  const frame: GsvResponseFrame = {
     type: "res",
     id,
     ok: false,
     error: {
       code,
       message,
-      ...(details === undefined ? {} : { details }),
-      ...(retryable === undefined ? {} : { retryable }),
     },
   };
+  if (details !== undefined) frame.error.details = details;
+  if (retryable !== undefined) frame.error.retryable = retryable;
+  return frame;
 }
 
-async function normalizeBinaryMessage(raw: unknown): Promise<ArrayBuffer | null> {
+async function normalizeBinaryMessage(raw: GsvSocketMessage): Promise<ArrayBuffer | null> {
   if (raw instanceof ArrayBuffer) {
     return raw;
   }
   if (ArrayBuffer.isView(raw)) {
-    return raw.buffer.slice(raw.byteOffset, raw.byteOffset + raw.byteLength) as ArrayBuffer;
+    const copy = new Uint8Array(raw.byteLength);
+    copy.set(new Uint8Array(raw.buffer, raw.byteOffset, raw.byteLength));
+    return copy.buffer;
   }
-  if (typeof Blob !== "undefined" && raw instanceof Blob) {
+  if (globalThis.Blob && raw instanceof globalThis.Blob) {
     return await raw.arrayBuffer();
   }
   return null;

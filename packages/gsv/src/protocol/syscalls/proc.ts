@@ -8,6 +8,7 @@
 
 import type { ProcessIdentity } from "./system";
 import type { InteractionOrigin } from "./interaction-origin";
+import type { JsonObject, JsonValue } from "../json";
 
 export type ProcMediaInput = {
   type: "image" | "audio" | "video" | "document";
@@ -105,7 +106,7 @@ export type ProcHilRequest = {
   syscall: string;
   /** Authoritative normalized execution target resolved by the Process approval policy. */
   target: string;
-  args: Record<string, unknown>;
+  args: JsonObject;
   createdAt: number;
 };
 
@@ -139,7 +140,7 @@ export type ProcSendResult =
     }
   | { ok: false; error: string };
 
-export type ProcIpcMetadata = Record<string, unknown>;
+export type ProcIpcMetadata = JsonObject;
 
 export type ProcIpcSendArgs = {
   pid: string;
@@ -210,7 +211,7 @@ export type ProcRunToolStartedSignal = {
   callId: string;
   name: string;
   syscall: string;
-  args: unknown;
+  args: JsonValue;
 };
 
 export type ProcRunToolFinishedSignal = {
@@ -227,7 +228,7 @@ export type ProcHistoryToolResultContent = {
   isError: boolean;
   outcome: ProcToolResultOutcome;
   toolCallId: string | null;
-  output: unknown;
+  output: JsonValue;
   media?: ProcMediaInput[];
 };
 
@@ -235,7 +236,7 @@ export type ProcHistoryMessage = {
   id?: number;
   runId?: string;
   role: "user" | "assistant" | "system" | "toolResult";
-  content: unknown;
+  content: JsonValue;
   timestamp?: number;
   origin?: InteractionOrigin;
   metadata?: ProcMessageMetadata;

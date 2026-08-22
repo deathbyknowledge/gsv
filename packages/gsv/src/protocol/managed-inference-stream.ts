@@ -1,4 +1,6 @@
 import type { ManagedInferenceStreamEvent } from "./managed";
+import type { JsonValue } from "./json";
+import { jsonValueSchema } from "./json";
 
 export const MAX_MANAGED_INFERENCE_STREAM_EVENT_BYTES = 16 * 1024 * 1024;
 
@@ -20,7 +22,7 @@ export function encodeManagedInferenceStreamEvent(
 export async function* decodeManagedInferenceStream(
   stream: ReadableStream<Uint8Array>,
   signal?: AbortSignal,
-): AsyncGenerator<unknown> {
+): AsyncGenerator<JsonValue> {
   const reader = stream.getReader();
   const parts: Uint8Array[] = [];
   let eventBytes = 0;
@@ -79,7 +81,7 @@ function appendPart(
   if (part.byteLength > 0) parts.push(part);
 }
 
-function parseEvent(parts: Uint8Array[], byteLength: number): unknown {
+function parseEvent(parts: Uint8Array[], byteLength: number): JsonValue {
   const payload = new Uint8Array(byteLength);
   let offset = 0;
   for (const part of parts) {
@@ -93,7 +95,7 @@ function parseEvent(parts: Uint8Array[], byteLength: number): unknown {
     throw new Error("Managed inference stream event is not UTF-8");
   }
   try {
-    return JSON.parse(json) as unknown;
+    return jsonValueSchema.parse(JSON.parse(json));
   } catch {
     throw new Error("Managed inference stream event is not valid JSON");
   }

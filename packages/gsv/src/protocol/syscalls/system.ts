@@ -1,3 +1,5 @@
+import type { JsonObject, JsonValue } from "../json";
+
 export type ProcessIdentity = {
   uid: number;
   gid: number;
@@ -376,7 +378,7 @@ export type SysOAuthAccountSummary = {
   createdAt: number;
   updatedAt: number;
   lastUsedAt: number | null;
-  metadata: Record<string, unknown>;
+  metadata: JsonObject;
 };
 
 export type SysOAuthStartResult = {
@@ -451,8 +453,8 @@ export type SysMcpConnectionState =
 export type SysMcpToolSummary = {
   name: string;
   description: string | null;
-  inputSchema: Record<string, unknown> | null;
-  outputSchema: Record<string, unknown> | null;
+  inputSchema: JsonObject | null;
+  outputSchema: JsonObject | null;
 };
 
 export type SysMcpServerSummary = {
@@ -465,7 +467,7 @@ export type SysMcpServerSummary = {
   authUrl: string | null;
   error: string | null;
   instructions: string | null;
-  capabilities: Record<string, unknown> | null;
+  capabilities: JsonObject | null;
   tools: SysMcpToolSummary[];
   resourceCount: number;
   promptCount: number;
@@ -518,12 +520,12 @@ export type SysMcpCallArgs = {
   uid?: number;
   serverId: string;
   name: string;
-  arguments?: Record<string, unknown>;
+  arguments?: JsonObject;
 };
 
 export type SysMcpCallResult = {
-  content?: unknown;
-  structuredContent?: unknown;
+  content?: JsonValue;
+  structuredContent?: JsonValue;
   isError?: boolean;
 };
 
