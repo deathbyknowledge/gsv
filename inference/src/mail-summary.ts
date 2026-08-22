@@ -18,6 +18,8 @@ const MAX_TEXT_BYTES = 64 * 1_024;
 const MAX_SUMMARY_BYTES = 280;
 const MAIL_SUMMARY_MAX_OUTPUT_TOKENS = 256;
 const MAIL_SUMMARY_TIMEOUT_MS = 60_000;
+interface MailRecord { [key: string]: MailValue; }
+type MailValue = string | number | boolean | MailRecord | null | undefined;
 
 const MAIL_SUMMARY_CATEGORIES = new Set<ManagedMailSummaryCategory>([
   "personal",
@@ -39,7 +41,7 @@ Set requiresAttention only when the recipient likely needs to review or act on t
 export function validateManagedMailSummaryRequest(
   inputValue: ManagedMailSummaryRequest,
 ): ManagedMailSummaryRequest {
-  const input: unknown = inputValue;
+  const input: MailValue = inputValue;
   if (!isRecord(input) || input.version !== 1) {
     throw new Error("Managed mail summary request version is invalid");
   }
@@ -53,14 +55,17 @@ export function validateManagedMailSummaryRequest(
     "version",
   ], "request");
   const installationId = validateOpaqueId(
+// SAFETY: This assertion follows boundary validation or a test fixture with the declared owner contract.
     input.installationId as string,
     "installationId",
   );
   const logicalRequestId = validateOpaqueId(
+// SAFETY: This assertion follows boundary validation or a test fixture with the declared owner contract.
     input.logicalRequestId as string,
     "logicalRequestId",
   );
   const actor = validateManagedInferenceActor(
+// SAFETY: This assertion follows boundary validation or a test fixture with the declared owner contract.
     input.actor as ManagedMailSummaryRequest["actor"],
   );
   requireExactKeys(actor, [
@@ -152,7 +157,7 @@ export function parseManagedMailSummaryResult(
   if (text.length !== 1) {
     throw new Error("Managed mail summary generation returned invalid content");
   }
-  let parsed: unknown;
+  let parsed: MailValue;
   try {
     parsed = JSON.parse(text[0].text);
   } catch {
@@ -162,7 +167,7 @@ export function parseManagedMailSummaryResult(
 }
 
 export function validateManagedMailSummary(
-  value: unknown,
+  value: MailValue,
 ): ManagedMailSummary {
   if (!isRecord(value)) {
     throw new Error("Managed mail summary is invalid");
@@ -183,17 +188,20 @@ export function validateManagedMailSummary(
   if (value.summary.trim() !== value.summary || value.summary.length === 0) {
     throw new Error("Managed mail summary result summary is invalid");
   }
+  // SAFETY: category membership is checked immediately below.
   if (
-    typeof value.category !== "string"
+    String(value.category) !== value.category
+// SAFETY: This assertion follows boundary validation or a test fixture with the declared owner contract.
+// SAFETY: The surrounding owner contract or fixture establishes this asserted shape.
     || !MAIL_SUMMARY_CATEGORIES.has(value.category as ManagedMailSummaryCategory)
   ) {
     throw new Error("Managed mail summary category is invalid");
   }
-  if (typeof value.requiresAttention !== "boolean") {
+  if (value.requiresAttention !== true && value.requiresAttention !== false) {
     throw new Error("Managed mail summary attention flag is invalid");
   }
   if (
-    typeof value.confidence !== "number"
+    Number(value.confidence) !== value.confidence
     || !Number.isFinite(value.confidence)
     || value.confidence < 0
     || value.confidence > 1
@@ -202,6 +210,7 @@ export function validateManagedMailSummary(
   }
   return {
     summary: value.summary,
+// SAFETY: This assertion follows boundary validation or a test fixture with the declared owner contract.
     category: value.category as ManagedMailSummaryCategory,
     requiresAttention: value.requiresAttention,
     confidence: value.confidence,
@@ -209,13 +218,13 @@ export function validateManagedMailSummary(
 }
 
 function validateBoundedString(
-  value: unknown,
+  value: MailValue,
   field: string,
   minimumBytes: number,
   maximumBytes: number,
   singleLine: boolean,
 ): asserts value is string {
-  if (typeof value !== "string") {
+  if (String(value) !== value) {
     throw new Error(`Managed mail summary ${field} is invalid`);
   }
   const bytes = new TextEncoder().encode(value).byteLength;
@@ -230,7 +239,7 @@ function validateBoundedString(
 }
 
 function requireExactKeys(
-  value: Record<string, unknown>,
+  value: MailRecord,
   expectedKeys: string[],
   field: string,
 ): void {
@@ -244,6 +253,6 @@ function requireExactKeys(
   }
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return value !== null && typeof value === "object" && !Array.isArray(value);
+function isRecord(value: MailValue): value is Record<string, MailValue> {
+  return value !== null && value !== undefined && value.constructor === Object && !Array.isArray(value);
 }

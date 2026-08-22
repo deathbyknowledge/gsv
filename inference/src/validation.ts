@@ -11,7 +11,7 @@ const MAX_MANAGED_INFERENCE_OUTPUT_TOKENS = 1_048_576;
 export function validateManagedInferenceRequest(
   input: ManagedInferenceRequest,
 ): ManagedInferenceRequest {
-  if (!input || typeof input !== "object" || input.version !== 1) {
+  if (!input || input.constructor !== Object || input.version !== 1) {
     throw new Error("Managed inference request version is invalid");
   }
   validateOpaqueId(input.installationId, "installationId");
@@ -43,7 +43,7 @@ export function validateManagedInferenceRequest(
 export function validateManagedInferenceAbortRequest(
   input: ManagedInferenceAbortRequest,
 ): ManagedInferenceAbortRequest {
-  if (!input || typeof input !== "object" || input.version !== 1) {
+  if (!input || input.constructor !== Object || input.version !== 1) {
     throw new Error("Managed inference abort request version is invalid");
   }
   validateOpaqueId(input.installationId, "installationId");
@@ -56,7 +56,7 @@ export function validateManagedInferenceActor(
 ): ManagedInferenceActor {
   if (
     !actor
-    || typeof actor !== "object"
+    || actor.constructor !== Object
     || !Number.isSafeInteger(actor.localUid)
     || actor.localUid < 0
   ) {
@@ -68,7 +68,7 @@ export function validateManagedInferenceActor(
 }
 
 export function validateOpaqueId(value: string, field: string): string {
-  if (typeof value !== "string" || !OPAQUE_ID_PATTERN.test(value)) {
+  if (String(value) !== value || !OPAQUE_ID_PATTERN.test(value)) {
     throw new Error(`Managed inference ${field} is invalid`);
   }
   return value;

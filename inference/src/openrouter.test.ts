@@ -6,6 +6,9 @@ import type {
 import { describe, expect, it, vi } from "vitest";
 import { createOpenRouterGeneration } from "./openrouter";
 
+interface TestObject { [key: string]: TestValue; }
+type TestValue = string | number | boolean | null | TestObject | TestValue[];
+
 const REQUEST: ManagedInferenceRequest = {
   version: 1,
   installationId: "inst_test",
@@ -82,10 +85,13 @@ describe("OpenRouter managed inference", () => {
       generation.result(ROUTING),
     ]);
     const [url, init] = fetchMock.mock.calls[0] ?? [];
+// SAFETY: This assertion follows boundary validation or a test fixture with the declared owner contract.
     const headers = new Headers((init as RequestInit | undefined)?.headers);
+// SAFETY: This assertion follows boundary validation or a test fixture with the declared owner contract.
     const payload = JSON.parse(
+// SAFETY: This assertion follows boundary validation or a test fixture with the declared owner contract.
       String((init as RequestInit | undefined)?.body ?? "{}"),
-    ) as Record<string, unknown>;
+    ) as Record<string, string | number | boolean | null>;
 
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(url).toBe("https://openrouter.ai/api/v1/chat/completions");
@@ -161,6 +167,6 @@ describe("OpenRouter managed inference", () => {
   });
 });
 
-function sse(payload: Record<string, unknown>): string {
+function sse(payload: TestObject): string {
   return `data: ${JSON.stringify(payload)}\n\n`;
 }

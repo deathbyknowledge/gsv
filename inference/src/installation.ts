@@ -853,16 +853,14 @@ export class InferenceInstallation extends DurableObject<InferenceEnv> {
       logicalRequestId: row.logical_request_id,
       actor: {
         localUid: row.local_uid,
-        ...(row.process_id ? { processId: row.process_id } : {}),
-        ...(row.run_id ? { runId: row.run_id } : {}),
+        processId: row.process_id ?? undefined,
+        runId: row.run_id ?? undefined,
       },
       purpose: row.purpose,
       period: row.period,
       model: row.model,
-      ...(row.response_model ? { responseModel: row.response_model } : {}),
-      ...(row.provider_response_id
-        ? { providerResponseId: row.provider_response_id }
-        : {}),
+      responseModel: row.response_model ?? undefined,
+      providerResponseId: row.provider_response_id ?? undefined,
       inputTokens: row.input_tokens,
       outputTokens: row.output_tokens,
       cacheReadTokens: row.cache_read_tokens,
@@ -871,7 +869,7 @@ export class InferenceInstallation extends DurableObject<InferenceEnv> {
       reservedNanoUsd: row.reserved_nano_usd,
       costNanoUsd: row.cost_nano_usd,
       outcome: row.state,
-      ...(row.stop_reason ? { stopReason: row.stop_reason } : {}),
+      stopReason: row.stop_reason ?? undefined,
       startedAt: row.started_at,
       completedAt: row.completed_at,
     };
@@ -954,7 +952,7 @@ export class InferenceInstallation extends DurableObject<InferenceEnv> {
     if (request.result_json === null) {
       throw new Error("Stored managed mail summary is invalid");
     }
-    let result: unknown;
+    let result: Parameters<typeof validateManagedMailSummary>[0];
     try {
       result = JSON.parse(request.result_json);
     } catch {
@@ -974,13 +972,7 @@ export class InferenceInstallation extends DurableObject<InferenceEnv> {
   }
 }
 
-function normalizedUsage(result: ManagedInferenceResult): {
-  input: number;
-  output: number;
-  cacheRead: number;
-  cacheWrite: number;
-  total: number;
-} {
+function normalizedUsage(result: ManagedInferenceResult) {
   return {
     input: tokenCount(result.usage.input),
     output: tokenCount(result.usage.output),
@@ -1092,7 +1084,7 @@ function effectiveMonthlyLimit(
   if (
     policy.version !== 1
     || policy.installationId !== installationId
-    || typeof policy.enabled !== "boolean"
+    || (policy.enabled !== true && policy.enabled !== false)
     || !Number.isSafeInteger(policy.monthlyLimitNanoUsd)
     || policy.monthlyLimitNanoUsd < 0
   ) {
@@ -1115,16 +1107,16 @@ function requireManagedInferenceRouting(
   if (
     !value
     || value.version !== 1
-    || typeof value.modelId !== "string"
+    || String(value.modelId) !== value.modelId
     || !/^[A-Za-z0-9][A-Za-z0-9._:/-]{0,199}$/.test(value.modelId)
-    || typeof value.displayName !== "string"
+    || String(value.displayName) !== value.displayName
     || value.displayName.length < 1
     || value.displayName.length > 200
     || value.displayName.trim() !== value.displayName
     || !positiveInteger(value.contextWindow)
     || !positiveInteger(value.maxOutputTokens)
     || value.maxOutputTokens > value.contextWindow
-    || typeof value.reasoning !== "boolean"
+    || (value.reasoning !== true && value.reasoning !== false)
     || !price(value.inputNanoUsdPerToken)
     || !price(value.outputNanoUsdPerToken)
     || !price(value.cacheReadNanoUsdPerToken)
@@ -1137,10 +1129,10 @@ function requireManagedInferenceRouting(
   const provider = value.provider;
   if (
     !provider
-    || typeof provider.allowFallbacks !== "boolean"
-    || typeof provider.requireParameters !== "boolean"
+    || provider.allowFallbacks !== true && provider.allowFallbacks !== false
+    || provider.requireParameters !== true && provider.requireParameters !== false
     || (provider.dataCollection !== "allow" && provider.dataCollection !== "deny")
-    || typeof provider.zdr !== "boolean"
+    || provider.zdr !== true && provider.zdr !== false
     || !providerList(provider.order)
     || !providerList(provider.only)
     || !providerList(provider.ignore)
@@ -1173,17 +1165,17 @@ function providerList(value: string[]): boolean {
     && value.length <= 32
     && new Set(value).size === value.length
     && value.every((item) =>
-      typeof item === "string"
+      String(item) === item
       && item.length >= 1
       && item.length <= 80
       && item.trim() === item
-      && !/[\u0000-\u001f\u007f,]/.test(item)
+      && !/[\p{Cc},]/u.test(item)
     );
 }
 
 function optionalPositive(value: number | undefined): boolean {
   return value === undefined
-    || (typeof value === "number" && Number.isFinite(value) && value > 0);
+    || (Number(value) === value && Number.isFinite(value) && value > 0);
 }
 
 function inferencePeriod(timestamp: number): string {

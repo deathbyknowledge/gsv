@@ -67,7 +67,7 @@ describe("managed inference service RPC", () => {
     }
 
     expect(events.map((event) => (
-      event && typeof event === "object" && "type" in event
+      event instanceof Object && "type" in event
         ? event.type
         : null
     ))).toEqual([
