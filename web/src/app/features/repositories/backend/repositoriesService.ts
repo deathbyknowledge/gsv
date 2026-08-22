@@ -1,4 +1,5 @@
 import type { GSVClient } from "@humansandmachines/gsv/client";
+import type { JsonValue } from "@humansandmachines/gsv/protocol";
 import type {
   RepositoryCompareResult,
   RepositoryCommitsPage,
@@ -78,17 +79,17 @@ export type RepositoryVisibilityArgs = {
 const DEFAULT_COMMIT_LIMIT = 20;
 
 export async function listRepositories(client: RepositoriesClient): Promise<RepositorySummary[]> {
-  const payload = await client.call<unknown>("repo.list", {});
+  const payload = await client.call<JsonValue>("repo.list", {});
   return normalizeRepositoryList(payload);
 }
 
 export async function listRepositoryRefs(client: RepositoriesClient, repo: string): Promise<RepositoryRefs> {
-  const payload = await client.call<unknown>("repo.refs", { repo });
+  const payload = await client.call<JsonValue>("repo.refs", { repo });
   return normalizeRepositoryRefs(payload, repo);
 }
 
 export async function readRepositoryPath(client: RepositoriesClient, args: RepositoryReadArgs): Promise<RepositoryReadResult> {
-  const payload = await client.call<unknown>("repo.read", {
+  const payload = await client.call<JsonValue>("repo.read", {
     repo: args.repo,
     ref: args.ref || undefined,
     path: normalizeRepoPath(args.path ?? "") || undefined,
@@ -108,7 +109,7 @@ export async function searchRepository(client: RepositoriesClient, args: Reposit
       matches: [],
     };
   }
-  const payload = await client.call<unknown>("repo.search", {
+  const payload = await client.call<JsonValue>("repo.search", {
     repo: args.repo,
     ref: args.ref || undefined,
     query,
@@ -120,7 +121,7 @@ export async function searchRepository(client: RepositoriesClient, args: Reposit
 export async function listRepositoryCommits(client: RepositoriesClient, args: RepositoryLogArgs): Promise<RepositoryCommitsPage> {
   const limit = normalizeCommitLimit(args.limit);
   const offset = normalizeCommitOffset(args.offset);
-  const payload = await client.call<unknown>("repo.log", {
+  const payload = await client.call<JsonValue>("repo.log", {
     repo: args.repo,
     ref: args.ref || undefined,
     limit: limit + 1,
@@ -130,27 +131,27 @@ export async function listRepositoryCommits(client: RepositoriesClient, args: Re
 }
 
 export async function readRepositoryDiff(client: RepositoriesClient, args: RepositoryDiffArgs): Promise<RepositoryDiffResult> {
-  const payload = await client.call<unknown>("repo.diff", {
+  const payload = await client.call<JsonValue>("repo.diff", {
     repo: args.repo,
     commit: args.commit,
-    context: typeof args.context === "number" ? args.context : 3,
+    context: args.context ?? 3,
   });
   return normalizeRepositoryDiff(payload);
 }
 
 export async function compareRepositoryRefs(client: RepositoriesClient, args: RepositoryCompareArgs): Promise<RepositoryCompareResult> {
-  const payload = await client.call<unknown>("repo.compare", {
+  const payload = await client.call<JsonValue>("repo.compare", {
     repo: args.repo,
     base: args.base,
     head: args.head,
-    context: typeof args.context === "number" ? args.context : 3,
+    context: args.context ?? 3,
     stat: args.stat === true ? true : undefined,
   });
   return normalizeRepositoryCompare(payload);
 }
 
 export async function pullRepository(client: RepositoriesClient, args: RepositoryPullArgs): Promise<RepositoryPullResult> {
-  const payload = await client.call<unknown>("repo.import", {
+  const payload = await client.call<JsonValue>("repo.import", {
     repo: args.repo,
     ref: args.ref || undefined,
   });
@@ -162,7 +163,7 @@ export async function deleteRepository(client: RepositoriesClient, args: Reposit
   if (!repo) {
     throw new Error("repository is required");
   }
-  const payload = await client.call<unknown>("repo.delete", { repo });
+  const payload = await client.call<JsonValue>("repo.delete", { repo });
   return normalizeRepositoryDelete(payload, repo);
 }
 
@@ -175,19 +176,19 @@ export async function setRepositoryVisibility(
     throw new Error("repository is required");
   }
   const nextPublic = args.public === true;
-  const payload = await client.call<unknown>("repo.visibility.set", { repo, public: nextPublic });
+  const payload = await client.call<JsonValue>("repo.visibility.set", { repo, public: nextPublic });
   return normalizeRepositoryVisibility(payload, repo, nextPublic);
 }
 
-function normalizeCommitLimit(value: unknown): number {
-  if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) {
+function normalizeCommitLimit(value: number | undefined): number {
+  if (value === undefined || !Number.isFinite(value) || value <= 0) {
     return DEFAULT_COMMIT_LIMIT;
   }
   return Math.min(Math.floor(value), 100);
 }
 
-function normalizeCommitOffset(value: unknown): number {
-  if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) {
+function normalizeCommitOffset(value: number | undefined): number {
+  if (value === undefined || !Number.isFinite(value) || value <= 0) {
     return 0;
   }
   return Math.floor(value);
