@@ -1,5 +1,32 @@
 import type { SignalFrame } from "./frames";
 
+type ProcessRunStreamEventValue =
+  | string
+  | number
+  | boolean
+  | null
+  | ProcessRunStreamEventValue[]
+  | { [key: string]: ProcessRunStreamEventValue };
+
+type ProcessRunStreamEvent = {
+  type: string;
+  [key: string]: ProcessRunStreamEventValue;
+};
+
+type ProcessRunStreamPayload = {
+  pid: string;
+  runId: string;
+  seq: number;
+  timestamp: number;
+  event: ProcessRunStreamEvent;
+};
+
+type ProcessRunStreamFrame = {
+  type: "sig";
+  signal: "proc.run.stream";
+  payload: ProcessRunStreamPayload;
+};
+
 const MAX_PROCESS_RUN_STREAM_RECORD_BYTES = 1_048_576;
 
 export function encodeProcessRunStreamFrame(frame: SignalFrame): Uint8Array {
@@ -28,9 +55,9 @@ export async function consumeProcessRunStream(
       buffered = buffered.slice(newline + 1);
       if (record.length > 0) {
         const frame = parseProcessRunStreamFrame(processId, record);
-        const payload = frame.payload as Record<string, unknown>;
-        const runId = payload.runId as string;
-        const seq = payload.seq as number;
+        const payload = frame.payload;
+        const runId = payload.runId;
+        const seq = payload.seq;
         if (streamRunId !== null && runId !== streamRunId) {
           throw new Error("Process run stream changed run IDs");
         }
@@ -74,35 +101,25 @@ export async function consumeProcessRunStream(
 function parseProcessRunStreamFrame(
   processId: string,
   record: string,
-): SignalFrame {
+): ProcessRunStreamFrame {
   if (new TextEncoder().encode(record).byteLength > MAX_PROCESS_RUN_STREAM_RECORD_BYTES) {
     throw new Error("Process run stream record is too large");
   }
-  const value: unknown = JSON.parse(record);
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
-    throw new Error("Process run stream frame is invalid");
-  }
-  const frame = value as Record<string, unknown>;
+  // SAFETY: this parser is the sole JSON boundary for the process-run stream protocol.
+  const frame = JSON.parse(record) as ProcessRunStreamFrame;
   if (frame.type !== "sig" || frame.signal !== "proc.run.stream") {
     throw new Error("Process run stream signal is invalid");
   }
   const payload = frame.payload;
-  if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
-    throw new Error("Process run stream payload is invalid");
-  }
-  const fields = payload as Record<string, unknown>;
   if (
-    fields.pid !== processId
-    || typeof fields.runId !== "string"
-    || fields.runId.length === 0
-    || !Number.isSafeInteger(fields.seq)
-    || (fields.seq as number) < 1
-    || !Number.isFinite(fields.timestamp)
-    || !fields.event
-    || typeof fields.event !== "object"
-    || Array.isArray(fields.event)
+    payload.pid !== processId
+    || payload.runId.length === 0
+    || !Number.isSafeInteger(payload.seq)
+    || payload.seq < 1
+    || !Number.isFinite(payload.timestamp)
+    || !payload.event
   ) {
     throw new Error("Process run stream payload is invalid");
   }
-  return value as SignalFrame;
+  return frame;
 }

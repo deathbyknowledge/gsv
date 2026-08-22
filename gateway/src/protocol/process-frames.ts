@@ -60,10 +60,22 @@ export type ProcessScheduleDeliverArgs = {
   scheduleId: string;
   scheduleName?: string;
   message: string;
-  data?: Record<string, unknown>;
+  data?: ProcessScheduleData;
   replyTo?: EventReplyTarget;
   scheduledAtMs?: number | null;
   firedAtMs: number;
+};
+
+type ProcessScheduleDataValue =
+  | string
+  | number
+  | boolean
+  | null
+  | ProcessScheduleDataValue[]
+  | { [key: string]: ProcessScheduleDataValue };
+
+export type ProcessScheduleData = {
+  [key: string]: ProcessScheduleDataValue;
 };
 
 export type ProcessScheduleDeliverRequestFrame = {
