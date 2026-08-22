@@ -1,4 +1,19 @@
 import { readFile } from "node:fs/promises";
+import Ajv from "ajv";
+
+const ajv = new Ajv();
+const isTelegramMe = ajv.compile({
+  type: "object",
+  properties: { username: { type: "string", minLength: 1 } },
+  required: ["username"],
+  additionalProperties: true,
+});
+const isTelegramWebhookInfo = ajv.compile({
+  type: "object",
+  properties: { url: { type: "string" } },
+  required: ["url"],
+  additionalProperties: true,
+});
 
 const args = process.argv.slice(2);
 const url = option("--url");
@@ -26,7 +41,10 @@ if (!/^[A-Za-z0-9_-]{16,256}$/.test(webhookSecret)) {
 }
 
 const me = await telegram("getMe");
-const actualUsername = typeof me.username === "string" ? me.username : "";
+if (!isTelegramMe(me)) {
+  throw new Error("Telegram getMe returned an invalid bot identity");
+}
+const actualUsername = me.username;
 if (!actualUsername || (expectedUsername && actualUsername !== expectedUsername)) {
   throw new Error("Managed Telegram bot identity does not match configuration");
 }
@@ -38,6 +56,9 @@ await telegram("setWebhook", {
   drop_pending_updates: false,
 });
 const webhook = await telegram("getWebhookInfo");
+if (!isTelegramWebhookInfo(webhook)) {
+  throw new Error("Telegram getWebhookInfo returned an invalid result");
+}
 if (webhook.url !== url) {
   throw new Error("Telegram did not retain the managed webhook URL");
 }
