@@ -2,6 +2,9 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+SERVICES_ROOT="${GSV_MANAGED_SERVICES_ROOT:?Set GSV_MANAGED_SERVICES_ROOT to a directory containing accounts/ and inference/ service implementations}"
+ACCOUNTS_DIR="$SERVICES_ROOT/accounts"
+INFERENCE_DIR="$SERVICES_ROOT/inference"
 OUTPUT_DIR="$(mktemp -d "${TMPDIR:-/tmp}/gsv-managed-check.XXXXXX")"
 
 cleanup() {
@@ -10,11 +13,11 @@ cleanup() {
 trap cleanup EXIT
 
 run_wrangler() {
-  local component="$1"
+  local component_dir="$1"
   local config="$2"
   local output="$3"
   (
-    cd "$ROOT_DIR/$component"
+    cd "$component_dir"
     npm exec --workspaces=false -- wrangler deploy \
       --config "$config" \
       --minify \
@@ -24,12 +27,12 @@ run_wrangler() {
 }
 
 generate_types() {
-  local component="$1"
+  local component_dir="$1"
   local config="$2"
   local output="$3"
   local interface_name="$4"
   (
-    cd "$ROOT_DIR/$component"
+    cd "$component_dir"
     npm exec --workspaces=false -- wrangler types \
       "$OUTPUT_DIR/$output.d.ts" \
       --config "$config" \
@@ -51,24 +54,24 @@ fi
 
 npm run gsv:check --prefix "$ROOT_DIR"
 npm run build --workspace web --prefix "$ROOT_DIR"
-npm run typecheck --workspace gsv-accounts --prefix "$ROOT_DIR"
-npm run typecheck --workspace gsv-inference --prefix "$ROOT_DIR"
+npm run typecheck --prefix "$ACCOUNTS_DIR"
+npm run typecheck --prefix "$INFERENCE_DIR"
 npm exec --workspace gateway -- tsc --noEmit
 npm run check --prefix "$ROOT_DIR/adapters/email" --workspaces=false
 npm run typecheck --prefix "$ROOT_DIR/adapters/telegram" --workspaces=false
 npm run test:managed --prefix "$ROOT_DIR/adapters/telegram" --workspaces=false
 
-generate_types "accounts" "wrangler.jsonc" "accounts" "ManagedAccountsEnv"
-generate_types "inference" "wrangler.jsonc" "inference" "ManagedInferenceEnv"
-generate_types "gateway" "wrangler.managed.jsonc" "gateway" "ManagedGatewayEnv"
-generate_types "adapters/email" "wrangler.jsonc" "email" "ManagedEmailEnv"
-generate_types "adapters/telegram" "wrangler.managed.jsonc" "telegram" "ManagedTelegramEnv"
+generate_types "$ACCOUNTS_DIR" "wrangler.jsonc" "accounts" "ManagedAccountsEnv"
+generate_types "$INFERENCE_DIR" "wrangler.jsonc" "inference" "ManagedInferenceEnv"
+generate_types "$ROOT_DIR/gateway" "wrangler.managed.jsonc" "gateway" "ManagedGatewayEnv"
+generate_types "$ROOT_DIR/adapters/email" "wrangler.jsonc" "email" "ManagedEmailEnv"
+generate_types "$ROOT_DIR/adapters/telegram" "wrangler.managed.jsonc" "telegram" "ManagedTelegramEnv"
 
-run_wrangler "accounts" "wrangler.jsonc" "accounts"
-run_wrangler "inference" "wrangler.jsonc" "inference"
-run_wrangler "ripgit" "wrangler.managed.jsonc" "ripgit"
-run_wrangler "gateway" "wrangler.managed.jsonc" "gateway"
-run_wrangler "adapters/email" "wrangler.jsonc" "email"
-run_wrangler "adapters/telegram" "wrangler.managed.jsonc" "telegram"
+run_wrangler "$ACCOUNTS_DIR" "wrangler.jsonc" "accounts"
+run_wrangler "$INFERENCE_DIR" "wrangler.jsonc" "inference"
+run_wrangler "$ROOT_DIR/ripgit" "wrangler.managed.jsonc" "ripgit"
+run_wrangler "$ROOT_DIR/gateway" "wrangler.managed.jsonc" "gateway"
+run_wrangler "$ROOT_DIR/adapters/email" "wrangler.jsonc" "email"
+run_wrangler "$ROOT_DIR/adapters/telegram" "wrangler.managed.jsonc" "telegram"
 
 echo "Managed production configs and Worker bundles are valid."

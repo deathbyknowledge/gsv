@@ -2,8 +2,9 @@
 
 GSV separates its public runtime from optional services supplied by a deployment
 operator. The stable Worker RPC contracts live under
-`packages/gsv/src/services/`. Implementations may live in this repository, in a
-private platform repository, or in an independently operated deployment.
+`packages/gsv/src/services/`. Implementations live with their deployment
+operator. The public repository contains contracts, consumers, and contract
+fixtures rather than one platform's account, billing, or funded-provider code.
 
 The current contracts are:
 
@@ -28,14 +29,17 @@ use user-configured model providers and any adapter Workers selected by its
 operator.
 
 A managed deployment supplies implementations of the applicable contracts and
-binds them to the public Gateway. Humans & Machines keeps its account directory,
-billing policy, provider credentials, funded-inference economics, managed email
-policy, and shared-adapter control plane in its private infrastructure. Those
-implementations are not required to build or develop the public runtime.
+binds them to the public Gateway. An operator may keep its account directory,
+billing policy, provider credentials, funded-inference economics, and
+managed-service policy private. Those implementations are not required to build
+or develop the public runtime.
 
 Local managed development composes the public repository with development
 implementations of these interfaces. A different operator can provide its own
-services without forking the Kernel contract.
+services without forking the Kernel contract. Set
+`GSV_MANAGED_SERVICES_ROOT` to a directory containing `accounts/` and
+`inference/` implementations when using the included managed development and
+validation composition scripts.
 
 ## Entitlements
 

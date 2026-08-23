@@ -3,10 +3,8 @@
   "version": "0.4.1",
   "private": true,
   "workspaces": [
-    "accounts",
     "extension",
     "gateway",
-    "inference",
     "web",
     "packages/*"
   ],
@@ -16,7 +14,6 @@
     "dev": "bash ./scripts/dev-stack.sh",
     "dev:managed": "bash ./scripts/dev-managed-stack.sh",
     "managed:check": "bash ./scripts/check-managed-deployment.sh",
-    "managed:deploy": "bash ./scripts/deploy-managed-stack.sh",
     "lint": "oxlint . --deny-warnings --report-unused-disable-directives",
     "lint:fix": "oxlint . --deny-warnings --report-unused-disable-directives --fix",
     "protocol:generate": "node ./tools/protocol/generate-gateway-wire-validator.mjs",

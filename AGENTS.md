@@ -68,8 +68,7 @@ Canonical user-facing conversations are not Process histories. Conversations ret
 
 ## System ownership
 
-- `accounts/`: installation reservations, hostname directory, private operator administration, one-time onboarding claims, managed principals, and account-to-installation membership.
-- `inference/`: private managed inference entrypoint, platform-owned provider transport, per-installation budgets, and usage settlement.
+- `packages/gsv/src/services/`: public Worker RPC contracts for installation directories, onboarding, entitlements, funded inference, mail, and adapters. Managed implementations belong to the deployment operator.
 - `gateway/src/kernel/`: authentication, capabilities, syscall dispatch, configuration, process registry, routing, schedules, adapters, and user connections.
 - `gateway/src/process/`: agent loop, history, queued input, pending tools, approvals, cancellation, context assembly, and process-scoped media.
 - `gateway/src/conversation/`: canonical user-visible message history, immutable resource references, hot SQLite retention, and immutable R2 archive segments.
@@ -125,8 +124,6 @@ Keep platform-specific identity and delivery behavior in its adapter. Keep visua
 
 Durable Object SQLite and managed D1 schemas use versioned migrations in:
 
-- `accounts/migrations/`
-- `inference/src/schema/`
 - `gateway/src/kernel/schema/`
 - `gateway/src/process/schema/`
 - `gateway/src/schema/runner.ts`
@@ -161,8 +158,6 @@ Preserve unrelated user changes in a dirty worktree. Do not broaden a cleanup ba
 
 ```text
 gsv/
-├── accounts/       # Managed accounts and installation directory
-├── inference/      # Private managed inference worker
 ├── gateway/       # Kernel, Process, syscalls, inference, filesystem
 ├── packages/gsv/  # Public TypeScript client and protocol
 ├── web/           # Desktop shell and embedded app host
@@ -170,7 +165,7 @@ gsv/
 │   ├── apps/      # Rust CLI, Desktop, and machine applications
 │   ├── helpers/   # Isolated transcription and gesture processes
 │   └── crates/    # Shared host transport, configuration, and IPC contracts
-├── adapters/      # WhatsApp, Discord, Telegram, and test channels
+├── adapters/      # External-platform Worker implementations and test channel
 ├── extension/     # Browser target
 ├── ripgit/        # Git-backed repository worker
 ├── engineering/   # Detailed implementation and product guidance
@@ -195,8 +190,7 @@ npm run dev
 
 Validate only the surfaces affected by the change:
 
-- Managed accounts: `cd accounts && npm run typecheck && npm test`
-- Managed inference: `cd inference && npm run typecheck && npm test`
+- Managed service implementations: validate them in their owning deployment repository against `packages/gsv/src/services/`
 - Gateway: `cd gateway && npx tsc --noEmit && npm run test:run`
 - Web: `cd web && npm run check && npm run test:run && npm run build`
 - Desktop and transcription helper: `cd host && cargo fmt --package desktop --package transcriber --check && cargo test --package desktop --package transcriber && cargo clippy --package desktop --package transcriber --all-targets -- -D warnings`
@@ -213,7 +207,6 @@ Protocol or client changes may affect gateway, web, CLI, devices, and adapters e
 
 ## Deployment model
 
-- Managed accounts: apply its D1 migrations, then `cd accounts && npm run deploy`.
 - Gateway code: `cd gateway && npm run deploy`
 - Web code: build `web`, then deploy the gateway that serves the resulting assets.
 - Adapter code: deploy the affected adapter worker.

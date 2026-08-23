@@ -87,7 +87,7 @@ GSV uses Linux as a design model (not POSIX, though). Familiar, composable primi
 - **Processes** — agents are durable processes with PIDs, histories, permissions, pending work, and subprocesses (`gsv proc list|spawn|send|kill`).
 - **Targets** — the cloud runtime and connected devices implement the same targetable filesystem, shell, and network contracts. The browser extension exposes the browser through the same filesystem and shell shape. Changing the target changes where work runs, not what the syscall means.
 - **Agent tools** — models see a deliberately small surface: Read, Write, Edit, Delete, Search, Shell, and CodeMode. Devices and integrations extend the system underneath those tools instead of making the tool list grow forever.
-- **Messengers** — Discord, Telegram, and WhatsApp workers translate external chat platforms into stable GSV identities and process messages.
+- **Adapters** — independently deployed Workers translate external services into stable GSV actors, surfaces, and messages. The repository bundles several implementations, while the `AdapterService` contract remains open to new providers.
 
 ## Development
 
@@ -95,14 +95,14 @@ GSV uses Linux as a design model (not POSIX, though). Familiar, composable primi
 ./scripts/setup-deps.sh        # install workspace and worker dependencies
 npm run build --workspace web  # build assets served by the gateway
 npm run dev                    # start the local multi-worker stack
-npm run dev:managed            # start the local managed stack
+GSV_MANAGED_SERVICES_ROOT=/path/to/services npm run dev:managed
 ```
 
-The managed stack starts the accounts directory, Gateway, inference broker, and
-ripgit on `http://localhost:8976`. Open `http://localhost:8976/admin`, create an
-installation, and follow the one-time onboarding link. Local development uses
-the real private admin and Kernel-owned setup flow; only the admin access
-boundary changes from Cloudflare Access to exact loopback access.
+The public repository does not ship a platform operator's Accounts or funded
+Inference implementation. Supplying compatible `accounts/` and `inference/`
+packages starts those services with the Gateway and ripgit on
+`http://localhost:8976`. See [service contracts](docs/architecture/services.md)
+for the required boundaries.
 
 Requires [Rust](https://rustup.rs) and Node.js 22 or newer with
 [npm](https://nodejs.org).

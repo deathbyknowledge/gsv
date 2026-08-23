@@ -226,7 +226,9 @@ export function createManagedGatewayTestHarness(): TestHarness {
   });
 }
 
-export function createManagedInferenceStackTestHarness(): TestHarness {
+export function createManagedInferenceServiceStackTestHarness(
+  serviceConfigs: { accounts: string; inference: string },
+): TestHarness {
   const gatewayService = "gsv-managed-inference-stack";
   return createTestHarness({
     root: GATEWAY_ROOT,
@@ -245,7 +247,7 @@ export function createManagedInferenceStackTestHarness(): TestHarness {
         config: integrationDependencyConfig(gatewayService),
       },
       {
-        configPath: resolve(GATEWAY_ROOT, "../accounts/wrangler.test.jsonc"),
+        configPath: serviceConfigs.accounts,
         vars: {
           ENVIRONMENT: "development",
           GSV_ACCOUNT_ORIGIN: "http://localhost",
@@ -253,14 +255,16 @@ export function createManagedInferenceStackTestHarness(): TestHarness {
         },
       },
       {
-        configPath: resolve(GATEWAY_ROOT, "../inference/wrangler.test.jsonc"),
+        configPath: serviceConfigs.inference,
         bindingOverrides: { ACCOUNTS: ACCOUNTS_WORKER },
       },
     ],
   });
 }
 
-export function createManagedMailStackTestHarness(): TestHarness {
+export function createManagedMailServiceStackTestHarness(
+  serviceConfigs: { accounts: string; inference: string },
+): TestHarness {
   const gatewayService = "gsv-managed-mail-stack";
   const queue = "gsv-managed-mail-outbound-stack";
   return createTestHarness({
@@ -281,7 +285,7 @@ export function createManagedMailStackTestHarness(): TestHarness {
         config: integrationDependencyConfig(gatewayService),
       },
       {
-        configPath: resolve(GATEWAY_ROOT, "../accounts/wrangler.test.jsonc"),
+        configPath: serviceConfigs.accounts,
         vars: {
           ENVIRONMENT: "development",
           GSV_ACCOUNT_ORIGIN: "http://localhost",
@@ -289,7 +293,7 @@ export function createManagedMailStackTestHarness(): TestHarness {
         },
       },
       {
-        configPath: resolve(GATEWAY_ROOT, "../inference/wrangler.test.jsonc"),
+        configPath: serviceConfigs.inference,
         bindingOverrides: { ACCOUNTS: ACCOUNTS_WORKER },
       },
       {
