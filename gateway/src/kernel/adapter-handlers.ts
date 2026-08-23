@@ -43,6 +43,7 @@ import type {
   AdapterWorkerSendResult,
   BinaryBody,
   ProcMediaInput,
+  ResourceBlock,
   ProcessIdentity,
   ConversationMessageOrigin,
   JsonObject,
@@ -67,6 +68,7 @@ import type {
   ProcessAdapterDeliverResponseFrame,
   ProcessRuntimeEventDeliverRequestFrame,
   ProcessRuntimeEventDeliverResponseFrame,
+  ProcessResourceWriteRequestFrame,
 } from "../protocol/process-frames";
 import { getConversationById, sendFrameToProcess } from "../shared/utils";
 import type { ConversationAppendRequest } from "../conversation/do";
@@ -153,7 +155,7 @@ type AdapterIngressProcessRecovery = {
   uid: number;
   pid: string;
   runId: string;
-  media: ProcMediaInput[];
+  media: Array<ResourceBlock | ProcMediaInput>;
   origin: Extract<InteractionOrigin, { kind: "adapter" }>;
   conversationId?: string;
   inputMessageId?: string;
@@ -234,6 +236,22 @@ const procMediaInputSchema = z.object({
   duration: z.optional(z.number()),
   transcription: z.optional(z.string()),
 });
+const resourceBlockRecoverySchema = z.object({
+  type: z.literal("resource"),
+  ref: z.object({
+    type: z.literal("file"),
+    target: z.string(),
+    path: z.string(),
+    revision: z.string(),
+    contentType: z.string(),
+    size: z.number().check(z.int(), z.nonnegative()),
+    expiresAt: z.optional(z.number().check(z.int(), z.nonnegative())),
+  }),
+  mediaType: z.optional(z.enum(["image", "audio", "video", "document"])),
+  filename: z.optional(z.string()),
+  duration: z.optional(z.number()),
+  transcription: z.optional(z.string()),
+});
 const adapterInteractionOriginSchema = z.object({
   kind: z.literal("adapter"),
   adapter: z.string(),
@@ -256,7 +274,7 @@ const adapterIngressRecoverySchema = z.discriminatedUnion("kind", [
     uid: z.number().check(z.int(), z.nonnegative()),
     pid: z.string(),
     runId: z.string(),
-    media: z.array(procMediaInputSchema),
+    media: z.array(z.union([resourceBlockRecoverySchema, procMediaInputSchema])),
     origin: adapterInteractionOriginSchema,
     conversationId: z.optional(z.string()),
     inputMessageId: z.optional(z.string()),
@@ -1837,18 +1855,15 @@ async function deliverAdapterInboundToProcess(input: {
   const data = response.data;
   if (!data.ok) {
     ctx.runRoutes.delete(runId);
-    await rollbackAdapterMedia(ctx.installationId, pid, media);
     return { ok: false, error: data.error };
   }
   const queued = data.queued === true;
   if (data.runId !== runId) {
     ctx.runRoutes.delete(runId);
-    await rollbackAdapterMedia(ctx.installationId, pid, media);
     return { ok: false, error: "proc.adapter.deliver admitted an unexpected run" };
   }
   if (data.replayed === "recorded") {
     ctx.runRoutes.delete(runId);
-    await rollbackAdapterMedia(ctx.installationId, pid, media);
   }
 
   return {
@@ -1966,29 +1981,26 @@ async function storeAdapterInboundMedia(
   media: AdapterInboundMessage["media"],
   body: BinaryBody | undefined,
   signal?: AbortSignal,
-): Promise<ProcMediaInput[] | undefined> {
+): Promise<ResourceBlock[] | undefined> {
   validateAdapterMediaItems(media, "inbound");
-  const stored: ProcMediaInput[] = [];
-  try {
-    await consumeAdapterMediaBodyParts(media, body, async ({
+  const stored: ResourceBlock[] = [];
+  await consumeAdapterMediaBodyParts(media, body, async ({
       mediaIndex,
       media: item,
       body: partBody,
     }) => {
-      const mediaArgs: RequestFrame<"proc.media.write">["args"] = {
-        pid,
-        type: item.type,
-        mimeType: item.mimeType,
-        mediaId: `${runId}:${mediaIndex}`,
-      };
-      if (item.filename) mediaArgs.filename = item.filename;
-      if (item.duration !== undefined) mediaArgs.duration = item.duration;
-      if (item.transcription) mediaArgs.transcription = item.transcription;
-      const request: RequestFrame<"proc.media.write"> = {
+      const request: ProcessResourceWriteRequestFrame = {
         type: "req",
         id: crypto.randomUUID(),
-        call: "proc.media.write",
-        args: mediaArgs,
+        call: "proc.resource.write",
+        args: {
+          resourceId: `${runId}:${mediaIndex}`,
+          mediaType: item.type,
+          contentType: item.mimeType,
+          filename: item.filename,
+          duration: item.duration,
+          transcription: item.transcription,
+        },
         body: partBody,
       };
       const response = await sendFrameToProcess(installationId, pid, request);
@@ -1997,20 +2009,12 @@ async function storeAdapterInboundMedia(
           ? response.error.message
           : "No response while storing adapter media");
       }
-      const result = response.data;
-      if (!result?.ok) {
-        throw new Error(result?.error || "Failed to store adapter media");
-      }
-      stored.push(result.media);
+      stored.push(response.data.resource);
     }, {
       maxBytes: MAX_MESSAGE_MEDIA_TOTAL_BYTES,
       maxPartBytes: MAX_MESSAGE_MEDIA_PART_BYTES,
       signal,
     });
-  } catch (error) {
-    await rollbackAdapterMedia(installationId, pid, stored);
-    throw error;
-  }
   return stored.length > 0 ? stored : undefined;
 }
 
@@ -2060,23 +2064,6 @@ function validateAdapterMediaItems(
       }
     }
   }
-}
-
-async function rollbackAdapterMedia(
-  installationId: KernelContext["installationId"],
-  pid: string,
-  media: ProcMediaInput[] | undefined,
-): Promise<void> {
-  const deletions = (media ?? []).flatMap(({ key }) => {
-    if (!key) return [];
-    return [sendFrameToProcess(installationId, pid, {
-      type: "req",
-      id: crypto.randomUUID(),
-      call: "proc.media.delete",
-      args: { pid, key },
-    })];
-  });
-  await Promise.allSettled(deletions);
 }
 
 export function handleAdapterStateUpdate(

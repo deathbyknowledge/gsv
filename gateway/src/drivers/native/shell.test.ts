@@ -3599,34 +3599,12 @@ describe("native administration shell commands", () => {
 
   it("stages files for the active run's terminal Message", async () => {
     const ctx = makeContext({
-      capabilities: ["shell.exec", "proc.media.write", "fs.write"],
+      capabilities: ["shell.exec", "fs.read", "fs.write"],
       processRunId: "run-native-file",
     });
     await handleFsWrite({ path: "/tmp/final.png", content: "PNG" }, ctx);
-    let stagedBytes: Uint8Array | undefined;
-    let stagedKey = "";
     sendFrameToProcessMock.mockImplementation(async (_installationId, _pid, frame) => {
       if (frame.type !== "req") return null;
-      if (frame.call === "proc.media.write") {
-        stagedBytes = frame.body ? await bodyToBytes(frame.body) : undefined;
-        stagedKey = `var/media/1000/task:shell/${frame.args.mediaId}`;
-        return responseFixture({
-          type: "res",
-          id: frame.id,
-          ok: true,
-          data: {
-            ok: true,
-            media: {
-              type: "image",
-              mimeType: "image/png",
-              filename: "final.png",
-              key: stagedKey,
-              path: `/${stagedKey}`,
-              size: 3,
-            },
-          },
-        });
-      }
       if (frame.call === "proc.run.attach") {
         return responseFixture({
           type: "res",
@@ -3643,7 +3621,6 @@ describe("native administration shell commands", () => {
     expect(result).toMatchObject({ status: "completed", exitCode: 0 });
     expect(result.stdout).toContain("attached=true");
     expect(result.stdout).toContain("run_id=run-native-file");
-    expect(stagedBytes && [...stagedBytes]).toEqual([80, 78, 71]);
     expect(sendFrameToProcessMock).toHaveBeenLastCalledWith(
       TEST_INSTALLATION_ID,
       "task:shell",
@@ -3651,55 +3628,35 @@ describe("native administration shell commands", () => {
         call: "proc.run.attach",
         args: expect.objectContaining({
           runId: "run-native-file",
-          stagedKeys: [stagedKey],
+          media: [expect.objectContaining({
+            type: "resource",
+            ref: expect.objectContaining({
+              target: "gsv",
+              path: "/tmp/final.png",
+              contentType: "image/png",
+              size: 3,
+              revision: expect.any(String),
+            }),
+          })],
         }),
       }),
     );
   });
 
-  it("removes staged reply media when active-run registration fails", async () => {
+  it("leaves the source file intact when active-run registration fails", async () => {
     const ctx = makeContext({
-      capabilities: ["shell.exec", "proc.media.write", "fs.write"],
+      capabilities: ["shell.exec", "fs.read", "fs.write"],
       processRunId: "run-ended",
     });
     await handleFsWrite({ path: "/tmp/late.pdf", content: "PDF" }, ctx);
-    let key = "";
     sendFrameToProcessMock.mockImplementation(async (_installationId, _pid, frame) => {
       if (frame.type !== "req") return null;
-      if (frame.call === "proc.media.write") {
-        await frame.body?.stream.cancel("test does not need the bytes");
-        key = `var/media/1000/task:shell/${frame.args.mediaId}`;
-        return responseFixture({
-          type: "res",
-          id: frame.id,
-          ok: true,
-          data: {
-            ok: true,
-            media: {
-              type: "document",
-              mimeType: "application/pdf",
-              filename: "late.pdf",
-              key,
-              path: `/${key}`,
-              size: 3,
-            },
-          },
-        });
-      }
       if (frame.call === "proc.run.attach") {
         return responseFixture({
           type: "res",
           id: frame.id,
           ok: true,
           data: { ok: false, error: "the process run is no longer active" },
-        });
-      }
-      if (frame.call === "proc.media.delete") {
-        return responseFixture({
-          type: "res",
-          id: frame.id,
-          ok: true,
-          data: { ok: true, key },
         });
       }
       return null;
@@ -3709,11 +3666,9 @@ describe("native administration shell commands", () => {
 
     expect(result.status).toBe("failed");
     expect(result.stderr).toContain("run is no longer active");
-    expect(sendFrameToProcessMock).toHaveBeenCalledWith(
-      TEST_INSTALLATION_ID,
-      "task:shell",
-      expect.objectContaining({ call: "proc.media.delete", args: { pid: "task:shell", key } }),
-    );
+    const source = await handleFsTransferSend({ path: "/tmp/late.pdf" }, ctx);
+    expect(source.data).toMatchObject({ ok: true, path: "/tmp/late.pdf", size: 3 });
+    await source.body?.stream.cancel();
   });
 
   it("captures the current adapter reply destination in a --here schedule", async () => {

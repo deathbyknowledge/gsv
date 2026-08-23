@@ -465,121 +465,6 @@ describe("Kernel frame bodies", () => {
     expect(sends).toHaveLength(1);
   });
 
-  it("cancels a request body forwarded to a process", async () => {
-    let reading!: () => void;
-    const readStarted = new Promise<void>((resolve) => {
-      reading = resolve;
-    });
-    let forwardedError: KernelTestValue;
-    sendFrameToProcessMock.mockImplementationOnce(async (_installationId, _pid, frame) => {
-      const reader = frame.body!.stream.getReader();
-      reading();
-      try {
-        await reader.read();
-      } catch (error) {
-        forwardedError = error;
-        throw error;
-      } finally {
-        reader.releaseLock();
-      }
-      return null;
-    });
-    let sourceCancellation: KernelTestValue;
-    const body = new ReadableStream<Uint8Array>({
-      pull() {},
-      cancel(reason) {
-        sourceCancellation = reason;
-      },
-    }, { highWaterMark: 0 });
-    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
-    const kernel = Object.create(Kernel.prototype) as any;
-    kernel.activeRequests = new Map();
-    kernel.cancelledProcessRequests = new Map();
-    kernel.routes = { get: () => null };
-    kernel.buildProcessContext = () => ({
-      callerOwnerUid: 0,
-      identity: {
-        role: "user",
-        process: {
-          uid: 0,
-          gid: 0,
-          gids: [0],
-          username: "root",
-          home: "/root",
-          cwd: "/root",
-        },
-        capabilities: ["*"],
-      },
-      procs: {
-        get: () => ({ ownerUid: 0 }),
-      },
-    });
-    kernel.buildDispatchDeps = () => ({});
-    kernel.applyPostDispatchEffects = vi.fn();
-    const request = kernel.handleProcessReq("source-process", {
-      type: "req",
-      id: "media-upload",
-      call: "proc.media.write",
-      args: {
-        pid: "target-process",
-        type: "image",
-        mimeType: "image/png",
-      },
-      body: { stream: body, length: 1 },
-    });
-    await Promise.race([
-      readStarted,
-      new Promise<never>((_resolve, reject) => {
-        setTimeout(() => reject(new Error("forwarded body was not read")), 500);
-      }),
-    ]);
-
-    expect(kernel.cancelProcessRequests(
-      "source-process",
-      ["media-upload"],
-      "User interrupted upload",
-    )).toBe(1);
-
-    await expect(Promise.race([
-      request,
-      new Promise<never>((_resolve, reject) => {
-        setTimeout(() => reject(new Error("forwarded body did not cancel")), 500);
-      }),
-    ])).resolves.toMatchObject({
-      ok: false,
-      error: { message: "User interrupted upload" },
-    });
-    expect(forwardedError).toEqual(new Error("User interrupted upload"));
-    expect(sourceCancellation).toEqual(new Error("User interrupted upload"));
-
-    let ignoredCancellation: KernelTestValue;
-    sendFrameToProcessMock.mockResolvedValueOnce({
-      type: "res",
-      id: "ignored-upload",
-      ok: true,
-      data: { ok: true },
-    });
-    await kernel.recvFrame("source-process", {
-      type: "req",
-      id: "ignored-upload",
-      call: "proc.media.write",
-      args: {
-        pid: "target-process",
-        type: "image",
-        mimeType: "image/png",
-      },
-      body: {
-        stream: new ReadableStream<Uint8Array>({
-          cancel(reason) {
-            ignoredCancellation = reason;
-          },
-        }),
-        length: 1,
-      },
-    });
-
-    expect(ignoredCancellation).toBe("Process request completed");
-  });
 });
 
 describe("Kernel nested dispatch", () => {
@@ -2154,7 +2039,7 @@ describe("Kernel adapter route replies", () => {
     );
   });
 
-  it("streams immutable conversation-owned message media through the adapter body", async () => {
+  it("streams legacy conversation-owned media through the adapter body", async () => {
     let deliveredBytes: Uint8Array | undefined;
     const adapterSend = vi.fn(async (
       _accountId: string,
@@ -2195,7 +2080,7 @@ describe("Kernel adapter route replies", () => {
       key,
       conversationId: "conv:home",
       size: 3,
-    }]);
+    }], 1001);
 
     await kernel.deliverAdapterRouteReply(route, {
       deliveryId: "run-adapter-reply:finished",
@@ -2220,6 +2105,72 @@ describe("Kernel adapter route replies", () => {
     );
   });
 
+  it("streams a retained resource after its originating Process is gone", async () => {
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+    const kernel = Object.create(Kernel.prototype) as any;
+    const key = `home/sam/.gsv/media/archived-media:${"a".repeat(64)}`;
+    const revision = '"archive-revision"';
+    kernel.installationId = TEST_INSTALLATION_ID;
+    kernel.auth = {
+      getPasswdByUid: vi.fn(() => ({
+        uid: 1001,
+        gid: 1001,
+        username: "sam",
+        home: "/home/sam",
+      })),
+    };
+    kernel.installationStorage = {
+      get: vi.fn(async () => ({
+        body: new ReadableStream<Uint8Array>({
+          start(controller) {
+            controller.enqueue(new Uint8Array([4, 5, 6]));
+            controller.close();
+          },
+        }),
+        httpEtag: revision,
+        size: 3,
+        httpMetadata: { contentType: "image/png" },
+        customMetadata: {
+          purpose: "resource",
+          uid: "1001",
+          gid: "1001",
+          mode: "400",
+          sourceEtag: '"source-revision"',
+          sourceContentType: "image/png",
+        },
+      })),
+    };
+
+    const bundle = await kernel.bundleConversationReplyMedia("conv:home", [{
+      type: "resource",
+      ref: {
+        type: "file",
+        target: "gsv",
+        path: `/${key}`,
+        revision,
+        contentType: "image/png",
+        size: 3,
+      },
+      mediaType: "image",
+      filename: "hand.png",
+    }], 1001);
+
+    expect(bundle.media).toEqual([{
+      type: "image",
+      mimeType: "image/png",
+      filename: "hand.png",
+      size: 3,
+      body: { offset: 0, length: 3 },
+    }]);
+    const body = bundle.body;
+    expect(body).toBeDefined();
+    if (!body) throw new Error("Expected bundled resource body");
+    expect([
+      ...new Uint8Array(await new Response(body.stream).arrayBuffer()),
+    ]).toEqual([4, 5, 6]);
+    expect(kernel.procs).toBeUndefined();
+  });
+
   it("rejects message media whose descriptor differs from its conversation object", async () => {
     // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     const kernel = Object.create(Kernel.prototype) as any;
@@ -2242,7 +2193,7 @@ describe("Kernel adapter route replies", () => {
       key,
       conversationId: "conv:home",
       size: 3,
-    }])).rejects.toThrow("descriptor does not match");
+    }], 1001)).rejects.toThrow("descriptor does not match");
     expect(cancel).toHaveBeenCalledOnce();
   });
 });

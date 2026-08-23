@@ -3,7 +3,7 @@ import type {
   ConversationMessage,
   ConversationMessageAuthor,
   ConversationMessageOrigin,
-  ProcMediaInput,
+  MessageAttachment,
 } from "@humansandmachines/gsv/protocol";
 
 type MetaRow = {
@@ -31,7 +31,7 @@ export type ConversationAppendInput = {
   idempotencyKey: string;
   author: ConversationMessageAuthor;
   text: string;
-  media?: ProcMediaInput[];
+  media?: MessageAttachment[];
   origin: ConversationMessageOrigin;
   processId?: string;
   runId?: string;
@@ -302,8 +302,8 @@ function toMessage(conversationId: string, row: MessageRow): ConversationMessage
     createdAt: row.created_at,
   };
   if (row.media_json) {
-    // SAFETY: persisted media_json is written only from ProcMediaInput arrays.
-    message.media = JSON.parse(row.media_json) as ProcMediaInput[];
+    // SAFETY: persisted media_json is written only from MessageAttachment arrays.
+    message.media = JSON.parse(row.media_json) as MessageAttachment[];
   }
   if (row.process_id) message.processId = row.process_id;
   if (row.run_id) message.runId = row.run_id;

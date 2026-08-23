@@ -18,9 +18,6 @@ import type {
   ProcHistoryResult,
   ProcHilRequest,
   ProcListEntry,
-  ProcMediaInput,
-  ProcMediaWriteArgs,
-  ProcSendArgs,
 } from "@humansandmachines/gsv/protocol";
 import { normalizeHilRequest } from "./hil";
 import { z } from "zod";
@@ -79,13 +76,17 @@ export type ChatSendDraft = {
   media?: ChatMediaUpload[];
 };
 
-export type ChatMediaUpload = Omit<ProcMediaWriteArgs, "pid"> & {
+export type ChatMediaUpload = {
+  type: "image" | "audio" | "video" | "document";
+  mimeType: string;
+  filename?: string;
+  duration?: number;
+  transcription?: string;
   body: Blob;
 };
 
 export const MAX_CHAT_PROCESS_MEDIA_BYTES = 25 * 1024 * 1024;
 
-export type ChatSendPayload = ProcSendArgs;
 export type ChatHilDecision = ProcHilDecision;
 export type ChatHilDecisionArgs = ProcHilArgs;
 export type ChatHilDecisionResult = Extract<ProcHilResult, { ok: true }>;
@@ -112,11 +113,6 @@ const historyValueSchema: z.ZodType<HistoryValue> = z.lazy(() => z.union([
   z.record(z.string(), historyValueSchema),
 ]));
 const historyRecordSchema = z.record(z.string(), historyValueSchema);
-
-function cleanOptionalString(value: string | undefined): string | undefined {
-  const normalized = value?.trim();
-  return normalized ? normalized : undefined;
-}
 
 function stringifyMessageContent(value: HistoryValue): string {
   try {
@@ -290,20 +286,6 @@ export function normalizeHistory(result: Extract<ProcHistoryResult, { ok: true }
     }),
     pendingHil,
     context: result.context ?? null,
-  };
-}
-
-export function normalizeSendPayload(
-  draft: Omit<ChatSendDraft, "media"> & { media?: ProcMediaInput[] },
-): ChatSendPayload {
-  const message = draft.message.trim();
-  const pid = cleanOptionalString(draft.pid);
-  const media = draft.media?.filter(Boolean);
-
-  return {
-    message,
-    ...(pid ? { pid } : undefined),
-    ...(media && media.length > 0 ? { media } : undefined),
   };
 }
 

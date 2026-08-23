@@ -4,7 +4,9 @@ use std::sync::Arc;
 
 use serde_json::Value;
 
-use crate::content::{MediaAttachment, MediaKind};
+use crate::content::MediaAttachment;
+#[cfg(test)]
+use crate::content::MediaKind;
 use crate::history::{
     HistoryActivity as PreparedHistoryActivity, HistoryActivityCategory, HistoryActivityUnit,
     HistoryApprovalPreview, HistoryMomentRole, HistoryPendingApproval, HistoryPreparationCandidate,

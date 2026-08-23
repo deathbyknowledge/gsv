@@ -84,6 +84,54 @@ describe("Conversation Durable Object", () => {
     expect([...new Uint8Array(await new Response(stored.stream).arrayBuffer())]).toEqual([1, 2, 3]);
   });
 
+  it("stores one immutable resource reference without copying its bytes", async () => {
+    const stub = conversation("resource");
+    await stub.initialize({ ownerUid: 1000, kind: "home" });
+    const suffix = crypto.randomUUID().replaceAll("-", "").repeat(2);
+    const key = `home/agent/.gsv/media/archived-media:${suffix}`;
+    await env.STORAGE.put(key, new Uint8Array([4, 5, 6]), {
+      httpMetadata: { contentType: "image/png" },
+      customMetadata: {
+        purpose: "resource",
+        uid: "1001",
+        gid: "1001",
+        mode: "400",
+        sourceEtag: "source-revision",
+        sourceContentType: "image/png",
+      },
+    });
+    const object = await env.STORAGE.head(key);
+    if (!object) throw new Error("resource fixture was not stored");
+    const resource = {
+      type: "resource" as const,
+      ref: {
+        type: "file" as const,
+        target: "gsv",
+        path: `/${key}`,
+        revision: object.httpEtag,
+        contentType: "image/png",
+        size: 3,
+      },
+      mediaType: "image" as const,
+      filename: "proof.png",
+    };
+
+    const appended = await stub.append({
+      ...message(1),
+      media: [resource],
+      mediaOwner: { pid: "proc:test", uid: 1001, gid: 1001, home: "/home/agent" },
+    });
+
+    expect(appended.message.media).toEqual([resource]);
+    const copies = await env.STORAGE.list({
+      prefix: `conversations/${encodeURIComponent(appended.message.conversationId)}/media/`,
+    });
+    expect(copies.objects).toHaveLength(0);
+    const retained = await env.STORAGE.get(key);
+    expect(retained && [...new Uint8Array(await retained.arrayBuffer())]).toEqual([4, 5, 6]);
+    await env.STORAGE.delete(key);
+  });
+
   it("cannot read a different conversation's media", async () => {
     const first = conversation("first-media");
     const second = conversation("second-media");

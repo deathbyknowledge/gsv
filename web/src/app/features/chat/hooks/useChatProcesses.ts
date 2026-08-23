@@ -9,9 +9,7 @@ import type {
   ProcHilArgs,
   ProcHistoryArgs,
   ProcListArgs,
-  ProcMediaReadArgs,
   ProcSpawnArgs,
-  ConversationMediaReadArgs,
   FileResourceReference,
 } from "@humansandmachines/gsv/protocol";
 import { useGateway } from "../../../services/gateway/GatewayProvider";
@@ -25,6 +23,7 @@ import {
   listChatHistorySegments,
   listChatProcesses,
   readChatProcessMedia,
+  type ChatStoredMediaReadArgs,
   readChatResource,
   readChatHistorySegment,
   sendChatMessage,
@@ -48,7 +47,7 @@ export const chatProcessHistoryQueryKey = (args: ProcHistoryArgs = {}) => [
 
 export const chatProcessHistoryQueryKeyRoot = ["process", "chat", "history"] as const;
 
-export const chatProcessMediaQueryKey = (args: ProcMediaReadArgs | ConversationMediaReadArgs) => [
+export const chatProcessMediaQueryKey = (args: ChatStoredMediaReadArgs) => [
   "process",
   "chat",
   "media",
@@ -98,7 +97,7 @@ type UseChatProcessHistoryOptions = ChatQueryOptions & {
 };
 
 type UseChatProcessMediaOptions = ChatQueryOptions & {
-  args: ProcMediaReadArgs | ConversationMediaReadArgs;
+  args: ChatStoredMediaReadArgs;
 };
 
 type UseChatResourceOptions = ChatQueryOptions & {

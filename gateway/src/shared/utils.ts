@@ -22,6 +22,9 @@ import type {
   ProcessMessageCommitRequestFrame,
   ProcessMessageCommitResponseFrame,
   ProcessMessageStreamSignal,
+  ProcessResourceResponseFrame,
+  ProcessResourceRetainRequestFrame,
+  ProcessResourceWriteRequestFrame,
 } from "../protocol/process-frames";
 import type { NetFetchArgs } from "@humansandmachines/gsv/protocol";
 import { SINGLETON_INSTALLATION_ID } from "../installation/identity";
@@ -149,6 +152,11 @@ export function sendFrameToProcess(
   pid: string,
   frame: ProcessRunAttachRequestFrame,
 ): Promise<ProcessRunAttachResponseFrame | null>;
+export function sendFrameToProcess(
+  installationId: string,
+  pid: string,
+  frame: ProcessResourceRetainRequestFrame | ProcessResourceWriteRequestFrame,
+): Promise<ProcessResourceResponseFrame | null>;
 export function sendFrameToProcess<S extends SyscallName>(
   installationId: string,
   pid: string,
@@ -169,6 +177,7 @@ export async function sendFrameToProcess(
   | ProcessScheduleDeliverResponseFrame
   | ProcessAdapterDeliverResponseFrame
   | ProcessRunAttachResponseFrame
+  | ProcessResourceResponseFrame
   | null
 > {
   const proc = await getProcessByPid(pid, installationId);

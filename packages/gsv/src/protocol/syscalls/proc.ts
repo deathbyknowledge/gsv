@@ -26,6 +26,9 @@ export type ProcMediaInput = {
   transcription?: string;
 };
 
+/** Legacy stored media descriptors remain readable while new messages use resources. */
+export type MessageAttachment = ResourceBlock | ProcMediaInput;
+
 export type ProcSpawnArgs = {
   /**
    * Account to run the process as a username or uid string. Defaults to the
@@ -71,7 +74,7 @@ export type ProcKillResult =
 export type ProcSendArgs = {
   pid?: string;
   message: string;
-  media?: ProcMediaInput[];
+  media?: ResourceBlock[];
   origin?: InteractionOrigin;
   interaction?: {
     conversationId: string;
@@ -405,43 +408,6 @@ export type ProcHistoryResult =
       pendingHil?: ProcHilRequest | null;
       context?: ProcContextState | null;
     }
-  | { ok: false; error: string };
-
-export type ProcMediaReadArgs = {
-  pid?: string;
-  key: string;
-};
-
-export type ProcMediaReadResult =
-  | {
-      ok: true;
-      key: string;
-      path: string;
-      mimeType: string;
-      size: number;
-    }
-  | { ok: false; error: string };
-
-export type ProcMediaWriteArgs = Omit<ProcMediaInput, "key" | "path" | "url" | "size"> & {
-  pid?: string;
-  /** Caller-preallocated idempotency key for a staged process media object. */
-  mediaId?: string;
-};
-
-export type ProcMediaWriteResult =
-  | {
-      ok: true;
-      media: ProcMediaInput & { key: string; path: string; size: number };
-    }
-  | { ok: false; error: string };
-
-export type ProcMediaDeleteArgs = {
-  pid?: string;
-  key: string;
-};
-
-export type ProcMediaDeleteResult =
-  | { ok: true; key: string }
   | { ok: false; error: string };
 
 export type ProcHistoryOverflowPolicy = "auto-compact" | "fail";

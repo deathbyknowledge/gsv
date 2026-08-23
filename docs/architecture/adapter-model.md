@@ -345,14 +345,13 @@ ranges in media-array order. The body is consumed sequentially with one owner;
 failure or cancellation cancels the remaining stream. Current Gateway limits
 are 20 items, 48 MiB per item, and 48 MiB total.
 
-Inbound bytes are staged under the owning process and exposed to the agent
-at a stable read-only `/var/media/{uid}/{pid}/{id}` path. The agent can inspect
-that path, copy it to a connected machine with target-aware `cp`, register it on
-the terminal Message with `message attach`, or attach it to a separate adapter
-message. A canonical Message copies attached media into conversation-owned R2,
-so it survives Process cleanup and every client consumes the same reference. A
-file on a connected machine can travel the other direction by copying it to GSV
-first and passing the local path to `message attach` or `message send --attach`.
+Inbound bytes stream through a private Process RPC into one immutable object in
+the run-as agent archive. The admitted message carries a revision-bound resource
+reference; model context, clients, and outbound adapters resolve that same
+reference lazily. A file on a connected machine can travel the other direction
+through `fs.transfer.send`; `message attach` retains the exact revision before
+the terminal Message is committed. No adapter or conversation layer makes an
+additional byte copy.
 
 ## Scheduled adapter delivery
 

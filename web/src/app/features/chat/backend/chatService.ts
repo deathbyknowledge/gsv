@@ -19,19 +19,16 @@ import type {
   ProcHistoryArgs,
   ProcHistoryResult,
   ProcListArgs,
-  ProcMediaInput,
-  ProcMediaReadArgs,
-  ProcMediaReadResult,
-  ProcMediaWriteResult,
-
   ProcSpawnArgs,
   ProcSpawnResult,
   ConversationForProcessResult,
   ConversationHistoryResult,
   ConversationMediaReadArgs,
-  ConversationMediaReadResult,
   ConversationSendResult,
   FileResourceReference,
+  ResourceBlock,
+  FsTransferReceiveResult,
+  FsTransferStatResult,
   FsTransferSendResult,
 } from "@humansandmachines/gsv/protocol";
 import { fileResourceReferenceSchema } from "@humansandmachines/gsv/protocol";
@@ -74,11 +71,21 @@ type ChatMediaGsvClient = Pick<GSVClient, "request">;
 type FailureResult = { ok: false; error: string };
 
 export type ChatProcessMedia = (
-  | Extract<ProcMediaReadResult, { ok: true }>
-  | Extract<ConversationMediaReadResult, { ok: true }>
+  {
+    ok: true;
+    key: string;
+    path?: string;
+    mimeType: string;
+    size: number;
+    conversationId?: string;
+  }
 ) & {
   blob: Blob;
 };
+
+export type ChatStoredMediaReadArgs =
+  | { key: string; pid?: string }
+  | ConversationMediaReadArgs;
 
 export type ChatResource = {
   blob: Blob;
@@ -120,20 +127,16 @@ export async function sendChatMessage(
   const conversationId = draft.conversationId?.trim()
     || (await client.conversation.forProcess({ pid })).conversation.id;
 
-  const settled = await Promise.allSettled(uploads.map(async ({ body, ...input }) => {
-    const response = await client.request("proc.media.write", {
-      ...input,
-      ...(draft.pid ? { pid: draft.pid } : undefined),
-    }, {
-      body: frameBodyFromBlob(body),
-    });
-    await response.body?.stream.cancel("proc.media.write does not return a body").catch(() => {});
-    return throwIfFailed<Extract<ProcMediaWriteResult, { ok: true }>>(response.data).media;
+  const stagedPaths: string[] = [];
+  const settled = await Promise.allSettled(uploads.map(async (upload) => {
+    const path = chatUploadPath(upload.filename);
+    stagedPaths.push(path);
+    return uploadChatResource(client, path, upload);
   }));
   const media = settled.flatMap((result) => result.status === "fulfilled" ? [result.value] : []);
   const uploadError = settled.find((result) => result.status === "rejected");
   if (uploadError?.status === "rejected") {
-    await rollbackChatMedia(client, draft.pid, media);
+    await deleteChatUploads(client, stagedPaths);
     throw uploadError.reason;
   }
 
@@ -144,9 +147,8 @@ export async function sendChatMessage(
       ...(media.length > 0 ? { media } : undefined),
       idempotencyKey: crypto.randomUUID(),
     });
-  } catch (error) {
-    await rollbackChatMedia(client, draft.pid, media);
-    throw error;
+  } finally {
+    await deleteChatUploads(client, stagedPaths);
   }
 }
 
@@ -165,14 +167,58 @@ export async function getChatConversationHistory(
   return client.conversation.history({ conversationId, ...options });
 }
 
-async function rollbackChatMedia(
+async function uploadChatResource(
   client: ChatGsvClient,
-  pid: string | undefined,
-  media: ProcMediaInput[],
-): Promise<void> {
-  await Promise.allSettled(media.flatMap(({ key }) => key
-    ? [client.proc.media.delete({ key, ...(pid ? { pid } : undefined) })]
-    : []));
+  path: string,
+  upload: NonNullable<ChatSendDraft["media"]>[number],
+): Promise<ResourceBlock> {
+  const received = await client.request("fs.transfer.receive", {
+    path,
+    contentType: upload.mimeType,
+  }, { body: frameBodyFromBlob(upload.body) });
+  await received.body?.stream.cancel("fs.transfer.receive does not return a body").catch(() => {});
+  const receiveResult = throwIfFailed<Extract<FsTransferReceiveResult, { ok: true }>>(
+    received.data,
+  );
+  if (receiveResult.bytesWritten !== upload.body.size) {
+    throw new Error("GSV stored an unexpected attachment length");
+  }
+  const stat = await client.request("fs.transfer.stat", { path: receiveResult.path });
+  await stat.body?.stream.cancel("fs.transfer.stat does not return a body").catch(() => {});
+  const statResult = throwIfFailed<Extract<FsTransferStatResult, { ok: true }>>(stat.data);
+  if (
+    !statResult.isFile
+    || statResult.size !== upload.body.size
+    || statResult.contentType !== upload.mimeType
+    || !statResult.revision
+  ) {
+    throw new Error("GSV could not identify the uploaded attachment revision");
+  }
+  return {
+    type: "resource",
+    ref: {
+      type: "file",
+      target: "gsv",
+      path: statResult.path,
+      revision: statResult.revision,
+      contentType: upload.mimeType,
+      size: statResult.size,
+    },
+    mediaType: upload.type,
+    filename: upload.filename,
+  };
+}
+
+function chatUploadPath(filename: string | undefined): string {
+  const safe = filename?.trim().replaceAll(/[/\\\0]/g, "_") || "attachment";
+  return `~/.gsv/uploads/${crypto.randomUUID()}/${safe}`;
+}
+
+async function deleteChatUploads(client: ChatGsvClient, paths: string[]): Promise<void> {
+  await Promise.allSettled(paths.map(async (path) => {
+    const response = await client.request("fs.delete", { path });
+    await response.body?.stream.cancel("fs.delete does not return a body").catch(() => {});
+  }));
 }
 
 export async function abortChatProcess(
@@ -203,15 +249,41 @@ export async function getChatHistory(
 
 export async function readChatProcessMedia(
   client: ChatMediaGsvClient,
-  args: ProcMediaReadArgs | ConversationMediaReadArgs,
+  args: ChatStoredMediaReadArgs,
 ): Promise<ChatProcessMedia> {
   const conversation = "conversationId" in args && Boolean(args.conversationId.trim());
+  if (!conversation) {
+    const path = `/${args.key.replace(/^\/+/, "")}`;
+    const statResponse = await client.request("fs.transfer.stat", { path });
+    await statResponse.body?.stream.cancel("fs.transfer.stat does not return a body").catch(() => {});
+    const stat = throwIfFailed<Extract<FsTransferStatResult, { ok: true }>>(statResponse.data);
+    if (!stat.isFile || !stat.revision || !stat.contentType) {
+      throw new Error("Process media no longer identifies an immutable file");
+    }
+    const resource = await readChatResource(client, {
+      type: "file",
+      target: "gsv",
+      path: stat.path,
+      revision: stat.revision,
+      contentType: stat.contentType,
+      size: stat.size,
+    });
+    return {
+      ok: true,
+      key: args.key,
+      path: stat.path,
+      mimeType: stat.contentType,
+      size: stat.size,
+      blob: resource.blob,
+    };
+  }
   const response = conversation
     ? await client.request("conversation.media.read", {
         conversationId: args.conversationId,
         key: args.key,
       })
-    : await client.request("proc.media.read", args);
+    : undefined;
+  if (!response) throw new Error("Conversation media request was not created");
   const data = mediaReadDataSchema.parse(response.data);
   if (!data.ok) {
     await response.body?.stream.cancel(data.error).catch(() => {});
@@ -244,6 +316,9 @@ export async function readChatResource(
   const ref = fileResourceReferenceSchema.parse(reference);
   if (ref.expiresAt !== undefined && ref.expiresAt <= Date.now()) {
     throw new Error("Resource reference has expired");
+  }
+  if (ref.size > MAX_CHAT_PROCESS_MEDIA_BYTES) {
+    throw new Error("Resource exceeds the 25 MiB display limit");
   }
   const response = await client.request("fs.transfer.send", {
     target: ref.target,

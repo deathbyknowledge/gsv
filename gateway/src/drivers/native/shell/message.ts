@@ -4,8 +4,7 @@ import type {
   AdapterMessageDestination,
   AdapterSendArgs,
   AdapterSendResult,
-  ProcMediaInput,
-  ProcMediaWriteResult,
+  ResourceBlock,
 } from "@humansandmachines/gsv/protocol";
 import type { GsvFs } from "../../../fs/gsv-fs";
 import type { KernelContext } from "../../../kernel/context";
@@ -24,7 +23,6 @@ import { resolveCallerOwnerUid } from "../../../kernel/context";
 import { findInteractiveProcess, type ProcessRecord } from "../../../kernel/processes";
 import type { RunRoute } from "../../../kernel/run-routes";
 import type { SurfaceRouteRecord } from "../../../kernel/surface-routes";
-import type { RequestFrame } from "../../../protocol/frames";
 import type {
   ProcessRunAttachRequestFrame,
   ProcessRunAttachResult,
@@ -34,18 +32,8 @@ import {
   MAX_MESSAGE_MEDIA_PART_BYTES,
   MAX_MESSAGE_MEDIA_TOTAL_BYTES,
 } from "../../../shared/message-media-limits";
-import {
-  parseProcessMediaPath,
-  processMediaPrefix,
-} from "../../../shared/process-media-path";
 import { sendFrameToProcess } from "../../../shared/utils";
 import { requireCommandCapability, requireShellOptionValue } from "./common";
-
-type ReplyAttachment = ProcMediaInput & {
-  key: string;
-  path: string;
-  size: number;
-};
 
 export function buildMessageCommand(fs: GsvFs, ctx: KernelContext) {
   return defineCommand("message", async (args, shellCtx): Promise<ExecResult> => {
@@ -94,7 +82,7 @@ async function attachToReply(
   fs: GsvFs,
   ctx: KernelContext,
 ): Promise<ExecResult> {
-  requireCommandCapability(ctx, "proc.media.write");
+  requireCommandCapability(ctx, "fs.read");
   const pid = ctx.processId;
   const runId = ctx.processRunId;
   if (!pid || !runId) {
@@ -125,134 +113,71 @@ async function attachToReply(
     throw new Error("--mime can only be used with one attachment");
   }
 
-  const staged: ReplyAttachment[] = [];
-  const stagedKeys: string[] = [];
+  const resources: ResourceBlock[] = [];
   let totalBytes = 0;
-  try {
-    for (const requestedPath of paths) {
-      const path = shellCtx.fs.resolvePath(shellCtx.cwd, requestedPath);
-      const opened = await fs.openFile(path);
-      if (!opened.body) {
-        throw new Error(`cannot read attachment data for ${path}`);
-      }
-      if (opened.size > MAX_MESSAGE_MEDIA_PART_BYTES) {
-        await opened.body.cancel("Reply attachment exceeds the per-file limit").catch(() => {});
-        throw new Error(
-          `attachment exceeds per-file limit (${MAX_MESSAGE_MEDIA_PART_BYTES} bytes): ${path}`,
-        );
-      }
-      totalBytes += opened.size;
-      if (totalBytes > MAX_MESSAGE_MEDIA_TOTAL_BYTES) {
-        await opened.body.cancel("Reply attachments exceed the total limit").catch(() => {});
-        throw new Error(
-          `attachments exceed total limit (${MAX_MESSAGE_MEDIA_TOTAL_BYTES} bytes)`,
-        );
-      }
-
-      const mimeType = requestedMime?.trim() || opened.contentType || inferMimeType(path);
-      const parsed = parseProcessMediaPath(path);
-      if (
-        parsed?.kind === "file"
-        && parsed.uid === ctx.identity!.process.uid
-        && parsed.pid === pid
-      ) {
-        await opened.body.cancel("Reusing process-owned media").catch(() => {});
-        staged.push({
-          type: mediaTypeForMime(mimeType),
-          mimeType,
-          key: parsed.key,
-          path,
-          filename: path.split("/").pop() || "attachment",
-          size: opened.size,
-        });
-        continue;
-      }
-
-      const mediaId = `reply:${crypto.randomUUID()}`;
-      const stagedKey = `${processMediaPrefix(ctx.identity!.process.uid, pid)}${mediaId}`;
-      stagedKeys.push(stagedKey);
-      const request: RequestFrame<"proc.media.write"> = {
-        type: "req",
-        id: crypto.randomUUID(),
-        call: "proc.media.write",
-        args: {
-          pid,
-          type: mediaTypeForMime(mimeType),
-          mimeType,
-          mediaId,
-          filename: path.split("/").pop() || "attachment",
-        },
-        body: { stream: opened.body, length: opened.size },
-      };
-      const response = await sendFrameToProcess(ctx.installationId, pid, request);
-      if (!response || response.type !== "res" || !response.ok) {
-        throw new Error(
-          response && response.type === "res" && !response.ok
-            ? response.error.message
-            : `no response while staging ${path}`,
-        );
-      }
-      // SAFETY: The proc.media.write response is validated by the syscall frame contract.
-      const result = response.data as ProcMediaWriteResult | undefined;
-      if (!result?.ok) {
-        throw new Error(result?.error || `failed to stage ${path}`);
-      }
-      if (result.media.key !== stagedKey) {
-        throw new Error(`staged media key did not match the requested id for ${path}`);
-      }
-      // SAFETY: The media write result has the same attachment fields required for reply staging.
-      staged.push(result.media as ReplyAttachment);
+  for (const requestedPath of paths) {
+    const path = shellCtx.fs.resolvePath(shellCtx.cwd, requestedPath);
+    const opened = await fs.openFile(path);
+    if (!opened.body) {
+      throw new Error(`cannot read attachment data for ${path}`);
     }
-
-    const request: ProcessRunAttachRequestFrame = {
-      type: "req",
-      id: crypto.randomUUID(),
-      call: "proc.run.attach",
-      args: {
-        runId,
-        media: staged,
-      },
-    };
-    if (stagedKeys.length > 0) request.args.stagedKeys = stagedKeys;
-    const response = await sendFrameToProcess(ctx.installationId, pid, request);
-    if (!response || response.type !== "res" || !response.ok) {
+    await opened.body.cancel("Attachment will be resolved by immutable revision").catch(() => {});
+    if (!opened.etag) {
+      throw new Error(`cannot identify an immutable revision for ${path}`);
+    }
+    if (opened.size > MAX_MESSAGE_MEDIA_PART_BYTES) {
       throw new Error(
-        response && response.type === "res" && !response.ok
-          ? response.error.message
-          : "no response while attaching media to the current reply",
+        `attachment exceeds per-file limit (${MAX_MESSAGE_MEDIA_PART_BYTES} bytes): ${path}`,
       );
     }
-    // SAFETY: The proc.run.attach response is validated by the syscall frame contract.
-    const result = response.data as ProcessRunAttachResult | undefined;
-    if (!result?.ok) {
-      throw new Error(result?.error || "failed to attach media to the current reply");
+    totalBytes += opened.size;
+    if (totalBytes > MAX_MESSAGE_MEDIA_TOTAL_BYTES) {
+      throw new Error(
+        `attachments exceed total limit (${MAX_MESSAGE_MEDIA_TOTAL_BYTES} bytes)`,
+      );
     }
-    return completed([
-      "attached=true",
-      `run_id=${runId}`,
-      `count=${result.media.length}`,
-      ...result.media.map((item) => `path=${item.path}`),
-      "",
-    ].join("\n"));
-  } catch (error) {
-    await rollbackStagedReplyMedia(ctx.installationId, pid, stagedKeys);
-    throw error;
-  }
-}
 
-async function rollbackStagedReplyMedia(
-  installationId: string,
-  pid: string,
-  keys: string[],
-): Promise<void> {
-  // SAFETY: Each mapped request is the exact proc.media.delete frame contract.
-  await Promise.allSettled(keys.map((key) => sendFrameToProcess(installationId, pid, {
+    const contentType = requestedMime?.trim() || opened.contentType || inferMimeType(path);
+    resources.push({
+      type: "resource",
+      ref: {
+        type: "file",
+        target: "gsv",
+        path,
+        revision: opened.etag,
+        contentType,
+        size: opened.size,
+      },
+      mediaType: mediaTypeForMime(contentType),
+      filename: path.split("/").pop() || "attachment",
+    });
+  }
+
+  const request: ProcessRunAttachRequestFrame = {
     type: "req",
     id: crypto.randomUUID(),
-    call: "proc.media.delete",
-    args: { pid, key },
-  // SAFETY: This request is the exact proc.media.delete frame contract.
-  } as RequestFrame<"proc.media.delete">)));
+    call: "proc.run.attach",
+    args: { runId, media: resources },
+  };
+  const response = await sendFrameToProcess(ctx.installationId, pid, request);
+  if (!response || response.type !== "res" || !response.ok) {
+    throw new Error(
+      response && response.type === "res" && !response.ok
+        ? response.error.message
+        : "no response while attaching media to the current reply",
+    );
+  }
+  const result: ProcessRunAttachResult | undefined = response.data;
+  if (!result?.ok) {
+    throw new Error(result?.error || "failed to attach media to the current reply");
+  }
+  return completed([
+    "attached=true",
+    `run_id=${runId}`,
+    `count=${result.media.length}`,
+    ...result.media.map((item) => `path=${item.ref.path}`),
+    "",
+  ].join("\n"));
 }
 
 async function showCurrentReplyDestination(

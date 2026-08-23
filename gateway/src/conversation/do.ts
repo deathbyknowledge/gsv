@@ -2,8 +2,11 @@ import { DurableObject } from "cloudflare:workers";
 import type {
   ConversationKind,
   ConversationMessage,
+  MessageAttachment,
   ProcMediaInput,
+  ResourceBlock,
 } from "@humansandmachines/gsv/protocol";
+import { resourceBlockSchema } from "@humansandmachines/gsv/protocol";
 import { createInstallationStorage } from "../installation/storage";
 import { parseConversationDurableObjectName } from "../installation/routing";
 import {
@@ -41,7 +44,7 @@ export type ConversationMediaOwner = {
 };
 
 export type ConversationAppendRequest = Omit<ConversationAppendInput, "payloadHash" | "media"> & {
-  media?: ProcMediaInput[];
+  media?: MessageAttachment[];
   mediaOwner?: ConversationMediaOwner;
 };
 
@@ -221,13 +224,13 @@ export class Conversation extends DurableObject<Env> {
     }
   }
 
-  private async persistMessageMedia(input: ConversationAppendRequest): Promise<ProcMediaInput[]> {
+  private async persistMessageMedia(input: ConversationAppendRequest): Promise<MessageAttachment[]> {
     const items = input.media ?? [];
     if (items.length === 0) return [];
     const owner = input.mediaOwner;
     if (!owner) throw new Error("Conversation media owner is required");
     requireMediaOwner(owner, input.processId);
-    const persisted: ProcMediaInput[] = [];
+    const persisted: MessageAttachment[] = [];
     for (let index = 0; index < items.length; index += 1) {
       persisted.push(await this.persistMessageMediaItem(items[index], input.messageId, index, owner));
     }
@@ -235,11 +238,14 @@ export class Conversation extends DurableObject<Env> {
   }
 
   private async persistMessageMediaItem(
-    item: ProcMediaInput,
+    item: MessageAttachment,
     messageId: string,
     index: number,
     owner: ConversationMediaOwner,
-  ): Promise<ProcMediaInput> {
+  ): Promise<MessageAttachment> {
+    if (item.type === "resource") {
+      return this.validateMessageResource(item, owner);
+    }
     const mimeType = item.mimeType.trim();
     if (!mimeType) throw new Error("Conversation media mimeType is required");
     const sourceKey = item.key?.trim() ?? "";
@@ -293,6 +299,39 @@ export class Conversation extends DurableObject<Env> {
     return canonicalConversationMedia(item, this.conversationId, key, stored.size, mimeType);
   }
 
+  private async validateMessageResource(
+    input: ResourceBlock,
+    owner: ConversationMediaOwner,
+  ): Promise<ResourceBlock> {
+    const resource = resourceBlockSchema.parse(input);
+    const { ref } = resource;
+    const key = ref.path.replace(/^\/+/, "");
+    if (
+      ref.target !== "gsv"
+      || ref.expiresAt !== undefined
+      || agentArchiveMediaPath(owner.home, key) !== ref.path
+    ) {
+      throw new Error("Conversation resource is outside the handling process");
+    }
+    const object = await this.storage.head(key);
+    if (
+      !object
+      || object.httpEtag !== ref.revision
+      || object.size !== ref.size
+      || !isValidAgentArchiveMediaObject({
+        home: owner.home,
+        key,
+        uid: owner.uid,
+        gid: owner.gid,
+        object,
+        expectedContentType: ref.contentType,
+      })
+    ) {
+      throw new Error("Conversation resource does not match retained data");
+    }
+    return resource;
+  }
+
   private async readArchive(segment: ConversationArchiveSegment): Promise<ConversationMessage[]> {
     const object = await this.storage.get(segment.objectKey);
     if (!object) throw new Error("Conversation archive is missing");
@@ -314,7 +353,9 @@ export class Conversation extends DurableObject<Env> {
 function requireAppendInput(input: ConversationAppendRequest): void {
   requireNonempty(input.messageId, "messageId");
   requireNonempty(input.idempotencyKey, "idempotencyKey");
-  if (!input.text.trim()) throw new Error("Conversation message text is invalid");
+  if (!input.text.trim() && !input.media?.length) {
+    throw new Error("Conversation message requires text or media");
+  }
   if (!Number.isSafeInteger(input.createdAt) || input.createdAt <= 0) {
     throw new Error("Conversation message timestamp is invalid");
   }

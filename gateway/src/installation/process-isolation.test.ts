@@ -3,13 +3,12 @@ import { runInDurableObject } from "cloudflare:test";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   bodyFromBytes,
-  bodyToBytes,
   type ArgsOf,
   type ProcessIdentity,
   type SyscallName,
 } from "@humansandmachines/gsv/protocol";
 import type { Process } from "../process/do";
-import type { RequestFrame, ResponseFrame } from "../protocol/frames";
+import type { RequestFrame } from "../protocol/frames";
 import { getProcessByPid } from "../shared/utils";
 import { processDurableObjectName } from "./routing";
 import { installationStoragePrefix } from "./storage";
@@ -82,20 +81,6 @@ describe("managed Process isolation", () => {
     expect([...new Uint8Array(await secondObject.arrayBuffer())]).toEqual([4, 5, 6]);
     expect(await env.STORAGE.head(firstUpload.key)).toBeNull();
 
-    // SAFETY: proc.media.read requests return the protocol's media-read response frame.
-    const firstRead = await first.recvFrame(request("proc.media.read", {
-      key: firstUpload.key,
-    })) as ResponseFrame<"proc.media.read">;
-    // SAFETY: proc.media.read requests return the protocol's media-read response frame.
-    const secondRead = await second.recvFrame(request("proc.media.read", {
-      key: secondUpload.key,
-    })) as ResponseFrame<"proc.media.read">;
-    expect(firstRead.ok && firstRead.body
-      ? [...await bodyToBytes(firstRead.body)]
-      : null).toEqual([1, 2, 3]);
-    expect(secondRead.ok && secondRead.body
-      ? [...await bodyToBytes(secondRead.body)]
-      : null).toEqual([4, 5, 6]);
   });
 });
 
@@ -114,22 +99,20 @@ async function writeMedia(
   pid: string,
   bytes: number[],
 ): Promise<{ key: string }> {
-  // SAFETY: proc.media.write requests return the protocol's media-write response frame.
-  const response = await process.recvFrame({
-    ...request("proc.media.write", {
-      pid,
+  const response = await runInDurableObject(process, (instance: Process) => {
+    // SAFETY: this isolation test invokes the private resource-ingress boundary directly.
+    const processInstance = instance as any;
+    return processInstance.storeIncomingResource({
       type: "document",
       mimeType: "application/octet-stream",
       mediaId: "shared-media",
-    }),
-    body: bodyFromBytes(new Uint8Array(bytes)),
-  }) as ResponseFrame<"proc.media.write">;
-  if (!response.ok || !response.data?.ok) {
-    throw new Error(response.ok
-      ? response.data?.error ?? "media write failed"
-      : response.error.message);
+    }, bodyFromBytes(new Uint8Array(bytes)));
+  });
+  if (!response.ok) {
+    throw new Error(response.error);
   }
-  return response.data.media;
+  expect(response.media.key).toContain(pid);
+  return response.media;
 }
 
 function identity(username: string): ProcessIdentity {

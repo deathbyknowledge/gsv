@@ -186,7 +186,13 @@ fn parse_media_attachment(item: &Value) -> Option<MediaAttachment> {
 
 fn parse_resource_attachment(block: &serde_json::Map<String, Value>) -> Option<MediaAttachment> {
     const MAX_SAFE_INTEGER: u64 = 9_007_199_254_740_991;
-    if block.len() != 2 {
+    if block.keys().any(|key| {
+        !matches!(
+            key.as_str(),
+            "type" | "ref" | "mediaType" | "filename" | "duration" | "transcription"
+        )
+    }) || block.get("type").and_then(Value::as_str) != Some("resource")
+    {
         return None;
     }
     let resource = block.get("ref")?.as_object()?;
@@ -213,11 +219,28 @@ fn parse_resource_attachment(block: &serde_json::Map<String, Value>) -> Option<M
         }
         None => None,
     };
-    let kind = media_kind_from_content_type(&content_type);
-    let filename = path
-        .split('/')
-        .rfind(|part| !part.is_empty())
-        .map(str::to_string);
+    let kind = match block.get("mediaType") {
+        Some(value) => match value.as_str()? {
+            "image" => MediaKind::Image,
+            "audio" => MediaKind::Audio,
+            "video" => MediaKind::Video,
+            "document" => MediaKind::Document,
+            _ => return None,
+        },
+        None => media_kind_from_content_type(&content_type),
+    };
+    let filename = nonempty_string(block.get("filename")).or_else(|| {
+        path.split('/')
+            .rfind(|part| !part.is_empty())
+            .map(str::to_string)
+    });
+    let duration = match block.get("duration") {
+        Some(value) => {
+            let value = value.as_f64()?;
+            (value.is_finite() && value >= 0.0).then_some(value)?
+        }
+        None => 0.0,
+    };
     Some(MediaAttachment {
         kind,
         mime_type: content_type.clone(),
@@ -227,8 +250,11 @@ fn parse_resource_attachment(block: &serde_json::Map<String, Value>) -> Option<M
         url: None,
         filename,
         size: Some(size),
-        duration: None,
-        transcription: None,
+        duration: block.contains_key("duration").then_some(duration),
+        transcription: block
+            .get("transcription")
+            .and_then(Value::as_str)
+            .map(str::to_string),
         description: None,
         resource: Some(FileResourceReference {
             target,
@@ -693,12 +719,16 @@ mod tests {
     fn resource_blocks_are_validated_once_at_history_ingress() {
         let resource = serde_json::json!([{
             "type": "resource",
+            "mediaType": "audio",
+            "filename": "note.m4a",
+            "duration": 2.5,
+            "transcription": "hello",
             "ref": {
                 "type": "file",
                 "target": "gsv",
                 "path": "/root/.gsv/media/archived-media:one",
                 "revision": "revision-one",
-                "contentType": "image/png",
+                "contentType": "audio/mp4",
                 "size": 3
             }
         }]);
@@ -706,15 +736,17 @@ mod tests {
         let media = parse_media_attachments(&resource);
 
         assert_eq!(media.len(), 1);
-        assert_eq!(media[0].kind, MediaKind::Image);
-        assert_eq!(media[0].filename.as_deref(), Some("archived-media:one"));
+        assert_eq!(media[0].kind, MediaKind::Audio);
+        assert_eq!(media[0].filename.as_deref(), Some("note.m4a"));
+        assert_eq!(media[0].duration, Some(2.5));
+        assert_eq!(media[0].transcription.as_deref(), Some("hello"));
         assert_eq!(
             media[0].resource,
             Some(FileResourceReference {
                 target: "gsv".to_string(),
                 path: "/root/.gsv/media/archived-media:one".to_string(),
                 revision: "revision-one".to_string(),
-                content_type: "image/png".to_string(),
+                content_type: "audio/mp4".to_string(),
                 size: 3,
                 expires_at: None,
             })

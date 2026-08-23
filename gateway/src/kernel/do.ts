@@ -47,8 +47,8 @@ import type {
   UnlinkManagedTelegramIdentityInput,
   UnlinkManagedTelegramIdentityResult,
   NetFetchArgs,
+  MessageAttachment,
   ProcessIdentity,
-  ProcMediaInput,
   ScheduleRecord,
   ScheduleRunResult,
   SchedulerRunArgs,
@@ -64,6 +64,7 @@ import {
   REQUEST_CANCEL_SIGNAL,
   bundleAdapterMedia,
   cancelBinaryBody,
+  resourceBlockSchema,
   type BinaryFrameDescriptor,
   type OutgoingBinaryBody,
 } from "@humansandmachines/gsv/protocol";
@@ -105,7 +106,7 @@ import {
   SETUP_REQUIRED_ERROR_CODE,
 } from "./connect";
 import { dispatch, type DispatchDeps } from "./dispatch";
-import { bindStreamToAbort } from "../shared/streams";
+import { bindByteStreamToAbort } from "../shared/streams";
 import { raceWithAbort } from "../shared/abort";
 import type { KernelContext } from "./context";
 import { getConversationById, sendFrameToProcess } from "../shared/utils";
@@ -116,6 +117,10 @@ import {
   MAX_MESSAGE_MEDIA_PART_BYTES,
   MAX_MESSAGE_MEDIA_TOTAL_BYTES,
 } from "../shared/message-media-limits";
+import {
+  agentArchiveMediaPath,
+  isValidAgentArchiveMediaObject,
+} from "../shared/process-media-path";
 import {
   handleSysSetup as handleKernelSetup,
   recoverCompletedSysSetup,
@@ -235,6 +240,14 @@ class AdapterReplyMediaError extends Error {
   }
 }
 
+function mediaTypeFromContentType(contentType: string): AdapterMedia["type"] {
+  const normalized = contentType.trim().toLowerCase();
+  if (normalized.startsWith("image/")) return "image";
+  if (normalized.startsWith("audio/")) return "audio";
+  if (normalized.startsWith("video/")) return "video";
+  return "document";
+}
+
 function scheduleDeliveryRetryDelayMs(attempt: number): number {
   return Math.min(5 * 60_000, 5_000 * (2 ** Math.max(0, attempt - 1)));
 }
@@ -274,7 +287,7 @@ type ConnectionMessageStreamPayload = {
 type IpcCompletionResponse = {
   text: string | null;
   usage: JsonValue;
-  media?: ProcMediaInput[];
+  media?: MessageAttachment[];
 };
 
 type IpcDeliverySignalPayload = {
@@ -451,8 +464,13 @@ const procMediaInputSchema = z.object({
 const adapterConversationMessageSchema = z.object({
   id: z.string(),
   conversationId: z.string(),
+  author: z.object({
+    kind: z.literal("process"),
+    pid: z.string(),
+    uid: z.number().int().nonnegative(),
+  }),
   text: z.string(),
-  media: z.array(procMediaInputSchema).optional(),
+  media: z.array(z.union([resourceBlockSchema, procMediaInputSchema])).optional(),
   processId: z.string().optional(),
   runId: z.string().optional(),
 });
@@ -469,7 +487,7 @@ const userProcessSignalPayloadSchema = z.object({
   text: z.string().nullable().optional(),
   error: z.string().optional(),
   usage: z.json().optional(),
-  media: z.array(procMediaInputSchema).optional(),
+  media: z.array(z.union([resourceBlockSchema, procMediaInputSchema])).optional(),
 }).catchall(z.json());
 const userProcessSignalFrameSchema = z.object({
   type: z.literal("sig"),
@@ -2042,6 +2060,7 @@ export class Kernel extends DurableObject<Env> {
         const attachmentBundle = await this.bundleConversationReplyMedia(
           message.conversationId,
           message.media,
+          message.author.uid,
         );
         if (!message.text.trim() && attachmentBundle.media.length === 0) {
           return { state: "delivered" };
@@ -2132,7 +2151,8 @@ export class Kernel extends DurableObject<Env> {
 
   private async bundleConversationReplyMedia(
     conversationId: string,
-    value: ProcMediaInput[] | undefined,
+    value: MessageAttachment[] | undefined,
+    authorUid: number,
   ): Promise<{ media: AdapterMedia[]; body?: BinaryBody }> {
     if (value === undefined) {
       return { media: [] };
@@ -2147,6 +2167,54 @@ export class Kernel extends DurableObject<Env> {
     let totalBytes = 0;
     try {
       for (const item of value) {
+        if (item.type === "resource") {
+          const { ref } = item;
+          const account = this.auth.getPasswdByUid(authorUid);
+          const key = ref.path.replace(/^\/+/, "");
+          const object = ref.target === "gsv" && ref.expiresAt === undefined
+            ? await this.installationStorage.get(key)
+            : null;
+          const matches = account
+            && object
+            && agentArchiveMediaPath(account.home, key) === ref.path
+            && object.httpEtag === ref.revision
+            && object.size === ref.size
+            && isValidAgentArchiveMediaObject({
+              home: account.home,
+              key,
+              uid: account.uid,
+              gid: account.gid,
+              object,
+              expectedContentType: ref.contentType,
+            });
+          if (!matches || !object) {
+            await object?.body.cancel("Message resource descriptor mismatch").catch(() => {});
+            throw new AdapterReplyMediaError("Message resource does not match retained data");
+          }
+          if (ref.size > MAX_MESSAGE_MEDIA_PART_BYTES) {
+            await object.body.cancel("Message resource exceeds the per-item limit").catch(() => {});
+            throw new AdapterReplyMediaError(
+              `Message media exceeds per-item limit (${MAX_MESSAGE_MEDIA_PART_BYTES} bytes)`,
+            );
+          }
+          totalBytes += ref.size;
+          if (totalBytes > MAX_MESSAGE_MEDIA_TOTAL_BYTES) {
+            await object.body.cancel("Message resources exceed the total limit").catch(() => {});
+            throw new AdapterReplyMediaError(
+              `Message media exceeds total limit (${MAX_MESSAGE_MEDIA_TOTAL_BYTES} bytes)`,
+            );
+          }
+          const media: AdapterMedia = {
+            type: item.mediaType ?? mediaTypeFromContentType(ref.contentType),
+            mimeType: ref.contentType,
+            size: ref.size,
+          };
+          if (item.filename) media.filename = item.filename;
+          if (item.duration !== undefined) media.duration = item.duration;
+          if (item.transcription) media.transcription = item.transcription;
+          parts.push({ media, body: { stream: object.body, length: object.size } });
+          continue;
+        }
         const key = item.key?.trim() ?? "";
         if (!key || item.conversationId !== conversationId) {
           throw new AdapterReplyMediaError("Message media is outside its conversation");
@@ -2527,7 +2595,7 @@ export class Kernel extends DurableObject<Env> {
     const body = frame.body;
     frame.body = {
       ...body,
-      stream: bindStreamToAbort(body.stream, signal),
+      stream: bindByteStreamToAbort(body.stream, signal),
     };
     return frame;
   }

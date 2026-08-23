@@ -22,18 +22,18 @@ const chatMediaObjectSchema = z.object({
   resource: z.undefined().optional(),
 });
 
-const chatResourceMediaSchema = resourceBlockSchema.transform(({ ref }) => ({
-  type: mediaKindFromContentType(ref.contentType),
-  mimeType: ref.contentType,
+const chatResourceMediaSchema = resourceBlockSchema.transform((resource) => ({
+  type: resource.mediaType ?? mediaKindFromContentType(resource.ref.contentType),
+  mimeType: resource.ref.contentType,
   key: undefined,
   conversationId: undefined,
   url: undefined,
-  filename: resourceFilename(ref.path),
-  size: ref.size,
-  duration: undefined,
-  transcription: undefined,
+  filename: resource.filename?.trim() || resourceFilename(resource.ref.path),
+  size: resource.ref.size,
+  duration: resource.duration,
+  transcription: resource.transcription?.trim() || undefined,
   description: undefined,
-  resource: ref,
+  resource: resource.ref,
 }));
 
 const chatMediaWireSchema = z.unknown().pipe(z.union([

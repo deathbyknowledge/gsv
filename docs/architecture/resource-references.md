@@ -1,9 +1,8 @@
 # Resource References and Lazy Binary Resolution
 
-Status: staged implementation. The common reference contract, revision-aware
-filesystem transfer, image-bearing `fs.read` retention, and lazy Web/Desktop
-resolution are implemented. Client uploads, adapter media, and the public
-process-media cutover remain.
+Status: implemented. Messages, Process output, adapters, Web, and Desktop use
+the common reference contract. Public process-media orchestration has been
+removed; legacy stored descriptors remain readable.
 
 GSV should represent files and media once, as authorized resource references,
 and move their bytes only when a consumer resolves those references. Structured
@@ -33,6 +32,10 @@ type FileRef = {
 type ResourceBlock = {
   type: "resource";
   ref: FileRef;
+  mediaType?: "image" | "audio" | "video" | "document";
+  filename?: string;
+  duration?: number;
+  transcription?: string;
 };
 ```
 
@@ -56,9 +59,9 @@ that representation. It must not be the GSV transport, history, or storage
 format.
 
 `fs.transfer.stat`, `fs.transfer.send`, `fs.transfer.receive`, `fs.copy`, and the
-binary-body channel already provide most of the required data plane. The new
-work is primarily a common reference type, authorization and lifetime rules,
-message content support, and resolvers for models and clients.
+binary-body channel provide the data plane. WebSocket framing and Worker RPC
+use byte-oriented `ReadableStream` values with backpressure. Metadata crosses
+in the structured frame; bytes are never serialized into the RPC argument.
 
 ## Required invariants
 
@@ -77,53 +80,49 @@ message content support, and resolvers for models and clients.
 - Temporary references expose expiry and offline behavior. A missing source is a
   visible unavailable-resource result, never silent substitution with newer
   bytes.
-- Content needed for durable process history is retained once in GSV, preferably
-  as a read-through, content-addressed copy. History then points at the retained
+- Content needed for durable process or conversation history is retained once
+  in the run-as agent's immutable archive. History then points at that retained
   revision without duplicating the bytes.
 - Models and visual clients consume the same reference. Provider-specific image
   blocks and UI object URLs are projections created only at their final boundary.
 
-## Relationship to process media
+## Retention and compatibility
 
-`proc.media.*` currently supplies process ownership, idempotent uploads,
-rollback, R2 storage, history references, and archive promotion. Those
-properties must survive the migration, but clients should not have to
-orchestrate that storage protocol.
+Public `proc.media.write/read/delete` calls no longer exist. Producers use
+filesystem transfer primitives and submit a `ResourceBlock`; adapter ingress
+uses a private streamed Process write because the adapter body is not itself a
+filesystem target. The Process validates ownership and exact revision, then
+retains the bytes once under `~/.gsv/media` before committing durable history.
+Already-owned archive references are reused without another RPC or R2 copy.
 
-During transition, process media can remain the internal retention/cache
-implementation behind a resource resolver. The intended end state is:
+Legacy Process histories can still contain `/var/media` descriptors, and old
+conversation records can still point at conversation media. Their read paths
+remain until a deliberate stored-data migration removes those representations.
+New messages and tool results do not create either form.
 
-- message and tool-result contracts carry resource blocks;
-- clients upload or serve files through target filesystem transfer primitives;
-- lazy reads use binary bodies;
-- durable retention is automatic policy at the Process boundary; and
-- public `proc.media.write/read/delete` calls can be retired once all producers
-  use the common reference contract.
-
-The compatibility tool-result bridge accepts inline provider image blocks, extracts
-their bytes into process-scoped R2 media, persists only references in new
-history, and rehydrates bytes while assembling model context. The common
-reference migration must replace that initial inline/base64 boundary rather
-than layering another copy on top. It must also continue resolving existing
-tool-result media references and legacy inline history until an explicit data
-migration or compatibility cutover retires both representations.
+The compatibility tool-result bridge accepts old inline provider image blocks,
+extracts their bytes, persists only a reference, and rehydrates bytes while
+assembling model context. Base64 is therefore confined to legacy input and
+provider APIs that require it.
 
 ## Implementation order
 
-1. Done: define and validate the reference and resource-block protocol types.
-2. Done: let image-bearing `fs.read` return a source reference without
+1. Define and strictly validate the reference and resource-block protocol types.
+2. Return revision-bound references from image-bearing `fs.read` without
    materializing base64.
-3. Done for image reads: Process resolves the exact source revision through
-   `fs.transfer.send`, retains it in the run-as agent's immutable archive, and
-   projects provider image content only while assembling model context.
-4. Done: Web and Desktop resolve the same reference lazily over
-   `fs.transfer.send`, reject a mismatched revision, and cache by revision.
-5. Move client uploads and adapter media onto references while preserving their
-   current authorization and replay fences.
-6. Remove the superseded public process-media orchestration after a deliberate
-   compatibility cutover.
+3. Resolve exact source revisions through `fs.transfer.send`, retain them in the
+   run-as agent's immutable archive, and project provider image content only
+   while assembling model context.
+4. Resolve the same reference lazily in Web and Desktop, reject a mismatched
+   revision, and cache by revision.
+5. Upload client files through `fs.transfer.receive`; stream adapter bodies
+   through the private Process boundary; preserve authorization and replay
+   fences in both paths.
+6. Remove public process-media orchestration while retaining stored-history
+   compatibility readers.
 
-The implemented encoding is structured and non-authoritative. Source expiry is
-explicit when present. Durable Process retention occurs before the tool result
-is committed, so later file edits mint a new revision without changing the old
-history entry.
+The encoding is structured and non-authoritative. Source expiry is explicit
+when present. Durable Process retention occurs before a message or tool result
+is committed. If an agent reads a file, edits it, and reads it again, the path
+may be the same but the revisions differ; each history entry continues to
+resolve the bytes that existed at that moment.

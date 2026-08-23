@@ -13,9 +13,11 @@ import type {
   ConversationSummary,
   InteractionOrigin,
   ProcSendResult,
+  ResourceBlock,
   BinaryBody,
 } from "@humansandmachines/gsv/protocol";
 import type { RequestFrame, ResponseFrame } from "../protocol/frames";
+import type { ProcessResourceRetainRequestFrame } from "../protocol/process-frames";
 import { getConversationById, sendFrameToProcess } from "../shared/utils";
 import { stableOpaqueId } from "../shared/stable-id";
 import type { KernelContext } from "./context";
@@ -108,12 +110,17 @@ export async function handleConversationSend(
   const runId = `run:${messageId}`;
   const origin = conversationOrigin(ctx);
   const interactionOrigin = processInteractionOrigin(ctx);
+  const media = await retainConversationResources(
+    args.media,
+    conversation.handlerPid,
+    ctx,
+  );
   const appended = await getConversationById(ctx.installationId, conversation.id).append({
     messageId,
     idempotencyKey,
     author: { kind: "user", uid: conversation.ownerUid },
     text,
-    media: args.media,
+    media,
     mediaOwner: processMediaOwner(conversation.handlerPid, handler),
     origin,
     processId: conversation.handlerPid,
@@ -140,7 +147,7 @@ export async function handleConversationSend(
     args: {
       pid: conversation.handlerPid,
       message: text,
-      media: args.media,
+      media,
       origin: interactionOrigin,
       interaction: {
         conversationId: conversation.id,
@@ -188,6 +195,28 @@ export async function handleConversationSend(
     runId: result.runId,
     queued: result.queued,
   };
+}
+
+async function retainConversationResources(
+  resources: ResourceBlock[] | undefined,
+  pid: string,
+  ctx: KernelContext,
+): Promise<ResourceBlock[] | undefined> {
+  if (!resources?.length) return undefined;
+  return Promise.all(resources.map(async (resource) => {
+    const request: ProcessResourceRetainRequestFrame = {
+      type: "req",
+      id: crypto.randomUUID(),
+      call: "proc.resource.retain",
+      args: { resource },
+    };
+    const response = await sendFrameToProcess(ctx.installationId, pid, request);
+    if (!response || response.type !== "res" || response.id !== request.id) {
+      throw new Error("Conversation handler returned no resource response");
+    }
+    if (!response.ok) throw new Error(response.error.message);
+    return response.data.resource;
+  }));
 }
 
 export async function handleConversationMediaRead(

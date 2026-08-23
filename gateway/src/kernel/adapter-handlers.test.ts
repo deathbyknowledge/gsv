@@ -164,6 +164,44 @@ function handleAdapterInbound(
   }, ctx, body);
 }
 
+function retainedAdapterResource(
+  frameId: string,
+  {
+    contentType = "image/png",
+    mediaType = "image" as const,
+    filename,
+    size = 1,
+    digest = "a",
+  }: {
+    contentType?: string;
+    mediaType?: "image" | "audio" | "video" | "document";
+    filename?: string;
+    size?: number;
+    digest?: string;
+  } = {},
+) {
+  return {
+    type: "res" as const,
+    id: frameId,
+    ok: true as const,
+    data: {
+      resource: {
+        type: "resource" as const,
+        ref: {
+          type: "file" as const,
+          target: "gsv",
+          path: `/home/sam/.gsv/media/archived-media:${digest.repeat(64)}`,
+          revision: `"${digest.repeat(32)}"`,
+          contentType,
+          size,
+        },
+        mediaType,
+        filename,
+      },
+    },
+  };
+}
+
 function makeContext(
   env: Partial<Env>,
   status: FakeAdapterStatusStore,
@@ -1994,22 +2032,9 @@ describe("adapter lifecycle handlers", () => {
       if (frame.call === "proc.history") {
         return { type: "res", id: frame.id, ok: true, data: { pendingHil: null } };
       }
-      if (frame.call === "proc.media.write") {
+      if (frame.call === "proc.resource.write") {
         await bodyToBytes(frame.body);
-        return {
-          type: "res",
-          id: frame.id,
-          ok: true,
-          data: {
-            ok: true,
-            media: {
-              type: "image",
-              mimeType: "image/png",
-              key: "var/media/1000/pid-1/replayed",
-              size: 1,
-            },
-          },
-        };
+        return retainedAdapterResource(frame.id);
       }
       if (frame.call === "proc.adapter.deliver") {
         return {
@@ -2021,17 +2046,6 @@ describe("adapter lifecycle handlers", () => {
             status: "started",
             runId: frame.args.runId,
             replayed: "recorded",
-          },
-        };
-      }
-      if (frame.call === "proc.media.delete") {
-        return {
-          type: "res",
-          id: frame.id,
-          ok: true,
-          data: {
-            ok: false,
-            error: "media is referenced by process history",
           },
         };
       }
@@ -2057,17 +2071,6 @@ describe("adapter lifecycle handlers", () => {
     expect(result.ok).toBe(true);
     const runId = result.delivered?.runId;
     expect(ctx.runRoutes.delete).toHaveBeenCalledWith(runId);
-    expect(sendFrameToProcessMock).toHaveBeenCalledWith(
-      TEST_INSTALLATION_ID,
-      "pid-1",
-      expect.objectContaining({
-        call: "proc.media.delete",
-        args: {
-          pid: "pid-1",
-          key: "var/media/1000/pid-1/replayed",
-        },
-      }),
-    );
     // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     expect(adapterSetActivity).not.toHaveBeenCalled();
   });
@@ -2190,26 +2193,20 @@ describe("adapter lifecycle handlers", () => {
 
   it("stores adapter media before delivering proc.send", async () => {
     let uploadedBytes: number[] = [];
+    let receivedByteStream = false;
     sendFrameToProcessMock.mockImplementation(async (_installationId: string, _pid: string, frame: any) => {
       if (frame.call === "proc.history") {
         return { type: "res", id: frame.id, ok: true, data: { pendingHil: null } };
       }
-      if (frame.call === "proc.media.write") {
-        uploadedBytes = [...await bodyToBytes(frame.body)];
-        return {
-          type: "res",
-          id: frame.id,
-          ok: true,
-          data: {
-            ok: true,
-            media: {
-              type: "image",
-              mimeType: "image/png",
-              key: "var/media/1000/pid-1/image",
-              size: 3,
-            },
-          },
-        };
+      if (frame.call === "proc.resource.write") {
+        const reader = frame.body.stream.getReader({ mode: "byob" });
+        receivedByteStream = true;
+        const chunk = await reader.read(new Uint8Array(3));
+        uploadedBytes = [...(chunk.value ?? [])];
+        const end = await reader.read(new Uint8Array(1));
+        expect(end.done).toBe(true);
+        reader.releaseLock();
+        return retainedAdapterResource(frame.id, { size: 3 });
       }
       if (frame.call === "proc.adapter.deliver") {
         return {
@@ -2247,52 +2244,40 @@ describe("adapter lifecycle handlers", () => {
 
     const upload = sendFrameToProcessMock.mock.calls[1]?.[2];
     expect(upload).toMatchObject({
-      call: "proc.media.write",
-      args: { type: "image", mimeType: "image/png" },
+      call: "proc.resource.write",
+      args: { mediaType: "image", contentType: "image/png" },
     });
     expect(upload?.args).not.toHaveProperty("size");
+    expect(receivedByteStream).toBe(true);
     expect(uploadedBytes).toEqual([1, 2, 3]);
     expect(sendFrameToProcessMock.mock.calls[2]?.[2]).toMatchObject({
       call: "proc.adapter.deliver",
       args: {
         media: [{
-          type: "image",
-          mimeType: "image/png",
-          key: "var/media/1000/pid-1/image",
-          size: 3,
+          type: "resource",
+          ref: expect.objectContaining({
+            type: "file",
+            contentType: "image/png",
+            size: 3,
+          }),
+          mediaType: "image",
         }],
       },
     });
   });
 
-  it("rolls back adapter uploads when another upload fails", async () => {
+  it("stops adapter delivery when a later resource upload fails", async () => {
     sendFrameToProcessMock.mockImplementation(async (_installationId: string, _pid: string, frame: any) => {
       if (frame.call === "proc.history") {
         return { type: "res", id: frame.id, ok: true, data: { pendingHil: null } };
       }
-      if (frame.call === "proc.media.write" && frame.args.filename === "good.png") {
+      if (frame.call === "proc.resource.write" && frame.args.filename === "good.png") {
         await bodyToBytes(frame.body);
-        return {
-          type: "res",
-          id: frame.id,
-          ok: true,
-          data: {
-            ok: true,
-            media: {
-              type: "image",
-              mimeType: "image/png",
-              key: "var/media/1000/pid-1/good",
-              size: 1,
-            },
-          },
-        };
+        return retainedAdapterResource(frame.id, { filename: "good.png" });
       }
-      if (frame.call === "proc.media.write") {
+      if (frame.call === "proc.resource.write") {
         await bodyToBytes(frame.body);
-        return { type: "res", id: frame.id, ok: true, data: { ok: false, error: "upload failed" } };
-      }
-      if (frame.call === "proc.media.delete") {
-        return { type: "res", id: frame.id, ok: true, data: { ok: true, key: frame.args.key } };
+        return { type: "res", id: frame.id, ok: false, error: { code: 500, message: "upload failed" } };
       }
       throw new Error(`Unexpected call: ${frame.call}`);
     });
@@ -2330,14 +2315,6 @@ describe("adapter lifecycle handlers", () => {
       },
     }, ctx, bodyFromBytes(new Uint8Array([1, 2])))).rejects.toThrow("upload failed");
 
-    expect(sendFrameToProcessMock).toHaveBeenCalledWith(
-      TEST_INSTALLATION_ID,
-      "pid-1",
-      expect.objectContaining({
-        call: "proc.media.delete",
-        args: { pid: "pid-1", key: "var/media/1000/pid-1/good" },
-      }),
-    );
     expect(sendFrameToProcessMock.mock.calls.some(([, , frame]) => frame.call === "proc.adapter.deliver")).toBe(false);
   });
 
@@ -2346,28 +2323,12 @@ describe("adapter lifecycle handlers", () => {
       if (frame.call === "proc.history") {
         return { type: "res", id: frame.id, ok: true, data: { pendingHil: null } };
       }
-      if (frame.call === "proc.media.write") {
+      if (frame.call === "proc.resource.write") {
         await bodyToBytes(frame.body);
-        return {
-          type: "res",
-          id: frame.id,
-          ok: true,
-          data: {
-            ok: true,
-            media: {
-              type: "image",
-              mimeType: "image/png",
-              key: "var/media/1000/pid-1/staged",
-              size: 1,
-            },
-          },
-        };
+        return retainedAdapterResource(frame.id);
       }
       if (frame.call === "proc.adapter.deliver") {
         return { type: "res", id: frame.id, ok: false, error: { code: 500, message: "delivery failed" } };
-      }
-      if (frame.call === "proc.media.delete") {
-        return { type: "res", id: frame.id, ok: true, data: { ok: true, key: frame.args.key } };
       }
       throw new Error(`Unexpected call: ${frame.call}`);
     });
@@ -2395,9 +2356,6 @@ describe("adapter lifecycle handlers", () => {
       },
     }, ctx, bodyFromBytes(new Uint8Array([1])))).rejects.toThrow("delivery failed");
 
-    expect(sendFrameToProcessMock.mock.calls.some(([, , frame]) =>
-      frame.call === "proc.media.delete"
-    )).toBe(false);
     const preallocatedRunId = vi.mocked(ctx.runRoutes.setAdapterRoute).mock.calls[0]?.[0]?.runId;
     expect(preallocatedRunId).toEqual(expect.any(String));
     expect(ctx.runRoutes.delete).not.toHaveBeenCalled();
@@ -2411,22 +2369,9 @@ describe("adapter lifecycle handlers", () => {
       if (frame.call === "proc.history") {
         return { type: "res", id: frame.id, ok: true, data: { pendingHil: null } };
       }
-      if (frame.call === "proc.media.write") {
+      if (frame.call === "proc.resource.write") {
         await bodyToBytes(frame.body);
-        return {
-          type: "res",
-          id: frame.id,
-          ok: true,
-          data: {
-            ok: true,
-            media: {
-              type: "image",
-              mimeType: "image/png",
-              key: "var/media/1000/pid-1/ambiguous",
-              size: 1,
-            },
-          },
-        };
+        return retainedAdapterResource(frame.id);
       }
       if (frame.call === "proc.adapter.deliver") {
         deliveryAttempts++;
@@ -2445,9 +2390,6 @@ describe("adapter lifecycle handlers", () => {
             replayed: "active",
           },
         };
-      }
-      if (frame.call === "proc.media.delete") {
-        throw new Error("Ambiguous delivery must not delete admitted media");
       }
       throw new Error(`Unexpected call: ${frame.call}`);
     });
@@ -2490,14 +2432,11 @@ describe("adapter lifecycle handlers", () => {
     const preallocatedRunId = vi.mocked(ctx.runRoutes.setAdapterRoute).mock.calls[0]?.[0]?.runId;
     expect(preallocatedRunId).toEqual(expect.any(String));
     expect(ctx.runRoutes.delete).not.toHaveBeenCalled();
-    expect(sendFrameToProcessMock.mock.calls.some(([, , frame]) =>
-      frame.call === "proc.media.delete"
-    )).toBe(false);
     expect(sendFrameToProcessMock.mock.calls.filter(([, , frame]) => (
       frame.call === "proc.adapter.deliver"
     ))).toHaveLength(2);
     expect(sendFrameToProcessMock.mock.calls.filter(([, , frame]) => (
-      frame.call === "proc.media.write"
+      frame.call === "proc.resource.write"
     ))).toHaveLength(1);
     expect(ctx.adapters.surfaceRoutes.setRoute).not.toHaveBeenCalled();
     // SAFETY: test fixture is constructed with the asserted kernel domain shape.

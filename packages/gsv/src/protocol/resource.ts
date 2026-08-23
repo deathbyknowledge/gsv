@@ -25,9 +25,17 @@ export const fileResourceReferenceSchema: z.ZodType<FileResourceReference> = z.s
 export type ResourceBlock = {
   type: "resource";
   ref: FileResourceReference;
+  mediaType?: "image" | "audio" | "video" | "document";
+  filename?: string;
+  duration?: number;
+  transcription?: string;
 };
 
 export const resourceBlockSchema: z.ZodType<ResourceBlock> = z.strictObject({
   type: z.literal("resource"),
   ref: fileResourceReferenceSchema,
+  mediaType: z.optional(z.enum(["image", "audio", "video", "document"])),
+  filename: z.optional(z.string().max(1_024)),
+  duration: z.optional(z.number().finite().nonnegative()),
+  transcription: z.optional(z.string()),
 });

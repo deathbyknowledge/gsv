@@ -51,7 +51,26 @@ type ProcessIdentity = {
   workspaceId: string | null;
 };
 
-type MediaInput = {
+type FileResourceReference = {
+  type: "file";
+  target: string;
+  path: string;
+  revision: string;
+  contentType: string;
+  size: number;
+  expiresAt?: number;
+};
+
+type ResourceBlock = {
+  type: "resource";
+  ref: FileResourceReference;
+  mediaType?: "image" | "audio" | "video" | "document";
+  filename?: string;
+  duration?: number;
+  transcription?: string;
+};
+
+type LegacyMediaInput = {
   type: "image" | "audio" | "video" | "document";
   mimeType: string;
   key?: string;
@@ -61,6 +80,8 @@ type MediaInput = {
   duration?: number;
   transcription?: string;
 };
+
+type MessageAttachment = ResourceBlock | LegacyMediaInput;
 
 ```
 
@@ -476,7 +497,7 @@ client; Process and adapter service callers use private Kernel-owned admission p
 | `conversation.list` | Kernel | Lists the caller's canonical Home, Work, and Group conversations. |
 | `conversation.history` | Conversation DO | Returns a newest-first page normalized into chronological order, paging transparently across hot SQLite messages and immutable R2 segments. |
 | `conversation.send` | Kernel | Idempotently commits user input, preinstalls the originating connection's directed run route, and admits the interaction to the conversation handler. The returned run id is deterministically bound to the canonical input message. |
-| `conversation.media.read` | Conversation DO through Kernel | Returns metadata plus a body stream for media owned by that conversation. Process cleanup does not remove it. |
+| `conversation.media.read` | Conversation DO through Kernel | Compatibility reader for media copied by older conversation records. New messages carry resource blocks and resolve them with `fs.transfer.send`. |
 
 ```ts
 type ConversationKind = "home" | "work" | "group";
@@ -496,7 +517,7 @@ type ConversationMessage = {
   sequence: number;
   author: { kind: "user"; uid: number } | { kind: "process"; pid: string; uid: number };
   text: string;
-  media?: MediaInput[];
+  media?: MessageAttachment[];
   origin: ConversationMessageOrigin;
   processId?: string;
   runId?: string;
@@ -520,7 +541,7 @@ type ConversationSyscalls = {
     result: { conversation: ConversationSummary; messages: ConversationMessage[]; hasMore: boolean };
   };
   "conversation.send": {
-    args: { conversationId: string; text: string; media?: MediaInput[]; idempotencyKey?: string };
+    args: { conversationId: string; text: string; media?: ResourceBlock[]; idempotencyKey?: string };
     result: { message: ConversationMessage; handlerPid: string; runId: string; queued?: boolean };
   };
   "conversation.media.read": {
@@ -542,16 +563,13 @@ Runtime behavior:
 | `proc.observe` | Kernel | Adds an owned Process to the current user connection's raw-activity observation set. Reasoning, output, tool, retry, HIL, and finish signals then reach that connection even when it does not own the run route. |
 | `proc.unobserve` | Kernel | Removes an owned Process from the current connection's observation set. |
 | `proc.spawn` | `handleProcSpawn` | Resolves the run-as identity (the personal agent for a parentless default, the parent for an inherited child, or explicit `runAs`), registers a process, sends kernel-only `proc.setidentity`, and optionally admits the initial prompt. |
-| `proc.send` | Process DO `handleProcSend` | Admits work into the target process history. A direct user message supersedes the active run; process and scheduler messages remain FIFO queued. Media entries contain process-scoped keys returned by `proc.media.write` or external URLs; inline `media.data` is not accepted. Media-bearing messages are admitted immediately and generation starts after background preparation. Kernel-owned paths can preallocate a run id, which the Process reconciles against active, queued, and recorded admissions. |
+| `proc.send` | Process DO `handleProcSend` | Admits work into the target process history. A direct user message supersedes the active run; process and scheduler messages remain FIFO queued. Attachments are revision-bound resource blocks. The Process validates and retains any non-owned source before generation. Kernel-owned paths can preallocate a run id, which the Process reconciles against active, queued, and recorded admissions. |
 | `proc.ipc.send` | `handleProcIpcSend` | Process-callable same-owner IPC. Validates that the caller is a registered process, the target exists, and source/target owners match, then sends kernel-only `proc.ipc.deliver` to the target Process DO. The target receives a visible user message envelope and starts or queues a run. |
 | `proc.ipc.call` | `handleProcIpcCall` | Process-callable bounded same-owner IPC. Creates a call id and deadline, delivers the request to the target process, and later sends either `ipc.reply` or `ipc.timeout` to the source process. The syscall returns after acceptance, not after the target replies. |
 | `proc.abort` | Process DO | Cancels the active run. Converts outstanding tool calls to error results, sends `request.cancel` for active tool, CodeMode, and routed provider requests, clears pending HIL and current run, emits `proc.run.finished` with `status: "aborted"`, and may promote the next queued run. Cancellation is nonblocking and late results cannot mutate the successor run. An optional `runId` prevents a stale abort from stopping a successor. |
 | `proc.hil` | Process DO | Resolves a pending human-in-the-loop request. `approve` dispatches the original syscall; `deny` appends a synthetic error tool result. `remember: true` with `approve` stores a process-local allow override for the syscall and target class. |
 | `proc.kill` | Process DO | Optionally archives the process history under the run-as agent's home, promotes referenced media into immutable archive objects, clears live process media, and wipes Process DO state. After success the Kernel removes the process registry entry. |
 | `proc.history` | Process DO | Returns paged stored messages, message count and cursor flags, pending HIL, and the latest context-pressure state. Offset paging reads from the beginning. `tail: true` reads the latest page, `beforeMessageId` reads older messages, and `afterMessageId` reads newer messages. `includeMessages: false` returns status metadata without transferring raw Process activity. Tool results and assistant metadata are expanded into structured content when messages are included. |
-| `proc.media.read` | Process DO | Reads one process-scoped media object. A successful result returns key, filesystem path, MIME type, and size in `data` and always attaches the media bytes as a response body. |
-| `proc.media.write` | Process DO | Streams one request body directly into process-scoped R2 storage. The body descriptor must declare its exact length so R2 receives a fixed-length stream. An internal caller may supply `mediaId` as an idempotency key: an exact repeated descriptor drains the repeated body and returns the original reference, while conflicting metadata is rejected. Returns a stable media reference for `proc.send`, including its read-only `/var/media/{uid}/{pid}/{id}` filesystem path. |
-| `proc.media.delete` | Process DO | Idempotently deletes one unreferenced process-scoped media object. Keys outside the target process or already referenced by process history are rejected. Used to roll back uploads that are not admitted by `proc.send`. |
 | `proc.history.policy.get` | Process DO | Returns the process context-overflow policy. The default is `auto-compact` at 90% pressure while retaining the newest 80 stored messages. |
 | `proc.history.policy.set` | Process DO | Sets the process context-overflow policy. Supported `overflow` values are `auto-compact` and `fail`; the policy is applied during run preflight and after a provider-confirmed overflow. Provider overflow does not advance the main generation fallback chain. |
 | `proc.history.compact` | Process DO | Archives an old history prefix, inserts a visible system summary marker, and records a `compaction` segment. Requires a supplied or generated summary and exactly one of `keepLast` or `throughMessageId`. |
@@ -676,7 +694,7 @@ type ProcessSyscalls = {
   };
 
   "proc.send": {
-    args: { pid?: string; message: string; media?: MediaInput[] };
+    args: { pid?: string; message: string; media?: ResourceBlock[] };
     result: { ok: true; status: "started"; runId: string; queued?: boolean; replayed?: "active" | "queued" | "recorded" } | OperationError;
   };
 
@@ -713,21 +731,6 @@ type ProcessSyscalls = {
   "proc.history": {
     args: { pid?: string; includeMessages?: boolean; limit?: number; offset?: number; beforeMessageId?: number; afterMessageId?: number; tail?: boolean };
     result: { ok: true; pid: string; messages: ProcHistoryMessage[]; messageCount: number; truncated?: boolean; hasMoreBefore?: boolean; hasMoreAfter?: boolean; pendingHil?: ProcHilRequest | null; context?: ProcContextState | null } | OperationError;
-  };
-
-  "proc.media.read": {
-    args: { pid?: string; key: string };
-    result: { ok: true; key: string; path: string; mimeType: string; size: number } | OperationError;
-  };
-
-  "proc.media.write": {
-    args: { pid?: string; type: "image" | "audio" | "video" | "document"; mimeType: string; mediaId?: string; filename?: string; duration?: number; transcription?: string };
-    result: { ok: true; media: MediaInput & { key: string; path: string; size: number } } | OperationError;
-  };
-
-  "proc.media.delete": {
-    args: { pid?: string; key: string };
-    result: { ok: true; key: string } | OperationError;
   };
 
   "proc.history.policy.get": {

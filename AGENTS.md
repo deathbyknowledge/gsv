@@ -69,7 +69,7 @@ Canonical user-facing conversations are not Process histories. Conversations ret
 - `inference/`: private managed inference entrypoint, platform-owned provider transport, per-installation budgets, and usage settlement.
 - `gateway/src/kernel/`: authentication, capabilities, syscall dispatch, configuration, process registry, routing, schedules, adapters, and user connections.
 - `gateway/src/process/`: agent loop, history, queued input, pending tools, approvals, cancellation, context assembly, and process-scoped media.
-- `gateway/src/conversation/`: canonical user-visible message history, conversation-owned media, hot SQLite retention, and immutable R2 archive segments.
+- `gateway/src/conversation/`: canonical user-visible message history, immutable resource references, hot SQLite retention, and immutable R2 archive segments.
 - `gateway/src/syscalls/` and `gateway/src/protocol/`: public runtime contracts and frame transport.
 - `gateway/src/inference/`: provider integration and model transport.
 - `packages/gsv/`: public client and protocol types.
@@ -114,8 +114,8 @@ Keep platform-specific identity and delivery behavior in its adapter. Keep visua
 - Enforce authorization in the Kernel, not only in UI or callers.
 - Managed onboarding capabilities authorize only first-boot setup for one installation. Store them hashed in accounts, keep them out of URLs after the browser reads the fragment, and let only the Kernel create local credentials.
 - Never hardcode or log secrets, raw authentication material, QR payloads, prompts, tool arguments, or private file contents.
-- Store live process media once in R2, persist references in history, and scope keys to the owning process. Before live cleanup, promote archived references to immutable media under the run-as agent home. Hydrate bytes only while building model context or serving an explicit media read.
-- Copy media on a committed canonical Message into conversation-owned R2 storage so Process cleanup cannot delete user-visible conversation history.
+- Persist file and media references in history, retain durable content once as immutable media under the run-as agent home, and scope temporary keys to the owning process. Hydrate bytes only while building model context or resolving an explicit resource read.
+- Canonical Messages store immutable resource references rather than duplicating bytes. A Process must retain an exact source revision before committing a reference whose source lifetime is not already durable.
 - Telemetry uses an explicit allowlist and records timings and outcomes rather than user content.
 
 ## Schema migrations

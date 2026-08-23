@@ -33,6 +33,8 @@ import type {
   AiToolsDevice,
   InteractionOrigin,
   FileResourceReference,
+  MessageAttachment,
+  ResourceBlock,
   NetFetchArgs,
   ProcessIdentity,
   ProcSendArgs,
@@ -53,12 +55,6 @@ import type {
   ProcHistoryMessage,
   ProcHistoryToolResultContent,
   ProcMediaInput,
-  ProcMediaDeleteArgs,
-  ProcMediaDeleteResult,
-  ProcMediaReadArgs,
-  ProcMediaReadResult,
-  ProcMediaWriteArgs,
-  ProcMediaWriteResult,
   ProcHistoryContextPolicy,
   ProcHistoryPolicyGetArgs,
   ProcHistoryPolicyGetResult,
@@ -90,6 +86,7 @@ import type {
 import {
   jsonObjectSchema,
   jsonValueSchema,
+  resourceBlockSchema,
   REQUEST_CANCEL_SIGNAL,
 } from "@humansandmachines/gsv/protocol";
 import type { AdapterSurface } from "../adapter-interface";
@@ -100,6 +97,9 @@ import type {
   ProcessMessageCommitRequestFrame,
   ProcessMessageStreamSignal,
   ProcessRequestFrame,
+  ProcessResourceResponseFrame,
+  ProcessResourceRetainRequestFrame,
+  ProcessResourceWriteRequestFrame,
   ProcessRuntimeEvent,
   ProcessRuntimeEventDeliverArgs,
   ProcessRuntimeEventDeliverResponseFrame,
@@ -307,7 +307,16 @@ type RunOutputMedia = ProcMediaInput & {
   key: string;
   path: string;
   size: number;
+  revision?: string;
 };
+
+type StagedResourceWriteArgs = Omit<ProcMediaInput, "key" | "path" | "url" | "size"> & {
+  mediaId?: string;
+};
+
+type StagedResourceWriteResult =
+  | { ok: true; media: RunOutputMedia }
+  | { ok: false; error: string };
 
 type AssistantHistoryContent = {
   text: string;
@@ -340,7 +349,7 @@ type RunFinishPayload = {
   text: string | null;
   error?: string;
   usage?: AssistantMessage["usage"];
-  media?: RunOutputMedia[];
+  media?: MessageAttachment[];
   aborted?: true;
   queuedCount: number;
   timestamp: number;
@@ -448,7 +457,7 @@ type ArchivedMessageRecord = {
 };
 
 type ArchivedMediaRewrite =
-  | { key: string; path: string }
+  | { key: string; path: string; revision: string }
   | { missing: true };
 
 type RuntimeEventAdmission =
@@ -673,6 +682,7 @@ const runOutputMediaSchema = processMediaInputSchema.extend({
   key: z.string(),
   path: z.string(),
   size: z.number(),
+  revision: z.string().optional(),
 });
 const assistantUsageSchema: z.ZodType<AssistantMessage["usage"]> = z.object({
   input: z.number(),
@@ -722,7 +732,7 @@ const pendingRunFinishSchema: z.ZodType<RunFinishPayload> = z.object({
   text: z.string().nullable(),
   error: z.string().optional(),
   usage: assistantUsageSchema.optional(),
-  media: z.array(runOutputMediaSchema).optional(),
+  media: z.array(z.union([resourceBlockSchema, runOutputMediaSchema])).optional(),
   aborted: z.literal(true).optional(),
   queuedCount: z.number().int().nonnegative(),
   timestamp: z.number(),
@@ -1442,6 +1452,16 @@ function emptyProcessArchive(): ProcessArchiveResult {
   };
 }
 
+function mediaTypeFromContentType(
+  contentType: string,
+): NonNullable<ResourceBlock["mediaType"]> {
+  const normalized = contentType.trim().toLowerCase();
+  if (normalized.startsWith("image/")) return "image";
+  if (normalized.startsWith("audio/")) return "audio";
+  if (normalized.startsWith("video/")) return "video";
+  return "document";
+}
+
 function messageSnapshotsMatch(
   expected: MessageRecord[],
   current: MessageRecord[],
@@ -1882,6 +1902,7 @@ export class Process extends DurableObject<ProcessEnv> {
     | ProcessRuntimeEventDeliverResponseFrame
     | ProcessScheduleDeliverResponseFrame
     | ProcessAdapterDeliverResponseFrame
+    | ProcessResourceResponseFrame
     | null
   > {
     try {
@@ -1897,6 +1918,14 @@ export class Process extends DurableObject<ProcessEnv> {
       if (frame.call === "proc.schedule.deliver") {
         const result = await this.handleProcScheduleDeliver(frame.args);
         return { type: "res", id: frame.id, ok: true, data: result };
+      }
+      if (frame.call === "proc.resource.retain") {
+        const resource = await this.handleProcessResourceRetain(frame);
+        return { type: "res", id: frame.id, ok: true, data: { resource } };
+      }
+      if (frame.call === "proc.resource.write") {
+        const resource = await this.handleProcessResourceWrite(frame);
+        return { type: "res", id: frame.id, ok: true, data: { resource } };
       }
       let data: ResultOf<SyscallName>;
 
@@ -1958,25 +1987,6 @@ export class Process extends DurableObject<ProcessEnv> {
         case "proc.ai.config.set":
           data = await this.handleProcAiConfigSet(
             frame.args,
-          );
-          break;
-        case "proc.media.read":
-          return {
-            type: "res",
-            id: frame.id,
-            ok: true,
-            ...await this.handleProcMediaRead(frame.args),
-          };
-        case "proc.media.write":
-          data = await this.handleProcMediaWrite(
-            frame.args,
-            frame.body,
-          );
-          break;
-        case "proc.media.delete":
-          data = await this.handleProcMediaDelete(
-            frame.args,
-            frame.body,
           );
           break;
         case "proc.run.attach":
@@ -2064,7 +2074,7 @@ export class Process extends DurableObject<ProcessEnv> {
   }
 
   private async handleProcSend(
-    args: ProcSendArgs,
+    args: Omit<ProcSendArgs, "media"> & { media?: Array<ResourceBlock | ProcMediaInput> },
     admittedRunId?: string,
   ): Promise<ProcSendResult> {
     if (!this.isInitialized()) {
@@ -2072,14 +2082,13 @@ export class Process extends DurableObject<ProcessEnv> {
     }
     const identity = this.identity;
     const pid = this.pid;
-    const mediaPrefix = processMediaPrefix(identity.uid, pid);
-    if (args.media?.some((item) =>
-      item.key !== undefined
-      && (!item.key.startsWith(mediaPrefix) || !processMediaPath(item.key))
-    )) {
-      return { ok: false, error: "media key is outside this process" };
+    let incomingMedia: ProcMediaInput[];
+    try {
+      incomingMedia = await this.resolveIncomingMedia(args.media);
+    } catch (error) {
+      return { ok: false, error: errorMessageFromUnknown(error) };
     }
-    const mediaKeys = [...new Set((args.media ?? []).flatMap((item) =>
+    const mediaKeys = [...new Set(incomingMedia.flatMap((item) =>
       item.key === undefined ? [] : [item.key]
     ))].sort();
     const runId = admittedRunId ?? crypto.randomUUID();
@@ -2106,8 +2115,13 @@ export class Process extends DurableObject<ProcessEnv> {
           this.storage,
           identity.uid,
           pid,
-          args.media,
-          await this.resolveMediaProcessingOptions(args.media),
+          incomingMedia,
+          {
+            ...await this.resolveMediaProcessingOptions(incomingMedia),
+            allowedStoredKeys: new Set(mediaKeys.filter((key) => (
+              agentArchiveMediaPath(identity.home, key) !== null
+            ))),
+          },
         );
         const releaseLifecycle = await this.acquireLifecycleTransition();
         try {
@@ -2171,7 +2185,6 @@ export class Process extends DurableObject<ProcessEnv> {
       }
     }
 
-    const incomingMedia = args.media ?? [];
     const hasMedia = incomingMedia.length > 0;
     const releaseMedia = await this.acquireMediaKeyAdmissions(mediaKeys);
     const releaseLifecycle = await this.acquireLifecycleTransition();
@@ -2271,6 +2284,83 @@ export class Process extends DurableObject<ProcessEnv> {
       releaseLifecycle();
       releaseMedia();
     }
+  }
+
+  private async resolveIncomingMedia(
+    input: Array<ResourceBlock | ProcMediaInput> | undefined,
+  ): Promise<ProcMediaInput[]> {
+    if (!input?.length) return [];
+    if (input.length > MAX_MESSAGE_MEDIA_ITEMS) {
+      throw new Error(`Message media exceeds item limit (${MAX_MESSAGE_MEDIA_ITEMS})`);
+    }
+    const identity = this.identity;
+    const lifecycleEpoch = this.lifecycleEpoch;
+    const media: ProcMediaInput[] = [];
+    let totalBytes = 0;
+    for (const candidate of input) {
+      if (candidate.type !== "resource") {
+        const key = candidate.key?.trim();
+        if (key) {
+          const active = key.startsWith(processMediaPrefix(identity.uid, this.pid))
+            && processMediaPath(key) !== null;
+          const object = await this.storage.head(key);
+          const archived = agentArchiveMediaPath(identity.home, key) !== null
+            && object !== null
+            && this.isValidOwnedArchiveObject(key, object, {
+              expectedContentType: candidate.mimeType,
+            });
+          if (!active && !archived) throw new Error("media key is outside this process");
+        }
+        media.push(candidate);
+        continue;
+      }
+
+      let resource = resourceBlockSchema.parse(candidate);
+      if (!await this.isOwnedResource(resource)) {
+        resource = await this.retainResource(resource, {
+          current: () => (
+            !this.killed
+            && this.isInitialized()
+            && this.lifecycleEpoch === lifecycleEpoch
+            && this.identity.uid === identity.uid
+            && this.identity.gid === identity.gid
+            && this.identity.home === identity.home
+          ),
+        });
+      }
+      const { ref } = resource;
+      totalBytes += ref.size;
+      if (ref.size > MAX_MESSAGE_MEDIA_PART_BYTES || totalBytes > MAX_MESSAGE_MEDIA_TOTAL_BYTES) {
+        throw new Error("Message media exceeds the attachment byte limit");
+      }
+      media.push({
+        type: resource.mediaType ?? mediaTypeFromContentType(ref.contentType),
+        mimeType: ref.contentType,
+        key: ref.path.replace(/^\/+/, ""),
+        path: ref.path,
+        size: ref.size,
+        filename: resource.filename,
+        duration: resource.duration,
+        transcription: resource.transcription,
+      });
+    }
+    return media;
+  }
+
+  private async isOwnedResource(resource: ResourceBlock): Promise<boolean> {
+    const { ref } = resource;
+    if (ref.target !== "gsv" || ref.expiresAt !== undefined) return false;
+    const key = ref.path.replace(/^\/+/, "");
+    if (agentArchiveMediaPath(this.identity.home, key) !== ref.path) return false;
+    const object = await this.storage.head(key);
+    return Boolean(
+      object
+      && object.httpEtag === ref.revision
+      && object.size === ref.size
+      && this.isValidOwnedArchiveObject(key, object, {
+        expectedContentType: ref.contentType,
+      }),
+    );
   }
 
   private maybeStartTaskTitleGeneration(message: string): void {
@@ -2386,7 +2476,7 @@ export class Process extends DurableObject<ProcessEnv> {
   private async prepareRunMedia(
     runId: string,
     messageId: number,
-    input: NonNullable<ProcSendArgs["media"]>,
+    input: ProcMediaInput[],
   ): Promise<void> {
     if (this.killed) {
       return;
@@ -2405,7 +2495,13 @@ export class Process extends DurableObject<ProcessEnv> {
           uid,
           pid,
           input,
-          { ...options, signal },
+          {
+            ...options,
+            signal,
+            allowedStoredKeys: new Set(input.flatMap((item) => (
+              item.key && agentArchiveMediaPath(this.identity.home, item.key) ? [item.key] : []
+            ))),
+          },
         ),
         signal,
       );
@@ -2520,7 +2616,7 @@ export class Process extends DurableObject<ProcessEnv> {
   }
 
   private async resolveMediaProcessingOptions(
-    media: ProcSendArgs["media"],
+    media: ProcMediaInput[] | undefined,
   ): Promise<StoreIncomingProcessMediaOptions> {
     if (!media || media.length === 0) {
       return { ai: this.env.AI };
@@ -3076,48 +3172,6 @@ export class Process extends DurableObject<ProcessEnv> {
     };
   }
 
-  private async handleProcMediaRead(
-    args: ProcMediaReadArgs,
-  ): Promise<{ data: ProcMediaReadResult; body?: FrameBody }> {
-    const key = args.key.trim();
-    if (!key) {
-      return { data: { ok: false, error: "proc.media.read requires key" } };
-    }
-
-    const path = this.ownedMediaPath(key);
-    if (!path) {
-      return { data: { ok: false, error: "media key is outside this process" } };
-    }
-
-    const object = await this.storage.get(key);
-    if (!object) {
-      return { data: { ok: false, error: "media not found" } };
-    }
-    if (this.killed) {
-      await object.body.cancel("Process no longer exists").catch(() => {});
-      return { data: { ok: false, error: "Process no longer exists" } };
-    }
-    if (!this.isValidOwnedArchiveObject(key, object)) {
-      await object.body.cancel("Invalid archived media ownership").catch(() => {});
-      return { data: { ok: false, error: "media key is outside this process" } };
-    }
-
-    const mimeType = object.httpMetadata?.contentType || "application/octet-stream";
-    return {
-      data: {
-        ok: true,
-        key,
-        path,
-        mimeType,
-        size: object.size,
-      },
-      body: {
-        stream: object.body,
-        length: object.size,
-      },
-    };
-  }
-
   private async handleProcRunAttach(
     args: ProcessRunAttachArgs,
   ): Promise<ProcessRunAttachResult> {
@@ -3137,62 +3191,82 @@ export class Process extends DurableObject<ProcessEnv> {
         error: `proc.run.attach accepts at most ${MAX_MESSAGE_MEDIA_ITEMS} media items`,
       };
     }
-    const prefix = processMediaPrefix(this.identity.uid, this.pid);
+    const identity = this.identity;
+    const lifecycleEpoch = this.lifecycleEpoch;
+    const current = () => (
+      !this.killed
+      && this.isInitialized()
+      && this.lifecycleEpoch === lifecycleEpoch
+      && this.identity.uid === identity.uid
+      && this.identity.gid === identity.gid
+      && this.identity.home === identity.home
+      && this.currentRun?.runId === runId
+    );
+    if (!current()) {
+      return { ok: false, error: "the process run is no longer active" };
+    }
     const normalized: RunOutputMedia[] = [];
+    const retained: ResourceBlock[] = [];
     const seen = new Set<string>();
     let totalBytes = 0;
-    for (const item of args.media) {
-      const key = item.key.trim();
-      const path = key ? processMediaPath(key) : null;
-      if (!key || !key.startsWith(prefix) || !path || item.path !== path) {
-        return { ok: false, error: "media key is outside this process" };
+    for (const raw of args.media) {
+      const parsed = resourceBlockSchema.safeParse(raw);
+      if (!parsed.success) {
+        return { ok: false, error: "proc.run.attach media requires a valid resource" };
       }
-      if (seen.has(key)) {
-        continue;
-      }
-      const mimeType = item.mimeType.trim();
-      if (!mimeType) {
-        return { ok: false, error: "proc.run.attach media requires mimeType" };
-      }
-      if (!Number.isSafeInteger(item.size) || item.size < 0) {
+      const item = parsed.data;
+      if (!Number.isSafeInteger(item.ref.size) || item.ref.size < 0) {
         return { ok: false, error: "proc.run.attach media requires an exact size" };
       }
-      if (item.size > MAX_MESSAGE_MEDIA_PART_BYTES) {
+      if (item.ref.size > MAX_MESSAGE_MEDIA_PART_BYTES) {
         return {
           ok: false,
           error: `proc.run.attach media exceeds per-item limit (${MAX_MESSAGE_MEDIA_PART_BYTES} bytes)`,
         };
       }
-      totalBytes += item.size;
+      const sourceId = JSON.stringify([item.ref.target, item.ref.path, item.ref.revision]);
+      if (seen.has(sourceId)) continue;
+      seen.add(sourceId);
+      totalBytes += item.ref.size;
       if (totalBytes > MAX_MESSAGE_MEDIA_TOTAL_BYTES) {
         return {
           ok: false,
           error: `proc.run.attach media exceeds total limit (${MAX_MESSAGE_MEDIA_TOTAL_BYTES} bytes)`,
         };
       }
-      seen.add(key);
+      let resource: ResourceBlock;
+      try {
+        resource = await this.retainResource(item, {
+          runId,
+          signal: this.runAbortSignal(runId),
+          current,
+        });
+      } catch (error) {
+        return {
+          ok: false,
+          error: error instanceof Error ? error.message : String(error),
+        };
+      }
+      const key = resource.ref.path.replace(/^\/+/, "");
       const descriptor: RunOutputMedia = {
-        type: item.type,
-        mimeType,
+        type: resource.mediaType ?? mediaTypeFromContentType(resource.ref.contentType),
+        mimeType: resource.ref.contentType,
         key,
-        path,
-        size: item.size,
+        path: resource.ref.path,
+        size: resource.ref.size,
+        revision: resource.ref.revision,
       };
-      if (item.filename?.trim()) {
-        descriptor.filename = item.filename;
+      if (resource.filename?.trim()) {
+        descriptor.filename = resource.filename;
       }
-      if (item.duration !== undefined && Number.isFinite(item.duration) && item.duration >= 0) {
-        descriptor.duration = item.duration;
+      if (resource.duration !== undefined) {
+        descriptor.duration = resource.duration;
       }
-      if (item.transcription?.trim()) {
-        descriptor.transcription = item.transcription;
+      if (resource.transcription?.trim()) {
+        descriptor.transcription = resource.transcription;
       }
       normalized.push(descriptor);
-    }
-
-    const stagedKeys = [...new Set((args.stagedKeys ?? []).map((key) => key.trim()))];
-    if (stagedKeys.some((key) => !key || !seen.has(key))) {
-      return { ok: false, error: "proc.run.attach stagedKeys must reference attached media" };
+      retained.push(resource);
     }
 
     const keys = normalized.map((item) => item.key).sort();
@@ -3238,13 +3312,9 @@ export class Process extends DurableObject<ProcessEnv> {
         }
 
         run.outputMedia = media;
-        run.stagedOutputMediaKeys = [...new Set([
-          ...(run.stagedOutputMediaKeys ?? []),
-          ...stagedKeys,
-        ])];
         delete run.outputMediaPersisted;
         this.currentRun = run;
-        return { ok: true, runId, media };
+        return { ok: true, runId, media: retained };
       } finally {
         releaseLifecycle();
       }
@@ -3253,27 +3323,101 @@ export class Process extends DurableObject<ProcessEnv> {
     }
   }
 
-  private async handleProcMediaWrite(
-    args: ProcMediaWriteArgs,
+  private async handleProcessResourceRetain(
+    frame: ProcessResourceRetainRequestFrame,
+  ): Promise<ResourceBlock> {
+    if (this.killed || !this.isInitialized()) {
+      throw new Error("Process no longer exists");
+    }
+    const resource = resourceBlockSchema.parse(frame.args.resource);
+    const identity = this.identity;
+    const lifecycleEpoch = this.lifecycleEpoch;
+    return this.retainResource(resource, {
+      current: () => (
+        !this.killed
+        && this.isInitialized()
+        && this.lifecycleEpoch === lifecycleEpoch
+        && this.identity.uid === identity.uid
+        && this.identity.gid === identity.gid
+        && this.identity.home === identity.home
+      ),
+    });
+  }
+
+  private async handleProcessResourceWrite(
+    frame: ProcessResourceWriteRequestFrame,
+  ): Promise<ResourceBlock> {
+    const body = frame.body;
+    if (body.length === undefined || body.length > MAX_MESSAGE_MEDIA_PART_BYTES) {
+      await body.stream.cancel("Resource body length is invalid").catch(() => {});
+      throw new Error(`Resource body must be at most ${MAX_MESSAGE_MEDIA_PART_BYTES} bytes`);
+    }
+    const result = await this.storeIncomingResource({
+      type: frame.args.mediaType,
+      mimeType: frame.args.contentType,
+      mediaId: frame.args.resourceId,
+      filename: frame.args.filename,
+      duration: frame.args.duration,
+      transcription: frame.args.transcription,
+    }, body);
+    if (!result.ok) throw new Error(result.error);
+    const sourceKey = result.media.key;
+    if (!sourceKey) throw new Error("Stored resource has no key");
+    try {
+      const rewrites = await this.persistArchivedMediaKeys([sourceKey]);
+      const rewrite = rewrites.get(sourceKey);
+      if (!rewrite || "missing" in rewrite) {
+        throw new Error("Stored resource disappeared before retention");
+      }
+      const object = await this.storage.head(rewrite.key);
+      if (!object || !this.isValidOwnedArchiveObject(rewrite.key, object, {
+        expectedContentType: frame.args.contentType,
+      })) {
+        throw new Error("Stored resource archive is invalid");
+      }
+      await this.storage.delete(sourceKey);
+      return resourceBlockSchema.parse({
+        type: "resource",
+        ref: {
+          type: "file",
+          target: "gsv",
+          path: rewrite.path,
+          revision: object.httpEtag,
+          contentType: frame.args.contentType,
+          size: object.size,
+        },
+        mediaType: frame.args.mediaType,
+        filename: frame.args.filename,
+        duration: frame.args.duration,
+        transcription: frame.args.transcription,
+      });
+    } catch (error) {
+      await this.storage.delete(sourceKey).catch(() => {});
+      throw error;
+    }
+  }
+
+  private async storeIncomingResource(
+    args: StagedResourceWriteArgs,
     body?: FrameBody,
-  ): Promise<ProcMediaWriteResult> {
+  ): Promise<StagedResourceWriteResult> {
     if (this.killed || !this.isInitialized()) {
       await body?.stream.cancel("Process no longer exists").catch(() => {});
       return { ok: false, error: "Process no longer exists" };
     }
     if (!body) {
-      return { ok: false, error: "proc.media.write requires a body" };
+      return { ok: false, error: "Resource write requires a body" };
     }
     const parsedLength = exactBodyLengthSchema.safeParse(body.length);
     if (!parsedLength.success) {
       await body.stream.cancel("Missing media body length").catch(() => {});
-      return { ok: false, error: "proc.media.write requires an exact body length" };
+      return { ok: false, error: "Resource write requires an exact body length" };
     }
     const length = parsedLength.data;
     const mimeType = args.mimeType.trim();
     if (!mimeType) {
       await body.stream.cancel("Missing media MIME type").catch(() => {});
-      return { ok: false, error: "proc.media.write requires mimeType" };
+      return { ok: false, error: "Resource write requires contentType" };
     }
     const pid = this.pid;
     const identity = this.identity;
@@ -3290,7 +3434,7 @@ export class Process extends DurableObject<ProcessEnv> {
       )
     ) {
       await body.stream.cancel("Invalid media id").catch(() => {});
-      return { ok: false, error: "proc.media.write mediaId is invalid" };
+      return { ok: false, error: "Resource id is invalid" };
     }
     const key = `${processMediaPrefix(uid, pid)}${requestedMediaId ?? crypto.randomUUID()}`;
     const path = processMediaPath(key);
@@ -3342,7 +3486,7 @@ export class Process extends DurableObject<ProcessEnv> {
             || existing.customMetadata?.descriptorId !== descriptorId
           ) {
             await body.stream.cancel("Process media id conflicts with existing media").catch(() => {});
-            return { ok: false, error: "proc.media.write mediaId conflicts with existing media" };
+            return { ok: false, error: "Resource id conflicts with existing media" };
           }
           try {
             await body.stream.pipeTo(new WritableStream<Uint8Array>(), {
@@ -3353,7 +3497,7 @@ export class Process extends DurableObject<ProcessEnv> {
               return { ok: false, error: "Process reset during media upload" };
             }
             throw new Error(
-              `proc.media.write failed to consume repeated media: ${
+              `Resource write failed to consume repeated media: ${
                 error instanceof Error ? error.message : String(error)
               }`,
             );
@@ -3406,7 +3550,7 @@ export class Process extends DurableObject<ProcessEnv> {
         }
         return {
           ok: false,
-          error: `proc.media.write failed: ${stored.reason instanceof Error ? stored.reason.message : String(stored.reason)}`,
+          error: `Resource write failed: ${stored.reason instanceof Error ? stored.reason.message : String(stored.reason)}`,
         };
       }
       if (piped.status === "rejected") {
@@ -3416,13 +3560,13 @@ export class Process extends DurableObject<ProcessEnv> {
         }
         return {
           ok: false,
-          error: `proc.media.write failed: ${piped.reason instanceof Error ? piped.reason.message : String(piped.reason)}`,
+          error: `Resource write failed: ${piped.reason instanceof Error ? piped.reason.message : String(piped.reason)}`,
         };
       }
       const object = stored.value;
       if (object.size !== length) {
         await this.storage.delete(key);
-        return { ok: false, error: `proc.media.write received ${object.size} bytes, expected ${length}` };
+        return { ok: false, error: `Resource write received ${object.size} bytes, expected ${length}` };
       }
 
       const releaseLifecycle = await this.acquireLifecycleTransition();
@@ -3457,56 +3601,6 @@ export class Process extends DurableObject<ProcessEnv> {
         this.mediaUploadAbortControllers.delete(key);
       }
       releaseMediaWrite?.();
-    }
-  }
-
-  private async handleProcMediaDelete(
-    args: ProcMediaDeleteArgs,
-    body?: FrameBody,
-  ): Promise<ProcMediaDeleteResult> {
-    if (body) {
-      await body.stream.cancel("proc.media.delete does not accept a body").catch(() => {});
-      return { ok: false, error: "proc.media.delete does not accept a body" };
-    }
-    if (this.killed || !this.isInitialized()) {
-      return { ok: false, error: "Process no longer exists" };
-    }
-    const key = args.key.trim();
-    if (!key) {
-      return { ok: false, error: "proc.media.delete requires key" };
-    }
-    if (
-      !key.startsWith(processMediaPrefix(this.identity.uid, this.pid))
-      || !processMediaPath(key)
-    ) {
-      return { ok: false, error: "media key is outside this process" };
-    }
-    const releaseMedia = await this.acquireMediaKeyAdmission(key);
-    try {
-      const releaseLifecycle = await this.acquireLifecycleTransition();
-      try {
-        if (this.killed || !this.isInitialized()) {
-          return { ok: false, error: "Process no longer exists" };
-        }
-        if (
-          !key.startsWith(processMediaPrefix(this.identity.uid, this.pid))
-          || !processMediaPath(key)
-        ) {
-          return { ok: false, error: "media key is outside this process" };
-        }
-        if (
-          this.store.referencesMediaKey(key)
-          || this.currentRun?.outputMedia?.some((item) => item.key === key)
-        ) {
-          return { ok: false, error: "media is referenced by process history" };
-        }
-        await this.storage.delete(key);
-        return { ok: true, key };
-      } finally {
-        releaseLifecycle();
-      }
-    } finally {
-      releaseMedia();
     }
   }
 
@@ -5653,7 +5747,7 @@ export class Process extends DurableObject<ProcessEnv> {
         runId,
       };
       if (outputMedia.length > 0) {
-        outputPayload.media = outputMedia;
+        outputPayload.media = outputMedia.map((item) => this.runOutputMediaResource(item));
       }
       if (activeFallbackMetadata) {
         outputPayload.fallback = activeFallbackMetadata;
@@ -5933,7 +6027,7 @@ export class Process extends DurableObject<ProcessEnv> {
         commitArgs.conversationId = run.conversationId;
       }
       if (media.length > 0) {
-        commitArgs.media = media;
+        commitArgs.media = media.map((item) => this.runOutputMediaResource(item));
       }
       const request: ProcessMessageCommitRequestFrame = {
         type: "req",
@@ -6835,17 +6929,73 @@ export class Process extends DurableObject<ProcessEnv> {
   ): Promise<{ ref: FileResourceReference; media: StoredProcessMedia }> {
     const signal = this.runAbortSignal(runId);
     signal.throwIfAborted();
-    if (source.expiresAt !== undefined && source.expiresAt <= Date.now()) {
-      throw new Error(`Resource has expired: ${source.path}`);
-    }
     if (
       !source.contentType.toLowerCase().startsWith("image/")
       || isVectorImageMimeType(source.contentType)
     ) {
       throw new Error(`Unsupported resource content type: ${source.contentType}`);
     }
+    const resource = await this.retainResource({
+      type: "resource",
+      ref: source,
+      mediaType: "image",
+    }, {
+      runId,
+      signal,
+      current: () => (
+        !this.handleRunStopped(runId)
+        && this.store.getPending(executionId)?.runId === runId
+      ),
+    });
+    const key = resource.ref.path.replace(/^\/+/, "");
+    return {
+      ref: resource.ref,
+      media: {
+        type: "image",
+        mimeType: resource.ref.contentType,
+        key,
+        path: resource.ref.path,
+        size: resource.ref.size,
+      },
+    };
+  }
+
+  private async retainResource(
+    resource: ResourceBlock,
+    options: {
+      runId?: string;
+      signal?: AbortSignal;
+      current: () => boolean;
+    },
+  ): Promise<ResourceBlock> {
+    const source = resource.ref;
+    options.signal?.throwIfAborted();
+    if (source.expiresAt !== undefined && source.expiresAt <= Date.now()) {
+      throw new Error(`Resource has expired: ${source.path}`);
+    }
     if (source.size > MAX_PROCESS_MEDIA_READ_BYTES) {
       throw new Error(`Resource exceeds the ${MAX_PROCESS_MEDIA_READ_BYTES}-byte limit`);
+    }
+    if (!options.current()) throw new Error("Resource is no longer pending");
+    const identity = this.identity;
+    const sourceKey = source.path.replace(/^\/+/, "");
+    if (
+      source.target === "gsv"
+      && source.path === agentArchiveMediaPath(identity.home, sourceKey)
+    ) {
+      const archived = await this.storage.head(sourceKey);
+      if (
+        !archived
+        || archived.size !== source.size
+        || archived.httpEtag !== source.revision
+        || !this.isValidOwnedArchiveObject(sourceKey, archived, {
+          expectedContentType: source.contentType,
+        })
+      ) {
+        throw new Error(`Owned resource does not match its immutable reference: ${source.path}`);
+      }
+      if (!options.current()) throw new Error("Resource is no longer pending");
+      return resource;
     }
     const archiveId = await stableOpaqueId("archived-media", [
       source.target,
@@ -6865,13 +7015,13 @@ export class Process extends DurableObject<ProcessEnv> {
         path: source.path,
         revision: source.revision,
       },
-      runId,
+      runId: options.runId,
     };
     const response = await sendFrameToKernel(this.installationId, this.pid, request);
     if (!response || response.type !== "res") {
       throw new Error(`Resource source did not respond: ${source.target}:${source.path}`);
     }
-    if (this.handleRunStopped(runId) || this.store.getPending(executionId)?.runId !== runId) {
+    if (!options.current()) {
       await cancelResponseBody(response, "Resource is no longer pending");
       throw new Error("Resource is no longer pending");
     }
@@ -6890,6 +7040,7 @@ export class Process extends DurableObject<ProcessEnv> {
       result.path !== source.path
       || result.size !== source.size
       || result.revision !== source.revision
+      || result.contentType !== source.contentType
       || response.body.length !== source.size
     ) {
       await response.body.stream.cancel("Resource source changed during resolution").catch(() => {});
@@ -6916,15 +7067,15 @@ export class Process extends DurableObject<ProcessEnv> {
         const stored = this.storage.put(key, fixed.readable, {
           httpMetadata: { contentType: source.contentType },
           customMetadata: {
-            uid: String(this.identity.uid),
-            gid: String(this.identity.gid),
+            uid: String(identity.uid),
+            gid: String(identity.gid),
             mode: "400",
             purpose: "resource",
             sourceEtag: source.revision,
             sourceContentType: source.contentType,
           },
         });
-        const piped = response.body.stream.pipeTo(fixed.writable, { signal });
+        const piped = response.body.stream.pipeTo(fixed.writable, { signal: options.signal });
         const [storedResult, pipedResult] = await Promise.allSettled([stored, piped]);
         if (storedResult.status === "rejected" || pipedResult.status === "rejected") {
           const reason = storedResult.status === "rejected"
@@ -6947,7 +7098,10 @@ export class Process extends DurableObject<ProcessEnv> {
         }
       }
 
-      return {
+      if (!options.current()) throw new Error("Resource is no longer pending");
+
+      return resourceBlockSchema.parse({
+        ...resource,
         ref: {
           type: "file",
           target: "gsv",
@@ -6956,14 +7110,7 @@ export class Process extends DurableObject<ProcessEnv> {
           contentType: source.contentType,
           size: source.size,
         },
-        media: {
-          type: "image",
-          mimeType: source.contentType,
-          key,
-          path,
-          size: source.size,
-        },
-      };
+      });
     } catch (error) {
       await response.body.stream.cancel(error).catch(() => {});
       throw error;
@@ -7287,7 +7434,7 @@ export class Process extends DurableObject<ProcessEnv> {
     if (options.error) payload.error = options.error;
     if (options.usage !== undefined) payload.usage = options.usage;
     if (run.outputMediaPersisted && run.outputMedia?.length) {
-      payload.media = run.outputMedia;
+      payload.media = run.outputMedia.map((item) => this.runOutputMediaResource(item));
     }
     if (options.status === "aborted") payload.aborted = true;
     return payload;
@@ -7699,6 +7846,28 @@ export class Process extends DurableObject<ProcessEnv> {
     return agentArchiveMediaPrefix(this.identity.home);
   }
 
+  private runOutputMediaResource(media: RunOutputMedia): ResourceBlock {
+    const path = agentArchiveMediaPath(this.identity.home, media.key);
+    if (!path || path !== media.path || !media.revision) {
+      throw new Error(`Reply media is not an immutable resource: ${media.key}`);
+    }
+    return resourceBlockSchema.parse({
+      type: "resource",
+      ref: {
+        type: "file",
+        target: "gsv",
+        path,
+        revision: media.revision,
+        contentType: media.mimeType,
+        size: media.size,
+      },
+      mediaType: media.type,
+      filename: media.filename,
+      duration: media.duration,
+      transcription: media.transcription,
+    });
+  }
+
   private ownedMediaPath(key: string): string | null {
     const activePath = processMediaPath(key);
     if (activePath && key.startsWith(processMediaPrefix(this.identity.uid, this.pid))) {
@@ -7790,23 +7959,34 @@ export class Process extends DurableObject<ProcessEnv> {
       const sourceKeys = snapshot.flatMap((item) =>
         item.key.startsWith(sourcePrefix) && processMediaPath(item.key) ? [item.key] : []
       );
-      if (sourceKeys.length === 0) return snapshot;
-
       const releaseMedia = await this.acquireMediaKeyAdmissions(sourceKeys);
       let retry = false;
       try {
-        const rewrites = await this.persistArchivedMediaKeys(
-          sourceKeys,
-          this.runAbortSignal(runId),
-        );
-        const promoted = snapshot.map((item): RunOutputMedia => {
+        const rewrites = sourceKeys.length > 0
+          ? await this.persistArchivedMediaKeys(sourceKeys, this.runAbortSignal(runId))
+          : new Map<string, ArchivedMediaRewrite>();
+        const promoted = await Promise.all(snapshot.map(async (item): Promise<RunOutputMedia> => {
           const rewrite = rewrites.get(item.key);
           if (!rewrite) return item;
           if ("missing" in rewrite) {
             throw new Error(`reply media not found while finalizing: ${item.key}`);
           }
           return { ...item, ...rewrite };
-        });
+        }).map(async (pending) => {
+          const item = await pending;
+          if (item.revision) return item;
+          const object = await this.storage.head(item.key);
+          if (
+            !object
+            || object.size !== item.size
+            || !this.isValidOwnedArchiveObject(item.key, object, {
+              expectedContentType: item.mimeType,
+            })
+          ) {
+            throw new Error(`reply media archive is invalid: ${item.key}`);
+          }
+          return { ...item, revision: object.httpEtag };
+        }));
 
         const releaseLifecycle = await this.acquireLifecycleTransition();
         try {
@@ -7859,17 +8039,17 @@ export class Process extends DurableObject<ProcessEnv> {
       const archivedKey = `${archivePrefix}${archiveId}`;
       const sourceContentType = sourceHead.httpMetadata?.contentType?.trim()
         || "application/octet-stream";
-      const existing = await this.storage.head(archivedKey);
-      const reusable = existing
-        && existing.size === sourceHead.size
-        && this.isValidOwnedArchiveObject(archivedKey, existing, {
+      let archived = await this.storage.head(archivedKey);
+      const reusable = archived
+        && archived.size === sourceHead.size
+        && this.isValidOwnedArchiveObject(archivedKey, archived, {
           sourceEtag: sourceHead.etag,
           expectedContentType: sourceContentType,
         }, identity);
-      if (existing && !reusable) {
+      if (archived && !reusable) {
         throw new Error(`archived media content-address collision: ${archivedKey}`);
       }
-      if (!existing) {
+      if (!archived) {
         signal?.throwIfAborted();
         const source = await this.storage.get(sourceKey);
         if (!source) {
@@ -7938,8 +8118,13 @@ export class Process extends DurableObject<ProcessEnv> {
         ) {
           throw new Error(`failed to verify archived media: ${archivedKey}`);
         }
+        archived = copied;
       }
-      rewrites.set(sourceKey, { key: archivedKey, path: `/${archivedKey}` });
+      rewrites.set(sourceKey, {
+        key: archivedKey,
+        path: `/${archivedKey}`,
+        revision: archived.httpEtag,
+      });
     }
 
     return rewrites;

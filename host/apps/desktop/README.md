@@ -213,15 +213,15 @@ approval text is not forwarded to the model.
   coalesced off the UI thread and publishes coherent snapshots rather than splicing an unparsed
   token tail into rendered Markdown. An identical completed reply reuses its final streamed
   document and type size instead of reparsing or reshaping at completion.
-- Process-owned image attachments use `proc.media.read`. Remote HTTP and HTTPS Markdown images are
-  fetched automatically inside the trusted conversation boundary. The selected moment owns each
-  transfer and cancels it on navigation; transfer, decoded-image, concurrency, and cache budgets
-  keep media work bounded.
+- Immutable file references resolve lazily through streamed `fs.transfer.send` bodies. Remote HTTP
+  and HTTPS Markdown images are fetched automatically inside the trusted conversation boundary.
+  The selected moment owns each transfer and cancels it on navigation; transfer, decoded-image,
+  concurrency, and cache budgets keep media work bounded.
 - Drafts can contain up to 20 files and 48 MiB total. Selection snapshots bytes into a private
-  app-owned directory off the UI thread; `proc.media.write` streams each snapshot once before
-  `proc.send`, and failed staging is rolled back. An uncertain send keeps its exact media
-  descriptors for authoritative history reconciliation instead of deleting a possibly accepted
-  upload.
+  app-owned directory off the UI thread; `fs.transfer.receive` streams each snapshot to a temporary
+  GSV path before `conversation.send`, and failed staging is removed. An uncertain send keeps its
+  exact immutable reference for authoritative history reconciliation instead of deleting a
+  possibly accepted upload.
 - Audio, video, and document attachments render as typed metadata cards, including a transcription
   or description when one exists. `OPEN` materializes the bounded process body into a private
   session directory and delegates playback or preview to the operating system; `SAVE` uses the

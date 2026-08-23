@@ -53,7 +53,7 @@ const MEDIA_CLEANUP_ENVELOPE_TIMEOUT: Duration = Duration::from_secs(6);
 const MAX_MEDIA_BYTES: usize = 48 * 1024 * 1024;
 const MAX_CONCURRENT_MEDIA_TRANSFERS: usize = 2;
 const MAX_MEDIA_CLEANUP_ENTRIES: usize = 256;
-const MEDIA_CLEANUP_JOURNAL_VERSION: u64 = 1;
+const MEDIA_CLEANUP_JOURNAL_VERSION: u64 = 2;
 const DEMO_SESSION_ID: u64 = 0;
 
 static NEXT_LIVE_SESSION_ID: AtomicU64 = AtomicU64::new(1);
@@ -1393,10 +1393,9 @@ impl SendProgress {
         &self,
         journal: &MediaCleanupJournal,
         scope: &MediaCleanupScope,
-        pid: &str,
         media: MediaAttachment,
     ) -> Result<(), String> {
-        let entry = media_cleanup_entry(scope, pid, &media)
+        let entry = media_cleanup_entry(scope, &media)
             .ok_or_else(|| "GSV returned an attachment without cleanup ownership".to_string())?;
         self.media
             .lock()
@@ -1409,9 +1408,8 @@ impl SendProgress {
         &self,
         journal: &MediaCleanupJournal,
         scope: &MediaCleanupScope,
-        pid: &str,
     ) -> Result<(), String> {
-        let entries = media_cleanup_entries(scope, pid, &self.media());
+        let entries = media_cleanup_entries(scope, &self.media());
         journal.retain_for_send(&entries)?;
         // There is deliberately no await between transitioning the write-ahead entries to
         // durable retention and setting this fence. A process crash in this window retains the
@@ -1451,8 +1449,7 @@ impl MediaCleanupScope {
 struct MediaCleanupEntry {
     gateway_url: String,
     username: String,
-    pid: String,
-    key: String,
+    path: String,
     cleanup: bool,
 }
 
@@ -1461,8 +1458,7 @@ impl MediaCleanupEntry {
         json!({
             "gatewayUrl": self.gateway_url,
             "username": self.username,
-            "pid": self.pid,
-            "key": self.key,
+            "path": self.path,
             "cleanup": self.cleanup,
         })
     }
@@ -1480,8 +1476,7 @@ impl MediaCleanupEntry {
         Ok(Self {
             gateway_url: field("gatewayUrl")?,
             username: field("username")?,
-            pid: field("pid")?,
-            key: field("key")?,
+            path: field("path")?,
             cleanup: value
                 .get("cleanup")
                 .and_then(Value::as_bool)
@@ -1492,8 +1487,7 @@ impl MediaCleanupEntry {
     fn same_object(&self, other: &Self) -> bool {
         self.gateway_url == other.gateway_url
             && self.username == other.username
-            && self.pid == other.pid
-            && self.key == other.key
+            && self.path == other.path
     }
 }
 
@@ -1629,6 +1623,9 @@ fn decode_cleanup_journal(document: &Value) -> Result<Vec<MediaCleanupEntry>, Co
     if document.is_null() {
         return Ok(Vec::new());
     }
+    if document.get("version").and_then(Value::as_u64) == Some(1) {
+        return Ok(Vec::new());
+    }
     if document.get("version").and_then(Value::as_u64) != Some(MEDIA_CLEANUP_JOURNAL_VERSION) {
         return Err(invalid_cleanup_journal(
             "unsupported native media cleanup journal version",
@@ -1655,26 +1652,23 @@ fn encode_cleanup_journal(entries: &[MediaCleanupEntry]) -> Value {
 
 fn media_cleanup_entry(
     scope: &MediaCleanupScope,
-    pid: &str,
     media: &MediaAttachment,
 ) -> Option<MediaCleanupEntry> {
     Some(MediaCleanupEntry {
         gateway_url: scope.gateway_url.clone(),
         username: scope.username.clone(),
-        pid: pid.to_string(),
-        key: media.key.as_deref()?.to_string(),
+        path: media.resource.as_ref()?.path.clone(),
         cleanup: true,
     })
 }
 
 fn media_cleanup_entries(
     scope: &MediaCleanupScope,
-    pid: &str,
     media: &[MediaAttachment],
 ) -> Vec<MediaCleanupEntry> {
     media
         .iter()
-        .filter_map(|media| media_cleanup_entry(scope, pid, media))
+        .filter_map(|media| media_cleanup_entry(scope, media))
         .collect()
 }
 
@@ -3434,7 +3428,7 @@ async fn fetch_conversation_media(
 
 async fn fetch_process_media(
     client: &KernelClient,
-    pid: &str,
+    _pid: &str,
     key: &str,
 ) -> Result<MediaResponse, RequestFailure> {
     if key.trim().is_empty() {
@@ -3443,11 +3437,32 @@ async fn fetch_process_media(
         ));
     }
 
-    fetch_stored_media(
+    let path = format!("/{}", key.trim_start_matches('/'));
+    let stat = request_ok(client, "fs.transfer.stat", Some(json!({ "path": &path }))).await?;
+    let revision = stat
+        .get("revision")
+        .and_then(Value::as_str)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| RequestFailure::transport("Process media has no immutable revision."))?;
+    let content_type = stat
+        .get("contentType")
+        .and_then(Value::as_str)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("application/octet-stream");
+    let size = stat
+        .get("size")
+        .and_then(Value::as_u64)
+        .ok_or_else(|| RequestFailure::transport("Process media has no valid size."))?;
+    fetch_file_resource(
         client,
-        "proc.media.read",
-        json!({ "pid": pid, "key": key }),
-        "Process media",
+        FileResourceReference {
+            target: "gsv".to_string(),
+            path,
+            revision: revision.to_string(),
+            content_type: content_type.to_string(),
+            size,
+            expires_at: None,
+        },
     )
     .await
 }
@@ -3723,18 +3738,17 @@ async fn upload_and_send_message(
 ) -> Result<(ProcSendResult, Vec<MediaAttachment>), SendAttemptFailure> {
     let mut staged = Vec::with_capacity(attachments.len());
     for attachment in attachments {
-        let media = match upload_attachment(client, pid, &attachment).await {
+        let media = match upload_attachment(client, &attachment).await {
             Ok(media) => media,
             Err(error) => {
                 let _ = retry_journaled_media_cleanup(client, cleanup_journal, cleanup_scope).await;
                 return Err(SendAttemptFailure::Rejected(error));
             }
         };
-        if let Err(error) = progress.stage_media(cleanup_journal, cleanup_scope, pid, media.clone())
-        {
+        if let Err(error) = progress.stage_media(cleanup_journal, cleanup_scope, media.clone()) {
             // The returned media exists but could not be recorded durably. Try the exact
             // descriptor synchronously before returning a definite pre-send failure.
-            let cleanup_entry = media_cleanup_entry(cleanup_scope, pid, &media);
+            let cleanup_entry = media_cleanup_entry(cleanup_scope, &media);
             if let Some(entry) = cleanup_entry {
                 let _ = delete_staged_media(client, &entry).await;
             }
@@ -3746,7 +3760,7 @@ async fn upload_and_send_message(
         staged.push(media);
     }
 
-    if let Err(error) = progress.begin_send(cleanup_journal, cleanup_scope, pid) {
+    if let Err(error) = progress.begin_send(cleanup_journal, cleanup_scope) {
         let _ = retry_journaled_media_cleanup(client, cleanup_journal, cleanup_scope).await;
         return Err(SendAttemptFailure::Rejected(format!(
             "The attachment cleanup state could not be committed: {error}"
@@ -3754,14 +3768,16 @@ async fn upload_and_send_message(
     }
     match send_message(client, pid, message, &staged).await {
         Ok(result) => {
-            let entries = media_cleanup_entries(cleanup_scope, pid, &staged);
-            let _ = cleanup_journal.remove(&entries);
+            let entries = media_cleanup_entries(cleanup_scope, &staged);
+            if cleanup_journal.arm_for_cleanup(&entries).is_ok() {
+                let _ = retry_journaled_media_cleanup(client, cleanup_journal, cleanup_scope).await;
+            }
             Ok((result, staged))
         }
         Err(SendAttemptFailure::Rejected(error)) => {
-            // proc.send definitely rejected the request. Re-arm the same descriptors before
+            // conversation.send definitely rejected the request. Re-arm the same references before
             // deletion so a transient cleanup failure remains recoverable across restart.
-            let entries = media_cleanup_entries(cleanup_scope, pid, &staged);
+            let entries = media_cleanup_entries(cleanup_scope, &staged);
             if cleanup_journal.arm_for_cleanup(&entries).is_ok() {
                 let _ = retry_journaled_media_cleanup(client, cleanup_journal, cleanup_scope).await;
             }
@@ -3770,9 +3786,9 @@ async fn upload_and_send_message(
         Err(SendAttemptFailure::Uncertain { message, .. }) => {
             Err(SendAttemptFailure::Uncertain {
                 message,
-                // The gateway may have accepted proc.send. Keep the process-scoped objects and
-                // expose their exact descriptors for history reconciliation; deleting here would
-                // race an accepted run.
+                // The gateway may have accepted conversation.send. Keep the source files and
+                // expose their exact references for history reconciliation; deleting here would
+                // race an accepted message.
                 media: staged,
             })
         }
@@ -3781,7 +3797,6 @@ async fn upload_and_send_message(
 
 async fn upload_attachment(
     client: &KernelClient,
-    pid: &str,
     attachment: &OutgoingAttachment,
 ) -> Result<MediaAttachment, String> {
     if attachment.size > MAX_MEDIA_BYTES as u64 {
@@ -3793,15 +3808,14 @@ async fn upload_attachment(
     let file = tokio::fs::File::open(&attachment.snapshot)
         .await
         .map_err(|_| format!("{} could not be read", attachment.filename))?;
+    let safe_filename = safe_upload_filename(&attachment.filename);
+    let path = format!("~/.gsv/uploads/{}/{}", attachment.media_id, safe_filename);
     let body = BinaryBody::from_reader(file, Some(attachment.size));
     let request = client.connection().request_with_body(
-        "proc.media.write",
+        "fs.transfer.receive",
         Some(json!({
-            "pid": pid,
-            "mediaId": attachment.media_id,
-            "type": media_kind_name(attachment.kind),
-            "mimeType": attachment.mime_type,
-            "filename": attachment.filename,
+            "path": &path,
+            "contentType": attachment.mime_type,
         })),
         body,
         RPC_ENVELOPE_TIMEOUT,
@@ -3812,7 +3826,10 @@ async fn upload_attachment(
     if response.body.is_some() {
         return Err("GSV returned an unexpected body for the media upload".to_string());
     }
-    if response.data.get("ok").and_then(Value::as_bool) == Some(false) {
+    if response.data.get("ok").and_then(Value::as_bool) != Some(true)
+        || response.data.get("path").and_then(Value::as_str) != Some(path.as_str())
+        || response.data.get("bytesWritten").and_then(Value::as_u64) != Some(attachment.size)
+    {
         return Err(response
             .data
             .get("error")
@@ -3820,12 +3837,65 @@ async fn upload_attachment(
             .unwrap_or("GSV rejected the attachment")
             .to_string());
     }
-    let media = response
-        .data
-        .get("media")
-        .ok_or_else(|| "GSV returned no attachment descriptor".to_string())?;
-    media_from_json(media)
-        .ok_or_else(|| "GSV returned an invalid attachment descriptor".to_string())
+    let stat = request_ok(client, "fs.transfer.stat", Some(json!({ "path": &path })))
+        .await
+        .map_err(|error| format!("{} could not be verified: {error}", attachment.filename))?;
+    let revision = stat
+        .get("revision")
+        .and_then(Value::as_str)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| "GSV returned no attachment revision".to_string())?;
+    let content_type = stat
+        .get("contentType")
+        .and_then(Value::as_str)
+        .filter(|value| !value.is_empty())
+        .unwrap_or(attachment.mime_type.as_str());
+    if stat.get("ok").and_then(Value::as_bool) != Some(true)
+        || stat.get("isFile").and_then(Value::as_bool) != Some(true)
+        || stat.get("path").and_then(Value::as_str) != Some(path.as_str())
+        || stat.get("size").and_then(Value::as_u64) != Some(attachment.size)
+    {
+        return Err("GSV returned inconsistent attachment metadata".to_string());
+    }
+    Ok(MediaAttachment {
+        kind: attachment.kind,
+        mime_type: content_type.to_string(),
+        key: None,
+        conversation_id: None,
+        path: None,
+        url: None,
+        filename: Some(attachment.filename.clone()),
+        size: Some(attachment.size),
+        duration: None,
+        transcription: None,
+        description: None,
+        resource: Some(FileResourceReference {
+            target: "gsv".to_string(),
+            path,
+            revision: revision.to_string(),
+            content_type: content_type.to_string(),
+            size: attachment.size,
+            expires_at: None,
+        }),
+    })
+}
+
+fn safe_upload_filename(filename: &str) -> String {
+    let filename = filename
+        .chars()
+        .map(|character| {
+            if character.is_ascii_alphanumeric() || matches!(character, '.' | '-' | '_') {
+                character
+            } else {
+                '_'
+            }
+        })
+        .collect::<String>();
+    if filename.is_empty() || filename == "." || filename == ".." {
+        "attachment".to_string()
+    } else {
+        filename
+    }
 }
 
 async fn retry_journaled_media_cleanup(
@@ -3855,19 +3925,19 @@ async fn delete_staged_media(
     entry: &MediaCleanupEntry,
 ) -> Result<(), String> {
     let request = client.connection().request_with_timeout(
-        "proc.media.delete",
-        Some(json!({ "pid": entry.pid, "key": entry.key })),
+        "fs.delete",
+        Some(json!({ "path": entry.path })),
         MEDIA_CLEANUP_RPC_TIMEOUT,
     );
     let response = tokio::time::timeout(MEDIA_CLEANUP_ENVELOPE_TIMEOUT, request)
         .await
-        .map_err(|_| "proc.media.delete timed out".to_string())?
+        .map_err(|_| "fs.delete timed out".to_string())?
         .map_err(|error| error.to_string())?;
     if !response.ok {
         return Err(response
             .error
             .map(|error| error.message)
-            .unwrap_or_else(|| "proc.media.delete failed without error details".to_string()));
+            .unwrap_or_else(|| "fs.delete failed without error details".to_string()));
     }
     let data = response.data.unwrap_or_else(|| json!({}));
     if data.get("ok").and_then(Value::as_bool) == Some(false) {
@@ -3890,6 +3960,40 @@ fn media_kind_name(kind: MediaKind) -> &'static str {
 }
 
 fn media_to_json(media: &MediaAttachment) -> Value {
+    if let Some(reference) = &media.resource {
+        let mut block = serde_json::Map::from_iter([
+            ("type".to_string(), json!("resource")),
+            (
+                "ref".to_string(),
+                json!({
+                    "type": "file",
+                    "target": reference.target,
+                    "path": reference.path,
+                    "revision": reference.revision,
+                    "contentType": reference.content_type,
+                    "size": reference.size,
+                }),
+            ),
+            ("mediaType".to_string(), json!(media_kind_name(media.kind))),
+        ]);
+        if let Some(expires_at) = reference.expires_at {
+            block
+                .get_mut("ref")
+                .and_then(Value::as_object_mut)
+                .expect("resource reference object")
+                .insert("expiresAt".to_string(), json!(expires_at));
+        }
+        if let Some(filename) = &media.filename {
+            block.insert("filename".to_string(), json!(filename));
+        }
+        if let Some(duration) = media.duration {
+            block.insert("duration".to_string(), json!(duration));
+        }
+        if let Some(transcription) = &media.transcription {
+            block.insert("transcription".to_string(), json!(transcription));
+        }
+        return Value::Object(block);
+    }
     json!({
         "type": media_kind_name(media.kind),
         "mimeType": media.mime_type,
@@ -3900,47 +4004,6 @@ fn media_to_json(media: &MediaAttachment) -> Value {
         "size": media.size,
         "duration": media.duration,
         "transcription": media.transcription,
-    })
-}
-
-fn media_from_json(value: &Value) -> Option<MediaAttachment> {
-    let kind = match value.get("type")?.as_str()? {
-        "image" => MediaKind::Image,
-        "audio" => MediaKind::Audio,
-        "video" => MediaKind::Video,
-        "document" => MediaKind::Document,
-        _ => return None,
-    };
-    let mime_type = value.get("mimeType")?.as_str()?.trim();
-    let key = value.get("key")?.as_str()?.trim();
-    if mime_type.is_empty() || key.is_empty() {
-        return None;
-    }
-    Some(MediaAttachment {
-        kind,
-        mime_type: mime_type.to_string(),
-        key: Some(key.to_string()),
-        conversation_id: value
-            .get("conversationId")
-            .and_then(Value::as_str)
-            .map(str::to_string),
-        path: value
-            .get("path")
-            .and_then(Value::as_str)
-            .map(str::to_string),
-        url: None,
-        filename: value
-            .get("filename")
-            .and_then(Value::as_str)
-            .map(str::to_string),
-        size: value.get("size").and_then(Value::as_u64),
-        duration: value.get("duration").and_then(Value::as_f64),
-        transcription: value
-            .get("transcription")
-            .and_then(Value::as_str)
-            .map(str::to_string),
-        description: None,
-        resource: None,
     })
 }
 
@@ -3955,11 +4018,11 @@ mod outgoing_media_tests {
         }
     }
 
-    fn cleanup_media(key: &str) -> MediaAttachment {
+    fn cleanup_media(path: &str) -> MediaAttachment {
         MediaAttachment {
             kind: MediaKind::Document,
             mime_type: "application/pdf".to_string(),
-            key: Some(key.to_string()),
+            key: None,
             conversation_id: None,
             path: None,
             url: None,
@@ -3968,7 +4031,14 @@ mod outgoing_media_tests {
             duration: None,
             transcription: None,
             description: None,
-            resource: None,
+            resource: Some(FileResourceReference {
+                target: "gsv".to_string(),
+                path: path.to_string(),
+                revision: "revision-one".to_string(),
+                content_type: "application/pdf".to_string(),
+                size: 42,
+                expires_at: None,
+            }),
         }
     }
 
@@ -3979,38 +4049,15 @@ mod outgoing_media_tests {
     }
 
     #[test]
-    fn uploaded_media_descriptors_round_trip_without_private_fields() {
-        let value = json!({
-            "type": "document",
-            "mimeType": "application/pdf",
-            "key": "var/media/7/pid/report",
-            "path": "/var/media/report",
-            "filename": "report.pdf",
-            "size": 42
-        });
-        let media = media_from_json(&value).expect("valid media");
-        assert_eq!(media.kind, MediaKind::Document);
-        assert_eq!(media.key.as_deref(), Some("var/media/7/pid/report"));
-        assert_eq!(media.filename.as_deref(), Some("report.pdf"));
+    fn uploaded_resources_round_trip_without_private_fields() {
+        let media = cleanup_media("~/.gsv/uploads/one/report.pdf");
         let wire = media_to_json(&media);
-        assert_eq!(wire["type"], "document");
-        assert_eq!(wire["key"], "var/media/7/pid/report");
+        assert_eq!(wire["type"], "resource");
+        assert_eq!(wire["mediaType"], "document");
+        assert_eq!(wire["ref"]["path"], "~/.gsv/uploads/one/report.pdf");
+        assert_eq!(wire["ref"]["revision"], "revision-one");
         assert!(wire.get("data").is_none());
-    }
-
-    #[test]
-    fn malformed_uploaded_media_is_rejected() {
-        assert!(media_from_json(&json!({
-            "type": "document",
-            "mimeType": "application/pdf"
-        }))
-        .is_none());
-        assert!(media_from_json(&json!({
-            "type": "unknown",
-            "mimeType": "application/pdf",
-            "key": "owned"
-        }))
-        .is_none());
+        assert!(wire.get("key").is_none());
     }
 
     #[test]
@@ -4023,16 +4070,14 @@ mod outgoing_media_tests {
             .stage_media(
                 &journal,
                 &scope,
-                "proc-7",
-                cleanup_media("var/media/root/proc-7/report"),
+                cleanup_media("~/.gsv/uploads/one/report.pdf"),
             )
             .expect("stage media");
 
         assert!(!progress.send_started.load(Ordering::Acquire));
         let entries = journal.entries_for(&scope).expect("load cleanup entries");
         assert_eq!(entries.len(), 1);
-        assert_eq!(entries[0].pid, "proc-7");
-        assert_eq!(entries[0].key, "var/media/root/proc-7/report");
+        assert_eq!(entries[0].path, "~/.gsv/uploads/one/report.pdf");
     }
 
     #[test]
@@ -4044,14 +4089,11 @@ mod outgoing_media_tests {
             .stage_media(
                 &journal,
                 &scope,
-                "proc-7",
-                cleanup_media("var/media/root/proc-7/report"),
+                cleanup_media("~/.gsv/uploads/one/report.pdf"),
             )
             .expect("stage media");
 
-        progress
-            .begin_send(&journal, &scope, "proc-7")
-            .expect("begin send");
+        progress.begin_send(&journal, &scope).expect("begin send");
 
         assert!(progress.send_started.load(Ordering::Acquire));
         assert!(journal
@@ -4062,7 +4104,7 @@ mod outgoing_media_tests {
             .retained_for(&scope)
             .expect("load retained descriptors");
         assert_eq!(retained.len(), 1);
-        assert_eq!(retained[0].key, "var/media/root/proc-7/report");
+        assert_eq!(retained[0].path, "~/.gsv/uploads/one/report.pdf");
     }
 
     #[test]
@@ -4075,22 +4117,19 @@ mod outgoing_media_tests {
             MediaCleanupEntry {
                 gateway_url: first.gateway_url.clone(),
                 username: first.username.clone(),
-                pid: "proc-1".to_string(),
-                key: "var/media/root/proc-1/one".to_string(),
+                path: "~/.gsv/uploads/one/one".to_string(),
                 cleanup: true,
             },
             MediaCleanupEntry {
                 gateway_url: second.gateway_url.clone(),
                 username: second.username.clone(),
-                pid: "proc-2".to_string(),
-                key: "var/media/root/proc-2/two".to_string(),
+                path: "~/.gsv/uploads/two/two".to_string(),
                 cleanup: true,
             },
             MediaCleanupEntry {
                 gateway_url: third.gateway_url.clone(),
                 username: third.username.clone(),
-                pid: "proc-3".to_string(),
-                key: "var/media/alice/proc-3/three".to_string(),
+                path: "~/.gsv/uploads/three/three".to_string(),
                 cleanup: true,
             },
         ];
@@ -4117,8 +4156,7 @@ mod outgoing_media_tests {
         let entry = MediaCleanupEntry {
             gateway_url: scope.gateway_url.clone(),
             username: scope.username.clone(),
-            pid: "proc-7".to_string(),
-            key: "var/media/root/proc-7/report".to_string(),
+            path: "~/.gsv/uploads/one/report.pdf".to_string(),
             cleanup: true,
         };
         journal

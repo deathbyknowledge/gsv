@@ -65,12 +65,6 @@ import type {
   ProcListResult,
   ProcObserveArgs,
   ProcObserveResult,
-  ProcMediaReadArgs,
-  ProcMediaReadResult,
-  ProcMediaDeleteArgs,
-  ProcMediaDeleteResult,
-  ProcMediaWriteArgs,
-  ProcMediaWriteResult,
   ProcResetArgs,
   ProcResetResult,
   ProcSendArgs,
@@ -297,9 +291,6 @@ export type SyscallDomains = {
   "proc.fork": { args: ProcForkArgs; result: ProcForkResult };
   "proc.ai.config.get": { args: ProcAiConfigGetArgs; result: ProcAiConfigGetResult };
   "proc.ai.config.set": { args: ProcAiConfigSetArgs; result: ProcAiConfigSetResult };
-  "proc.media.read": { args: ProcMediaReadArgs; result: ProcMediaReadResult };
-  "proc.media.write": { args: ProcMediaWriteArgs; result: ProcMediaWriteResult };
-  "proc.media.delete": { args: ProcMediaDeleteArgs; result: ProcMediaDeleteResult };
   "proc.reset": { args: ProcResetArgs; result: ProcResetResult };
   "proc.setidentity": { args: ProcSetIdentityArgs; result: ProcSetIdentityResult };
 

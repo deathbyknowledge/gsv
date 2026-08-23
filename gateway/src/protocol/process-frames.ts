@@ -5,8 +5,9 @@ import type {
   ProcMediaInput,
   ProcSendResult,
   ConversationMessage,
+  ResourceBlock,
 } from "@humansandmachines/gsv/protocol";
-import type { Frame, RequestFrame, ResponseErrFrame, SignalFrame } from "./frames";
+import type { Frame, FrameBody, RequestFrame, ResponseErrFrame, SignalFrame } from "./frames";
 
 export type ProcessMailReceivedRuntimeEvent = {
   type: "mail.received";
@@ -104,7 +105,7 @@ export type ProcessAdapterDeliverArgs = {
   runId: string;
   pid: string;
   message: string;
-  media?: ProcMediaInput[];
+  media?: Array<ResourceBlock | ProcMediaInput>;
   origin: AdapterInteractionOrigin;
   interaction: {
     conversationId: string;
@@ -131,16 +132,14 @@ export type ProcessAdapterDeliverResponseFrame =
 
 export type ProcessRunAttachArgs = {
   runId: string;
-  media: Array<ProcMediaInput & { key: string; path: string; size: number }>;
-  /** Media created by this command and safe to remove if registration fails. */
-  stagedKeys?: string[];
+  media: ResourceBlock[];
 };
 
 export type ProcessRunAttachResult =
   | {
       ok: true;
       runId: string;
-      media: Array<ProcMediaInput & { key: string; path: string; size: number }>;
+      media: ResourceBlock[];
     }
   | { ok: false; error: string };
 
@@ -161,11 +160,43 @@ export type ProcessRunAttachResponseFrame =
     }
   | ResponseErrFrame;
 
+export type ProcessResourceRetainRequestFrame = {
+  type: "req";
+  id: string;
+  call: "proc.resource.retain";
+  args: { resource: ResourceBlock };
+  body?: undefined;
+};
+
+export type ProcessResourceWriteRequestFrame = {
+  type: "req";
+  id: string;
+  call: "proc.resource.write";
+  args: {
+    resourceId: string;
+    mediaType: NonNullable<ResourceBlock["mediaType"]>;
+    contentType: string;
+    filename?: string;
+    duration?: number;
+    transcription?: string;
+  };
+  body: FrameBody;
+};
+
+export type ProcessResourceResponseFrame =
+  | {
+      type: "res";
+      id: string;
+      ok: true;
+      data: { resource: ResourceBlock };
+    }
+  | ResponseErrFrame;
+
 export type ProcessMessageCommitArgs = {
   runId: string;
   conversationId?: string;
   text: string;
-  media?: ProcMediaInput[];
+  media?: ResourceBlock[];
 };
 
 export type ProcessMessageCommitRequestFrame = {
@@ -201,13 +232,17 @@ export type ProcessRequestFrame =
   | ProcessRuntimeEventDeliverRequestFrame
   | ProcessScheduleDeliverRequestFrame
   | ProcessAdapterDeliverRequestFrame
-  | ProcessRunAttachRequestFrame;
+  | ProcessRunAttachRequestFrame
+  | ProcessResourceRetainRequestFrame
+  | ProcessResourceWriteRequestFrame;
 export type ProcessInboundFrame =
   | Frame
   | ProcessRuntimeEventDeliverRequestFrame
   | ProcessScheduleDeliverRequestFrame
   | ProcessAdapterDeliverRequestFrame
-  | ProcessRunAttachRequestFrame;
+  | ProcessRunAttachRequestFrame
+  | ProcessResourceRetainRequestFrame
+  | ProcessResourceWriteRequestFrame;
 
 export type ProcessOutboundFrame =
   | Frame

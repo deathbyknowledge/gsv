@@ -78,6 +78,7 @@ export type StoreIncomingProcessMediaOptions = {
   imageReadingMaxBytes?: number;
   imageReadingMaxTokens?: number;
   imageReadingTimeoutMs?: number;
+  allowedStoredKeys?: ReadonlySet<string>;
 };
 
 
@@ -110,8 +111,9 @@ export async function storeIncomingProcessMedia(
     let base64: string | null = null;
 
     if (item.key && item.key.length > 0) {
-      const path = processMediaPath(item.key);
-      if (!item.key.startsWith(prefix) || !path) {
+      const path = processMediaPath(item.key) ?? archivedProcessMediaPath(item.key);
+      const processOwned = item.key.startsWith(prefix) && processMediaPath(item.key) !== null;
+      if ((!processOwned && !options.allowedStoredKeys?.has(item.key)) || !path) {
         throw new Error("media key is outside this process");
       }
       const object = await bucket.head(item.key);

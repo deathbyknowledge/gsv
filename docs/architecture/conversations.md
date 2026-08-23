@@ -79,8 +79,9 @@ Object:
   segment in installation-scoped R2.
 - SQLite retains the segment index and idempotency receipts, so history paging and retried appends
   remain stable across the hot/archive boundary.
-- Conversation media is copied into conversation-owned R2 keys before the canonical message is
-  committed. It remains readable after Process media cleanup.
+- Conversation messages store immutable resource references. The Process retains an exact source
+  revision in the run-as agent archive before committing it, so the bytes remain readable after
+  temporary Process cleanup without a second conversation-owned copy.
 
 The archive operation uploads and verifies the immutable R2 object before a synchronous SQLite
 commit records the segment and removes its hot rows. A failed upload or changed candidate leaves the

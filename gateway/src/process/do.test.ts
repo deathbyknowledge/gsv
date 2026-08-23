@@ -13,7 +13,6 @@ import { Kernel } from "../kernel/do";
 import {
   bodyFromBytes,
   bodyFromText,
-  bodyToBytes,
   bodyToText,
   REQUEST_CANCEL_SIGNAL,
   type ProcessIdentity,
@@ -24,6 +23,7 @@ import type {
   ProcessAdapterDeliverRequestFrame,
   ProcessRuntimeEventDeliverArgs,
   ProcessRuntimeEventDeliverRequestFrame,
+  ProcessResourceWriteRequestFrame,
   ProcessRunAttachRequestFrame,
   ProcessScheduleDeliverArgs,
   ProcessScheduleDeliverRequestFrame,
@@ -3454,13 +3454,20 @@ describe("Process DO — mechanical", () => {
     it("persists active-run reply media on the final assistant message and signals", async () => {
       const pid = "mech-final-reply-media";
       const stub = await initProcess(pid, ROOT_IDENTITY);
-      const key = `var/media/0/${pid}/final-report`;
-      await env.STORAGE.put(key, new Uint8Array([1, 2, 3]), {
-        httpMetadata: { contentType: "application/pdf" },
-      });
-
-// SAFETY: test fixture is constructed with the asserted domain shape.
-
+      const uploaded = await stub.recvFrame({
+        type: "req",
+        id: crypto.randomUUID(),
+        call: "proc.resource.write",
+        args: {
+          resourceId: "final-report",
+          mediaType: "document",
+          contentType: "application/pdf",
+          filename: "report.pdf",
+        },
+        body: bodyFromBytes(new Uint8Array([1, 2, 3])),
+      } satisfies ProcessResourceWriteRequestFrame);
+      if (!uploaded.ok) throw new Error(uploaded.error.message);
+      const resource = uploaded.data.resource;
       const result = await runInDurableObject(stub, async (instance: Process) => {
         // SAFETY: test fixture is constructed with the asserted domain shape.
         const process = instance as any;
@@ -3510,31 +3517,19 @@ describe("Process DO — mechanical", () => {
 
 // SAFETY: test fixture is constructed with the asserted domain shape.
 
-        const media = {
-          // SAFETY: test fixture is constructed with the asserted domain shape.
-          type: "document" as const,
-          mimeType: "application/pdf",
-          filename: "report.pdf",
-          key,
-          path: `/${key}`,
-          size: 3,
-        };
         const attach = await process.recvFrame({
           type: "req",
           id: crypto.randomUUID(),
           call: "proc.run.attach",
           args: {
             runId: "run-final-reply-media",
-            media: [media],
-            stagedKeys: [key],
+            media: [resource],
           },
         } satisfies ProcessRunAttachRequestFrame);
-        const pendingDelete = await process.recvFrame(makeReq("proc.media.delete", { key }));
         await process.runTick("run-final-reply-media");
         const history = await process.handleProcHistory({});
         return {
           attach,
-          pendingDelete,
           emitted,
           history,
           messages: process.store.getMessages(),
@@ -3543,11 +3538,11 @@ describe("Process DO — mechanical", () => {
 
       expect(result.attach).toMatchObject({
         ok: true,
-        data: { ok: true, runId: "run-final-reply-media", media: [{ key }] },
-      });
-      expect(result.pendingDelete).toMatchObject({
-        ok: true,
-        data: { ok: false, error: "media is referenced by process history" },
+        data: {
+          ok: true,
+          runId: "run-final-reply-media",
+          media: [{ type: "resource", ref: { path: resource.ref.path } }],
+        },
       });
       expect(result.messages.findLast((message: any) => message.role === "assistant"))
         .toMatchObject({
@@ -3574,16 +3569,18 @@ describe("Process DO — mechanical", () => {
         expect(result.emitted.find((entry) => entry.signal === signal)?.payload).toMatchObject({
           runId: "run-final-reply-media",
           media: [expect.objectContaining({
-            key: expect.stringMatching(/^root\/\.gsv\/media\/archived-media:[0-9a-f]{64}$/),
-            path: expect.stringMatching(/^\/root\/\.gsv\/media\/archived-media:[0-9a-f]{64}$/),
+            type: "resource",
+            ref: expect.objectContaining({
+              path: expect.stringMatching(/^\/root\/\.gsv\/media\/archived-media:[0-9a-f]{64}$/),
+            }),
           })],
         });
       // SAFETY: test fixture is constructed with the asserted domain shape.
       }
       // SAFETY: test fixture is constructed with the asserted domain shape.
       const archivedKey = (result.history as any).messages
-        .find((message: any) => message.role === "assistant").content.media[0].key;
-      await expect(env.STORAGE.get(key)).resolves.toBeNull();
+        .find((message: any) => message.role === "assistant").content.media[0].path
+        .replace(/^\/+/, "");
       const archived = await env.STORAGE.get(archivedKey);
       expect(archived && [...new Uint8Array(await archived.arrayBuffer())]).toEqual([1, 2, 3]);
     });
@@ -3654,7 +3651,7 @@ describe("Process DO — mechanical", () => {
       })).rejects.toThrow("archived media content-address collision");
     });
 
-    it("refuses to read an archive without immutable source metadata", async () => {
+    it("rejects an archive without immutable source metadata", async () => {
       const pid = "mech-archive-media-read-metadata";
       const stub = await initProcess(pid, ROOT_IDENTITY);
       const key = `root/.gsv/media/archived-media:${"c".repeat(64)}`;
@@ -3668,18 +3665,33 @@ describe("Process DO — mechanical", () => {
         },
       });
 
-      // SAFETY: test fixture is constructed with the asserted domain shape.
-      const response = await stub.recvFrame(makeReq("proc.media.read", { key })) as ResponseOkFrame;
-      expect(response.data).toEqual({ ok: false, error: "media key is outside this process" });
+      const object = await env.STORAGE.head(key);
+      const valid = await runInDurableObject(stub, (instance: Process) => {
+        // SAFETY: this focused test invokes a private archive validator on a real Process instance.
+        const process = instance as any;
+        return process.isValidOwnedArchiveObject(key, object);
+      });
+      expect(valid).toBe(false);
     });
 
-    it("cleans command-staged reply media when the run aborts before a final answer", async () => {
+    it("keeps immutable source media when the run aborts before a final answer", async () => {
       const pid = "mech-aborted-reply-media";
       const stub = await initProcess(pid, ROOT_IDENTITY);
-      const key = `var/media/0/${pid}/unfinished-report`;
-      await env.STORAGE.put(key, new Uint8Array([1]), {
-        httpMetadata: { contentType: "application/pdf" },
-      });
+      const uploaded = await stub.recvFrame({
+        type: "req",
+        id: crypto.randomUUID(),
+        call: "proc.resource.write",
+        args: {
+          resourceId: "unfinished-report",
+          mediaType: "document",
+          contentType: "application/pdf",
+          filename: "report.pdf",
+        },
+        body: bodyFromBytes(new Uint8Array([1])),
+      } satisfies ProcessResourceWriteRequestFrame);
+      if (!uploaded.ok) throw new Error(uploaded.error.message);
+      const resource = uploaded.data.resource;
+      const key = resource.ref.path.replace(/^\/+/, "");
 
 // SAFETY: test fixture is constructed with the asserted domain shape.
 
@@ -3696,15 +3708,7 @@ describe("Process DO — mechanical", () => {
           call: "proc.run.attach",
           args: {
             runId: "run-aborted-reply-media",
-            media: [{
-              type: "document",
-              mimeType: "application/pdf",
-              filename: "report.pdf",
-              key,
-              path: `/${key}`,
-              size: 1,
-            }],
-            stagedKeys: [key],
+            media: [resource],
           },
         } satisfies ProcessRunAttachRequestFrame);
         expect(attach).toMatchObject({ ok: true, data: { ok: true } });
@@ -3712,9 +3716,7 @@ describe("Process DO — mechanical", () => {
         expect(abort).toMatchObject({ ok: true, aborted: true });
       });
 
-      await vi.waitFor(async () => {
-        expect(await env.STORAGE.head(key)).toBeNull();
-      });
+      expect(await env.STORAGE.head(key)).not.toBeNull();
     });
 
     it("retries reasoning-only model turns", async () => {
@@ -6974,34 +6976,38 @@ describe("Process DO — mechanical", () => {
       });
     });
 
-    it("stores process-scoped media, reads it back, and hydrates image context blocks", async () => {
+    it("streams an incoming resource into immutable history and hydrates image context blocks", async () => {
       const pid = "mech-send-media";
       const stub = await initProcess(pid, ROOT_IDENTITY);
-      let mediaKey = "";
 
 // SAFETY: test fixture is constructed with the asserted domain shape.
 
       const upload = (await stub.recvFrame({
-        ...makeReq("proc.media.write", {
-          type: "image",
-          mimeType: "image/png",
+        type: "req",
+        id: crypto.randomUUID(),
+        call: "proc.resource.write",
+        args: {
+          resourceId: "proof",
+          mediaType: "image",
+          contentType: "image/png",
           filename: "proof.png",
-        }),
+        },
         body: bodyFromBytes(new Uint8Array([1, 2, 3])),
-      // SAFETY: test fixture is constructed with the asserted domain shape.
-      })) as ResponseFrame<"proc.media.write">;
+// SAFETY: test fixture is constructed with the asserted domain shape.
+      } satisfies ProcessResourceWriteRequestFrame));
       if (!upload.ok) {
         throw new Error(upload.error.message);
       }
       expect(upload.data).toMatchObject({
-        ok: true,
-        media: {
-          size: 3,
-          path: expect.stringMatching(`^/var/media/0/${pid}/`),
+        resource: {
+          type: "resource",
+          ref: {
+            size: 3,
+            path: expect.stringMatching(/^\/root\/\.gsv\/media\/archived-media:/),
+          },
         },
       });
-      const uploadedMedia = upload.data?.ok ? upload.data.media : null;
-      expect(uploadedMedia).not.toBeNull();
+      const uploadedMedia = upload.data.resource;
 
 // SAFETY: test fixture is constructed with the asserted domain shape.
 
@@ -7036,9 +7042,8 @@ describe("Process DO — mechanical", () => {
 
         const media = JSON.parse(record.media!);
         expect(media).toHaveLength(1);
-        expect(media[0].key).toContain(`/0/${pid}/`);
+        expect(media[0].key).toMatch(/^root\/\.gsv\/media\/archived-media:/);
         expect(media[0].path).toBe(`/${media[0].key}`);
-        mediaKey = media[0].key;
 
         const stored = await env.STORAGE.get(media[0].key);
         expect(stored).not.toBeNull();
@@ -7046,7 +7051,7 @@ describe("Process DO — mechanical", () => {
           uid: "0",
           gid: "0",
           mode: "400",
-          processId: pid,
+          purpose: expect.any(String),
         });
 
         // SAFETY: test fixture is constructed with the asserted domain shape.
@@ -7069,74 +7074,6 @@ describe("Process DO — mechanical", () => {
         expect(user.content[2].mimeType).toBe("image/png");
         expect(user.content[2].data).toBe("AQID");
       });
-
-// SAFETY: test fixture is constructed with the asserted domain shape.
-
-      const read = (await stub.recvFrame(
-        makeReq("proc.media.read", { key: mediaKey }),
-      // SAFETY: test fixture is constructed with the asserted domain shape.
-      )) as ResponseOkFrame;
-      expect(read.ok).toBe(true);
-      expect(read.data).toMatchObject({
-        ok: true,
-        key: mediaKey,
-        path: `/${mediaKey}`,
-        mimeType: "image/png",
-      });
-      expect(read.body && [...await bodyToBytes(read.body)]).toEqual([1, 2, 3]);
-
-// SAFETY: test fixture is constructed with the asserted domain shape.
-
-      const referenced = (await stub.recvFrame(
-        makeReq("proc.media.delete", { key: mediaKey }),
-      // SAFETY: test fixture is constructed with the asserted domain shape.
-      )) as ResponseOkFrame;
-      expect(referenced.data).toEqual({
-        ok: false,
-        error: "media is referenced by process history",
-      });
-      expect(await env.STORAGE.head(mediaKey)).not.toBeNull();
-
-// SAFETY: test fixture is constructed with the asserted domain shape.
-
-      const unusedUpload = (await stub.recvFrame({
-        ...makeReq("proc.media.write", {
-          type: "document",
-          mimeType: "application/octet-stream",
-        }),
-        body: bodyFromBytes(new Uint8Array([4, 5, 6])),
-      // SAFETY: test fixture is constructed with the asserted domain shape.
-      })) as ResponseOkFrame<"proc.media.write">;
-      const unusedKey = unusedUpload.data?.ok ? unusedUpload.data.media.key : "";
-      expect(unusedKey).toBeTruthy();
-      // SAFETY: test fixture is constructed with the asserted domain shape.
-      const deleted = (await stub.recvFrame(
-        makeReq("proc.media.delete", { key: unusedKey }),
-      // SAFETY: test fixture is constructed with the asserted domain shape.
-      )) as ResponseOkFrame;
-      expect(deleted.data).toEqual({ ok: true, key: unusedKey });
-      // SAFETY: test fixture is constructed with the asserted domain shape.
-      const deletedAgain = (await stub.recvFrame(
-        makeReq("proc.media.delete", { key: unusedKey }),
-      // SAFETY: test fixture is constructed with the asserted domain shape.
-      )) as ResponseOkFrame;
-      expect(deletedAgain.data).toEqual({ ok: true, key: unusedKey });
-      expect(await env.STORAGE.head(unusedKey)).toBeNull();
-
-// SAFETY: test fixture is constructed with the asserted domain shape.
-
-      const outside = (await stub.recvFrame(
-        makeReq("proc.media.delete", { key: "var/media/0/another-process/file" }),
-      // SAFETY: test fixture is constructed with the asserted domain shape.
-      )) as ResponseOkFrame;
-      expect(outside.data).toEqual({ ok: false, error: "media key is outside this process" });
-      // SAFETY: test fixture is constructed with the asserted domain shape.
-      const withBody = (await stub.recvFrame({
-        ...makeReq("proc.media.delete", { key: unusedKey }),
-        body: bodyFromBytes(new Uint8Array()),
-      // SAFETY: test fixture is constructed with the asserted domain shape.
-      })) as ResponseOkFrame;
-      expect(withBody.data).toEqual({ ok: false, error: "proc.media.delete does not accept a body" });
     });
 
     it("externalizes tool result images before history and rehydrates model image blocks", async () => {
@@ -7385,12 +7322,12 @@ describe("Process DO — mechanical", () => {
 
 // SAFETY: test fixture is constructed with the asserted domain shape.
 
-      const first = (await stub.recvFrame({
-        ...makeReq("proc.media.write", args),
-        body: bodyFromBytes(new Uint8Array([1, 2, 3])),
-      // SAFETY: test fixture is constructed with the asserted domain shape.
-      })) as ResponseOkFrame<"proc.media.write">;
-      expect(first.data).toMatchObject({
+      const first = await runInDurableObject(stub, (instance: Process) =>
+        (instance as any).storeIncomingResource(
+          args,
+          bodyFromBytes(new Uint8Array([1, 2, 3])),
+        ));
+      expect(first).toMatchObject({
         ok: true,
         media: {
           type: "image",
@@ -7402,7 +7339,7 @@ describe("Process DO — mechanical", () => {
         },
       });
       // SAFETY: test fixture is constructed with the asserted domain shape.
-      const originalMedia = (first.data as any).media;
+      const originalMedia = (first as any).media;
 
       let repeatedBodyPulled = false;
       const repeatedBody = new ReadableStream<Uint8Array>({
@@ -7413,30 +7350,25 @@ describe("Process DO — mechanical", () => {
         },
       }, { highWaterMark: 0 });
       // SAFETY: test fixture is constructed with the asserted domain shape.
-      const repeated = (await stub.recvFrame({
-        ...makeReq("proc.media.write", args),
-        body: { stream: repeatedBody, length: 3 },
-      // SAFETY: test fixture is constructed with the asserted domain shape.
-      })) as ResponseOkFrame<"proc.media.write">;
+      const repeated = await runInDurableObject(stub, (instance: Process) =>
+        (instance as any).storeIncomingResource(
+          args,
+          { stream: repeatedBody, length: 3 },
+        ));
 
       expect(repeatedBodyPulled).toBe(true);
-      expect(repeated.data).toEqual({ ok: true, media: originalMedia });
+      expect(repeated).toEqual({ ok: true, media: originalMedia });
 
 // SAFETY: test fixture is constructed with the asserted domain shape.
 
-      const mimeConflict = (await runInDurableObject(stub, (instance: Process) =>
-        instance.recvFrame({
-          ...makeReq("proc.media.write", {
-            ...args,
-            mimeType: "image/jpeg",
-          }),
-          body: bodyFromBytes(new Uint8Array([4, 5, 6])),
-        })
-      // SAFETY: test fixture is constructed with the asserted domain shape.
-      )) as ResponseOkFrame<"proc.media.write">;
-      expect(mimeConflict.data).toEqual({
+      const mimeConflict = await runInDurableObject(stub, (instance: Process) =>
+        (instance as any).storeIncomingResource(
+          { ...args, mimeType: "image/jpeg" },
+          bodyFromBytes(new Uint8Array([4, 5, 6])),
+        ));
+      expect(mimeConflict).toEqual({
         ok: false,
-        error: "proc.media.write mediaId conflicts with existing media",
+        error: "Resource id conflicts with existing media",
       });
       // SAFETY: test fixture is constructed with the asserted domain shape.
       for (const conflictingArgs of [
@@ -7448,16 +7380,14 @@ describe("Process DO — mechanical", () => {
         { ...args, transcription: "different transcript" },
       ]) {
         // SAFETY: test fixture is constructed with the asserted domain shape.
-        const conflict = (await runInDurableObject(stub, (instance: Process) =>
-          instance.recvFrame({
-            ...makeReq("proc.media.write", conflictingArgs),
-            body: bodyFromBytes(new Uint8Array([4, 5, 6])),
-          })
-        // SAFETY: test fixture is constructed with the asserted domain shape.
-        )) as ResponseOkFrame<"proc.media.write">;
-        expect(conflict.data).toEqual({
+        const conflict = await runInDurableObject(stub, (instance: Process) =>
+          (instance as any).storeIncomingResource(
+            conflictingArgs,
+            bodyFromBytes(new Uint8Array([4, 5, 6])),
+          ));
+        expect(conflict).toEqual({
           ok: false,
-          error: "proc.media.write mediaId conflicts with existing media",
+          error: "Resource id conflicts with existing media",
         });
       }
 
@@ -7535,12 +7465,12 @@ describe("Process DO — mechanical", () => {
             filename: "concurrent.png",
             mediaId: "provider-message-2:image-1",
           };
-          const first = process.handleProcMediaWrite(
+          const first = process.storeIncomingResource(
             args,
             bodyFromBytes(new Uint8Array([1, 2, 3])),
           );
           await putStarted;
-          const repeated = process.handleProcMediaWrite(
+          const repeated = process.storeIncomingResource(
             args,
             bodyFromBytes(new Uint8Array([9, 9, 9])),
           );
@@ -7643,46 +7573,43 @@ describe("Process DO — mechanical", () => {
 
     it("requires the media body descriptor length", async () => {
       const stub = await initProcess("mech-media-length", ROOT_IDENTITY);
-      // SAFETY: test fixture is constructed with the asserted domain shape.
-      const response = (await stub.recvFrame({
-        ...makeReq("proc.media.write", {
+      const response = await runInDurableObject(stub, (instance: Process) => {
+        // SAFETY: this focused test invokes the private resource-ingress boundary directly.
+        const process = instance as any;
+        return process.storeIncomingResource({
           type: "image",
           mimeType: "image/png",
-        }),
-        body: {
+        }, {
           stream: new ReadableStream<Uint8Array>({
             start(controller) {
               controller.enqueue(new Uint8Array([1, 2, 3]));
               controller.close();
-            // SAFETY: test fixture is constructed with the asserted domain shape.
             },
           }),
-        },
-      // SAFETY: test fixture is constructed with the asserted domain shape.
-      })) as ResponseOkFrame;
+        });
+      });
 
-      expect(response.data).toEqual({
+      expect(response).toEqual({
         ok: false,
-        error: "proc.media.write requires an exact body length",
+        error: "Resource write requires an exact body length",
       });
     });
 
     it("rejects the reserved R2 directory-marker media id", async () => {
       const stub = await initProcess("mech-media-reserved-marker", ROOT_IDENTITY);
-      // SAFETY: test fixture is constructed with the asserted domain shape.
-      const response = (await stub.recvFrame({
-        ...makeReq("proc.media.write", {
+      const response = await runInDurableObject(stub, (instance: Process) => {
+        // SAFETY: this focused test invokes the private resource-ingress boundary directly.
+        const process = instance as any;
+        return process.storeIncomingResource({
           type: "document",
           mimeType: "application/octet-stream",
           mediaId: ".dir",
-        }),
-        body: bodyFromBytes(new Uint8Array([1])),
-      // SAFETY: test fixture is constructed with the asserted domain shape.
-      })) as ResponseOkFrame;
+        }, bodyFromBytes(new Uint8Array([1])));
+      });
 
-      expect(response.data).toEqual({
+      expect(response).toEqual({
         ok: false,
-        error: "proc.media.write mediaId is invalid",
+        error: "Resource id is invalid",
       });
     });
 
@@ -7728,7 +7655,7 @@ describe("Process DO — mechanical", () => {
         };
 
         try {
-          const writing = process.handleProcMediaWrite(
+          const writing = process.storeIncomingResource(
             { type: "image", mimeType: "image/png" },
             bodyFromBytes(new Uint8Array([1, 2, 3])),
           );
@@ -9576,10 +9503,8 @@ describe("Process DO — mechanical", () => {
       expect(media.path).toBe(`/${media.key}`);
       expect(await env.STORAGE.head(activeKey)).toBeNull();
 
-      // SAFETY: test fixture is constructed with the asserted domain shape.
-      const read = await stub.recvFrame(makeReq("proc.media.read", { key: media.key })) as ResponseOkFrame;
-      expect(read.data).toMatchObject({ ok: true, key: media.key, path: media.path, size: 3 });
-      expect(read.body && [...await bodyToBytes(read.body)]).toEqual([7, 8, 9]);
+      const archived = await env.STORAGE.get(media.key);
+      expect(archived && [...new Uint8Array(await archived.arrayBuffer())]).toEqual([7, 8, 9]);
     });
 
     it("rejects compaction while the process is active", async () => {
@@ -12621,10 +12546,8 @@ describe("Process DO — mechanical", () => {
       });
       expect(media.path).toBe(`/${media.key}`);
 
-      // SAFETY: test fixture is constructed with the asserted domain shape.
-      const read = await resumed.recvFrame(makeReq("proc.media.read", { key: media.key })) as ResponseOkFrame;
-      expect(read.data).toMatchObject({ ok: true, key: media.key, path: media.path, size: 3 });
-      expect(read.body && [...await bodyToBytes(read.body)]).toEqual([1, 2, 3]);
+      const restored = await env.STORAGE.get(media.key);
+      expect(restored && [...new Uint8Array(await restored.arrayBuffer())]).toEqual([1, 2, 3]);
 
       await env.STORAGE.delete([archive.path.replace(/^\//, ""), media.key]);
       await resumed.recvFrame(makeReq("proc.kill", { archive: false }));
@@ -13348,26 +13271,18 @@ describe("Process DO — mechanical", () => {
           delete: (...args: any[]) => originalStorage.delete(...args),
           put: (...args: any[]) => originalStorage.put(...args),
         };
-        // SAFETY: test fixture is constructed with the asserted domain shape.
-        const writeFrame = {
-          ...makeReq("proc.media.write", {
-            type: "image",
-            mimeType: "image/png",
-            mediaId,
-          }),
-          body: bodyFromBytes(new Uint8Array([1])),
-        // SAFETY: test fixture is constructed with the asserted domain shape.
-        } as RequestFrame;
-
-        const writing = process.recvFrame(writeFrame);
+        const writing = process.storeIncomingResource(
+          { type: "image", mimeType: "image/png", mediaId },
+          bodyFromBytes(new Uint8Array([1])),
+        );
         await headStarted;
         await expect(process.recvFrame(
           makeReq("proc.kill", { archive: false }),
         )).resolves.toMatchObject({ ok: true, data: { ok: true, pid } });
         releaseHead();
-        await expect(writing).resolves.toMatchObject({
-          ok: true,
-          data: { ok: false, error: "Process reset during media upload" },
+        await expect(writing).resolves.toEqual({
+          ok: false,
+          error: "Process reset during media upload",
         });
         process.storage = originalStorage;
       });
@@ -13578,8 +13493,21 @@ describe("Process DO — mechanical", () => {
     it("delivers persisted output media before deleting live process media", async () => {
       const pid = "mech-kill-finish-media-order";
       const runId = "run-kill-finish-media-order";
-      const key = `var/media/0/${pid}/reply.png`;
+      const key = `var/media/0/${pid}/scratch.png`;
       const stub = await initProcess(pid, ROOT_IDENTITY);
+      const uploaded = await stub.recvFrame({
+        type: "req",
+        id: crypto.randomUUID(),
+        call: "proc.resource.write",
+        args: {
+          resourceId: "reply.png",
+          mediaType: "image",
+          contentType: "image/png",
+        },
+        body: bodyFromBytes(new Uint8Array([7, 8, 9])),
+      } satisfies ProcessResourceWriteRequestFrame);
+      if (!uploaded.ok) throw new Error(uploaded.error.message);
+      const resource = uploaded.data.resource;
       await env.STORAGE.put(key, new Uint8Array([7, 8, 9]), {
         httpMetadata: { contentType: "image/png" },
       });
@@ -13592,9 +13520,10 @@ describe("Process DO — mechanical", () => {
         const media = [{
           type: "image",
           mimeType: "image/png",
-          key,
-          path: `/${key}`,
-          size: 3,
+          key: resource.ref.path.replace(/^\/+/, ""),
+          path: resource.ref.path,
+          size: resource.ref.size,
+          revision: resource.ref.revision,
         }];
         let mediaPresentDuringFinish = false;
         let finishPayload: any = null;
@@ -13638,8 +13567,13 @@ describe("Process DO — mechanical", () => {
       expect(result.responses[1].data).toEqual(result.responses[0].data);
       expect(result.mediaPresentDuringFinish).toBe(true);
       expect(result.mediaPresentDuringRetry).toBe(true);
-      expect(result.finishPayload).toMatchObject({ pid, runId, media: [{ key }] });
+      expect(result.finishPayload).toMatchObject({
+        pid,
+        runId,
+        media: [{ type: "resource", ref: { path: resource.ref.path } }],
+      });
       expect(await env.STORAGE.head(key)).toBeNull();
+      expect(await env.STORAGE.head(resource.ref.path.replace(/^\/+/, ""))).not.toBeNull();
     });
 
     it("finishes the active run and leaves the executor empty and dead", async () => {

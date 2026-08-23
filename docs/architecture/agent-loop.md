@@ -257,17 +257,17 @@ Late tool responses are ignored after their durable dispatch row is cleared.
 
 ## Media Handling
 
-Incoming process media and image-bearing tool results are stored outside the
-message table in R2. Message rows keep metadata references and the stable
-`/var/media/{uid}/{pid}/{id}` path; tool output JSON contains that path rather
-than encoded image bytes. Before a model call, the Process DO includes the
-actionable path in attachment text and hydrates stored raster images into native
-image content blocks. Audio, video, vector image, and document media retain the
-same path alongside transcript or descriptive fallback text.
+Incoming media and image-bearing tool results are stored outside the message
+table in R2. New message boundaries carry revision-bound resource blocks; the
+Process retains external sources once in the run-as agent's immutable archive.
+Before a model call, it includes the actionable path in attachment text and
+hydrates stored raster images into native image content blocks. Audio, video,
+vector image, and document media retain the same reference alongside transcript
+or descriptive fallback text.
 
 For the supported upgrade path, legacy tool-result rows that contain a typed
 image inside JSON text are reconstructed as image blocks with the encoded bytes
-removed from their text block. New results always use process-media references.
+removed from their text block. New results always use resource references.
 
 The `/var/media` filesystem mount is read-only and checks process ownership
 instead of relying on R2 object metadata. Root, the process itself, and sibling

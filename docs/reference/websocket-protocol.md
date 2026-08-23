@@ -440,9 +440,7 @@ The current body-bearing syscalls are:
 | `fs.transfer.receive` | Required file bytes | No |
 | `fs.transfer.send` | No | Successful file bytes |
 | `net.fetch` | Optional HTTP request bytes | HTTP response bytes when the response has a body |
-| `proc.media.read` | No | Successful stored media bytes |
-| `proc.media.write` | Required media bytes with an exact descriptor length | No |
-| `conversation.media.read` | No | Successful canonical conversation media bytes |
+| `conversation.media.read` | No | Successful legacy conversation media bytes |
 | `ai.transcription.create` | Required audio bytes | No |
 | `ai.image.read` | Required image bytes | Decoded UTF-8 text when caption, query, or OCR requests set `stream: true` |
 | `ai.image.generate` | No | Generated image bytes when returned inline |
@@ -470,7 +468,9 @@ before returning. Success consumes the body through its exact end; validation
 failure, cancellation, or a downstream error cancels the stream and prevents
 later parts from being processed. Adapter service bindings use the same
 metadata/body ownership contract even though they do not encode the stream as
-WebSocket binary chunks between workers.
+WebSocket binary chunks between workers. Cross-Worker and cross-Durable-Object
+RPC forwards the body as a byte-oriented `ReadableStream`, preserving
+backpressure and cancellation rather than materializing or serializing it.
 
 Adapter retry identity remains in JSON, not in the binary framing layer.
 Inbound events must reuse their provider `message.messageId`. The Kernel claims

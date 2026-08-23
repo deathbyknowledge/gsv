@@ -1,4 +1,5 @@
-import type { ProcMediaInput } from "./proc";
+import type { MessageAttachment } from "./proc";
+import type { ResourceBlock } from "../resource";
 
 export type ConversationKind = "home" | "work" | "group";
 
@@ -58,7 +59,7 @@ export type ConversationMessage = {
   sequence: number;
   author: ConversationMessageAuthor;
   text: string;
-  media?: ProcMediaInput[];
+  media?: MessageAttachment[];
   origin: ConversationMessageOrigin;
   processId?: string;
   runId?: string;
@@ -89,7 +90,7 @@ export type ConversationHistoryResult = {
 export type ConversationSendArgs = {
   conversationId: string;
   text: string;
-  media?: ProcMediaInput[];
+  media?: ResourceBlock[];
   idempotencyKey?: string;
 };
 
