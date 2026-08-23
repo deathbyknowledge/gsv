@@ -26,7 +26,11 @@
     {
       "binding": "GATEWAY",
       "service": "gsv",
-      "entrypoint": "WhatsAppGatewayEntrypoint"
+      "entrypoint": "AdapterGatewayEntrypoint",
+      "props": {
+        "id": "whatsapp",
+        "calls": ["adapter.inbound", "adapter.state.update"]
+      }
     }
   ],
   "migrations": [

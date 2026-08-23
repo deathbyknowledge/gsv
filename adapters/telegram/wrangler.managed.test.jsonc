@@ -32,7 +32,11 @@
     {
       "binding": "GATEWAY",
       "service": "managed-telegram-gateway-test",
-      "entrypoint": "TelegramGatewayEntrypoint"
+      "entrypoint": "AdapterGatewayEntrypoint",
+      "props": {
+        "id": "telegram",
+        "calls": ["adapter.inbound", "adapter.state.update"]
+      }
     },
     {
       "binding": "TELEGRAM_API",

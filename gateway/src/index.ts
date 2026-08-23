@@ -154,12 +154,23 @@ const LEGACY_ADAPTER_IDS = new Set(["telegram", "whatsapp", "discord", "test"]);
 const legacyAdapterServiceArgsSchema = z.object({
   adapter: z.string(),
 });
+const adapterServicePeerProfileSchema = z.object({
+  id: z.string().check(
+    z.minLength(1),
+    z.maxLength(64),
+    z.regex(/^[a-z][a-z0-9-]*$/),
+  ),
+  calls: z.array(z.enum(ADAPTER_SERVICE_CALLS)).check(
+    z.minLength(1),
+    z.maxLength(ADAPTER_SERVICE_CALLS.length),
+  ),
+});
 
-export class GatewayEntrypoint
-  extends WorkerEntrypoint<Env & GatewayInstallationBindings>
-  implements GatewayAdapterInterface, ManagedMailGatewayService, ManagedTelegramGatewayService
+abstract class AdapterServiceEntrypoint<Props>
+  extends WorkerEntrypoint<Env & GatewayInstallationBindings, Props>
+  implements GatewayAdapterInterface
 {
-  protected readonly servicePeerProfile: ServicePeerProfile | null = null;
+  protected abstract resolveServicePeerProfile(frame: Frame): ServicePeerProfile;
 
   serviceFrame(frame: Frame): Promise<Frame | null>;
   serviceFrame(
@@ -177,7 +188,7 @@ export class GatewayEntrypoint
         return await routeAdapterServiceFrame(
           this.env,
           { installationId: SINGLETON_INSTALLATION_ID },
-          resolveAdapterServicePeerProfile(this.servicePeerProfile, frame),
+          this.resolveServicePeerProfile(frame),
           frame,
         );
       }
@@ -187,7 +198,7 @@ export class GatewayEntrypoint
         return await routeAdapterServiceFrame(
           this.env,
           installation.data,
-          resolveAdapterServicePeerProfile(this.servicePeerProfile, frame),
+          this.resolveServicePeerProfile(frame),
           frame,
         );
       }
@@ -200,6 +211,15 @@ export class GatewayEntrypoint
       console.error("[GatewayEntrypoint] serviceFrame failed:", error);
       return null;
     }
+  }
+}
+
+export class GatewayEntrypoint
+  extends AdapterServiceEntrypoint<Record<never, never>>
+  implements ManagedMailGatewayService, ManagedTelegramGatewayService
+{
+  protected override resolveServicePeerProfile(frame: Frame): ServicePeerProfile {
+    return resolveLegacyAdapterServicePeerProfile(frame);
   }
 
   async acceptManagedInboundMail(
@@ -281,32 +301,14 @@ export class GatewayEntrypoint
   }
 }
 
-export class TelegramGatewayEntrypoint extends GatewayEntrypoint {
-  protected override readonly servicePeerProfile = {
-    id: "telegram",
-    calls: ADAPTER_SERVICE_CALLS,
-  } satisfies ServicePeerProfile;
-}
-
-export class WhatsAppGatewayEntrypoint extends GatewayEntrypoint {
-  protected override readonly servicePeerProfile = {
-    id: "whatsapp",
-    calls: ADAPTER_SERVICE_CALLS,
-  } satisfies ServicePeerProfile;
-}
-
-export class DiscordGatewayEntrypoint extends GatewayEntrypoint {
-  protected override readonly servicePeerProfile = {
-    id: "discord",
-    calls: ADAPTER_SERVICE_CALLS,
-  } satisfies ServicePeerProfile;
-}
-
-export class TestGatewayEntrypoint extends GatewayEntrypoint {
-  protected override readonly servicePeerProfile = {
-    id: "test",
-    calls: ADAPTER_SERVICE_CALLS,
-  } satisfies ServicePeerProfile;
+export class AdapterGatewayEntrypoint extends AdapterServiceEntrypoint<ServicePeerProfile> {
+  protected override resolveServicePeerProfile(): ServicePeerProfile {
+    const parsed = adapterServicePeerProfileSchema.safeParse(this.ctx.props);
+    if (!parsed.success || new Set(parsed.data.calls).size !== parsed.data.calls.length) {
+      throw new Error("Adapter service binding props are invalid");
+    }
+    return parsed.data;
+  }
 }
 
 async function routeAdapterServiceFrame(
@@ -356,11 +358,7 @@ function requireAdapterServiceFrame(value: Frame): Frame {
   return value;
 }
 
-function resolveAdapterServicePeerProfile(
-  configured: ServicePeerProfile | null,
-  frame: Frame,
-): ServicePeerProfile {
-  if (configured) return configured;
+function resolveLegacyAdapterServicePeerProfile(frame: Frame): ServicePeerProfile {
   if (frame.type !== "req") {
     throw new Error("Legacy adapter service bindings accept only requests");
   }

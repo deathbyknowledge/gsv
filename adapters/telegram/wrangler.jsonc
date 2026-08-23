@@ -25,7 +25,11 @@
     {
       "binding": "GATEWAY",
       "service": "gsv",
-      "entrypoint": "TelegramGatewayEntrypoint"
+      "entrypoint": "AdapterGatewayEntrypoint",
+      "props": {
+        "id": "telegram",
+        "calls": ["adapter.inbound", "adapter.state.update"]
+      }
     }
   ]
 }

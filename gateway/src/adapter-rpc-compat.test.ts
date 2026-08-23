@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { GatewayEntrypoint, TelegramGatewayEntrypoint } from "./index";
+import { AdapterGatewayEntrypoint, GatewayEntrypoint } from "./index";
+import type { ServicePeerProfile } from "./kernel/peer";
 import type { Frame } from "./protocol/frames";
 
 type TrackedBody = { stream: ReadableStream<Uint8Array> };
@@ -33,13 +34,17 @@ function requestFrameWithTrackedBody(id: string): TrackedBodyFixture {
   };
 }
 
-function telegramGatewayWithEnv(value: GatewayTestEnv): TelegramGatewayEntrypoint {
+function adapterGatewayWithEnv(
+  value: GatewayTestEnv,
+  props: ServicePeerProfile = {
+    id: "telegram",
+    calls: ["adapter.inbound", "adapter.state.update"],
+  },
+): AdapterGatewayEntrypoint {
   // SAFETY: The prototype instance is used to exercise the entrypoint with an injected test environment.
-  const gateway = Object.create(TelegramGatewayEntrypoint.prototype) as TelegramGatewayEntrypoint;
+  const gateway = Object.create(AdapterGatewayEntrypoint.prototype) as AdapterGatewayEntrypoint;
   Object.defineProperty(gateway, "env", { value });
-  Object.defineProperty(gateway, "servicePeerProfile", {
-    value: { id: "telegram", calls: ["adapter.inbound", "adapter.state.update"] },
-  });
+  Object.defineProperty(gateway, "ctx", { value: { props } });
   return gateway;
 }
 
@@ -51,7 +56,7 @@ function genericGatewayWithEnv(value: GatewayTestEnv): GatewayEntrypoint {
 }
 
 async function callServiceFrame(
-  gateway: GatewayEntrypoint,
+  gateway: GatewayEntrypoint | AdapterGatewayEntrypoint,
   ...args: unknown[]
 ): Promise<Frame | null> {
   // SAFETY: The compatibility test deliberately invokes the overloaded method with malformed argument lists.
@@ -60,6 +65,14 @@ async function callServiceFrame(
 }
 
 describe("Gateway adapter RPC compatibility", () => {
+  it("exposes only the adapter protocol on the adapter entrypoint", () => {
+    const gateway = adapterGatewayWithEnv({});
+
+    expect("serviceFrame" in gateway).toBe(true);
+    expect("acceptManagedInboundMail" in gateway).toBe(false);
+    expect("unlinkManagedTelegramIdentity" in gateway).toBe(false);
+  });
+
   it("accepts the pre-managed one-argument serviceFrame call", async () => {
     const response = {
       type: "res" as const,
@@ -69,7 +82,7 @@ describe("Gateway adapter RPC compatibility", () => {
     };
     const peerFrame = vi.fn(async () => response);
     const getByName = vi.fn(() => ({ peerFrame }));
-    const gateway = telegramGatewayWithEnv({ KERNEL: { getByName } });
+    const gateway = adapterGatewayWithEnv({ KERNEL: { getByName } });
     const frame = requestFrame("legacy");
 
     await expect(gateway.serviceFrame(frame)).resolves.toEqual(response);
@@ -97,7 +110,7 @@ describe("Gateway adapter RPC compatibility", () => {
       canonicalOrigin: "https://rpc-compat.gsv.space",
       state: "active" as const,
     }));
-    const gateway = telegramGatewayWithEnv({
+    const gateway = adapterGatewayWithEnv({
       INSTALLATION_DIRECTORY: { resolveInstallation },
       KERNEL: { getByName },
     });
@@ -115,7 +128,7 @@ describe("Gateway adapter RPC compatibility", () => {
   it("fails closed across deployment modes and cancels untransferred bodies", async () => {
     const error = vi.spyOn(console, "error").mockImplementation(() => {});
     const managedRequest = requestFrameWithTrackedBody("managed-legacy-call");
-    const managedGateway = telegramGatewayWithEnv({
+    const managedGateway = adapterGatewayWithEnv({
       INSTALLATION_DIRECTORY: {},
       KERNEL: {},
     });
@@ -125,7 +138,7 @@ describe("Gateway adapter RPC compatibility", () => {
 
     const getByName = vi.fn();
     const standaloneRequest = requestFrameWithTrackedBody("standalone-scoped-call");
-    const standaloneGateway = telegramGatewayWithEnv({ KERNEL: { getByName } });
+    const standaloneGateway = adapterGatewayWithEnv({ KERNEL: { getByName } });
 
     await expect(standaloneGateway.serviceFrame(
       { installationId: "inst_rpc_compat" },
@@ -139,7 +152,7 @@ describe("Gateway adapter RPC compatibility", () => {
   it("rejects malformed RPC variants and cancels every candidate frame body", async () => {
     const error = vi.spyOn(console, "error").mockImplementation(() => {});
     const getByName = vi.fn();
-    const gateway = telegramGatewayWithEnv({ KERNEL: { getByName } });
+    const gateway = adapterGatewayWithEnv({ KERNEL: { getByName } });
 
     await expect(callServiceFrame(gateway, null)).resolves.toBeNull();
 
@@ -186,6 +199,43 @@ describe("Gateway adapter RPC compatibility", () => {
       { id: "telegram", calls: ["adapter.inbound", "adapter.state.update"] },
       frame,
     );
+  });
+
+  it("derives adapter authority only from trusted service binding props", async () => {
+    const response = {
+      type: "res" as const,
+      id: "binding-props",
+      ok: true,
+      data: { routed: true },
+    };
+    const peerFrame = vi.fn(async () => response);
+    const getByName = vi.fn(() => ({ peerFrame }));
+    const gateway = adapterGatewayWithEnv(
+      { KERNEL: { getByName } },
+      { id: "discord", calls: ["adapter.inbound"] },
+    );
+    const frame = requestFrame("binding-props");
+
+    await expect(gateway.serviceFrame(frame)).resolves.toEqual(response);
+    expect(peerFrame).toHaveBeenCalledWith(
+      { id: "discord", calls: ["adapter.inbound"] },
+      frame,
+    );
+  });
+
+  it("rejects invalid service binding props before entering the Kernel", async () => {
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    const request = requestFrameWithTrackedBody("invalid-binding-props");
+    const getByName = vi.fn();
+    const gateway = adapterGatewayWithEnv(
+      { KERNEL: { getByName } },
+      { id: "telegram", calls: ["adapter.inbound", "account.list"] },
+    );
+
+    await expect(gateway.serviceFrame(request.frame)).resolves.toBeNull();
+    expect(request.cancelled()).toBe("Gateway service request failed");
+    expect(getByName).not.toHaveBeenCalled();
+    error.mockRestore();
   });
 
   it("rejects an unknown identity on a legacy generic adapter binding", async () => {

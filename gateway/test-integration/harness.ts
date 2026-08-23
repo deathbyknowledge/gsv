@@ -145,12 +145,20 @@ function integrationDependencyConfig(
       {
         binding: "TELEGRAM_GATEWAY",
         service: gatewayService,
-        entrypoint: "TelegramGatewayEntrypoint",
+        entrypoint: "AdapterGatewayEntrypoint",
+        props: {
+          id: "telegram",
+          calls: ["adapter.inbound", "adapter.state.update"],
+        },
       },
       {
         binding: "DISCORD_GATEWAY",
         service: gatewayService,
-        entrypoint: "DiscordGatewayEntrypoint",
+        entrypoint: "AdapterGatewayEntrypoint",
+        props: {
+          id: "discord",
+          calls: ["adapter.inbound", "adapter.state.update"],
+        },
       },
     ],
   };

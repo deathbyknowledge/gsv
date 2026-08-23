@@ -154,20 +154,27 @@ cancellation remain streaming end to end.
 
 ```text
 adapter normalized req + optional BinaryBody
-  -> named Gateway service entrypoint assigns the fixed service peer
+  -> AdapterGatewayEntrypoint validates deployment-owned binding props
   -> Kernel validates and dispatches the same logical req
   -> correlated res returns through the binding
 ```
 
 Workers RPC carries `BinaryBody.stream` as a `ReadableStream`; it is not
-base64-encoded or buffered into the frame. The named entrypoints are part of
-the trust boundary: Telegram, WhatsApp, Discord, and the test adapter each
-receive their own fixed service identity and attenuated calls. The generic
-Gateway entrypoint retains a rolling-upgrade bridge for already-deployed
-adapters: it accepts only the known adapter ids and the same two attenuated
-calls, deriving identity from the validated request. New bindings use only the
-named entrypoints. During a rolling release, deploy the Gateway before adapters
-switch their bindings to those named entrypoints.
+base64-encoded or buffered into the frame. The service binding is part of the
+trust boundary: its `props` carry the adapter id and attenuated call grant, and
+Cloudflare supplies those props from deployment configuration rather than the
+adapter's request. Every first-party adapter uses the same entrypoint; adding
+one does not add another Gateway class. The generic Gateway entrypoint retains
+a narrow rolling-upgrade bridge for already-deployed adapters: it accepts only
+known adapter ids and the same two attenuated calls, deriving identity from the
+validated request. New bindings use only `AdapterGatewayEntrypoint`. During a
+rolling release, deploy the Gateway before adapters switch their bindings.
+
+Outbound adapter selection is the inverse mapping. The Kernel normalizes the
+adapter id to a deployment binding key such as `CHANNEL_TELEGRAM` and reads that
+binding dynamically from its environment. The peer never supplies a binding
+key, and no central source registry has to change when deployment adds another
+adapter.
 
 Provider delivery APIs remain typed adapter RPC beneath this protocol. They own
 provider credentials, formatting, retry ledgers, and supported standalone
@@ -258,7 +265,7 @@ Process output as replies.
   role field.
 - The Kernel derives delegated uid, groups, calls, and provenance.
 - Requested implementations do not widen call or signal grants.
-- Fixed adapter entrypoints cannot impersonate another adapter.
+- Adapter binding props cannot be overridden by a frame to impersonate another adapter.
 - External frames are validated at the carrier boundary; internal code uses the
   trusted protocol types.
 - Every body has one owner and one terminal outcome: consumed, forwarded, or

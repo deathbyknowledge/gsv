@@ -13,7 +13,7 @@ export default defineConfig({
             script: `
               import { WorkerEntrypoint } from "cloudflare:workers";
               const calls = [];
-              export class TelegramGatewayEntrypoint extends WorkerEntrypoint {
+              export class AdapterGatewayEntrypoint extends WorkerEntrypoint {
                 async serviceFrame(installation, frame) {
                   const bodyBytes = frame.body
                     ? Array.from(new Uint8Array(await new Response(frame.body.stream).arrayBuffer()))

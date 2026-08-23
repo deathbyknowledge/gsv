@@ -238,13 +238,12 @@ of chat integrations.
 - [Unified Protocol Peers](./unified-protocol-peers.md) describes the shared
   identity, grants, frames, streaming bodies, reverse calls, and delegated
   adapter command model used by clients, machines, and services.
+- [Resource References and Lazy Binary Resolution](./resource-references.md)
+  documents the implemented common file-reference and lazy byte-streaming
+  contract used by Messages, Processes, adapters, Web, and Desktop.
 
 ## Deferred design proposals
 
-- [Resource References and Lazy Binary Resolution](./resource-references.md)
-  records the proposed common file-reference contract for machines, clients,
-  adapters, model context, and durable GSV retention. It replaces eager media
-  copying with lazy binary resolution and is intentionally not implemented yet.
 - [Surface Bindings and Output Graphs](./interaction-surface-bindings.md) records
   the constraints on any future binding or forwarding design. The older
   Process-owned automatic-output graph is superseded.
