@@ -34,6 +34,12 @@ function integrationGatewayConfig(options: {
     { config: resolve(GATEWAY_ROOT, "wrangler.jsonc") },
     { hideWarnings: true },
   );
+  const lifecycleConfig = options.managed
+    ? unstable_readConfig(
+        { config: resolve(GATEWAY_ROOT, "wrangler.managed.dev.jsonc") },
+        { hideWarnings: true },
+      )
+    : config;
 
   return {
     name: options.name ?? config.name,
@@ -42,8 +48,8 @@ function integrationGatewayConfig(options: {
     compatibility_flags: config.compatibility_flags,
     define: config.define,
     rules: config.rules,
-    migrations: config.migrations,
-    durable_objects: config.durable_objects,
+    migrations: lifecycleConfig.migrations,
+    durable_objects: lifecycleConfig.durable_objects,
     observability: config.observability,
     r2_buckets: config.r2_buckets,
     queues: options.managedMailQueue

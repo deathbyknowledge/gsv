@@ -37,6 +37,19 @@ type SetupNodeConfig = {
   expiresAt?: number;
 };
 
+async function ensurePersonalConversation(
+  ownerUid: number,
+  ctx: KernelContext,
+  preferredAgentName?: string,
+): Promise<void> {
+  const pid = await ensurePersonalController(ownerUid, ctx, preferredAgentName);
+  const conversation = ctx.conversations.ensureHome(ownerUid, pid);
+  await getConversationById(ctx.installationId, conversation.id).initialize({
+    ownerUid,
+    kind: "home",
+  });
+}
+
 async function timeSetupStep<T>(
   timings: SetupTiming[],
   label: string,
@@ -405,12 +418,7 @@ export async function handleSysSetup(
     };
 
     await timeSetupStep(timings, "provision-personal-agent", async () => {
-      const pid = await ensurePersonalController(uid, ctx, agentName);
-      const conversation = ctx.conversations.ensureHome(uid, pid);
-      await getConversationById(ctx.installationId, conversation.id).initialize({
-        ownerUid: uid,
-        kind: "home",
-      });
+      await ensurePersonalConversation(uid, ctx, agentName);
     });
 
     const rootShadow = auth.getShadowByUsername("root");
@@ -452,6 +460,11 @@ export async function recoverCompletedSysSetup(
   if (!authenticated.ok || authenticated.identity.uid !== user.uid) {
     throw new Error("Installation setup credentials do not match");
   }
+
+  const preferredAgentName = ctx.auth.getPersonalAgentUid(user.uid) === null
+    ? parseSetupAgentName(ctx.auth, args.agentName, username)
+    : undefined;
+  await ensurePersonalConversation(user.uid, ctx, preferredAgentName);
 
   const node = parseNodeConfig(args);
   let nodeToken: SysSetupResult["nodeToken"];

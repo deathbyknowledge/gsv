@@ -445,4 +445,26 @@ describe("handleSysSetup", () => {
       password: "wrong-password",
     }, ctx)).rejects.toThrow("credentials do not match");
   });
+
+  it("finishes personal provisioning after an interrupted setup", async () => {
+    const { ctx } = createCtx();
+    const initialize = vi.fn()
+      .mockRejectedValueOnce(new Error("conversation unavailable"))
+      .mockResolvedValueOnce(undefined);
+    getConversationByIdMock.mockReturnValue({ initialize });
+
+    await expect(handleSysSetup({
+      username: "alice",
+      password: "password-123",
+    }, ctx)).rejects.toThrow("conversation unavailable");
+
+    await expect(recoverCompletedSysSetup({
+      username: "alice",
+      password: "password-123",
+    }, ctx)).resolves.toMatchObject({
+      user: { username: "alice" },
+    });
+    expect(ensurePersonalControllerMock).toHaveBeenCalledTimes(2);
+    expect(initialize).toHaveBeenCalledTimes(2);
+  });
 });

@@ -3467,25 +3467,27 @@ export class Kernel extends DurableObject<Env> {
       try {
         if (this.auth.isSetupMode()) {
           data = await handleKernelSetup(setupArgs, ctx);
-          this.pendingManagedOnboarding = {
-            claimId: authorization.claimId,
-            installationId: authorization.installation.installationId,
-          };
-          this.ctx.storage.kv.put(
-            MANAGED_ONBOARDING_COMPLETION_KEY,
-            this.pendingManagedOnboarding,
-          );
         } else {
           const pending = this.pendingManagedOnboarding;
           if (
-            !pending
-            || pending.claimId !== authorization.claimId
-            || pending.installationId !== authorization.installation.installationId
+            pending
+            && (
+              pending.claimId !== authorization.claimId
+              || pending.installationId !== authorization.installation.installationId
+            )
           ) {
             throw new Error("System already initialized");
           }
           data = await recoverCompletedSysSetup(setupArgs, ctx);
         }
+        this.pendingManagedOnboarding = {
+          claimId: authorization.claimId,
+          installationId: authorization.installation.installationId,
+        };
+        this.ctx.storage.kv.put(
+          MANAGED_ONBOARDING_COMPLETION_KEY,
+          this.pendingManagedOnboarding,
+        );
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         this.sendError(connection, frame.id, 400, message);

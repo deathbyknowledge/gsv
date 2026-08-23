@@ -1,6 +1,6 @@
 import gateway from "./index";
 
-export { GatewayEntrypoint, Kernel, Process } from "./index";
+export * from "./index";
 
 type ManagedDevelopmentEnv = Env & {
   ACCOUNT_HTTP: Fetcher;
