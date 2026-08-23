@@ -2,6 +2,10 @@
 
 Once a messenger is connected, you can talk to GSV from it just like you do on the desktop — anything you can ask GSV, you can ask from anywhere.
 
+GSV adapters are extensible. This page documents the messenger implementations
+bundled with the current release; it is not a complete list of transports an
+adapter can implement.
+
 Connecting a bot or phone account and linking your messenger identity are
 separate steps. If you leave setup after the connection succeeds but before
 entering the authorization code, do not create another account. Return to

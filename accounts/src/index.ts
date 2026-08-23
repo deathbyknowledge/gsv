@@ -4,14 +4,14 @@ import type {
   CompleteInstallationOnboardingInput,
   CompleteInstallationOnboardingResult,
   InstallationDirectoryResult,
-  InstallationDirectoryService,
   InstallationOnboardingAuthorization,
-  InstallationOnboardingService,
   ManagedInferencePolicy,
   ManagedInferencePolicyService,
   ManagedInferenceUsageEvent,
   ManagedInferenceUsageService,
 } from "@humansandmachines/gsv/protocol";
+import type { InstallationDirectoryService } from "@humansandmachines/gsv/services/directory";
+import type { InstallationOnboardingService } from "@humansandmachines/gsv/services/onboarding";
 import { EnvironmentAccountsAdminAccess } from "./admin/access";
 import { AccountsAdminHttp } from "./admin/http";
 import { InstallationAdminService } from "./admin/service";

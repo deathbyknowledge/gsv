@@ -49,8 +49,9 @@ import type {
   AdapterMedia,
   AdapterOutboundMessage,
   AdapterSendResult,
+  AdapterService,
+  AdapterServiceDescriptor,
   AdapterSurface,
-  AdapterWorkerInterface,
   BinaryBody,
 } from "../../shared/src/types";
 
@@ -183,8 +184,29 @@ export class TestChannelState extends DurableObject<Env> {
 // Test Channel WorkerEntrypoint
 // ============================================================================
 
-export class TestChannel extends WorkerEntrypoint<Env> implements AdapterWorkerInterface {
+export class TestChannel extends WorkerEntrypoint<Env> implements AdapterService {
   readonly adapterId = "test";
+
+  async adapterDescribe(): Promise<AdapterServiceDescriptor> {
+    return {
+      version: 1,
+      id: this.adapterId,
+      displayName: "Test",
+      capabilities: {
+        connect: true,
+        disconnect: true,
+        send: true,
+        status: true,
+        activity: true,
+        pairing: false,
+        surfaces: ["dm", "group", "channel", "thread"],
+        media: {
+          inbound: ["image", "audio", "video", "document"],
+          outbound: ["image", "audio", "video", "document"],
+        },
+      },
+    };
+  }
 
   private getStateDO(
     installation: AdapterInstallationContext,

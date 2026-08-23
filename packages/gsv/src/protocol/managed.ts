@@ -1,102 +1,26 @@
+import type { AiStopReason } from "./syscalls/ai";
 import type {
-  AiAssistantMessage,
-  AiStopReason,
-  AiTextContent,
-  AiThinkingContent,
-  AiTextMessage,
-  AiTextTool,
-  AiToolCall,
-} from "./syscalls/ai";
+  ManagedInferenceActor,
+  ManagedInferencePurpose,
+} from "../services/inference";
+import { GSV_INFERENCE_PRODUCT_MODEL } from "../services/inference";
 
-export const GSV_INFERENCE_PROVIDER = "gsv";
-export const GSV_INFERENCE_MODEL = "default";
-export const GSV_INFERENCE_PRODUCT_MODEL = "gsv/default";
-export const GSV_INFERENCE_FEATURE = "ai.provider.gsv";
-
-export type ManagedInferenceActor = {
-  localUid: number;
-  processId?: string;
-  runId?: string;
-};
-
-export type ManagedInferencePurpose = "agent" | "mail-intake";
-
-export type ManagedInferenceRequest = {
-  version: 1;
-  installationId: string;
-  logicalRequestId: string;
-  actor: ManagedInferenceActor;
-  model: typeof GSV_INFERENCE_PRODUCT_MODEL;
-  systemPrompt?: string;
-  messages: AiTextMessage[];
-  tools?: AiTextTool[];
-  maxOutputTokens: number;
-  reasoning?: "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
-  timeoutMs: number;
-};
-
-export type ManagedInferenceResult = Omit<
-  AiAssistantMessage,
-  "diagnostics" | "timestamp"
-> & {
-  timestamp: number;
-};
-
-export type ManagedInferencePartial = Omit<
+export {
+  GSV_INFERENCE_FEATURE,
+  GSV_INFERENCE_MODEL,
+  GSV_INFERENCE_PRODUCT_MODEL,
+  GSV_INFERENCE_PROVIDER,
+} from "../services/inference";
+export type {
+  InferenceService as ManagedInferenceService,
+  ManagedInferenceAbortRequest,
+  ManagedInferenceActor,
+  ManagedInferencePartial,
+  ManagedInferencePurpose,
+  ManagedInferenceRequest,
   ManagedInferenceResult,
-  "stopReason"
-> & {
-  stopReason: AiStopReason | "pending";
-};
-
-export type ManagedInferenceStreamEvent =
-  | { type: "start"; partial: ManagedInferencePartial }
-  | { type: "text_start"; contentIndex: number; content: AiTextContent }
-  | { type: "text_delta"; contentIndex: number; delta: string }
-  | { type: "text_end"; contentIndex: number; content: AiTextContent }
-  | {
-      type: "thinking_start";
-      contentIndex: number;
-      content: AiThinkingContent;
-    }
-  | { type: "thinking_delta"; contentIndex: number; delta: string }
-  | {
-      type: "thinking_end";
-      contentIndex: number;
-      content: AiThinkingContent;
-    }
-  | { type: "toolcall_start"; contentIndex: number; toolCall: AiToolCall }
-  | {
-      type: "toolcall_delta";
-      contentIndex: number;
-      delta: string;
-      toolCall: AiToolCall;
-    }
-  | { type: "toolcall_end"; contentIndex: number; toolCall: AiToolCall }
-  | {
-      type: "done";
-      reason: Extract<AiStopReason, "stop" | "length" | "toolUse">;
-      message: ManagedInferenceResult;
-    }
-  | {
-      type: "error";
-      reason: Extract<AiStopReason, "aborted" | "error">;
-      error: ManagedInferenceResult;
-    };
-
-export type ManagedInferenceAbortRequest = {
-  version: 1;
-  installationId: string;
-  logicalRequestId: string;
-};
-
-export interface ManagedInferenceService {
-  generate(input: ManagedInferenceRequest): Promise<ManagedInferenceResult>;
-  generateStream(
-    input: ManagedInferenceRequest,
-  ): Promise<ReadableStream<Uint8Array>>;
-  abort(input: ManagedInferenceAbortRequest): Promise<void>;
-}
+  ManagedInferenceStreamEvent,
+} from "../services/inference";
 
 export type ManagedMailSummaryRequest = {
   version: 1;
@@ -226,66 +150,19 @@ export interface ManagedInferencePolicyService {
   ): Promise<ManagedInferencePolicy>;
 }
 
-export type ManagedInstallationState =
-  | "reserved"
-  | "provisioning"
-  | "trialing"
-  | "active"
-  | "past_due"
-  | "restricted"
-  | "cancelled"
-  | "retained"
-  | "deleting"
-  | "deleted";
-
-export type ManagedInstallationIdentity = {
-  installationId: string;
-  handle: string;
-  canonicalOrigin: string;
-};
-
-export type InstallationDirectoryResult =
-  | ({ found: true; state: ManagedInstallationState } & ManagedInstallationIdentity)
-  | { found: false };
-
-export interface InstallationDirectoryService {
-  resolveHostname(hostname: string): Promise<InstallationDirectoryResult>;
-  resolveInstallation(
-    installationId: string,
-  ): Promise<InstallationDirectoryResult>;
-}
-
-export type AuthorizeInstallationOnboardingInput = {
-  installationId: string;
-  token: string;
-};
-
-export type InstallationOnboardingAuthorization =
-  | {
-      ok: true;
-      claimId: string;
-      installation: ManagedInstallationIdentity;
-    }
-  | { ok: false };
-
-export type CompleteInstallationOnboardingInput = {
-  claimId: string;
-  installationId: string;
-};
-
-export type CompleteInstallationOnboardingResult = {
-  state: "complete";
-  installationId: string;
-};
-
-export interface InstallationOnboardingService {
-  authorizeInstallationOnboarding(
-    input: AuthorizeInstallationOnboardingInput,
-  ): Promise<InstallationOnboardingAuthorization>;
-  completeInstallationOnboarding(
-    input: CompleteInstallationOnboardingInput,
-  ): Promise<CompleteInstallationOnboardingResult>;
-}
+export type {
+  InstallationDirectoryResult,
+  InstallationDirectoryService,
+  ManagedInstallationIdentity,
+  ManagedInstallationState,
+} from "../services/directory";
+export type {
+  AuthorizeInstallationOnboardingInput,
+  CompleteInstallationOnboardingInput,
+  CompleteInstallationOnboardingResult,
+  InstallationOnboardingAuthorization,
+  InstallationOnboardingService,
+} from "../services/onboarding";
 
 export type UnlinkManagedTelegramIdentityInput = {
   installationId: string;

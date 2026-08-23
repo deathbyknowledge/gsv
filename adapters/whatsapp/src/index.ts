@@ -25,8 +25,9 @@ import type {
   AdapterInstallationContext,
   AdapterOutboundMessage,
   AdapterSendResult,
+  AdapterService,
+  AdapterServiceDescriptor,
   AdapterSurface,
-  AdapterWorkerInterface,
   BinaryBody,
 } from "../../shared/src/types";
 import { errorFields, errorMessage, logWhatsApp } from "./logging";
@@ -43,9 +44,30 @@ type WhatsAppConnectConfig = z.infer<typeof whatsappConnectConfigSchema>;
 
 export class WhatsAppChannelEntrypoint
   extends WorkerEntrypoint<Env>
-  implements AdapterWorkerInterface
+  implements AdapterService
 {
   readonly adapterId = "whatsapp";
+
+  async adapterDescribe(): Promise<AdapterServiceDescriptor> {
+    return {
+      version: 1,
+      id: this.adapterId,
+      displayName: "WhatsApp",
+      capabilities: {
+        connect: true,
+        disconnect: true,
+        send: true,
+        status: true,
+        activity: true,
+        pairing: false,
+        surfaces: ["dm", "group"],
+        media: {
+          inbound: ["image", "audio", "video", "document"],
+          outbound: ["image", "audio", "video", "document"],
+        },
+      },
+    };
+  }
 
   async adapterConnect(
     accountId: string,

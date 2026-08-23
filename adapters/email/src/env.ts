@@ -1,8 +1,8 @@
 import type {
-  InstallationDirectoryService,
-  ManagedMailGatewayService,
   ManagedMailSummaryService,
 } from "@humansandmachines/gsv/protocol";
+import type { InstallationDirectoryService } from "@humansandmachines/gsv/services/directory";
+import type { MailGatewayService } from "@humansandmachines/gsv/services/mail";
 import type { MailInstallation } from "./mail-installation";
 
 export type MailEnv = Omit<
@@ -35,7 +35,7 @@ export type MailEnv = Omit<
   MAIL_DAILY_OUTBOUND_BYTE_LIMIT: number | string;
   MAIL_INSTALLATIONS: DurableObjectNamespace<MailInstallation>;
   ACCOUNTS: InstallationDirectoryService;
-  GATEWAY: ManagedMailGatewayService;
+  GATEWAY: MailGatewayService;
   INFERENCE: ManagedMailSummaryService;
   EMAIL: SendEmail;
 };

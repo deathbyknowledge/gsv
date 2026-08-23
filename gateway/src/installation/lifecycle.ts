@@ -1,7 +1,7 @@
 import type {
   InstallationDirectoryResult,
-  InstallationDirectoryService,
 } from "@humansandmachines/gsv/protocol";
+import type { InstallationDirectoryService } from "@humansandmachines/gsv/services/directory";
 import { parseManagedInstallationId } from "./identity";
 
 export const MANAGED_LIFECYCLE_RECHECK_MS = 60_000;

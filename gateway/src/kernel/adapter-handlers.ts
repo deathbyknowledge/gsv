@@ -8,6 +8,8 @@ import type {
   AdapterPairingCandidate,
   AdapterPairingPreparation,
   AdapterPairingWorkerInterface,
+  AdapterService,
+  AdapterServiceDescriptor,
   AdapterSurface,
   AdapterWorkerInterface,
 } from "../adapter-interface";
@@ -61,6 +63,7 @@ import {
   adapterSurfaceSchema,
   validateAdapterMediaBody,
 } from "@humansandmachines/gsv/protocol";
+import { adapterServiceDescriptorSchema } from "@humansandmachines/gsv/services/adapters";
 import * as z from "zod/mini";
 import { resolveCallerOwnerUid, type KernelContext } from "./context";
 import type { RequestFrame } from "../protocol/frames";
@@ -124,6 +127,7 @@ type LegacyStandaloneAdapterService = {
   ): ReturnType<AdapterWorkerInterface["adapterStatus"]>;
 };
 type AdapterServiceBinding = Fetcher
+  & Partial<Pick<AdapterService, "adapterDescribe">>
   & Partial<AdapterWorkerInterface>
   & Partial<AdapterPairingWorkerInterface>
   & Partial<LegacyStandaloneAdapterService>;
@@ -1067,19 +1071,20 @@ export async function handleAdapterStatus(
   return { adapter, accounts };
 }
 
-export function handleAdapterList(
+export async function handleAdapterList(
   _args: AdapterListArgs,
   ctx: KernelContext,
-): AdapterListResult {
+): Promise<AdapterListResult> {
   const entries = new Map<string, AdapterListEntry>();
+  const deployed = Object.keys(ctx.env)
+    .map((key) => adapterNameFromBindingKey(key))
+    .filter((adapter): adapter is string => adapter !== null);
 
-  for (const key of Object.keys(ctx.env)) {
-    const adapter = adapterNameFromBindingKey(key);
-    if (!adapter) continue;
-
+  await Promise.all(deployed.map(async (adapter) => {
     const service = resolveAdapterService(ctx.env, adapter);
-    entries.set(adapter, adapterListEntry(adapter, service));
-  }
+    const descriptor = await describeAdapterService(adapter, service);
+    entries.set(adapter, adapterListEntry(adapter, service, descriptor));
+  }));
 
   const statuses = visibleAdapterStatusRecords(ctx);
 
@@ -2121,23 +2126,49 @@ function normalizeAdapterName(adapter: string): string {
   return adapter.trim().toLowerCase();
 }
 
-function adapterListEntry(adapter: string, service: AdapterServiceBinding | null): AdapterListEntry {
+function adapterListEntry(
+  adapter: string,
+  service: AdapterServiceBinding | null,
+  descriptor: AdapterServiceDescriptor | null = null,
+): AdapterListEntry {
+  const capabilities = descriptor?.capabilities;
   return {
     adapter,
     available: service !== null,
-    supportsConnect: service?.adapterConnect !== undefined,
-    supportsDisconnect: service?.adapterDisconnect !== undefined,
-    supportsSend: service?.adapterSend !== undefined,
-    supportsStatus: service?.adapterStatus !== undefined,
-    supportsActivity: service?.adapterSetActivity !== undefined,
-    supportsPairing: service?.adapterPairingInfo !== undefined
-      && service.adapterPairingInspect !== undefined
-      && service.adapterPairingPrepare !== undefined
-      && service.adapterPairingActivate !== undefined
-      && service.adapterPairingFinalize !== undefined
-      && service.adapterPairingDisconnect !== undefined,
+    descriptor: descriptor ?? undefined,
+    supportsConnect: capabilities?.connect ?? service?.adapterConnect !== undefined,
+    supportsDisconnect: capabilities?.disconnect ?? service?.adapterDisconnect !== undefined,
+    supportsSend: capabilities?.send ?? service?.adapterSend !== undefined,
+    supportsStatus: capabilities?.status ?? service?.adapterStatus !== undefined,
+    supportsActivity: capabilities?.activity ?? service?.adapterSetActivity !== undefined,
+    supportsPairing: capabilities?.pairing ?? (
+      service?.adapterPairingInfo !== undefined
+        && service.adapterPairingInspect !== undefined
+        && service.adapterPairingPrepare !== undefined
+        && service.adapterPairingActivate !== undefined
+        && service.adapterPairingFinalize !== undefined
+        && service.adapterPairingDisconnect !== undefined
+    ),
     accounts: [],
   };
+}
+
+async function describeAdapterService(
+  adapter: string,
+  service: AdapterServiceBinding | null,
+): Promise<AdapterServiceDescriptor | null> {
+  if (!service?.adapterDescribe) return null;
+  try {
+    const result = adapterServiceDescriptorSchema.safeParse(await service.adapterDescribe());
+    if (!result.success || result.data.id !== adapter) {
+      logAdapterBoundaryFailure("error", "descriptor_invalid_response");
+      return null;
+    }
+    return result.data;
+  } catch {
+    logAdapterBoundaryFailure("error", "descriptor_worker_failed");
+    return null;
+  }
 }
 
 function adapterAccountStatusFromRecord(status: AdapterStatusRecord): AdapterAccountStatus {

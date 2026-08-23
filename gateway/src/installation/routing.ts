@@ -1,10 +1,10 @@
 import { env } from "cloudflare:workers";
 import type {
   InstallationDirectoryResult,
-  InstallationDirectoryService,
-  InstallationOnboardingService,
   ManagedInstallationState,
 } from "@humansandmachines/gsv/protocol";
+import type { InstallationDirectoryService } from "@humansandmachines/gsv/services/directory";
+import type { InstallationOnboardingService } from "@humansandmachines/gsv/services/onboarding";
 import type { Kernel } from "../kernel/do";
 import {
   SINGLETON_INSTALLATION_ID,

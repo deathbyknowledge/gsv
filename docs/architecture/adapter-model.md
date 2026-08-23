@@ -1,14 +1,15 @@
 # The Adapter Model
 
-Use this page when you want to understand how GSV connects external messaging
-systems such as WhatsApp and Discord to the same durable process model used by
-the CLI and Desktop.
+Use this page when you want to understand how GSV connects an open-ended set of
+external messaging systems to the same durable process model used by the CLI
+and Desktop. WhatsApp, Discord, and Telegram are bundled adapter
+implementations, not a closed list of transports recognized by the Kernel.
 
 ## Why adapters exist
 
 An agent that only lives in a terminal is not very useful as personal
 infrastructure. You want to reach the same system from the Desktop, the CLI,
-WhatsApp, Discord, and eventually other surfaces.
+the bundled messengers, and adapters written for services GSV has never seen.
 
 The naive design would be to bundle every external messaging integration directly
 into the Gateway. That creates three bad outcomes:
@@ -98,10 +99,17 @@ actions in that run. The summary remains untrusted external context. Upgrades
 preserve historical Inbox accounts, processes, and mailbox notification fields,
 but new mail neither consults nor updates them.
 
-The protocol source of truth is `packages/gsv/src/protocol/adapters.ts`.
-Gateway-to-adapter bindings expose lifecycle, status, activity, and send
-operations; adapters call the Gateway's single `serviceFrame` entrypoint for
+Normalized message and body types live in
+`packages/gsv/src/protocol/adapters.ts`. The Worker RPC extension point is
+`AdapterService` in `packages/gsv/src/services/adapters.ts`. Every adapter
+returns a descriptor for lifecycle, status, activity, pairing, surface, and
+media support; adapters call the Gateway's single `serviceFrame` entrypoint for
 `adapter.inbound` and `adapter.state.update`.
+
+The canonical adapter identity comes from the trusted `CHANNEL_*` service
+binding. A descriptor must agree with that identity and cannot grant its Worker
+additional authority. Adding an adapter therefore extends deployment metadata
+and provider code rather than a Kernel enum.
 
 Every call in either direction begins with a validated installation context.
 The Kernel supplies that context from its durable installation identity; it is

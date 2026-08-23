@@ -22,6 +22,8 @@ export type {
   AdapterPairingRoute,
   AdapterPairingWorkerInterface,
   AdapterSendResult,
+  AdapterService,
+  AdapterServiceDescriptor,
   AdapterSurface,
   AdapterSurfaceKind,
   AdapterWorkerInterface,

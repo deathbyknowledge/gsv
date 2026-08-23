@@ -71,8 +71,10 @@ export const adapterMediaBodySchema = z.strictObject({
   length: z.number(),
 });
 
+export type AdapterMediaType = "image" | "audio" | "video" | "document";
+
 export type AdapterMedia = {
-  type: "image" | "audio" | "video" | "document";
+  type: AdapterMediaType;
   mimeType: string;
   body?: AdapterMediaBody;
   url?: string;
@@ -523,7 +525,13 @@ export interface AdapterGatewayInterface<Frame = AdapterGatewayFrame> {
   ): Promise<Frame | null>;
 }
 
-/** Canonical service-binding RPC surface implemented by every adapter worker. */
+/**
+ * Legacy full-operation shape retained for mixed standalone deployments.
+ *
+ * @deprecated Implement `AdapterService` from
+ * `@humansandmachines/gsv/services/adapters`; it permits intentionally omitted
+ * operations and adds explicit discovery metadata.
+ */
 export interface AdapterWorkerInterface {
   readonly adapterId: string;
   /**

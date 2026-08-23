@@ -649,7 +649,7 @@ describe("adapter lifecycle handlers", () => {
     });
   });
 
-  it("adapter.list discovers deployed adapter bindings and cached accounts", () => {
+  it("adapter.list discovers deployed adapter bindings and cached accounts", async () => {
     const whatsappService = {
       adapterConnect: vi.fn(),
       adapterDisconnect: vi.fn(),
@@ -692,7 +692,7 @@ describe("adapter lifecycle handlers", () => {
       status,
     );
 
-    const result = handleAdapterList({}, ctx);
+    const result = await handleAdapterList({}, ctx);
 
     expect(result.adapters).toEqual([
       expect.objectContaining({
@@ -741,7 +741,47 @@ describe("adapter lifecycle handlers", () => {
     ]);
   });
 
-  it("adapter.list filters cached accounts to non-root identity links", () => {
+  it("discovers an arbitrary adapter from its trusted binding and descriptor", async () => {
+    const descriptor = {
+      version: 1 as const,
+      id: "matrix",
+      displayName: "Matrix",
+      capabilities: {
+        connect: true,
+        disconnect: true,
+        send: true,
+        status: true,
+        activity: false,
+        pairing: false,
+        surfaces: ["dm", "group"] as const,
+        media: {
+          inbound: ["image", "document"] as const,
+          outbound: ["image", "document"] as const,
+        },
+      },
+    };
+    const ctx = makeContext({
+      CHANNEL_MATRIX: { adapterDescribe: vi.fn(async () => descriptor) },
+    }, {
+      upsert: vi.fn(),
+      listAll: vi.fn(() => []),
+    });
+
+    expect((await handleAdapterList({}, ctx)).adapters).toEqual([{
+      adapter: "matrix",
+      available: true,
+      descriptor,
+      supportsConnect: true,
+      supportsDisconnect: true,
+      supportsSend: true,
+      supportsStatus: true,
+      supportsActivity: false,
+      supportsPairing: false,
+      accounts: [],
+    }]);
+  });
+
+  it("adapter.list filters cached accounts to non-root identity links", async () => {
     const rows = [
       {
         adapter: "whatsapp",
@@ -820,7 +860,7 @@ describe("adapter lifecycle handlers", () => {
       },
     );
 
-    const result = handleAdapterList({}, ctx);
+    const result = await handleAdapterList({}, ctx);
 
     expect(status.listAll).not.toHaveBeenCalled();
     expect(result.adapters).toEqual([
@@ -845,7 +885,7 @@ describe("adapter lifecycle handlers", () => {
     ]);
   });
 
-  it("adapter.list uses owning human links for agent process callers", () => {
+  it("adapter.list uses owning human links for agent process callers", async () => {
     const rows = [
       {
         adapter: "telegram",
@@ -906,7 +946,7 @@ describe("adapter lifecycle handlers", () => {
       },
     );
 
-    const result = handleAdapterList({}, ctx);
+    const result = await handleAdapterList({}, ctx);
 
     expect(listLinks).toHaveBeenCalledWith(1000);
     expect(result.adapters).toEqual([
@@ -4753,7 +4793,7 @@ describe("managed adapter pairing", () => {
     );
   });
 
-  it("advertises pairing only when the full managed lifecycle is available", () => {
+  it("advertises pairing only when the full managed lifecycle is available", async () => {
     const full = pairingService();
     const partial = { ...pairingService(), adapterPairingDisconnect: undefined };
     const ctx = makeContext({
@@ -4764,7 +4804,7 @@ describe("managed adapter pairing", () => {
       listAll: vi.fn(() => []),
     });
 
-    expect(handleAdapterList({}, ctx).adapters).toEqual([
+    expect((await handleAdapterList({}, ctx)).adapters).toEqual([
       expect.objectContaining({ adapter: "discord", supportsPairing: false }),
       expect.objectContaining({ adapter: "telegram", supportsPairing: true }),
     ]);

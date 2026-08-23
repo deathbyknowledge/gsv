@@ -1,7 +1,7 @@
 import type {
   AdapterInstallationContext,
-  InstallationDirectoryService,
 } from "@humansandmachines/gsv/protocol";
+import type { InstallationDirectoryService } from "@humansandmachines/gsv/services/directory";
 
 const HANDLE_PATTERN = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
 

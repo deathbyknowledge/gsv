@@ -1,4 +1,3 @@
-import type { AdapterInstallationContext } from "./adapters";
 import type { BinaryBody } from "./body";
 import type { ManagedMailSummary } from "./managed";
 
@@ -98,26 +97,6 @@ export type ManagedOutboundMailClaimOutcome =
       errorCode: "reference_mismatch";
     };
 
-export interface ManagedMailGatewayService {
-  acceptManagedInboundMail(
-    installation: AdapterInstallationContext,
-    metadata: ManagedInboundMailMetadata,
-    body: BinaryBody,
-  ): Promise<ManagedInboundMailAccepted>;
-  completeManagedInboundMail(
-    installation: AdapterInstallationContext,
-    completion: ManagedInboundMailCompletion,
-  ): Promise<void>;
-  claimManagedOutboundMail(
-    installation: AdapterInstallationContext,
-    reference: ManagedOutboundMailReference,
-  ): Promise<ManagedOutboundMailClaimOutcome>;
-  completeManagedOutboundMail(
-    installation: AdapterInstallationContext,
-    completion: ManagedOutboundMailCompletion,
-  ): Promise<void>;
-}
-
 export type ManagedMailStorageState = "pending" | "stored";
 
 export type ManagedMailSummaryState =
@@ -152,13 +131,7 @@ export type ManagedMailIntakePage = {
   cursor?: string;
 };
 
-export interface ManagedMailService {
-  getIntake(
-    installation: AdapterInstallationContext,
-    intakeId: string,
-  ): Promise<ManagedMailIntakeDiagnostic | null>;
-  listIntakes(
-    installation: AdapterInstallationContext,
-    input?: ListManagedMailIntakesInput,
-  ): Promise<ManagedMailIntakePage>;
-}
+export type {
+  MailGatewayService as ManagedMailGatewayService,
+  MailService as ManagedMailService,
+} from "../services/mail";

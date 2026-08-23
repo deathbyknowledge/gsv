@@ -6,6 +6,7 @@ import type {
   AdapterMedia,
   AdapterSurface,
 } from "../adapters";
+import type { AdapterServiceDescriptor } from "../../services/adapters";
 import {
   adapterConnectChallengeSchema,
   type AdapterConnectChallenge,
@@ -123,6 +124,7 @@ export type AdapterListArgs = Record<string, never>;
 export type AdapterListEntry = {
   adapter: string;
   available: boolean;
+  descriptor?: AdapterServiceDescriptor;
   supportsConnect: boolean;
   supportsDisconnect: boolean;
   supportsSend: boolean;

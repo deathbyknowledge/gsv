@@ -21,7 +21,8 @@ Most personal AI agents run on one host you pick and keep alive — a laptop, VP
 
 - Run things across all your machines from one agent — kick off a job on your home server while your laptop's shut.
 - Keep agents working while your devices sleep — they live on the edge, not on your hardware.
-- Reach it from anywhere — web UI, CLI, or WhatsApp / Discord / Telegram.
+- Reach it from anywhere — web UI, CLI, or an extensible adapter system with
+  WhatsApp, Discord, and Telegram implementations bundled today.
 - Spawn durable agents with their own memory and permissions, that can start sub-agents of their own.
 - Keep your repositories and knowledge source-inspectable through a built-in git remote.
 - Hand your agent the browser. The web extension lets it drive your real browser — your tabs and logged-in sessions — so it works the sites you already use, not just the public web.

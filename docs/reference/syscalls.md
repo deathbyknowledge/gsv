@@ -1144,7 +1144,9 @@ type AiSyscalls = {
 ## Adapters: `adapter.*`
 
 `adapter.*` is the control plane for external chat or channel connectors.
-Gateway-to-adapter service bindings implement `AdapterWorkerInterface` with
+Gateway-to-adapter service bindings implement `AdapterService` from
+`@humansandmachines/gsv/services/adapters`. Its descriptor makes discovery
+independent of any fixed messenger list; optional operations include
 `adapterConnect`, `adapterDisconnect`, `adapterSend`,
 `adapterSetActivity`, and `adapterStatus`. Adapters call the Gateway's single
 `serviceFrame` entrypoint for `adapter.inbound` and
@@ -1194,7 +1196,7 @@ Runtime behavior:
 
 | Syscall | Handler | Behavior |
 |---|---|---|
-| `adapter.list` | `handleAdapterList` | Lists configured adapter bindings and caller-visible account status, including which lifecycle, send, status, activity, and managed-pairing methods each binding implements. |
+| `adapter.list` | `handleAdapterList` | Lists arbitrary configured `CHANNEL_*` bindings, their validated descriptors, and caller-visible account status. Older bindings without a descriptor temporarily fall back to method discovery. |
 | `adapter.connect` | `handleAdapterConnect` | User-role only. Rejects foreign-owned accounts, serializes lifecycle operations per account, durably assigns new accounts to the caller's owning human, and calls `CHANNEL_<ADAPTER>.adapterConnect({ installationId }, accountId, config)`. Ownership survives failed provisioning so the owner can retry safely. |
 | `adapter.disconnect` | `handleAdapterDisconnect` | Owner-or-root only. Serializes with connect, calls adapter disconnect, upserts local status as disconnected and unauthenticated, then best-effort refreshes live status. |
 | `adapter.pair.info` | `handleAdapterPairInfo` | Direct signed-in human only. Returns public information for a platform-owned managed adapter, such as the official bot username. |

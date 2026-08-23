@@ -36,8 +36,9 @@ import type {
   AdapterInstallationContext,
   AdapterOutboundMessage,
   AdapterSendResult,
+  AdapterService,
+  AdapterServiceDescriptor,
   AdapterSurface,
-  AdapterWorkerInterface,
   BinaryBody,
 } from "../../shared/src/types";
 import { DiscordGateway } from "./discord-gateway";
@@ -67,8 +68,29 @@ type DiscordConnectConfig = z.infer<typeof discordConnectConfigSchema>;
  * Gateway calls these methods via Service Binding.
  */
 // Named export for service binding entrypoint
-export class DiscordChannel extends WorkerEntrypoint<Env> implements AdapterWorkerInterface {
+export class DiscordChannel extends WorkerEntrypoint<Env> implements AdapterService {
   readonly adapterId = "discord";
+
+  async adapterDescribe(): Promise<AdapterServiceDescriptor> {
+    return {
+      version: 1,
+      id: this.adapterId,
+      displayName: "Discord",
+      capabilities: {
+        connect: true,
+        disconnect: true,
+        send: true,
+        status: true,
+        activity: true,
+        pairing: false,
+        surfaces: ["dm", "group", "channel", "thread"],
+        media: {
+          inbound: ["image", "audio", "video", "document"],
+          outbound: ["image", "audio", "video", "document"],
+        },
+      },
+    };
+  }
 
   async adapterConnect(
     accountId: string,

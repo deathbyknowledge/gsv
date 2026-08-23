@@ -34,9 +34,7 @@ import type {
   AdapterMediaPart,
   BinaryBody,
   ConnectedPeer,
-  InstallationDirectoryService,
   InstallationOnboardingAuthorization,
-  InstallationOnboardingService,
   JsonValue,
   ManagedInboundMailAccepted,
   ManagedInboundMailCompletion,
@@ -59,6 +57,8 @@ import type {
   ConversationMessage,
   ConversationMessageOrigin,
 } from "@humansandmachines/gsv/protocol";
+import type { InstallationDirectoryService } from "@humansandmachines/gsv/services/directory";
+import type { InstallationOnboardingService } from "@humansandmachines/gsv/services/onboarding";
 import type { ConnectionIdentity } from "./identity";
 import {
   BinaryBodyChannel,

@@ -8,7 +8,6 @@ import type {
   ManagedInboundMailAccepted,
   ManagedInboundMailCompletion,
   ManagedInboundMailMetadata,
-  ManagedMailGatewayService,
   ManagedTelegramGatewayService,
   ManagedOutboundMailClaimOutcome,
   ManagedOutboundMailCompletion,
@@ -16,6 +15,7 @@ import type {
   UnlinkManagedTelegramIdentityInput,
   UnlinkManagedTelegramIdentityResult,
 } from "@humansandmachines/gsv/protocol";
+import type { MailGatewayService } from "@humansandmachines/gsv/services/mail";
 import {
   adapterGatewayFrameSchema,
   adapterInstallationContextSchema,
@@ -216,7 +216,7 @@ abstract class AdapterServiceEntrypoint<Props>
 
 export class GatewayEntrypoint
   extends AdapterServiceEntrypoint<Record<never, never>>
-  implements ManagedMailGatewayService, ManagedTelegramGatewayService
+  implements MailGatewayService, ManagedTelegramGatewayService
 {
   protected override resolveServicePeerProfile(frame: Frame): ServicePeerProfile {
     return resolveLegacyAdapterServicePeerProfile(frame);

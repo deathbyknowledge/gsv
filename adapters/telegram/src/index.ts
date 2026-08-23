@@ -26,8 +26,9 @@ import type {
   AdapterInstallationContext,
   AdapterOutboundMessage,
   AdapterSendResult,
+  AdapterService,
+  AdapterServiceDescriptor,
   AdapterSurface,
-  AdapterWorkerInterface,
   BinaryBody,
 } from "./types";
 import { parseTelegramWebhookPath } from "./webhook-route";
@@ -66,9 +67,30 @@ function toJsonError(message: string, status = 500): Response {
 
 export class TelegramChannel
   extends WorkerEntrypoint<Env>
-  implements AdapterWorkerInterface
+  implements AdapterService
 {
   readonly adapterId = "telegram";
+
+  async adapterDescribe(): Promise<AdapterServiceDescriptor> {
+    return {
+      version: 1,
+      id: this.adapterId,
+      displayName: "Telegram",
+      capabilities: {
+        connect: true,
+        disconnect: true,
+        send: true,
+        status: true,
+        activity: true,
+        pairing: false,
+        surfaces: ["dm", "group", "channel", "thread"],
+        media: {
+          inbound: ["image", "audio", "video", "document"],
+          outbound: ["image", "audio", "video", "document"],
+        },
+      },
+    };
+  }
 
   async adapterConnect(
     accountId: string,

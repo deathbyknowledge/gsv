@@ -1,4 +1,9 @@
 export type {
+  AdapterService,
+  AdapterServiceCapabilities,
+  AdapterServiceDescriptor,
+} from "../../../packages/gsv/src/services/adapters.js";
+export type {
   AdapterAccountStatus,
   AdapterActivity,
   AdapterActor,

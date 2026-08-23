@@ -483,9 +483,11 @@ binding only when the account is positively identified as Workers Paid. Free and
 unknown plans omit it, keeping the default deployment Free-safe. Use `on` to
 require CodeMode explicitly or `off` to omit the binding explicitly.
 
-Valid components are `ripgit`, `gateway`, `channel-whatsapp`,
-`channel-discord`, and `channel-telegram`. When no deploy/upgrade component is
-supplied, all components are selected. Deploying `gateway` requires `ripgit` to
+The current release bundles `ripgit`, `gateway`, and the bundled adapter
+implementations `channel-whatsapp`, `channel-discord`, and `channel-telegram`.
+This release catalog is not the adapter protocol's supported set. When no
+deploy/upgrade component is supplied, all bundled components are selected.
+Deploying `gateway` requires `ripgit` to
 be selected or already deployed. Deploying or upgrading an adapter also
 reconciles the adapter-to-gateway and gateway-to-adapter service bindings when a
 gateway already exists. This applies to both the default and named instances.

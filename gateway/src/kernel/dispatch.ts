@@ -598,7 +598,7 @@ async function dispatchNative(
         data = await handleAdapterStatus(frame.args, ctx);
         break;
       case "adapter.list":
-        data = handleAdapterList(frame.args, ctx);
+        data = await handleAdapterList(frame.args, ctx);
         break;
       case "adapter.pair.info":
         data = await handleAdapterPairInfo(frame.args, ctx);

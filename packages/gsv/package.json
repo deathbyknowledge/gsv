@@ -33,6 +33,14 @@
       "types": "./dist/client.d.ts",
       "default": "./dist/client.js"
     },
+    "./services": {
+      "types": "./dist/services/index.d.ts",
+      "default": "./dist/services/index.js"
+    },
+    "./services/*": {
+      "types": "./dist/services/*.d.ts",
+      "default": "./dist/services/*.js"
+    },
     "./package.json": "./package.json"
   },
   "publishConfig": {

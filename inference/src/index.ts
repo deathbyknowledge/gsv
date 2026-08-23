@@ -3,12 +3,12 @@ import type {
   ManagedInferenceAbortRequest,
   ManagedInferenceRequest,
   ManagedInferenceResult,
-  ManagedInferenceService,
   ManagedMailSummary,
   ManagedMailSummaryRequest,
   ManagedMailSummaryRequestStatus,
   ManagedMailSummaryService,
 } from "@humansandmachines/gsv/protocol";
+import type { InferenceService as InferenceServiceContract } from "@humansandmachines/gsv/services/inference";
 import type { InferenceEnv } from "./env";
 import { validateManagedMailSummaryRequest } from "./mail-summary";
 import {
@@ -21,7 +21,7 @@ export { InferenceInstallation } from "./installation";
 
 export class InferenceService
   extends WorkerEntrypoint<InferenceEnv>
-  implements ManagedInferenceService, ManagedMailSummaryService
+  implements InferenceServiceContract, ManagedMailSummaryService
 {
   async fetch(_request: Request): Promise<Response> {
     return new Response("Not Found", { status: 404 });

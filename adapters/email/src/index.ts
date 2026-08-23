@@ -6,9 +6,9 @@ import {
   type ListManagedMailIntakesInput,
   type ManagedMailIntakeDiagnostic,
   type ManagedMailIntakePage,
-  type ManagedMailService as ManagedMailServiceContract,
   type ManagedOutboundMailCommand,
 } from "@humansandmachines/gsv/protocol";
+import type { MailService as MailServiceContract } from "@humansandmachines/gsv/services/mail";
 import { resolveMailRecipient } from "./address";
 import { mailLimits, type MailEnv } from "./env";
 
@@ -19,7 +19,7 @@ export { MailInstallation } from "./mail-installation";
 
 export default class MailService
   extends WorkerEntrypoint<MailEnv>
-  implements ManagedMailServiceContract
+  implements MailServiceContract
 {
   async fetch(request: Request): Promise<Response> {
     const url = new URL(request.url);

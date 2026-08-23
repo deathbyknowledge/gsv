@@ -18,9 +18,9 @@ import {
   GSV_INFERENCE_PROVIDER,
   type ManagedInferenceRequest,
   type ManagedInferenceResult,
-  type ManagedInferenceService,
   type ManagedInferenceStreamEvent,
 } from "@humansandmachines/gsv/protocol";
+import type { InferenceService as ManagedInferenceService } from "@humansandmachines/gsv/services/inference";
 import type {
   InferenceAttribution,
   InferenceProviderFactory,

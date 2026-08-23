@@ -11,6 +11,10 @@ import {
   type AdapterPairingPreparation,
   type AdapterPairingPrepareInput,
 } from "../../../packages/gsv/src/protocol/adapters.js";
+import type {
+  AdapterService,
+  AdapterServiceDescriptor,
+} from "../../../packages/gsv/src/services/adapters.js";
 import { cancelBinaryBody } from "../../shared/src/media-body";
 import {
   LEGACY_STANDALONE_ADAPTER_INSTALLATION_ID,
@@ -66,8 +70,29 @@ type ManagedTelegramPairingStub = {
   finalize(input: AdapterPairingFinalizeInput): Promise<AdapterPairingPreparation>;
 };
 
-export class ManagedTelegramChannel extends WorkerEntrypoint<Env> {
+export class ManagedTelegramChannel extends WorkerEntrypoint<Env> implements AdapterService {
   readonly adapterId = "telegram";
+
+  async adapterDescribe(): Promise<AdapterServiceDescriptor> {
+    return {
+      version: 1,
+      id: this.adapterId,
+      displayName: "Telegram",
+      capabilities: {
+        connect: false,
+        disconnect: false,
+        send: true,
+        status: true,
+        activity: true,
+        pairing: true,
+        surfaces: ["dm"],
+        media: {
+          inbound: ["image", "audio", "video", "document"],
+          outbound: ["image", "audio", "video", "document"],
+        },
+      },
+    };
+  }
 
   async adapterStatus(
     installation: AdapterInstallationContext,
