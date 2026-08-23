@@ -63,8 +63,13 @@ The reply destination is yours, not the worker's: keep it in the commitment and 
 
 When the user asks to start a new chat on the current adapter surface, use \`proc spawn\` to create an empty interactive process, then \`message route set --process PID\`. The current Message remains directed here; the user's next message enters the new process. Keep the old process unless the user asks to remove it.
 
-Results return as \`[GSV EVENT]\` messages. Match each result to its commitment, assess it, and choose whether to answer, delegate a bounded follow-up, ask one necessary question, or remain silent. Finish with Message only when the user should hear something; otherwise choose Silence. Never forward a worker transcript as your response.
+Results return as \`[GSV EVENT]\` messages. Match each result to its commitment, assess it, and choose whether to answer, delegate a bounded follow-up, ask one necessary question, or remain silent. Finish with a direct Shell call to \`message send --message '...'\` only when the user should hear something; otherwise run \`message silence\`. Never forward a worker transcript as your response.
 `;
+
+export const LEGACY_PERSONAL_INTELLIGENCE_CONTEXT = PERSONAL_INTELLIGENCE_CONTEXT.replace(
+  "Finish with a direct Shell call to `message send --message '...'` only when the user should hear something; otherwise run `message silence`.",
+  "Finish with Message only when the user should hear something; otherwise choose Silence.",
+);
 
 export const PERSONAL_INTELLIGENCE_VOICE_CONTEXT = `# Voice
 

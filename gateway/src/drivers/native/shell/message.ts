@@ -70,7 +70,9 @@ async function runMessageCommand(
     case "attach":
       return attachToReply(rest, shellCtx, fs, ctx);
     case "send":
-      return sendMessage(rest, shellCtx, fs, ctx);
+      return await sendMessage(rest, shellCtx, fs, ctx);
+    case "silence":
+      return silenceMessage(rest, ctx);
     default:
       throw new Error(`unknown command: ${subcommand}\n${messageUsage()}`);
   }
@@ -200,8 +202,8 @@ async function showCurrentReplyDestination(
     `directed endpoint: ${current.label}`,
     `transport: ${current.transport}`,
     ...(destinationId ? [`destination: ${destinationId}`] : []),
-    "Finish with Message to send the run's user-visible response here, or Silence.",
-    "`message send` creates a separate outbound message or cross-channel delivery.",
+    "Finish with `message send --message '...'` here, or `message silence`.",
+    "Use `message send --to ... --also` for a separate or cross-channel delivery.",
     "",
   ].join("\n"));
 }
@@ -428,7 +430,6 @@ async function sendMessage(
   fs: GsvFs,
   ctx: KernelContext,
 ): Promise<ExecResult> {
-  requireCommandCapability(ctx, "adapter.send");
   let to: string | undefined;
   let text: string | undefined;
   let attachmentPath: string | undefined;
@@ -470,15 +471,20 @@ async function sendMessage(
     throw new Error(`unexpected argument: ${current}`);
   }
 
-  if (!to) {
-    throw new Error("message send requires --to");
+  const activeRun = Boolean(ctx.processId && ctx.processRunId);
+  if (activeRun && !also) {
+    throw new Error(
+      "the terminal form of message send must be invoked as a direct Shell tool call; use --also for an additional outbound message",
+    );
   }
+  if (!to) throw new Error("message send requires --to outside its terminal form");
   if (!text?.trim() && !attachmentPath) {
     throw new Error("message send requires --message or --attach");
   }
   if (attachmentMime && !attachmentPath) {
     throw new Error("--mime requires --attach");
   }
+  requireCommandCapability(ctx, "adapter.send");
 
   const destination = to.trim().toLowerCase() === "here"
     ? destinationFromCurrentRoute(ctx)
@@ -533,6 +539,23 @@ async function sendMessage(
     ...(result.deliveryState ? [`delivery_state=${result.deliveryState}`] : []),
     "",
   ].join("\n"));
+}
+
+function silenceMessage(args: string[], ctx: KernelContext): ExecResult {
+  let reason: string | undefined;
+  for (let index = 0; index < args.length; index += 1) {
+    const current = args[index];
+    if (current !== "--reason") throw new Error(`unexpected argument: ${current}`);
+    if (reason !== undefined) throw new Error("message silence accepts --reason once");
+    index += 1;
+    reason = requireShellOptionValue(args[index], current);
+  }
+  if (!ctx.processId || !ctx.processRunId) {
+    throw new Error("message silence requires an active process run");
+  }
+  throw new Error(
+    "message silence must be invoked as a direct Shell tool call so the Process can finish the run",
+  );
 }
 
 async function openAttachment(
@@ -663,12 +686,13 @@ function messageUsage(): string {
     "  message route set --process PID_OR_LABEL [--to here|DESTINATION] [--json]",
     "  message route clear [--to here|DESTINATION] [--json]",
     "  message attach PATH... [--mime TYPE]",
+    "  message send [--message TEXT]",
+    "  message silence [--reason TEXT]",
     "  message send --to DESTINATION [--message TEXT] [--attach PATH [--mime TYPE]] [--delivery-id ID] [--also]",
     "",
-    "Finish the current run with Message to send one user-visible response, or Silence.",
-    "`message attach` adds files to the eventual Message action.",
-    "`message send` creates a separate outbound message. Use --to here --also only when a",
-    "second message on the current directed endpoint is intentional.",
+    "Finish the current run with `message send --message '...'`, or `message silence`.",
+    "`message attach` adds files to that eventual terminal message.",
+    "Inside an active run, --also is required for a separate or cross-channel send.",
     "Use `message destinations` and copy its opaque GSV id; do not use provider ids.",
     "Use `message route` to inspect routing, open a private-DM work direct line from personal,",
     "or manage groups, channels, and threads.",
@@ -690,7 +714,7 @@ function messageRouteUsage(): string {
     "intelligence can use `set` to open a direct line to owned non-personal work.",
     "Use /home inside the DM to return to personal intelligence.",
     "The destination defaults to the current adapter chat. Changes affect future inbound messages;",
-    "the current run's Message remains directed to the endpoint that started it.",
+    "the current run's terminal message remains directed to the endpoint that started it.",
     "",
   ].join("\n");
 }

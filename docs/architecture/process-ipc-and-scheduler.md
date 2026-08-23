@@ -98,7 +98,7 @@ timeout later re-enters the caller as a process event.
 
 During an adapter turn, `message current --json` exposes the current surface as
 an opaque GSV destination id. The personal intelligence can store that id with
-a commitment and use `message send --to DESTINATION` if a result merits a later
+a commitment and use `message send --to DESTINATION --also` if a result merits a later
 update. Provider account, actor, and surface identifiers remain hidden.
 
 ## History, compaction, and branching

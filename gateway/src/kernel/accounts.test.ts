@@ -8,6 +8,7 @@ import {
   handleAccountList,
 } from "./agents";
 import {
+  LEGACY_PERSONAL_INTELLIGENCE_CONTEXT,
   PERSONAL_INTELLIGENCE_COMMITMENTS_CONTEXT,
   PERSONAL_INTELLIGENCE_CONTEXT,
   PERSONAL_INTELLIGENCE_VOICE_CONTEXT,
@@ -459,6 +460,10 @@ describe("handleAccountCreate", () => {
         .replaceAll("{{program.username}}", "friday")
         .replaceAll("{{program.home}}", "/home/friday"),
     );
+    state.ripgitFiles.set(
+      "friday:context.d/00-role.md",
+      LEGACY_PERSONAL_INTELLIGENCE_CONTEXT,
+    );
     state.ripgitFiles.set("friday:context.d/00-style.md", LEGACY_STYLE_CONTEXT);
     state.ripgitFiles.set(
       "friday:context.d/15-memory.md",
@@ -499,8 +504,10 @@ describe("handleAccountCreate", () => {
     expect(new TextDecoder().decode(new Uint8Array(bootOp?.contentBytes ?? [])))
       .toContain("This GSV was just created");
     const roleOp = ops.find((op) => op.path === "context.d/00-role.md");
-    expect(new TextDecoder().decode(new Uint8Array(roleOp?.contentBytes ?? [])))
-      .toContain("one continuous personal intelligence");
+    const roleText = new TextDecoder().decode(new Uint8Array(roleOp?.contentBytes ?? []));
+    expect(roleText).toContain("one continuous personal intelligence");
+    expect(roleText).toContain("message send --message");
+    expect(roleText).not.toContain("Finish with Message only");
   });
 
   it("preserves customized personal agent context during reconciliation", async () => {

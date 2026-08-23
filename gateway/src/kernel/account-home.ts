@@ -15,6 +15,7 @@ import {
   LEGACY_STYLE_CONTEXT,
 } from "../prompts/agent-home";
 import {
+  LEGACY_PERSONAL_INTELLIGENCE_CONTEXT,
   PERSONAL_INTELLIGENCE_COMMITMENTS_CONTEXT,
   PERSONAL_INTELLIGENCE_CONTEXT,
   PERSONAL_INTELLIGENCE_VOICE_CONTEXT,
@@ -92,7 +93,13 @@ export async function ensureAccountHomeLayout(
       );
     }
     if (options.personalAgent === true) {
-      maybePutTextFile(ops, "context.d/00-role.md", roleContext, PERSONAL_INTELLIGENCE_CONTEXT);
+      maybePutOrReplaceGeneratedTextFile(
+        ops,
+        "context.d/00-role.md",
+        roleContext,
+        PERSONAL_INTELLIGENCE_CONTEXT,
+        [LEGACY_PERSONAL_INTELLIGENCE_CONTEXT],
+      );
       maybePutTextFile(
         ops,
         "context.d/05-voice.md",

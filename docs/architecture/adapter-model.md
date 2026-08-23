@@ -149,7 +149,7 @@ The inbound path looks like this:
    unrouted group, channel, or thread starts and binds a separate interactive
    process running as the owner's personal agent.
 9. The process runs the normal agent loop. Raw `proc.run.*` activity is inspectable;
-   only an explicit Message becomes user-visible conversation output.
+   only an explicit terminal `message send` becomes user-visible conversation output.
 
 The important point is that inbound adapter traffic does not create a special
 kind of bot runtime. It feeds the same durable process model that the CLI and
@@ -159,8 +159,8 @@ Desktop use.
 
 The canonical outbound path is:
 
-1. A process chooses the terminal Message control. Ordinary assistant text remains
-   raw Process activity; Silence finishes without output.
+1. A process runs terminal `message send` through Shell. Ordinary assistant text remains
+   raw Process activity; `message silence` finishes without output.
 2. The Kernel commits the Message to the canonical conversation and looks up the
    exact directed endpoint created during admission.
 3. If no conversation identity or exact route exists and this is a background run
@@ -181,8 +181,9 @@ The `message` shell command exposes delivery context and the explicit path for a
 separate or cross-channel message. `message current` describes the directed endpoint
 and includes its opaque destination id when it is an adapter surface,
 `message destinations` lists authorized observed surfaces, and `message attach`
-registers files for the eventual terminal Message. `message send --to ...` sends a
-separate message. Sending separately to the current endpoint requires `--also`,
+registers files for the eventual terminal message. `message send --message ...` finishes the run
+on its directed endpoint. `message send --to ... --also` sends a separate message. `--also` is
+required for every separate send during an active run,
 preventing an accidental duplicate.
 
 `message route` is the process-facing control for persistent group, channel,

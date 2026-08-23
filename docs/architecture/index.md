@@ -77,7 +77,7 @@ the process metadata needed for routing and permissions.
 The agent loop belongs to the Process DO. It assembles context, calls the model,
 receives tool calls, issues syscalls, waits for results, and emits raw
 `proc.run.*` and `proc.changed` activity through the Kernel. A Process explicitly
-finishes each interaction with Message or Silence.
+finishes each interaction through Shell with `message send` or `message silence`.
 
 ### Conversations
 
@@ -177,7 +177,7 @@ CLI, browser, or adapter
   -> native handler, Process DO, or device driver
   -> response
   -> Process DO continues the run
-  -> Process chooses Message or Silence
+  -> Process runs message send or message silence through Shell
   -> canonical Message commit
   -> directed endpoint plus synchronized clients
 ```

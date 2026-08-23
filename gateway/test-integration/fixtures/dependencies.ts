@@ -143,13 +143,15 @@ export class ManagedInferenceFixture
       `pid:${input.actor.processId ?? "none"}`,
       `run:${input.actor.runId ?? "none"}`,
     ].join(":");
-    const messageToolOffered = input.tools?.some((tool) => tool.name === "Message") === true;
-    const content: ManagedInferenceResult["content"] = messageToolOffered
+    const shellToolOffered = input.tools?.some((tool) => tool.name === "Shell") === true;
+    const content: ManagedInferenceResult["content"] = shellToolOffered
       ? [{
           type: "toolCall",
           id: `managed-message-${input.logicalRequestId}`,
-          name: "Message",
-          arguments: { text },
+          name: "Shell",
+          arguments: {
+            input: `message send --message ${shellQuote(text)}`,
+          },
         }]
       : [{ type: "text", text }];
     const result: ManagedInferenceResult = {
@@ -166,7 +168,7 @@ export class ManagedInferenceFixture
         totalTokens: 2,
         cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
       },
-      stopReason: messageToolOffered ? "toolUse" : "stop",
+      stopReason: shellToolOffered ? "toolUse" : "stop",
       timestamp: Date.now(),
     };
     return result;
@@ -577,6 +579,10 @@ function installationHandle(installationId: string): "first" | "second" | null {
   if (installationId === "inst_integration_first") return "first";
   if (installationId === "inst_integration_second") return "second";
   return null;
+}
+
+function shellQuote(value: string): string {
+  return `'${value.replaceAll("'", `'"'"'`)}'`;
 }
 
 function installationIdentity(handle: "first" | "second") {

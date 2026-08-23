@@ -2,7 +2,7 @@
 
 The agent loop is the runtime inside a GSV process. It turns incoming messages,
 signals, and queued work into model calls, syscall requests, tool results, explicit
-Message or Silence choices, and `proc.run.*` / `proc.changed` signals. The loop is
+`message send` or `message silence` choices, and `proc.run.*` / `proc.changed` signals. The loop is
 not tied to one client. CLI chat, browser apps, adapter messages, scheduled work,
 and signal watches all converge on the same Process DO model.
 
@@ -144,11 +144,11 @@ The model response can contain text, thinking blocks, and tool calls:
   that explicitly called `proc.observe`.
 - Assistant text, thinking blocks, and tool calls are stored in the `messages`
   table.
-- `Message` commits exactly one canonical user-visible message and any media
-  registered by `message attach`. `Silence` finishes without a canonical output.
-- While the `Message` arguments stream, the originating client receives
+- A direct Shell call to `message send --message '...'` commits exactly one canonical user-visible
+  message and any media registered by `message attach`. `message silence` finishes without output.
+- Once the Process validates the terminal command, the originating client receives
   `message.started` and `message.delta`. Adapters wait for `message.committed`.
-- Ordinary assistant text without Message or Silence causes one `[GSV EVENT]`
+- Ordinary assistant text without either terminal command causes one `[GSV EVENT]`
   correction. A second omission ends the run with an inspectable bounded error.
 - If there are tool calls, the process evaluates approval rules and dispatches
   each allowed call as a syscall frame.
@@ -161,13 +161,15 @@ still preserved in assistant history with synthetic terminal tool results so
 provider history remains structurally valid and the next model turn can recover
 instead of silently completing or hanging.
 
-Only syscall-backed work tools are exposed to the model. Current agent-visible
-work tool names are `Read`, `Write`, `Edit`, `Delete`, `Search`, `Shell`, and `CodeMode`;
+Only the fixed syscall-backed tool surface is exposed to the model. Current agent-visible
+tool names are `Read`, `Write`, `Edit`, `Delete`, `Search`, `Shell`, and `CodeMode`;
 they map to `fs.read`, `fs.write`, `fs.edit`, `fs.delete`, `fs.search`,
 `shell.exec`, and `codemode.exec`.
 
-Message and Silence are fixed terminal protocol controls. They do not add
-capabilities, target external services, or enlarge the composable work-tool surface.
+The terminal message commands are Process-owned Shell intrinsics. They do not add model tools,
+require `shell.exec` approval, target a device, or enlarge the composable tool surface. An explicit
+`message send --to ... --also` remains an ordinary approved shell operation for additional or
+cross-channel delivery.
 
 `CodeMode` remains the programmable tool for multi-step orchestration. It can
 call `fs.*`, `shell.exec`, and connected MCP tools as generated async
@@ -199,7 +201,7 @@ schedules/continues the loop:
 4. Background-origin queued messages are promoted as separate runs after the
    current run finishes.
 
-This repeats until the model completes a valid Message or Silence action.
+This repeats until the model runs a valid `message send` or `message silence` terminal command.
 
 Tool result content is stored as text. Non-string syscall output is JSON encoded
 for model history.

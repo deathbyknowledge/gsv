@@ -223,13 +223,13 @@ describe("gateway runtime integration", () => {
         role: "assistant",
         runId: first.runId,
         content: expect.objectContaining({
-          toolCalls: [expect.objectContaining({ name: "Message" })],
+          toolCalls: [expect.objectContaining({ name: "Shell" })],
         }),
       }),
       expect.objectContaining({
         role: "toolResult",
         runId: first.runId,
-        content: expect.objectContaining({ toolName: "Message" }),
+        content: expect.objectContaining({ toolName: "Shell" }),
       }),
       expect.objectContaining({
         role: "user",
@@ -240,13 +240,13 @@ describe("gateway runtime integration", () => {
         role: "assistant",
         runId: second.runId,
         content: expect.objectContaining({
-          toolCalls: [expect.objectContaining({ name: "Message" })],
+          toolCalls: [expect.objectContaining({ name: "Shell" })],
         }),
       }),
       expect.objectContaining({
         role: "toolResult",
         runId: second.runId,
-        content: expect.objectContaining({ toolName: "Message" }),
+        content: expect.objectContaining({ toolName: "Shell" }),
       }),
     ]);
     expect(history.messages[0]).toMatchObject({
@@ -577,13 +577,13 @@ describe("gateway runtime integration", () => {
     expect(routedHistory.messages[1]).toMatchObject({
       role: "assistant",
       content: expect.objectContaining({
-        toolCalls: [expect.objectContaining({ name: "Message" })],
+        toolCalls: [expect.objectContaining({ name: "Shell" })],
       }),
       runId: firstNormal.delivered?.runId,
     });
     expect(routedHistory.messages[2]).toMatchObject({
       role: "toolResult",
-      content: expect.objectContaining({ toolName: "Message" }),
+      content: expect.objectContaining({ toolName: "Shell" }),
       runId: firstNormal.delivered?.runId,
     });
     expect(routedHistory.messages[3]).toMatchObject({
@@ -594,13 +594,13 @@ describe("gateway runtime integration", () => {
     expect(routedHistory.messages[4]).toMatchObject({
       role: "assistant",
       content: expect.objectContaining({
-        toolCalls: [expect.objectContaining({ name: "Message" })],
+        toolCalls: [expect.objectContaining({ name: "Shell" })],
       }),
       runId: secondNormal.delivered?.runId,
     });
     expect(routedHistory.messages[5]).toMatchObject({
       role: "toolResult",
-      content: expect.objectContaining({ toolName: "Message" }),
+      content: expect.objectContaining({ toolName: "Shell" }),
       runId: secondNormal.delivered?.runId,
     });
 

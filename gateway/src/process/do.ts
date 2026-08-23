@@ -229,6 +229,10 @@ import {
 } from "../codemode/request";
 import { formatAgentToolResponse, materializeToolResponse } from "./tool-response";
 import {
+  parseTerminalMessageCommand,
+  type TerminalMessageCommandParseResult,
+} from "./terminal-message-command";
+import {
   extractStoredFsReadResource,
   extractFsReadResource,
   extractToolResultImages,
@@ -301,6 +305,11 @@ type MessageStreamProjection = {
   started: boolean;
   text: string;
   aborted: boolean;
+};
+
+type TerminalShellCall = {
+  toolCall: ToolCall;
+  parsed: TerminalMessageCommandParseResult;
 };
 
 type RunOutputMedia = ProcMediaInput & {
@@ -478,41 +487,8 @@ const SHELL_SESSION_TARGET_KEY_PREFIX = "shellSessionTarget:";
 const UNKNOWN_SHELL_SESSION_TARGET_MESSAGE =
   "Shell session continuation requires an explicit target because this process does not know which device owns the session";
 const USER_INTERRUPTED_TOOL_MESSAGE = "User interrupted tool execution";
-const MESSAGE_TOOL_NAME = "Message";
-const SILENCE_TOOL_NAME = "Silence";
 const MAX_TERMINAL_CORRECTION_ROUNDS = 1;
 const MAX_TERMINAL_ACTION_FAILURES = 2;
-const TERMINAL_TOOLS: Tool[] = [
-  {
-    name: MESSAGE_TOOL_NAME,
-    description: "Commit the one message the user should see and finish this interaction. Use only after all other tool work is complete. The text is the user-visible message; ordinary assistant text is Process activity and is not delivered.",
-    parameters: {
-      type: "object",
-      properties: {
-        text: {
-          type: "string",
-          description: "The complete message to send to the user.",
-        },
-      },
-      required: ["text"],
-      additionalProperties: false,
-    },
-  },
-  {
-    name: SILENCE_TOOL_NAME,
-    description: "Finish this interaction without sending a user-visible message. Use when no response or notification is useful.",
-    parameters: {
-      type: "object",
-      properties: {
-        reason: {
-          type: "string",
-          description: "A short Process-visible reason for choosing silence.",
-        },
-      },
-      additionalProperties: false,
-    },
-  },
-];
 const USER_SUPERSEDED_TOOL_MESSAGE =
   "Cancelled for this agent run because a newer user message arrived; the underlying operation may still complete";
 const TOOL_EXECUTION_DENIED_BY_USER_MESSAGE = "Tool execution denied by user";
@@ -572,6 +548,28 @@ const toolDefinitionSchema = z.object({
 const piToolParametersSchema = z.custom<Tool["parameters"]>(
   (value) => jsonObjectSchema.safeParse(value).success,
 );
+const terminalShellToolArgsSchema = z.object({
+  input: z.string(),
+  target: z.enum(["gsv", "gateway"]).optional(),
+  cwd: z.string().optional(),
+  timeout: z.number().optional(),
+}).strict();
+const TERMINAL_SHELL_TOOL: Tool = {
+  name: "Shell",
+  description:
+    "Run a GSV shell command. After all work is complete, finish this interaction with exactly one direct Shell call to `message send --message '...'` or `message silence --reason '...'`. Ordinary assistant text is Process activity and is not sent to the user.",
+  parameters: {
+    type: "object",
+    properties: {
+      input: {
+        type: "string",
+        description: "The terminal message command to run on GSV.",
+      },
+    },
+    required: ["input"],
+    additionalProperties: false,
+  },
+};
 const aiToolsDeviceSchema = z.object({
   id: z.string(),
   implements: z.array(z.string()),
@@ -849,8 +847,6 @@ const conversationProvenanceSchema = z.object({
   conversationId: nonEmptyStringSchema,
   messageId: nonEmptyStringSchema,
 });
-const terminalMessageArgsSchema = z.object({ text: z.string() });
-const terminalSilenceArgsSchema = z.object({ reason: z.string() });
 const archivedToolCallSchema = z.object({
   type: z.literal("toolCall"),
   id: z.string(),
@@ -5322,15 +5318,14 @@ export class Process extends DurableObject<ProcessEnv> {
     }
 
     // Step 4: Build pi-ai Context
-    const tools: Tool[] = (run.tools ?? [])
-      .filter((tool) => !isTerminalToolName(tool.name))
+    const workTools: Tool[] = (run.tools ?? [])
       .map((tool) => ({
         name: tool.name,
         description: tool.description,
         parameters: piToolParametersSchema.parse(tool.inputSchema),
-      }))
-      .concat(TERMINAL_TOOLS);
-    run.offeredToolNames = [...new Set(tools.map((tool) => tool.name))];
+      }));
+    const tools = withTerminalShellInstructions(workTools);
+    run.offeredToolNames = [...new Set(workTools.map((tool) => tool.name))];
     this.currentRun = run;
     const buildGenerationContext = async (): Promise<Context> => {
       const activeRun = this.killed ? null : this.currentRun;
@@ -5707,18 +5702,21 @@ export class Process extends DurableObject<ProcessEnv> {
     const returnedToolCalls = response.content.filter(
       (b): b is ToolCall => b.type === "toolCall",
     );
-    const offeredToolNames = new Set(run.offeredToolNames ?? []);
-    const terminalToolCalls = returnedToolCalls.filter((toolCall) => (
-      isTerminalToolName(toolCall.name)
-    ));
+    const terminalShellCalls = returnedToolCalls
+      .map(terminalShellCall)
+      .filter((call): call is TerminalShellCall => call !== null);
+    const terminalToolCallIds = new Set(
+      terminalShellCalls.map(({ toolCall }) => toolCall.id),
+    );
+    const workToolNames = new Set((run.tools ?? []).map((tool) => tool.name));
     const toolCalls = returnedToolCalls.filter((toolCall) => (
-      offeredToolNames.has(toolCall.name) && !isTerminalToolName(toolCall.name)
+      workToolNames.has(toolCall.name) && !terminalToolCallIds.has(toolCall.id)
     ));
     const unofferedToolCalls = returnedToolCalls.filter((toolCall) => (
-      !offeredToolNames.has(toolCall.name)
+      !workToolNames.has(toolCall.name) && !terminalToolCallIds.has(toolCall.id)
     ));
-    const terminalCombinationInvalid = terminalToolCalls.length > 1
-      || (terminalToolCalls.length === 1 && (
+    const terminalCombinationInvalid = terminalShellCalls.length > 1
+      || (terminalShellCalls.length === 1 && (
         toolCalls.length > 0 || unofferedToolCalls.length > 0
       ));
     if (unofferedToolCalls.length > 0) {
@@ -5784,7 +5782,7 @@ export class Process extends DurableObject<ProcessEnv> {
           this.store.appendToolResult(
             toolCall.id,
             TOOL_TO_SYSCALL[toolCall.name] ?? toolCall.name,
-            "Message and Silence are terminal actions and cannot be combined with other actions",
+            "message send and message silence are terminal commands and cannot be combined with other actions",
             true,
             runId,
             "failed",
@@ -5820,11 +5818,11 @@ export class Process extends DurableObject<ProcessEnv> {
         );
       }
       if (terminalCombinationInvalid) {
-        for (const toolCall of terminalToolCalls) {
+        for (const { toolCall } of terminalShellCalls) {
           this.store.appendToolResult(
             toolCall.id,
-            toolCall.name,
-            "Message and Silence are terminal actions and cannot be combined with other actions",
+            "shell.exec",
+            "message send and message silence are terminal commands and cannot be combined with other actions",
             true,
             runId,
             "failed",
@@ -5851,12 +5849,12 @@ export class Process extends DurableObject<ProcessEnv> {
       text: string;
       error?: string;
     } | null = null;
-    const terminalToolCall = terminalCombinationInvalid ? null : terminalToolCalls[0] ?? null;
-    if (terminalToolCall) {
-      terminalResult = await this.executeTerminalAction(runId, terminalToolCall, outputMedia);
+    const terminalCall = terminalCombinationInvalid ? null : terminalShellCalls[0] ?? null;
+    if (terminalCall) {
+      terminalResult = await this.executeTerminalAction(runId, terminalCall.parsed, outputMedia);
       this.store.appendToolResult(
-        terminalToolCall.id,
-        terminalToolCall.name,
+        terminalCall.toolCall.id,
+        "shell.exec",
         terminalResult.ok
           ? terminalResult.action === "message"
             ? "Message committed"
@@ -5971,7 +5969,7 @@ export class Process extends DurableObject<ProcessEnv> {
 
   private async executeTerminalAction(
     runId: string,
-    toolCall: ToolCall,
+    parsed: TerminalMessageCommandParseResult,
     media: RunOutputMedia[],
   ): Promise<{
     ok: boolean;
@@ -5979,7 +5977,15 @@ export class Process extends DurableObject<ProcessEnv> {
     text: string;
     error?: string;
   }> {
-    if (toolCall.name === SILENCE_TOOL_NAME) {
+    if (!parsed.ok) {
+      return {
+        ok: false,
+        action: parsed.action,
+        text: "",
+        error: parsed.error,
+      };
+    }
+    if (parsed.command.action === "silence") {
       const projection = this.messageStreamProjections.get(runId);
       if (projection) {
         await this.abortMessageStream(runId, projection, "Interaction completed silently");
@@ -5992,12 +5998,12 @@ export class Process extends DurableObject<ProcessEnv> {
       return {
         ok: true,
         action: "silence",
-        text: terminalSilenceReason(toolCall) ?? "",
+        text: parsed.command.reason,
       };
     }
 
-    const text = terminalMessageText(toolCall);
-    if (text === null || (!text.trim() && media.length === 0)) {
+    const text = parsed.command.text;
+    if (!text.trim() && media.length === 0) {
       return {
         ok: false,
         action: "message",
@@ -6071,7 +6077,7 @@ export class Process extends DurableObject<ProcessEnv> {
       await this.abortMessageStream(
         runId,
         projection,
-        "The model did not complete a valid Message action",
+        "The model did not run a valid terminal message command",
       );
     }
     if ((run.terminalCorrectionRounds ?? 0) >= MAX_TERMINAL_CORRECTION_ROUNDS) {
@@ -6079,7 +6085,7 @@ export class Process extends DurableObject<ProcessEnv> {
         reason: "message.action.missing",
         status: "error",
         text: draftText || null,
-        error: "The model did not choose Message or Silence after correction",
+        error: "The model did not run message send or message silence after correction",
         usage,
       });
       return;
@@ -6087,7 +6093,7 @@ export class Process extends DurableObject<ProcessEnv> {
     run.terminalCorrectionRounds = (run.terminalCorrectionRounds ?? 0) + 1;
     this.currentRun = run;
     const message = [
-      "This interaction is not complete. Ordinary assistant text is Process activity and is not sent to the user. Finish with exactly one Message action, or choose Silence if no user-visible response is useful.",
+      "This interaction is not complete. Ordinary assistant text is Process activity and is not sent to the user. Finish with exactly one direct Shell call to `message send --message '...'`, or run `message silence --reason '...'` if no user-visible response is useful.",
     ].join("\n");
     this.store.appendMessage("system", message, { runId });
     await this.emitProcChanged(["messages"], {
@@ -6125,7 +6131,6 @@ export class Process extends DurableObject<ProcessEnv> {
     // TODO: add ai.text.stream
     const stream = this.generation.stream(request);
     const eventSink = await this.openRunEventSink(options.runId);
-    const messageStream = this.messageStreamProjection(options.runId);
     try {
       let seq = options.streamSeq?.value ?? 0;
       let response: AssistantMessage | null = null;
@@ -6135,7 +6140,6 @@ export class Process extends DurableObject<ProcessEnv> {
           options.streamSeq.value = seq;
         }
         await eventSink?.emit(seq, event);
-        await this.projectMessageStreamEvent(options.runId, event, messageStream);
         if (event.type === "done") {
           response = event.message;
         } else if (event.type === "error") {
@@ -7230,37 +7234,6 @@ export class Process extends DurableObject<ProcessEnv> {
       this.messageStreamProjections.set(runId, projection);
     }
     return projection;
-  }
-
-  private async projectMessageStreamEvent(
-    runId: string,
-    event: AssistantMessageEvent,
-    projection: MessageStreamProjection,
-  ): Promise<void> {
-    if (projection.aborted || !event.type.startsWith("toolcall_")) return;
-    const partial = "partial" in event ? event.partial : null;
-    const contentIndex = "contentIndex" in event ? event.contentIndex : -1;
-    const content = partial?.content[contentIndex];
-    if (!content || content.type !== "toolCall") return;
-    if (content.name !== MESSAGE_TOOL_NAME) {
-      if (projection.started && event.type === "toolcall_end") {
-        await this.abortMessageStream(runId, projection, "Message action changed while streaming");
-      }
-      return;
-    }
-    if (!projection.started) {
-      projection.started = true;
-      await this.emitMessageStream(runId, projection, "started");
-    }
-    const text = terminalMessageText(content);
-    if (text === null || text === projection.text) return;
-    if (!text.startsWith(projection.text)) {
-      await this.abortMessageStream(runId, projection, "Message text changed while streaming");
-      return;
-    }
-    const delta = text.slice(projection.text.length);
-    projection.text = text;
-    if (delta) await this.emitMessageStream(runId, projection, "delta", delta);
   }
 
   private async completeMessageStream(runId: string, text: string): Promise<void> {
@@ -9139,20 +9112,25 @@ function conversationRunState(
   }
 }
 
-function isTerminalToolName(name: string): boolean {
-  return name === MESSAGE_TOOL_NAME || name === SILENCE_TOOL_NAME;
+function withTerminalShellInstructions(workTools: Tool[]): Tool[] {
+  let foundShell = false;
+  const tools = workTools.map((tool) => {
+    if (tool.name !== "Shell") return tool;
+    foundShell = true;
+    return {
+      ...tool,
+      description: `${tool.description} After all work is complete, finish with exactly one direct Shell call to \`message send --message '...'\` or \`message silence --reason '...'\`.`,
+    };
+  });
+  return foundShell ? tools : [...tools, TERMINAL_SHELL_TOOL];
 }
 
-function terminalMessageText(toolCall: ToolCall): string | null {
-  if (toolCall.name !== MESSAGE_TOOL_NAME) return null;
-  const args = terminalMessageArgsSchema.safeParse(toolCall.arguments);
-  return args.success ? args.data.text : null;
-}
-
-function terminalSilenceReason(toolCall: ToolCall): string | null {
-  if (toolCall.name !== SILENCE_TOOL_NAME) return null;
-  const args = terminalSilenceArgsSchema.safeParse(toolCall.arguments);
-  return args.success ? args.data.reason : null;
+function terminalShellCall(toolCall: ToolCall): TerminalShellCall | null {
+  if (toolCall.name !== "Shell") return null;
+  const args = terminalShellToolArgsSchema.safeParse(toolCall.arguments);
+  if (!args.success) return null;
+  const parsed = parseTerminalMessageCommand(args.data.input);
+  return parsed ? { toolCall, parsed } : null;
 }
 
 function orderMessagesForProvider(messages: Message[]): Message[] {

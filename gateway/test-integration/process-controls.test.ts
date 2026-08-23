@@ -109,8 +109,10 @@ describe("gateway process controls integration", () => {
           runId: sent.runId,
           content: expect.objectContaining({
             toolCalls: [expect.objectContaining({
-              name: "Message",
-              arguments: { text: "banana" },
+              name: "Shell",
+              arguments: {
+                input: "message send --message 'banana'",
+              },
             })],
           }),
         }),
@@ -118,7 +120,7 @@ describe("gateway process controls integration", () => {
           role: "toolResult",
           runId: sent.runId,
           content: expect.objectContaining({
-            toolName: "Message",
+            toolName: "Shell",
             outcome: "completed",
             output: "Message committed",
           }),
@@ -257,8 +259,10 @@ describe("gateway process controls integration", () => {
           runId: sent.runId,
           content: expect.objectContaining({
             toolCalls: [expect.objectContaining({
-              name: "Message",
-              arguments: { text: scenario.finalText },
+              name: "Shell",
+              arguments: {
+                input: `message send --message '${scenario.finalText}'`,
+              },
             })],
           }),
         });
@@ -266,7 +270,7 @@ describe("gateway process controls integration", () => {
           role: "toolResult",
           runId: sent.runId,
           content: expect.objectContaining({
-            toolName: "Message",
+            toolName: "Shell",
             output: "Message committed",
           }),
         });
@@ -373,13 +377,13 @@ describe("gateway process controls integration", () => {
         role: "assistant",
         runId: foreground.runId,
         content: expect.objectContaining({
-          toolCalls: [expect.objectContaining({ name: "Message" })],
+          toolCalls: [expect.objectContaining({ name: "Shell" })],
         }),
       });
       expect(history.messages[2]).toMatchObject({
         role: "toolResult",
         runId: foreground.runId,
-        content: expect.objectContaining({ toolName: "Message" }),
+        content: expect.objectContaining({ toolName: "Shell" }),
       });
       expect(history.messages[3]).toMatchObject({
         role: "user",
@@ -394,13 +398,13 @@ describe("gateway process controls integration", () => {
         role: "assistant",
         runId: queuedRunId,
         content: expect.objectContaining({
-          toolCalls: [expect.objectContaining({ name: "Message" })],
+          toolCalls: [expect.objectContaining({ name: "Shell" })],
         }),
       });
       expect(history.messages[5]).toMatchObject({
         role: "toolResult",
         runId: queuedRunId,
-        content: expect.objectContaining({ toolName: "Message" }),
+        content: expect.objectContaining({ toolName: "Shell" }),
       });
       expect(runtime.ai.requests).toHaveLength(2);
       expect(runtime.ai.requests[1]?.messages).toEqual(expect.arrayContaining([

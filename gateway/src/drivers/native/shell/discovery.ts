@@ -52,7 +52,7 @@ const NATIVE_COMMAND_DESCRIPTORS = defineNativeCommandDescriptors({
   codemode: command("Run a reusable JavaScript GSV tool workflow.", "Combine several shell, filesystem, or connected integration operations in one scripted workflow.", ["script", "workflow", "automation", "tools", "javascript"]),
   mcp: command("Discover and call connected MCP integrations.", "Use an external connected service or search its available integration tools.", ["integration", "service", "connector", "api", "tools", "mcp"]),
   proc: command("Inspect, delegate to, message, and control GSV agent processes.", "Create a subagent, delegate a task, contact another agent, or inspect agent history and lifecycle.", ["agent", "subagent", "delegate", "process", "message", "history"]),
-  message: command("Send messages, attach files, and route adapter chats.", "Attach a file to the run's Message action, send a separate adapter message, inspect its directed endpoint, open a private work direct line, or route a group, channel, or thread to a process.", ["chat", "reply", "send", "attachment", "file", "image", "photo", "audio", "document", "route", "conversation", "work", "group", "channel", "thread"], [], [
+  message: command("Finish interactions, send messages, attach files, and route adapter chats.", "Finish the run with message send or message silence, attach a file to its terminal message, send a separate adapter message, inspect its directed endpoint, open a private work direct line, or route a group, channel, or thread to a process.", ["chat", "reply", "send", "silence", "attachment", "file", "image", "photo", "audio", "document", "route", "conversation", "work", "group", "channel", "thread"], [], [
     "message current [--json]",
     "message destinations [--all] [--json]",
     "message route show [--to here|DESTINATION] [--json]",
@@ -60,6 +60,8 @@ const NATIVE_COMMAND_DESCRIPTORS = defineNativeCommandDescriptors({
     "message route set --process PID_OR_LABEL [--to here|DESTINATION] [--json]",
     "message route clear [--to here|DESTINATION] [--json]",
     "message attach PATH... [--mime TYPE]",
+    "message send [--message TEXT]",
+    "message silence [--reason TEXT]",
     "message send --to DESTINATION [--message TEXT] [--attach PATH [--mime TYPE]] [--delivery-id ID] [--also]",
   ]),
   mail: command("Read, send, reply to, and inspect managed email.", "Send email, reply to an inbox message, or check whether a queued email was accepted.", ["email", "inbox", "send", "reply", "status", "delivery"], [], [

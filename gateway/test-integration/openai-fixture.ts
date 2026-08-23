@@ -216,8 +216,10 @@ function writeScriptedResponse(
     const calls = scripted.kind === "message"
       ? [{
           id: `message-integration-${requestNumber}`,
-          name: "Message",
-          arguments: { text: scripted.text },
+          name: "Shell",
+          arguments: {
+            input: `message send --message ${shellQuote(scripted.text)}`,
+          },
         }]
       : scripted.calls;
     response.write(openAiChunk({
@@ -292,6 +294,10 @@ function fixtureUsage(): JsonObject {
     completion_tokens: 3,
     total_tokens: 13,
   };
+}
+
+function shellQuote(value: string): string {
+  return `'${value.replaceAll("'", `'"'"'`)}'`;
 }
 
 function delay(delayMs: number): Promise<void> {

@@ -167,8 +167,8 @@ function messageAction(text: string, id = `message-${crypto.randomUUID()}`) {
     // SAFETY: test fixture is constructed with the asserted domain shape.
     type: "toolCall" as const,
     id,
-    name: "Message",
-    arguments: { text },
+    name: "Shell",
+    arguments: { input: `message send --message ${shellQuote(text)}` },
   };
 // SAFETY: test fixture is constructed with the asserted domain shape.
 }
@@ -178,10 +178,14 @@ function silenceAction(reason: string, id = `silence-${crypto.randomUUID()}`) {
     // SAFETY: test fixture is constructed with the asserted domain shape.
     type: "toolCall" as const,
     id,
-    name: "Silence",
-    arguments: { reason },
+    name: "Shell",
+    arguments: { input: `message silence --reason ${shellQuote(reason)}` },
   };
 // SAFETY: test fixture is constructed with the asserted domain shape.
+}
+
+function shellQuote(value: string): string {
+  return `'${value.replaceAll("'", `'"'"'`)}'`;
 }
 
 function terminalTestConfig(pid: string) {
@@ -1856,14 +1860,8 @@ describe("Process DO — mechanical", () => {
         await process.runTick(mailRunId);
         await process.runTick(mailRunId);
 
-        expect(generationContexts[0].tools.map((tool: any) => tool.name)).toEqual([
-          "Message",
-          "Silence",
-        ]);
-        expect(generationContexts[1].tools.map((tool: any) => tool.name)).toEqual([
-          "Message",
-          "Silence",
-        ]);
+        expect(generationContexts[0].tools.map((tool: any) => tool.name)).toEqual(["Shell"]);
+        expect(generationContexts[1].tools.map((tool: any) => tool.name)).toEqual(["Shell"]);
         expect(generationContexts[1].messages.slice(-3)).toEqual([
           expect.objectContaining({
             role: "assistant",
@@ -1910,7 +1908,7 @@ describe("Process DO — mechanical", () => {
         expect(JSON.parse(mailMessages.findLast((message: any) => (
           message.runId === mailRunId && message.role === "assistant"
         )).toolCalls)).toEqual([
-          expect.objectContaining({ id: "mail-message", name: "Message" }),
+          expect.objectContaining({ id: "mail-message", name: "Shell" }),
         ]);
         expect(process.currentRun).toBeNull();
 
@@ -1946,8 +1944,6 @@ describe("Process DO — mechanical", () => {
         expect(process.kernelRpc).toHaveBeenCalledWith("ai.tools", {});
         expect(generationContexts[2].tools).toEqual([
           expect.objectContaining({ name: "Shell" }),
-          expect.objectContaining({ name: "Message" }),
-          expect.objectContaining({ name: "Silence" }),
         ]);
         await vi.waitFor(() => {
           expect(process.dispatchSyscall).toHaveBeenCalledOnce();
@@ -2104,14 +2100,10 @@ describe("Process DO — mechanical", () => {
             approvalPolicy: { default: "auto", rules: [] },
           };
           await process.runTick(humanRunId);
-          expect(generationContexts[0].tools.map((tool: any) => tool.name)).toEqual([
-            "Message",
-            "Silence",
-          ]);
+          expect(generationContexts[0].tools.map((tool: any) => tool.name)).toEqual(["Shell"]);
           expect(generationContexts[1].tools.map((tool: any) => tool.name)).toEqual([
             "Read",
-            "Message",
-            "Silence",
+            "Shell",
           ]);
           expect(process.kernelRpc).toHaveBeenCalledWith("ai.tools", {});
         } finally {
@@ -2356,8 +2348,7 @@ describe("Process DO — mechanical", () => {
             generationCalls += 1;
             expect(request.context.tools.map((tool: any) => tool.name)).toEqual([
               "Read",
-              "Message",
-              "Silence",
+              "Shell",
             ]);
             return generationCalls === 1
               ? {
@@ -2417,7 +2408,7 @@ describe("Process DO — mechanical", () => {
             maxContextBytes: 32768,
             generationStreaming: "off",
           },
-          tools: offeredTools("Read", "Message", "Silence"),
+          tools: offeredTools("Read"),
           devices: [],
           mcpServers: [],
           systemPrompt: "Test system prompt.",
@@ -2502,11 +2493,11 @@ describe("Process DO — mechanical", () => {
         )).map((message: any) => [message.toolCallId, message.content])).toEqual([
           [
             "combined-read",
-            "Message and Silence are terminal actions and cannot be combined with other actions",
+            "message send and message silence are terminal commands and cannot be combined with other actions",
           ],
           [
             "combined-message",
-            "Message and Silence are terminal actions and cannot be combined with other actions",
+            "message send and message silence are terminal commands and cannot be combined with other actions",
           ],
         ]);
         expect(process.scheduleTick).toHaveBeenCalledOnce();
@@ -2551,9 +2542,9 @@ describe("Process DO — mechanical", () => {
         const correction = process.store.getMessages().find((message: any) => (
           message.role === "system" && message.runId === runId
         ));
-        expect(correction?.content).toContain("Finish with exactly one Message action");
+        expect(correction?.content).toContain("Finish with exactly one direct Shell call");
         expect((await process.buildContextMessages("default"))
-          .find((message: any) => message.content.includes("Finish with exactly one Message action"))
+          .find((message: any) => message.content.includes("Finish with exactly one direct Shell call"))
           ?.content).toContain("[GSV EVENT]");
 
         await process.runTick(runId);
@@ -2566,7 +2557,7 @@ describe("Process DO — mechanical", () => {
         .toMatchObject({
           status: "error",
           reason: "message.action.missing",
-          error: "The model did not choose Message or Silence after correction",
+          error: "The model did not run message send or message silence after correction",
         });
     });
 
@@ -2585,6 +2576,7 @@ describe("Process DO — mechanical", () => {
           emitted.push({ signal, payload });
         });
         process.emitMessageStream = vi.fn(async () => {});
+        process.dispatchSyscall = vi.fn(async () => {});
         process.generation = {
           async generate() {
             return terminalTestResponse([
@@ -2604,7 +2596,10 @@ describe("Process DO — mechanical", () => {
           tools: [],
           devices: [],
           systemPrompt: "Test system prompt.",
-          approvalPolicy: { default: "auto", rules: [] },
+          approvalPolicy: {
+            default: "auto",
+            rules: [{ match: "shell.exec", action: "ask" }],
+          },
         };
 
         await process.runTick(runId);
@@ -2612,6 +2607,7 @@ describe("Process DO — mechanical", () => {
           emitted,
           streamCalls: process.emitMessageStream.mock.calls,
           messages: process.store.getMessages(),
+          dispatchCalls: process.dispatchSyscall.mock.calls,
         };
       });
 
@@ -2620,6 +2616,7 @@ describe("Process DO — mechanical", () => {
       ]);
       expect(result.messages.find((message: any) => message.toolCallId === "silence-action"))
         .toMatchObject({ content: "Interaction completed silently" });
+      expect(result.dispatchCalls).toEqual([]);
       expect(result.emitted.findLast((entry) => entry.signal === "proc.run.finished")?.payload)
         .toMatchObject({ status: "ok", reason: "message.silenced", text: null });
     });
@@ -5701,7 +5698,7 @@ describe("Process DO — mechanical", () => {
             stream.push({
               type: "toolcall_delta",
               contentIndex: 1,
-              delta: "{\"text\":\"visible retry\"}",
+              delta: JSON.stringify(toolCall.arguments),
               partial,
             });
             stream.push({ type: "toolcall_end", contentIndex: 1, toolCall, partial });
@@ -6122,8 +6119,7 @@ describe("Process DO — mechanical", () => {
           }],
           tools: expect.arrayContaining([
             expect.objectContaining({ name: "Read" }),
-            expect.objectContaining({ name: "Message" }),
-            expect.objectContaining({ name: "Silence" }),
+            expect.objectContaining({ name: "Shell" }),
           ]),
           config: {
             processOverrides: {

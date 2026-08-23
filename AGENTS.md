@@ -54,7 +54,7 @@ Processes have identities, histories, permissions, queues, pending work, and lif
 
 The personal agent account is the user's personal intelligence. One Kernel-marked interactive process receives its top-level conversation across user interfaces; its pid is replaceable and otherwise follows ordinary process lifecycle. Other processes are visible work, even when they run as the same account. They share natural-language commitments through the account's `context.d` and delegate bounded work through the existing process and IPC primitives. A delegated process is an ordinary process acting in a worker role, not a second orchestration runtime.
 
-Canonical user-facing conversations are not Process histories. Conversations retain only committed user-visible Messages across Process replacement or deletion; Process history retains reasoning, drafts, tools, results, and terminal choices for inspection. Every interaction must finish explicitly with Message or Silence. Clients may opt into raw Process observation, while adapters consume only committed messages.
+Canonical user-facing conversations are not Process histories. Conversations retain only committed user-visible Messages across Process replacement or deletion; Process history retains reasoning, drafts, tools, results, and terminal choices for inspection. Every interaction must finish explicitly through Shell with `message send` or `message silence`; these Process-owned terminal commands do not add model tools or require shell approval. Clients may opt into raw Process observation, while adapters consume only committed messages.
 
 ### Prefer fewer mechanisms
 

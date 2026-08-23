@@ -31,18 +31,19 @@ work, or remain silent.
 ## Explicit delivery
 
 Ordinary assistant text is Process activity. It is never implicitly sent to a user. Every model turn
-ends with exactly one protocol control:
+ends with exactly one direct Shell terminal command:
 
-- `Message` commits one canonical user-visible message.
-- `Silence` records that no user-visible response is useful.
+- `message send --message '...'` commits one canonical user-visible message.
+- `message silence --reason '...'` records that no user-visible response is useful.
 
-`Message` and `Silence` are terminal controls, not general capabilities or additional integration
-tools. The model still receives the fixed Read, Write, Edit, Delete, Search, Shell, and CodeMode
-surface for work. If a generation returns ordinary text without a terminal control, the Process adds
-one `[GSV EVENT]` correction and retries once. A second omission ends the run with an inspectable
-error instead of looping indefinitely.
+The Process recognizes these exact, literal commands inside a direct `Shell` call before normal
+shell dispatch. They do not require `shell.exec` capability or approval, cannot target a device, and
+cannot be invoked indirectly through CodeMode. The model receives only the fixed Read, Write, Edit,
+Delete, Search, Shell, and CodeMode surface. If a generation returns ordinary text without a terminal
+command, the Process adds one `[GSV EVENT]` correction and retries once. A second omission ends the
+run with an inspectable error instead of looping indefinitely.
 
-An IPC call is the exception to canonical user delivery: its terminal `Message` returns to the
+An IPC call is the exception to canonical user delivery: its terminal message returns to the
 calling Process. It does not impersonate a user or append to Home.
 
 ## Directed endpoints and synchronization
@@ -50,8 +51,8 @@ calling Process. It does not impersonate a user or append to Home.
 The run route identifies the endpoint that caused the interaction. It controls immediate delivery,
 not conversation ownership:
 
-- The originating Web/Desktop/CLI connection receives `message.started` and `message.delta` while
-  the `Message` arguments stream, then `message.committed`.
+- The originating Web/Desktop/CLI connection receives `message.started` and `message.delta` once
+  the terminal command has been validated, then `message.committed`.
 - Other signed-in clients receive only the committed canonical message as synchronization. They do
   not play a notification or act as though the response was directed to them.
 - Adapters buffer Process output and deliver only the committed message. Provider-specific reply

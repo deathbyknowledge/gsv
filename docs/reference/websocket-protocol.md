@@ -373,8 +373,8 @@ current Kernel:
 Canonical `conversation.*` and `message.*` signals are independent of raw
 Process observation. All connected clients for the owner can synchronize the
 same conversation, while only the directed connection receives transient
-Message streaming. A model must explicitly finish an interaction with Message
-or Silence; ordinary assistant output remains Process activity.
+Message streaming. A model must explicitly finish an interaction through Shell
+with `message send` or `message silence`; ordinary assistant output remains Process activity.
 
 ### Request cancellation
 
