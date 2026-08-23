@@ -421,7 +421,8 @@ runtime.
 
 ## Adding an adapter
 
-1. Implement the shared adapter worker interface in a separate worker.
+1. Implement `AdapterService` in a separate Worker and return a truthful,
+   versioned descriptor from `adapterDescribe`.
 2. Keep one account's provider lifecycle in its owning Durable Object.
 3. Normalize stable actor and surface identifiers, and derive one account-scoped
    ingress delivery id from the provider's complete event identity.
@@ -432,13 +433,18 @@ runtime.
 7. Exercise DM linking, shared surfaces, media cancellation, reconnects,
    request-bound approvals, duplicate ingress, canonical Messages, and directed
    endpoint routing.
+8. Add a bundled implementation to `adapters/catalog.json`. The release builder
+   and Rust CLI compile their component names, scripts, entrypoints, binding
+   reconciliation, and deployment order from this catalog. A separately operated
+   adapter can instead provide equivalent deployment metadata without joining the
+   bundled catalog.
 
 ## Why this matters
 
 The adapter model keeps GSV coherent.
 
 Without it, every external integration would drag platform details into the core
-runtime. With it, GSV can treat WhatsApp, Discord, the CLI, and the Desktop as
+runtime. With it, GSV can treat any provider adapter, the CLI, and the Desktop as
 multiple surfaces into the same computer.
 
 ## See also

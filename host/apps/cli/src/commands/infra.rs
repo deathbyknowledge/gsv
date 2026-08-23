@@ -214,14 +214,7 @@ fn component_is_selected(components: &[String], component: &str) -> bool {
 }
 
 fn teardown_component_description(component: &str) -> &'static str {
-    match component {
-        "ripgit" => "Git-backed storage worker",
-        "gateway" => "Core API + sessions worker",
-        "channel-whatsapp" => "WhatsApp channel worker",
-        "channel-discord" => "Discord channel worker",
-        "channel-telegram" => "Telegram channel worker",
-        _ => "Worker component",
-    }
+    deploy::component_description(component)
 }
 
 fn prompt_down_components(

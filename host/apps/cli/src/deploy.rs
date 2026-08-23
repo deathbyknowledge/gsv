@@ -20,62 +20,33 @@ const REPO_NAME: &str = "gsv";
 
 const COMPONENT_GATEWAY: &str = "gateway";
 const COMPONENT_RIPGIT: &str = "ripgit";
-const COMPONENT_CHANNEL_WHATSAPP: &str = "channel-whatsapp";
-const COMPONENT_CHANNEL_DISCORD: &str = "channel-discord";
-const COMPONENT_CHANNEL_TELEGRAM: &str = "channel-telegram";
 const LEGACY_COMPONENT_ASSEMBLER: &str = "assembler";
 
 const BUNDLE_GATEWAY: &str = "gsv-cloudflare-gateway.tar.gz";
 const BUNDLE_RIPGIT: &str = "gsv-cloudflare-ripgit.tar.gz";
-const BUNDLE_CHANNEL_WHATSAPP: &str = "gsv-cloudflare-channel-whatsapp.tar.gz";
-const BUNDLE_CHANNEL_DISCORD: &str = "gsv-cloudflare-channel-discord.tar.gz";
-const BUNDLE_CHANNEL_TELEGRAM: &str = "gsv-cloudflare-channel-telegram.tar.gz";
 const BUNDLE_CHECKSUMS: &str = "cloudflare-checksums.txt";
 pub const DEFAULT_DEPLOY_INSTANCE: &str = "gsv";
 const DEFAULT_STORAGE_BUCKET_NAME: &str = "gsv-storage";
 const SCRIPT_GATEWAY: &str = "gsv";
 const SCRIPT_RIPGIT: &str = "ripgit";
-const SCRIPT_CHANNEL_WHATSAPP: &str = "gsv-channel-whatsapp";
-const SCRIPT_CHANNEL_DISCORD: &str = "gsv-channel-discord";
-const SCRIPT_CHANNEL_TELEGRAM: &str = "gsv-channel-telegram";
 const GATEWAY_ENTRYPOINT: &str = "GatewayEntrypoint";
 const RIPGIT_PAID_CPU_LIMIT_MS: u64 = 300_000;
 
 #[derive(Debug, Clone, Copy)]
 struct AdapterDeploymentSpec {
+    description: &'static str,
     component: &'static str,
+    bundle: &'static str,
     default_script: &'static str,
+    script_suffix: &'static str,
     gateway_binding: &'static str,
     adapter_entrypoint: &'static str,
+    deploy_order: usize,
 }
 
-const ADAPTER_DEPLOYMENTS: &[AdapterDeploymentSpec] = &[
-    AdapterDeploymentSpec {
-        component: COMPONENT_CHANNEL_WHATSAPP,
-        default_script: SCRIPT_CHANNEL_WHATSAPP,
-        gateway_binding: "CHANNEL_WHATSAPP",
-        adapter_entrypoint: "WhatsAppChannelEntrypoint",
-    },
-    AdapterDeploymentSpec {
-        component: COMPONENT_CHANNEL_DISCORD,
-        default_script: SCRIPT_CHANNEL_DISCORD,
-        gateway_binding: "CHANNEL_DISCORD",
-        adapter_entrypoint: "DiscordChannel",
-    },
-    AdapterDeploymentSpec {
-        component: COMPONENT_CHANNEL_TELEGRAM,
-        default_script: SCRIPT_CHANNEL_TELEGRAM,
-        gateway_binding: "CHANNEL_TELEGRAM",
-        adapter_entrypoint: "TelegramChannel",
-    },
-];
+include!(concat!(env!("OUT_DIR"), "/adapter_catalog.rs"));
 const RESERVED_NON_DEFAULT_INSTANCE_NAMES: &[&str] = &[SCRIPT_RIPGIT];
-const RESERVED_INSTANCE_NAME_SUFFIXES: &[&str] = &[
-    "-ripgit",
-    "-channel-whatsapp",
-    "-channel-discord",
-    "-channel-telegram",
-];
+const RESERVED_NON_DEFAULT_INSTANCE_SUFFIXES: &[&str] = &["-ripgit"];
 const DEV_RELEASE_TAG: &str = "dev";
 const WORKERS_SUBDOMAIN_API_DATE: &str = "2025-08-01";
 const CLOUDFLARE_MAX_ATTEMPTS: usize = 5;
@@ -114,13 +85,13 @@ impl DeployInstance {
     }
 
     pub fn script_name(&self, component: &str) -> Option<String> {
+        if let Some(adapter) = adapter_deployment(component) {
+            return Some(format!("{}-{}", self.name, adapter.script_suffix));
+        }
         match component {
             COMPONENT_GATEWAY => Some(self.name.clone()),
             COMPONENT_RIPGIT if self.is_default() => Some(SCRIPT_RIPGIT.to_string()),
             COMPONENT_RIPGIT => Some(format!("{}-ripgit", self.name)),
-            COMPONENT_CHANNEL_WHATSAPP => Some(format!("{}-channel-whatsapp", self.name)),
-            COMPONENT_CHANNEL_DISCORD => Some(format!("{}-channel-discord", self.name)),
-            COMPONENT_CHANNEL_TELEGRAM => Some(format!("{}-channel-telegram", self.name)),
             _ => None,
         }
     }
@@ -174,9 +145,12 @@ fn normalize_instance_name(raw: &str) -> Result<String, Box<dyn std::error::Erro
     }
     if normalized != DEFAULT_DEPLOY_INSTANCE
         && (RESERVED_NON_DEFAULT_INSTANCE_NAMES.contains(&normalized.as_str())
-            || RESERVED_INSTANCE_NAME_SUFFIXES
+            || RESERVED_NON_DEFAULT_INSTANCE_SUFFIXES
                 .iter()
-                .any(|suffix| normalized.ends_with(suffix)))
+                .any(|suffix| normalized.ends_with(suffix))
+            || ADAPTER_DEPLOYMENTS
+                .iter()
+                .any(|adapter| normalized.ends_with(&format!("-{}", adapter.script_suffix))))
     {
         return Err("GSV instance name would collide with generated component worker names".into());
     }
@@ -582,21 +556,22 @@ fn component_to_bundle(component: &str) -> Option<&'static str> {
     match component {
         COMPONENT_GATEWAY => Some(BUNDLE_GATEWAY),
         COMPONENT_RIPGIT => Some(BUNDLE_RIPGIT),
-        COMPONENT_CHANNEL_WHATSAPP => Some(BUNDLE_CHANNEL_WHATSAPP),
-        COMPONENT_CHANNEL_DISCORD => Some(BUNDLE_CHANNEL_DISCORD),
-        COMPONENT_CHANNEL_TELEGRAM => Some(BUNDLE_CHANNEL_TELEGRAM),
-        _ => None,
+        _ => adapter_deployment(component).map(|adapter| adapter.bundle),
     }
 }
 
 pub fn available_components() -> &'static [&'static str] {
-    &[
-        COMPONENT_RIPGIT,
-        COMPONENT_GATEWAY,
-        COMPONENT_CHANNEL_WHATSAPP,
-        COMPONENT_CHANNEL_DISCORD,
-        COMPONENT_CHANNEL_TELEGRAM,
-    ]
+    AVAILABLE_COMPONENTS
+}
+
+pub fn component_description(component: &str) -> &'static str {
+    match component {
+        COMPONENT_RIPGIT => "Git-backed storage worker",
+        COMPONENT_GATEWAY => "Core API + sessions worker",
+        _ => adapter_deployment(component)
+            .map(|adapter| adapter.description)
+            .unwrap_or("Worker component"),
+    }
 }
 
 fn adapter_deployment(component: &str) -> Option<&'static AdapterDeploymentSpec> {
@@ -2266,11 +2241,11 @@ async fn purge_r2_bucket_objects(
 }
 
 fn deploy_order(component: &str) -> usize {
+    if let Some(adapter) = adapter_deployment(component) {
+        return adapter.deploy_order;
+    }
     match component {
         COMPONENT_RIPGIT => 0,
-        COMPONENT_CHANNEL_WHATSAPP => 1,
-        COMPONENT_CHANNEL_DISCORD => 2,
-        COMPONENT_CHANNEL_TELEGRAM => 3,
         LEGACY_COMPONENT_ASSEMBLER => 9,
         COMPONENT_GATEWAY => 10,
         _ => 100,

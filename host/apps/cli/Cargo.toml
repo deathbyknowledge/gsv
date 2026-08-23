@@ -115,3 +115,7 @@ dbg_macro = "warn"
 # Suppressions should be intentional and documented.
 allow_attributes = "warn"
 allow_attributes_without_reason = "warn"
+
+[build-dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"

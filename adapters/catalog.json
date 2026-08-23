@@ -1,0 +1,47 @@
+{
+  "version": 1,
+  "adapters": [
+    {
+      "id": "whatsapp",
+      "displayName": "WhatsApp",
+      "description": "WhatsApp adapter worker",
+      "component": "channel-whatsapp",
+      "sourceDir": "adapters/whatsapp",
+      "defaultScript": "gsv-channel-whatsapp",
+      "instanceSuffix": "channel-whatsapp",
+      "gatewayBinding": "CHANNEL_WHATSAPP",
+      "entrypoint": "WhatsAppChannelEntrypoint",
+      "wranglerConfig": "wrangler.jsonc",
+      "devStateDirectories": ["gsv-channel-whatsapp-WhatsAppAccount"],
+      "deployOrder": 1
+    },
+    {
+      "id": "discord",
+      "displayName": "Discord",
+      "description": "Discord adapter worker",
+      "component": "channel-discord",
+      "sourceDir": "adapters/discord",
+      "defaultScript": "gsv-channel-discord",
+      "instanceSuffix": "channel-discord",
+      "gatewayBinding": "CHANNEL_DISCORD",
+      "entrypoint": "DiscordChannel",
+      "wranglerConfig": "wrangler.jsonc",
+      "devStateDirectories": ["gsv-channel-discord-DiscordGateway"],
+      "deployOrder": 2
+    },
+    {
+      "id": "telegram",
+      "displayName": "Telegram",
+      "description": "Telegram adapter worker",
+      "component": "channel-telegram",
+      "sourceDir": "adapters/telegram",
+      "defaultScript": "gsv-channel-telegram",
+      "instanceSuffix": "channel-telegram",
+      "gatewayBinding": "CHANNEL_TELEGRAM",
+      "entrypoint": "TelegramChannel",
+      "wranglerConfig": "wrangler.jsonc",
+      "devStateDirectories": ["gsv-channel-telegram-TelegramAccount"],
+      "deployOrder": 3
+    }
+  ]
+}
