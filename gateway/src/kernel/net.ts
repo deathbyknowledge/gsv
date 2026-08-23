@@ -2,6 +2,7 @@ import type { KernelContext } from "./context";
 import { getVisibleTarget } from "./targets";
 import {
   jsonValueSchema,
+  byteStreamChunk,
   type JsonValue,
   type NetFetchArgs,
   type NetFetchResult,
@@ -301,7 +302,8 @@ function limitNetFetchBody(
     }
   };
 
-  return new ReadableStream<Uint8Array>({
+  const source: UnderlyingByteSource = {
+    type: "bytes",
     async pull(controller) {
       try {
         const { done, value } = await reader.read();
@@ -321,7 +323,7 @@ function limitNetFetchBody(
           controller.error(error);
           return;
         }
-        controller.enqueue(value);
+        controller.enqueue(byteStreamChunk(value));
       } catch (error) {
         await reader.cancel(error).catch(() => {});
         finish();
@@ -332,7 +334,8 @@ function limitNetFetchBody(
       await reader.cancel(reason).catch(() => {});
       finish();
     },
-  });
+  };
+  return new ReadableStream(source);
 }
 
 export async function requestNetFetchWithSignal(

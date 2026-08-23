@@ -13,6 +13,7 @@ import {
 import {
   cancelResponseBody,
 } from "../../shared/src/media-body";
+import { byteStreamChunk } from "../../../packages/gsv/src/protocol/body.js";
 import type { AdapterMediaPart } from "../../shared/src/media-body";
 import type { AdapterMedia } from "../../shared/src/types";
 import { errorMessage } from "./logging";
@@ -268,7 +269,8 @@ function temporaryFileBody(path: string): ReadableStream<Uint8Array> {
     cleaned = true;
     await unlink(path).catch(() => undefined);
   };
-  return new ReadableStream<Uint8Array>({
+  const source: UnderlyingByteSource = {
+    type: "bytes",
     async pull(controller) {
       try {
         const next = await iterator.next();
@@ -278,7 +280,7 @@ function temporaryFileBody(path: string): ReadableStream<Uint8Array> {
           return;
         }
         const chunk = next.value;
-        controller.enqueue(chunk);
+        controller.enqueue(byteStreamChunk(new Uint8Array(chunk)));
       } catch (error) {
         controller.error(error);
         stream.destroy();
@@ -289,7 +291,8 @@ function temporaryFileBody(path: string): ReadableStream<Uint8Array> {
       stream.destroy(reason instanceof Error ? reason : undefined);
       await cleanup();
     },
-  });
+  };
+  return new ReadableStream(source);
 }
 
 export function whatsAppMediaDescriptor(contentType: string): {

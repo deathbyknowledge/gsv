@@ -1,4 +1,7 @@
-import { bodyToBytes } from "../../../packages/gsv/src/protocol/body.js";
+import {
+  bodyToBytes,
+  byteStreamChunk,
+} from "../../../packages/gsv/src/protocol/body.js";
 import type { BinaryBody } from "./types";
 
 export {
@@ -109,16 +112,18 @@ export async function responseBodyToBinaryBody(
 export function binaryBodyFromOwnedBytes(
   bytes: Uint8Array,
 ): BinaryBody & { length: number } {
+  const source: UnderlyingByteSource = {
+    type: "bytes",
+    start(controller) {
+      if (bytes.byteLength > 0) {
+        controller.enqueue(byteStreamChunk(bytes));
+      }
+      controller.close();
+    },
+  };
   return {
     length: bytes.byteLength,
-    stream: new ReadableStream<Uint8Array>({
-      start(controller) {
-        if (bytes.byteLength > 0) {
-          controller.enqueue(bytes);
-        }
-        controller.close();
-      },
-    }),
+    stream: new ReadableStream(source),
   };
 }
 

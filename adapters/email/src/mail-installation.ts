@@ -1,6 +1,7 @@
 import { DurableObject } from "cloudflare:workers";
 import {
   bodyToBytes,
+  byteStreamChunk,
   isAdapterInstallationContext,
   type AdapterInstallationContext,
   type BinaryBody,
@@ -675,7 +676,8 @@ export class MailInstallation extends DurableObject<MailEnv> {
 
     let index = 0;
     let remaining = row.raw_size;
-    const stream = new ReadableStream<Uint8Array>({
+    const source: UnderlyingByteSource = {
+      type: "bytes",
       pull: (controller) => {
         if (remaining === 0) {
           controller.close();
@@ -695,14 +697,15 @@ export class MailInstallation extends DurableObject<MailEnv> {
           );
           return;
         }
-        controller.enqueue(new Uint8Array(chunk.content));
+        controller.enqueue(byteStreamChunk(new Uint8Array(chunk.content)));
         index += 1;
         remaining -= expectedBytes;
       },
       cancel: () => {
         remaining = 0;
       },
-    });
+    };
+    const stream = new ReadableStream(source);
     return { stream, length: row.raw_size };
   }
 

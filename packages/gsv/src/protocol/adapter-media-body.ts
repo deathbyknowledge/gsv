@@ -1,5 +1,5 @@
 import type { AdapterMedia } from "./adapters";
-import type { BinaryBody } from "./body";
+import { byteStreamChunk, type BinaryBody } from "./body";
 
 export type AdapterMediaPart = {
   media: Omit<AdapterMedia, "body">;
@@ -284,7 +284,7 @@ class AdapterMediaBodyCursor {
           this.pending = undefined;
           this.pendingOffset = 0;
         }
-        return chunk;
+        return chunk.slice();
       }
       if (this.ended) {
         return undefined;
@@ -362,7 +362,8 @@ function createAdapterMediaPartStream(
   let remaining = descriptor.length;
   let complete = remaining === 0;
   let failure: Error | undefined;
-  const stream = new ReadableStream<Uint8Array>({
+  const source: UnderlyingByteSource = {
+    type: "bytes",
     start(controller) {
       if (complete) {
         controller.close();
@@ -381,7 +382,7 @@ function createAdapterMediaPartStream(
           );
         }
         remaining -= chunk.byteLength;
-        controller.enqueue(chunk);
+        controller.enqueue(byteStreamChunk(chunk));
         if (remaining === 0) {
           complete = true;
           controller.close();
@@ -399,7 +400,8 @@ function createAdapterMediaPartStream(
         await cursor.cancel(failure);
       }
     },
-  }, { highWaterMark: 0 });
+  };
+  const stream = new ReadableStream(source, { highWaterMark: 0 });
 
   return {
     stream,
@@ -488,45 +490,47 @@ function concatenateBodies(
     );
   };
 
-  return {
-    length,
-    stream: new ReadableStream<Uint8Array>({
-      async pull(controller) {
-        try {
-          while (bodyIndex < bodies.length) {
-            const body = bodies[bodyIndex];
-            reader ??= body.stream.getReader();
-            const { done, value } = await reader.read();
-            if (!done) {
-              bodyBytes += value.byteLength;
-              if (bodyBytes > body.length) {
-                throw new Error(
-                  `Adapter media body exceeded declared length ${body.length}`,
-                );
-              }
-              controller.enqueue(value);
-              return;
-            }
-            reader.releaseLock();
-            reader = null;
-            if (bodyBytes !== body.length) {
+  const source: UnderlyingByteSource = {
+    type: "bytes",
+    async pull(controller) {
+      try {
+        while (bodyIndex < bodies.length) {
+          const body = bodies[bodyIndex];
+          reader ??= body.stream.getReader();
+          const { done, value } = await reader.read();
+          if (!done) {
+            bodyBytes += value.byteLength;
+            if (bodyBytes > body.length) {
               throw new Error(
-                `Adapter media body length ${bodyBytes} did not match ${body.length}`,
+                `Adapter media body exceeded declared length ${body.length}`,
               );
             }
-            bodyBytes = 0;
-            bodyIndex += 1;
+            controller.enqueue(byteStreamChunk(value));
+            return;
           }
-          controller.close();
-        } catch (error) {
-          await cancelRemaining(error);
-          controller.error(error);
+          reader.releaseLock();
+          reader = null;
+          if (bodyBytes !== body.length) {
+            throw new Error(
+              `Adapter media body length ${bodyBytes} did not match ${body.length}`,
+            );
+          }
+          bodyBytes = 0;
+          bodyIndex += 1;
         }
-      },
-      async cancel(reason) {
-        await cancelRemaining(reason);
-      },
-    }),
+        controller.close();
+      } catch (error) {
+        await cancelRemaining(error);
+        controller.error(error);
+      }
+    },
+    async cancel(reason) {
+      await cancelRemaining(reason);
+    },
+  };
+  return {
+    length,
+    stream: new ReadableStream(source),
   };
 }
 

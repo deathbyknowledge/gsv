@@ -9,6 +9,7 @@ import type {
   JsonValue,
 } from "@humansandmachines/gsv/protocol";
 import {
+  byteStreamChunk,
   jsonObjectSchema,
   jsonValueSchema,
 } from "@humansandmachines/gsv/protocol";
@@ -246,7 +247,7 @@ export function decodeMoondreamStream(
   let closed = false;
   let pumpStarted = false;
   let timeout: ReturnType<typeof setTimeout> | undefined;
-  let controller: ReadableStreamDefaultController<Uint8Array>;
+  let controller: ReadableByteStreamController;
 
   const cleanup = () => {
     if (timeout !== undefined) {
@@ -273,7 +274,8 @@ export function decodeMoondreamStream(
       : new Error("Image reading cancelled"),
   );
 
-  return new ReadableStream<Uint8Array>({
+  const stream: UnderlyingByteSource = {
+    type: "bytes",
     start(nextController) {
       controller = nextController;
       options.signal?.addEventListener("abort", abort, { once: true });
@@ -326,7 +328,8 @@ export function decodeMoondreamStream(
         await reader.cancel(reason).catch(() => {});
       }
     },
-  });
+  };
+  return new ReadableStream(stream);
 }
 
 function buildMoondreamInput(
@@ -714,7 +717,7 @@ function normalizeObjects(value: JsonValue | undefined): AiImageObject[] {
 
 function emitSseEvents(
   input: string,
-  controller: ReadableStreamDefaultController<Uint8Array>,
+  controller: ReadableByteStreamController,
   encoder: TextEncoder,
   state: { cumulativeText: string },
   flush: boolean,
@@ -739,7 +742,7 @@ function emitSseEvents(
     }
     const text = streamEventText(parsed, state);
     if (text) {
-      controller.enqueue(encoder.encode(text));
+      controller.enqueue(byteStreamChunk(encoder.encode(text)));
     }
   }
 }

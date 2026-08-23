@@ -5,6 +5,16 @@ export type BinaryBody = {
   length?: number;
 };
 
+/** Returns a byte-stream-safe view, copying only SharedArrayBuffer-backed input. */
+export function byteStreamChunk(bytes: Uint8Array): Uint8Array<ArrayBuffer> {
+  if (bytes.buffer instanceof ArrayBuffer) {
+    return new Uint8Array(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  }
+  const copy = new Uint8Array(bytes.byteLength);
+  copy.set(bytes);
+  return copy;
+}
+
 const binaryBodyObjectSchema = z.strictObject({
   stream: z.instanceof(ReadableStream),
   length: z.optional(z.number()),
@@ -22,9 +32,7 @@ export const BODY_SYSCALL_NAMES = [
   "fs.transfer.send",
   "fs.transfer.receive",
   "net.fetch",
-  "proc.media.read",
   "conversation.media.read",
-  "proc.media.write",
   "ai.transcription.create",
   "ai.image.read",
   "ai.image.generate",

@@ -1,4 +1,4 @@
-import type { BinaryBody } from "./body";
+import { byteStreamChunk, type BinaryBody } from "./body";
 import {
   BINARY_FRAME_CANCEL,
   BINARY_FRAME_DATA,
@@ -14,7 +14,7 @@ const DEFAULT_CHUNK_BYTES = 1024 * 1024;
 const DEFAULT_IDLE_TIMEOUT_MS = 120_000;
 
 type PendingBinaryBody = {
-  controller: ReadableStreamDefaultController<Uint8Array>;
+  controller: ReadableByteStreamController;
   timeoutId: ReturnType<typeof setTimeout>;
   expectedBytes?: number;
   receivedBytes: number;
@@ -77,33 +77,35 @@ export class BinaryBodyChannel {
     }
 
     const { streamId, length } = descriptor;
+    const source: UnderlyingByteSource = {
+      type: "bytes",
+      start: (controller) => {
+        const abort = () => {
+          if (signal) {
+            this.rejectPending(streamId, abortError(signal));
+          }
+        };
+        this.pending.set(streamId, {
+          controller,
+          timeoutId: this.receiveTimeout(streamId),
+          expectedBytes: length,
+          receivedBytes: 0,
+          signal,
+          abort,
+        });
+        signal?.addEventListener("abort", abort, { once: true });
+        if (signal?.aborted) {
+          abort();
+        }
+      },
+      cancel: async (cause) => {
+        if (this.clearPending(streamId)) {
+          await this.sendCancel(streamId, cause);
+        }
+      },
+    };
     const body: BinaryBody = {
-      stream: new ReadableStream<Uint8Array>({
-        start: (controller) => {
-          const abort = () => {
-            if (signal) {
-              this.rejectPending(streamId, abortError(signal));
-            }
-          };
-          this.pending.set(streamId, {
-            controller,
-            timeoutId: this.receiveTimeout(streamId),
-            expectedBytes: length,
-            receivedBytes: 0,
-            signal,
-            abort,
-          });
-          signal?.addEventListener("abort", abort, { once: true });
-          if (signal?.aborted) {
-            abort();
-          }
-        },
-        cancel: async (cause) => {
-          if (this.clearPending(streamId)) {
-            await this.sendCancel(streamId, cause);
-          }
-        },
-      }),
+      stream: new ReadableStream(source),
     };
     if (length !== undefined) {
       body.length = length;
@@ -146,7 +148,7 @@ export class BinaryBodyChannel {
         );
         return true;
       }
-      pending.controller.enqueue(frame.payload);
+      pending.controller.enqueue(byteStreamChunk(frame.payload));
     }
     if ((frame.flags & BINARY_FRAME_END) !== 0) {
       if (pending.expectedBytes !== undefined && pending.receivedBytes !== pending.expectedBytes) {
