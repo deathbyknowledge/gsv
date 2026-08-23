@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { GatewayEntrypoint } from "./index";
+import { GatewayEntrypoint, TelegramGatewayEntrypoint } from "./index";
 import type { Frame } from "./protocol/frames";
 
 type TrackedBody = { stream: ReadableStream<Uint8Array> };
@@ -13,7 +13,7 @@ function requestFrame(id: string): Frame {
     type: "req",
     id,
     call: "adapter.inbound",
-    args: {},
+    args: { adapter: "telegram" },
   };
 }
 
@@ -33,7 +33,17 @@ function requestFrameWithTrackedBody(id: string): TrackedBodyFixture {
   };
 }
 
-function gatewayWithEnv(value: GatewayTestEnv): GatewayEntrypoint {
+function telegramGatewayWithEnv(value: GatewayTestEnv): TelegramGatewayEntrypoint {
+  // SAFETY: The prototype instance is used to exercise the entrypoint with an injected test environment.
+  const gateway = Object.create(TelegramGatewayEntrypoint.prototype) as TelegramGatewayEntrypoint;
+  Object.defineProperty(gateway, "env", { value });
+  Object.defineProperty(gateway, "servicePeerProfile", {
+    value: { id: "telegram", calls: ["adapter.inbound", "adapter.state.update"] },
+  });
+  return gateway;
+}
+
+function genericGatewayWithEnv(value: GatewayTestEnv): GatewayEntrypoint {
   // SAFETY: The prototype instance is used to exercise the entrypoint with an injected test environment.
   const gateway = Object.create(GatewayEntrypoint.prototype) as GatewayEntrypoint;
   Object.defineProperty(gateway, "env", { value });
@@ -57,14 +67,17 @@ describe("Gateway adapter RPC compatibility", () => {
       ok: true,
       data: { routed: true },
     };
-    const serviceFrame = vi.fn(async () => response);
-    const getByName = vi.fn(() => ({ serviceFrame }));
-    const gateway = gatewayWithEnv({ KERNEL: { getByName } });
+    const peerFrame = vi.fn(async () => response);
+    const getByName = vi.fn(() => ({ peerFrame }));
+    const gateway = telegramGatewayWithEnv({ KERNEL: { getByName } });
     const frame = requestFrame("legacy");
 
     await expect(gateway.serviceFrame(frame)).resolves.toEqual(response);
     expect(getByName).toHaveBeenCalledWith("singleton");
-    expect(serviceFrame).toHaveBeenCalledWith(frame);
+    expect(peerFrame).toHaveBeenCalledWith(
+      { id: "telegram", calls: ["adapter.inbound", "adapter.state.update"] },
+      frame,
+    );
   });
 
   it("accepts the already-deployed managed two-argument serviceFrame call", async () => {
@@ -75,8 +88,8 @@ describe("Gateway adapter RPC compatibility", () => {
       ok: true,
       data: { routed: true },
     };
-    const serviceFrame = vi.fn(async () => response);
-    const getByName = vi.fn(() => ({ serviceFrame }));
+    const peerFrame = vi.fn(async () => response);
+    const getByName = vi.fn(() => ({ peerFrame }));
     const resolveInstallation = vi.fn(async () => ({
       found: true as const,
       installationId: installation.installationId,
@@ -84,7 +97,7 @@ describe("Gateway adapter RPC compatibility", () => {
       canonicalOrigin: "https://rpc-compat.gsv.space",
       state: "active" as const,
     }));
-    const gateway = gatewayWithEnv({
+    const gateway = telegramGatewayWithEnv({
       INSTALLATION_DIRECTORY: { resolveInstallation },
       KERNEL: { getByName },
     });
@@ -93,13 +106,16 @@ describe("Gateway adapter RPC compatibility", () => {
     await expect(gateway.serviceFrame(installation, frame)).resolves.toEqual(response);
     expect(resolveInstallation).toHaveBeenCalledWith(installation.installationId);
     expect(getByName).toHaveBeenCalledWith(installation.installationId);
-    expect(serviceFrame).toHaveBeenCalledWith(frame);
+    expect(peerFrame).toHaveBeenCalledWith(
+      { id: "telegram", calls: ["adapter.inbound", "adapter.state.update"] },
+      frame,
+    );
   });
 
   it("fails closed across deployment modes and cancels untransferred bodies", async () => {
     const error = vi.spyOn(console, "error").mockImplementation(() => {});
     const managedRequest = requestFrameWithTrackedBody("managed-legacy-call");
-    const managedGateway = gatewayWithEnv({
+    const managedGateway = telegramGatewayWithEnv({
       INSTALLATION_DIRECTORY: {},
       KERNEL: {},
     });
@@ -109,7 +125,7 @@ describe("Gateway adapter RPC compatibility", () => {
 
     const getByName = vi.fn();
     const standaloneRequest = requestFrameWithTrackedBody("standalone-scoped-call");
-    const standaloneGateway = gatewayWithEnv({ KERNEL: { getByName } });
+    const standaloneGateway = telegramGatewayWithEnv({ KERNEL: { getByName } });
 
     await expect(standaloneGateway.serviceFrame(
       { installationId: "inst_rpc_compat" },
@@ -123,7 +139,7 @@ describe("Gateway adapter RPC compatibility", () => {
   it("rejects malformed RPC variants and cancels every candidate frame body", async () => {
     const error = vi.spyOn(console, "error").mockImplementation(() => {});
     const getByName = vi.fn();
-    const gateway = gatewayWithEnv({ KERNEL: { getByName } });
+    const gateway = telegramGatewayWithEnv({ KERNEL: { getByName } });
 
     await expect(callServiceFrame(gateway, null)).resolves.toBeNull();
 
@@ -149,6 +165,40 @@ describe("Gateway adapter RPC compatibility", () => {
       null,
     )).resolves.toBeNull();
     expect(extraArgument.cancelled()).toBe("Gateway service request failed");
+    expect(getByName).not.toHaveBeenCalled();
+    error.mockRestore();
+  });
+
+  it("derives an attenuated peer for a legacy generic adapter binding", async () => {
+    const response = {
+      type: "res" as const,
+      id: "legacy-binding",
+      ok: true,
+      data: { routed: true },
+    };
+    const peerFrame = vi.fn(async () => response);
+    const getByName = vi.fn(() => ({ peerFrame }));
+    const gateway = genericGatewayWithEnv({ KERNEL: { getByName } });
+    const frame = requestFrame("legacy-binding");
+
+    await expect(gateway.serviceFrame(frame)).resolves.toEqual(response);
+    expect(peerFrame).toHaveBeenCalledWith(
+      { id: "telegram", calls: ["adapter.inbound", "adapter.state.update"] },
+      frame,
+    );
+  });
+
+  it("rejects an unknown identity on a legacy generic adapter binding", async () => {
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    const request = requestFrameWithTrackedBody("unknown-adapter");
+    if (request.frame.type === "req") {
+      request.frame.args = { adapter: "unknown" };
+    }
+    const getByName = vi.fn();
+    const gateway = genericGatewayWithEnv({ KERNEL: { getByName } });
+
+    await expect(gateway.serviceFrame(request.frame)).resolves.toBeNull();
+    expect(request.cancelled()).toBe("Gateway service request failed");
     expect(getByName).not.toHaveBeenCalled();
     error.mockRestore();
   });

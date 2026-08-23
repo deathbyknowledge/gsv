@@ -58,6 +58,7 @@ type MakeContextOptions = {
   processState?: "idle" | "queued" | "running" | "waiting_tool" | "waiting_hil";
   connection?: KernelContext["connection"];
   installationIdentity?: KernelContext["installationIdentity"];
+  request?: KernelContext["request"];
 };
 // SAFETY: test fixture is constructed with the asserted kernel domain shape.
 const TEST_INSTALLATION_ID = "singleton" as KernelContext["installationId"];
@@ -453,6 +454,9 @@ function makeContext(
       getPersonalAgentUid: vi.fn(() => personalAgent.uid),
       isPersonalAgentUid: vi.fn((uid: number) => uid === personalAgent.uid),
     },
+    caps: {
+      resolve: vi.fn(() => ["proc.list"]),
+    },
     procs: {
       get: vi.fn((pid: string) => pid === "pid-1" ? processRecord : null),
       getOwnerUid: vi.fn((pid: string) => pid === "pid-1" ? human.uid : null),
@@ -529,6 +533,38 @@ function makeContext(
       void promise;
     }),
     broadcastToUserUid: vi.fn(),
+    request: options.request ?? vi.fn(async (frame) => {
+      if (frame.call !== "proc.list") {
+        return {
+          type: "res",
+          id: frame.id,
+          ok: false,
+          error: { code: 404, message: "Unknown syscall" },
+        };
+      }
+      return {
+        type: "res",
+        id: frame.id,
+        ok: true,
+        data: {
+          processes: [{
+            pid: processRecord.processId,
+            uid: processRecord.ownerUid,
+            username: processRecord.username,
+            interactive: processRecord.interactive,
+            personal: processRecord.isPersonalController,
+            parentPid: processRecord.parentPid,
+            state: processRecord.state,
+            activeRunId: processRecord.activeRunId,
+            queuedCount: processRecord.queuedCount,
+            lastActiveAt: processRecord.lastActiveAt,
+            label: processRecord.label,
+            createdAt: processRecord.createdAt,
+            cwd: processRecord.cwd,
+          }],
+        },
+      };
+    }),
     identity: options.identity ?? {
       role: "service",
       service: "test",
@@ -1969,7 +2005,7 @@ describe("adapter lifecycle handlers", () => {
       reply: { text: expect.stringContaining("/home - leave the work session") },
     });
     expect(replay.reply?.text).not.toContain("/work");
-    expect(replay.reply?.text).not.toContain("/list");
+    expect(replay.reply?.text).toContain("/list - list personal home and work processes");
     expect(ctx.adapters.surfaceRoutes.setRoute).not.toHaveBeenCalled();
     expect(receipts.complete).toHaveBeenCalledTimes(2);
   });
@@ -2911,9 +2947,10 @@ describe("adapter lifecycle handlers", () => {
     );
   });
 
-  it.each(["/work helper", "/list"])("does not expose the removed DM command %s", async (text) => {
+  it("does not expose the removed /work command", async () => {
     const status = { upsert: vi.fn() };
     const ctx = makeContext({}, status, { routePid: null });
+    const text = "/work helper";
 
     const result = await handleAdapterInbound(
       {
@@ -2931,9 +2968,68 @@ describe("adapter lifecycle handlers", () => {
 
     expect(result.reply?.text).toContain(`Unknown command: ${text.split(" ")[0]}`);
     expect(result.reply?.text).not.toContain("/work -");
-    expect(result.reply?.text).not.toContain("/list -");
+    expect(result.reply?.text).toContain("/list -");
     expect(ctx.procs.spawn).not.toHaveBeenCalled();
     expect(ctx.adapters.surfaceRoutes.setRoute).not.toHaveBeenCalled();
+  });
+
+  it("runs /list through a delegated linked-user peer", async () => {
+    const request = vi.fn(async (frame, delegated: KernelContext) => ({
+      type: "res" as const,
+      id: frame.id,
+      ok: true as const,
+      data: {
+        processes: [{
+          pid: "pid-1",
+          uid: 1000,
+          username: "sam-agent",
+          interactive: true,
+          personal: true,
+          parentPid: null,
+          state: "idle" as const,
+          activeRunId: null,
+          queuedCount: 0,
+          lastActiveAt: null,
+          label: "Sam",
+          createdAt: 1,
+          cwd: "/home/sam-agent",
+        }],
+      },
+      delegated,
+    }));
+    const ctx = makeContext({}, { upsert: vi.fn() }, { request });
+
+    const result = await handleAdapterInbound({
+      adapter: "whatsapp",
+      accountId: "primary",
+      message: {
+        messageId: "msg-list",
+        surface: { kind: "dm", id: "dm-1" },
+        actor: { id: "wa:+123" },
+        text: "/list",
+      },
+    }, ctx);
+
+    expect(result.reply?.text).toContain("[PERSONAL HOME] Sam [idle] (pid-1)");
+    expect(request).toHaveBeenCalledOnce();
+    const delegated = request.mock.calls[0][1];
+    expect(delegated.peer).toMatchObject({
+      peer: {
+        principal: { kind: "human", account: { uid: 1000 } },
+        grant: { calls: ["proc.list"], signals: [], implements: [] },
+      },
+      provenance: {
+        kind: "adapter-link",
+        serviceId: "whatsapp",
+        accountId: "primary",
+        actorId: "wa:+123",
+      },
+    });
+    expect(delegated.identity).toMatchObject({
+      role: "user",
+      process: { uid: 1000 },
+      capabilities: ["proc.list"],
+    });
   });
 
   it("returns home immediately while a selected work process is still running", async () => {

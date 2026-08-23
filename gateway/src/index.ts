@@ -45,6 +45,7 @@ import { createInstallationStorage } from "./installation/storage";
 import { createInstallationRipgit } from "./installation/ripgit";
 import { buildGitProxyRequest, getBasicAuth, matchGitPath } from "./git";
 import * as z from "zod/mini";
+import type { ServicePeerProfile } from "./kernel/peer";
 
 export { Kernel } from "./kernel/do";
 export { Process } from "./process/do";
@@ -147,10 +148,19 @@ export default {
     return new Response("Not Found", { status: 404 });
   },
 } satisfies ExportedHandler<Env>;
+
+const ADAPTER_SERVICE_CALLS = ["adapter.inbound", "adapter.state.update"] as const;
+const LEGACY_ADAPTER_IDS = new Set(["telegram", "whatsapp", "discord", "test"]);
+const legacyAdapterServiceArgsSchema = z.object({
+  adapter: z.string(),
+});
+
 export class GatewayEntrypoint
   extends WorkerEntrypoint<Env & GatewayInstallationBindings>
   implements GatewayAdapterInterface, ManagedMailGatewayService, ManagedTelegramGatewayService
 {
+  protected readonly servicePeerProfile: ServicePeerProfile | null = null;
+
   serviceFrame(frame: Frame): Promise<Frame | null>;
   serviceFrame(
     installation: AdapterInstallationContext,
@@ -163,18 +173,22 @@ export class GatewayEntrypoint
   ): Promise<Frame | null> {
     try {
       if (args.length === 1) {
+        const frame = requireAdapterServiceFrame(args[0]);
         return await routeAdapterServiceFrame(
           this.env,
           { installationId: SINGLETON_INSTALLATION_ID },
-          requireAdapterServiceFrame(args[0]),
+          resolveAdapterServicePeerProfile(this.servicePeerProfile, frame),
+          frame,
         );
       }
       const installation = adapterInstallationContextSchema.safeParse(args[0]);
       if (args.length === 2 && installation.success) {
+        const frame = requireAdapterServiceFrame(args[1]);
         return await routeAdapterServiceFrame(
           this.env,
           installation.data,
-          requireAdapterServiceFrame(args[1]),
+          resolveAdapterServicePeerProfile(this.servicePeerProfile, frame),
+          frame,
         );
       }
       throw new Error("Gateway serviceFrame RPC arguments are invalid");
@@ -267,9 +281,38 @@ export class GatewayEntrypoint
   }
 }
 
+export class TelegramGatewayEntrypoint extends GatewayEntrypoint {
+  protected override readonly servicePeerProfile = {
+    id: "telegram",
+    calls: ADAPTER_SERVICE_CALLS,
+  } satisfies ServicePeerProfile;
+}
+
+export class WhatsAppGatewayEntrypoint extends GatewayEntrypoint {
+  protected override readonly servicePeerProfile = {
+    id: "whatsapp",
+    calls: ADAPTER_SERVICE_CALLS,
+  } satisfies ServicePeerProfile;
+}
+
+export class DiscordGatewayEntrypoint extends GatewayEntrypoint {
+  protected override readonly servicePeerProfile = {
+    id: "discord",
+    calls: ADAPTER_SERVICE_CALLS,
+  } satisfies ServicePeerProfile;
+}
+
+export class TestGatewayEntrypoint extends GatewayEntrypoint {
+  protected override readonly servicePeerProfile = {
+    id: "test",
+    calls: ADAPTER_SERVICE_CALLS,
+  } satisfies ServicePeerProfile;
+}
+
 async function routeAdapterServiceFrame(
   bindings: Env & GatewayInstallationBindings,
   installation: AdapterInstallationContext,
+  profile: ServicePeerProfile,
   frame: Frame,
 ): Promise<Frame | null> {
   const body = adapterServiceFrameBody(frame);
@@ -295,9 +338,9 @@ async function routeAdapterServiceFrame(
     // SAFETY: this namespace is generated from Kernel; the narrow view avoids
     // recursively expanding every unrelated RPC method in Cloudflare's stub type.
     const kernel = kernelStub as {
-      serviceFrame(frame: Frame): Promise<Frame | null>;
+      peerFrame(profile: ServicePeerProfile, frame: Frame): Promise<Frame | null>;
     };
-    return await kernel.serviceFrame(frame);
+    return await kernel.peerFrame(profile, frame);
   } catch (error) {
     if (body && !body.stream.locked) {
       await body.stream.cancel("Gateway service request failed").catch(() => {});
@@ -311,6 +354,22 @@ function requireAdapterServiceFrame(value: Frame): Frame {
   const parsed = adapterGatewayFrameSchema.safeParse(value);
   if (!parsed.success) throw new Error("Gateway serviceFrame frame is invalid");
   return value;
+}
+
+function resolveAdapterServicePeerProfile(
+  configured: ServicePeerProfile | null,
+  frame: Frame,
+): ServicePeerProfile {
+  if (configured) return configured;
+  if (frame.type !== "req") {
+    throw new Error("Legacy adapter service bindings accept only requests");
+  }
+  const args = legacyAdapterServiceArgsSchema.safeParse(frame.args);
+  const adapter = args.success ? args.data.adapter.trim().toLowerCase() : "";
+  if (!LEGACY_ADAPTER_IDS.has(adapter)) {
+    throw new Error("Legacy adapter service identity is invalid");
+  }
+  return { id: adapter, calls: ADAPTER_SERVICE_CALLS };
 }
 
 type AdapterServiceRpcArgument = AdapterInstallationContext | Frame;

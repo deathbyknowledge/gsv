@@ -1,7 +1,7 @@
 import type {
-  GsvDriverContext,
-  GsvDriverHandler,
-  GsvDriverRequest,
+  GsvEndpointContext,
+  GsvEndpointHandler,
+  GsvEndpointRequest,
   GsvResponse,
 } from "@humansandmachines/gsv/client";
 import type { ActivityEntry, ActivityKind, ActivityStatus } from "../shared/ui-state";
@@ -15,7 +15,7 @@ export type BrowserTargetActivity = Omit<ActivityEntry, "id" | "at">;
 export type BrowserTargetActivityObserver = (activity: BrowserTargetActivity) => void;
 
 export type BrowserTargetDriver = {
-  handle: GsvDriverHandler;
+  handle: GsvEndpointHandler;
 };
 
 export function createBrowserTargetDriver(
@@ -73,7 +73,7 @@ export function createBrowserTargetDriver(
   };
 }
 
-function activityForFrame(frame: GsvDriverRequest): BrowserTargetActivity {
+function activityForFrame(frame: GsvEndpointRequest): BrowserTargetActivity {
   if (frame.call === "shell.exec") {
     // SAFETY: gateway syscall arguments are JSON protocol values.
     const input = shellInput(frame.args as ExtensionBoundaryValue);
@@ -142,10 +142,8 @@ function classifyShellCommand(command: string): ActivityKind {
   return "shell";
 }
 
-function currentTargetId(context: GsvDriverContext): string | undefined {
-  return context.connection.identity.role === "driver"
-    ? context.connection.identity.device
-    : undefined;
+function currentTargetId(context: GsvEndpointContext): string | undefined {
+  return context.connection.peer.id;
 }
 
 function classifyFsCall(call: string): ActivityKind {

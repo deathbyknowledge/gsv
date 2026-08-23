@@ -29,7 +29,8 @@ A future product may still need durable policies such as:
 - binding a named surface to a Conversation rather than directly to a PID;
 - adding an authorized Process as a Conversation handler or observer;
 - forwarding an explicitly committed Message to another Conversation; or
-- attaching a live client to an endpoint with negotiated facilities.
+- binding a durable offline delivery policy to an endpoint without turning its
+  live peer session into message storage.
 
 Those features must extend the current primitives instead of creating a second
 message model. In particular:
@@ -46,7 +47,7 @@ message model. In particular:
   Messages merely because a route exists.
 
 Any concrete graph design should begin from Conversation membership, directed
-endpoint delivery, and the shared protocol-peer work—not from the removed
+endpoint delivery, and the shared protocol-peer model—not from the removed
 automatic Process-output graph.
 
 ## See also

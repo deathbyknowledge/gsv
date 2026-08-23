@@ -7,7 +7,6 @@
 
 import type { MCPClientManager } from "agents/mcp/client";
 import type {
-  ConnectionIdentity,
   JsonObject,
   JsonValue,
   SchedulerRunArgs,
@@ -31,6 +30,9 @@ import type { MailboxStore } from "./mailbox-store";
 import type { McpAddConnectionInput, McpAddConnectionResult } from "./sys/mcp";
 import type { InstallationIdentity } from "../installation/identity";
 import type { KernelConnection, KernelConnectionState } from "./connection";
+import type { PeerContext } from "./peer";
+import type { RequestFrame, ResponseFrame } from "../protocol/frames";
+import type { ConnectionIdentity } from "./identity";
 
 export type KernelContext = {
   env: Env;
@@ -53,6 +55,7 @@ export type KernelContext = {
   schedules: ScheduleStore;
   mailboxes: MailboxStore;
   connection: KernelConnection<KernelConnectionState> | null;
+  peer?: PeerContext;
   identity?: ConnectionIdentity;
   processId?: string;
   processRunId?: string;
@@ -88,6 +91,11 @@ export type KernelContext = {
     args: JsonObject,
     signal?: AbortSignal,
   ) => ReturnType<MCPClientManager["callTool"]>;
+  request?: (
+    frame: RequestFrame,
+    ctx: KernelContext,
+    signal?: AbortSignal,
+  ) => Promise<ResponseFrame>;
 };
 
 export type CallerOwnerContext = {

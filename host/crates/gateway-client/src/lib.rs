@@ -8,7 +8,5 @@ pub use body::{
     RpcResponse,
 };
 pub use client::{GatewayAuth, GsvClient, KernelClient, ProcSendResult};
-pub use connection::{
-    ClientIdentity, Connection, ConnectionOptions, ConnectionRole, GatewayRpcError,
-};
+pub use connection::{Connection, ConnectionOptions, GatewayRpcError, PeerIdentity};
 pub use protocol::*;

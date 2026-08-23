@@ -141,11 +141,18 @@ function integrationDependencyConfig(
     observability: config.observability,
     durable_objects: config.durable_objects,
     migrations: config.migrations,
-    services: [{
-      binding: "GATEWAY",
-      service: gatewayService,
-      entrypoint: "GatewayEntrypoint",
-    }],
+    services: [
+      {
+        binding: "TELEGRAM_GATEWAY",
+        service: gatewayService,
+        entrypoint: "TelegramGatewayEntrypoint",
+      },
+      {
+        binding: "DISCORD_GATEWAY",
+        service: gatewayService,
+        entrypoint: "DiscordGatewayEntrypoint",
+      },
+    ],
   };
 }
 

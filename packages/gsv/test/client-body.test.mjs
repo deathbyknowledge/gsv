@@ -24,7 +24,7 @@ class FakeWebSocket extends EventTarget {
   readyState = 0;
   sent = [];
   closeCalls = [];
-  connectSignals = ["device.pong"];
+  connectSignals = ["peer.pong"];
 
   constructor() {
     super();
@@ -47,11 +47,28 @@ class FakeWebSocket extends EventTarget {
         id: frame.id,
         ok: true,
         data: {
-          protocol: 2,
+          protocol: 3,
           server: { connectionId: "test" },
-          identity: { role: "user" },
-          syscalls: [],
-          signals: this.connectSignals,
+          peer: {
+            id: frame.args.peer.id,
+            sessionId: "test",
+            principal: {
+              kind: "human",
+              account: {
+                uid: 1000,
+                gid: 1000,
+                gids: [1000],
+                username: "test",
+                home: "/home/test",
+                cwd: "/home/test",
+              },
+            },
+            grant: {
+              calls: [],
+              signals: this.connectSignals,
+              implements: frame.args.peer.implements ?? [],
+            },
+          },
         },
       })));
     }
@@ -742,9 +759,9 @@ test("keeps a caller-owned mail delivery id after a lost response", async () => 
   client.close();
 });
 
-test("cancels an inbound driver request without publishing the reserved signal", async () => {
+test("cancels an inbound endpoint request without publishing the reserved signal", async () => {
   const client = new GSVClient({ WebSocket: FakeWebSocket });
-  const driver = client.driver({ keepalive: false });
+  const driver = client.endpoint({ keepalive: false });
   let requestSignal;
   let started;
   const requestStarted = new Promise((resolve) => {
@@ -757,7 +774,7 @@ test("cancels an inbound driver request without publishing the reserved signal",
     return { data: { status: "completed", output: "late", exitCode: 0 } };
   });
   await driver.connect({
-    deviceId: "test-driver",
+    peerId: "test-driver",
     url: "ws://test",
     username: "test",
     password: "test",
@@ -791,13 +808,13 @@ test("cancels an inbound driver request without publishing the reserved signal",
   driver.close();
 });
 
-test("keeps driver acknowledgement checks opt-in", async () => {
+test("keeps endpoint acknowledgement checks opt-in", async () => {
   const client = new GSVClient({ WebSocket: FakeWebSocket });
-  const driver = client.driver({ keepalive: { intervalMs: 10 } });
+  const driver = client.endpoint({ keepalive: { intervalMs: 10 } });
   driver.implement("shell.exec", async () => ({ data: {} }));
 
   await driver.connect({
-    deviceId: "test-driver",
+    peerId: "test-driver",
     url: "ws://test",
     username: "test",
     password: "test",
@@ -805,14 +822,14 @@ test("keeps driver acknowledgement checks opt-in", async () => {
   await new Promise((resolve) => setTimeout(resolve, 20));
 
   const ping = JSON.parse(FakeWebSocket.instance.sent.at(-1));
-  assert.equal(ping.signal, "device.ping");
+  assert.equal(ping.signal, "peer.ping");
   assert.equal(ping.payload.nonce, undefined);
   driver.close();
 });
 
 test("uses unacknowledged keepalives when the gateway does not advertise pong support", async () => {
   const client = new GSVClient({ WebSocket: LegacyGatewayWebSocket });
-  const driver = client.driver({
+  const driver = client.endpoint({
     keepalive: {
       intervalMs: 10,
       acknowledgement: { timeoutMs: 20 },
@@ -821,7 +838,7 @@ test("uses unacknowledged keepalives when the gateway does not advertise pong su
   driver.implement("shell.exec", async () => ({ data: {} }));
 
   await driver.connect({
-    deviceId: "test-driver",
+    peerId: "test-driver",
     url: "ws://test",
     username: "test",
     password: "test",
@@ -829,15 +846,15 @@ test("uses unacknowledged keepalives when the gateway does not advertise pong su
   await new Promise((resolve) => setTimeout(resolve, 40));
 
   const ping = JSON.parse(LegacyGatewayWebSocket.instance.sent.at(-1));
-  assert.equal(ping.signal, "device.ping");
+  assert.equal(ping.signal, "peer.ping");
   assert.equal(ping.payload.nonce, undefined);
   assert.equal(client.getStatus().state, "connected");
   driver.close();
 });
 
-test("disconnects a driver when its keepalive acknowledgement is missing", async () => {
+test("disconnects an endpoint when its keepalive acknowledgement is missing", async () => {
   const client = new GSVClient({ WebSocket: FakeWebSocket });
-  const driver = client.driver({
+  const driver = client.endpoint({
     keepalive: {
       intervalMs: 1_000,
       acknowledgement: { timeoutMs: 20 },
@@ -845,7 +862,7 @@ test("disconnects a driver when its keepalive acknowledgement is missing", async
   });
   driver.implement("shell.exec", async () => ({ data: {} }));
   await driver.connect({
-    deviceId: "test-driver",
+    peerId: "test-driver",
     url: "ws://test",
     username: "test",
     password: "test",
@@ -855,38 +872,38 @@ test("disconnects a driver when its keepalive acknowledgement is missing", async
 
   socket.receive(JSON.stringify({
     type: "sig",
-    signal: "device.pong",
+    signal: "peer.pong",
     payload: { nonce: `${ping.payload.nonce}-stale` },
   }));
   await new Promise((resolve) => setTimeout(resolve, 40));
 
   assert.equal(client.getStatus().state, "disconnected");
-  assert.equal(client.getStatus().message, "device heartbeat timed out");
+  assert.equal(client.getStatus().message, "peer heartbeat timed out");
   driver.close();
 });
 
-test("disconnects a driver when an acknowledged keepalive cannot be sent", async () => {
+test("disconnects an endpoint when an acknowledged keepalive cannot be sent", async () => {
   const client = new GSVClient({ WebSocket: SignalFailingWebSocket });
-  const driver = client.driver({
+  const driver = client.endpoint({
     keepalive: { acknowledgement: {} },
   });
   driver.implement("shell.exec", async () => ({ data: {} }));
 
   await driver.connect({
-    deviceId: "test-driver",
+    peerId: "test-driver",
     url: "ws://test",
     username: "test",
     password: "test",
   });
 
   assert.equal(client.getStatus().state, "disconnected");
-  assert.equal(client.getStatus().message, "device heartbeat send failed");
+  assert.equal(client.getStatus().message, "peer heartbeat send failed");
   driver.close();
 });
 
-test("accepts only the matching driver keepalive acknowledgement", async () => {
+test("accepts only the matching endpoint keepalive acknowledgement", async () => {
   const client = new GSVClient({ WebSocket: FakeWebSocket });
-  const driver = client.driver({
+  const driver = client.endpoint({
     keepalive: {
       intervalMs: 1_000,
       acknowledgement: { timeoutMs: 20 },
@@ -894,7 +911,7 @@ test("accepts only the matching driver keepalive acknowledgement", async () => {
   });
   driver.implement("shell.exec", async () => ({ data: {} }));
   await driver.connect({
-    deviceId: "test-driver",
+    peerId: "test-driver",
     url: "ws://test",
     username: "test",
     password: "test",
@@ -904,7 +921,7 @@ test("accepts only the matching driver keepalive acknowledgement", async () => {
 
   socket.receive(JSON.stringify({
     type: "sig",
-    signal: "device.pong",
+    signal: "peer.pong",
     payload: { nonce: ping.payload.nonce, at: Date.now() },
   }));
   await new Promise((resolve) => setTimeout(resolve, 40));
@@ -915,7 +932,7 @@ test("accepts only the matching driver keepalive acknowledgement", async () => {
 
 test("cancelling an inbound request terminates its incoming body", async () => {
   const client = new GSVClient({ WebSocket: FakeWebSocket });
-  const driver = client.driver({ keepalive: false });
+  const driver = client.endpoint({ keepalive: false });
   let reading;
   const bodyReading = new Promise((resolve) => {
     reading = resolve;
@@ -926,7 +943,7 @@ test("cancelling an inbound request terminates its incoming body", async () => {
     return { data: {} };
   });
   await driver.connect({
-    deviceId: "body-driver",
+    peerId: "body-driver",
     url: "ws://test",
     username: "test",
     password: "test",
@@ -957,7 +974,7 @@ test("cancelling an inbound request terminates its incoming body", async () => {
 
 test("cancelling an inbound request stops its response body", async () => {
   const client = new GSVClient({ WebSocket: FakeWebSocket });
-  const driver = client.driver({ keepalive: false });
+  const driver = client.endpoint({ keepalive: false });
   let sourceCancelled;
   const cancelled = new Promise((resolve) => {
     sourceCancelled = resolve;
@@ -972,7 +989,7 @@ test("cancelling an inbound request stops its response body", async () => {
     },
   }));
   await driver.connect({
-    deviceId: "response-driver",
+    peerId: "response-driver",
     url: "ws://test",
     username: "test",
     password: "test",

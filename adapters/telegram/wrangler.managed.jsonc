@@ -29,7 +29,7 @@
     {
       "binding": "GATEWAY",
       "service": "gsv-managed-gateway",
-      "entrypoint": "GatewayEntrypoint"
+      "entrypoint": "TelegramGatewayEntrypoint"
     }
   ]
 }

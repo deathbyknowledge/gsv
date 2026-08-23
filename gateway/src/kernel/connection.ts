@@ -1,13 +1,14 @@
 import { z } from "zod";
-import type { ConnectionIdentity } from "@humansandmachines/gsv/protocol";
+import type { ConnectedPeer } from "@humansandmachines/gsv/protocol";
 
 export type KernelWebSocketMessage = string | ArrayBuffer;
 
 export type KernelConnectionState = {
   step: "pending" | "connected" | "superseded";
-  identity?: ConnectionIdentity;
+  peer?: ConnectedPeer;
   clientId?: string;
   clientPlatform?: string;
+  credentialMethod?: "password" | "token";
   observedProcessIds?: string[];
 };
 
@@ -20,32 +21,26 @@ const PROCESS_IDENTITY_SCHEMA = z.object({
   cwd: z.string(),
 });
 
-const CONNECTION_IDENTITY_SCHEMA = z.discriminatedUnion("role", [
-  z.object({
-    role: z.literal("user"),
-    process: PROCESS_IDENTITY_SCHEMA,
-    capabilities: z.array(z.string()),
+const CONNECTED_PEER_SCHEMA = z.object({
+  id: z.string(),
+  sessionId: z.string(),
+  principal: z.object({
+    kind: z.enum(["human", "machine", "service"]),
+    account: PROCESS_IDENTITY_SCHEMA,
   }),
-  z.object({
-    role: z.literal("driver"),
-    process: PROCESS_IDENTITY_SCHEMA,
-    capabilities: z.array(z.string()),
-    device: z.string(),
+  grant: z.object({
+    calls: z.array(z.string()),
+    signals: z.array(z.string()),
     implements: z.array(z.string()),
   }),
-  z.object({
-    role: z.literal("service"),
-    process: PROCESS_IDENTITY_SCHEMA,
-    capabilities: z.array(z.string()),
-    channel: z.string(),
-  }),
-]);
+});
 
 const KERNEL_CONNECTION_STATE_SCHEMA = z.object({
   step: z.enum(["pending", "connected", "superseded"]),
-  identity: CONNECTION_IDENTITY_SCHEMA.optional(),
+  peer: CONNECTED_PEER_SCHEMA.optional(),
   clientId: z.string().optional(),
   clientPlatform: z.string().optional(),
+  credentialMethod: z.enum(["password", "token"]).optional(),
   observedProcessIds: z.array(z.string()).optional(),
 });
 

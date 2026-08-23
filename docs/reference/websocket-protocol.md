@@ -4,7 +4,7 @@ Gateway control requests, responses, and signals use JSON text frames over
 `GET /ws`. Requests and successful responses may attach a byte stream carried
 by binary frames.
 
-The current protocol is syscall-based:
+Protocol version 3 is peer- and syscall-based:
 
 - requests carry a syscall name in `call`
 - responses carry success data in `data`
@@ -150,7 +150,10 @@ only after setup succeeds.
 
 ## `sys.connect`
 
-`sys.connect` is the handshake syscall. It authenticates the caller, assigns identity, registers drivers or services, and returns the allowed syscall/signal surface.
+`sys.connect` is the handshake syscall. It authenticates the principal, binds a
+live peer session, and returns the Kernel-authoritative call, signal, and
+implementation grants. The request does not contain a role. Principal kind is
+derived from the password or token used to authenticate.
 
 ### Request
 
@@ -160,12 +163,12 @@ only after setup succeeds.
   "id": "uuid",
   "call": "sys.connect",
   "args": {
-    "protocol": 2,
-    "client": {
-      "id": "client-123",
+    "protocol": 3,
+    "peer": {
+      "id": "desktop-alice",
       "version": "0.1.0",
       "platform": "linux",
-      "role": "user"
+      "implements": ["fs.*", "shell.exec"]
     },
     "auth": {
       "username": "alice",
@@ -177,16 +180,19 @@ only after setup succeeds.
 
 | Field | Type | Required | Description |
 |---|---|---|---|
-| `protocol` | `number` | Yes | Must currently be `2` |
-| `client.id` | `string` | Yes | Client identifier |
-| `client.version` | `string` | Yes | Client version |
-| `client.platform` | `string` | Yes | Platform string |
-| `client.role` | `"user" \| "driver" \| "service"` | Yes | Connection role |
-| `client.channel` | `string` | No | Required for `service` role |
-| `driver.implements` | `string[]` | No | Required for `driver` role |
+| `protocol` | `number` | Yes | Must currently be `3` |
+| `peer.id` | `string` | Yes | Stable application, machine, or service identity |
+| `peer.version` | `string` | Yes | Peer version |
+| `peer.platform` | `string` | Yes | Platform string |
+| `peer.implements` | `string[]` | No | Requested reverse syscall implementation patterns. Machine credentials require at least one. |
 | `auth.username` | `string` | No | Required when authenticating |
 | `auth.password` | `string` | No | User-password auth |
-| `auth.token` | `string` | No | Token auth. Required for machine connections. |
+| `auth.token` | `string` | No | User, node, or service token auth |
+
+Password and token are mutually exclusive. A node token is bound to the exact
+`peer.id` recorded when the token was created. `peer.implements` is an
+advertisement, not authority: the Kernel validates it and independently derives
+the returned grants.
 
 ### Response
 
@@ -196,43 +202,49 @@ only after setup succeeds.
   "id": "uuid",
   "ok": true,
   "data": {
-    "protocol": 2,
+    "protocol": 3,
     "server": {
       "version": "0.4.0",
       "release": "dev",
       "features": ["ai.provider.gsv"],
       "connectionId": "conn-123"
     },
-    "identity": {
-      "role": "user",
-      "process": {
-        "uid": 1000,
-        "gid": 1000,
-        "gids": [1000],
-        "username": "alice",
-        "home": "/home/alice",
-        "cwd": "/home/alice",
-        "workspaceId": null
+    "peer": {
+      "id": "desktop-alice",
+      "sessionId": "conn-123",
+      "principal": {
+        "kind": "human",
+        "account": {
+          "uid": 1000,
+          "gid": 1000,
+          "gids": [1000, 100],
+          "username": "alice",
+          "home": "/home/alice",
+          "cwd": "/home/alice"
+        }
       },
-      "capabilities": ["fs.*", "proc.*"]
-    },
-    "syscalls": ["fs.read", "proc.send"],
-    "signals": ["proc.run.output", "proc.run.finished"]
+      "grant": {
+        "calls": ["fs.*", "proc.*"],
+        "signals": ["proc.changed", "message.committed", "peer.pong"],
+        "implements": ["fs.*", "shell.exec"]
+      }
+    }
   }
 }
 ```
-
-**Role-specific identity payloads**
 
 `server.features` is an optional list of runtime capabilities advertised by the
 connected deployment. Managed gateways with the private GSV inference binding
 include `ai.provider.gsv`; standalone gateways omit it.
 
-| Role | Extra fields |
-|---|---|
-| `user` | none |
-| `driver` | `device`, `implements` |
-| `service` | `channel` |
+The three grant axes are independent:
+
+- `calls` lists syscall patterns the peer may invoke;
+- `signals` lists asynchronous signals it may receive; and
+- `implements` lists syscall patterns GSV may route back to this peer.
+
+`peer.id` is stable across reconnects. `peer.sessionId` identifies this live
+socket incarnation. Neither is a credential.
 
 ---
 
@@ -240,7 +252,7 @@ include `ai.provider.gsv`; standalone gateways omit it.
 
 The Kernel decodes each incoming text frame once at the WebSocket boundary.
 Requests are validated against the argument contract for their exact `call`.
-Successful driver responses are validated against the result contract recorded
+Successful endpoint responses are validated against the result contract recorded
 on the matching route. Dispatch and syscall handlers therefore receive trusted
 protocol types and do not repeat structural type checks. Authorization,
 resource limits, and other semantic policy remain the responsibility of the
@@ -250,8 +262,8 @@ The websocket protocol is uniform: every operation is a `req` frame with a sysca
 
 | Domain | Behavior |
 |---|---|
-| `fs.*` | Native on `gsv`, or routed to a driver when `args.target` names a device |
-| `shell.exec` | Native on `gsv`, routed to a driver when `args.target` names a device, or routed by `args.sessionId` for an existing shell session |
+| `fs.*` | Native on `gsv`, or routed to an endpoint when `args.target` names a registered target |
+| `shell.exec` | Native on `gsv`, routed to an endpoint when `args.target` names a registered target, or routed by `args.sessionId` for an existing shell session |
 | `proc.*` | Kernel and Process DO control plane |
 | `conversation.*` | Kernel-owned canonical conversation state and media |
 | `repo.*`, `sys.*`, `sched.*`, `signal.*` | Kernel-handled |
@@ -259,7 +271,10 @@ The websocket protocol is uniform: every operation is a `req` frame with a sysca
 | `ai.tools`, `ai.config` | Kernel-internal process bootstrap path |
 | Other `ai.*` | Capability-gated inference and media operations |
 
-For routed `fs.*` and initial `shell.exec` requests, the gateway strips `args.target` before forwarding the request frame to the driver. Shell continuations use `args.sessionId`; the gateway looks up the session owner and forwards the same `shell.exec` frame to that device.
+For routed `fs.*` and initial `shell.exec` requests, the gateway strips
+`args.target` before forwarding the request frame to the endpoint. Shell
+continuations use `args.sessionId`; the gateway looks up the session owner and
+forwards the same `shell.exec` frame to that endpoint.
 
 Use the [Syscalls Reference](/reference/syscalls) for the full syscall surface.
 
@@ -267,11 +282,11 @@ Use the [Syscalls Reference](/reference/syscalls) for the full syscall surface.
 
 ## Signals
 
-The connect response advertises the signal set allowed for the role.
+The connect response advertises the signal set granted to that peer.
 
-Current role defaults from `buildSignalList()`:
+Current principal defaults from `buildSignalList()`:
 
-### User connections
+### Human peers
 
 - `proc.changed`
 - `proc.run.started`
@@ -323,14 +338,22 @@ Current role defaults from `buildSignalList()`:
 - `device.status`
 - `adapter.status`
 - `mcp.changed`
+- `peer.pong`
 
-### Driver connections
+### Machine peers
 
 - `device.status`
+- `peer.pong`
 
-### Service connections
+### Service peers
 
-Service connections receive no ambient signals. Adapter workers report state through the gateway service binding.
+Service peers receive no ambient signals. Adapter workers report state through
+the gateway service binding.
+
+An endpoint may send `peer.ping` with an optional payload and sequence. The
+Kernel echoes them in `peer.pong` while that endpoint is the active session for
+its registered target. This is a generic endpoint heartbeat, not a machine-only
+protocol.
 
 `proc.run.*` signals are raw Process activity emitted by Process DOs. In the
 current Kernel:
@@ -372,7 +395,8 @@ request:
 The `id` is the original request ID. The optional reason is diagnostic only;
 request ownership is determined from the authenticated connection or Process
 route. The gateway removes matching routes and body pumps before forwarding the
-signal to a driver. Drivers stop the active handler and suppress late responses.
+signal to an endpoint. Endpoints stop the active handler and suppress late
+responses.
 Unknown, duplicate, and post-completion cancellation signals have no effect.
 
 Process abort, reset, kill, user supersession, route expiry, client timeout, and

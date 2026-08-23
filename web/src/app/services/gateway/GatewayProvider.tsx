@@ -17,11 +17,10 @@ type GatewayProviderProps = {
 
 function createWebGsvClient(): GSVClient {
   return new GSVClient({
-    client: {
+    peer: {
       id: "gsv-ui",
       version: "0.4.1",
       platform: "browser",
-      role: "user",
     },
   });
 }

@@ -235,6 +235,9 @@ of chat integrations.
 - [Get Started](../get-started/)
 - [How-to Guides](../how-to/)
 - [Reference](../reference/)
+- [Unified Protocol Peers](./unified-protocol-peers.md) describes the shared
+  identity, grants, frames, streaming bodies, reverse calls, and delegated
+  adapter command model used by clients, machines, and services.
 
 ## Deferred design proposals
 
@@ -242,11 +245,6 @@ of chat integrations.
   records the proposed common file-reference contract for machines, clients,
   adapters, model context, and durable GSV retention. It replaces eager media
   copying with lazy binary resolution and is intentionally not implemented yet.
-- [Unified Protocol Peers](./unified-protocol-peers.md) records the remaining
-  transport-independent identity, capability, and command work. Canonical
-  Conversations and directed Message signals now provide its shared output
-  foundation, but service-bound adapters do not yet expose the full client
-  syscall surface.
 - [Surface Bindings and Output Graphs](./interaction-surface-bindings.md) records
   the constraints on any future binding or forwarding design. The older
   Process-owned automatic-output graph is superseded.

@@ -69,12 +69,11 @@ describe("managed mail stack integration", () => {
         onboardingToken,
       });
       await expectRpcOk(socket, "connect", "sys.connect", {
-        protocol: 2,
-        client: {
+        protocol: 3,
+        peer: {
           id: "managed-mail-stack-test",
           version: "1.0.0",
           platform: "test",
-          role: "user",
         },
         auth: {
           username: "mail-owner",

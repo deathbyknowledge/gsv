@@ -25,7 +25,7 @@ import { ConnectionSupervisor } from "./connection-supervisor";
 import { createBrowserTargetDriver, type BrowserTargetActivity } from "./driver";
 
 const client = new GSVClient();
-const driver = client.driver({
+const endpoint = client.endpoint({
   platform: "browser-extension",
   version: "0.4.1",
   keepalive: {
@@ -33,7 +33,7 @@ const driver = client.driver({
     acknowledgement: { timeoutMs: 10_000 },
   },
 });
-const connectionSupervisor = new ConnectionSupervisor(driver);
+const connectionSupervisor = new ConnectionSupervisor(endpoint);
 let diagnostics: ExtensionDiagnostics = emptyDiagnostics();
 const diagnosticsReady = loadDiagnostics().then((stored) => {
   diagnostics = mergeDiagnostics(stored, diagnostics);
@@ -49,8 +49,8 @@ const runtimeStateReady = loadRuntimeState().then((state) => {
 });
 
 const browserTarget = createBrowserTargetDriver(addActivity);
-driver.implement("shell.exec", browserTarget.handle);
-driver.implement("fs.*", browserTarget.handle);
+endpoint.implement("shell.exec", browserTarget.handle);
+endpoint.implement("fs.*", browserTarget.handle);
 client.onStatus((status) => {
   connectionSupervisor.handleStatus(status);
   const key = `${status.state}:${status.connectionId ?? ""}:${status.message ?? ""}`;

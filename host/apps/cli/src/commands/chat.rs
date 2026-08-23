@@ -2,7 +2,7 @@ use std::io::{self, BufRead, Write};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
-use gsv::kernel_client::{cli_client_identity, BinaryBodyLimits, GatewayAuth, KernelClient};
+use gsv::kernel_client::{cli_peer_identity, BinaryBodyLimits, GatewayAuth, KernelClient};
 use serde_json::{json, Value};
 
 const CHAT_WAIT_TIMEOUT_SECS: u64 = 120;
@@ -41,12 +41,7 @@ fn signal_run_id(payload: &Value) -> Option<String> {
         .map(ToOwned::to_owned)
 }
 
-fn implicit_personal_owner_uid(identity: &Value) -> Result<u64, &'static str> {
-    let owner_uid = identity
-        .get("process")
-        .and_then(|process| process.get("uid"))
-        .and_then(Value::as_u64)
-        .ok_or("sys.connect returned no current user")?;
+fn implicit_personal_owner_uid(owner_uid: u64) -> Result<u64, &'static str> {
     if owner_uid == 0 {
         return Err("root has no implicit personal intelligence; pass --pid");
     }
@@ -255,9 +250,10 @@ pub(crate) async fn run_client(
     let pending_signals_for_handler = pending_signals.clone();
     let debug_enabled_for_handler = debug_enabled;
 
-    let client = match KernelClient::connect_user_with_identity(
+    let client = match KernelClient::connect_with_peer(
         url,
-        cli_client_identity(),
+        cli_peer_identity(),
+        Vec::new(),
         auth,
         BinaryBodyLimits::default(),
         move |frame| {
@@ -354,7 +350,9 @@ pub(crate) async fn run_client(
                 .connect_result
                 .as_ref()
                 .ok_or("sys.connect returned no current user")
-                .and_then(|result| implicit_personal_owner_uid(&result.identity))?;
+                .and_then(|result| {
+                    implicit_personal_owner_uid(result.peer.principal.account.uid)
+                })?;
             let processes = client
                 .request_ok("proc.list", Some(json!({ "uid": owner_uid })))
                 .await?;
@@ -541,24 +539,14 @@ mod tests {
     }
 
     #[test]
-    fn resolves_the_current_user_from_the_authenticated_identity() {
-        let identity = json!({
-            "role": "user",
-            "process": { "uid": 1000, "username": "sam" }
-        });
-
-        assert_eq!(implicit_personal_owner_uid(&identity), Ok(1000));
+    fn resolves_the_current_user_from_the_authenticated_principal() {
+        assert_eq!(implicit_personal_owner_uid(1000), Ok(1000));
     }
 
     #[test]
     fn requires_root_to_choose_an_explicit_process() {
-        let identity = json!({
-            "role": "user",
-            "process": { "uid": 0, "username": "root" }
-        });
-
         assert_eq!(
-            implicit_personal_owner_uid(&identity),
+            implicit_personal_owner_uid(0),
             Err("root has no implicit personal intelligence; pass --pid")
         );
     }

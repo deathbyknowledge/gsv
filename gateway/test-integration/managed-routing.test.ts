@@ -157,12 +157,11 @@ describe("managed installation routing integration", () => {
       onboardingToken: "integration-onboarding-first",
     });
     const connect = await expectManagedRpcOk(socket, "connect-inference", "sys.connect", {
-      protocol: 2,
-      client: {
+      protocol: 3,
+      peer: {
         id: "managed-inference-test",
         version: "1.0.0",
         platform: "test",
-        role: "user",
       },
       auth: {
         username: "inference-owner",
@@ -205,12 +204,11 @@ describe("managed installation routing integration", () => {
       onboardingToken: "integration-onboarding-first",
     });
     await expectManagedRpcOk(socket, "connect-process-inference", "sys.connect", {
-      protocol: 2,
-      client: {
+      protocol: 3,
+      peer: {
         id: "managed-process-inference-test",
         version: "1.0.0",
         platform: "test",
-        role: "user",
       },
       auth: {
         username: "process-owner",
@@ -322,12 +320,11 @@ describe("managed installation routing integration", () => {
       onboardingToken: "integration-onboarding-first",
     });
     await expectManagedRpcOk(socket, "connect-lifecycle", "sys.connect", {
-      protocol: 2,
-      client: {
+      protocol: 3,
+      peer: {
         id: "managed-lifecycle-test",
         version: "1.0.0",
         platform: "test",
-        role: "user",
       },
       auth: {
         username: "lifecycle-owner",
@@ -416,12 +413,11 @@ describe("managed installation routing integration", () => {
         onboardingToken: `integration-onboarding-${handle}`,
       });
       await expectManagedRpcOk(socket, `connect-${handle}`, "sys.connect", {
-        protocol: 2,
-        client: {
+        protocol: 3,
+        peer: {
           id: `managed-${handle}`,
           version: "1.0.0",
           platform: "test",
-          role: "user",
         },
         auth: { username: "root", password: rootPassword },
       });
@@ -608,7 +604,7 @@ async function sendAdapterServiceFrame(
   frame: AdapterGatewayRequestFrame,
 ): Promise<AdapterGatewayResponseFrame | null> {
   const response = await harness.getWorker("gsv-test-dependencies").fetch(
-    "http://gsv-test-dependencies/__test/service-frame",
+    "http://gsv-test-dependencies/__test/service-frame/telegram",
     {
       method: "POST",
       headers: { "content-type": "application/json" },

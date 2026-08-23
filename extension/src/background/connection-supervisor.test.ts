@@ -1,6 +1,6 @@
 import type {
   GsvClientStatus,
-  GsvDriverConnectOptions,
+  GsvEndpointConnectOptions,
 } from "@humansandmachines/gsv/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ExtensionConfig } from "../shared/config";
@@ -21,11 +21,11 @@ describe("ConnectionSupervisor", () => {
 
   it("retries failed connections immediately with bounded exponential backoff", async () => {
     vi.useFakeTimers();
-    const driver = new FakeDriver(async () => {
+    const endpoint = new FakeEndpoint(async () => {
       throw new Error("offline");
     });
     const jitter = [0, 1, 0.5];
-    const supervisor = new ConnectionSupervisor(driver, {
+    const supervisor = new ConnectionSupervisor(endpoint, {
       retryBaseMs: 1_000,
       retryMaxMs: 2_000,
       random: () => jitter.shift() ?? 0.5,
@@ -33,28 +33,28 @@ describe("ConnectionSupervisor", () => {
     });
 
     await expect(supervisor.reconcile(CONFIG)).rejects.toThrow("offline");
-    expect(driver.connectOptions).toHaveLength(1);
+    expect(endpoint.connectOptions).toHaveLength(1);
     expect(supervisor.getState().retryAt).toBe(Date.now() + 750);
 
     await vi.advanceTimersByTimeAsync(750);
-    expect(driver.connectOptions).toHaveLength(2);
+    expect(endpoint.connectOptions).toHaveLength(2);
     expect(supervisor.getState().retryAt).toBe(Date.now() + 2_000);
 
     await vi.advanceTimersByTimeAsync(2_000);
-    expect(driver.connectOptions).toHaveLength(3);
+    expect(endpoint.connectOptions).toHaveLength(3);
     expect(supervisor.getState().retryAt).toBe(Date.now() + 2_000);
   });
 
   it("supersedes an opening connection when its configuration changes", async () => {
     const first = deferred<void>();
     let attempts = 0;
-    const driver = new FakeDriver(async () => {
+    const endpoint = new FakeEndpoint(async () => {
       attempts += 1;
       if (attempts === 1) {
         return await first.promise;
       }
     });
-    const supervisor = new ConnectionSupervisor(driver);
+    const supervisor = new ConnectionSupervisor(endpoint);
 
     const stale = supervisor.reconcile(CONFIG);
     await Promise.resolve();
@@ -63,17 +63,17 @@ describe("ConnectionSupervisor", () => {
     first.reject(new Error("superseded"));
     await expect(stale).rejects.toThrow("superseded");
 
-    expect(driver.disconnectReasons).toEqual(["connection settings changed"]);
-    expect(driver.connectOptions.map((options) => options.token)).toEqual(["token-one", "token-two"]);
+    expect(endpoint.disconnectReasons).toEqual(["connection settings changed"]);
+    expect(endpoint.connectOptions.map((options) => options.token)).toEqual(["token-one", "token-two"]);
     expect(supervisor.getState().retryAt).toBeNull();
   });
 
   it("keeps an explicit disconnect suppressed across reconciliation", async () => {
     vi.useFakeTimers();
-    const driver = new FakeDriver(async () => {
+    const endpoint = new FakeEndpoint(async () => {
       throw new Error("offline");
     });
-    const supervisor = new ConnectionSupervisor(driver, {
+    const supervisor = new ConnectionSupervisor(endpoint, {
       retryBaseMs: 100,
       random: () => 0.5,
     });
@@ -84,28 +84,28 @@ describe("ConnectionSupervisor", () => {
 
     await supervisor.reconcile(CONFIG);
     await vi.advanceTimersByTimeAsync(10_000);
-    expect(driver.connectOptions).toHaveLength(1);
+    expect(endpoint.connectOptions).toHaveLength(1);
   });
 
   it("reconnects after an established socket closes", async () => {
     vi.useFakeTimers();
-    const driver = new FakeDriver(async () => {});
-    const supervisor = new ConnectionSupervisor(driver, {
+    const endpoint = new FakeEndpoint(async () => {});
+    const supervisor = new ConnectionSupervisor(endpoint, {
       retryBaseMs: 100,
       random: () => 0.5,
     });
 
     await supervisor.reconcile(CONFIG);
-    driver.setStatus("disconnected", "Connection closed");
-    supervisor.handleStatus(driver.client.getStatus());
+    endpoint.setStatus("disconnected", "Connection closed");
+    supervisor.handleStatus(endpoint.client.getStatus());
     await vi.advanceTimersByTimeAsync(100);
 
-    expect(driver.connectOptions).toHaveLength(2);
+    expect(endpoint.connectOptions).toHaveLength(2);
   });
 });
 
-class FakeDriver {
-  readonly connectOptions: GsvDriverConnectOptions[] = [];
+class FakeEndpoint {
+  readonly connectOptions: GsvEndpointConnectOptions[] = [];
   readonly disconnectReasons: string[] = [];
   readonly client = {
     getStatus: (): GsvClientStatus => this.status,
@@ -118,7 +118,7 @@ class FakeDriver {
     this.connectImplementation = connectImplementation;
   }
 
-  async connect(options: GsvDriverConnectOptions): Promise<void> {
+  async connect(options: GsvEndpointConnectOptions): Promise<void> {
     this.connectOptions.push(options);
     this.status = status("connecting");
     try {

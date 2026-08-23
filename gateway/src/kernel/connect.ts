@@ -11,13 +11,13 @@
  */
 
 import type {
+  ConnectedPeer,
   ConnectArgs,
   ConnectResult,
-  ConnectionIdentity,
   JsonValue,
+  PeerPrincipalKind,
   ProcessIdentity,
 } from "@humansandmachines/gsv/protocol";
-import type { AuthTokenRole } from "./auth-store";
 import type { CapabilityStore } from "./capabilities";
 import { isValidCapability } from "./capabilities";
 import type { KernelContext } from "./context";
@@ -28,7 +28,11 @@ import { USER_CONNECTION_SIGNALS } from "./user-signals";
 import { gsvInferenceFeaturesFromEnv } from "../inference/gsv-provider";
 
 export type ConnectOutcome =
-  | { ok: true; identity: ConnectionIdentity; result: ConnectResult }
+  | {
+      ok: true;
+      peer: ConnectedPeer;
+      result: ConnectResult;
+    }
   | { ok: false; code: number; message: string; details?: JsonValue };
 
 export const SETUP_REQUIRED_ERROR_CODE = 425;
@@ -93,13 +97,13 @@ export async function handleConnect(
     throw new Error("sys.connect requires an active connection");
   }
 
-  if (args.protocol !== 2) {
+  if (args.protocol !== 3) {
     return { ok: false, code: 102, message: "Unsupported protocol version" };
   }
 
-  const role = args.client?.role;
-  if (!role || !["user", "driver", "service"].includes(role)) {
-    return { ok: false, code: 103, message: "Invalid client role" };
+  const peerId = args.peer?.id?.trim();
+  if (!peerId) {
+    return { ok: false, code: 103, message: "Peer id is required" };
   }
 
   // First-boot provisioning (SQLite, no R2)
@@ -123,102 +127,72 @@ export async function handleConnect(
   }
 
   // Authentication
-  const process = await resolveIdentity(args, ctx);
-  if (!process.ok) {
-    return { ok: false, code: 401, message: process.error };
+  const authenticated = await authenticatePeer(args, ctx);
+  if (!authenticated.ok) {
+    return { ok: false, code: 401, message: authenticated.error };
   }
-  const identity = process.identity;
-
-  const capabilities = resolveConnectionCapabilities(role, identity, caps);
-
-  // Build ConnectionIdentity based on role
-  let connectionIdentity: ConnectionIdentity;
-
-  switch (role) {
-    case "user": {
-      connectionIdentity = {
-        role: "user",
-        process: identity,
-        capabilities,
-      };
-      break;
-    }
-
-    case "driver": {
-      if (!args.driver?.implements || args.driver.implements.length === 0) {
-        return { ok: false, code: 103, message: "Driver role requires implements list" };
-      }
-
-      for (const pattern of args.driver.implements) {
-        if (!isValidCapability(pattern)) {
-          return { ok: false, code: 103, message: `Invalid implements pattern: ${pattern}` };
-        }
-      }
-
-      const deviceId = args.client.id;
-      const regResult = devices.register(
-        deviceId,
-        identity.uid,
-        identity.gid,
-        args.driver.implements,
-        args.client.platform,
-        args.client.version,
-      );
-
-      if (!regResult.ok) {
-        return { ok: false, code: 103, message: regResult.error! };
-      }
-
-      connectionIdentity = {
-        role: "driver",
-        process: identity,
-        capabilities,
-        device: deviceId,
-        implements: args.driver.implements,
-      };
-      break;
-    }
-
-    case "service": {
-      const channel = args.client.channel;
-      if (!channel) {
-        return { ok: false, code: 103, message: "Service role requires channel field" };
-      }
-
-      connectionIdentity = {
-        role: "service",
-        process: identity,
-        capabilities,
-        channel,
-      };
-      break;
-    }
-
-    default:
-      return { ok: false, code: 103, message: "Invalid client role" };
+  const { identity, principalKind } = authenticated;
+  const implementsList = [...new Set(args.peer.implements ?? [])];
+  if (principalKind === "machine" && implementsList.length === 0) {
+    return { ok: false, code: 103, message: "Machine peers require an implements list" };
   }
+  for (const pattern of implementsList) {
+    if (!isValidCapability(pattern)) {
+      return { ok: false, code: 103, message: `Invalid implements pattern: ${pattern}` };
+    }
+  }
+
+  const capabilities = resolvePeerCalls(principalKind, identity, caps);
+  const signals = buildSignalList(principalKind);
+
+  if (implementsList.length > 0) {
+    const registered = devices.register(
+      peerId,
+      identity.uid,
+      identity.gid,
+      implementsList,
+      args.peer.platform,
+      args.peer.version,
+    );
+    if (!registered.ok) {
+      return { ok: false, code: 103, message: registered.error! };
+    }
+  }
+
+  const peer: ConnectedPeer = {
+    id: peerId,
+    sessionId: ctx.connection.id,
+    principal: { kind: principalKind, account: identity },
+    grant: {
+      calls: capabilities,
+      signals,
+      implements: implementsList,
+    },
+  };
 
   const serverFeatures = gsvInferenceFeaturesFromEnv(ctx.env);
   const result: ConnectResult = {
-    protocol: 2,
+    protocol: 3,
     server: {
       version: serverVersion,
       release: SERVER_RELEASE,
       connectionId: ctx.connection.id,
     },
-    identity: connectionIdentity,
-    syscalls: capabilities,
-    signals: buildSignalList(role),
+    peer,
   };
   if (serverFeatures.length > 0) {
     result.server.features = serverFeatures;
   }
 
-  return { ok: true, identity: connectionIdentity, result };
+  return { ok: true, peer, result };
 }
 
-type IdentityOutcome =
-  | { ok: true; identity: ProcessIdentity }
+type PeerAuthenticationOutcome =
+  | {
+      ok: true;
+      identity: ProcessIdentity;
+      principalKind: PeerPrincipalKind;
+    }
   | { ok: false; error: string };
 
 function withDefaultProcessContext(identity: {
@@ -234,27 +208,26 @@ function withDefaultProcessContext(identity: {
   };
 }
 
-function resolveConnectionCapabilities(
-  role: ConnectArgs["client"]["role"],
+function resolvePeerCalls(
+  kind: PeerPrincipalKind,
   identity: ProcessIdentity,
   caps: CapabilityStore,
 ): string[] {
-  switch (role) {
-    case "user":
+  switch (kind) {
+    case "human":
       return caps.resolve(identity.gids);
-    case "driver":
+    case "machine":
       return [...DRIVER_CONNECTION_CAPABILITIES];
     case "service":
       return caps.resolve(SERVICE_CAPABILITY_GIDS);
   }
 }
 
-async function resolveIdentity(
+async function authenticatePeer(
   args: ConnectArgs,
   ctx: KernelContext,
-): Promise<IdentityOutcome> {
+): Promise<PeerAuthenticationOutcome> {
   const { auth } = ctx;
-  const role = args.client.role;
 
   if (!args.auth) {
     return { ok: false, error: "Authentication required" };
@@ -266,42 +239,44 @@ async function resolveIdentity(
   const hasPassword = !!args.auth.password;
   if (hasToken && hasPassword) return { ok: false, error: "Provide either password or token" };
 
-  if (role === "driver" || role === "service") {
-    if (!hasToken) {
-      return { ok: false, error: "Token required for machine connections" };
-    }
-    // SAFETY: role is narrowed to a machine role by the enclosing branch.
-    const machineRole = role as AuthTokenRole;
-
-    const result = await auth.authenticateToken(username, args.auth.token!, {
-      role: machineRole,
-      deviceId: role === "driver" ? args.client.id : undefined,
-    });
-    if (!result.ok) return { ok: false, error: result.error };
-    return { ok: true, identity: withDefaultProcessContext(result.identity) };
-  }
-
   if (hasToken) {
-    const result = await auth.authenticateToken(username, args.auth.token!, {
-      role: "user",
-    });
+    const result = await auth.authenticatePeerToken(username, args.auth.token!);
     if (!result.ok) return { ok: false, error: result.error };
-    return { ok: true, identity: withDefaultProcessContext(result.identity) };
+    if (result.role === "driver" && result.allowedDeviceId !== args.peer.id.trim()) {
+      return { ok: false, error: "Authentication failed" };
+    }
+    return {
+      ok: true,
+      identity: withDefaultProcessContext(result.identity),
+      principalKind: principalKindForTokenRole(result.role),
+    };
   }
 
   if (!hasPassword) return { ok: false, error: "Password or token required" };
   const result = await auth.authenticate(username, args.auth.password!);
   if (!result.ok) return { ok: false, error: result.error };
 
-  return { ok: true, identity: withDefaultProcessContext(result.identity) };
+  return {
+    ok: true,
+    identity: withDefaultProcessContext(result.identity),
+    principalKind: "human",
+  };
 }
 
-function buildSignalList(role: string): string[] {
+function principalKindForTokenRole(role: "driver" | "service" | "user"): PeerPrincipalKind {
   switch (role) {
-    case "user":
-      return [...USER_CONNECTION_SIGNALS];
-    case "driver":
-      return ["device.status", "device.pong"];
+    case "user": return "human";
+    case "driver": return "machine";
+    case "service": return "service";
+  }
+}
+
+function buildSignalList(kind: PeerPrincipalKind): string[] {
+  switch (kind) {
+    case "human":
+      return [...USER_CONNECTION_SIGNALS, "peer.pong"];
+    case "machine":
+      return ["device.status", "peer.pong"];
     default:
       return [];
   }

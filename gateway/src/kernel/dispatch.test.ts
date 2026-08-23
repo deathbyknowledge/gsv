@@ -22,6 +22,35 @@ function deviceRecord(deviceId: string, online: boolean, implementsList = ["fs.*
   };
 }
 
+function operationPeer(
+  id: string,
+  implementsList: string[],
+  kind: "human" | "machine" = "machine",
+) {
+  return {
+    id,
+    sessionId: `session:${id}`,
+    principal: {
+      kind,
+      account: {
+        uid: 1000,
+        gid: 1000,
+        gids: [1000],
+        username: "sam",
+        home: "/home/sam",
+        cwd: "/home/sam",
+      },
+    },
+    grant: {
+      calls: kind === "human" ? ["*"] : [],
+      signals: kind === "human"
+        ? ["device.status", "peer.pong", "message.committed"]
+        : ["device.status", "peer.pong"],
+      implements: implementsList,
+    },
+  };
+}
+
 function makeContext(): KernelContext {
   // SAFETY: test fixture is constructed with the asserted kernel domain shape.
   return {
@@ -67,7 +96,7 @@ function sendFrame(connection: { send(message: string): void }, frame: KernelTes
 }
 
 describe("dispatch", () => {
-  it("routes target syscalls to browser driver targets", async () => {
+  it("routes target syscalls to connected human endpoints", async () => {
     const send = vi.fn();
     const cancelRoute = vi.fn();
     const registerRoute = vi.fn(async () => ({ cancel: cancelRoute }));
@@ -79,13 +108,7 @@ describe("dispatch", () => {
           id: "conn_1",
           state: {
             step: "connected",
-            identity: {
-              role: "driver",
-              process: { uid: 1000, gid: 1000, gids: [1000], username: "sam", home: "/home/sam" },
-              capabilities: ["*"],
-              device: "browser:conn_1",
-              implements: ["fs.*", "shell.*"],
-            },
+            peer: operationPeer("browser:conn_1", ["fs.*", "shell.*"], "human"),
           },
           send,
         }],
@@ -150,7 +173,7 @@ describe("dispatch", () => {
           id: "old-connection",
           state: {
             step: "superseded",
-            identity: { role: "driver", device: "browser" },
+            peer: operationPeer("browser", ["fs.*"]),
           },
           send: vi.fn(),
         }],
@@ -206,13 +229,7 @@ describe("dispatch", () => {
           id: "conn_1",
           state: {
             step: "connected",
-            identity: {
-              role: "driver",
-              process: { uid: 1000, gid: 1000, gids: [1000], username: "sam", home: "/home/sam" },
-              capabilities: ["*"],
-              device: "linux-machine",
-              implements: ["net.fetch"],
-            },
+            peer: operationPeer("linux-machine", ["net.fetch"]),
           },
           send,
         }],
@@ -287,13 +304,7 @@ describe("dispatch", () => {
           id: "conn_1",
           state: {
             step: "connected",
-            identity: {
-              role: "driver",
-              process: { uid: 1000, gid: 1000, gids: [1000], username: "sam", home: "/home/sam" },
-              capabilities: ["*"],
-              device: "browser:conn_1",
-              implements: ["fs.*", "shell.*"],
-            },
+            peer: operationPeer("browser:conn_1", ["fs.*", "shell.*"]),
           },
           send,
         }],
@@ -349,13 +360,7 @@ describe("dispatch", () => {
       id: "conn_1",
       state: {
         step: "connected",
-        identity: {
-          role: "driver",
-          process: { uid: 1000, gid: 1000, gids: [1000], username: "sam", home: "/home/sam" },
-          capabilities: ["*"],
-          device: "browser:conn_1",
-          implements: ["fs.*", "shell.*"],
-        },
+        peer: operationPeer("browser:conn_1", ["fs.*", "shell.*"]),
       },
       send: vi.fn(),
     };
@@ -432,13 +437,7 @@ describe("dispatch", () => {
           id: "conn_1",
           state: {
             step: "connected",
-            identity: {
-              role: "driver",
-              process: { uid: 1000, gid: 1000, gids: [1000], username: "sam", home: "/home/sam" },
-              capabilities: ["*"],
-              device: "browser:conn_1",
-              implements: ["fs.*", "shell.*"],
-            },
+            peer: operationPeer("browser:conn_1", ["fs.*", "shell.*"]),
           },
           send,
         }],

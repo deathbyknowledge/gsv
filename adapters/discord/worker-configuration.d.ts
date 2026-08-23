@@ -8,7 +8,7 @@ declare namespace Cloudflare {
 	}
 	interface Env {
 		DISCORD_GATEWAY: DurableObjectNamespace<import("./src/index").DiscordGateway>;
-		GATEWAY: Service /* entrypoint GatewayEntrypoint from gsv */;
+		GATEWAY: Service /* entrypoint DiscordGatewayEntrypoint from gsv */;
 	}
 }
 interface Env extends Cloudflare.Env {}

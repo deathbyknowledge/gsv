@@ -19,6 +19,38 @@ import {
 const sendFrameToProcessMock = vi.spyOn(utils, "sendFrameToProcess");
 const TEST_INSTALLATION_ID = "singleton";
 
+function connectedPeer(
+  kind: "human" | "machine" | "service",
+  id: string,
+  uid = 1000,
+  implementsList: string[] = [],
+) {
+  return {
+    id,
+    sessionId: `session:${id}`,
+    principal: {
+      kind,
+      account: {
+        uid,
+        gid: uid,
+        gids: [uid],
+        username: `user-${uid}`,
+        home: `/home/user-${uid}`,
+        cwd: `/home/user-${uid}`,
+      },
+    },
+    grant: {
+      calls: kind === "human" ? ["*"] : [],
+      signals: kind === "human"
+        ? ["mcp.changed", "proc.run.stream", "proc.changed", "message.committed", "device.status"]
+        : kind === "machine"
+          ? ["device.status", "peer.pong"]
+          : [],
+      implements: implementsList,
+    },
+  };
+}
+
 function createRoutedKernel() {
   // SAFETY: test fixture is constructed with the asserted kernel domain shape.
   const kernel = Object.create(Kernel.prototype) as any;
@@ -61,7 +93,7 @@ describe("Kernel frame bodies", () => {
       id: "device-connection",
       state: {
         step: "connected",
-        identity: { role: "driver", device: "device-1" },
+        peer: connectedPeer("machine", "device-1", 1000, ["net.fetch"]),
       },
     };
     kernel.connections = new Map([[deviceConnection.id, deviceConnection]]);
@@ -115,7 +147,7 @@ describe("Kernel frame bodies", () => {
       id: "device-connection",
       state: {
         step: "connected",
-        identity: { role: "driver", device: "device-1" },
+        peer: connectedPeer("machine", "device-1", 1000, ["net.fetch"]),
       },
     };
     kernel.connections = new Map([[deviceConnection.id, deviceConnection]]);
@@ -494,7 +526,7 @@ describe("Kernel nested dispatch", () => {
       ok: false,
       error: { code: 403, message: "Permission denied: net.fetch" },
     });
-    expect(cancelled).toBe("Dispatched request rejected");
+    expect(cancelled).toBe("Dispatched request completed");
   });
 
   it("forwards cancellation for an awaited nested device request", async () => {
@@ -504,10 +536,7 @@ describe("Kernel nested dispatch", () => {
       id: "driver-connection",
       state: {
         step: "connected",
-        identity: {
-          role: "driver",
-          device: "workstation",
-        },
+        peer: connectedPeer("machine", "workstation", 1000, ["shell.exec"]),
       },
     };
     let route: any = null;
@@ -596,7 +625,7 @@ describe("Kernel nested dispatch", () => {
         args: { input: "sleep 300" },
       },
     ));
-    expect(kernel.activeRequests.size).toBe(0);
+    expect(kernel.activeRequests.size).toBe(1);
     controller.abort(reason);
 
     await expect(request).rejects.toThrow("new user message");
@@ -614,16 +643,12 @@ describe("Kernel nested dispatch", () => {
 
 describe("Kernel device connection cleanup", () => {
   it("makes a replacement authoritative before closing the old connection", () => {
-    const identity = {
-      role: "driver",
-      process: { uid: 1000 },
-      device: "browser",
-    };
+    const peer = connectedPeer("machine", "browser", 1000, ["fs.*"]);
     const oldConnection: any = {
       id: "old-connection",
       state: {
         step: "connected",
-        identity,
+        peer,
         clientId: "browser",
       },
       setState: vi.fn((state) => {
@@ -645,7 +670,7 @@ describe("Kernel device connection cleanup", () => {
 
     kernel.activateConnection(replacement, {
       step: "connected",
-      identity,
+      peer,
       clientId: "browser",
     });
 
@@ -662,14 +687,14 @@ describe("Kernel device connection cleanup", () => {
       id: "old-connection",
       state: {
         step: "superseded",
-        identity: { role: "driver", device: "browser" },
+        peer: connectedPeer("machine", "browser", 1000, ["fs.*"]),
       },
     };
     const replacement = {
       id: "new-connection",
       state: {
         step: "connected",
-        identity: { role: "driver", device: "browser" },
+        peer: connectedPeer("machine", "browser", 1000, ["fs.*"]),
       },
     };
     // SAFETY: test fixture is constructed with the asserted kernel domain shape.
@@ -698,7 +723,7 @@ describe("Kernel device connection cleanup", () => {
       id: "driver-connection",
       state: {
         step: "connected",
-        identity: { role: "driver", device: "browser" },
+        peer: connectedPeer("machine", "browser", 1000, ["fs.*"]),
       },
     };
     // SAFETY: test fixture is constructed with the asserted kernel domain shape.
@@ -708,14 +733,14 @@ describe("Kernel device connection cleanup", () => {
 
     kernel.handleSig(connection, {
       type: "sig",
-      signal: "device.ping",
+      signal: "peer.ping",
       payload: { at: 1234, nonce: "ping-1" },
       seq: 7,
     });
 
     expect(kernel.sendWebSocketFrame).toHaveBeenCalledWith(connection, {
       type: "sig",
-      signal: "device.pong",
+      signal: "peer.pong",
       payload: { at: 1234, nonce: "ping-1" },
       seq: 7,
     });
@@ -725,7 +750,7 @@ describe("Kernel device connection cleanup", () => {
     const controller = new AbortController();
     const connection = {
       id: "connection-1",
-      state: { step: "connected", identity: { role: "user" } },
+      state: { step: "connected", peer: connectedPeer("human", "web") },
     };
     // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     const kernel = Object.create(Kernel.prototype) as any;
@@ -751,21 +776,21 @@ describe("Kernel device connection cleanup", () => {
     const alpha = {
       state: {
         step: "connected",
-        identity: { role: "driver", device: "node-alpha" },
+        peer: connectedPeer("machine", "node-alpha", 1000, ["fs.*"]),
       },
       close: vi.fn(),
     };
     const beta = {
       state: {
         step: "connected",
-        identity: { role: "driver", device: "node-beta" },
+        peer: connectedPeer("machine", "node-beta", 1000, ["fs.*"]),
       },
       close: vi.fn(),
     };
     const user = {
       state: {
         step: "connected",
-        identity: { role: "user" },
+        peer: connectedPeer("human", "web"),
       },
       close: vi.fn(),
     };
@@ -803,10 +828,10 @@ describe("Kernel device connection cleanup", () => {
 
 describe("Kernel user signal broadcasts", () => {
   it("does not send user signals to driver or service sockets", () => {
-    const user = { state: { identity: { role: "user", process: { uid: 1000 } } }, send: vi.fn() };
-    const otherUser = { state: { identity: { role: "user", process: { uid: 2000 } } }, send: vi.fn() };
-    const driver = { state: { identity: { role: "driver", process: { uid: 1000 } } }, send: vi.fn() };
-    const service = { state: { identity: { role: "service", process: { uid: 1000 } } }, send: vi.fn() };
+    const user = { state: { peer: connectedPeer("human", "web", 1000) }, send: vi.fn() };
+    const otherUser = { state: { peer: connectedPeer("human", "web-other", 2000) }, send: vi.fn() };
+    const driver = { state: { peer: connectedPeer("machine", "machine", 1000, ["fs.*"]) }, send: vi.fn() };
+    const service = { state: { peer: connectedPeer("service", "telegram", 0) }, send: vi.fn() };
     // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     const kernel = Object.create(Kernel.prototype) as any;
     kernel.connections = new Map([
@@ -830,23 +855,23 @@ describe("Kernel user signal broadcasts", () => {
 
   it("sends raw Process activity only to its routed or observing connections", () => {
     const routed = {
-      state: { identity: { role: "user", process: { uid: 1000 } } },
+      state: { peer: connectedPeer("human", "routed", 1000) },
       send: vi.fn(),
     };
     const observing = {
       state: {
-        identity: { role: "user", process: { uid: 1000 } },
+        peer: connectedPeer("human", "observing", 1000),
         observedProcessIds: ["proc-1"],
       },
       send: vi.fn(),
     };
     const idle = {
-      state: { identity: { role: "user", process: { uid: 1000 } } },
+      state: { peer: connectedPeer("human", "idle", 1000) },
       send: vi.fn(),
     };
     const other = {
       state: {
-        identity: { role: "user", process: { uid: 2000 } },
+        peer: connectedPeer("human", "other", 2000),
         observedProcessIds: ["proc-1"],
       },
       send: vi.fn(),
@@ -879,11 +904,11 @@ describe("Kernel user signal broadcasts", () => {
 
   it("sends only a content-free Process invalidation to idle owner connections", () => {
     const routed = {
-      state: { identity: { role: "user", process: { uid: 1000 } } },
+      state: { peer: connectedPeer("human", "routed", 1000) },
       send: vi.fn(),
     };
     const idle = {
-      state: { identity: { role: "user", process: { uid: 1000 } } },
+      state: { peer: connectedPeer("human", "idle", 1000) },
       send: vi.fn(),
     };
     // SAFETY: test fixture is constructed with the asserted kernel domain shape.
@@ -991,11 +1016,11 @@ describe("Kernel canonical message commits", () => {
     };
     const kernel = buildCommitKernel(route);
     const origin = {
-      state: { identity: { role: "user", process: { uid: 1000 } } },
+      state: { peer: connectedPeer("human", "origin", 1000) },
       send: vi.fn(),
     };
     const observer = {
-      state: { identity: { role: "user", process: { uid: 1000 } } },
+      state: { peer: connectedPeer("human", "observer", 1000) },
       send: vi.fn(),
     };
     kernel.connections = new Map([["origin", origin], ["observer", observer]]);
@@ -1062,7 +1087,7 @@ describe("Kernel canonical message commits", () => {
     const kernel = buildCommitKernel(null);
     kernel.materializePersonalAdapterFallback.mockReturnValue(route);
     const synced = {
-      state: { identity: { role: "user", process: { uid: 1000 } } },
+      state: { peer: connectedPeer("human", "web", 1000) },
       send: vi.fn(),
     };
     kernel.connections = new Map([["web", synced]]);

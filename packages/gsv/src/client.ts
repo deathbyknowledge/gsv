@@ -107,7 +107,7 @@ export type GsvRequestArguments = {
   readonly [name: string]: JsonValue | undefined;
 };
 
-export type GsvClientInfo = ConnectArgs["client"];
+export type GsvPeerInfo = ConnectArgs["peer"];
 
 export type GsvBody = BinaryBody;
 
@@ -132,9 +132,9 @@ export type GsvInboundRequestHandler = (
   abortSignal?: AbortSignal,
 ) => Promise<GsvResponse> | GsvResponse;
 
-export type GsvDriverPattern = SyscallName | `${string}.*`;
+export type GsvEndpointPattern = SyscallName | `${string}.*`;
 
-export type GsvDriverRequest<S extends string = string> = {
+export type GsvEndpointRequest<S extends string = string> = {
   id: string;
   call: S;
   args: S extends SyscallName ? ArgsOf<S> : JsonValue;
@@ -142,42 +142,42 @@ export type GsvDriverRequest<S extends string = string> = {
   raw: GsvRequestFrame<S>;
 };
 
-export type GsvDriverContext = {
+export type GsvEndpointContext = {
   client: GSVClient;
   connection: ConnectResult;
   abortSignal: AbortSignal;
   sendSignal(signal: string, payload?: JsonValue, seq?: number): void;
 };
 
-export type GsvDriverHandler<S extends string = string> = (
-  request: GsvDriverRequest<S>,
-  context: GsvDriverContext,
+export type GsvEndpointHandler<S extends string = string> = (
+  request: GsvEndpointRequest<S>,
+  context: GsvEndpointContext,
 ) => Promise<GsvResponse<S extends SyscallName ? ResultOf<S> : JsonValue>>
   | GsvResponse<S extends SyscallName ? ResultOf<S> : JsonValue>;
 
-type GsvDriverAcknowledgementOptions = {
+type GsvEndpointAcknowledgementOptions = {
   signal?: string;
   timeoutMs?: number;
 };
 
-export type GsvDriverOptions = {
-  deviceId?: string;
+export type GsvEndpointOptions = {
+  peerId?: string;
   platform?: string;
   version?: string;
-  implements?: GsvDriverPattern[];
+  implements?: GsvEndpointPattern[];
   keepalive?: false | {
     intervalMs?: number;
     signal?: string;
     payload?: (nonce?: string) => JsonValue;
-    acknowledgement?: false | GsvDriverAcknowledgementOptions;
+    acknowledgement?: false | GsvEndpointAcknowledgementOptions;
   };
 };
 
-export type GsvDriverConnectOptions = Omit<GsvConnectOptions, "client" | "driver"> & {
-  deviceId?: string;
+export type GsvEndpointConnectOptions = Omit<GsvConnectOptions, "peer"> & {
+  peerId?: string;
   platform?: string;
   version?: string;
-  implements?: GsvDriverPattern[];
+  implements?: GsvEndpointPattern[];
 };
 
 export type GsvConnectOptions = {
@@ -185,8 +185,7 @@ export type GsvConnectOptions = {
   username?: string;
   password?: string;
   token?: string;
-  client?: Partial<GsvClientInfo>;
-  driver?: ConnectArgs["driver"];
+  peer?: Partial<GsvPeerInfo>;
 };
 
 export type GsvClientStatus = {
@@ -213,8 +212,8 @@ type GsvNamespaceTarget = { call: GsvClientCall };
 type GsvSocketMessage = string | ArrayBuffer | ArrayBufferView | Blob;
 type GsvHeartbeatPayload = { at: number; nonce?: string };
 type GsvOutgoingArguments = ArgsOf<SyscallName> | GsvRequestArguments;
-type GsvMergedConnectOptions = Omit<GsvConnectOptions, "client"> & {
-  client: GsvClientInfo;
+type GsvMergedConnectOptions = Omit<GsvConnectOptions, "peer"> & {
+  peer: GsvPeerInfo;
 };
 
 const binaryFrameDescriptorSchema = z.strictObject({
@@ -283,12 +282,12 @@ export type GsvSignalNamespace = GsvClientNamespaces["signal"];
 export type GsvSysNamespace = GsvClientNamespaces["sys"];
 
 const DEFAULT_CONNECT_TIMEOUT_MS = 8_000;
-const PROTOCOL_VERSION = 2;
+const PROTOCOL_VERSION = 3;
 const DEFAULT_REQUEST_TIMEOUT_MS = 20_000;
 const LONG_RUNNING_REQUEST_TIMEOUT_MS = 120_000;
 const AI_TEXT_GENERATION_REQUEST_TIMEOUT_MS = 180_000;
-const DEFAULT_DRIVER_KEEPALIVE_MS = 240_000;
-const DEFAULT_DRIVER_ACKNOWLEDGEMENT_TIMEOUT_MS = 10_000;
+const DEFAULT_ENDPOINT_KEEPALIVE_MS = 240_000;
+const DEFAULT_ENDPOINT_ACKNOWLEDGEMENT_TIMEOUT_MS = 10_000;
 const WEBSOCKET_CONNECTING = 0;
 const WEBSOCKET_OPEN = 1;
 
@@ -308,11 +307,10 @@ const DEFAULT_REQUEST_TIMEOUTS_MS = {
   "ai.speech.create": LONG_RUNNING_REQUEST_TIMEOUT_MS,
 } satisfies GsvRequestTimeoutMap;
 
-const DEFAULT_CLIENT_INFO: GsvClientInfo = {
+const DEFAULT_PEER_INFO: GsvPeerInfo = {
   id: "gsv-js",
   version: "0.0.6",
   platform: "javascript",
-  role: "user",
 };
 
 const SYSCALL_NAMES = [
@@ -565,8 +563,8 @@ export class GSVClient {
     };
   }
 
-  driver(options: GsvDriverOptions = {}): GSVDriver {
-    return new GSVDriver(this, options);
+  endpoint(options: GsvEndpointOptions = {}): GSVEndpoint {
+    return new GSVEndpoint(this, options);
   }
 
   sendSignal(signal: string, payload?: JsonValue, seq?: number): void {
@@ -637,13 +635,12 @@ export class GSVClient {
     try {
       const connectArgs: ConnectArgs = {
         protocol: PROTOCOL_VERSION,
-        client: merged.client,
+        peer: merged.peer,
         auth: {
           username,
           ...(token ? { token } : { password }),
         },
       };
-      if (merged.driver) connectArgs.driver = merged.driver;
       connectResult = (await this.request("sys.connect", connectArgs)).data;
       if (connectResult.protocol !== PROTOCOL_VERSION) {
         throw new Error(
@@ -758,21 +755,19 @@ export class GSVClient {
   }
 
   private mergeConnectOptions(options: GsvConnectOptions): GsvMergedConnectOptions {
-    const defaults = this.connectDefaults.client;
-    const override = options.client;
-    const client: GsvClientInfo = {
-      id: override?.id ?? defaults?.id ?? DEFAULT_CLIENT_INFO.id,
-      version: override?.version ?? defaults?.version ?? DEFAULT_CLIENT_INFO.version,
-      platform: override?.platform ?? defaults?.platform ?? DEFAULT_CLIENT_INFO.platform,
-      role: override?.role ?? defaults?.role ?? DEFAULT_CLIENT_INFO.role,
+    const defaults = this.connectDefaults.peer;
+    const override = options.peer;
+    const peer: GsvPeerInfo = {
+      id: override?.id ?? defaults?.id ?? DEFAULT_PEER_INFO.id,
+      version: override?.version ?? defaults?.version ?? DEFAULT_PEER_INFO.version,
+      platform: override?.platform ?? defaults?.platform ?? DEFAULT_PEER_INFO.platform,
     };
-    const channel = override?.channel ?? defaults?.channel;
-    if (channel !== undefined) client.channel = channel;
+    const implementsList = override?.implements ?? defaults?.implements;
+    if (implementsList !== undefined) peer.implements = implementsList;
     return {
       ...this.connectDefaults,
       ...options,
-      client,
-      driver: options.driver ?? this.connectDefaults.driver,
+      peer,
     };
   }
 
@@ -1231,11 +1226,11 @@ export class GSVClient {
 
 }
 
-export class GSVDriver {
+export class GSVEndpoint {
   readonly client: GSVClient;
 
-  private readonly options: GsvDriverOptions;
-  private readonly handlers = new Map<GsvDriverPattern, GsvDriverHandler>();
+  private readonly options: GsvEndpointOptions;
+  private readonly handlers = new Map<GsvEndpointPattern, GsvEndpointHandler>();
   private unregisterRequestHandler: (() => void) | null = null;
   private unregisterStatusHandler: (() => void) | null = null;
   private unregisterSignalHandler: (() => void) | null = null;
@@ -1246,30 +1241,30 @@ export class GSVDriver {
   private abortController = new AbortController();
   private locked = false;
 
-  constructor(client: GSVClient, options: GsvDriverOptions = {}) {
+  constructor(client: GSVClient, options: GsvEndpointOptions = {}) {
     this.client = client;
     this.options = options;
   }
 
-  implement<S extends SyscallName>(pattern: S, handler: GsvDriverHandler<S>): this;
-  implement(pattern: GsvDriverPattern, handler: GsvDriverHandler): this;
-  implement(pattern: GsvDriverPattern, handler: GsvDriverHandler): this {
+  implement<S extends SyscallName>(pattern: S, handler: GsvEndpointHandler<S>): this;
+  implement(pattern: GsvEndpointPattern, handler: GsvEndpointHandler): this;
+  implement(pattern: GsvEndpointPattern, handler: GsvEndpointHandler): this {
     if (this.locked) {
-      throw new Error("Cannot add driver implementations after connect");
+      throw new Error("Cannot add endpoint implementations after connect");
     }
     this.handlers.set(pattern, handler);
     return this;
   }
 
-  async connect(options: GsvDriverConnectOptions = {}): Promise<ConnectResult> {
-    const deviceId = options.deviceId ?? this.options.deviceId;
-    if (!deviceId?.trim()) {
-      throw new Error("Driver deviceId is required");
+  async connect(options: GsvEndpointConnectOptions = {}): Promise<ConnectResult> {
+    const peerId = options.peerId ?? this.options.peerId;
+    if (!peerId?.trim()) {
+      throw new Error("Endpoint id is required");
     }
 
     const implementsList = this.resolveImplements(options.implements);
     if (implementsList.length === 0) {
-      throw new Error("Driver requires at least one implementation");
+      throw new Error("Endpoint requires at least one implementation");
     }
 
     this.ensureClientHandlers();
@@ -1278,25 +1273,23 @@ export class GSVDriver {
     this.abortController.abort();
 
     const {
-      deviceId: _deviceId,
+      peerId: _peerId,
       platform,
       version,
       implements: _implements,
       ...connectOptions
     } = options;
-    void _deviceId;
+    void _peerId;
     void _implements;
 
     const result = await this.client.connect({
       ...connectOptions,
-      client: buildDriverClientInfo(
-        deviceId.trim(),
+      peer: buildEndpointPeerInfo(
+        peerId.trim(),
         platform ?? this.options.platform,
         version ?? this.options.version,
+        implementsList,
       ),
-      driver: {
-        implements: implementsList,
-      },
     });
 
     this.abortController = new AbortController();
@@ -1323,9 +1316,13 @@ export class GSVDriver {
     this.unregisterSignalHandler = null;
   }
 
-  private resolveImplements(connectImplements?: GsvDriverPattern[]): string[] {
+  private resolveImplements(connectImplements?: GsvEndpointPattern[]): GsvEndpointPattern[] {
     const source = connectImplements ?? this.options.implements ?? Array.from(this.handlers.keys());
-    return Array.from(new Set(source.map((pattern) => pattern.trim()).filter(Boolean)));
+    return Array.from(new Set(
+      source
+        .map((pattern) => pattern.trim())
+        .filter((pattern): pattern is GsvEndpointPattern => pattern.length > 0),
+    ));
   }
 
   private ensureClientHandlers(): void {
@@ -1347,7 +1344,7 @@ export class GSVDriver {
     if (!this.unregisterSignalHandler) {
       this.unregisterSignalHandler = this.client.onSignal((signal, payload) => {
         const acknowledgement = this.keepaliveAcknowledgement();
-        if (!acknowledgement || signal !== (acknowledgement.signal ?? "device.pong")) {
+        if (!acknowledgement || signal !== (acknowledgement.signal ?? "peer.pong")) {
           return;
         }
         const nonce = acknowledgementNonce(payload);
@@ -1367,14 +1364,14 @@ export class GSVDriver {
   ): Promise<GsvResponse> {
     const handler = this.findHandler(frame.call);
     if (!handler) {
-      throw new GsvRequestError(404, `Driver does not implement ${frame.call}`);
+      throw new GsvRequestError(404, `Endpoint does not implement ${frame.call}`);
     }
     const connection = this.connection;
     if (!connection) {
-      throw new GsvRequestError(503, "Driver is not connected");
+      throw new GsvRequestError(503, "Endpoint is not connected");
     }
 
-    const context: GsvDriverContext = {
+    const context: GsvEndpointContext = {
       client: this.client,
       connection,
       abortSignal: signal
@@ -1392,7 +1389,7 @@ export class GSVDriver {
     }, context);
   }
 
-  private findHandler(call: string): GsvDriverHandler | null {
+  private findHandler(call: string): GsvEndpointHandler | null {
     for (const [pattern, handler] of this.handlers) {
       if (patternMatches(pattern, call)) {
         return handler;
@@ -1407,8 +1404,8 @@ export class GSVDriver {
       return;
     }
     const keepalive = this.options.keepalive ?? {};
-    const intervalMs = keepalive.intervalMs ?? DEFAULT_DRIVER_KEEPALIVE_MS;
-    const signal = keepalive.signal ?? "device.ping";
+    const intervalMs = keepalive.intervalMs ?? DEFAULT_ENDPOINT_KEEPALIVE_MS;
+    const signal = keepalive.signal ?? "peer.ping";
     const payload = keepalive.payload ?? ((nonce?: string) => {
       const heartbeat: GsvHeartbeatPayload = { at: Date.now() };
       if (nonce) heartbeat.nonce = nonce;
@@ -1432,11 +1429,11 @@ export class GSVDriver {
             if (this.pendingAcknowledgement !== nonce) {
               return;
             }
-            this.disconnect("device heartbeat timed out");
-          }, acknowledgement.timeoutMs ?? DEFAULT_DRIVER_ACKNOWLEDGEMENT_TIMEOUT_MS);
+            this.disconnect("peer heartbeat timed out");
+          }, acknowledgement.timeoutMs ?? DEFAULT_ENDPOINT_ACKNOWLEDGEMENT_TIMEOUT_MS);
         }
       } catch {
-        this.disconnect("device heartbeat send failed");
+        this.disconnect("peer heartbeat send failed");
       }
     };
     if (this.keepaliveAcknowledgement()) {
@@ -1456,7 +1453,7 @@ export class GSVDriver {
     this.clearAcknowledgementTimer();
   }
 
-  private keepaliveAcknowledgement(): GsvDriverAcknowledgementOptions | false {
+  private keepaliveAcknowledgement(): GsvEndpointAcknowledgementOptions | false {
     if (this.options.keepalive === false) {
       return false;
     }
@@ -1464,8 +1461,8 @@ export class GSVDriver {
     if (!acknowledgement) {
       return false;
     }
-    const signal = acknowledgement.signal ?? "device.pong";
-    return this.connection?.signals?.includes(signal) ? acknowledgement : false;
+    const signal = acknowledgement.signal ?? "peer.pong";
+    return this.connection?.peer.grant.signals.includes(signal) ? acknowledgement : false;
   }
 
   private clearAcknowledgementTimer(): void {
@@ -1484,15 +1481,16 @@ export function createGsvClient(options?: GsvClientOptions): GSVClient {
 
 export { GSVClient as GSV };
 
-function buildDriverClientInfo(
+function buildEndpointPeerInfo(
   id: string,
   platform: string | undefined,
   version: string | undefined,
-): Partial<GsvClientInfo> {
-  const client: Partial<GsvClientInfo> = { id, role: "driver" };
-  if (platform !== undefined) client.platform = platform;
-  if (version !== undefined) client.version = version;
-  return client;
+  implementsList: GsvEndpointPattern[],
+): Partial<GsvPeerInfo> {
+  const peer: Partial<GsvPeerInfo> = { id, implements: implementsList };
+  if (platform !== undefined) peer.platform = platform;
+  if (version !== undefined) peer.version = version;
+  return peer;
 }
 
 function assignNamespaces(target: GsvNamespaceTarget, call: GsvClientCall): void {

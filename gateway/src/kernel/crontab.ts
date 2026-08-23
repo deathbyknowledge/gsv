@@ -1,10 +1,10 @@
 import type { PasswdEntry } from "../auth/passwd";
 import type {
-  ConnectionIdentity,
   ProcessIdentity,
   ScheduleExpression,
   SchedulePrincipal,
 } from "@humansandmachines/gsv/protocol";
+import type { ConnectionIdentity } from "./identity";
 import { canOwnerDelegateRunAs } from "./account-access";
 import { hasCapability } from "./capabilities";
 import type { KernelContext } from "./context";

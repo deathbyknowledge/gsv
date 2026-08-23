@@ -2,7 +2,7 @@ use chrono::{TimeZone, Utc};
 use cliclack::{confirm, input, password, select};
 use gsv::config::CliConfig;
 use gsv::connection::{Connection, GatewayRpcError};
-use gsv::kernel_client::{cli_client_identity, BinaryBodyLimits, GatewayAuth, KernelClient};
+use gsv::kernel_client::{cli_peer_identity, BinaryBodyLimits, GatewayAuth, KernelClient};
 use gsv::protocol::PROTOCOL_VERSION;
 use serde::Deserialize;
 use serde_json::json;
@@ -360,9 +360,10 @@ async fn issue_and_store_user_session_token(
     };
     auth.validate()?;
 
-    let client = KernelClient::connect_user_with_identity(
+    let client = KernelClient::connect_with_peer(
         url,
-        cli_client_identity(),
+        cli_peer_identity(),
+        Vec::new(),
         auth,
         BinaryBodyLimits::default(),
         |_| {},

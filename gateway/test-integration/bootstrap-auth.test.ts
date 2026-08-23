@@ -1,4 +1,5 @@
 import { GSVClient, GsvClientError } from "@humansandmachines/gsv";
+import type { GsvRequestArguments } from "@humansandmachines/gsv";
 import type {
   ConnectArgs,
   SysSetupArgs,
@@ -40,19 +41,15 @@ describe("gateway authentication integration", () => {
   it("rejects invalid handshakes before setup", async () => {
     await expect(connectOnce({
       protocol: 1,
-      client: clientInfo("user", "old-protocol"),
+      peer: peerInfo("old-protocol"),
     })).rejects.toMatchObject({
       code: 102,
       message: "Unsupported protocol version",
     });
 
     await expect(connectOnce({
-      protocol: 2,
-      client: {
-        ...clientInfo("user", "invalid-role"),
-        // SAFETY: This intentionally malformed role exercises the protocol validator.
-        role: "invalid" as ConnectArgs["client"]["role"],
-      },
+      protocol: 3,
+      peer: { ...peerInfo("invalid-peer"), implements: [42] },
     })).rejects.toMatchObject({
       code: 400,
       message: "Invalid sys.connect arguments",
@@ -63,33 +60,33 @@ describe("gateway authentication integration", () => {
     await setup();
 
     await expect(connectOnce({
-      protocol: 2,
-      client: clientInfo("user", "missing-auth"),
+      protocol: 3,
+      peer: peerInfo("missing-auth"),
     })).rejects.toMatchObject({ code: 401, message: "Authentication required" });
 
     await expect(connectOnce({
-      protocol: 2,
-      client: clientInfo("user", "unknown-user"),
+      protocol: 3,
+      peer: peerInfo("unknown-user"),
       auth: { username: "nobody", token: "unknown-token" },
     })).rejects.toMatchObject({ code: 401 });
 
     await expect(connectOnce({
-      protocol: 2,
-      client: clientInfo("user", "wrong-token"),
+      protocol: 3,
+      peer: peerInfo("wrong-token"),
       auth: { username: USERNAME, token: "wrong-token" },
     })).rejects.toMatchObject({ code: 401 });
 
     const user = createClient({
       username: USERNAME,
       password: PASSWORD,
-      client: clientInfo("user", "password-user"),
+      peer: peerInfo("password-user"),
     });
     const connected = await user.connect();
-    expect(connected.identity).toMatchObject({
-      role: "user",
-      process: { uid: 1000, username: USERNAME },
+    expect(connected.peer).toMatchObject({
+      id: "password-user",
+      principal: { kind: "human", account: { uid: 1000, username: USERNAME } },
     });
-    expect(connected.identity.capabilities).toContain("proc.*");
+    expect(connected.peer.grant.calls).toContain("proc.*");
 
     const issued = await user.call<SysTokenCreateResult>("sys.token.create", {
       kind: "user",
@@ -105,16 +102,16 @@ describe("gateway authentication integration", () => {
     const tokenUser = createClient({
       username: USERNAME,
       token: issued.token.token,
-      client: clientInfo("user", "token-user"),
+      peer: peerInfo("token-user"),
     });
     await expect(tokenUser.connect()).resolves.toMatchObject({
-      protocol: 2,
-      identity: { role: "user", process: { uid: 1000 } },
+      protocol: 3,
+      peer: { principal: { kind: "human", account: { uid: 1000 } } },
     });
 
     await expect(connectOnce({
-      protocol: 2,
-      client: clientInfo("user", "ambiguous-auth"),
+      protocol: 3,
+      peer: peerInfo("ambiguous-auth"),
       auth: {
         username: USERNAME,
         password: PASSWORD,
@@ -126,7 +123,7 @@ describe("gateway authentication integration", () => {
     });
   });
 
-  it("requires a device-bound token and registers a capability-free driver", async () => {
+  it("infers machine authority from a device-bound token and registers its implementations", async () => {
     const setupResult = await setup({
       node: { deviceId: "integration-device", label: "Integration device" },
     });
@@ -135,81 +132,60 @@ describe("gateway authentication integration", () => {
     }
 
     await expect(connectOnce({
-      protocol: 2,
-      client: clientInfo("driver", "integration-device"),
+      protocol: 3,
+      peer: peerInfo("integration-device"),
       auth: { username: USERNAME, token: setupResult.nodeToken.token },
     })).rejects.toMatchObject({
       code: 103,
-      message: "Driver role requires implements list",
+      message: "Machine peers require an implements list",
     });
 
     await expect(connectOnce({
-      protocol: 2,
-      client: clientInfo("driver", "integration-device"),
-      driver: { implements: ["not valid!"] },
+      protocol: 3,
+      peer: peerInfo("integration-device", ["not valid!"]),
       auth: { username: USERNAME, token: setupResult.nodeToken.token },
     })).rejects.toMatchObject({ code: 103, message: expect.stringContaining("Invalid implements") });
 
     await expect(connectOnce({
-      protocol: 2,
-      client: clientInfo("driver", "other-device"),
-      driver: { implements: ["fs.*"] },
+      protocol: 3,
+      peer: peerInfo("other-device", ["fs.*"]),
       auth: { username: USERNAME, token: setupResult.nodeToken.token },
     })).rejects.toMatchObject({ code: 401 });
 
-    await expect(connectOnce({
-      protocol: 2,
-      client: clientInfo("driver", "integration-device"),
-      driver: { implements: ["fs.*"] },
-      auth: { username: USERNAME, password: PASSWORD },
-    })).rejects.toMatchObject({
-      code: 401,
-      message: "Token required for machine connections",
+    const humanEndpoint = createClient({
+      username: USERNAME,
+      password: PASSWORD,
+      peer: peerInfo("browser-endpoint", ["fs.read"]),
     });
-
-    const root = createClient({
-      username: "root",
-      password: ROOT_PASSWORD,
-      client: clientInfo("user", "machine-auth-configurator"),
-    });
-    await root.connect();
-    await root.call("sys.config.set", {
-      key: "config/auth/allow_machine_password",
-      value: "true",
-    });
-    await expect(connectOnce({
-      protocol: 2,
-      client: clientInfo("driver", "integration-device"),
-      driver: { implements: ["fs.*"] },
-      auth: { username: USERNAME, password: PASSWORD },
-    })).rejects.toMatchObject({
-      code: 401,
-      message: "Token required for machine connections",
+    await expect(humanEndpoint.connect()).resolves.toMatchObject({
+      peer: {
+        principal: { kind: "human" },
+        grant: { implements: ["fs.read"] },
+      },
     });
 
     const driver = createClient({
       username: USERNAME,
       token: setupResult.nodeToken.token,
-      client: clientInfo("driver", "integration-device"),
-      driver: { implements: ["fs.*", "shell.exec"] },
+      peer: peerInfo("integration-device", ["fs.*", "shell.exec"]),
     });
     const connected = await driver.connect();
     expect(connected).toMatchObject({
-      identity: {
-        role: "driver",
-        process: { uid: 1000, username: USERNAME },
-        device: "integration-device",
-        implements: ["fs.*", "shell.exec"],
-        capabilities: [],
+      peer: {
+        id: "integration-device",
+        principal: { kind: "machine", account: { uid: 1000, username: USERNAME } },
+        grant: {
+          calls: [],
+          implements: ["fs.*", "shell.exec"],
+          signals: expect.arrayContaining(["device.status", "peer.pong"]),
+        },
       },
-      syscalls: [],
-      signals: expect.arrayContaining(["device.status", "device.pong"]),
     });
 
     const user = createClient({
       username: USERNAME,
       password: PASSWORD,
-      client: clientInfo("user", "device-observer"),
+      peer: peerInfo("device-observer"),
     });
     await user.connect();
     expect((await user.call("sys.device.list", {})).devices).toContainEqual(
@@ -222,12 +198,12 @@ describe("gateway authentication integration", () => {
     );
   });
 
-  it("requires a root-issued service token and channel", async () => {
+  it("infers service authority from a root-issued service token", async () => {
     await setup();
     const root = createClient({
       username: "root",
       password: ROOT_PASSWORD,
-      client: clientInfo("user", "root-token-issuer"),
+      peer: peerInfo("root-token-issuer"),
     });
     await root.connect();
     const issued = await root.call<SysTokenCreateResult>("sys.token.create", {
@@ -240,32 +216,18 @@ describe("gateway authentication integration", () => {
       allowedRole: "service",
     });
 
-    await expect(connectOnce({
-      protocol: 2,
-      client: clientInfo("service", "service-without-channel"),
-      auth: { username: "root", token: issued.token.token },
-    })).rejects.toMatchObject({
-      code: 103,
-      message: "Service role requires channel field",
-    });
-
     const service = createClient({
       username: "root",
       token: issued.token.token,
-      client: {
-        ...clientInfo("service", "integration-service"),
-        channel: "integration",
-      },
+      peer: peerInfo("integration-service"),
     });
     const connected = await service.connect();
     expect(connected).toMatchObject({
-      identity: {
-        role: "service",
-        channel: "integration",
-        capabilities: ["adapter.*"],
+      peer: {
+        id: "integration-service",
+        principal: { kind: "service" },
+        grant: { calls: ["adapter.*"], signals: [], implements: [] },
       },
-      syscalls: ["adapter.*"],
-      signals: [],
     });
   });
 
@@ -274,7 +236,7 @@ describe("gateway authentication integration", () => {
     const user = createClient({
       username: USERNAME,
       password: PASSWORD,
-      client: clientInfo("user", "pre-eviction-user"),
+      peer: peerInfo("pre-eviction-user"),
     });
     await user.connect();
     const issued = await user.call<SysTokenCreateResult>("sys.token.create", {
@@ -292,7 +254,7 @@ describe("gateway authentication integration", () => {
     const root = createClient({
       username: "root",
       password: ROOT_PASSWORD,
-      client: clientInfo("user", "pre-eviction-root"),
+      peer: peerInfo("pre-eviction-root"),
     });
     await root.connect();
     await root.call("sys.config.set", {
@@ -310,7 +272,7 @@ describe("gateway authentication integration", () => {
     const reconnectedUser = createClient({
       username: USERNAME,
       token: issued.token.token,
-      client: clientInfo("user", "post-eviction-user"),
+      peer: peerInfo("post-eviction-user"),
     });
     await reconnectedUser.connect();
     expect((await reconnectedUser.proc.list()).processes).toContainEqual(
@@ -323,7 +285,7 @@ describe("gateway authentication integration", () => {
     const reconnectedRoot = createClient({
       username: "root",
       password: ROOT_PASSWORD,
-      client: clientInfo("user", "post-eviction-root"),
+      peer: peerInfo("post-eviction-root"),
     });
     await reconnectedRoot.connect();
     expect(await reconnectedRoot.call("sys.config.get", {
@@ -344,7 +306,7 @@ describe("gateway authentication integration", () => {
     const user = createClient({
       username: USERNAME,
       password: PASSWORD,
-      client: clientInfo("user", "hibernating-user"),
+      peer: peerInfo("hibernating-user"),
     });
     await user.connect();
     const before = await user.proc.list();
@@ -366,9 +328,10 @@ describe("gateway authentication integration", () => {
     return client;
   }
 
-  function connectOnce(args: ConnectArgs): Promise<never> {
+  function connectOnce(args: GsvRequestArguments): Promise<never> {
     const client = new GSVClient();
-    return client.requestOnce(webSocketUrl(baseUrl), "sys.connect", args)
+    const call: string = "sys.connect";
+    return client.requestOnce(webSocketUrl(baseUrl), call, args)
       .then(() => {
         throw new Error("expected connection to fail");
       })
@@ -391,14 +354,11 @@ describe("gateway authentication integration", () => {
   }
 });
 
-function clientInfo(
-  role: ConnectArgs["client"]["role"],
-  id: string,
-): ConnectArgs["client"] {
+function peerInfo(id: string, implementsList: string[] = []): ConnectArgs["peer"] {
   return {
     id,
     version: "1.0.0",
-    platform: role === "service" ? "worker" : "node",
-    role,
+    platform: "test",
+    implements: implementsList,
   };
 }

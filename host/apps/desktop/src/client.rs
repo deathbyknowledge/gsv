@@ -14,7 +14,7 @@ use desktop_protocol::{
     ServerOptions,
 };
 use gateway_client::client::{GatewayAuth, KernelClient, ProcSendResult};
-use gateway_client::connection::{ClientIdentity, GatewayRpcError};
+use gateway_client::connection::{GatewayRpcError, PeerIdentity};
 use gateway_client::protocol::Frame;
 use gateway_client::{BinaryBody, BinaryBodyLimits};
 use host_config::{CliConfig, ConfigError, ConfigFile};
@@ -2408,14 +2408,14 @@ async fn establish_live_session(
     let signal_state = signal_lease.state.clone();
     let signal_process_exit = process_exit.clone();
     let signal_events = events.clone();
-    let identity = ClientIdentity::new(
+    let peer = PeerIdentity::new(
         format!("gsv-desktop-{}", uuid::Uuid::new_v4()),
         env!("CARGO_PKG_VERSION"),
-    )
-    .with_channel("desktop");
-    let connect = KernelClient::connect_user_with_identity(
+    );
+    let connect = KernelClient::connect_with_peer(
         url,
-        identity,
+        peer,
+        Vec::new(),
         auth,
         BinaryBodyLimits::default(),
         move |frame| {

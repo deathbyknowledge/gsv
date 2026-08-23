@@ -34,6 +34,8 @@ This document is the root engineering contract for the repository. It explains h
 ### Treat syscalls and protocol frames as the primitive boundary
 
 - Fix shared semantics at the syscall, protocol, or owning runtime boundary rather than patching individual callers.
+- Model browsers, native clients, machines, and adapter services as protocol peers. Principal, callable syscalls, receivable signals, implemented syscalls, transport, and provenance are independent axes; transport or a claimed peer id never grants authority.
+- A linked adapter actor may invoke an ordinary syscall only through a Kernel-derived, interaction-scoped human peer whose grant is intersected with the linked account's capabilities.
 - A targetable syscall must mean the same thing on `gsv`, a connected device, and a browser-backed target.
 - Shell, agent tools, CodeMode, apps, and SDK clients may present results differently, but they must share the same underlying primitive behavior.
 - Structured frames carry metadata. Potentially large or binary payloads travel through frame bodies and streams.

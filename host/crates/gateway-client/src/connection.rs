@@ -1,7 +1,7 @@
 use crate::body::{BinaryBody, BinaryBodyChannel, BinaryBodyLimits, BodyError, RpcResponse};
 use crate::protocol::{
-    AuthInfo, ClientInfo, ConnectArgs, ConnectResult, DriverInfo, ErrorShape, Frame, RequestFrame,
-    ResponseFrame, SignalFrame, PROTOCOL_VERSION, REQUEST_CANCEL_SIGNAL,
+    AuthInfo, ConnectArgs, ConnectResult, ErrorShape, Frame, PeerInfo, RequestFrame, ResponseFrame,
+    SignalFrame, PROTOCOL_VERSION, REQUEST_CANCEL_SIGNAL,
 };
 use futures_util::{SinkExt, StreamExt};
 use serde_json::Value;
@@ -160,46 +160,24 @@ fn fail_all_pending_requests(pending: &PendingRequests, code: i32, message: &str
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ClientIdentity {
+pub struct PeerIdentity {
     pub id: String,
     pub version: String,
     pub platform: String,
-    pub channel: Option<String>,
 }
 
-impl ClientIdentity {
+impl PeerIdentity {
     pub fn new(id: impl Into<String>, version: impl Into<String>) -> Self {
         Self {
             id: id.into(),
             version: version.into(),
             platform: std::env::consts::OS.to_string(),
-            channel: None,
         }
     }
 
     pub fn with_platform(mut self, platform: impl Into<String>) -> Self {
         self.platform = platform.into();
         self
-    }
-
-    pub fn with_channel(mut self, channel: impl Into<String>) -> Self {
-        self.channel = Some(channel.into());
-        self
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum ConnectionRole {
-    User,
-    Driver { implements: Vec<String> },
-}
-
-impl ConnectionRole {
-    fn wire_name(&self) -> &'static str {
-        match self {
-            Self::User => "user",
-            Self::Driver { .. } => "driver",
-        }
     }
 }
 
@@ -208,8 +186,8 @@ impl ConnectionRole {
 #[derive(Debug, Clone)]
 pub struct ConnectionOptions {
     pub url: String,
-    pub identity: ClientIdentity,
-    pub role: ConnectionRole,
+    pub peer: PeerIdentity,
+    pub implements: Vec<String>,
     pub auth_username: Option<String>,
     pub auth_password: Option<String>,
     pub auth_token: Option<String>,
@@ -459,22 +437,14 @@ impl Connection {
             password: opts.auth_password.clone(),
             token: opts.auth_token.clone(),
         });
-        let driver = match &opts.role {
-            ConnectionRole::User => None,
-            ConnectionRole::Driver { implements } => Some(DriverInfo {
-                implements: implements.clone(),
-            }),
-        };
         let connect_args = ConnectArgs {
             protocol: PROTOCOL_VERSION,
-            client: ClientInfo {
-                id: opts.identity.id.clone(),
-                version: opts.identity.version.clone(),
-                platform: opts.identity.platform.clone(),
-                role: opts.role.wire_name().to_string(),
-                channel: opts.identity.channel.clone(),
+            peer: PeerInfo {
+                id: opts.peer.id.clone(),
+                version: opts.peer.version.clone(),
+                platform: opts.peer.platform.clone(),
+                implements: opts.implements.clone(),
             },
-            driver,
             auth,
         };
         let response = self
@@ -1005,16 +975,29 @@ mod tests {
     }
 
     #[test]
-    fn connect_result_requires_protocol_2() {
+    fn connect_result_requires_protocol_3() {
         let data = serde_json::json!({
             "protocol": 1,
             "server": { "version": "test", "connectionId": "conn-1" },
-            "identity": {},
-            "syscalls": [],
-            "signals": []
+            "peer": {
+                "id": "test-peer",
+                "sessionId": "conn-1",
+                "principal": {
+                    "kind": "human",
+                    "account": {
+                        "uid": 1000,
+                        "gid": 1000,
+                        "gids": [1000],
+                        "username": "test",
+                        "home": "/home/test",
+                        "cwd": "/home/test"
+                    }
+                },
+                "grant": { "calls": [], "signals": [], "implements": [] }
+            }
         });
 
         let error = parse_connect_result(Some(data)).expect_err("protocol 1 must be rejected");
-        assert_eq!(error, "Gateway selected protocol 1, expected 2");
+        assert_eq!(error, "Gateway selected protocol 1, expected 3");
     }
 }

@@ -1,7 +1,5 @@
 use crate::body::BinaryBodyLimits;
-use crate::connection::{
-    ClientIdentity, Connection, ConnectionOptions, ConnectionRole, GatewayRpcError,
-};
+use crate::connection::{Connection, ConnectionOptions, GatewayRpcError, PeerIdentity};
 use crate::protocol::Frame;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -46,33 +44,9 @@ pub struct KernelClient {
 pub type GsvClient = KernelClient;
 
 impl KernelClient {
-    pub async fn connect_user_with_identity(
+    pub async fn connect_with_peer(
         url: &str,
-        identity: ClientIdentity,
-        auth: GatewayAuth,
-        limits: BinaryBodyLimits,
-        on_frame: impl Fn(Frame) + Send + Sync + 'static,
-    ) -> Result<Self, Box<dyn std::error::Error>> {
-        auth.validate()?;
-        let conn = Connection::connect_with_options(
-            ConnectionOptions {
-                url: url.to_string(),
-                identity,
-                role: ConnectionRole::User,
-                auth_username: auth.username,
-                auth_password: auth.password,
-                auth_token: auth.token,
-                limits,
-            },
-            on_frame,
-        )
-        .await?;
-        Ok(Self { conn })
-    }
-
-    pub async fn connect_driver_with_identity(
-        url: &str,
-        identity: ClientIdentity,
+        peer: PeerIdentity,
         implements: Vec<String>,
         auth: GatewayAuth,
         limits: BinaryBodyLimits,
@@ -82,8 +56,8 @@ impl KernelClient {
         let conn = Connection::connect_with_options(
             ConnectionOptions {
                 url: url.to_string(),
-                identity,
-                role: ConnectionRole::Driver { implements },
+                peer,
+                implements,
                 auth_username: auth.username,
                 auth_password: auth.password,
                 auth_token: auth.token,

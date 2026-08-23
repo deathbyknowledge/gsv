@@ -3653,12 +3653,11 @@ async fn connect_gateway_with_retry(
         match Connection::connect_with_options(
             crate::connection::ConnectionOptions {
                 url: ws_url.to_string(),
-                identity: crate::connection::ClientIdentity::new(
+                peer: crate::connection::PeerIdentity::new(
                     "deploy-bootstrap",
                     crate::build_info::BUILD_VERSION,
-                )
-                .with_channel("cli"),
-                role: crate::connection::ConnectionRole::User,
+                ),
+                implements: Vec::new(),
                 auth_username: None,
                 auth_password: None,
                 auth_token: auth_token.map(|t| t.to_string()),

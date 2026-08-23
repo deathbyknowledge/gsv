@@ -33,7 +33,7 @@ import type {
   AdapterMedia,
   AdapterMediaPart,
   BinaryBody,
-  ConnectionIdentity,
+  ConnectedPeer,
   InstallationDirectoryService,
   InstallationOnboardingAuthorization,
   InstallationOnboardingService,
@@ -59,6 +59,7 @@ import type {
   ConversationMessage,
   ConversationMessageOrigin,
 } from "@humansandmachines/gsv/protocol";
+import type { ConnectionIdentity } from "./identity";
 import {
   BinaryBodyChannel,
   REQUEST_CANCEL_SIGNAL,
@@ -109,6 +110,15 @@ import { dispatch, type DispatchDeps } from "./dispatch";
 import { bindByteStreamToAbort } from "../shared/streams";
 import { raceWithAbort } from "../shared/abort";
 import type { KernelContext } from "./context";
+import {
+  connectedPeerContext,
+  peerAllowsCall,
+  peerConnectionIdentity,
+  peerProvidesOperations,
+  type PeerContext,
+  servicePeerContext,
+  type ServicePeerProfile,
+} from "./peer";
 import { getConversationById, sendFrameToProcess } from "../shared/utils";
 import type { ConversationAppendRequest } from "../conversation/do";
 import { stableOpaqueId } from "../shared/stable-id";
@@ -512,6 +522,10 @@ const managedTelegramUnlinkSchema = z.object({
 
 const serviceBindingArgsSchema = z.object({
   adapter: z.string().trim().min(1).optional(),
+});
+const servicePeerProfileSchema = z.object({
+  id: z.string().trim().min(1),
+  calls: z.array(z.string().trim().min(1)),
 });
 
 type UserProcessSignalFrame = z.infer<typeof userProcessSignalFrameSchema>;
@@ -932,13 +946,13 @@ export class Kernel extends DurableObject<Env> {
       }
     }
 
-    const identity = state.identity;
+    const peer = state.peer;
 
-    if (identity?.role === "driver") {
-      if (state.step === "connected" && !this.findDeviceConnection(identity.device)) {
-        this.devices.setOnline(identity.device, false);
-        this.broadcastDeviceStatus(identity.device, "disconnected");
-        this.failRoutesForDevice(identity.device);
+    if (peer && peerProvidesOperations(peer)) {
+      if (state.step === "connected" && !this.findDeviceConnection(peer.id)) {
+        this.devices.setOnline(peer.id, false);
+        this.broadcastDeviceStatus(peer.id, "disconnected");
+        this.failRoutesForDevice(peer.id);
       } else {
         this.failRoutesForDriverConnection(connection.id);
       }
@@ -1328,17 +1342,21 @@ export class Kernel extends DurableObject<Env> {
    * Service-binding RPC entrypoint.
    * Accepts the same frame format as WS connections/process RPC.
    */
-  async serviceFrame(frame: Frame): Promise<Frame | null> {
+  async peerFrame(profile: ServicePeerProfile, frame: Frame): Promise<Frame | null> {
     const body = "body" in frame ? frame.body : undefined;
     try {
       if (frame.type !== "req") {
         return null;
       }
+      const parsedProfile = servicePeerProfileSchema.safeParse(profile);
+      if (!parsedProfile.success) {
+        return errFrame(frame.id, 403, "Service peer profile is invalid");
+      }
       const gate = await this.managedWorkGate();
       if (!gate.allowed) {
         return errFrame(frame.id, gate.code, gate.message);
       }
-      return await this.handleServiceReq(frame);
+      return await this.handleServiceReq(parsedProfile.data, frame);
     } finally {
       await cancelUnlockedBody(body, "Service request completed");
     }
@@ -2325,7 +2343,10 @@ export class Kernel extends DurableObject<Env> {
     });
   }
 
-  private async handleServiceReq(frame: RequestFrame): Promise<ResponseFrame> {
+  private async handleServiceReq(
+    profile: ServicePeerProfile,
+    frame: RequestFrame,
+  ): Promise<ResponseFrame> {
     if (frame.call === "sys.connect" || frame.call === "sys.setup" || frame.call === "sys.setup.assist") {
       return errFrame(frame.id, 400, `${frame.call} is not supported via serviceFrame`);
     }
@@ -2334,37 +2355,53 @@ export class Kernel extends DurableObject<Env> {
       return errFrame(frame.id, 403, `Permission denied: ${frame.call}`);
     }
 
-    const identity = this.buildServiceBindingIdentity(frame);
+    const identity = this.buildServiceBindingIdentity(profile);
     if (!identity) {
       return errFrame(frame.id, 503, "Service identity is not configured");
     }
-    if (!hasCapability(identity.capabilities, frame.call)) {
+    const args = serviceBindingArgsSchema.safeParse(frame.args);
+    if (args.success && args.data.adapter && args.data.adapter.toLowerCase() !== profile.id) {
+      return errFrame(frame.id, 403, "Service peer cannot act as another adapter");
+    }
+    const peer = servicePeerContext({
+      installationId: this.installationId,
+      profile,
+      sessionId: `service:${profile.id}`,
+      identity,
+    });
+    if (!peerAllowsCall(peer, frame.call)) {
       return errFrame(frame.id, 403, `Permission denied: ${frame.call}`);
     }
 
-    const ctx = this.buildKernelContext({ identity });
-    const origin: RouteOrigin = { type: "process", id: "__service_binding__" };
-    const result = await dispatch(frame, origin, ctx, this.buildDispatchDeps());
-
-    if (!result.handled) {
-      return errFrame(frame.id, 501, `${frame.call} requires unsupported async routing`);
-    }
-
-    this.applyPostDispatchEffects(frame, result.response);
-    return result.response;
+    const ctx = this.buildKernelContext({ identity, peer });
+    return await this.dispatchPeerRequest(
+      frame,
+      { type: "kernel", id: frame.id },
+      ctx,
+      { awaitRouted: true },
+    ) ?? errFrame(frame.id, 500, "Service request did not produce a response");
   }
 
   private buildContext(connection: KernelConnection<ConnectionState>): KernelContext {
     const state = connection.state;
     if (!state) throw new Error("Connection state is missing");
+    const peer = state.peer
+      ? connectedPeerContext({
+          installationId: this.installationId,
+          peer: state.peer,
+          credential: state.credentialMethod ?? "token",
+        })
+      : undefined;
     return this.buildKernelContext({
       connection,
-      identity: state.identity,
+      peer,
+      identity: state.peer ? peerConnectionIdentity(state.peer) : undefined,
     });
   }
 
   private buildKernelContext(options: {
     connection?: KernelConnection<ConnectionState> | null;
+    peer?: PeerContext;
     identity?: ConnectionIdentity;
     processId?: string;
     processRunId?: string;
@@ -2393,6 +2430,7 @@ export class Kernel extends DurableObject<Env> {
       schedules: this.schedules,
       mailboxes: this.mailboxes,
       connection: options.connection ?? null,
+      peer: options.peer,
       identity: options.identity,
       processId: options.processId,
       processRunId: options.processRunId,
@@ -2427,6 +2465,7 @@ export class Kernel extends DurableObject<Env> {
         undefined,
         signal ? { signal } : undefined,
       ),
+      request: this.requestDispatchedFrame.bind(this),
     };
   }
 
@@ -2454,38 +2493,74 @@ export class Kernel extends DurableObject<Env> {
     ctx: KernelContext,
     signal?: AbortSignal,
   ): Promise<ResponseFrame> {
-    if (isInternalOnlySyscall(frame.call)) {
-      await cancelUnlockedBody(frame.body, "Dispatched request rejected");
-      return errFrame(frame.id, 403, `Permission denied: ${frame.call}`);
+    try {
+      const response = await this.dispatchPeerRequest(
+        frame,
+        { type: "kernel", id: frame.id },
+        ctx,
+        { awaitRouted: true, signal, throwOnCancel: true },
+      );
+      return response ?? errFrame(frame.id, 500, "Dispatched request did not produce a response");
+    } finally {
+      await cancelUnlockedBody(frame.body, "Dispatched request completed");
     }
-    if (!hasCapability(ctx.identity?.capabilities ?? [], frame.call)) {
-      await cancelUnlockedBody(frame.body, "Dispatched request rejected");
-      return errFrame(frame.id, 403, `Permission denied: ${frame.call}`);
+  }
+
+  private async dispatchPeerRequest(
+    inputFrame: RequestFrame,
+    origin: RouteOrigin,
+    ctx: KernelContext,
+    options: {
+      awaitRouted: boolean;
+      signal?: AbortSignal;
+      throwOnCancel?: boolean;
+    },
+  ): Promise<ResponseFrame | null> {
+    if (isInternalOnlySyscall(inputFrame.call)) {
+      return errFrame(inputFrame.id, 403, `Permission denied: ${inputFrame.call}`);
+    }
+    const allowed = ctx.peer
+      ? peerAllowsCall(ctx.peer, inputFrame.call)
+      : hasCapability(ctx.identity?.capabilities ?? [], inputFrame.call);
+    if (!allowed) {
+      return errFrame(inputFrame.id, 403, `Permission denied: ${inputFrame.call}`);
     }
 
-    const requestSignal = ctx.requestSignal && signal && ctx.requestSignal !== signal
-      ? AbortSignal.any([ctx.requestSignal, signal])
-      : signal ?? ctx.requestSignal;
-    if (requestSignal?.aborted) {
-      await cancelUnlockedBody(frame.body, "Request cancelled");
-      throw requestAbortError(requestSignal.reason);
+    const callerSignal = ctx.requestSignal && options.signal && ctx.requestSignal !== options.signal
+      ? AbortSignal.any([ctx.requestSignal, options.signal])
+      : options.signal ?? ctx.requestSignal;
+    if (callerSignal?.aborted) {
+      if (options.throwOnCancel) throw requestAbortError(callerSignal.reason);
+      return null;
     }
 
-    const origin: RouteOrigin = { type: "kernel", id: frame.id };
-    const pending = this.createPendingKernelResponse(frame.id);
+    let controller: AbortController;
+    try {
+      controller = this.registerActiveRequest(origin, inputFrame.id);
+    } catch (error) {
+      return errFrame(
+        inputFrame.id,
+        409,
+        error instanceof Error ? error.message : String(error),
+      );
+    }
+    const requestSignal = callerSignal
+      ? AbortSignal.any([controller.signal, callerSignal])
+      : controller.signal;
+    const pending = options.awaitRouted
+      ? this.createPendingKernelResponse(inputFrame.id)
+      : null;
     const cancel = () => {
       this.cancelRequest(
         origin,
-        frame.id,
-        requestAbortError(requestSignal?.reason).message,
+        inputFrame.id,
+        requestAbortError(requestSignal.reason).message,
         false,
       );
     };
+    let frame = this.bindRequestBodyCancellation(inputFrame, requestSignal);
 
     try {
-      if (requestSignal) {
-        frame = this.bindRequestBodyCancellation(frame, requestSignal);
-      }
       const result = await raceWithAbort(
         dispatch(
           frame,
@@ -2495,7 +2570,7 @@ export class Kernel extends DurableObject<Env> {
         ),
         requestSignal,
         {
-          abortReason: () => requestAbortError(requestSignal?.reason),
+          abortReason: () => requestAbortError(requestSignal.reason),
           onAbort: cancel,
           onLateResolve: (late) => {
             if (late.handled && late.response.ok) {
@@ -2504,26 +2579,30 @@ export class Kernel extends DurableObject<Env> {
           },
         },
       );
-      const response = result.handled
-        ? result.response
-        : await raceWithAbort(
-            pending.promise,
-            requestSignal,
-            {
-              abortReason: () => requestAbortError(requestSignal?.reason),
-              onAbort: cancel,
-              onLateResolve: (late) => {
-                if (late.ok) {
-                  void cancelUnlockedBody(late.body, "Request was cancelled");
-                }
-              },
+      let response: ResponseFrame | null = result.handled ? result.response : null;
+      if (!response && pending) {
+        response = await raceWithAbort(
+          pending.promise,
+          requestSignal,
+          {
+            abortReason: () => requestAbortError(requestSignal.reason),
+            onAbort: cancel,
+            onLateResolve: (late) => {
+              if (late.ok) {
+                void cancelUnlockedBody(late.body, "Request was cancelled");
+              }
             },
-          );
-      this.applyPostDispatchEffects(frame, response);
+          },
+        );
+      }
+      if (response) this.applyPostDispatchEffects(frame, response);
       return response;
+    } catch (error) {
+      if (!requestSignal.aborted || options.throwOnCancel) throw error;
+      return null;
     } finally {
-      pending.cleanup();
-      await cancelUnlockedBody(frame.body, "Dispatched request completed");
+      pending?.cleanup();
+      this.finishActiveRequest(frame.id, controller);
     }
   }
 
@@ -2639,14 +2718,12 @@ export class Kernel extends DurableObject<Env> {
       active.controller.abort(new Error(message));
     }
     if (route && ownsRoute) {
-      if (!internalKernelRoute) {
-        this.sendDeviceRequestCancel(
-          route.deviceId,
-          route.driverConnectionId,
-          requestId,
-          message,
-        );
-      }
+      this.sendDeviceRequestCancel(
+        route.deviceId,
+        route.driverConnectionId,
+        requestId,
+        message,
+      );
       this.cancelRoute(requestId);
     }
     if (ownsActive || ownsRoute) {
@@ -2898,8 +2975,8 @@ export class Kernel extends DurableObject<Env> {
   ): boolean {
     const state = connection.state;
     return state?.step === "connected" &&
-      state.identity?.role === "driver" &&
-      state.identity.device === deviceId;
+      state.peer?.id === deviceId &&
+      peerProvidesOperations(state.peer);
   }
 
   private disconnectDeviceConnections(deviceId: string, reason: string): void {
@@ -3021,7 +3098,7 @@ export class Kernel extends DurableObject<Env> {
         return;
       }
 
-      if (!state || state.step !== "connected" || !state.identity) {
+      if (!state || state.step !== "connected" || !state.peer) {
         if (this.auth.isSetupMode()) {
           if (this.managedOnboardingService()) {
             this.sendError(
@@ -3050,7 +3127,12 @@ export class Kernel extends DurableObject<Env> {
         return;
       }
 
-      if (!hasCapability(state.identity.capabilities, frame.call)) {
+      const peer = connectedPeerContext({
+        installationId: this.installationId,
+        peer: state.peer,
+        credential: state.credentialMethod ?? "token",
+      });
+      if (!peerAllowsCall(peer, frame.call)) {
         this.sendError(connection, frame.id, 403, `Permission denied: ${frame.call}`);
         return;
       }
@@ -3058,7 +3140,7 @@ export class Kernel extends DurableObject<Env> {
       if (frame.call === "proc.observe" || frame.call === "proc.unobserve") {
         const pid = frame.args.pid.trim();
         const process = pid ? this.procs.get(pid) : null;
-        if (!process || process.ownerUid !== state.identity.process.uid) {
+        if (!process || process.ownerUid !== state.peer.principal.account.uid) {
           this.sendError(connection, frame.id, 404, `Process not found: ${pid || "(missing)"}`);
           return;
         }
@@ -3074,42 +3156,20 @@ export class Kernel extends DurableObject<Env> {
         return;
       }
 
-      const origin: RouteOrigin = { type: "connection", id: connection.id };
-      let controller: AbortController;
-      try {
-        controller = this.registerActiveRequest(origin, frame.id);
-      } catch (error) {
-        this.sendError(connection, frame.id, 409, error instanceof Error ? error.message : String(error));
-        return;
-      }
-      let result;
-      try {
-        frame = this.bindRequestBodyCancellation(frame, controller.signal);
-        result = await dispatch(
-          frame,
-          origin,
-          { ...this.buildContext(connection), requestSignal: controller.signal },
-          this.buildDispatchDeps(),
-        );
-      } finally {
-        this.finishActiveRequest(frame.id, controller);
-      }
-      if (result.handled) {
-        this.applyPostDispatchEffects(frame, result.response);
-        this.sendWebSocketFrame(connection, result.response);
-      }
+      const response = await this.dispatchPeerRequest(
+        frame,
+        { type: "connection", id: connection.id },
+        this.buildContext(connection),
+        { awaitRouted: false },
+      );
+      if (response) this.sendWebSocketFrame(connection, response);
       // Routed responses arrive asynchronously through handleRes.
     } finally {
       await cancelUnlockedBody(frame.body, "WebSocket request completed");
     }
   }
 
-  private buildServiceBindingIdentity(frame: RequestFrame): ConnectionIdentity | null {
-    const args = serviceBindingArgsSchema.safeParse(frame.args);
-    const adapterHint = args.success && args.data.adapter
-      ? args.data.adapter.toLowerCase()
-      : "service-binding";
-
+  private buildServiceBindingIdentity(profile: ServicePeerProfile): ConnectionIdentity | null {
     const root = this.auth.getPasswdByUid(0);
     if (!root) {
       return null;
@@ -3126,7 +3186,7 @@ export class Kernel extends DurableObject<Env> {
         cwd: root.home,
       },
       capabilities: this.caps.resolve([102]),
-      channel: adapterHint,
+      channel: profile.id,
     };
   }
 
@@ -3204,21 +3264,22 @@ export class Kernel extends DurableObject<Env> {
       return;
     }
 
-    const clientId = frame.args?.client?.id?.trim();
-    const clientPlatform = frame.args?.client?.platform?.trim();
+    const clientId = frame.args.peer.id.trim();
+    const clientPlatform = frame.args.peer.platform.trim();
     const newState = {
       step: "connected",
-      identity: outcome.identity,
+      peer: outcome.peer,
       clientId: clientId || undefined,
       clientPlatform: clientPlatform || undefined,
-    } satisfies ConnectionState & { step: "connected"; identity: ConnectionIdentity };
+      credentialMethod: frame.args.auth?.token ? "token" : "password",
+    } satisfies ConnectionState & { step: "connected" };
 
     if (
-      outcome.identity.role === "user"
-      && outcome.identity.process.uid >= 1000
-      && !ctx.auth.isPersonalAgentUid(outcome.identity.process.uid)
+      outcome.peer.principal.kind === "human"
+      && outcome.peer.principal.account.uid >= 1000
+      && !ctx.auth.isPersonalAgentUid(outcome.peer.principal.account.uid)
     ) {
-      const ownerUid = outcome.identity.process.uid;
+      const ownerUid = outcome.peer.principal.account.uid;
       const pid = await ensurePersonalController(ownerUid, ctx);
       const conversation = ctx.conversations.ensureHome(ownerUid, pid);
       await getConversationById(this.installationId, conversation.id).initialize({
@@ -3229,12 +3290,12 @@ export class Kernel extends DurableObject<Env> {
 
     this.activateConnection(connection, newState);
 
-    if (outcome.identity.role === "driver") {
-      this.broadcastDeviceStatus(outcome.identity.device, "connected");
+    if (peerProvidesOperations(outcome.peer)) {
+      this.broadcastDeviceStatus(outcome.peer.id, "connected");
     }
 
-    if (outcome.identity.role === "user") {
-      this.reconcileOwnedIdentities(outcome.identity.process.uid);
+    if (outcome.peer.principal.kind === "human") {
+      this.reconcileOwnedIdentities(outcome.peer.principal.account.uid);
     }
 
     this.sendOk(connection, frame.id, outcome.result);
@@ -3242,7 +3303,7 @@ export class Kernel extends DurableObject<Env> {
 
   private activateConnection(
     connection: KernelConnection<ConnectionState>,
-    state: ConnectionState & { step: "connected"; identity: ConnectionIdentity },
+    state: ConnectionState & { step: "connected"; peer: ConnectedPeer },
   ): void {
     connection.setState(state);
     this.connections.set(connection.id, connection);
@@ -3255,8 +3316,8 @@ export class Kernel extends DurableObject<Env> {
       if (
         existing !== connection &&
         existingState?.step === "connected" &&
-        existingState.identity?.process.uid === state.identity.process.uid &&
-        existingState.identity.role === state.identity.role &&
+        existingState.peer?.principal.account.uid === state.peer.principal.account.uid &&
+        existingState.peer.principal.kind === state.peer.principal.kind &&
         existingState.clientId === state.clientId
       ) {
         existing.setState({ ...existingState, step: "superseded" });
@@ -3614,17 +3675,17 @@ export class Kernel extends DurableObject<Env> {
     frame: SignalFrame,
   ): void {
     const state = connection.state;
-    const targetId = state?.identity?.role === "driver"
-      ? state.identity.device
+    const targetId = state?.peer && peerProvidesOperations(state.peer)
+      ? state.peer.id
       : null;
     if (!targetId || !this.isConnectionForDevice(connection, targetId)) {
       return;
     }
 
-    if (frame.signal === "device.ping") {
+    if (frame.signal === "peer.ping") {
       const pong: SignalFrame = {
         type: "sig",
-        signal: "device.pong",
+        signal: "peer.pong",
       };
       if (frame.payload !== undefined) pong.payload = frame.payload;
       if (frame.seq !== undefined) pong.seq = frame.seq;
@@ -4269,9 +4330,10 @@ export class Kernel extends DurableObject<Env> {
 
     for (const [, conn] of this.connections) {
       const state = conn.state;
-      if (!state) continue;
-      if (state.identity?.role !== "user") continue;
-      if (state.identity?.process.uid === uid) {
+      const peer = state?.peer;
+      if (!peer || peer.principal.kind !== "human") continue;
+      if (!peer.grant.signals.includes(signal)) continue;
+      if (peer.principal.account.uid === uid) {
         conn.send(json);
       }
     }
@@ -4289,17 +4351,19 @@ export class Kernel extends DurableObject<Env> {
       : null;
     for (const [connectionId, connection] of this.connections) {
       const state = connection.state;
+      const peer = state?.peer;
       if (
-        state?.identity?.role !== "user"
-        || state.identity.process.uid !== uid
+        !peer
+        || peer.principal.kind !== "human"
+        || peer.principal.account.uid !== uid
       ) {
         continue;
       }
       const routed = route?.kind === "connection" && route.connectionId === connectionId;
       const observing = state.observedProcessIds?.includes(processId) === true;
-      if (routed || observing) {
+      if ((routed || observing) && peer.grant.signals.includes(frame.signal)) {
         connection.send(json);
-      } else if (ambient) {
+      } else if (ambient && peer.grant.signals.includes("proc.changed")) {
         connection.send(ambient);
       }
     }
@@ -4315,9 +4379,11 @@ export class Kernel extends DurableObject<Env> {
     for (const [connectionId, connection] of this.connections) {
       if (connectionId === excludedConnectionId) continue;
       const state = connection.state;
+      const peer = state?.peer;
       if (
-        state?.identity?.role === "user"
-        && state.identity.process.uid === uid
+        peer?.principal.kind === "human"
+        && peer.principal.account.uid === uid
+        && peer.grant.signals.includes(signal)
       ) {
         connection.send(json);
       }
@@ -4330,7 +4396,7 @@ export class Kernel extends DurableObject<Env> {
     payload?: JsonValue,
   ): void {
     const connection = this.connections.get(connectionId);
-    if (!connection) return;
+    if (!connection?.state.peer?.grant.signals.includes(signal)) return;
     connection.send(JSON.stringify({ type: "sig", signal, payload } satisfies SignalFrame));
   }
 
@@ -4367,16 +4433,17 @@ export class Kernel extends DurableObject<Env> {
 
     for (const [, conn] of this.connections) {
       const state = conn.state;
-      if (!state?.identity) continue;
-      if (state.identity.role === "service") continue;
+      const peer = state?.peer;
+      if (!peer?.grant.signals.includes("device.status")) continue;
+      if (peer.principal.kind === "service") continue;
 
-      if (state.identity.role === "user") {
-        const proc = state.identity.process;
+      if (peer.principal.kind === "human") {
+        const proc = peer.principal.account;
         if (!this.devices.canAccess(deviceId, proc.uid, [...proc.gids])) {
           continue;
         }
-      } else if (state.identity.role === "driver") {
-        if (state.identity.device !== deviceId) {
+      } else if (peer.principal.kind === "machine") {
+        if (peer.id !== deviceId) {
           continue;
         }
       }
@@ -4396,10 +4463,10 @@ export class Kernel extends DurableObject<Env> {
       }
       const state = connection.state;
       this.connections.set(connection.id, connection);
-      if (!state || state.step !== "connected" || !state.identity) continue;
-      if (state.identity.role === "driver") {
-        onlineTargets.add(state.identity.device);
-        this.devices.setOnline(state.identity.device, true);
+      if (!state || state.step !== "connected" || !state.peer) continue;
+      if (peerProvidesOperations(state.peer)) {
+        onlineTargets.add(state.peer.id);
+        this.devices.setOnline(state.peer.id, true);
       }
     }
 

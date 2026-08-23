@@ -54,11 +54,10 @@ export async function startProcessRuntimeHarness(): Promise<ProcessRuntimeHarnes
       url: webSocketUrl(url),
       username: USERNAME,
       password: PASSWORD,
-      client: {
+      peer: {
         id: "process-runtime-integration",
         version: "1.0.0",
         platform: "node",
-        role: "user",
       },
     });
     await client.connect();

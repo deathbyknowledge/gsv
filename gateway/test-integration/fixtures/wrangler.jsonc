@@ -23,9 +23,14 @@
   ],
   "services": [
     {
-      "binding": "GATEWAY",
+      "binding": "TELEGRAM_GATEWAY",
       "service": "gsv",
-      "entrypoint": "GatewayEntrypoint"
+      "entrypoint": "TelegramGatewayEntrypoint"
+    },
+    {
+      "binding": "DISCORD_GATEWAY",
+      "service": "gsv",
+      "entrypoint": "DiscordGatewayEntrypoint"
     }
   ]
 }

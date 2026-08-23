@@ -43,6 +43,7 @@ import type {
   AdapterWorkerSendResult,
   BinaryBody,
   ProcMediaInput,
+  ProcListResult,
   ResourceBlock,
   ProcessIdentity,
   ConversationMessageOrigin,
@@ -92,6 +93,13 @@ import {
 } from "../shared/message-media-limits";
 import { SINGLETON_INSTALLATION_ID } from "../installation/identity";
 import { isLocked } from "../auth/shadow";
+import { hasCapability } from "./capabilities";
+import { delegatedAdapterPeerContext } from "./peer";
+import {
+  parseAdapterCommand,
+  renderAdapterCommandHelp,
+  renderAdapterProcessList,
+} from "./adapter-commands";
 
 type LegacyStandaloneAdapterService = {
   adapterConnect(
@@ -2469,13 +2477,10 @@ async function handleAdapterCommand(args: {
     return { handled: false };
   }
 
-  const text = message.text.trim();
-  if (!text.startsWith("/")) {
+  const parsed = parseAdapterCommand(message.text);
+  if (!parsed) {
     return { handled: false };
   }
-
-  const [rawCommand] = text.split(/\s+/);
-  const command = rawCommand.toLowerCase();
   const actorId = resolveActorId(message);
   if (!actorId) {
     return replyToAdapterCommand(message, "This adapter message has no linked actor identity.");
@@ -2490,11 +2495,65 @@ async function handleAdapterCommand(args: {
     uid,
   };
 
-  if (command === "/help") {
+  if (parsed.name === "help") {
     return replyToAdapterCommand(message, renderAdapterCommandHelp());
   }
 
-  if (command === "/where") {
+  if (parsed.name && parsed.args.length > 0) {
+    return replyToAdapterCommand(
+      message,
+      `/${parsed.name ?? parsed.rawName.slice(1)} does not accept arguments.\n\n${renderAdapterCommandHelp()}`,
+    );
+  }
+
+  if (parsed.name === "list") {
+    const userIdentity = identityForUid(uid, ctx);
+    if (!userIdentity) {
+      return replyToAdapterCommand(message, "Your linked GSV user no longer exists.");
+    }
+    const allowedCalls = ["proc.list"].filter((call) =>
+      hasCapability(ctx.caps.resolve(userIdentity.gids), call)
+    );
+    const peer = delegatedAdapterPeerContext({
+      installationId: ctx.installationId,
+      serviceId: adapter,
+      accountId,
+      actorId,
+      surface: message.surface,
+      sessionId: `adapter:${receiptId}`,
+      identity: userIdentity,
+      calls: allowedCalls,
+    });
+    const request: RequestFrame<"proc.list"> = {
+      type: "req",
+      id: crypto.randomUUID(),
+      call: "proc.list",
+      args: {},
+    };
+    const response = await ctx.request?.(
+      request,
+      {
+        ...ctx,
+        peer,
+        identity: peer.identity,
+        callerOwnerUid: uid,
+      },
+      ctx.requestSignal,
+    );
+    if (!response) {
+      throw new Error("Adapter command dispatch is unavailable");
+    }
+    if (!response.ok) {
+      return replyToAdapterCommand(message, `Unable to list work: ${response.error.message}`);
+    }
+    // SAFETY: The shared dispatcher correlates this response with the typed proc.list request above.
+    return replyToAdapterCommand(
+      message,
+      renderAdapterProcessList((response.data as ProcListResult).processes),
+    );
+  }
+
+  if (parsed.name === "where") {
     const selection = await resolvePrivateDmSelection(routeKey, uid, ctx);
     return replyToAdapterCommand(
       message,
@@ -2504,7 +2563,7 @@ async function handleAdapterCommand(args: {
     );
   }
 
-  if (command === "/home") {
+  if (parsed.name === "home") {
     const selectedRoute = ctx.adapters.surfaceRoutes.resolveRoute(routeKey);
     if (!selectedRoute) {
       const personalPid = await ensurePersonalController(uid, ctx);
@@ -2546,7 +2605,10 @@ async function handleAdapterCommand(args: {
     );
   }
 
-  return replyToAdapterCommand(message, `Unknown command: ${rawCommand}\n\n${renderAdapterCommandHelp()}`);
+  return replyToAdapterCommand(
+    message,
+    `Unknown command: ${parsed.rawName}\n\n${renderAdapterCommandHelp()}`,
+  );
 }
 
 async function deliverAdapterWorkReturnedEvent(
@@ -2656,16 +2718,6 @@ function replyToAdapterCommand(message: AdapterInboundMessage, text: string): Ad
       replyToId: message.messageId,
     },
   };
-}
-
-function renderAdapterCommandHelp(): string {
-  return [
-    "Adapter commands:",
-    "/where - show PERSONAL HOME or the selected WORK SESSION",
-    "/home - leave the work session and return to personal home",
-    "",
-    "When approval is pending, reply approve, deny, or approve always.",
-  ].join("\n");
 }
 
 function isOwnedInteractiveProcess(

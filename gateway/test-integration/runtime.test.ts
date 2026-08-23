@@ -679,11 +679,10 @@ describe("gateway runtime integration", () => {
       url: webSocketUrl(baseUrl),
       username: USERNAME,
       password: PASSWORD,
-      client: {
+      peer: {
         id: CLIENT_ID,
         version: "1.0.0",
         platform: "node",
-        role: "user",
       },
     });
     clients.add(client);
@@ -796,7 +795,7 @@ async function sendServiceFrame(
   frame: AdapterGatewayRequestFrame,
 ): Promise<AdapterGatewayResponseFrame> {
   const response = await harness.getWorker("gsv-test-dependencies").fetch(
-    "http://gsv-test-dependencies/__test/service-frame",
+    "http://gsv-test-dependencies/__test/service-frame/discord",
     {
       method: "POST",
       headers: { "content-type": "application/json" },

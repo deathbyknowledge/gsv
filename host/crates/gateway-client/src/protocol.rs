@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 pub const BINARY_FRAME_HEADER_BYTES: usize = 5;
-pub const PROTOCOL_VERSION: u32 = 2;
+pub const PROTOCOL_VERSION: u32 = 3;
 pub const REQUEST_CANCEL_SIGNAL: &str = "request.cancel";
 pub const BINARY_FRAME_DATA: u8 = 1 << 0;
 pub const BINARY_FRAME_END: u8 = 1 << 1;
@@ -78,25 +78,17 @@ pub struct ErrorShape {
 #[serde(rename_all = "camelCase")]
 pub struct ConnectArgs {
     pub protocol: u32,
-    pub client: ClientInfo,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub driver: Option<DriverInfo>,
+    pub peer: PeerInfo,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub auth: Option<AuthInfo>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ClientInfo {
+pub struct PeerInfo {
     pub id: String,
     pub version: String,
     pub platform: String,
-    pub role: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub channel: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct DriverInfo {
+    #[serde(skip_serializing_if = "Vec::is_empty", default)]
     pub implements: Vec<String>,
 }
 
@@ -117,9 +109,47 @@ pub struct AuthInfo {
 pub struct ConnectResult {
     pub protocol: u32,
     pub server: ServerInfo,
-    pub identity: Value,
-    pub syscalls: Vec<String>,
+    pub peer: ConnectedPeer,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ConnectedPeer {
+    pub id: String,
+    pub session_id: String,
+    pub principal: PeerPrincipal,
+    pub grant: PeerGrant,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum PeerPrincipalKind {
+    Human,
+    Machine,
+    Service,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PeerPrincipal {
+    pub kind: PeerPrincipalKind,
+    pub account: ProcessIdentity,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProcessIdentity {
+    pub uid: u64,
+    pub gid: u64,
+    pub gids: Vec<u64>,
+    pub username: String,
+    pub home: String,
+    pub cwd: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PeerGrant {
+    pub calls: Vec<String>,
     pub signals: Vec<String>,
+    pub implements: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

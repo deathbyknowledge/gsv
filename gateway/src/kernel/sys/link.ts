@@ -1,6 +1,5 @@
 import type { KernelContext } from "../context";
 import type {
-  UserIdentity,
   SysLinkArgs,
   SysLinkConsumeArgs,
   SysLinkConsumeResult,
@@ -10,6 +9,7 @@ import type {
   SysUnlinkArgs,
   SysUnlinkResult,
 } from "@humansandmachines/gsv/protocol";
+import type { UserIdentity } from "../identity";
 
 export function handleSysLinkConsume(
   args: SysLinkConsumeArgs,

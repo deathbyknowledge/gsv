@@ -58,7 +58,8 @@ export type RecordedOutboundMessage = {
 type OnboardingCompletionFailure = "before-activation" | "after-activation";
 
 interface Env {
-  GATEWAY: Fetcher & AdapterGatewayInterface;
+  TELEGRAM_GATEWAY: Fetcher & AdapterGatewayInterface;
+  DISCORD_GATEWAY: Fetcher & AdapterGatewayInterface;
   INTEGRATION_STATE: DurableObjectNamespace<IntegrationState>;
 }
 
@@ -310,12 +311,17 @@ export default class TestDependencies
   async fetch(request: Request): Promise<Response> {
     const url = new URL(request.url);
 
-    if (url.pathname === "/__test/service-frame" && request.method === "POST") {
+    const gateway = url.pathname === "/__test/service-frame/telegram"
+      ? this.env.TELEGRAM_GATEWAY
+      : url.pathname === "/__test/service-frame/discord"
+        ? this.env.DISCORD_GATEWAY
+        : null;
+    if (gateway && request.method === "POST") {
       const input = await request.json<{
         installation: AdapterInstallationContext;
         frame: AdapterGatewayRequestFrame;
       }>();
-      const response = await this.env.GATEWAY.serviceFrame(
+      const response = await gateway.serviceFrame(
         input.installation,
         input.frame,
       );

@@ -9,8 +9,8 @@ import {
   type ProcessIdentity,
   type SysSetupArgs,
   type SysSetupResult,
-  type UserIdentity,
 } from "@humansandmachines/gsv/protocol";
+import type { UserIdentity } from "../identity";
 import { handleSysBootstrap } from "./bootstrap";
 import { ensureAccountHomeLayout } from "../account-home";
 import { RipgitClient } from "../../fs";

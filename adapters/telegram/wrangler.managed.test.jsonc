@@ -32,7 +32,7 @@
     {
       "binding": "GATEWAY",
       "service": "managed-telegram-gateway-test",
-      "entrypoint": "GatewayEntrypoint"
+      "entrypoint": "TelegramGatewayEntrypoint"
     },
     {
       "binding": "TELEGRAM_API",

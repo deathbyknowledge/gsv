@@ -1,321 +1,294 @@
 # Unified Protocol Peers
 
-Status: **foundation implemented; broader peer unification deferred**.
-Canonical Conversations, explicit Message/Silence completion, directed client
-streaming, adapter delivery of committed Messages, and opt-in Process
-observation now provide one interaction model across transports. The remaining
-facility negotiation, delegated adapter syscall surface, and shared command
-frontend described here are proposals, not compatibility promises.
+Status: **implemented in protocol version 3**.
 
-## Problem
+GSV has one request, response, signal, body, and cancellation model. A browser,
+native application, CLI, machine daemon, or adapter service is a protocol peer.
+WebSocket and Workers RPC are carriers for that model rather than different
+application protocols.
 
-GSV currently separates clients and adapters more deeply than their actual
-roles require.
+## Why the model exists
 
-- Web, native, and CLI clients connect over WebSocket, call ordinary syscalls,
-  synchronize canonical Conversations, and explicitly observe raw Process
-  activity when needed.
-- Adapter Workers communicate over service bindings. They use the same frame
-  shape, but enter through a restricted `serviceFrame` path and mostly call
-  adapter-specific syscalls.
-- Text commands exposed by an adapter can reproduce client operations such as
-  listing processes, but do so through a separate command path.
-- Adapters and clients now receive the same canonical committed Message
-  semantics, while only a directed client receives transient Message deltas.
-  They still enter through different authenticated transport and command paths.
+The old connection roles coupled unrelated decisions. A `user` could call
+syscalls but could not implement one; a `driver` could implement syscalls but
+was not treated like a full client; an adapter used a restricted parallel RPC
+path even when a command such as `/list` was an ordinary user operation.
 
-This makes adapters artificially narrow and clients artificially unaware of
-routing. It also encourages provider-specific command implementations and
-client heuristics. For example, a native application should be able to play a
-sound when it receives an answer, but `proc.run.finished` alone does not mean
-that the answer was directed to that application.
+Protocol peers separate the independent questions:
 
-The shared primitive should be a protocol peer. A peer speaks GSV frames under
-an authenticated identity and an explicit capability set. WebSocket and
-service binding are transports for peers, not separate application models.
+- who is acting;
+- which live program or service is connected;
+- what it may call;
+- which signals it may receive;
+- what it can implement for GSV; and
+- how frames and bodies reach it.
 
-## Core model
+That separation lets a native application be both an interactive client and a
+filesystem or audio endpoint. It lets a linked Telegram actor invoke a bounded
+ordinary syscall without giving the Telegram Worker login authority. It also
+keeps Process observation separate from user-facing Messages.
 
-Keep these concerns independent:
+## Public peer contract
 
-1. **Principal:** who the peer is acting as.
-2. **Transport:** how request, response, and signal frames move.
-3. **Facilities:** which parts of the protocol the peer may use.
-
-An illustrative shape is:
+`sys.connect` returns the Kernel-authoritative peer:
 
 ```ts
-type ProtocolPeer = {
-  peerId: string;
-  principal: PeerPrincipal;
-  capabilities: string[];
-  transport: "websocket" | "service-binding";
-  facilities: {
-    syscalls: boolean;
+type ConnectedPeer = {
+  id: string;
+  sessionId: string;
+  principal: {
+    kind: "human" | "machine" | "service";
+    account: ProcessIdentity;
+  };
+  grant: {
+    calls: string[];
     signals: string[];
-    interactiveInput: boolean;
-    routedOutput: boolean;
-    syscallTarget?: boolean;
+    implements: string[];
   };
 };
 ```
 
-This is not intended as a final public type. It records the important
-separation: identity does not imply a transport, and a transport does not imply
-authority or protocol facilities.
+These fields are deliberately different axes.
 
-The current mutually exclusive connection roles may remain authentication
-categories during migration, but they must stop determining the entire runtime
-surface. Facilities are additive and explicitly authorized.
+### Principal
 
-Examples:
+`principal` answers **who is acting**. Its kind is derived from the credential,
+never claimed in the connect request.
 
-| Participant | Principal | Transport | Facilities |
-|---|---|---|---|
-| Native application | authenticated human | WebSocket | syscalls, signals, interactive input, routed output |
-| Web application | authenticated human | WebSocket | syscalls, signals, interactive input, routed output |
-| CLI | authenticated human | WebSocket | syscalls and signals, optionally interactive input and routed output |
-| Machine daemon | device identity | WebSocket | selected syscalls, signals, syscall-target execution |
-| Telegram transport control | service identity | service binding | adapter lifecycle and provider operations |
-| Linked Telegram conversation | delegated human identity | service binding | restricted syscalls, interactive input, routed output |
+- Password and user-token authentication produce a human principal.
+- A node token produces a machine principal and is bound to its machine id.
+- A service token or a fixed first-party service binding produces a service
+  principal.
+- Linked adapter ingress produces a short-lived delegated human context only
+  after the Kernel resolves its owned identity link.
 
-A Conversation is the durable user-facing message primitive. A Process remains
-the durable execution and raw-history primitive. A peer is neither one.
+The account carries the uid, gids, home, and working directory used for
+authorization and syscall execution.
 
-## Adapters as protocol peers
+### Peer and session identity
 
-An adapter Worker has two distinct authorities that must not be conflated.
+`peer.id` answers **which program, machine, or service is participating**.
+Routeable endpoints keep it stable across reconnects; an ephemeral client may
+use an incarnation-specific id. Examples are a desktop installation id, a
+machine id, or `telegram`.
 
-The Worker itself is a service peer. It authenticates provider traffic, owns
-provider state, normalizes identities and media, and performs delivery. It may
-call only its service-level control operations.
+`sessionId` answers **which live incarnation is carrying frames now**. It is
+Kernel-assigned and changes on reconnect. Exact routes use the live session;
+durable ownership and machine records use stable identities.
 
-A linked external actor can produce a delegated user peer context for one
-request or interaction. The Kernel derives the local user from its owned
-identity link. Neither the adapter nor the external actor may select a local
-uid.
+Neither identifier is a credential.
+
+### Grant axes
+
+The three grant lists are independent:
+
+- `calls`: syscall patterns the peer may send to GSV;
+- `signals`: asynchronous signal names GSV may send to the peer;
+- `implements`: syscall patterns GSV may route to the peer.
+
+The connect request may advertise `peer.implements`, but the Kernel validates
+the patterns and returns the effective grant. Advertising an implementation
+does not add call authority. Credentials and Kernel policy determine `calls`
+and `signals`.
+
+Common combinations are:
+
+| Participant | Principal | Calls | Signals | Implements |
+|---|---|---|---|---|
+| Web UI | human | human capabilities | user signals | none |
+| CLI | human | human capabilities | user signals | none |
+| Desktop app | human | human capabilities | user signals | optional host operations |
+| Machine daemon | machine | minimal control calls | machine signals | filesystem, shell, network, and host operations |
+| Adapter Worker | service | `adapter.inbound`, `adapter.state.update` | none | none |
+| Linked adapter command | delegated human | command-specific intersection | none | none |
+
+A human endpoint with implementations remains a human peer. It is not promoted
+to a machine and does not lose its client facilities.
+
+## Internal peer context
+
+After authentication the Kernel adds transport and provenance to the public
+peer:
+
+```text
+PeerContext
+  installationId  immutable outer tenant boundary
+  peer             public principal and grants
+  transport        websocket | service-binding | process-rpc | kernel
+  provenance       credential | service-binding | adapter-link | process | kernel
+```
+
+Transport does not grant authority. Provenance records how authority was
+obtained so policy can distinguish a password-authenticated human from an
+adapter-linked human even when both resolve to the same uid.
+
+## One frame protocol
+
+Every carrier transports the same logical frames:
+
+```text
+req { id, call, args, body? }
+res { id, ok, data|error, body? }
+sig { signal, payload?, seq? }
+```
+
+The Kernel validates an external frame once, constructs a `PeerContext`, and
+enters one dispatcher. Capability checks, target routing, request cancellation,
+post-dispatch effects, and body ownership are shared.
+
+### WebSocket byte flow
+
+```text
+client JSON req
+  -> Gateway WebSocket boundary validates it
+  -> Kernel dispatches locally or routes the same req to an endpoint
+  -> endpoint JSON res returns on the same socket
+  -> Kernel forwards the correlated res to the origin
+```
+
+If a request or response has bytes, its JSON frame carries a body descriptor.
+Binary WebSocket chunks carry the stream id, flags, and bytes. Backpressure and
+cancellation remain streaming end to end.
+
+### Workers RPC byte flow
+
+```text
+adapter normalized req + optional BinaryBody
+  -> named Gateway service entrypoint assigns the fixed service peer
+  -> Kernel validates and dispatches the same logical req
+  -> correlated res returns through the binding
+```
+
+Workers RPC carries `BinaryBody.stream` as a `ReadableStream`; it is not
+base64-encoded or buffered into the frame. The named entrypoints are part of
+the trust boundary: Telegram, WhatsApp, Discord, and the test adapter each
+receive their own fixed service identity and attenuated calls. The generic
+Gateway entrypoint retains a rolling-upgrade bridge for already-deployed
+adapters: it accepts only the known adapter ids and the same two attenuated
+calls, deriving identity from the validated request. New bindings use only the
+named entrypoints. During a rolling release, deploy the Gateway before adapters
+switch their bindings to those named entrypoints.
+
+Provider delivery APIs remain typed adapter RPC beneath this protocol. They own
+provider credentials, formatting, retry ledgers, and supported standalone
+rolling-upgrade compatibility; they do not create a second Kernel syscall
+model.
+
+## Reverse calls and endpoints
+
+A peer that advertises implementations can receive `req` frames from GSV and
+return ordinary `res` frames. The public SDK exposes this as
+`client.endpoint()`:
+
+```ts
+const endpoint = client.endpoint({
+  peerId: "my-laptop",
+  implements: ["fs.*", "shell.exec"],
+});
+
+endpoint.implement("fs.read", async (request, context) => {
+  // Return metadata plus an optional streaming body.
+});
+```
+
+The same route table correlates responses from human endpoints and machine
+daemons. `request.cancel` cancels the operation; body cancel frames independently
+stop an unwanted byte stream. Disconnects, timeouts, malformed responses, and
+late responses remove routes and release owned bodies.
+
+`peer.ping` and `peer.pong` are generic endpoint liveness signals. They replace
+the old device-specific heartbeat names.
+
+The Kernel currently retains `device` names in its persisted target registry
+and machine-management syscalls for upgrade compatibility. That storage detail
+does not change the public peer model: any authorized peer with implementations
+can be a route target.
+
+## Adapters and delegated humans
+
+An adapter has two authorities that must not be conflated.
+
+1. The Worker is a service peer. It authenticates provider traffic, owns
+   provider state, normalizes actor and surface ids, and calls only its fixed
+   adapter operations.
+2. A linked external actor may create an interaction-scoped delegated human
+   peer. The Kernel derives the local uid and grants; the adapter supplies
+   neither.
 
 ```text
 provider event
-  -> authenticated adapter service peer
-  -> Kernel resolves the owned actor link
-  -> delegated user peer with attenuated capabilities
-  -> ordinary syscall dispatcher
+  -> fixed adapter service peer
+  -> Kernel resolves actor link and surface
+  -> delegated human peer with an attenuated grant
+  -> ordinary dispatcher
 ```
 
-The delegated peer's effective capabilities are the intersection of:
+`/list` demonstrates this path. It invokes the real `proc.list` syscall with a
+grant containing only `proc.list`, then applies bounded text formatting.
+`/help`, `/where`, and `/home` share Kernel-owned parsing and help metadata.
+`/home` intentionally remains a Kernel routing operation because it must clear
+the exact adapter route and preserve durable ingress/recovery fences.
 
-- the linked user's authority;
-- the operations allowed through that adapter or surface; and
-- any explicit user policy for that connection.
+Managed adapter pairing remains an explicit human action through
+`adapter.pair.*`. Pairing binds an external actor to an installation and local
+uid; it is not transport authentication and cannot be inferred from a Telegram
+username, peer id, or service binding.
 
-An adapter can therefore expose more GSV functionality without acquiring root
-or full login authority. A Telegram `/list` command can invoke the ordinary
-`proc.list` syscall as the linked user, while account administration, secret
-management, or other inappropriate capabilities remain unavailable.
+## Interaction, Messages, and observation
 
-The current behavior that synthesizes a privileged service identity for a
-service-binding frame is suitable for the adapter control plane, but it must
-not become the identity for delegated user syscalls.
+The protocol does not add flags such as `interactionInput` or
+`processObservation` because these are already explicit operations:
 
-## Shared command frontends
+- `conversation.send` or `proc.send` admits input;
+- `proc.observe` and `proc.unobserve` control raw Process observation;
+- `message.*` signals project user-facing output;
+- `proc.run.*` signals project raw Process activity.
 
-Slash commands and native UI actions should be presentations of ordinary
-syscalls, not adapter-only features.
+A client may inspect reasoning, tool calls, and output from several Processes
+without treating all of it as a message addressed to the user. A committed
+Message synchronizes through canonical Conversation history. Only the endpoint
+whose input admitted the run receives its transient directed Message stream.
+Adapters own provider delivery of committed Messages and do not render raw
+Process output as replies.
 
-```text
-/list            -> proc.list
-/home            -> canonical routing operation
-/where           -> canonical routing query
-approve or deny  -> proc.hil
-```
+## Security and lifecycle invariants
 
-A shared command registry can define parsing, required syscall, bounded output
-formatting, and help metadata. Telegram, WhatsApp, and other text transports use
-that registry. Native and web applications normally call the structured
-syscall directly and may use the same metadata for menus or command palettes.
+- Installation identity is resolved before a managed Kernel is addressed.
+- Principal kind comes from credentials or a fixed binding, never a request
+  role field.
+- The Kernel derives delegated uid, groups, calls, and provenance.
+- Requested implementations do not widen call or signal grants.
+- Fixed adapter entrypoints cannot impersonate another adapter.
+- External frames are validated at the carrier boundary; internal code uses the
+  trusted protocol types.
+- Every body has one owner and one terminal outcome: consumed, forwarded, or
+  cancelled.
+- Request cancellation and body cancellation propagate across routes.
+- Provider replay, delivery idempotency, route generations, relinking, and
+  platform formatting remain adapter-owned.
+- Process observation never grants process control or user-message delivery.
 
-Provider-specific syntax remains in the adapter. Authorization and behavior
-remain in the Kernel syscall boundary. No command may become more powerful
-because a transport parsed it locally.
+## Deliberate non-goals
 
-## Directed Messages for every peer
+This model does not create a notification subsystem, make every Process signal
+a user message, grant linked messaging identities full password-login authority,
+move provider SDKs into the Kernel, or require WebSockets and third-party
+providers to have identical durability.
 
-Observed Process activity and directed interaction output have different
-meanings and remain different protocol events.
+It also does not require Cap'n Web. GSV already needs protocol-specific syscall
+contracts, streamed bodies, explicit signals, and hibernation-safe routing. A
+future carrier may use another RPC representation without changing the peer
+model described here.
 
-`proc.run.*` and `proc.changed` describe process execution and persisted state.
-They may be observed by multiple clients and are useful for streaming,
-inspection, synchronization, and control. They do not by themselves mean that
-a user-facing answer was addressed to the observing client.
+## Source map
 
-When an interactive run produces a user-visible answer, it explicitly chooses
-Message. The Kernel emits the implemented canonical signals:
-
-```ts
-type MessageSignal =
-  | { signal: "message.started"; payload: MessageStreamIdentity }
-  | { signal: "message.delta"; payload: MessageStreamIdentity & { delta: string } }
-  | { signal: "message.aborted"; payload: MessageStreamIdentity & { reason: string } }
-  | { signal: "message.committed"; payload: {
-      message: ConversationMessage;
-      directed: boolean;
-    } };
-```
-
-Its semantic meaning is fixed: transient events belong only to the live endpoint
-that admitted the run; the committed Message belongs to its Conversation and is
-synchronized to the owner's other clients.
-
-- An adapter renders it into the provider's message format.
-- Native renders it in the active interaction and may play a local sound.
-- Web renders it and may update its own local presentation.
-- A TTY prints it.
-
-This does not introduce GSV notifications. Sound, badges, desktop alerts, and
-other presentation choices remain client-owned reactions to an addressed
-message. Background execution continues to be represented by process state and
-signals unless a separate product decision deliberately routes its output to a
-peer.
-
-Human-in-the-loop requests may need an analogous exact routed frame while
-retaining the existing owner-wide ability to inspect and answer a pending
-request. That decision must preserve the exact request-id authorization
-contract.
-
-## Shared interactive admission and routes
-
-Interactive input from any peer should cross one Kernel-owned admission
-boundary. That boundary resolves the selected Process, allocates or validates
-the run identity, and installs the exact reply route before the Process can
-emit output.
-
-The route records a logical peer delivery handle plus the immutable context
-needed by its transport. The final transport is selected only when delivering:
-
-- a WebSocket transport writes the canonical frame to the live connection;
-- a service-binding transport invokes the adapter's delivery operation;
-- the adapter retains provider-specific reply ids, formatting, retry state,
-  and idempotency in its own boundary.
-
-The common protocol must not pretend all transports have identical durability.
-A disconnected WebSocket recovers committed output from Conversation history.
-An adapter may provide store-and-forward delivery with a durable provider
-ledger. Those are transport properties beneath the same directed-message
-semantics.
-
-Observation remains separate from the exact route. A client may observe many
-Processes while receiving directed Message deltas only for its own admitted
-run. Other committed Messages still synchronize without becoming directed
-notifications.
-
-## Transport-independent frame handling
-
-The Gateway should have one authenticated frame-dispatch path after transport
-setup. WebSocket handling and service-binding handling should adapt their input
-into the same peer context, body ownership, cancellation, capability checks,
-dispatch, and post-dispatch behavior.
-
-Service-bound peers also need a supported way to receive asynchronous routed
-frames. This may be a reverse service-binding callback or another explicit
-delivery interface. It must preserve stable delivery identities and must not
-be implemented by polling broad process signals.
-
-The existing facts make this an evolutionary refactor rather than a new
-protocol stack:
-
-- service bindings already carry the public `Frame` representation;
-- WebSocket and Process requests already converge on the syscall dispatcher;
-- run routes already distinguish exact connection and adapter replies;
-- adapters already own provider delivery retries and formatting.
-
-The work is to remove the artificial restrictions and duplicated semantic
-paths without weakening identity or delivery boundaries.
-
-## Security invariants
-
-- The Kernel derives every local user identity. An adapter never supplies a
-  trusted uid, group list, capability list, installation id, or Process owner.
-- The managed installation remains the outer address and security boundary.
-- Adapter service authority and delegated external-user authority remain
-  separate contexts.
-- Effective delegated capabilities are attenuated and fail closed. Linking a
-  messaging identity does not grant the equivalent of a password login.
-- A service binding authenticates participation in the deployment graph; it
-  does not authorize arbitrary user impersonation.
-- Exact routes, peer handles, provider ids, message ids, and connection ids are
-  not credentials. Delivery rechecks the owned route and current authority.
-- Request and response bodies retain one owner and one terminal outcome across
-  both transports.
-- Provider replay, delayed delivery, relinking, and installation lifecycle
-  fences remain adapter-owned where provider state is required.
-- A peer cannot advertise facilities or subscribe to signals beyond the
-  capabilities granted by the Kernel.
-
-## Non-goals
-
-This proposal does not:
-
-- turn adapters into hardware syscall targets;
-- grant messaging identities all permissions held by the linked human;
-- move provider SDKs, formatting, webhooks, retries, or credentials into the
-  Kernel;
-- create a general notification subsystem or offline client inbox;
-- make every process signal a directed message;
-- replace Processes with client sessions or provider conversations;
-- require equal delivery guarantees from WebSockets and third-party messaging
-  providers; or
-- approve the separate universal routing graph proposal.
-
-## Relationship to surface bindings
-
-`interaction-surface-bindings.md` explores durable Process bindings and output
-graphs. This proposal addresses a lower protocol asymmetry: who may speak GSV
-frames and how exact interactive input and output cross transports.
-
-Protocol peers should be designed first. A later surface-binding design can
-then use peer delivery handles instead of independently inventing separate
-client and adapter mechanisms. Nothing in this document requires durable
-output edges, offline client delivery, or a general routing graph.
-
-## Suggested implementation sequence
-
-Do not begin this sequence until the managed staging and native application
-work designated ahead of it is stable.
-
-1. Specify the peer identity, capability attenuation, facility negotiation,
-   and transport-independent request context without changing behavior.
-2. Refactor WebSocket and service-binding request handling to share body,
-   cancellation, capability, dispatch, and post-dispatch ownership.
-3. Add a Kernel-derived delegated user context for linked adapter actors and
-   prove that the adapter cannot choose or widen it.
-4. Extend the implemented `conversation.send` / adapter canonical admission
-   boundary into a transport-independent peer operation.
-5. Keep the implemented `message.*` delivery semantics while removing duplicate
-   WebSocket-versus-adapter frame plumbing.
-6. Move bounded adapter commands onto the shared command-to-syscall registry.
-7. Native and Web already use canonical Conversations and directed Messages;
-   retain that contract while migrating their authentication context.
-8. Remove superseded adapter-only command and connection-versus-adapter reply
-   branches after compatibility gates are satisfied.
-
-Each stage needs cross-transport tests. At minimum, the same linked owner must
-receive equivalent results through native/WebSocket, Telegram/service binding,
-and a direct SDK client; foreign actors, unlinked actors, restricted
-installations, capability widening, stale routes, duplicate ingress, body
-cancellation, and disconnects must fail without changing Process state.
-
-## Open decisions
-
-- Whether a delegated adapter peer is durable, interaction-scoped, or a
-  stateless context reconstructed for each authenticated ingress.
-- How a service-binding peer registers its reverse delivery callback without
-  allowing another bound service to impersonate it.
-- Which capability profile each first-party adapter receives by default and
-  how users inspect or narrow it.
-- Whether service-bound adapter peers should receive transient Message streaming;
-  current adapters deliberately buffer and deliver only committed Messages.
-- Whether the command registry belongs in the public SDK, the Kernel, or a
-  shared package with Kernel-owned execution.
-- How existing connection and adapter run-route rows migrate without moving or
-  duplicating already-admitted replies.
+- Public types and JavaScript endpoint: `packages/gsv/src/protocol/` and
+  `packages/gsv/src/client.ts`
+- Peer authentication and grants: `gateway/src/kernel/connect.ts`
+- Peer context and delegation: `gateway/src/kernel/peer.ts`
+- Shared dispatcher and routing: `gateway/src/kernel/do.ts` and
+  `gateway/src/kernel/dispatch.ts`
+- Adapter command frontend: `gateway/src/kernel/adapter-commands.ts`
+- Service peer entrypoints: `gateway/src/index.ts`
+- Rust carrier and endpoint support: `host/crates/gateway-client/`
+- Frame and body reference: `docs/reference/websocket-protocol.md`

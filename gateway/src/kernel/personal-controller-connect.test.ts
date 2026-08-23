@@ -25,10 +25,9 @@ function connectFrame(): RequestFrame<"sys.connect"> {
     id: "connect-1",
     call: "sys.connect",
     args: {
-      protocol: 2,
-      client: {
+      protocol: 3,
+      peer: {
         id: "web",
-        role: "user",
         platform: "web",
         version: "test",
       },
@@ -47,25 +46,25 @@ describe("Kernel personal controller connect lifecycle", () => {
     getConversationByIdMock.mockReturnValue({ initialize: vi.fn(async () => undefined) });
     handleConnectMock.mockResolvedValue({
       ok: true,
-      identity: {
-        role: "user",
-        process: PROCESS_IDENTITY,
-        capabilities: [],
+      peer: {
+        id: "web",
+        sessionId: "connection-1",
+        principal: { kind: "human", account: PROCESS_IDENTITY },
+        grant: { calls: [], signals: [], implements: [] },
       },
       result: {
-        protocol: 2,
+        protocol: 3,
         server: {
           version: "test",
           release: "dev",
           connectionId: "connection-1",
         },
-        identity: {
-          role: "user",
-          process: PROCESS_IDENTITY,
-          capabilities: [],
+        peer: {
+          id: "web",
+          sessionId: "connection-1",
+          principal: { kind: "human", account: PROCESS_IDENTITY },
+          grant: { calls: [], signals: [], implements: [] },
         },
-        syscalls: [],
-        signals: [],
       },
     });
   });
@@ -100,7 +99,7 @@ describe("Kernel personal controller connect lifecycle", () => {
     expect(kernel.sendOk).toHaveBeenCalledWith(
       connection,
       "connect-1",
-      expect.objectContaining({ protocol: 2 }),
+      expect.objectContaining({ protocol: 3 }),
     );
   });
 

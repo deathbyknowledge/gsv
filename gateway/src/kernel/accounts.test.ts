@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { KernelContext } from "./context";
-import type { ConnectionIdentity, ProcessIdentity } from "@humansandmachines/gsv/protocol";
+import type { ProcessIdentity } from "@humansandmachines/gsv/protocol";
+import type { ConnectionIdentity } from "./identity";
 import {
   ensurePersonalAgent,
   handleAccountCreate,

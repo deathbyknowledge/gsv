@@ -4,9 +4,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use gateway_client::client::GatewayAuth;
-use gateway_client::connection::{
-    ClientIdentity, Connection, ConnectionOptions, ConnectionRole, GatewayRpcError,
-};
+use gateway_client::connection::{Connection, ConnectionOptions, GatewayRpcError, PeerIdentity};
 use gateway_client::protocol::{
     DeviceExecEventParams, ErrorShape, Frame, RequestFrame, ResponseFrame, SignalFrame,
     REQUEST_CANCEL_SIGNAL,
@@ -633,14 +631,11 @@ pub async fn run(
                 Connection::connect_with_options(
                     ConnectionOptions {
                         url: url.to_string(),
-                        identity: ClientIdentity::new(device_id.clone(), env!("CARGO_PKG_VERSION"))
-                            .with_channel("daemon"),
-                        role: ConnectionRole::Driver {
-                            implements: DEVICE_DRIVER_IMPLEMENTS
-                                .iter()
-                                .map(|item| item.to_string())
-                                .collect(),
-                        },
+                        peer: PeerIdentity::new(device_id.clone(), env!("CARGO_PKG_VERSION")),
+                        implements: DEVICE_DRIVER_IMPLEMENTS
+                            .iter()
+                            .map(|item| item.to_string())
+                            .collect(),
                         auth_username: auth.username.clone(),
                         auth_password: auth.password.clone(),
                         auth_token: auth.token.clone(),

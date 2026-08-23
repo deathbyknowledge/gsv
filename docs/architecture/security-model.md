@@ -26,13 +26,18 @@ but local OS permissions remain the final boundary on those machines.
 
 ## Authentication
 
-`sys.connect` is the WebSocket login syscall. A client connects as one of three
-roles:
+`sys.connect` is the WebSocket login syscall. The request identifies the peer
+program and any syscalls it implements, but never claims an authority role. The
+Kernel derives a human, machine, or service principal from the credential:
 
-- `user`: interactive clients and user tokens; password auth is allowed.
-- `driver`: CLI devices; token auth is required and may be bound to one device
-  id.
-- `service`: adapter/service workers; token auth is required.
+- passwords and user tokens produce human principals;
+- node tokens produce machine principals and are bound to one peer id; and
+- service tokens produce service principals.
+
+The resulting grant independently lists syscalls the peer may call, signals it
+may receive, and syscalls GSV may route back to it. A human client may implement
+host operations without becoming a machine. First-party adapter Workers use
+fixed, attenuated service-binding identities rather than WebSocket credentials.
 
 Setup mode accepts only setup syscalls until the first user/root credential state
 is created. Passwords are stored in `/etc/shadow` form using salted

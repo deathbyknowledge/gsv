@@ -42,7 +42,7 @@ describe("decodeWireFrameJson", () => {
     },
     {
       type: "sig",
-      signal: "device.ping",
+      signal: "peer.ping",
       body: { streamId: 1 },
     },
   ])("rejects values outside the wire contract", (frame) => {
@@ -63,10 +63,10 @@ describe("decodeWireFrameJson", () => {
 
     expect(decodeWireFrameJson(JSON.stringify({
       type: "sig",
-      signal: "device.ping",
+      signal: "peer.ping",
       payload: { nonce: "nonce-1" },
       seq: 4,
-    }))).toMatchObject({ type: "sig", signal: "device.ping" });
+    }))).toMatchObject({ type: "sig", signal: "peer.ping" });
   });
 
   it("distinguishes malformed JSON from a structurally invalid frame", () => {

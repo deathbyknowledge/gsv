@@ -73,14 +73,16 @@ describe("session lock", () => {
     const connect = vi.fn<SessionClient["connect"]>();
     connect.mockResolvedValue({
       server: { version: "test", release: "test", connectionId: "connection:bob" },
-      protocol: 2,
-      identity: {
-        role: "user",
-        process: { uid: 1, gid: 1, gids: [1], username: "bob", home: "/", cwd: "/" },
-        capabilities: [],
+      protocol: 3,
+      peer: {
+        id: "web",
+        sessionId: "connection:bob",
+        principal: {
+          kind: "human",
+          account: { uid: 1, gid: 1, gids: [1], username: "bob", home: "/", cwd: "/" },
+        },
+        grant: { calls: [], signals: [], implements: [] },
       },
-      syscalls: [],
-      signals: [],
     });
     const client = {
       connect,

@@ -895,7 +895,7 @@ Runtime behavior:
 
 | Syscall | Handler | Behavior |
 |---|---|---|
-| `sys.connect` | `handleConnect` | First request on a WebSocket connection. Authenticates, assigns identity, returns capabilities as `syscalls`, returns signal list, registers driver devices, closes older same-client connections, and ensures the user's personal agent account exists. Setup mode rejects with `425` and `next: "sys.setup"`. |
+| `sys.connect` | `handleConnect` | First request on a WebSocket connection. Authenticates the credential, derives the principal kind, returns independent call/signal/implementation grants, registers peers that implement syscalls as route targets, closes older sessions for the same logical peer, and ensures a human user's personal intelligence exists. Setup mode rejects with `425` and `next: "sys.setup"`. |
 | `sys.setup.assist` | `handleSysSetupAssist` | Pre-connect setup helper. Uses app AI config to guide onboarding, redacts secrets from drafts, and only accepts whitelisted non-secret patches from model output. Rejected if already connected or initialized. |
 | `sys.setup` | `handleSysSetup` | Pre-connect setup-mode bootstrap. Creates first user, root password, groups/home, optional timezone, optional AI config, optional node token, home layout, imports the manual, and seeds built-in skills. Username, password, and timezone are validated. |
 | `sys.bootstrap` | `handleSysBootstrap` | Imports `root/gsv-manual`, registers it as a public system repository, and seeds the gateway's bundled skills into the caller's home without replacing existing files. `GSV_MANUAL_BOOTSTRAP_UPSTREAM` accepts `owner/repo`, a git URL, or either form with `#ref`; `GSV_MANUAL_BOOTSTRAP_REF` overrides its ref. The default is `deathbyknowledge/gsv-manual#main`. Requires `RIPGIT`. |
@@ -937,8 +937,21 @@ metadata document advertises the same URL as its `client_id`.
 ```ts
 type SystemSyscalls = {
   "sys.connect": {
-    args: { protocol: number; client: { id: string; version: string; platform: string; role: "user" | "driver" | "service"; channel?: string }; driver?: { implements: string[] }; auth?: { username: string; password?: string; token?: string } };
-    result: { protocol: number; server: { version: string; release: string; features?: string[]; connectionId: string }; identity: ConnectionIdentity; syscalls: string[]; signals: string[] };
+    args: {
+      protocol: 3;
+      peer: { id: string; version: string; platform: string; implements?: string[] };
+      auth?: { username: string; password?: string; token?: string };
+    };
+    result: {
+      protocol: 3;
+      server: { version: string; release: string; features?: string[]; connectionId: string };
+      peer: {
+        id: string;
+        sessionId: string;
+        principal: { kind: "human" | "machine" | "service"; account: ProcessIdentity };
+        grant: { calls: string[]; signals: string[]; implements: string[] };
+      };
+    };
   };
 
   "sys.setup.assist": {

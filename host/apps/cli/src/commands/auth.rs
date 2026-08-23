@@ -1,5 +1,5 @@
 use chrono::Utc;
-use gsv::kernel_client::{cli_client_identity, BinaryBodyLimits, GatewayAuth, KernelClient};
+use gsv::kernel_client::{cli_peer_identity, BinaryBodyLimits, GatewayAuth, KernelClient};
 use serde::Deserialize;
 use serde_json::json;
 
@@ -12,9 +12,10 @@ pub(crate) async fn run_auth(
     auth: GatewayAuth,
     action: AuthAction,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let client = KernelClient::connect_user_with_identity(
+    let client = KernelClient::connect_with_peer(
         url,
-        cli_client_identity(),
+        cli_peer_identity(),
+        Vec::new(),
         auth,
         BinaryBodyLimits::default(),
         |_| {},

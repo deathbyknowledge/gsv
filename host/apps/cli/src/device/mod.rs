@@ -5,7 +5,7 @@ use std::process::Command;
 use daemon_protocol::{ClientOptions, DaemonControlClient, DaemonControlEndpoint, Diagnostics};
 use gsv::config::CliConfig;
 use gsv::device_service;
-use gsv::kernel_client::{cli_client_identity, BinaryBodyLimits, GatewayAuth, KernelClient};
+use gsv::kernel_client::{cli_peer_identity, BinaryBodyLimits, GatewayAuth, KernelClient};
 use gsv::protocol::Frame;
 use host_config::ConfigFile;
 use serde_json::json;
@@ -311,9 +311,10 @@ pub(crate) async fn run_shell(
     auth: GatewayAuth,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let username = auth.username.clone();
-    let client = KernelClient::connect_user_with_identity(
+    let client = KernelClient::connect_with_peer(
         url,
-        cli_client_identity(),
+        cli_peer_identity(),
+        Vec::new(),
         auth,
         BinaryBodyLimits::default(),
         |frame| {

@@ -62,12 +62,11 @@ describe("gateway integration", () => {
     const wsUrl = webSocketUrl(baseUrl);
     const oneShot = new GSVClient();
     const connectArgs = {
-      protocol: 2 as const,
-      client: {
+      protocol: 3 as const,
+      peer: {
         id: "gateway-integration",
         version: "1.0.0",
         platform: "node",
-        role: "user" as const,
       },
       auth: { username: USERNAME, password: PASSWORD },
     };
@@ -118,16 +117,18 @@ describe("gateway integration", () => {
       url: wsUrl,
       username: USERNAME,
       password: PASSWORD,
-      client: connectArgs.client,
+      peer: connectArgs.peer,
     });
 
     try {
       const connected = await client.connect();
-      expect(connected.identity).toMatchObject({
-        role: "user",
-        process: { username: USERNAME, uid: 1000 },
+      expect(connected.peer).toMatchObject({
+        principal: {
+          kind: "human",
+          account: { username: USERNAME, uid: 1000 },
+        },
       });
-      expect(connected.identity.capabilities).toContain("proc.*");
+      expect(connected.peer.grant.calls).toContain("proc.*");
 
       await expect(client.sys.config.get({ key: "config/ai/provider" })).resolves.toEqual({
         entries: [{ key: "config/ai/provider", value: "workers-ai" }],

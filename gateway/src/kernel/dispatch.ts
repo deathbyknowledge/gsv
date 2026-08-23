@@ -737,8 +737,8 @@ function findDeviceConnection(
     const state = conn.state;
     if (
       state?.step === "connected" &&
-      state.identity?.role === "driver" &&
-      state.identity.device === deviceId
+      state.peer?.id === deviceId &&
+      state.peer.grant.implements.length > 0
     ) {
       return conn;
     }

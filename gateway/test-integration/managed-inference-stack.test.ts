@@ -78,12 +78,11 @@ describe("managed inference stack integration", () => {
         onboardingToken,
       });
       await expectRpcOk(socket, "connect", "sys.connect", {
-        protocol: 2,
-        client: {
+        protocol: 3,
+        peer: {
           id: "managed-inference-stack-test",
           version: "1.0.0",
           platform: "test",
-          role: "user",
         },
         auth: {
           username: "inference-owner",

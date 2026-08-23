@@ -2,7 +2,6 @@ import type { KernelContext } from "./context";
 import { resolveCallerOwnerUid } from "./context";
 import { hasCapability } from "./capabilities";
 import type {
-  ConnectionIdentity,
   ScheduleExpression,
   SchedulePrincipal,
   ScheduleRecord,
@@ -20,6 +19,7 @@ import type {
   ScheduleRunResult,
   ScheduleTarget,
 } from "@humansandmachines/gsv/protocol";
+import type { ConnectionIdentity } from "./identity";
 import {
   assertAdapterMessageDestinationAccess,
   normalizeAdapterMessageDestination,
