@@ -27,6 +27,8 @@ const toolResponseRecordSchema = z.object({
   path: z.string().optional(),
   size: z.number().optional(),
   lines: z.number().optional(),
+  truncated: z.boolean().optional(),
+  nextOffset: z.number().int().nonnegative().optional(),
   resource: fileResourceReferenceSchema.optional(),
 }).catchall(z.json());
 
@@ -41,12 +43,16 @@ const toolRequestSchema = z.object({
 
 type ToolResponseRecord = z.infer<typeof toolResponseRecordSchema>;
 type ToolResponseInput = ResponseOkFrame["data"] | null;
+type ToolResponseMaterializationOptions = {
+  maxTextBytes?: number;
+};
 
 export async function materializeToolResponse(
   call: string,
   data: ToolResponseInput | null,
   body?: FrameBody,
   signal?: AbortSignal,
+  options?: ToolResponseMaterializationOptions,
 ): Promise<JsonValue> {
   const record = parseToolResponseRecord(data);
   if (call === "net.fetch") {
@@ -95,7 +101,10 @@ export async function materializeToolResponse(
   }
   if (call === "fs.read" && record?.ok === true) {
     if (record.kind === "text") {
-      return { ...record, content: await bodyToText(body, Infinity, signal) };
+      return {
+        ...record,
+        content: await bodyToText(body, options?.maxTextBytes ?? Infinity, signal),
+      };
     }
     if (record.kind === "image") {
       const bytes = await bodyToBytes(body, MAX_TOOL_IMAGE_BYTES, signal);
@@ -128,11 +137,17 @@ export function formatAgentToolResponse(
   const request = parseToolRequest(args);
   const offset = request?.offset ?? 0;
   const lines = record.data.lines === 0 ? [] : record.data.content.split("\n");
+  const numbered = lines
+    .map((line, index) => `${String(offset + index + 1).padStart(6)}\t${line}`)
+    .join("\n");
+  const truncationNotice = record.data.truncated
+    ? record.data.nextOffset === undefined
+      ? "[Read truncated inside a line. Use Shell for byte-range inspection.]"
+      : `[Read truncated. Continue with Read using offset ${record.data.nextOffset}.]`
+    : "";
   return {
     ...record.data,
-    content: lines
-      .map((line, index) => `${String(offset + index + 1).padStart(6)}\t${line}`)
-      .join("\n"),
+    content: [numbered, truncationNotice].filter(Boolean).join("\n\n"),
   };
 }
 

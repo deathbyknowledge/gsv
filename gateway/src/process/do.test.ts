@@ -14849,10 +14849,12 @@ describe("Process DO — mechanical", () => {
       const pid = "mech-res-sync-body";
       const stub = await initProcess(pid, ROOT_IDENTITY);
       const originalRecvFrame = Kernel.prototype.recvFrame;
+      let forwardedArgs: ProcessTestValue;
       // SAFETY: test fixture is constructed with the asserted domain shape.
       const recvSpy = vi.spyOn(Kernel.prototype as any, "recvFrame").mockImplementation(
         async function (this: Kernel, processId: string, frame: any) {
           if (frame?.type === "req" && frame.id === "dispatch-sync-body") {
+            forwardedArgs = frame.args;
             // SAFETY: test fixture is constructed with the asserted domain shape.
             return {
               type: "res",
@@ -14865,6 +14867,8 @@ describe("Process DO — mechanical", () => {
                 contentType: "text/plain",
                 size: 5,
                 lines: 1,
+                truncated: true,
+                nextOffset: 2,
               },
               body: bodyFromText("hello"),
             // SAFETY: test fixture is constructed with the asserted domain shape.
@@ -14898,13 +14902,64 @@ describe("Process DO — mechanical", () => {
 
           expect(process.store.getResults("run-sync-body")).toMatchObject([{
             status: "completed",
-            result: { content: "     2\thello" },
+            result: {
+              content: "     2\thello\n\n[Read truncated. Continue with Read using offset 2.]",
+            },
           }]);
+          expect(forwardedArgs).toEqual({
+            path: "/tmp/note.txt",
+            offset: 1,
+            limit: 2_000,
+            maxBytes: 65_536,
+            representation: "resource",
+          });
           process.currentRun = null;
         });
       } finally {
         recvSpy.mockRestore();
       }
+    });
+
+    it("rejects an oversized text response from a device that ignores Read bounds", async () => {
+      const pid = "mech-res-read-hard-cap";
+      const stub = await initProcess(pid, ROOT_IDENTITY);
+
+      await runInDurableObject(stub, async (instance: Process) => {
+        // SAFETY: this test exercises private Process tool response ownership.
+        const process = instance as any;
+        process.currentRun = { runId: "run-read-hard-cap" };
+        process.sendSignal = vi.fn(async () => {});
+        process.scheduleTick = vi.fn(async () => {});
+        process.store.register(
+          "dispatch-read-hard-cap",
+          "call-read-hard-cap",
+          "run-read-hard-cap",
+          "fs.read",
+          { path: "/tmp/huge.txt" },
+        );
+        process.store.markDispatched("dispatch-read-hard-cap");
+
+        await process.handleRes({
+          type: "res",
+          id: "dispatch-read-hard-cap",
+          ok: true,
+          data: {
+            ok: true,
+            path: "/tmp/huge.txt",
+            kind: "text",
+            contentType: "text/plain",
+            size: 65_537,
+            lines: 1,
+          },
+          body: bodyFromText("x".repeat(65_537)),
+        });
+
+        expect(process.store.getResults("run-read-hard-cap")).toMatchObject([{
+          status: "error",
+          error: "Body exceeds limit (65537 bytes, max 65536)",
+        }]);
+        process.currentRun = null;
+      });
     });
 
     it("stops response body materialization when its run is aborted", async () => {

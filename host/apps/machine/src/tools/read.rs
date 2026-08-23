@@ -44,8 +44,17 @@ struct ReadArgs {
     offset: Option<usize>,
     #[serde(default)]
     limit: Option<usize>,
+    #[serde(rename = "maxBytes", default)]
+    max_bytes: Option<usize>,
     #[serde(default)]
     representation: Option<String>,
+}
+
+struct TextSelection {
+    content: String,
+    lines: usize,
+    truncated: bool,
+    next_offset: Option<usize>,
 }
 
 fn format_byte_size(bytes: u64) -> String {
@@ -194,25 +203,81 @@ impl Tool for ReadTool {
             .map_err(|e| format!("Failed to read '{}': {}", resolved.display(), e))?;
         let content = String::from_utf8(bytes).map_err(|_error| binary_error())?;
         let offset = args.offset.unwrap_or(0);
-        let selected = content
-            .split('\n')
-            .skip(offset)
-            .take(args.limit.unwrap_or(usize::MAX))
-            .collect::<Vec<_>>();
-        let body = selected.join("\n").into_bytes();
+        let selection = select_text_lines(&content, offset, args.limit, args.max_bytes)?;
+        let body = selection.content.into_bytes();
+        let mut data = json!({
+            "ok": true,
+            "path": resolved.display().to_string(),
+            "size": size,
+            "kind": "text",
+            "contentType": content_type,
+            "lines": selection.lines,
+        });
+        if selection.truncated {
+            data["truncated"] = json!(true);
+        }
+        if let Some(next_offset) = selection.next_offset {
+            data["nextOffset"] = json!(next_offset);
+        }
 
         Ok(ToolOutput::with_body(
-            json!({
-                "ok": true,
-                "path": resolved.display().to_string(),
-                "size": size,
-                "kind": "text",
-                "contentType": content_type,
-                "lines": selected.len(),
-            }),
+            data,
             ToolBody::bytes(body, resolved.display().to_string()),
         ))
     }
+}
+
+fn select_text_lines(
+    content: &str,
+    offset: usize,
+    limit: Option<usize>,
+    max_bytes: Option<usize>,
+) -> Result<TextSelection, String> {
+    if max_bytes == Some(0) {
+        return Err("fs.read maxBytes must be a positive integer".to_string());
+    }
+    let all_lines = content.split('\n').collect::<Vec<_>>();
+    let start = offset.min(all_lines.len());
+    let end = start
+        .saturating_add(limit.unwrap_or(usize::MAX))
+        .min(all_lines.len());
+    let requested = &all_lines[start..end];
+    let byte_limit = max_bytes.unwrap_or(usize::MAX);
+    let mut selected = Vec::new();
+    let mut used_bytes = 0_usize;
+    let mut partial = false;
+
+    for line in requested {
+        let separator_bytes = usize::from(!selected.is_empty());
+        if used_bytes
+            .saturating_add(separator_bytes)
+            .saturating_add(line.len())
+            <= byte_limit
+        {
+            selected.push(*line);
+            used_bytes += separator_bytes + line.len();
+            continue;
+        }
+        if selected.is_empty() {
+            let mut prefix_end = byte_limit.min(line.len());
+            while prefix_end > 0 && !line.is_char_boundary(prefix_end) {
+                prefix_end -= 1;
+            }
+            selected.push(&line[..prefix_end]);
+            partial = true;
+        }
+        break;
+    }
+
+    let lines = selected.len();
+    let truncated = partial || lines < requested.len() || end < all_lines.len();
+    let next_offset = (!partial && truncated && lines > 0).then_some(start + lines);
+    Ok(TextSelection {
+        content: selected.join("\n"),
+        lines,
+        truncated,
+        next_offset,
+    })
 }
 
 fn infer_content_type(path: &Path) -> &'static str {
@@ -348,6 +413,49 @@ mod tests {
         assert!(result.data["resource"]["revision"]
             .as_str()
             .is_some_and(|revision| !revision.is_empty()));
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[tokio::test]
+    async fn bounds_text_by_utf8_bytes_and_reports_continuation() {
+        let root = std::env::temp_dir().join(format!("gsv-read-test-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&root).unwrap();
+        fs::write(root.join("bounded.txt"), "zero\néé\nthird\nfourth").unwrap();
+
+        let result = ReadTool::new(root.clone())
+            .execute(json!({ "path": "bounded.txt", "limit": 3, "maxBytes": 9 }))
+            .await
+            .unwrap();
+
+        assert_eq!(result.data["lines"], 2);
+        assert_eq!(result.data["truncated"], true);
+        assert_eq!(result.data["nextOffset"], 2);
+        let mut body = result.body.unwrap();
+        let mut actual = String::new();
+        body.reader.read_to_string(&mut actual).await.unwrap();
+        assert_eq!(actual, "zero\néé");
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[tokio::test]
+    async fn returns_a_utf8_safe_prefix_for_an_oversized_line() {
+        let root = std::env::temp_dir().join(format!("gsv-read-test-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&root).unwrap();
+        fs::write(root.join("long.txt"), "ééé").unwrap();
+
+        let result = ReadTool::new(root.clone())
+            .execute(json!({ "path": "long.txt", "maxBytes": 3 }))
+            .await
+            .unwrap();
+
+        assert_eq!(result.data["truncated"], true);
+        assert!(result.data.get("nextOffset").is_none());
+        let mut body = result.body.unwrap();
+        let mut actual = String::new();
+        body.reader.read_to_string(&mut actual).await.unwrap();
+        assert_eq!(actual, "é");
 
         fs::remove_dir_all(root).unwrap();
     }

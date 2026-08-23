@@ -521,6 +521,40 @@ describe("native shell execution", () => {
     expect(read.body && await bodyToText(read.body)).toBe("é\nlast\n");
   });
 
+  it("bounds text reads by UTF-8 bytes and reports a continuation offset", async () => {
+    const ctx = makeContext();
+    const path = "/tmp/fs-read-bounded.txt";
+    await handleFsWrite({ path, content: "zero\néé\nthird\nfourth" }, ctx);
+
+    const read = await handleFsRead({ path, limit: 3, maxBytes: 9 }, ctx);
+
+    expect(read.data).toMatchObject({
+      ok: true,
+      kind: "text",
+      lines: 2,
+      truncated: true,
+      nextOffset: 2,
+    });
+    expect(read.body && await bodyToText(read.body)).toBe("zero\néé");
+  });
+
+  it("returns a safe prefix when one line exceeds the text byte limit", async () => {
+    const ctx = makeContext();
+    const path = "/tmp/fs-read-long-line.txt";
+    await handleFsWrite({ path, content: "ééé" }, ctx);
+
+    const read = await handleFsRead({ path, maxBytes: 3 }, ctx);
+
+    expect(read.data).toMatchObject({
+      ok: true,
+      kind: "text",
+      lines: 1,
+      truncated: true,
+    });
+    expect(read.data).not.toHaveProperty("nextOffset");
+    expect(read.body && await bodyToText(read.body)).toBe("é");
+  });
+
   it("uses stored MIME types for reads and transfer metadata", async () => {
     const bytes = new Uint8Array([0x89, 0x50, 0x4e, 0x47]);
     await env.STORAGE.put("tmp/fs-read-image", bytes, {

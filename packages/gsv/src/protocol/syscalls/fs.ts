@@ -5,6 +5,7 @@ export type FsReadArgs = {
   path: string;
   offset?: number;
   limit?: number;
+  maxBytes?: number;
   representation?: "content" | "resource";
 };
 
@@ -16,6 +17,8 @@ export type FsReadResult =
       contentType: string;
       lines?: number;
       size: number;
+      truncated?: boolean;
+      nextOffset?: number;
       resource?: FileResourceReference;
     }
   | { ok: true; path: string; files: string[]; directories: string[] }

@@ -214,6 +214,10 @@ import {
   isToolSyscallName,
   syscallToolName,
 } from "../syscalls/constants";
+import {
+  AGENT_READ_DEFAULT_LINE_LIMIT,
+  AGENT_READ_MAX_BYTES,
+} from "../syscalls/read";
 import { RipgitClient } from "../fs/ripgit/client";
 import {
   buildCodeModeMcpToolBindings,
@@ -1837,6 +1841,7 @@ export class Process extends DurableObject<ProcessEnv> {
           frame.data ?? null,
           frame.body,
           this.runAbortSignal(pending.runId),
+          { maxTextBytes: AGENT_READ_MAX_BYTES },
         );
         if (this.killed || !this.store.getPending(frame.id)) {
           return;
@@ -7488,7 +7493,12 @@ export class Process extends DurableObject<ProcessEnv> {
     }
     const pid = this.pid;
     const dispatchArgs = call === "fs.read"
-      ? { ...args, representation: "resource" }
+      ? {
+          ...args,
+          limit: args.limit ?? AGENT_READ_DEFAULT_LINE_LIMIT,
+          maxBytes: AGENT_READ_MAX_BYTES,
+          representation: "resource",
+        }
       : args;
     // SAFETY: tool arguments cross the model boundary through jsonObjectSchema,
     // and the Kernel remains the owner of per-syscall semantic validation.
@@ -7515,6 +7525,7 @@ export class Process extends DurableObject<ProcessEnv> {
             res.data ?? null,
             res.body,
             this.runAbortSignal(runId),
+            { maxTextBytes: AGENT_READ_MAX_BYTES },
           );
           if (this.handleRunStopped(runId) || !this.store.getPending(dispatchId)) {
             return;

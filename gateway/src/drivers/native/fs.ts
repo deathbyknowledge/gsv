@@ -51,6 +51,16 @@ export type FsOpenedSource = {
   contentType?: string;
 };
 type FsReadResponse = { data: FsReadResult; body?: FrameBody };
+type FsReadFileSuccess = Extract<
+  FsReadResult,
+  { ok: true; kind: "text" | "image" }
+>;
+type TextLineSelection = {
+  content: string;
+  lines: number;
+  truncated: boolean;
+  partial: boolean;
+};
 
 export async function openFsSource(
   source: Required<FsCopyEndpoint>,
@@ -158,7 +168,15 @@ export async function handleFsRead(
       Infinity,
       ctx.requestSignal,
     );
-    return readText(bytes, p, contentType, st.size, args.offset, args.limit);
+    return readText(
+      bytes,
+      p,
+      contentType,
+      st.size,
+      args.offset,
+      args.limit,
+      args.maxBytes,
+    );
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     return { data: { ok: false, error: msg } };
@@ -172,6 +190,7 @@ function readText(
   size: number,
   offset?: number,
   limit?: number,
+  maxBytes?: number,
 ): FsReadResponse {
   let text: string;
   try {
@@ -187,19 +206,87 @@ function readText(
   const allLines = text.split("\n");
   const start = offset ?? 0;
   const count = limit ?? allLines.length;
-  const selected = allLines.slice(start, start + count);
+  const requested = allLines.slice(start, start + count);
+  const selection = selectTextLines(requested, maxBytes);
+  const truncated = selection.truncated || start + requested.length < allLines.length;
+  const nextOffset = !selection.partial && truncated && selection.lines > 0
+    ? start + selection.lines
+    : undefined;
+  const data: FsReadFileSuccess = {
+    ok: true,
+    path,
+    kind: "text",
+    contentType,
+    lines: selection.lines,
+    size,
+  };
+  if (truncated) {
+    data.truncated = true;
+  }
+  if (nextOffset !== undefined) {
+    data.nextOffset = nextOffset;
+  }
 
   return {
-    data: {
-      ok: true,
-      path,
-      kind: "text",
-      contentType,
-      lines: selected.length,
-      size,
-    },
-    body: bodyFromText(selected.join("\n")),
+    data,
+    body: bodyFromText(selection.content),
   };
+}
+
+function selectTextLines(
+  lines: string[],
+  maxBytes?: number,
+): TextLineSelection {
+  if (maxBytes === undefined) {
+    return {
+      content: lines.join("\n"),
+      lines: lines.length,
+      truncated: false,
+      partial: false,
+    };
+  }
+  if (!Number.isSafeInteger(maxBytes) || maxBytes <= 0) {
+    throw new Error("fs.read maxBytes must be a positive safe integer");
+  }
+
+  const encoder = new TextEncoder();
+  const selected: string[] = [];
+  let usedBytes = 0;
+  let partial = false;
+  for (const line of lines) {
+    const lineBytes = encoder.encode(line);
+    const separatorBytes = selected.length === 0 ? 0 : 1;
+    if (usedBytes + separatorBytes + lineBytes.byteLength <= maxBytes) {
+      selected.push(line);
+      usedBytes += separatorBytes + lineBytes.byteLength;
+      continue;
+    }
+    if (selected.length === 0) {
+      selected.push(decodeUtf8Prefix(lineBytes, maxBytes));
+      partial = true;
+    }
+    break;
+  }
+
+  return {
+    content: selected.join("\n"),
+    lines: selected.length,
+    truncated: partial || selected.length < lines.length,
+    partial,
+  };
+}
+
+function decodeUtf8Prefix(bytes: Uint8Array, maxBytes: number): string {
+  let end = Math.min(bytes.byteLength, maxBytes);
+  const decoder = new TextDecoder("utf-8", { fatal: true, ignoreBOM: false });
+  while (end > 0) {
+    try {
+      return decoder.decode(bytes.subarray(0, end));
+    } catch {
+      end -= 1;
+    }
+  }
+  return "";
 }
 
 function readImage(

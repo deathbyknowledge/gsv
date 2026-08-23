@@ -1,6 +1,9 @@
 import type { ToolDefinition } from ".";
 import { FS_READ, SYSCALL_TOOL_NAMES } from "./constants";
 
+export const AGENT_READ_DEFAULT_LINE_LIMIT = 2_000;
+export const AGENT_READ_MAX_BYTES = 64 * 1024;
+
 export const FS_READ_DEFINITION: ToolDefinition = {
   name: SYSCALL_TOOL_NAMES[FS_READ],
   description:
@@ -18,7 +21,7 @@ export const FS_READ_DEFINITION: ToolDefinition = {
       },
       limit: {
         type: "number",
-        description: "Maximum number of lines to read (optional)",
+        description: `Maximum number of lines to read (optional; defaults to ${AGENT_READ_DEFAULT_LINE_LIMIT})`,
       },
     },
     required: ["path"],
