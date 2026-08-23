@@ -299,7 +299,10 @@ fn validate_gateway_url(value: &str) -> Result<String, String> {
 
 fn is_loopback_host(host: Host<&str>) -> bool {
     match host {
-        Host::Domain(host) => host.eq_ignore_ascii_case("localhost"),
+        Host::Domain(host) => {
+            host.eq_ignore_ascii_case("localhost")
+                || host.to_ascii_lowercase().ends_with(".localhost")
+        }
         Host::Ipv4(host) => host.is_loopback(),
         Host::Ipv6(host) => host.is_loopback(),
     }
@@ -415,6 +418,7 @@ mod tests {
     #[test]
     fn loopback_detection_uses_the_parsed_host() {
         assert!(validate_gateway_url("ws://localhost:8788/ws").is_ok());
+        assert!(validate_gateway_url("ws://hank.localhost:8976/ws").is_ok());
         assert!(validate_gateway_url("ws://[::1]:8788/ws").is_ok());
         assert!(validate_gateway_url("ws://127.1.2.3:8788/ws").is_ok());
         assert!(validate_gateway_url("ws://localhost:8788@evil.example/ws").is_err());
