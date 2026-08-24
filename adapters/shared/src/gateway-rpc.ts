@@ -1,5 +1,9 @@
 import type { AdapterGatewayInterface } from "../../../packages/gsv/src/protocol/adapters.js";
 import { adapterInboundResultSchema } from "../../../packages/gsv/src/protocol/adapters.js";
+import {
+  jsonValueSchema,
+  type JsonValue,
+} from "../../../packages/gsv/src/protocol/json.js";
 import type {
   AdapterInboundArgs,
   AdapterStateUpdateArgs,
@@ -45,11 +49,18 @@ export async function callAdapterGateway(
   args: AdapterInboundArgs | AdapterStateUpdateArgs,
   body?: BinaryBody,
 ): Promise<AdapterInboundResult | AdapterStateUpdateResult> {
+  let wireArgs: JsonValue;
+  try {
+    wireArgs = projectJsonMetadata(args);
+  } catch (error) {
+    await cancelBinaryBody(body, error);
+    throw error;
+  }
   const frame: GatewayRequestFrame = {
     type: "req",
     id: crypto.randomUUID(),
     call,
-    args,
+    args: wireArgs,
   };
   if (body) frame.body = body;
 
@@ -90,4 +101,12 @@ export async function callAdapterGateway(
     throw new Error(`Gateway returned an invalid ${call} response`);
   }
   return decoded.data;
+}
+
+function projectJsonMetadata(value: AdapterInboundArgs | AdapterStateUpdateArgs): JsonValue {
+  const serialized = JSON.stringify(value);
+  if (serialized === undefined) {
+    throw new Error("Adapter gateway request metadata is not JSON-serializable");
+  }
+  return jsonValueSchema.parse(JSON.parse(serialized));
 }

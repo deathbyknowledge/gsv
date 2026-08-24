@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import { adapterGatewayFrameSchema } from "../../../packages/gsv/src/protocol/adapters";
 
 import {
   callAdapterGateway,
@@ -71,6 +72,61 @@ function binding(
 }
 
 describe("callAdapterGateway", () => {
+  it("projects optional metadata to the receiver's JSON frame contract", async () => {
+    let received: GatewayFrame | undefined;
+    const serviceFrame = vi.fn(async (
+      _installation: AdapterInstallationContext,
+      frame: GatewayFrame,
+    ) => {
+      received = frame;
+      return {
+        type: "res" as const,
+        id: frame.type === "req" ? frame.id : "unexpected",
+        ok: true,
+        data: { ok: true },
+      };
+    });
+
+    await expect(callAdapterGateway(
+      binding(serviceFrame),
+      INSTALLATION,
+      "adapter.inbound",
+      {
+        adapter: "telegram",
+        accountId: "managed",
+        deliveryId: "telegram:1",
+        message: {
+          messageId: "1",
+          surface: { kind: "dm", id: "123", name: undefined },
+          actor: { id: "123", handle: undefined },
+          text: "/help",
+          media: undefined,
+          replyToId: undefined,
+          timestamp: 1_700_000_000_000,
+          wasMentioned: true,
+        },
+      },
+    )).resolves.toEqual({ ok: true });
+
+    expect(adapterGatewayFrameSchema.safeParse(received).success).toBe(true);
+    expect(received).toMatchObject({
+      type: "req",
+      args: {
+        adapter: "telegram",
+        accountId: "managed",
+        deliveryId: "telegram:1",
+        message: {
+          messageId: "1",
+          surface: { kind: "dm", id: "123" },
+          actor: { id: "123" },
+          text: "/help",
+          timestamp: 1_700_000_000_000,
+          wasMentioned: true,
+        },
+      },
+    });
+  });
+
   it("forwards the request body and returns typed response data", async () => {
     const request = trackedBody();
     const serviceFrame = vi.fn(async (
