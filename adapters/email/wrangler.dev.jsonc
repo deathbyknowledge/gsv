@@ -6,6 +6,9 @@
   "compatibility_flags": ["nodejs_compat"],
   "workers_dev": false,
   "preview_urls": false,
+  "secrets": {
+    "required": []
+  },
   "vars": {
     "MAIL_DOMAIN": "gsv.space",
     "GSV_BASE_DOMAIN": "localhost",

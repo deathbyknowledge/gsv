@@ -15,20 +15,22 @@ cd "$ROOT_DIR"
 npm run gsv:build
 npm run build --workspace web
 
-cd "$ACCOUNTS_DIR"
-CI=1 npm exec --workspaces=false -- wrangler d1 migrations apply ACCOUNT_DB \
-  --config wrangler.dev.jsonc \
-  --local \
-  --persist-to "$STATE_DIR"
+(
+  cd "$ACCOUNTS_DIR"
+  CI=1 npm exec --workspaces=false -- wrangler d1 migrations apply ACCOUNT_DB \
+    --config wrangler.dev.jsonc \
+    --local \
+    --persist-to "$STATE_DIR"
+)
 
 printf '\nManaged GSV is starting on http://localhost:8976\n'
 printf 'Open http://localhost:8976/admin to create an installation.\n'
 printf 'Then open the one-time onboarding link issued by the registry.\n'
 printf 'State: %s\n\n' "$STATE_DIR"
 
+cd "$ROOT_DIR/ripgit"
 exec env \
   CLOUDFLARE_INCLUDE_PROCESS_ENV=false \
-  CLOUDFLARE_LOAD_DEV_VARS_FROM_DOT_ENV=false \
   npm exec --workspaces=false -- wrangler dev \
   --config "$ROOT_DIR/gateway/wrangler.managed.dev.jsonc" \
   --config "$ACCOUNTS_DIR/wrangler.dev.jsonc" \

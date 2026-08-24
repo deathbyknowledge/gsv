@@ -6,6 +6,9 @@
   "compatibility_flags": ["nodejs_compat"],
   "workers_dev": false,
   "preview_urls": false,
+  "secrets": {
+    "required": []
+  },
   "vars": {
     "GSV_ACCOUNT_ORIGIN": "http://localhost:8976"
   },
