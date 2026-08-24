@@ -422,7 +422,8 @@ async function rollbackSpawn(
   }
   if (!response.ok) {
     if (response.error.code === 410) {
-      ctx.procs.kill(pid);
+      const proc = ctx.procs.get(pid);
+      if (proc) reconcileKilledProcess(proc.ownerUid, pid, ctx);
       return;
     }
     throw new Error(response.error.message);
@@ -432,7 +433,8 @@ async function rollbackSpawn(
   if (killed?.ok !== true) {
     throw new Error("proc.kill rejected rollback");
   }
-  ctx.procs.kill(pid);
+  const proc = ctx.procs.get(pid);
+  if (proc) reconcileKilledProcess(proc.ownerUid, pid, ctx);
 }
 
 /**
@@ -586,7 +588,7 @@ export async function handleProcIpcCall(
 ): Promise<ProcIpcCallResult> {
   const resolved = resolveSameOwnerIpc(args, ctx, "proc.ipc.call");
   if (!resolved.ok) return resolved;
-  const timeoutMs = clampIpcCallTimeout(args.timeoutMs);
+  const timeoutMs = resolveIpcCallTimeoutMs(args.timeoutMs);
   const deadlineAt = Date.now() + timeoutMs;
   const callId = crypto.randomUUID();
   const runId = crypto.randomUUID();
@@ -818,9 +820,22 @@ function reconcileKilledProcess(
   pid: string,
   ctx: KernelContext,
 ): void {
+  const reclaimed = ctx.responsibilities.reclaimProcessAssignments({
+    ownerUid,
+    processId: pid,
+    now: Date.now(),
+  });
   ctx.runRoutes.clearForProcess(pid);
   ctx.failIpcCallsByTarget(ownerUid, pid, "Target process was killed");
   ctx.procs.kill(pid);
+  if (reclaimed.length > 0) {
+    ctx.defer(ctx.reconcileResponsibilityWake(ownerUid).catch((error) => {
+      console.warn(
+        `[Kernel] Failed to schedule responsibility recovery after killing ${pid}:`,
+        error,
+      );
+    }));
+  }
 }
 
 function withRedactedProcAiConfigGet(
@@ -961,7 +976,7 @@ function normalizeIpcSendArgs(
   return normalized;
 }
 
-function clampIpcCallTimeout(value: number | undefined): number {
+export function resolveIpcCallTimeoutMs(value: number | undefined): number {
   if (value === undefined || !Number.isFinite(value)) {
     return DEFAULT_IPC_CALL_TIMEOUT_MS;
   }

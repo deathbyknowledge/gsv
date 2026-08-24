@@ -574,7 +574,7 @@ Runtime behavior:
 | `proc.history.policy.set` | Process DO | Sets the process context-overflow policy. Supported `overflow` values are `auto-compact` and `fail`; the policy is applied during run preflight and after a provider-confirmed overflow. Provider overflow does not advance the main generation fallback chain. |
 | `proc.history.compact` | Process DO | Archives an old history prefix, inserts a visible system summary marker, and records a `compaction` segment. Requires a supplied or generated summary and exactly one of `keepLast` or `throughMessageId`. |
 | `proc.history.segment.read` | Process DO | Reads paged messages from a compacted segment without restoring them into active history. |
-| `proc.history.segments` | Process DO | Lists compacted segments, including archive paths and summary marker ids. |
+| `proc.history.segments` | Process DO | Lists compacted segments and context epochs, including immutable archive paths for closed records. |
 | `proc.fork` | `handleProcFork` | Creates a new process from committed source history through a raw `throughMessageId`, a canonical Conversation message's `throughRunId`, or a compacted `segmentId`. Run selection resolves to the corresponding Process input boundary. Its label defaults to `Branch of <source label>` and the canonical label is returned. Segment restore includes the live suffix present at the compaction boundary unless `includeLiveSuffix: false`. Active work, queued input, tools, and HIL are not copied. |
 | `proc.reset` | Process DO | Archives the non-empty history, clears active execution state, queues, process media, and messages, then increments the history generation. |
 | `proc.ipc.deliver` | Process DO direct path | Kernel-only through public dispatch. Delivers a Kernel-validated IPC envelope to the target process. A bounded call marks the run as returning to its caller, omits terminal human-delivery instructions, and completes the Kernel call from `proc.run.finished.result` rather than `delivery`. |
@@ -632,6 +632,19 @@ type ProcHistorySegment = {
   archivePath: string;
   summaryMessageId: number | null;
   createdAt: number;
+};
+
+type ProcContextEpoch = {
+  id: string;
+  generation: number;
+  state: "live" | "closed";
+  r12yRevision: number;
+  r12yCount: number;
+  observedR12yRevision: number;
+  createdAt: number;
+  closedAt?: number;
+  closeReason?: string;
+  archivePath?: string;
 };
 
 type ProcHistoryContextPolicy = {
@@ -725,7 +738,7 @@ type ProcessSyscalls = {
 
   "proc.kill": {
     args: { pid: string; archive?: boolean };
-    result: { ok: true; pid: string; archivedMessages: number; archivedTo?: string; archives: ProcArchiveEntry[] } | OperationError;
+    result: { ok: true; pid: string; archivedMessages: number; archivedTo?: string; archives: ProcArchiveEntry[]; contextEpochArchives?: string[] } | OperationError;
   };
 
   "proc.history": {
@@ -755,7 +768,7 @@ type ProcessSyscalls = {
 
   "proc.history.segments": {
     args: { pid?: string };
-    result: { ok: true; pid: string; segments: ProcHistorySegment[] } | OperationError;
+    result: { ok: true; pid: string; segments: ProcHistorySegment[]; epochs: ProcContextEpoch[] } | OperationError;
   };
 
   "proc.fork": {
@@ -775,7 +788,7 @@ type ProcessSyscalls = {
 
   "proc.reset": {
     args: { pid?: string };
-    result: { ok: true; pid: string; archivedMessages: number; archivedTo?: string; archives: ProcArchiveEntry[] } | OperationError;
+    result: { ok: true; pid: string; archivedMessages: number; archivedTo?: string; archives: ProcArchiveEntry[]; contextEpochArchives?: string[] } | OperationError;
   };
 
   "proc.setidentity": {
@@ -789,6 +802,79 @@ type ProcessSyscalls = {
 `proc.setidentity` are kernel-only. User and device callers receive a forbidden
 response. Export and import use normal syscall frames; their Process Durable
 Object methods are routing details rather than a second semantic API.
+
+## Responsibilities: `r12y.*`
+
+`r12y.*` is the Kernel-owned ledger for unresolved work that must survive the
+current Process run. The Kernel derives the owner from the authenticated caller.
+Ship can inspect the owner's ledger; a child Process sees its own assignments
+and their ancestor records, and may update only its own assignment.
+
+| Syscall | Behavior |
+|---|---|
+| `r12y.list` | Lists current records, optionally filtered by exact ids, state, assignee, or parent. Terminal records are hidden unless requested. |
+| `r12y.get` | Reads one visible record and the owner's current ledger revision. |
+| `r12y.create` | Creates an open responsibility, or returns the existing record for the same stable dedupe key. |
+| `r12y.update` | Applies an optimistic revision-checked state or metadata transition and appends it to the ordered journal. |
+| `r12y.changes` | Pages ordered transitions after a known revision for context recovery. |
+
+```ts
+type ResponsibilityState = "open" | "active" | "waiting" | "resolved" | "cancelled";
+type ResponsibilityAssignee =
+  | { kind: "ship" }
+  | { kind: "process"; processId: string };
+
+type ResponsibilityRecord = {
+  id: string;
+  ownerUid: number;
+  parentId?: string;
+  title: string;
+  details?: Record<string, unknown>;
+  source:
+    | { kind: "account"; uid: number; username: string }
+    | { kind: "process"; processId: string; runId?: string }
+    | { kind: "event"; eventType: string; eventId: string }
+    | { kind: "schedule"; scheduleId: string }
+    | { kind: "system"; component: string };
+  audience?: { conversationIds: string[] };
+  assignee: ResponsibilityAssignee;
+  state: ResponsibilityState;
+  priority: "low" | "normal" | "high" | "critical";
+  dueAtMs?: number;
+  nextCheckAtMs?: number;
+  blocker?: string;
+  leaseExpiresAtMs?: number;
+  dedupeKey?: string;
+  resolution?: Record<string, unknown>;
+  revision: number;
+  createdAtMs: number;
+  updatedAtMs: number;
+  resolvedAtMs?: number;
+};
+
+type ResponsibilitySyscalls = {
+  "r12y.list": {
+    args: { ids?: string[]; states?: ResponsibilityState[]; assigneeProcessId?: string; parentId?: string; includeTerminal?: boolean; limit?: number; offset?: number };
+    result: { responsibilities: ResponsibilityRecord[]; count: number; revision: number };
+  };
+  "r12y.get": {
+    args: { id: string };
+    result: { responsibility: ResponsibilityRecord; revision: number };
+  };
+  "r12y.create": {
+    args: { title: string; details?: Record<string, unknown>; parentId?: string; audience?: { conversationIds: string[] }; assignee?: ResponsibilityAssignee; priority?: ResponsibilityRecord["priority"]; dueAtMs?: number; nextCheckAtMs?: number; blocker?: string; leaseExpiresAtMs?: number; dedupeKey?: string };
+    result: { responsibility: ResponsibilityRecord; created: boolean; revision: number };
+  };
+  "r12y.update": {
+    args: { id: string; expectedRevision?: number; patch: Partial<Omit<ResponsibilityRecord, "id" | "ownerUid" | "source" | "revision" | "createdAtMs" | "updatedAtMs" | "resolvedAtMs">> };
+    result: { responsibility: ResponsibilityRecord; revision: number };
+  };
+  "r12y.changes": {
+    args: { afterRevision: number; limit?: number };
+    result: { transitions: Array<{ revision: number; responsibilityId: string; record: ResponsibilityRecord }>; revision: number; hasMore: boolean };
+  };
+};
+```
 
 ## Repositories: `repo.*`
 

@@ -20,6 +20,7 @@ type SyscallDomain =
   | "sys"
   | "ai"
   | "sched"
+  | "r12y"
   | "adapter"
   | "signal"
   | "account";

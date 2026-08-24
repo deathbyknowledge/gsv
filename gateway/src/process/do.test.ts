@@ -162,6 +162,16 @@ function offeredTools(...names: string[]) {
 // SAFETY: test fixture is constructed with the asserted domain shape.
 }
 
+function responsibilityKernelResult(call: string) {
+  if (call === "r12y.list") {
+    return { responsibilities: [], count: 0, revision: 0 };
+  }
+  if (call === "r12y.changes") {
+    return { transitions: [], revision: 0, hasMore: false };
+  }
+  return undefined;
+}
+
 function messageAction(text: string, id = `message-${crypto.randomUUID()}`) {
   return {
     // SAFETY: test fixture is constructed with the asserted domain shape.
@@ -1236,6 +1246,213 @@ describe("Process DO — mechanical", () => {
   });
 
   describe("model context", () => {
+    it("freezes one responsibility baseline and projects each later revision once", async () => {
+      const pid = "mech-r12y-context-epoch";
+      const runId = "run-r12y-context-epoch";
+      const stub = await initProcess(pid, ROOT_IDENTITY);
+
+      const result = await runInDurableObject(stub, async (instance: Process) => {
+        // SAFETY: test exercises Process-owned context epoch internals.
+        const process = instance as any;
+        const initial = {
+          id: "r12y:00000000-0000-4000-8000-000000000010",
+          ownerUid: 0,
+          title: "Ship the epoch model",
+          source: { kind: "account", uid: 0, username: "root" },
+          assignee: { kind: "ship" },
+          state: "open",
+          priority: "high",
+          revision: 1,
+          createdAtMs: 100,
+          updatedAtMs: 100,
+        };
+        const changed = {
+          ...initial,
+          state: "active",
+          revision: 2,
+          updatedAtMs: 200,
+        };
+        let ledgerRevision = 1;
+        process.kernelRpc = vi.fn(async (call: string, args: any) => {
+          if (call === "r12y.list") {
+            return { responsibilities: [initial], count: 600, revision: 1 };
+          }
+          if (call === "r12y.changes") {
+            return args.afterRevision < ledgerRevision
+              ? {
+                  transitions: [{
+                    revision: 2,
+                    responsibilityId: initial.id,
+                    kind: "updated",
+                    beforeState: "open",
+                    afterState: "active",
+                    changedFields: ["state"],
+                    actor: { kind: "process", processId: pid, runId },
+                    record: changed,
+                    createdAtMs: 200,
+                  }],
+                  revision: 2,
+                  hasMore: false,
+                }
+              : { transitions: [], revision: ledgerRevision, hasMore: false };
+          }
+          throw new Error(`unexpected kernel call: ${call}`);
+        });
+        const run = {
+          runId,
+          config: {
+            ...terminalTestConfig(pid),
+            skillIndexMode: "off",
+            systemContextFiles: [{
+              name: "10-responsibilities.md",
+              text: "Responsibility baseline:\n{{r12y}}",
+            }],
+          },
+          tools: [],
+          devices: [],
+          mcpServers: [],
+          approvalPolicy: { default: "auto", rules: [] },
+        };
+        process.currentRun = run;
+
+        const epoch = await process.ensureContextEpoch(runId, run, run.config);
+        const promptBefore = epoch.systemPrompt;
+        ledgerRevision = 2;
+        const sameEpoch = await process.ensureContextEpoch(runId, run, run.config);
+        await process.syncResponsibilityDeltas(runId, sameEpoch);
+        await process.syncResponsibilityDeltas(runId, process.store.getLiveContextEpoch());
+
+        return {
+          epoch: process.store.getLiveContextEpoch(),
+          promptBefore,
+          promptAfter: run.systemPrompt,
+          transitions: process.store.listContextEpochTransitions(epoch.id),
+          deltaMessages: process.store.getMessages().filter((message: any) => (
+            message.role === "system" && message.content.includes("ledger revision 2")
+          )),
+          calls: process.kernelRpc.mock.calls,
+        };
+      });
+
+      expect(result.promptBefore).toContain("Ship the epoch model");
+      expect(result.promptBefore).toContain("599 additional unresolved responsibilities");
+      expect(result.promptAfter).toBe(result.promptBefore);
+      expect(result.epoch).toMatchObject({
+        r12yRevision: 1,
+        r12yCount: 600,
+        observedR12yRevision: 2,
+        state: "live",
+      });
+      expect(result.transitions).toHaveLength(1);
+      expect(result.deltaMessages).toHaveLength(1);
+      expect(result.calls.filter(([call]: [string]) => call === "r12y.list"))
+        .toHaveLength(1);
+    });
+
+    it("closes and archives the exact epoch when standing context changes", async () => {
+      const pid = "mech-context-epoch-rotation";
+      const stub = await initProcess(pid, ROOT_IDENTITY);
+
+      const result = await runInDurableObject(stub, async (instance: Process) => {
+        // SAFETY: test exercises Process-owned context epoch internals.
+        const process = instance as any;
+        process.kernelRpc = vi.fn(async (call: string) => {
+          const responsibilityResult = responsibilityKernelResult(call);
+          if (responsibilityResult) return responsibilityResult;
+          throw new Error(`unexpected kernel call: ${call}`);
+        });
+        process.store.appendMessage("user", "Preserve this exact activity.", {
+          runId: "run-epoch-a",
+        });
+        const configA = {
+          ...terminalTestConfig(pid),
+          skillIndexMode: "off",
+          systemContextFiles: [{ name: "00-test.md", text: "epoch alpha" }],
+        };
+        const runA = {
+          runId: "run-epoch-a",
+          config: configA,
+          tools: [],
+          devices: [],
+          mcpServers: [],
+          approvalPolicy: { default: "auto", rules: [] },
+        };
+        process.currentRun = runA;
+        const epochA = await process.ensureContextEpoch(runA.runId, runA, configA);
+        process.store.recordContextEpochRun(runA.runId, {
+          runId: runA.runId,
+          status: "ok",
+          delivery: {
+            kind: "message",
+            conversationId: "conv:ship",
+            messageId: "msg:epoch-a",
+          },
+        }, 200);
+
+        const configB = {
+          ...configA,
+          systemContextFiles: [{ name: "00-test.md", text: "epoch beta" }],
+        };
+        const runB = {
+          ...runA,
+          runId: "run-epoch-b",
+          config: configB,
+          systemPrompt: undefined,
+        };
+        process.store.appendMessage("user", "This belongs to epoch beta.", {
+          runId: runB.runId,
+        });
+        process.currentRun = runB;
+        const epochB = await process.ensureContextEpoch(runB.runId, runB, configB);
+        const epochs = process.store.listContextEpochs();
+        const closed = epochs.find((epoch: any) => epoch.id === epochA.id);
+        if (!closed?.archivePath) throw new Error("Expected closed epoch archive");
+        const archived = await process.storage.get(closed.archivePath.replace(/^\/+/, ""));
+        if (!archived) throw new Error("Expected stored epoch archive");
+        const manifest = await new Response(
+          archived.body.pipeThrough(new DecompressionStream("gzip")),
+        ).json();
+        return { epochA, epochB, epochs, manifest };
+      });
+
+      expect(result.epochA.systemPrompt).toContain("epoch alpha");
+      expect(result.epochB.systemPrompt).toContain("epoch beta");
+      expect(result.epochB.id).not.toBe(result.epochA.id);
+      expect(result.epochs).toHaveLength(2);
+      expect(result.epochs[0]).toMatchObject({
+        id: result.epochA.id,
+        state: "closed",
+        closeReason: "context.changed",
+        archivePath: expect.stringContaining("/epochs/"),
+      });
+      expect(result.epochs[1]).toMatchObject({
+        id: result.epochB.id,
+        state: "live",
+      });
+      expect(result.manifest).toMatchObject({
+        epoch: {
+          id: result.epochA.id,
+          systemPrompt: expect.stringContaining("epoch alpha"),
+          processActivity: [expect.objectContaining({
+            content: "Preserve this exact activity.",
+          })],
+          runBoundaries: [expect.objectContaining({
+            runId: "run-epoch-a",
+            delivery: {
+              kind: "message",
+              conversationId: "conv:ship",
+              messageId: "msg:epoch-a",
+            },
+          })],
+        },
+      });
+      expect(result.manifest.epoch.processActivity).not.toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ content: "This belongs to epoch beta." }),
+        ]),
+      );
+    });
+
     it("admits a typed work-return event exactly once", async () => {
       const stub = await initProcess("mech-work-return-event", ROOT_IDENTITY);
       const firstRequest = makeRuntimeEventReq(
@@ -1403,6 +1620,179 @@ describe("Process DO — mechanical", () => {
           role: "toolResult",
           toolCallId: "call-boundary|fc_boundary",
           toolName: "Search",
+        });
+      });
+    });
+
+    it("admits a responsibility batch into the active run exactly once", async () => {
+      const stub = await initProcess("mech-r12y-event-active", ROOT_IDENTITY);
+      const args: ProcessRuntimeEventDeliverArgs = {
+        eventId: "r12y.ready:batch:00000000-0000-4000-8000-000000000001",
+        event: {
+          type: "r12y.ready",
+          batchId: "batch:00000000-0000-4000-8000-000000000001",
+          ledgerRevision: 7,
+          responsibilities: [{
+            id: "r12y:00000000-0000-4000-8000-000000000002",
+            title: "Recover the mail transport",
+            state: "open",
+            priority: "high",
+            assignee: { kind: "ship" },
+            dueAtMs: 1_800_000_000_000,
+          }],
+        },
+      };
+
+      await runInDurableObject(stub, async (instance: Process) => {
+        // SAFETY: test fixture is constructed with the asserted domain shape.
+        const process = instance as any;
+        process.sendSignal = vi.fn(async () => {});
+        process.scheduleTick = vi.fn(async () => {});
+        process.currentRun = { runId: "run-busy" };
+
+        const first = await instance.recvFrame(makeRuntimeEventDeliverReq(args));
+        const repeat = await instance.recvFrame(makeRuntimeEventDeliverReq(args));
+
+        expect(first).toMatchObject({
+          type: "res",
+          ok: true,
+          data: {
+            eventId: args.eventId,
+            runId: "run-busy",
+            queued: false,
+          },
+        });
+        // SAFETY: test fixture is constructed with the asserted domain shape.
+        expect((repeat as any).data).toEqual((first as any).data);
+        expect(process.store.getMessages()).toHaveLength(1);
+        expect(process.store.getMessages()[0].content).toContain(
+          "Responsibility batch `batch:00000000-0000-4000-8000-000000000001` is ready",
+        );
+        expect(process.currentRun).toMatchObject({
+          runId: "run-busy",
+          pendingRuntimeEvents: 1,
+          responsibilityBatches: [{
+            batchId: args.event.batchId,
+            responsibilityIds: [args.event.responsibilities[0].id],
+          }],
+        });
+      });
+    });
+
+    it("prevents a responsibility-triggered run from yielding unhandled work", async () => {
+      const pid = "mech-r12y-yield-boundary";
+      const runId = "run-r12y-yield-boundary";
+      const responsibilityId = "r12y:00000000-0000-4000-8000-000000000020";
+      const stub = await initProcess(pid, ROOT_IDENTITY);
+
+      await runInDurableObject(stub, async (instance: Process) => {
+        // SAFETY: test exercises the Process-owned run-control boundary.
+        const process = instance as any;
+        const responsibility = {
+          id: responsibilityId,
+          ownerUid: 0,
+          title: "Repair the adapter",
+          source: { kind: "system", component: "adapter" },
+          assignee: { kind: "ship" },
+          state: "open",
+          priority: "high",
+          revision: 1,
+          createdAtMs: 100,
+          updatedAtMs: 100,
+        };
+        process.currentRun = {
+          runId,
+          responsibilityBatches: [{
+            batchId: "batch:00000000-0000-4000-8000-000000000021",
+            responsibilityIds: [responsibilityId],
+          }],
+        };
+        process.kernelRpc = vi.fn(async () => ({
+          responsibilities: [responsibility],
+          count: 1,
+          revision: responsibility.revision,
+        }));
+        process.emitMessageStream = vi.fn(async () => {});
+        process.completeMessageStream = vi.fn(async () => {});
+
+        const blockedYield = await process.executeRunControlAction(
+          runId,
+          "yield-action",
+          { ok: true, command: { action: "yield" } },
+          [],
+        );
+        const blockedMessage = await process.executeRunControlAction(
+          runId,
+          "message-action",
+          {
+            ok: true,
+            command: { action: "message", text: "I handled it.", finish: true },
+          },
+          [],
+        );
+
+        expect(blockedYield).toMatchObject({
+          ok: false,
+          failureKind: "command",
+          error: expect.stringContaining(responsibilityId),
+        });
+        expect(blockedMessage).toMatchObject({
+          ok: false,
+          failureKind: "command",
+          error: expect.stringContaining(responsibilityId),
+        });
+        expect(process.emitMessageStream).not.toHaveBeenCalled();
+        expect(process.completeMessageStream).not.toHaveBeenCalled();
+
+        process.kernelRpc.mockResolvedValue({
+          responsibilities: [{
+            ...responsibility,
+            assignee: { kind: "process", processId: "proc:repair-child" },
+            state: "active",
+            leaseExpiresAtMs: Date.now() + 60_000,
+            revision: 2,
+            updatedAtMs: 200,
+          }],
+          count: 1,
+          revision: 2,
+        });
+        const delegatedYield = await process.executeRunControlAction(
+          runId,
+          "delegated-yield-action",
+          { ok: true, command: { action: "yield" } },
+          [],
+        );
+
+        expect(delegatedYield).toMatchObject({
+          ok: true,
+          action: "yield",
+          finish: true,
+        });
+        expect(process.emitMessageStream).toHaveBeenCalledOnce();
+
+        process.kernelRpc.mockResolvedValue({
+          responsibilities: [{
+            ...responsibility,
+            assignee: { kind: "process", processId: "proc:repair-child" },
+            state: "waiting",
+            blocker: "Worker stopped responding",
+            leaseExpiresAtMs: Date.now() - 1,
+            revision: 3,
+            updatedAtMs: 300,
+          }],
+          count: 1,
+          revision: 3,
+        });
+        const expiredDelegation = await process.executeRunControlAction(
+          runId,
+          "expired-delegation-yield",
+          { ok: true, command: { action: "yield" } },
+          [],
+        );
+        expect(expiredDelegation).toMatchObject({
+          ok: false,
+          failureKind: "command",
+          error: expect.stringContaining(responsibilityId),
         });
       });
     });
@@ -1753,6 +2143,8 @@ describe("Process DO — mechanical", () => {
         process.executeCodeModeTool = vi.fn(async () => {});
         process.getCodeModeMcpToolBindings = vi.fn(async () => []);
         process.kernelRpc = vi.fn(async (call: string) => {
+          const responsibilityResult = responsibilityKernelResult(call);
+          if (responsibilityResult) return responsibilityResult;
           if (call !== "ai.tools" || phase !== "human") {
             throw new Error(`unexpected kernel call: ${call}`);
           }
@@ -1886,7 +2278,8 @@ describe("Process DO — mechanical", () => {
           expect.objectContaining({ role: "toolResult", toolCallId: "forged-shell" }),
           expect.objectContaining({ role: "toolResult", toolCallId: "forged-codemode" }),
         ]);
-        expect(process.kernelRpc).not.toHaveBeenCalled();
+        expect(process.kernelRpc.mock.calls.filter(([call]: [string]) => call === "ai.tools"))
+          .toEqual([]);
         expect(process.dispatchSyscall).not.toHaveBeenCalled();
         expect(process.executeCodeModeTool).not.toHaveBeenCalled();
         expect(process.getCodeModeMcpToolBindings).not.toHaveBeenCalled();
@@ -1925,6 +2318,7 @@ describe("Process DO — mechanical", () => {
         ]);
         expect(process.currentRun).toBeNull();
 
+        process.kernelRpc.mockClear();
         phase = "human";
         const admitted = await process.handleProcSend({
           message: "Please check my working directory.",
@@ -1953,7 +2347,8 @@ describe("Process DO — mechanical", () => {
         expect(process.currentRun.notifyOnly).toBeUndefined();
         await process.runTick(humanRunId);
 
-        expect(process.kernelRpc).toHaveBeenCalledOnce();
+        expect(process.kernelRpc.mock.calls.filter(([call]: [string]) => call === "ai.tools"))
+          .toHaveLength(1);
         expect(process.kernelRpc).toHaveBeenCalledWith("ai.tools", {});
         expect(generationContexts[2].tools).toEqual([
           expect.objectContaining({ name: "Shell" }),
@@ -1989,6 +2384,8 @@ describe("Process DO — mechanical", () => {
         process.dispatchSyscall = vi.fn(async () => {});
         process.executeCodeModeTool = vi.fn(async () => {});
         process.kernelRpc = vi.fn(async (call: string) => {
+          const responsibilityResult = responsibilityKernelResult(call);
+          if (responsibilityResult) return responsibilityResult;
           if (call !== "ai.tools") {
             throw new Error(`unexpected kernel call: ${call}`);
           }
@@ -6290,6 +6687,8 @@ describe("Process DO — mechanical", () => {
         const kernelCalls: Array<{ call: string; args: any }> = [];
         process.sendSignal = async () => {};
         process.kernelRpc = async (call: string, args: any) => {
+          const responsibilityResult = responsibilityKernelResult(call);
+          if (responsibilityResult) return responsibilityResult;
           kernelCalls.push({ call, args });
           if (call !== "ai.text.generate") {
             throw new Error(`unexpected kernel syscall: ${call}`);
@@ -6517,6 +6916,8 @@ describe("Process DO — mechanical", () => {
         const deviceRequests: Array<{ target: string; call: string; args: any; ttlMs?: number }> = [];
         process.sendSignal = async () => {};
         process.kernelRpc = async (call: string, _args: any) => {
+          const responsibilityResult = responsibilityKernelResult(call);
+          if (responsibilityResult) return responsibilityResult;
           throw new Error(`unexpected synchronous kernel syscall: ${call}`);
         };
         process.requestKernelNetFetch = async (
@@ -13110,7 +13511,7 @@ describe("Process DO — mechanical", () => {
         ok: true,
         data: { ok: true, pid, archivedMessages: 5 },
       });
-      expect(result.archiveAttempts).toBe(3);
+      expect(result.archiveAttempts).toBe(2);
       expect(result.contents).toEqual([
         "answer before kill",
         "checking",
@@ -13769,6 +14170,68 @@ describe("Process DO — mechanical", () => {
       });
       expect(replay.response.data).toEqual(first.response.data);
       expect(replay.finishCalls).toBe(0);
+    });
+
+    it("archives the active run terminal boundary in its context epoch", async () => {
+      const pid = "mech-kill-context-epoch-boundary";
+      const runId = "run-kill-context-epoch-boundary";
+      const epochId = "epoch-kill-boundary";
+      const stub = await initProcess(pid, ROOT_IDENTITY);
+
+      const result = await runInDurableObject(stub, async (instance: Process) => {
+        // SAFETY: test exercises Process-owned context epoch archival.
+        const process = instance as any;
+        process.store.appendMessage("user", "archive the active run", { runId });
+        process.store.createContextEpoch({
+          id: epochId,
+          generation: process.store.getHistoryGeneration(),
+          systemPrompt: "Frozen test prompt.",
+          r12yRevision: 0,
+          r12yCount: 0,
+          r12yBaseline: [],
+          sourceManifest: { version: 1 },
+          now: 100,
+        });
+        process.currentRun = { runId };
+        process.sendSignal = vi.fn(async () => {});
+        const epochKey = `${process.historyArchiveDir()}/epochs/${epochId}.json.gz`;
+
+        const response = await process.recvFrame(makeReq("proc.kill", {}));
+        const archived = await process.env.STORAGE.get(epochKey);
+        if (!archived) throw new Error("Expected killed context epoch archive");
+        const manifest = await new Response(
+          archived.body.pipeThrough(new DecompressionStream("gzip")),
+        ).json();
+        return { response, manifest };
+      });
+
+      expect(result.response).toMatchObject({
+        ok: true,
+        data: {
+          ok: true,
+          pid,
+          archivedMessages: 1,
+          contextEpochArchives: [
+            expect.stringMatching(`/epochs/${epochId}\\.json\\.gz$`),
+          ],
+        },
+      });
+      expect(result.manifest).toMatchObject({
+        epoch: {
+          id: epochId,
+          systemPrompt: "Frozen test prompt.",
+          processActivity: [expect.objectContaining({
+            run_id: runId,
+            content: "archive the active run",
+          })],
+          runBoundaries: [expect.objectContaining({
+            pid,
+            runId,
+            status: "aborted",
+            reason: "process.kill",
+          })],
+        },
+      });
     });
 
     it("delivers persisted output media before deleting live process media", async () => {

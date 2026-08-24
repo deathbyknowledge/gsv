@@ -27,7 +27,8 @@ A good order is:
 4. [Process IPC and Scheduler](./process-ipc-and-scheduler.md)
 5. [The Adapter Model](./adapter-model.md)
 6. [Context and Knowledge](./context-and-knowledge.md)
-7. [Security Model](./security-model.md)
+7. [Responsibilities and Context Epochs](./responsibilities-and-context-epochs.md)
+8. [Security Model](./security-model.md)
 
 ## The Current Pillars
 
@@ -209,6 +210,11 @@ The system uses multiple Durable Object roles instead of one monolith:
 - Conversation DOs: canonical Messages, idempotency receipts, and archive indexes.
 - Process DOs: durable agent loops and process-local SQLite.
 - ripgit objects/workers: repository storage and Git protocol handling.
+
+The Kernel also owns the responsibility ledger that lets the personal intelligence
+continue promises, upkeep, delegation, and recovery without waiting for unrelated user
+input. [Responsibilities and Context Epochs](./responsibilities-and-context-epochs.md)
+describes how that ledger is projected into a stable model context and archived.
 
 The tradeoff is that the architecture must be explicit about routing, timeouts,
 and state boundaries. Long-running local work should happen on devices. Durable

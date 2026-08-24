@@ -29,10 +29,10 @@ interaction:
 The conventional shared file is `context.d/10-personal.md`. An owned agent sees
 it under the editable `<user>` prompt root; `~` still refers to that agent's own
 home. Keep shared context short and specific. Role instructions, voice, and the
-personal intelligence's open commitments stay in the personal agent account
-instead. Because these are account files, every process running as the personal
-agent sees the same standing state. Detailed or occasionally relevant
-information belongs in the Personal wiki.
+personal intelligence's stable program context stay in the personal agent
+account. Unresolved work belongs in the Kernel responsibility ledger rather
+than standing context. Detailed or occasionally relevant information belongs
+in the Personal wiki.
 
 ## Personal wiki
 

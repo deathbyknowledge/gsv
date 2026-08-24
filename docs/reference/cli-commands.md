@@ -54,7 +54,7 @@ commands inspect and control the Kernel schedule records:
 proc self
 proc list
 proc spawn [--as ACCOUNT] [--non-interactive] [--label LABEL] [--prompt TEXT] [--] [prompt]
-proc delegate [--as ACCOUNT] [--label LABEL] [--timeout 10m] <task>
+proc delegate [--as ACCOUNT] [--label LABEL] [--timeout 10m] [--responsibility ID] <task>
 proc reset [--pid PID]
 proc kill PID [--no-archive]
 proc send <pid> [--metadata-json json] <message>
@@ -69,6 +69,15 @@ message attach PATH... [--mime TYPE]
 message send [--message TEXT]
 yield
 message send --to DESTINATION [--message TEXT] [--attach PATH [--mime TYPE]] [--delivery-id ID] [--also]
+r12y list [--all] [--json]
+r12y show ID
+r12y create --title TITLE [--details JSON] [--parent ID] [--priority PRIORITY] [--due ISO] [--check ISO] [--blocker TEXT] [--dedupe KEY]
+r12y update ID --json PATCH
+r12y start ID
+r12y wait ID [--until ISO] [--blocker TEXT]
+r12y delegate ID PID --until ISO
+r12y resolve ID [--json RESOLUTION]
+r12y cancel ID [--json RESOLUTION]
 img2txt [caption] [--length short|normal|long] [--stream] IMAGE
 img2txt query --prompt TEXT [--reasoning] [--response-format FORMAT] [--schema JSON] [--stream] IMAGE
 img2txt ocr [--prompt TEXT] [--response-format FORMAT] [--schema JSON] [--stream] IMAGE
@@ -94,7 +103,9 @@ remains in that child process's history. Unknown options are
 rejected; use `--` before a positional prompt that begins with `-`. Use
 `--non-interactive` for scheduled background work. `proc delegate` creates a
 bounded child whose ordinary final assistant output returns to its caller as a process event; it
-requires a process-backed caller and must not be placed in a crontab.
+requires a process-backed caller and must not be placed in a crontab. Passing
+`--responsibility ID` assigns that existing Kernel record to the child before
+IPC admission and restores its prior Ship state if admission fails.
 `proc send` is asynchronous same-owner process mail. `proc call` is bounded:
 the source process receives either
 `ipc.reply` or `ipc.timeout` as a delegated task event. In a process-backed
@@ -103,6 +114,12 @@ shell, `proc self` prints the current process id and the shell exports it as
 with an error there. `proc list` labels the one canonical process as
 `kind=personal`; all other entries are `kind=work`, even when they run as the
 same personal-agent account.
+
+`r12y` manages the Kernel's durable unresolved-work ledger. `list` omits
+terminal records unless `--all` is supplied. Waiting work must name a future
+check time or a blocker. Prefer `proc delegate --responsibility ID ...` for a
+new bounded worker; the lower-level `r12y delegate ID PID --until ISO` command
+assigns an already-existing owned process with an explicit recovery deadline.
 
 `message current` reports the current run's directed endpoint. For an adapter
 run, both text and JSON output include an opaque

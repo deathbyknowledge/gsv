@@ -31,7 +31,7 @@ function createTableStatement(name: string): string {
 describe("kernel schema migrations", () => {
   it("starts the kernel component at a v1 baseline", () => {
     expect(KERNEL_SCHEMA_COMPONENT).toBe("kernel");
-    expect(KERNEL_MIGRATIONS).toHaveLength(28);
+    expect(KERNEL_MIGRATIONS).toHaveLength(29);
     expect(KERNEL_MIGRATIONS[0]).toMatchObject({
       id: 1,
       name: "initial_kernel_schema",
@@ -143,6 +143,10 @@ describe("kernel schema migrations", () => {
     expect(KERNEL_MIGRATIONS[27]).toMatchObject({
       id: 28,
       name: "rename_home_conversation_to_ship",
+    });
+    expect(KERNEL_MIGRATIONS[28]).toMatchObject({
+      id: 29,
+      name: "add_responsibilities",
     });
   });
 
@@ -267,6 +271,21 @@ describe("kernel schema migrations", () => {
     expect(statements).toContain(
       "CREATE UNIQUE INDEX conversations_ship_owner_idx ON conversations (owner_uid) WHERE kind = 'ship'",
     );
+  });
+
+  it("stores responsibilities, transition history, and recoverable wake state", () => {
+    const statements = normalizedStatements();
+    const responsibilities = statements.find((statement) => (
+      statement.startsWith("CREATE TABLE responsibilities ")
+    ));
+    expect(responsibilities).toContain("change_pending INTEGER NOT NULL DEFAULT 0");
+    expect(responsibilities).toContain("wake_retry_at INTEGER");
+    expect(statements.some((statement) => (
+      statement.startsWith("CREATE TABLE responsibility_transitions ")
+    ))).toBe(true);
+    expect(statements.some((statement) => (
+      statement.startsWith("CREATE TABLE responsibility_wake_batches ")
+    ))).toBe(true);
   });
 
   it("removes the parallel conversation registry", () => {

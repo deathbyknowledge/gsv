@@ -21,6 +21,8 @@ import type {
   ProcToolResultOutcome,
   ProcUsageCost,
   ProcUsageState,
+  ResponsibilityRecord,
+  ResponsibilityTransition,
 } from "@humansandmachines/gsv/protocol";
 import {
   jsonObjectSchema,
@@ -149,6 +151,38 @@ type MessageStats = {
   count: number;
   firstMessageId: number | null;
   lastMessageId: number | null;
+};
+
+export type ContextEpochRecord = {
+  id: string;
+  generation: number;
+  systemPrompt: string;
+  r12yRevision: number;
+  r12yCount: number;
+  observedR12yRevision: number;
+  r12yBaseline: ResponsibilityRecord[];
+  sourceManifest: JsonObject;
+  state: "live" | "closed";
+  createdAt: number;
+  closedAt?: number;
+  closeReason?: string;
+  archivePath?: string;
+};
+
+type ContextEpochRow = {
+  epoch_id: string;
+  generation: number;
+  system_prompt: string;
+  r12y_revision: number;
+  r12y_count: number;
+  observed_r12y_revision: number;
+  r12y_baseline_json: string;
+  source_manifest_json: string;
+  state: "live" | "closed";
+  created_at: number;
+  closed_at: number | null;
+  close_reason: string | null;
+  archive_path: string | null;
 };
 
 type ToolResultMetadata = {
@@ -313,6 +347,174 @@ export class ProcessStore {
     this.clearMessages();
     this.setValue("historyGeneration", String(generation));
     return generation;
+  }
+
+  getLiveContextEpoch(): ContextEpochRecord | null {
+    const row = this.sql.exec<ContextEpochRow>(
+      "SELECT * FROM context_epochs WHERE state = 'live' LIMIT 1",
+    ).toArray()[0];
+    return row ? contextEpochFromRow(row) : null;
+  }
+
+  createContextEpoch(input: {
+    id: string;
+    generation: number;
+    systemPrompt: string;
+    r12yRevision: number;
+    r12yCount: number;
+    r12yBaseline: ResponsibilityRecord[];
+    sourceManifest: JsonObject;
+    now: number;
+  }): ContextEpochRecord {
+    if (this.getLiveContextEpoch()) {
+      throw new Error("A live context epoch already exists");
+    }
+    this.sql.exec(
+      `INSERT INTO context_epochs (
+        epoch_id, generation, system_prompt, r12y_revision, r12y_count,
+        observed_r12y_revision, r12y_baseline_json,
+        source_manifest_json, state, created_at, closed_at, close_reason,
+        archive_path
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'live', ?, NULL, NULL, NULL)`,
+      input.id,
+      input.generation,
+      input.systemPrompt,
+      input.r12yRevision,
+      input.r12yCount,
+      input.r12yRevision,
+      JSON.stringify(input.r12yBaseline),
+      JSON.stringify(input.sourceManifest),
+      input.now,
+    );
+    const epoch = this.getLiveContextEpoch();
+    if (!epoch) throw new Error("Context epoch was not persisted");
+    return epoch;
+  }
+
+  closeLiveContextEpoch(
+    reason: string,
+    now: number,
+    archivePath?: string,
+  ): ContextEpochRecord | null {
+    const current = this.getLiveContextEpoch();
+    if (!current) return null;
+    this.sql.exec(
+      `UPDATE context_epochs
+       SET state = 'closed', closed_at = ?, close_reason = ?, archive_path = ?
+       WHERE epoch_id = ? AND state = 'live'`,
+      now,
+      reason,
+      archivePath ?? null,
+      current.id,
+    );
+    return this.getContextEpoch(current.id);
+  }
+
+  getContextEpoch(id: string): ContextEpochRecord | null {
+    const row = this.sql.exec<ContextEpochRow>(
+      "SELECT * FROM context_epochs WHERE epoch_id = ? LIMIT 1",
+      id,
+    ).toArray()[0];
+    return row ? contextEpochFromRow(row) : null;
+  }
+
+  listContextEpochs(): ContextEpochRecord[] {
+    return this.sql.exec<ContextEpochRow>(
+      "SELECT * FROM context_epochs ORDER BY created_at ASC, epoch_id ASC",
+    ).toArray().map(contextEpochFromRow);
+  }
+
+  appendContextEpochTransition(
+    epochId: string,
+    transition: ResponsibilityTransition,
+    content: string,
+    runId: string,
+  ): number {
+    const epoch = this.getContextEpoch(epochId);
+    if (!epoch || epoch.state !== "live") {
+      throw new Error(`Live context epoch not found: ${epochId}`);
+    }
+    if (transition.revision <= epoch.observedR12yRevision) {
+      return epoch.observedR12yRevision;
+    }
+    const messageId = this.appendMessage("system", content, { runId });
+    this.sql.exec(
+      `INSERT INTO context_epoch_transitions (
+        epoch_id, revision, transition_json, message_id, created_at
+      ) VALUES (?, ?, ?, ?, ?)`,
+      epochId,
+      transition.revision,
+      JSON.stringify(transition),
+      messageId,
+      transition.createdAtMs,
+    );
+    this.sql.exec(
+      `UPDATE context_epochs
+       SET observed_r12y_revision = ?
+       WHERE epoch_id = ? AND state = 'live'`,
+      transition.revision,
+      epochId,
+    );
+    return transition.revision;
+  }
+
+  advanceContextEpochObservedRevision(epochId: string, revision: number): void {
+    this.sql.exec(
+      `UPDATE context_epochs
+       SET observed_r12y_revision = ?
+       WHERE epoch_id = ?
+         AND state = 'live'
+         AND observed_r12y_revision < ?`,
+      revision,
+      epochId,
+      revision,
+    );
+  }
+
+  listContextEpochTransitions(epochId: string): ResponsibilityTransition[] {
+    return this.sql.exec<{ transition_json: string }>(
+      `SELECT transition_json
+       FROM context_epoch_transitions
+       WHERE epoch_id = ?
+       ORDER BY revision ASC`,
+      epochId,
+    ).toArray().map((row) => (
+      parseContextEpochJson<ResponsibilityTransition>(row.transition_json)
+    ));
+  }
+
+  recordContextEpochRun(runId: string, finish: JsonObject, now: number): void {
+    const epoch = this.getLiveContextEpoch();
+    if (!epoch) return;
+    this.sql.exec(
+      `INSERT OR IGNORE INTO context_epoch_runs (
+        epoch_id, run_id, finish_json, created_at
+      ) VALUES (?, ?, ?, ?)`,
+      epoch.id,
+      runId,
+      JSON.stringify(finish),
+      now,
+    );
+  }
+
+  listContextEpochRuns(epochId: string): JsonObject[] {
+    return this.sql.exec<{ finish_json: string }>(
+      `SELECT finish_json
+       FROM context_epoch_runs
+       WHERE epoch_id = ?
+       ORDER BY created_at ASC, run_id ASC`,
+      epochId,
+    ).toArray().map((row) => parseContextEpochJson<JsonObject>(row.finish_json));
+  }
+
+  deleteContextEpochProjectionMessages(epochId: string): void {
+    this.sql.exec(
+      `DELETE FROM messages
+       WHERE id IN (
+         SELECT message_id FROM context_epoch_transitions WHERE epoch_id = ?
+       )`,
+      epochId,
+    );
   }
 
   getHistoryPrefixMessages(opts: {
@@ -1547,6 +1749,30 @@ function normalizeAssistantStopReason(
   return value === "length" || value === "toolUse" || value === "error" || value === "aborted"
     ? value
     : "stop";
+}
+
+function contextEpochFromRow(row: ContextEpochRow): ContextEpochRecord {
+  const epoch: ContextEpochRecord = {
+    id: row.epoch_id,
+    generation: row.generation,
+    systemPrompt: row.system_prompt,
+    r12yRevision: row.r12y_revision,
+    r12yCount: row.r12y_count,
+    observedR12yRevision: row.observed_r12y_revision,
+    r12yBaseline: parseContextEpochJson<ResponsibilityRecord[]>(row.r12y_baseline_json),
+    sourceManifest: parseContextEpochJson<JsonObject>(row.source_manifest_json),
+    state: row.state,
+    createdAt: row.created_at,
+  };
+  if (row.closed_at !== null) epoch.closedAt = row.closed_at;
+  if (row.close_reason) epoch.closeReason = row.close_reason;
+  if (row.archive_path) epoch.archivePath = row.archive_path;
+  return epoch;
+}
+
+function parseContextEpochJson<Value>(value: string): Value {
+  // SAFETY: context epoch JSON is written only by ProcessStore from typed records.
+  return JSON.parse(value) as Value;
 }
 
 export function parseAssistantMessageMeta(raw: string | null): AssistantMessageMeta {

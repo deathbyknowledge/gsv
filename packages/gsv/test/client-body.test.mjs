@@ -241,6 +241,16 @@ test("exposes the typed mail status namespace", async () => {
   client.close();
 });
 
+test("exposes the responsibility namespace", () => {
+  const client = new GSVClient({ WebSocket: FakeWebSocket });
+
+  assert.equal(client.r12y.list instanceof Function, true);
+  assert.equal(client.r12y.get instanceof Function, true);
+  assert.equal(client.r12y.create instanceof Function, true);
+  assert.equal(client.r12y.update instanceof Function, true);
+  assert.equal(client.r12y.changes instanceof Function, true);
+});
+
 test("bodyFromBytes preserves its input buffer", async () => {
   const bytes = new Uint8Array([1, 2, 3]);
   const framed = bodyFromBytes(bytes);

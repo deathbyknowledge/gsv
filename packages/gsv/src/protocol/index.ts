@@ -6,6 +6,8 @@ export type * from "./syscalls/codemode";
 export type * from "./syscalls/repositories";
 export type * from "./syscalls/proc";
 export type * from "./syscalls/scheduler";
+export type * from "./syscalls/responsibility";
+export { responsibilityRequiresAction } from "./syscalls/responsibility";
 export type * from "./syscalls/adapter";
 export { isAdapterConnectResult } from "./syscalls/adapter";
 export type * from "./syscalls/signal";

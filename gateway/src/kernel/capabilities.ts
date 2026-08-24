@@ -39,6 +39,7 @@ const DEFAULT_CAPABILITIES: [number, string[]][] = [
     "repo.search",
     "repo.visibility.set",
     "sched.*",
+    "r12y.*",
     "ai.text.generate",
     "ai.image.generate",
     "ai.image.read",

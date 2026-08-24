@@ -118,6 +118,13 @@ import {
   handleSchedulerUpdate,
 } from "./scheduler";
 import {
+  handleResponsibilityChanges,
+  handleResponsibilityCreate,
+  handleResponsibilityGet,
+  handleResponsibilityList,
+  handleResponsibilityUpdate,
+} from "./responsibilities";
+import {
   getVisibleTarget,
   targetCanHandle,
   type TargetDescriptor,
@@ -576,6 +583,23 @@ async function dispatchNative(
         break;
       case "sched.run":
         data = await handleSchedulerRun(frame.args, ctx);
+        break;
+
+      // --- r12y.* ---
+      case "r12y.list":
+        data = handleResponsibilityList(frame.args, ctx);
+        break;
+      case "r12y.get":
+        data = handleResponsibilityGet(frame.args, ctx);
+        break;
+      case "r12y.create":
+        data = await handleResponsibilityCreate(frame.args, ctx);
+        break;
+      case "r12y.update":
+        data = await handleResponsibilityUpdate(frame.args, ctx);
+        break;
+      case "r12y.changes":
+        data = handleResponsibilityChanges(frame.args, ctx);
         break;
 
       // --- adapter.* ---

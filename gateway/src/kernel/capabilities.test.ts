@@ -120,6 +120,7 @@ describe("CapabilityStore", () => {
         "mail.status",
         "net.fetch",
         "proc.*",
+        "r12y.*",
         "repo.apply",
         "repo.compare",
         "repo.create",

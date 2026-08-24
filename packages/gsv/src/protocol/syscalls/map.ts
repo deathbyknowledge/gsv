@@ -175,6 +175,18 @@ import type {
   SchedulerUpdateResult,
 } from "./scheduler";
 import type {
+  ResponsibilityChangesArgs,
+  ResponsibilityChangesResult,
+  ResponsibilityCreateArgs,
+  ResponsibilityCreateResult,
+  ResponsibilityGetArgs,
+  ResponsibilityGetResult,
+  ResponsibilityListArgs,
+  ResponsibilityListResult,
+  ResponsibilityUpdateArgs,
+  ResponsibilityUpdateResult,
+} from "./responsibility";
+import type {
   AiConfigArgs,
   AiConfigResult,
   AiImageGenerateArgs,
@@ -343,6 +355,12 @@ export type SyscallDomains = {
   "sched.update": { args: SchedulerUpdateArgs; result: SchedulerUpdateResult };
   "sched.remove": { args: SchedulerRemoveArgs; result: SchedulerRemoveResult };
   "sched.run": { args: SchedulerRunArgs; result: SchedulerRunResult };
+
+  "r12y.list": { args: ResponsibilityListArgs; result: ResponsibilityListResult };
+  "r12y.get": { args: ResponsibilityGetArgs; result: ResponsibilityGetResult };
+  "r12y.create": { args: ResponsibilityCreateArgs; result: ResponsibilityCreateResult };
+  "r12y.update": { args: ResponsibilityUpdateArgs; result: ResponsibilityUpdateResult };
+  "r12y.changes": { args: ResponsibilityChangesArgs; result: ResponsibilityChangesResult };
 
   "ai.tools": { args: AiToolsArgs; result: AiToolsResult };
   "ai.config": { args: AiConfigArgs; result: AiConfigResult };

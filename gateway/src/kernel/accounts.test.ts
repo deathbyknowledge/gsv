@@ -8,9 +8,9 @@ import {
   handleAccountList,
 } from "./agents";
 import {
-  PERSONAL_INTELLIGENCE_COMMITMENTS_CONTEXT,
   PERSONAL_INTELLIGENCE_CONTEXT,
   PERSONAL_INTELLIGENCE_VOICE_CONTEXT,
+  RETIRED_PERSONAL_INTELLIGENCE_COMMITMENTS_CONTEXT,
 } from "../prompts/personal-intelligence";
 import {
   PERSONAL_STANDING_CONTEXT,
@@ -298,15 +298,13 @@ describe("handleAccountCreate", () => {
       .not.toContain("Your program home");
     const roleContextOp = agentOps.find((op) => op.path === "context.d/00-role.md");
     const voiceContextOp = agentOps.find((op) => op.path === "context.d/05-voice.md");
-    const commitmentsContextOp = agentOps.find((op) => (
-      op.path === "context.d/10-commitments.md"
-    ));
     expect(new TextDecoder().decode(new Uint8Array(roleContextOp?.contentBytes ?? [])))
       .toBe(PERSONAL_INTELLIGENCE_CONTEXT);
     expect(new TextDecoder().decode(new Uint8Array(voiceContextOp?.contentBytes ?? [])))
       .toBe(PERSONAL_INTELLIGENCE_VOICE_CONTEXT);
-    expect(new TextDecoder().decode(new Uint8Array(commitmentsContextOp?.contentBytes ?? [])))
-      .toBe(PERSONAL_INTELLIGENCE_COMMITMENTS_CONTEXT);
+    expect(agentOps).not.toContainEqual(
+      expect.objectContaining({ type: "put", path: "context.d/10-commitments.md" }),
+    );
     expect(agentOps).not.toContainEqual(
       expect.objectContaining({ type: "put", path: "context.d/00-style.md" }),
     );
@@ -454,6 +452,10 @@ describe("handleAccountCreate", () => {
     for (const path of existingPaths) {
       state.ripgitFiles.set(`friday:${path}`, `Existing ${path}`);
     }
+    state.ripgitFiles.set(
+      "friday:context.d/10-commitments.md",
+      RETIRED_PERSONAL_INTELLIGENCE_COMMITMENTS_CONTEXT,
+    );
     const ctx = state.ctxFor(userIdentity(1000, "alice", ["account.create"]), { ripgit: true });
 
     const result = await ensurePersonalAgent(ctx, ctx.identity!.process);
@@ -464,8 +466,14 @@ describe("handleAccountCreate", () => {
     const ops = state.ripgitApplyBodies.flatMap((body) => body.ops);
     expect(ops).toEqual(expect.arrayContaining([
       expect.objectContaining({ type: "put", path: "context.d/05-voice.md" }),
-      expect.objectContaining({ type: "put", path: "context.d/10-commitments.md" }),
     ]));
+    expect(ops).not.toContainEqual(
+      expect.objectContaining({ type: "put", path: "context.d/10-commitments.md" }),
+    );
+    expect(ops).toContainEqual({
+      type: "delete",
+      path: "context.d/10-commitments.md",
+    });
     for (const path of existingPaths) {
       expect(ops).not.toContainEqual(expect.objectContaining({ path }));
     }

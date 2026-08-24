@@ -8,7 +8,12 @@ import {
   handleProcIpcCall,
   handleProcIpcSend,
   handleProcSpawn,
+  resolveIpcCallTimeoutMs,
 } from "../../../kernel/proc-handlers";
+import {
+  handleResponsibilityGet,
+  handleResponsibilityUpdate,
+} from "../../../kernel/responsibilities";
 import { handleAccountList } from "../../../kernel/agents";
 import type { ArgsOf, ResultOf } from "../../../syscalls";
 import type {
@@ -17,6 +22,7 @@ import type {
   ProcHistoryMessage,
   ProcHistoryOverflowPolicy,
   ProcSpawnArgs,
+  ResponsibilityRecord,
 } from "@humansandmachines/gsv/protocol";
 import {
   jsonObjectSchema,
@@ -96,7 +102,12 @@ type ParsedProcDelegate = {
   parentPid?: string;
   cwd?: string;
   timeoutMs?: number;
+  responsibilityId?: string;
   message: string;
+};
+type DelegatedResponsibilityRollback = {
+  original: ResponsibilityRecord;
+  delegatedRevision?: number;
 };
 type ProcHistoryFormatOptions = {
   json?: boolean;
@@ -231,6 +242,15 @@ async function runProcCommand(args: string[], ctx: KernelContext): Promise<ExecR
         };
       }
       const parsed = parseProcDelegateCommand(rest, ctx);
+      let responsibilityRollback: DelegatedResponsibilityRollback | undefined;
+      if (parsed.responsibilityId) {
+        requireCommandCapability(ctx, "r12y.get");
+        requireCommandCapability(ctx, "r12y.update");
+        responsibilityRollback = {
+          original: handleResponsibilityGet({ id: parsed.responsibilityId }, ctx)
+            .responsibility,
+        };
+      }
       const label = parsed.label ?? summarizeDelegateLabel(parsed.message);
       const spawnArgs: ProcSpawnArgs = {
         interactive: false,
@@ -243,20 +263,43 @@ async function runProcCommand(args: string[], ctx: KernelContext): Promise<ExecR
       if (!spawned.ok) {
         return { stdout: "", stderr: `proc delegate: ${spawned.error}\n`, exitCode: 1 };
       }
+      const timeoutMs = resolveIpcCallTimeoutMs(parsed.timeoutMs);
+      if (responsibilityRollback) {
+        try {
+          const delegated = await handleResponsibilityUpdate({
+            id: responsibilityRollback.original.id,
+            expectedRevision: responsibilityRollback.original.revision,
+            patch: {
+              assignee: { kind: "process", processId: spawned.pid },
+              state: "active",
+              blocker: null,
+              nextCheckAtMs: null,
+              leaseExpiresAtMs: Date.now() + timeoutMs,
+            },
+          }, ctx);
+          responsibilityRollback.delegatedRevision = delegated.responsibility.revision;
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          return delegateFailureResult(ctx, spawned.pid, message, responsibilityRollback);
+        }
+      }
       let result: Awaited<ReturnType<typeof handleProcIpcCall>>;
       try {
         const callArgs: ArgsOf<"proc.ipc.call"> = {
           pid: spawned.pid,
           message: parsed.message,
+          timeoutMs,
         };
-        if (parsed.timeoutMs !== undefined) callArgs.timeoutMs = parsed.timeoutMs;
+        if (parsed.responsibilityId) {
+          callArgs.metadata = { responsibilityId: parsed.responsibilityId };
+        }
         result = await handleProcIpcCall(callArgs, ctx, { terminateTargetOnTimeout: true });
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
-        return delegateFailureResult(ctx, spawned.pid, message);
+        return delegateFailureResult(ctx, spawned.pid, message, responsibilityRollback);
       }
       if (!result.ok) {
-        return delegateFailureResult(ctx, spawned.pid, result.error);
+        return delegateFailureResult(ctx, spawned.pid, result.error, responsibilityRollback);
       }
       return {
         stdout: [
@@ -267,6 +310,9 @@ async function runProcCommand(args: string[], ctx: KernelContext): Promise<ExecR
           `queued=${result.queued === true}`,
           `deadline=${new Date(result.deadlineAt).toISOString()}`,
           `label=${quoteShellField(label)}`,
+          ...(parsed.responsibilityId
+            ? [`responsibility=${parsed.responsibilityId}`]
+            : []),
         ].join(" ") + "\n",
         stderr: "",
         exitCode: 0,
@@ -289,6 +335,18 @@ async function runProcCommand(args: string[], ctx: KernelContext): Promise<ExecR
           segment.summaryMessageId === null ? "-" : String(segment.summaryMessageId),
           segment.archivePath,
         ].join("\t"));
+      }
+      if (result.epochs.length > 0) {
+        lines.push("", "EPOCH\tGEN\tSTATE\tR12Y\tARCHIVE");
+        for (const epoch of result.epochs) {
+          lines.push([
+            epoch.id,
+            String(epoch.generation),
+            epoch.state,
+            `${epoch.r12yRevision}->${epoch.observedR12yRevision}`,
+            epoch.archivePath ?? "-",
+          ].join("\t"));
+        }
       }
       return { stdout: `${lines.join("\n")}\n`, stderr: "", exitCode: 0 };
     }
@@ -495,9 +553,41 @@ async function delegateFailureResult(
   ctx: KernelContext,
   pid: string,
   originalError: string,
+  responsibilityRollback?: DelegatedResponsibilityRollback,
 ): Promise<ExecResult> {
   let error = originalError;
   const rollbackErrors: string[] = [];
+  if (responsibilityRollback) {
+    try {
+      const current = handleResponsibilityGet({
+        id: responsibilityRollback.original.id,
+      }, ctx).responsibility;
+      const stillDelegated = current.assignee.kind === "process"
+        && current.assignee.processId === pid;
+      const unchangedSinceDelegation = responsibilityRollback.delegatedRevision === undefined
+        || current.revision === responsibilityRollback.delegatedRevision;
+      if (stillDelegated && unchangedSinceDelegation) {
+        const original = responsibilityRollback.original;
+        await handleResponsibilityUpdate({
+          id: original.id,
+          expectedRevision: current.revision,
+          patch: {
+            assignee: original.assignee,
+            state: original.state,
+            blocker: original.blocker ?? null,
+            nextCheckAtMs: original.nextCheckAtMs ?? null,
+            leaseExpiresAtMs: original.leaseExpiresAtMs ?? null,
+          },
+        }, ctx);
+      }
+    } catch (responsibilityError) {
+      rollbackErrors.push(
+        responsibilityError instanceof Error
+          ? responsibilityError.message
+          : String(responsibilityError),
+      );
+    }
+  }
   try {
     const rollback = await runProcLifecycleSyscall(ctx, "proc.kill", {
       pid,
@@ -1025,6 +1115,7 @@ function parseProcDelegateCommand(args: string[], ctx: KernelContext): ParsedPro
   let parentPid: string | undefined = ctx.processId;
   let cwd: string | undefined;
   let timeoutMs: number | undefined;
+  let responsibilityId: string | undefined;
   const positional: string[] = [];
 
   for (let index = 0; index < args.length; index += 1) {
@@ -1054,6 +1145,11 @@ function parseProcDelegateCommand(args: string[], ctx: KernelContext): ParsedPro
       timeoutMs = parseDurationMs(requireShellOptionValue(args[index], current));
       continue;
     }
+    if (current === "--responsibility") {
+      index += 1;
+      responsibilityId = requireShellOptionValue(args[index], current);
+      continue;
+    }
     positional.push(current);
   }
 
@@ -1069,6 +1165,7 @@ function parseProcDelegateCommand(args: string[], ctx: KernelContext): ParsedPro
   if (parentPid) parsed.parentPid = parentPid;
   if (cwd) parsed.cwd = cwd;
   if (timeoutMs !== undefined) parsed.timeoutMs = timeoutMs;
+  if (responsibilityId) parsed.responsibilityId = responsibilityId;
   return parsed;
 }
 
@@ -1189,7 +1286,7 @@ function procUsage(): string {
     "  proc spawn --json JSON",
     "  proc reset [--pid PID]",
     "  proc kill PID [--no-archive]",
-    "  proc delegate [--as ACCOUNT] [--label LABEL] [--parent PID] [--cwd PATH] [--timeout 10m] <task>",
+    "  proc delegate [--as ACCOUNT] [--label LABEL] [--parent PID] [--cwd PATH] [--timeout 10m] [--responsibility ID] <task>",
     "  proc segments [--pid PID]",
     "  proc policy [--pid PID] [--overflow auto-compact|fail] [--compact-at N] [--keep-last N]",
     "  proc history [--pid PID] [--tail] [--limit N] [--offset N] [--json] [--full]",
@@ -1205,7 +1302,9 @@ function procUsage(): string {
     "proc history reads the live transcript for this process or another visible process.",
     "",
     "proc delegate creates a child process for bounded work and returns a task",
-    "handle immediately. proc send is asynchronous mail. proc call sends bounded",
+    "handle immediately. --responsibility assigns the record before the child",
+    "starts and returns it to Ship if IPC admission fails. proc send is asynchronous",
+    "mail. proc call sends bounded",
     "work to an existing process; replies arrive as delegated task events.",
     "",
   ].join("\n");

@@ -10,7 +10,7 @@ Memory belongs to the human, not to an individual agent. Every agent working for
 - The `personal` wiki contains durable information that is searched and loaded when relevant.
 - The owner's `context.d/10-personal.md` contains a very small set of stable facts and preferences that should affect nearly every interaction. It appears under the editable `<user>` context root in the prompt; do not confuse it with the current agent's `~/context.d/`.
 
-The personal intelligence's account-local commitments file is working state, not personal memory. Do not copy open tasks into the wiki merely because they exist. Record an outcome later only when it is useful history.
+The Kernel responsibility ledger is working state, not personal memory. Do not copy unresolved responsibilities into the wiki merely because they exist. Record an outcome later only when it is useful history.
 
 ## Decide When to Read
 
@@ -58,4 +58,4 @@ Use `man wiki` for exact wiki syntax and general wiki workflows.
 
 Edit the owner's `context.d/10-personal.md` only for explicit, stable facts or preferences that should be present in almost every interaction. Keep the file small, preserve its purpose statement, and replace corrected facts.
 
-Open commitments remain with the personal intelligence until the user-facing loop closes.
+Unresolved work belongs in the `r12y` responsibility ledger. Do not duplicate it in standing context or the wiki.

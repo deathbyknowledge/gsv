@@ -68,6 +68,7 @@ export type ProcKillResult =
       archivedMessages: number;
       archivedTo?: string;
       archives: ProcArchiveEntry[];
+      contextEpochArchives?: string[];
     }
   | { ok: false; error: string };
 
@@ -522,11 +523,25 @@ export type ProcHistorySegmentsArgs = {
   pid?: string;
 };
 
+export type ProcContextEpoch = {
+  id: string;
+  generation: number;
+  state: "live" | "closed";
+  r12yRevision: number;
+  r12yCount: number;
+  observedR12yRevision: number;
+  createdAt: number;
+  closedAt?: number;
+  closeReason?: string;
+  archivePath?: string;
+};
+
 export type ProcHistorySegmentsResult =
   | {
       ok: true;
       pid: string;
       segments: ProcHistorySegment[];
+      epochs: ProcContextEpoch[];
     }
   | { ok: false; error: string };
 
@@ -570,6 +585,7 @@ export type ProcResetResult =
       archivedMessages: number;
       archivedTo?: string;
       archives: ProcArchiveEntry[];
+      contextEpochArchives?: string[];
     }
   | { ok: false; error: string };
 

@@ -20,6 +20,7 @@ import { buildNetCommands } from "./net";
 import { buildOAuthCommand } from "./oauth";
 import { buildProcCommand } from "./proc";
 import { buildRgitCommands } from "./rgit";
+import { buildR12yCommand } from "./r12y";
 import { buildSchedCommand } from "./sched";
 import { buildSkillsCommand } from "./skills";
 import { buildStatCommand } from "./stat";
@@ -56,6 +57,7 @@ export function buildCustomCommands(
   const wiki = buildWikiCommand(ctx);
   const proc = buildProcCommand(ctx);
   const rgitCommands = buildRgitCommands(ctx);
+  const r12y = buildR12yCommand(ctx);
   const sched = buildSchedCommand(ctx);
   const targets = buildTargetsCommands(ctx);
   const mediaCommands = buildMediaCommands(fs, ctx, options?.fsTransport);
@@ -83,6 +85,7 @@ export function buildCustomCommands(
     mcp,
     proc,
     ...rgitCommands,
+    r12y,
     sched,
     ...targets,
     ...netCommands,

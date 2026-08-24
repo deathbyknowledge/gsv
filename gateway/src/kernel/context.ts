@@ -27,6 +27,7 @@ import type { SignalWatchStore } from "./signal-watches";
 import type { IpcCallStore } from "./ipc-calls";
 import type { ScheduleStore } from "./scheduler";
 import type { MailboxStore } from "./mailbox-store";
+import type { ResponsibilityStore } from "./responsibility-store";
 import type { McpAddConnectionInput, McpAddConnectionResult } from "./sys/mcp";
 import type { InstallationIdentity } from "../installation/identity";
 import type { KernelConnection, KernelConnectionState } from "./connection";
@@ -54,6 +55,7 @@ export type KernelContext = {
   ipcCalls: IpcCallStore;
   schedules: ScheduleStore;
   mailboxes: MailboxStore;
+  responsibilities: ResponsibilityStore;
   connection: KernelConnection<KernelConnectionState> | null;
   peer?: PeerContext;
   identity?: ConnectionIdentity;
@@ -73,6 +75,7 @@ export type KernelContext = {
   failIpcCallsByTarget: (uid: number, targetPid: string, error: string) => void;
   scheduleScheduleWake: (scheduleId: string, dueAtMs: number) => Promise<string>;
   cancelScheduleWake: (wakeScheduleId: string) => Promise<void>;
+  reconcileResponsibilityWake: (ownerUid: number) => Promise<void>;
   scheduleManagedOutboundEnqueue: (
     outboundId: string,
     dueAtMs: number,

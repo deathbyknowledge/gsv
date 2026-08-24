@@ -15,6 +15,7 @@
 import {
   GSV_CONTEXT_DISCOVERY,
   GSV_PROCESS_ORCHESTRATION,
+  GSV_RESPONSIBILITY_CONTEXT,
   GSV_RUNTIME_CONTEXT,
   GSV_RUNTIME_FACTS,
   GSV_TARGET_CONTEXT,
@@ -99,6 +100,7 @@ export const SYSTEM_CONFIG_DEFAULTS = defineSystemConfigDefaults({
   "config/ai/context.d/00-runtime.md": GSV_RUNTIME_FACTS,
   "config/ai/context.d/01-gsv.md": GSV_RUNTIME_CONTEXT,
   "config/ai/context.d/05-targets.md": GSV_TARGET_CONTEXT,
+  "config/ai/context.d/10-responsibilities.md": GSV_RESPONSIBILITY_CONTEXT,
   "config/ai/context.d/20-discovery.md": GSV_CONTEXT_DISCOVERY,
   "config/ai/context.d/30-process-orchestration.md": GSV_PROCESS_ORCHESTRATION,
   // Prompt-visible skill enumeration. Detailed skill discovery remains available

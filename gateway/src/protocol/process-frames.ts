@@ -5,6 +5,9 @@ import type {
   ProcMediaInput,
   ProcSendResult,
   ConversationMessage,
+  ResponsibilityAssignee,
+  ResponsibilityPriority,
+  ResponsibilityState,
   ResourceBlock,
 } from "@humansandmachines/gsv/protocol";
 import type { Frame, FrameBody, RequestFrame, ResponseErrFrame, SignalFrame } from "./frames";
@@ -24,9 +27,27 @@ export type ProcessAdapterWorkReturnedRuntimeEvent = {
   workPid: string;
 };
 
+export type ProcessResponsibilityReadyRuntimeEvent = {
+  type: "r12y.ready";
+  batchId: string;
+  ledgerRevision: number;
+  responsibilities: Array<{
+    id: string;
+    title: string;
+    state: ResponsibilityState;
+    priority: ResponsibilityPriority;
+    assignee: ResponsibilityAssignee;
+    dueAtMs?: number;
+    nextCheckAtMs?: number;
+    leaseExpiresAtMs?: number;
+    blocker?: string;
+  }>;
+};
+
 export type ProcessRuntimeEvent =
   | ProcessMailReceivedRuntimeEvent
-  | ProcessAdapterWorkReturnedRuntimeEvent;
+  | ProcessAdapterWorkReturnedRuntimeEvent
+  | ProcessResponsibilityReadyRuntimeEvent;
 
 export type ProcessRuntimeEventDeliverArgs = {
   eventId: string;

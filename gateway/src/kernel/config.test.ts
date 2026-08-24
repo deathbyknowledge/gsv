@@ -120,6 +120,11 @@ describe("ConfigStore", () => {
     );
     expect(targets).toContain("targets list");
     expect(targets).toContain("must be run from the `gsv` target");
+    const responsibilities =
+      SYSTEM_CONFIG_DEFAULTS["config/ai/context.d/10-responsibilities.md"];
+    expect(responsibilities).toContain("Kernel responsibility ledger");
+    expect(responsibilities).toContain("`r12y` command");
+    expect(responsibilities).toContain("{{r12y}}");
     const discovery =
       SYSTEM_CONFIG_DEFAULTS["config/ai/context.d/20-discovery.md"];
     expect(discovery).toContain("man --search -- '<plain-language goal>'");

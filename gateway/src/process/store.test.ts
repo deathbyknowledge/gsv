@@ -5,6 +5,91 @@ import { getProcessByPid } from "../shared/utils";
 
 describe("ProcessStore", () => {
   describe("history", () => {
+    it("stores one immutable context baseline and revisioned delta projections", async () => {
+      const stub = await getProcessByPid("history-context-epoch");
+      await runInDurableObject(stub, (instance: Process) => {
+        // SAFETY: test fixture exercises the internal ProcessStore contract.
+        const store = (instance as any).store;
+        const responsibility = {
+          id: "r12y:00000000-0000-4000-8000-000000000001",
+          ownerUid: 1000,
+          title: "Finish the handoff",
+          source: { kind: "account", uid: 1000, username: "hank" },
+          assignee: { kind: "ship" },
+          state: "open",
+          priority: "normal",
+          revision: 1,
+          createdAtMs: 100,
+          updatedAtMs: 100,
+        };
+        const epoch = store.createContextEpoch({
+          id: "epoch-1",
+          generation: 1,
+          systemPrompt: "exact prompt",
+          r12yRevision: 1,
+          r12yCount: 1,
+          r12yBaseline: [responsibility],
+          sourceManifest: { version: 1 },
+          now: 100,
+        });
+        const transition = {
+          revision: 2,
+          responsibilityId: responsibility.id,
+          kind: "updated",
+          beforeState: "open",
+          afterState: "active",
+          changedFields: ["state"],
+          actor: { kind: "process", processId: "proc:ship" },
+          record: { ...responsibility, state: "active", revision: 2, updatedAtMs: 200 },
+          createdAtMs: 200,
+        };
+
+        expect(epoch).toMatchObject({
+          systemPrompt: "exact prompt",
+          r12yRevision: 1,
+          r12yCount: 1,
+          observedR12yRevision: 1,
+        });
+        expect(store.appendContextEpochTransition(
+          epoch.id,
+          transition,
+          "Responsibility changed.",
+          "run-1",
+        )).toBe(2);
+        expect(store.appendContextEpochTransition(
+          epoch.id,
+          transition,
+          "must not duplicate",
+          "run-1",
+        )).toBe(2);
+        expect(store.listContextEpochTransitions(epoch.id)).toEqual([transition]);
+        store.recordContextEpochRun("run-1", {
+          runId: "run-1",
+          status: "ok",
+          delivery: { kind: "message", conversationId: "conv:ship", messageId: "msg:1" },
+        }, 250);
+        store.recordContextEpochRun("run-1", { runId: "run-1", status: "error" }, 251);
+        expect(store.listContextEpochRuns(epoch.id)).toEqual([{
+          runId: "run-1",
+          status: "ok",
+          delivery: { kind: "message", conversationId: "conv:ship", messageId: "msg:1" },
+        }]);
+        expect(store.getMessages().map((message: any) => message.content)).toEqual([
+          "Responsibility changed.",
+        ]);
+
+        store.deleteContextEpochProjectionMessages(epoch.id);
+        expect(store.getMessages()).toEqual([]);
+        expect(store.closeLiveContextEpoch("process.reset", 300, "/epoch.json.gz"))
+          .toMatchObject({
+            id: epoch.id,
+            state: "closed",
+            observedR12yRevision: 2,
+            archivePath: "/epoch.json.gz",
+          });
+      });
+    });
+
     it("resets history by clearing messages and incrementing generation", async () => {
       const stub = await getProcessByPid("history-reset");
       // SAFETY: test fixture is constructed with the asserted domain shape.

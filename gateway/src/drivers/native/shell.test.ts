@@ -23,7 +23,9 @@ import {
   jsonObjectSchema,
   type JsonObject,
   type ProcessIdentity,
+  type ResponsibilityRecord,
 } from "@humansandmachines/gsv/protocol";
+import type { ResponsibilityUpdateInput } from "../../kernel/responsibility-store";
 import type { RequestFrame, ResponseFrame } from "../../protocol/frames";
 import type { InstallationIdentity } from "../../installation/identity";
 import { stableOpaqueId } from "../../shared/stable-id";
@@ -139,6 +141,28 @@ function makeProcess(
   };
 }
 
+function applyResponsibilityTestUpdate(
+  current: ResponsibilityRecord,
+  input: ResponsibilityUpdateInput,
+): ResponsibilityRecord {
+  const next: ResponsibilityRecord = {
+    ...current,
+    revision: current.revision + 1,
+    updatedAtMs: input.now,
+  };
+  if (input.patch.assignee) next.assignee = input.patch.assignee;
+  if (input.patch.state) next.state = input.patch.state;
+  for (const field of ["blocker", "nextCheckAtMs", "leaseExpiresAtMs"] as const) {
+    const value = input.patch[field];
+    if (value === null) {
+      delete next[field];
+    } else if (value !== undefined) {
+      next[field] = value;
+    }
+  }
+  return next;
+}
+
 function makeContext(options?: {
   capabilities?: string[];
   config?: Record<string, string>;
@@ -148,9 +172,11 @@ function makeContext(options?: {
   caps?: Partial<KernelContext["caps"]>;
   schedules?: Partial<KernelContext["schedules"]>;
   ipcCalls?: Partial<KernelContext["ipcCalls"]>;
+  responsibilities?: Partial<KernelContext["responsibilities"]>;
   oauth?: Partial<KernelContext["oauth"]>;
   scheduleIpcCallTimeout?: KernelContext["scheduleIpcCallTimeout"];
   scheduleScheduleWake?: KernelContext["scheduleScheduleWake"];
+  reconcileResponsibilityWake?: KernelContext["reconcileResponsibilityWake"];
   processRunId?: string;
   identity?: ProcessIdentity;
   aiRun?: (model: string, input: ShellAiInput) => Promise<ShellAiResult>;
@@ -265,6 +291,9 @@ function makeContext(options?: {
       findPendingByTargetRun: vi.fn(() => null),
       ...options?.ipcCalls,
     }),
+    responsibilities: focusedFixture<KernelContext["responsibilities"]>(
+      options?.responsibilities ?? {},
+    ),
     connection: null,
     identity: {
       role: "user",
@@ -276,6 +305,7 @@ function makeContext(options?: {
     serverVersion: "0.4.1",
     scheduleIpcCallTimeout: options?.scheduleIpcCallTimeout,
     scheduleScheduleWake: options?.scheduleScheduleWake,
+    reconcileResponsibilityWake: options?.reconcileResponsibilityWake,
   });
 }
 
@@ -1309,10 +1339,15 @@ describe("proc native command", () => {
       ipcCalls: {
         cancelBySourcePid,
       },
+      responsibilities: {
+        reclaimProcessAssignments: vi.fn(() => []),
+      },
+      reconcileResponsibilityWake: vi.fn(async () => undefined),
     });
     Object.assign(ctx, {
       failIpcCallsByTarget,
       runRoutes: { clearForProcess: clearProcessRoutes },
+      defer: vi.fn(),
     });
     return {
       ctx,
@@ -1692,6 +1727,221 @@ describe("proc native command", () => {
     );
   });
 
+  it("assigns a responsibility before admitting delegated work", async () => {
+    const responsibilityId = "r12y:11111111-1111-4111-8111-111111111111";
+    const parent = makeProcess({
+      processId: "task:shell",
+      isPersonalController: true,
+      state: "running",
+      activeRunId: "parent-run",
+    });
+    const children: string[] = [];
+    const order: string[] = [];
+    let responsibility: ResponsibilityRecord = {
+      id: responsibilityId,
+      ownerUid: IDENTITY.uid,
+      title: "write a migration plan",
+      source: { kind: "process", processId: parent.processId, runId: "parent-run" },
+      assignee: { kind: "ship" },
+      state: "open",
+      priority: "normal",
+      revision: 1,
+      createdAtMs: 1,
+      updatedAtMs: 1,
+    };
+    const update = vi.fn((input: ResponsibilityUpdateInput) => {
+      expect(input.expectedRevision).toBe(responsibility.revision);
+      responsibility = applyResponsibilityTestUpdate(responsibility, input);
+      order.push("assigned");
+      return { record: responsibility, revision: responsibility.revision, changed: true };
+    });
+    const ipcCalls = {
+      create: vi.fn(),
+      get: vi.fn(() => ({ status: "pending", error: null })),
+      remove: vi.fn(),
+    };
+    const ctx = makeContext({
+      capabilities: ["proc.spawn", "proc.ipc.call", "r12y.get", "r12y.update"],
+      procs: {
+        get(pid: string) {
+          if (pid === parent.processId) return parent;
+          if (pid === children[0]) {
+            return makeProcess({
+              processId: pid,
+              parentPid: parent.processId,
+              interactive: false,
+              label: "planning",
+            });
+          }
+          return null;
+        },
+        getOwnerUid: vi.fn(() => IDENTITY.uid),
+        spawn: vi.fn((pid: string) => children.push(pid)),
+      },
+      responsibilities: {
+        get: vi.fn(() => responsibility),
+        revision: vi.fn(() => responsibility.revision),
+        update,
+        reclaimProcessAssignments: vi.fn(() => []),
+      },
+      reconcileResponsibilityWake: vi.fn(async () => undefined),
+      ipcCalls,
+      scheduleIpcCallTimeout: vi.fn(async () => "timeout-schedule"),
+      processRunId: "parent-run",
+    });
+    sendFrameToProcessMock.mockImplementation(async (_installationId, pid, frame) => {
+      if (frame.type !== "req") throw new Error("expected process request frame");
+      if (frame.call === "proc.setidentity") {
+        return { type: "res", id: frame.id, ok: true, data: { ok: true } };
+      }
+      if (frame.call === "proc.ipc.deliver") {
+        order.push("delivered");
+        expect(pid).toBe(children[0]);
+        expect(frame.args.metadata).toEqual({ responsibilityId });
+        return {
+          type: "res",
+          id: frame.id,
+          ok: true,
+          data: {
+            ok: true,
+            status: "started",
+            pid,
+            sourcePid: parent.processId,
+            runId: frame.args.runId,
+          },
+        };
+      }
+      throw new Error(`unexpected process frame: ${frame.call}`);
+    });
+
+    const result = await handleShellExec({
+      input: `proc delegate --responsibility ${responsibilityId} --label planning analyze schema`,
+    }, ctx);
+
+    expect(result.ok).toBe(true);
+    expect(order).toEqual(["assigned", "delivered"]);
+    expect(responsibility.assignee).toEqual({ kind: "process", processId: children[0] });
+    expect(responsibility.state).toBe("active");
+    expect(responsibility.leaseExpiresAtMs).toEqual(expect.any(Number));
+    expect(result.stdout).toContain(`responsibility=${responsibilityId}`);
+  });
+
+  it("returns a responsibility to Ship when delegated admission fails", async () => {
+    const responsibilityId = "r12y:22222222-2222-4222-8222-222222222222";
+    const parent = makeProcess({
+      processId: "task:shell",
+      isPersonalController: true,
+      state: "running",
+      activeRunId: "parent-run",
+    });
+    const children: string[] = [];
+    let responsibility: ResponsibilityRecord = {
+      id: responsibilityId,
+      ownerUid: IDENTITY.uid,
+      title: "inspect deployment",
+      source: { kind: "process", processId: parent.processId, runId: "parent-run" },
+      assignee: { kind: "ship" },
+      state: "waiting",
+      priority: "normal",
+      nextCheckAtMs: 99_000,
+      blocker: "waiting for a worker",
+      revision: 1,
+      createdAtMs: 1,
+      updatedAtMs: 1,
+    };
+    const update = vi.fn((input: ResponsibilityUpdateInput) => {
+      responsibility = applyResponsibilityTestUpdate(responsibility, input);
+      return { record: responsibility, revision: responsibility.revision, changed: true };
+    });
+    const kill = vi.fn();
+    const ctx = makeContext({
+      capabilities: [
+        "proc.spawn",
+        "proc.ipc.call",
+        "proc.kill",
+        "r12y.get",
+        "r12y.update",
+      ],
+      procs: {
+        get(pid: string) {
+          if (pid === parent.processId) return parent;
+          if (pid === children[0]) {
+            return makeProcess({
+              processId: pid,
+              parentPid: parent.processId,
+              interactive: false,
+            });
+          }
+          return null;
+        },
+        getOwnerUid: vi.fn(() => IDENTITY.uid),
+        spawn: vi.fn((pid: string) => children.push(pid)),
+        kill,
+      },
+      responsibilities: {
+        get: vi.fn(() => responsibility),
+        revision: vi.fn(() => responsibility.revision),
+        update,
+        reclaimProcessAssignments: vi.fn(() => []),
+      },
+      reconcileResponsibilityWake: vi.fn(async () => undefined),
+      ipcCalls: {
+        create: vi.fn(),
+        remove: vi.fn(),
+        cancelBySourcePid: vi.fn(),
+      },
+      scheduleIpcCallTimeout: vi.fn(async () => "timeout-schedule"),
+      processRunId: "parent-run",
+    });
+    Object.assign(ctx, {
+      failIpcCallsByTarget: vi.fn(),
+      runRoutes: { clearForProcess: vi.fn() },
+      defer: vi.fn(),
+    });
+    sendFrameToProcessMock.mockImplementation(async (_installationId, _pid, frame) => {
+      if (frame.type !== "req") throw new Error("expected process request frame");
+      if (frame.call === "proc.setidentity") {
+        return { type: "res", id: frame.id, ok: true, data: { ok: true } };
+      }
+      if (frame.call === "proc.ipc.deliver") {
+        return {
+          type: "res",
+          id: frame.id,
+          ok: false,
+          error: { code: "DELIVERY_FAILED", message: "delivery failed" },
+        };
+      }
+      if (frame.call === "proc.kill") {
+        return {
+          type: "res",
+          id: frame.id,
+          ok: true,
+          data: {
+            ok: true,
+            pid: children[0],
+            archivedMessages: 0,
+            archives: [],
+          },
+        };
+      }
+      throw new Error(`unexpected process frame: ${frame.call}`);
+    });
+
+    const result = await handleShellExec({
+      input: `proc delegate --responsibility ${responsibilityId} inspect deployment`,
+    }, ctx);
+
+    expect(result.status).toBe("failed");
+    expect(result.stderr).toContain("delivery failed");
+    expect(responsibility.assignee).toEqual({ kind: "ship" });
+    expect(responsibility.state).toBe("waiting");
+    expect(responsibility.blocker).toBe("waiting for a worker");
+    expect(responsibility.nextCheckAtMs).toBe(99_000);
+    expect(responsibility.leaseExpiresAtMs).toBeUndefined();
+    expect(update).toHaveBeenCalledTimes(2);
+    expect(kill).toHaveBeenCalledWith(children[0]);
+  });
+
   it("rejects delegation from a top-level shell before spawning", async () => {
     const spawn = vi.fn();
     const ctx = makeContext({
@@ -1776,12 +2026,17 @@ describe("proc native command", () => {
         kill,
       },
       ipcCalls,
+      responsibilities: {
+        reclaimProcessAssignments: vi.fn(() => []),
+      },
+      reconcileResponsibilityWake: vi.fn(async () => undefined),
       scheduleIpcCallTimeout: vi.fn(async () => "timeout-schedule"),
       processRunId: "parent-run",
     });
     Object.assign(ctx, {
       failIpcCallsByTarget: vi.fn(),
       runRoutes: { clearForProcess: vi.fn() },
+      defer: vi.fn(),
     });
     sendFrameToProcessMock.mockImplementation(async (_installationId, _pid, frame) => {
       if (frame.type !== "req") throw new Error("expected process request frame");

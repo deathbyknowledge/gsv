@@ -275,6 +275,7 @@ export type GsvFsNamespace = GsvClientNamespaces["fs"];
 export type GsvMailNamespace = GsvClientNamespaces["mail"];
 export type GsvNetNamespace = never;
 export type GsvProcNamespace = GsvClientNamespaces["proc"];
+export type GsvR12yNamespace = GsvClientNamespaces["r12y"];
 export type GsvRepoNamespace = GsvClientNamespaces["repo"];
 export type GsvSchedNamespace = GsvClientNamespaces["sched"];
 export type GsvShellNamespace = GsvClientNamespaces["shell"];
@@ -400,6 +401,11 @@ const SYSCALL_NAMES = [
   "sched.update",
   "sched.remove",
   "sched.run",
+  "r12y.list",
+  "r12y.get",
+  "r12y.create",
+  "r12y.update",
+  "r12y.changes",
   "ai.tools",
   "ai.config",
   "ai.text.generate",
@@ -457,6 +463,7 @@ export class GSVClient {
   declare readonly fs: GsvFsNamespace;
   declare readonly mail: GsvMailNamespace;
   declare readonly proc: GsvProcNamespace;
+  declare readonly r12y: GsvR12yNamespace;
   declare readonly repo: GsvRepoNamespace;
   declare readonly sched: GsvSchedNamespace;
   declare readonly shell: GsvShellNamespace;

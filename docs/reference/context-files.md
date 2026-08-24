@@ -42,9 +42,9 @@ Conventional files include:
 Keep both layers short and stable. The shared `10-personal.md` is for explicit
 facts and preferences that should affect nearly every interaction. Detailed or
 occasionally relevant personal information belongs in the human-owned
-`personal` wiki, where agents retrieve it deliberately. Open commitments stay
-in the personal agent's account-local context, shared by its conversation
-processes, rather than either personal-memory layer.
+`personal` wiki, where agents retrieve it deliberately. Unresolved work belongs
+in the Kernel `r12y` responsibility ledger rather than either context or memory
+layer.
 
 ## Skills: `skills.d/`
 

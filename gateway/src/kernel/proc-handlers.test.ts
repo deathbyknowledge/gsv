@@ -87,6 +87,20 @@ function makeStorageBucket() {
   };
 }
 
+function makeProcessCleanupMocks() {
+  return {
+    runRoutes: {
+      clearForProcess: vi.fn(),
+    },
+    responsibilities: {
+      reclaimProcessAssignments: vi.fn(() => []),
+    },
+    failIpcCallsByTarget: vi.fn(),
+    defer: vi.fn(),
+    reconcileResponsibilityWake: vi.fn(async () => {}),
+  };
+}
+
 describe("proc handlers", () => {
   beforeEach(() => {
     vi.resetAllMocks();
@@ -689,6 +703,11 @@ describe("proc handlers", () => {
     } as RequestFrame, ctx);
 
     expect(ctx.procs.kill).toHaveBeenCalledWith("proc-1");
+    expect(ctx.responsibilities.reclaimProcessAssignments).toHaveBeenCalledWith({
+      ownerUid: IDENTITY.uid,
+      processId: "proc-1",
+      now: expect.any(Number),
+    });
     expect(ctx.runRoutes.clearForProcess).toHaveBeenCalledWith("proc-1");
     expect(ctx.failIpcCallsByTarget).toHaveBeenCalledWith(
       IDENTITY.uid,
@@ -978,6 +997,7 @@ describe("proc handlers", () => {
         spawn: vi.fn(),
         kill: vi.fn(() => true),
       };
+      const cleanup = makeProcessCleanupMocks();
       // SAFETY: test fixture is constructed with the asserted kernel domain shape.
       const ctx = {
         installationId: TEST_INSTALLATION_ID,
@@ -988,6 +1008,7 @@ describe("proc handlers", () => {
           capabilities: ["proc.spawn"],
         },
         procs,
+        ...cleanup,
       // SAFETY: test fixture is constructed with the asserted kernel domain shape.
       } as KernelContext;
 
@@ -1008,6 +1029,11 @@ describe("proc handlers", () => {
         }),
       );
       expect(procs.kill).toHaveBeenCalledWith(pid);
+      expect(cleanup.responsibilities.reclaimProcessAssignments).toHaveBeenCalledWith({
+        ownerUid: IDENTITY.uid,
+        processId: pid,
+        now: expect.any(Number),
+      });
     },
   );
 
@@ -1026,6 +1052,7 @@ describe("proc handlers", () => {
       spawn: vi.fn(),
       kill: vi.fn(() => true),
     };
+    const cleanup = makeProcessCleanupMocks();
     // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     const ctx = {
       installationId: TEST_INSTALLATION_ID,
@@ -1036,6 +1063,7 @@ describe("proc handlers", () => {
         capabilities: ["proc.spawn"],
       },
       procs,
+      ...cleanup,
     // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     } as KernelContext;
 
@@ -1063,6 +1091,7 @@ describe("proc handlers", () => {
       spawn: vi.fn(),
       kill: vi.fn(() => true),
     };
+    const cleanup = makeProcessCleanupMocks();
     // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     const ctx = {
       installationId: TEST_INSTALLATION_ID,
@@ -1073,6 +1102,7 @@ describe("proc handlers", () => {
         capabilities: ["proc.spawn"],
       },
       procs,
+      ...cleanup,
     // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     } as KernelContext;
 
@@ -1389,10 +1419,15 @@ function makeForwardContext(overrides?: {
       delete: vi.fn(),
       clearForProcess: vi.fn(),
     },
+    responsibilities: {
+      reclaimProcessAssignments: vi.fn(() => []),
+    },
     ipcCalls: {
       cancelBySourcePid: overrides?.cancelBySourcePid ?? vi.fn(),
     },
     failIpcCallsByTarget: vi.fn(),
+    defer: vi.fn(),
+    reconcileResponsibilityWake: vi.fn(async () => {}),
   // SAFETY: test fixture is constructed with the asserted kernel domain shape.
   } as KernelContext;
 }

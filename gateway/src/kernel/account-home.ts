@@ -7,9 +7,9 @@ import {
   DEFAULT_STYLE_CONTEXT,
 } from "../prompts/agent-home";
 import {
-  PERSONAL_INTELLIGENCE_COMMITMENTS_CONTEXT,
   PERSONAL_INTELLIGENCE_CONTEXT,
   PERSONAL_INTELLIGENCE_VOICE_CONTEXT,
+  RETIRED_PERSONAL_INTELLIGENCE_COMMITMENTS_CONTEXT,
 } from "../prompts/personal-intelligence";
 
 const TEXT_ENCODER = new TextEncoder();
@@ -83,11 +83,11 @@ export async function ensureAccountHomeLayout(
         voiceContext,
         PERSONAL_INTELLIGENCE_VOICE_CONTEXT,
       );
-      maybePutTextFile(
+      maybeDeleteGeneratedTextFile(
         ops,
         "context.d/10-commitments.md",
         commitmentsContext,
-        PERSONAL_INTELLIGENCE_COMMITMENTS_CONTEXT,
+        RETIRED_PERSONAL_INTELLIGENCE_COMMITMENTS_CONTEXT,
       );
       maybeDeleteGeneratedTextFile(
         ops,
@@ -133,6 +133,12 @@ export async function ensureAccountHomeLayout(
       "context.d/15-memory.md",
       memoryContext,
       DEFAULT_MEMORY_CONTEXT_TEMPLATE,
+    );
+    maybeDeleteGeneratedTextFile(
+      ops,
+      "context.d/10-commitments.md",
+      commitmentsContext,
+      RETIRED_PERSONAL_INTELLIGENCE_COMMITMENTS_CONTEXT,
     );
   }
   if (skillsDir.kind === "missing") {

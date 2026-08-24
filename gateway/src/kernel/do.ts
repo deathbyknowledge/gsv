@@ -154,6 +154,8 @@ import type {
   ProcessMessageCommitResponseFrame,
   ProcessMessageStreamSignal,
   ProcessOutboundFrame,
+  ProcessRuntimeEventDeliverRequestFrame,
+  ProcessResponsibilityReadyRuntimeEvent,
   ProcessScheduleDeliverRequestFrame,
   ProcessScheduleDeliverResponseFrame,
 } from "../protocol/process-frames";
@@ -161,6 +163,10 @@ import { isRepoPublic } from "./repo-visibility";
 import { canReadRepo, canWriteRepo } from "./repo";
 import { forwardToProcess, handleProcSpawn } from "./proc-handlers";
 import { ensurePersonalController } from "./personal-controller";
+import {
+  ResponsibilityStore,
+  type ResponsibilityWakeBatch,
+} from "./responsibility-store";
 import {
   acceptManagedInboundMail as acceptKernelManagedInboundMail,
   completeManagedInboundMail as completeKernelManagedInboundMail,
@@ -390,7 +396,11 @@ type KernelTask =
   | { callback: "onManagedOutboundEnqueue"; payload: string }
   | { callback: "onProcessDeliveryNotice"; payload: ProcessDeliveryNoticeRetry }
   | { callback: "onRouteExpired"; payload: string }
-  | { callback: "onScheduleDue"; payload: string };
+  | { callback: "onScheduleDue"; payload: string }
+  | {
+      callback: "onResponsibilityWake";
+      payload: { ownerUid: number; generation: number };
+    };
 
 type KernelTaskCallback = KernelTask["callback"];
 
@@ -440,6 +450,13 @@ const KERNEL_TASK_SCHEMA = z.discriminatedUnion("callback", [
   }),
   z.object({ callback: z.literal("onRouteExpired"), payload: z.string() }),
   z.object({ callback: z.literal("onScheduleDue"), payload: z.string() }),
+  z.object({
+    callback: z.literal("onResponsibilityWake"),
+    payload: z.object({
+      ownerUid: z.number().int().nonnegative(),
+      generation: z.number().int().nonnegative(),
+    }),
+  }),
 ]);
 const requestCancelPayloadSchema = z.object({
   id: z.string(),
@@ -564,6 +581,7 @@ export class Kernel extends DurableObject<Env> {
   private readonly ipcCalls: IpcCallStore;
   private readonly schedules: ScheduleStore;
   private readonly mailboxes: MailboxStore;
+  private readonly responsibilities: ResponsibilityStore;
   private readonly oauth: OAuthStore;
   private readonly mcpServers: McpServerStore;
   private readonly connections = new Map<string, KernelConnection<ConnectionState>>();
@@ -641,6 +659,8 @@ export class Kernel extends DurableObject<Env> {
 
     this.mailboxes = new MailboxStore(sql);
 
+    this.responsibilities = new ResponsibilityStore(ctx.storage);
+
     this.oauth = new OAuthStore(sql);
 
     this.mcpServers = new McpServerStore(sql);
@@ -681,6 +701,12 @@ export class Kernel extends DurableObject<Env> {
     for (const callId of this.ipcCalls.recoverDeliveryIds()) {
       this.queueIpcCallDelivery(callId);
     }
+    ctx.waitUntil(this.recoverResponsibilityWakes().catch((error) => {
+      console.warn(
+        "[Kernel] Failed to recover responsibility wakes:",
+        error instanceof Error ? error.message : String(error),
+      );
+    }));
   }
 
   createMcpOAuthProvider(callbackUrl: string): AgentMcpOAuthProvider {
@@ -845,6 +871,9 @@ export class Kernel extends DurableObject<Env> {
         return;
       case "onScheduleDue":
         await this.onScheduleDue(task.payload, task);
+        return;
+      case "onResponsibilityWake":
+        await this.onResponsibilityWake(task.payload, task);
         return;
     }
   }
@@ -2445,6 +2474,7 @@ export class Kernel extends DurableObject<Env> {
       ipcCalls: this.ipcCalls,
       schedules: this.schedules,
       mailboxes: this.mailboxes,
+      responsibilities: this.responsibilities,
       connection: options.connection ?? null,
       peer: options.peer,
       identity: options.identity,
@@ -2461,6 +2491,7 @@ export class Kernel extends DurableObject<Env> {
       cancelScheduleWake: async (wakeScheduleId) => {
         await this.cancelSchedule(wakeScheduleId);
       },
+      reconcileResponsibilityWake: this.reconcileResponsibilityWake.bind(this),
       scheduleManagedOutboundEnqueue: async (outboundId, dueAtMs) => {
         await this.scheduleManagedOutboundEnqueue(outboundId, dueAtMs);
       },
@@ -3042,6 +3073,65 @@ export class Kernel extends DurableObject<Env> {
       scheduleId,
     );
     return sched.id;
+  }
+
+  private async recoverResponsibilityWakes(): Promise<void> {
+    for (const ownerUid of this.responsibilities.ownersWithLedgers()) {
+      await this.reconcileResponsibilityWake(ownerUid);
+    }
+  }
+
+  private async reconcileResponsibilityWake(ownerUid: number): Promise<void> {
+    const now = Date.now();
+    const state = this.responsibilities.wakeState(ownerUid);
+    const nextWakeAt = this.responsibilities.nextWakeAt(ownerUid, now);
+    if (nextWakeAt === null) {
+      this.responsibilities.setWakeTask(
+        ownerUid,
+        state.generation,
+        null,
+        null,
+        now,
+      );
+      if (state.taskId) await this.cancelSchedule(state.taskId);
+      return;
+    }
+    await this.scheduleResponsibilityWakeAt(
+      ownerUid,
+      state.generation,
+      nextWakeAt,
+      state.taskId,
+    );
+  }
+
+  private async scheduleResponsibilityWakeAt(
+    ownerUid: number,
+    generation: number,
+    wakeAtMs: number,
+    previousTaskId: string | null,
+  ): Promise<void> {
+    const wakeAt = new Date(
+      Math.ceil(Math.max(Date.now() + 1_000, wakeAtMs) / 1_000) * 1_000,
+    );
+    const task = await this.schedule(
+      wakeAt,
+      "onResponsibilityWake",
+      { ownerUid, generation },
+    );
+    const installed = this.responsibilities.setWakeTask(
+      ownerUid,
+      generation,
+      task.id,
+      wakeAt.getTime(),
+      Date.now(),
+    );
+    if (!installed) {
+      await this.cancelSchedule(task.id);
+      return;
+    }
+    if (previousTaskId && previousTaskId !== task.id) {
+      await this.cancelSchedule(previousTaskId);
+    }
   }
 
   private async scheduleManagedOutboundEnqueue(
@@ -3811,6 +3901,64 @@ export class Kernel extends DurableObject<Env> {
     );
   }
 
+  async onResponsibilityWake(
+    payload: { ownerUid: number; generation: number },
+    task?: { id?: string },
+  ): Promise<void> {
+    const state = this.responsibilities.wakeState(payload.ownerUid);
+    if (state.generation !== payload.generation) {
+      await this.reconcileResponsibilityWake(payload.ownerUid);
+      return;
+    }
+    if (task?.id && state.taskId !== task.id) return;
+
+    const gate = await this.managedWorkGate();
+    if (!gate.allowed) {
+      await this.scheduleResponsibilityWakeAt(
+        payload.ownerUid,
+        payload.generation,
+        Date.now() + MANAGED_LIFECYCLE_RECHECK_MS,
+        state.taskId,
+      );
+      return;
+    }
+
+    const batch = this.responsibilities.createReadyBatch(payload.ownerUid, Date.now());
+    if (!batch) {
+      await this.reconcileResponsibilityWake(payload.ownerUid);
+      return;
+    }
+
+    try {
+      const processId = await ensurePersonalController(
+        payload.ownerUid,
+        this.buildKernelContext({ callerOwnerUid: payload.ownerUid }),
+      );
+      const response = await sendFrameToProcess(
+        this.installationId,
+        processId,
+        responsibilityRuntimeEventFrame(batch),
+      );
+      if (!response) throw new Error("Responsibility event produced no Process response");
+      if (!response.ok) throw new Error(response.error.message);
+      this.responsibilities.markBatchDelivered(batch.id);
+      await this.reconcileResponsibilityWake(payload.ownerUid);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.responsibilities.markBatchFailed(batch.id, message, Date.now());
+      const current = this.responsibilities.pendingBatch(payload.ownerUid);
+      const attempt = current?.attemptCount ?? batch.attemptCount + 1;
+      const retryAt = Date.now()
+        + Math.min(5 * 60_000, 1_000 * (2 ** Math.min(8, attempt)));
+      await this.scheduleResponsibilityWakeAt(
+        payload.ownerUid,
+        payload.generation,
+        retryAt,
+        state.taskId,
+      );
+    }
+  }
+
   async onScheduleDue(scheduleId: string, wake?: { id?: string }): Promise<void> {
     const record = this.schedules.getStored(scheduleId);
     const wakeId = wake?.id ?? null;
@@ -4560,6 +4708,41 @@ async function cancelUnlockedBody(body: FrameBody | undefined, reason: string): 
 
 function errFrame(id: string, code: number, message: string): ResponseFrame {
   return { type: "res", id, ok: false, error: { code, message } };
+}
+
+function responsibilityRuntimeEventFrame(
+  batch: ResponsibilityWakeBatch,
+): ProcessRuntimeEventDeliverRequestFrame {
+  const responsibilities = batch.responsibilities.map((record) => {
+    const summary: ProcessResponsibilityReadyRuntimeEvent["responsibilities"][number] = {
+      id: record.id,
+      title: record.title,
+      state: record.state,
+      priority: record.priority,
+      assignee: record.assignee,
+    };
+    if (record.dueAtMs !== undefined) summary.dueAtMs = record.dueAtMs;
+    if (record.nextCheckAtMs !== undefined) summary.nextCheckAtMs = record.nextCheckAtMs;
+    if (record.leaseExpiresAtMs !== undefined) {
+      summary.leaseExpiresAtMs = record.leaseExpiresAtMs;
+    }
+    if (record.blocker) summary.blocker = record.blocker;
+    return summary;
+  });
+  return {
+    type: "req",
+    id: crypto.randomUUID(),
+    call: "proc.runtime.event.deliver",
+    args: {
+      eventId: batch.eventId,
+      event: {
+        type: "r12y.ready",
+        batchId: batch.id,
+        ledgerRevision: batch.throughRevision,
+        responsibilities,
+      },
+    },
+  };
 }
 
 function requestAbortError(reason: FrameCancellationReason | undefined): Error {

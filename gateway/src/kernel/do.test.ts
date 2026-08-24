@@ -5,6 +5,7 @@ type KernelTestValue<T = string | number | boolean | null | undefined> = T;
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import * as utils from "../shared/utils";
+import * as personalController from "./personal-controller";
 const getConversationByIdMock = vi.spyOn(utils, "getConversationById");
 
 import { Kernel } from "./do";
@@ -18,6 +19,104 @@ import {
 
 const sendFrameToProcessMock = vi.spyOn(utils, "sendFrameToProcess");
 const TEST_INSTALLATION_ID = "singleton";
+
+describe("Kernel responsibility wakes", () => {
+  it("durably admits a ready batch to the existing Ship process", async () => {
+    const responsibility = {
+      id: "r12y:11111111-1111-4111-8111-111111111111",
+      ownerUid: 1000,
+      title: "Repair adapter delivery",
+      source: { kind: "system", component: "adapter" },
+      assignee: { kind: "ship" },
+      state: "open",
+      priority: "high",
+      revision: 1,
+      createdAtMs: 1,
+      updatedAtMs: 1,
+    };
+    const batch = {
+      id: "batch:22222222-2222-4222-8222-222222222222",
+      ownerUid: 1000,
+      throughRevision: 1,
+      eventId: "r12y.ready:batch:22222222-2222-4222-8222-222222222222",
+      responsibilities: [responsibility],
+      attemptCount: 0,
+      createdAtMs: 1,
+    };
+    // SAFETY: test fixture is constructed with the asserted Kernel boundary shape.
+    const kernel = Object.create(Kernel.prototype) as any;
+    kernel.installationId = TEST_INSTALLATION_ID;
+    kernel.responsibilities = {
+      wakeState: vi.fn(() => ({
+        ownerUid: 1000,
+        generation: 1,
+        taskId: "wake-1",
+        scheduledAtMs: 1,
+      })),
+      createReadyBatch: vi.fn(() => batch),
+      markBatchDelivered: vi.fn(),
+      markBatchFailed: vi.fn(),
+    };
+    kernel.managedWorkGate = vi.fn(async () => ({ allowed: true }));
+    kernel.buildKernelContext = vi.fn(() => ({}));
+    kernel.reconcileResponsibilityWake = vi.fn(async () => {});
+    const ensureShip = vi.spyOn(personalController, "ensurePersonalController")
+      .mockResolvedValue("proc:ship");
+    sendFrameToProcessMock.mockImplementationOnce(async (_installationId, _pid, frame) => ({
+      type: "res",
+      id: frame.type === "req" ? frame.id : "signal",
+      ok: true,
+      data: { eventId: batch.eventId, runId: "run:r12y", queued: false },
+    }));
+
+    try {
+      await kernel.onResponsibilityWake(
+        { ownerUid: 1000, generation: 1 },
+        { id: "wake-1" },
+      );
+    } finally {
+      ensureShip.mockRestore();
+    }
+
+    expect(sendFrameToProcessMock).toHaveBeenCalledWith(
+      TEST_INSTALLATION_ID,
+      "proc:ship",
+      expect.objectContaining({
+        call: "proc.runtime.event.deliver",
+        args: expect.objectContaining({
+          eventId: batch.eventId,
+          event: expect.objectContaining({
+            type: "r12y.ready",
+            ledgerRevision: 1,
+          }),
+        }),
+      }),
+    );
+    expect(kernel.responsibilities.markBatchDelivered).toHaveBeenCalledWith(batch.id);
+    expect(kernel.reconcileResponsibilityWake).toHaveBeenCalledWith(1000);
+  });
+
+  it("reconciles the current generation when a stale wake fires", async () => {
+    // SAFETY: test fixture is constructed with the asserted Kernel boundary shape.
+    const kernel = Object.create(Kernel.prototype) as any;
+    kernel.responsibilities = {
+      wakeState: vi.fn(() => ({
+        ownerUid: 1000,
+        generation: 2,
+        taskId: "wake-2",
+        scheduledAtMs: 2,
+      })),
+    };
+    kernel.reconcileResponsibilityWake = vi.fn(async () => {});
+
+    await kernel.onResponsibilityWake(
+      { ownerUid: 1000, generation: 1 },
+      { id: "wake-1" },
+    );
+
+    expect(kernel.reconcileResponsibilityWake).toHaveBeenCalledWith(1000);
+  });
+});
 
 function connectedPeer(
   kind: "human" | "machine" | "service",

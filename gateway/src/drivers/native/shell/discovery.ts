@@ -52,6 +52,14 @@ const NATIVE_COMMAND_DESCRIPTORS = defineNativeCommandDescriptors({
   codemode: command("Run a reusable JavaScript GSV tool workflow.", "Combine several shell, filesystem, or connected integration operations in one scripted workflow.", ["script", "workflow", "automation", "tools", "javascript"]),
   mcp: command("Discover and call connected MCP integrations.", "Use an external connected service or search its available integration tools.", ["integration", "service", "connector", "api", "tools", "mcp"]),
   proc: command("Inspect, delegate to, message, and control GSV agent processes.", "Create a subagent, delegate a task, contact another agent, or inspect agent history and lifecycle.", ["agent", "subagent", "delegate", "process", "message", "history"]),
+  r12y: command("Inspect and maintain durable unresolved responsibilities.", "Record work that must survive the current run, delegate it, defer it to a known wake condition, or close it with a durable outcome.", ["responsibility", "promise", "work", "task", "delegate", "waiting", "deadline", "outcome"], [], [
+    "r12y list [--all] [--json]",
+    "r12y show ID",
+    "r12y create --title TITLE [OPTIONS]",
+    "r12y update ID --json PATCH",
+    "r12y wait ID [--until ISO] [--blocker TEXT]",
+    "r12y resolve ID [--json RESOLUTION]",
+  ]),
   message: command("Send messages, attach files, and route adapter chats.", "Send an update to the current conversation without finishing the run, attach files to the next message, send to another destination, inspect the directed endpoint, open a private work direct line, or route a group, channel, or thread to a process.", ["chat", "reply", "send", "update", "attachment", "file", "image", "photo", "audio", "document", "route", "conversation", "work", "group", "channel", "thread"], [], [
     "message current [--json]",
     "message destinations [--all] [--json]",

@@ -45,9 +45,18 @@ export async function seedBuiltinSkillsToHome(
       const previousContents: readonly string[] = "previousContents" in skill
         ? skill.previousContents
         : [];
+      const previousSha256s: readonly string[] = "previousSha256s" in skill
+        ? skill.previousSha256s
+        : [];
+      const matchesPreviousHash = existing.kind === "file"
+        && previousSha256s.length > 0
+        && previousSha256s.includes(await sha256Hex(existing.bytes));
       if (
         existing.kind !== "file"
-        || !previousContents.includes(TEXT_DECODER.decode(existing.bytes))
+        || (
+          !previousContents.includes(TEXT_DECODER.decode(existing.bytes))
+          && !matchesPreviousHash
+        )
       ) {
         skipped += 1;
         continue;
@@ -76,4 +85,12 @@ export async function seedBuiltinSkillsToHome(
     copied: ops.filter((op) => op.type === "put" && op.path !== SKILLS_DIR_MARKER).length,
     skipped,
   };
+}
+
+async function sha256Hex(bytes: Uint8Array | number[]): Promise<string> {
+  const digest = await crypto.subtle.digest("SHA-256", new Uint8Array(bytes));
+  return Array.from(
+    new Uint8Array(digest),
+    (byte) => byte.toString(16).padStart(2, "0"),
+  ).join("");
 }
