@@ -51,6 +51,7 @@ test("prompt review evaluates current source exports", async () => {
   const result = await loadPromptGroups(join(REPO_ROOT, "gateway/src/prompts"));
   assert.ok(result.blocks.some((block) => block.exportName === "GSV_RUNTIME_CONTEXT"));
   assert.ok(result.blocks.some((block) => block.exportName === "PERSONAL_INTELLIGENCE_CONTEXT"));
+  assert.ok(result.blocks.every((block) => !block.exportName.startsWith("LEGACY_")));
   assert.ok(result.bytes > 0);
   assert.equal(result.estimatedTokens, Math.ceil(result.bytes / 4));
 });

@@ -194,12 +194,8 @@ export async function createAccount(
 
   const entry = auth.getPasswdByUid(uid)!;
   const identity = accountIdentity(auth, entry);
-  const userContextUsername = input.kind === "agent" && ownerUsername
-    ? ownerUsername
-    : identity.username;
 
   await ensureAccountHomeLayout(env, identity, {
-    userContextUsername,
     seedPromptContext: input.kind === "agent",
     personalAgent: input.personalAgentOf != null,
     seedBootContext: input.personalAgentOf != null,

@@ -126,27 +126,13 @@ export async function loadPromptGroups(promptRoot) {
   };
 
   const groups = [];
-  const selected = new Set();
   for (const group of PROMPT_GROUPS) {
     const blocks = [];
     for (const [path, exportName] of group.entries) {
       blocks.push(await loadExport(path, exportName));
-      selected.add(`${path}:${exportName}`);
     }
     groups.push({ id: group.id, label: group.label, tone: group.tone, blocks });
   }
-
-  const legacyBlocks = [];
-  for (const path of ["agent-home.ts", "personal-intelligence.ts", "persona.ts"]) {
-    const absolutePath = resolve(promptRoot, path);
-    const metadata = await stat(absolutePath);
-    const loaded = await import(`${pathToFileURL(absolutePath).href}?legacy=${metadata.mtimeMs}`);
-    for (const exportName of Object.keys(loaded).sort()) {
-      if (!exportName.startsWith("LEGACY_") || selected.has(`${path}:${exportName}`)) continue;
-      legacyBlocks.push(promptBlock(path, exportName, loaded[exportName]));
-    }
-  }
-  groups.push({ id: "legacy", label: "LEGACY MIGRATION SOURCES", tone: "legacy", blocks: legacyBlocks });
 
   const blocks = groups.flatMap((group) => group.blocks);
   const bytes = blocks.reduce((total, block) => total + block.bytes, 0);

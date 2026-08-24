@@ -12,7 +12,6 @@
   --system: #9ab8ff;
   --personal: #e9a9c8;
   --supporting: #c4a7ff;
-  --legacy: #aaa3a7;
   --danger: #ff9b9b;
 }
 
@@ -217,7 +216,6 @@ h2 { font-size: 14px; overflow-wrap: anywhere; }
 
 .prompt-block.is-system { border-left-color: var(--system); }
 .prompt-block.is-personal { border-left-color: var(--personal); }
-.prompt-block.is-legacy { border-left-color: var(--legacy); opacity: 0.72; }
 
 .prompt-block header {
   display: flex;

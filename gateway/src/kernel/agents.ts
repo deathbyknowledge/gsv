@@ -179,7 +179,6 @@ export async function ensurePersonalAgent(
       const reconciled = reconcilePersonalAgentDisplayName(auth, entry, human) ?? entry;
       const identity = accountIdentity(auth, reconciled);
       await ensureAccountHomeLayout(ctx.env, identity, {
-        userContextUsername: human.username,
         seedPromptContext: true,
         personalAgent: true,
       });
