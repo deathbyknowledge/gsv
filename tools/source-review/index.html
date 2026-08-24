@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>GSV Source Review</title>
+    <link rel="stylesheet" href="/styles.css">
+  </head>
+  <body>
+    <header class="topbar">
+      <div>
+        <p class="eyebrow">LOCAL DEVELOPER TOOL</p>
+        <h1>GSV Source Review</h1>
+      </div>
+      <nav id="workspace-tabs" aria-label="Review workspace"></nav>
+      <div class="topbar-actions">
+        <span id="root-path" class="path"></span>
+        <button id="refresh" type="button">Refresh</button>
+      </div>
+    </header>
+
+    <main class="layout">
+      <aside class="sidebar">
+        <label class="search-label" for="file-search">FILES</label>
+        <input id="file-search" type="search" placeholder="Filter files">
+        <div id="file-list" class="file-list"></div>
+      </aside>
+
+      <section class="review-pane">
+        <header class="pane-header">
+          <div>
+            <p id="review-kind" class="eyebrow"></p>
+            <h2 id="review-title">Select a file</h2>
+          </div>
+          <div id="review-stats" class="stats"></div>
+        </header>
+        <p id="review-note" class="review-note"></p>
+        <div id="preview" class="preview"></div>
+      </section>
+
+      <section class="source-pane">
+        <header class="pane-header">
+          <div>
+            <p class="eyebrow">RAW WORKTREE SOURCE</p>
+            <h2 id="source-path">No file selected</h2>
+          </div>
+          <div class="source-actions">
+            <span id="save-state" class="save-state"></span>
+            <button id="save" type="button" disabled>Save</button>
+          </div>
+        </header>
+        <textarea id="source" aria-label="Raw source" spellcheck="false" disabled></textarea>
+        <details class="diff-panel" open>
+          <summary>GIT DIFF</summary>
+          <pre id="diff">No file selected.</pre>
+        </details>
+      </section>
+    </main>
+
+    <dialog id="error-dialog">
+      <h2>Could not complete that action</h2>
+      <pre id="error-message"></pre>
+      <form method="dialog"><button>Close</button></form>
+    </dialog>
+
+    <script type="module" src="/app.js"></script>
+  </body>
+</html>
