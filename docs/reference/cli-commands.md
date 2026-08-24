@@ -425,11 +425,9 @@ overrides, currently `users/{uid}/ai/*`.
 With `--local`, commands edit `~/.config/gsv/config.toml`. Supported local keys:
 `gateway.url`, `gateway.username`, `gateway.token`, `gateway.session_token`,
 `gateway.session_token_id`, `gateway.session_expires_at`,
-`gateway.session_expires_at_ms`, `cloudflare.account_id`,
-`cloudflare.api_token`, `release.channel`, `r2.account_id`,
-`r2.access_key_id`, `r2.secret_access_key`, `r2.bucket`,
+`gateway.session_expires_at_ms`, `release.channel`,
 `session.default_key`, `device.id`, `device.token`, and `device.workspace`.
-`release.channel` must be `stable` or `dev`; token and secret values are masked
+`release.channel` must be `stable` or `dev`; token values are masked
 on local `get`. Adapter workers use Cloudflare service bindings rather than
 locally configured WhatsApp URLs or tokens.
 
@@ -470,43 +468,6 @@ itself or from a group. If it still gets no reply, verify that the Gateway and
 both workers' live logs. For an expired or already-used code, send a new DM and
 run `gsv auth link` with the new code.
 
-## Infrastructure Commands
-
-```bash
-gsv infra deploy [--version REF] [-c COMPONENT ... | --all] [--force-fetch] [--codemode auto|on|off]
-gsv infra upgrade [--version REF] [-c COMPONENT ... | --all] [--force-fetch] [--codemode auto|on|off]
-gsv infra destroy [-c COMPONENT ... | --all] [--delete-bucket] [--purge-bucket]
-```
-
-`--codemode` defaults to `auto`. Auto mode enables the gateway's Worker Loader
-binding only when the account is positively identified as Workers Paid. Free and
-unknown plans omit it, keeping the default deployment Free-safe. Use `on` to
-require CodeMode explicitly or `off` to omit the binding explicitly.
-
-The current release bundles `ripgit`, `gateway`, and the bundled adapter
-implementations `channel-whatsapp`, `channel-discord`, and `channel-telegram`.
-This release catalog is not the adapter protocol's supported set. When no
-deploy/upgrade component is supplied, all bundled components are selected.
-Deploying `gateway` requires `ripgit` to
-be selected or already deployed. Deploying or upgrading an adapter also
-reconciles the adapter-to-gateway and gateway-to-adapter service bindings when a
-gateway already exists. This applies to both the default and named instances.
-
-`deploy` fetches release bundles and applies Cloudflare Workers. `upgrade` does
-the same but auto-refreshes mutable refs such as `latest`, `stable`, and `dev`.
-Both accept `--bundle-dir PATH` for local bundles, `--api-token` or
-`CF_API_TOKEN`, `--account-id` or `CF_ACCOUNT_ID`, and `--discord-bot-token` or
-`DISCORD_BOT_TOKEN`.
-
-`destroy` tears down Workers. If no component or `--all` is supplied, it targets
-all components. `--delete-bucket` removes the shared R2 bucket; `--purge-bucket`
-must be combined with it. Unless `--keep-device` is passed, `destroy` also
-attempts to uninstall the local gsvd service. A full teardown also removes the
-legacy assembler Worker when it exists; assembler remains unavailable as a
-deployable component. Cloudflare removes service bindings associated with a
-destroyed adapter worker, and later gateway upgrades also omit bindings whose
-target worker is absent.
-
 ## Version
 
 ```bash
@@ -523,7 +484,7 @@ Prints build metadata for the installed CLI.
 | `gsv client` | `gsv chat` |
 | `gsv session` | `gsv proc` |
 | `gsv local-config` | `gsv config --local` |
-| `gsv deploy` | `gsv infra` |
+| `gsv deploy`, `gsv infra` | Removed; use the public Alchemy stack or Managed GSV. |
 | `gsv tools`, `gsv skills`, `gsv init` | Removed from the current CLI. |
 
 ## See also

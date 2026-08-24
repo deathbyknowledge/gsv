@@ -1,107 +1,80 @@
-# Deploy, Update, and Remove
+# Deploy, update, and remove
 
-## Deploy
+## Managed GSV
 
-Go to [deploy.gsv.space](https://deploy.gsv.space) and follow the steps. It connects your Cloudflare account, provisions the required Workers and Durable Objects, and leaves you with a running GSV instance.
+Managed GSV provisions and operates the Cloudflare resources for you. Finish
+onboarding in the web application; you do not need Cloudflare credentials or a
+local deployment tool.
 
-You will need:
+## Standalone GSV
 
-- A Cloudflare account
-- Your Cloudflare API token (the deploy tool will walk you through creating one with the right permissions)
+The public Alchemy stack deploys a user-owned GSV into your Cloudflare account.
+It discovers the adapter implementations bundled in the checkout from their
+`adapter.json` files and defaults to installing all of them.
 
-Once complete, your GSV instance is live and reachable via the CLI or any adapter you connect.
+You need Node.js 22 or newer, npm, and a Cloudflare account:
 
-The supported baseline uses Workers, R2, and SQLite-backed Durable Objects. It
-does not use Cloudflare Containers and can run on Workers Free. CodeMode's
-Worker Loader binding is paid-only; automatic deployment omits it on Free
-accounts while leaving the rest of GSV available.
+```bash
+git clone https://github.com/deathbyknowledge/gsv.git
+cd gsv
+npm ci
+npx alchemy login
+npx alchemy cloudflare bootstrap
+npm run deployment:plan
+npm run deployment:deploy
+```
 
-For WhatsApp, budget the Free plan for one continuously connected account. Its
-[outbound WebSocket prevents account Durable Object eviction for at most 15
-minutes per connection](https://developers.cloudflare.com/changelog/post/2026-06-19-outbound-connections-keep-dos-alive/).
-The connection itself can continue after that cap, but it stops preventing
-eviction. While the transport is healthy, the account schedules an alarm every
-30 seconds so an incoming event reaches the Durable Object before Cloudflare's
-minimum idle eviction window. Routine residency maintenance therefore keeps the
-same provider session; only an unhealthy transport reconnects with the saved
-credentials.
-That is roughly 2,880 alarm requests and writes per day, but resident duration
-is the tighter limit: one continuously resident 128 MB object is about 11,060
-GB-s against Cloudflare's current 13,000 GB-s daily Free allowance. This is an
-operating estimate, not a hard account-capacity guarantee, because other active
-Durable Objects use the same allowance. Review the current
+Open the Gateway URL printed by Alchemy to finish onboarding. Select a subset
+of adapters without changing source:
+
+```bash
+GSV_ADAPTERS=telegram,discord npm run deployment:plan
+GSV_ADAPTERS=telegram,discord npm run deployment:deploy
+```
+
+Adapter credentials are configured in GSV after deployment. They are not
+stored in the public stack source.
+
+### Update
+
+Pull the desired GSV revision, install its exact dependencies, inspect the
+plan, and deploy the same `standalone` stage:
+
+```bash
+git pull --ff-only
+npm ci
+npm run deployment:plan
+npm run deployment:deploy
+```
+
+Alchemy retains the stage state needed to update the existing resources rather
+than creating a second GSV.
+
+### Remove
+
+The public stack currently marks deployed resources for retention so an
+accidental stack-state operation cannot erase user data. For now, perform full
+teardown from the Cloudflare dashboard after reviewing the Workers, Durable
+Objects, and R2 bucket owned by the `standalone` stage. Do not delete R2 or
+Durable Object state until confirming it is no longer needed. Guided standalone
+teardown will move into the web deployer after the new deployment path has been
+dogfooded.
+
+## Runtime notes
+
+The standalone baseline uses Workers, R2, and SQLite-backed Durable Objects. It
+does not require Cloudflare Containers. Workers Paid adds more capacity and
+enables features that depend on paid bindings.
+
+WhatsApp maintains an outbound provider connection. A continuously resident
+account can consume most of the current Workers Free Durable Object duration
+allowance, so treat one account as the Free-plan baseline and review current
 [Durable Objects pricing](https://developers.cloudflare.com/durable-objects/platform/pricing/)
 before operating several always-connected accounts.
 
-The equivalent CLI deployment is:
-
-```bash
-gsv infra deploy --all
-```
-
-To add or update only WhatsApp later, run:
-
-```bash
-gsv infra deploy -c channel-whatsapp
-```
-
-The deployer also refreshes an existing gateway's service binding, including
-for named GSV instances, so the adapter worker is reachable without public
-adapter URLs or adapter tokens.
-
-Deployment installs the transport but does not identify a WhatsApp sender. Pair
-the linked device, send a direct message from the personal WhatsApp account to
-the paired GSV number, and enter the returned link code in the web UI or with
-`gsv auth link CODE`. Send one more message after linking; the code-request
-message is not forwarded to an agent.
-
-## Update
-
-To update to the latest version of GSV, go back to [deploy.gsv.space](https://deploy.gsv.space) and run through the deploy flow again. It will update your existing instance in place — your data and configuration are preserved.
-
-From the CLI:
-
-```bash
-gsv infra upgrade --all
-```
-
-Routine WhatsApp upgrades and unhealthy-transport reconnects keep the saved
-linked-device authentication. They are not logout operations and do not require
-scanning a new QR.
-
-## Remove
-
-Use the CLI for a complete removal:
-
-```bash
-gsv infra destroy --all --delete-bucket --purge-bucket
-```
-
-This deletes the GSV Workers and, when requested, the shared R2 data. It also
-uninstalls the local gsvd service unless `--keep-device` is supplied. Review
-the teardown prompt carefully because purged storage cannot be recovered.
-
-To remove only the WhatsApp worker and its gateway binding while keeping GSV and
-the local gsvd service:
-
-```bash
-gsv infra destroy -c channel-whatsapp --keep-device
-```
-
-Removing infrastructure does not itself press WhatsApp's in-app **Log out**
-button. If you are retiring the account, disconnect it in GSV first so the
-linked-device session is revoked, then remove the worker.
-
-You can also remove resources manually from the Cloudflare dashboard:
-
-1. Go to your [Cloudflare dashboard](https://dash.cloudflare.com)
-2. Delete the GSV Workers (under **Workers & Pages**)
-3. Delete the Durable Object namespaces (under **Workers & Pages → Durable Objects**)
-4. Delete the KV namespaces if any were created (under **Workers & Pages → KV**)
-5. Remove the API token you created for GSV if you no longer need it
-
 ## See also
 
-- [Get Started](/get-started/) — first-run walkthrough
-- [Connect Devices](/how-to/connect-devices)
-- [FAQ](/get-started/faq)
+- [Standalone Alchemy details](./deploy-with-alchemy.md)
+- [Get Started](/get-started/)
+- [Connect Devices](./connect-devices.md)
+- [Connect a messenger](./messengers.md)

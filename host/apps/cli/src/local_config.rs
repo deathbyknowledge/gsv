@@ -20,16 +20,6 @@ fn mask_secret_edges(value: &str, prefix_chars: usize, suffix_chars: usize) -> S
     format!("{}...{}", prefix, suffix)
 }
 
-fn mask_secret_prefix(value: &str, prefix_chars: usize) -> String {
-    let chars = value.chars().collect::<Vec<_>>();
-    if chars.len() <= prefix_chars {
-        return "****".to_string();
-    }
-
-    let prefix = chars.iter().take(prefix_chars).copied().collect::<String>();
-    format!("{}...", prefix)
-}
-
 pub(crate) fn run_local_config(
     action: LocalConfigAction,
 ) -> Result<(), Box<dyn std::error::Error>> {
@@ -50,15 +40,7 @@ pub(crate) fn run_local_config(
                     .gateway
                     .session_expires_at
                     .map(|value| value.to_string()),
-                "cloudflare.account_id" => cfg.cloudflare.account_id,
-                "cloudflare.api_token" => cfg
-                    .cloudflare
-                    .api_token
-                    .map(|s| mask_secret_edges(&s, 4, 4)),
                 "release.channel" => cfg.release.channel,
-                "r2.account_id" => cfg.r2.account_id,
-                "r2.access_key_id" => cfg.r2.access_key_id.map(|s| mask_secret_prefix(&s, 8)),
-                "r2.bucket" => cfg.r2.bucket,
                 "session.default_key" => cfg.session.default_key,
                 "device.id" | "node.id" => cfg.device.id,
                 "device.label" | "node.label" => cfg.device.label,
@@ -75,9 +57,7 @@ pub(crate) fn run_local_config(
                     eprintln!("\nValid keys:");
                     eprintln!("  gateway.url, gateway.username, gateway.token");
                     eprintln!("  gateway.session_token, gateway.session_token_id, gateway.session_expires_at");
-                    eprintln!("  cloudflare.account_id, cloudflare.api_token");
                     eprintln!("  release.channel");
-                    eprintln!("  r2.account_id, r2.access_key_id, r2.bucket");
                     eprintln!("  session.default_key");
                     eprintln!("  device.id, device.label, device.token, device.workspace");
                     eprintln!("  device.gateway_url, device.gateway_username");
@@ -101,13 +81,7 @@ pub(crate) fn run_local_config(
                     | "gateway.session_token_id"
                     | "gateway.session_expires_at"
                     | "gateway.session_expires_at_ms"
-                    | "cloudflare.account_id"
-                    | "cloudflare.api_token"
                     | "release.channel"
-                    | "r2.account_id"
-                    | "r2.access_key_id"
-                    | "r2.secret_access_key"
-                    | "r2.bucket"
                     | "session.default_key"
                     | "device.id"
                     | "node.id"
@@ -157,13 +131,7 @@ pub(crate) fn run_local_config(
                 "gateway.session_expires_at" | "gateway.session_expires_at_ms" => {
                     cfg.gateway.session_expires_at = parsed_expiry;
                 }
-                "cloudflare.account_id" => cfg.cloudflare.account_id = Some(value.clone()),
-                "cloudflare.api_token" => cfg.cloudflare.api_token = Some(value.clone()),
                 "release.channel" => cfg.release.channel = release_channel.clone(),
-                "r2.account_id" => cfg.r2.account_id = Some(value.clone()),
-                "r2.access_key_id" => cfg.r2.access_key_id = Some(value.clone()),
-                "r2.secret_access_key" => cfg.r2.secret_access_key = Some(value.clone()),
-                "r2.bucket" => cfg.r2.bucket = Some(value.clone()),
                 "session.default_key" => {
                     cfg.session.default_key = Some(config::normalize_session_key(&value))
                 }

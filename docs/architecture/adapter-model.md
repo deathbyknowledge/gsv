@@ -50,15 +50,10 @@ the adapter as the platform-specific owner of delivery.
 ## Why deployment names still say `channel-*`
 
 User-facing docs prefer **adapter** because that is the better product term.
-Some deployed components and worker names still use `channel-*` because those are
-compatibility names in infrastructure commands and bindings.
-
-For example:
-
-```bash
-gsv infra deploy -c channel-whatsapp
-gsv infra deploy -c channel-discord
-```
+Some deployed components and worker names still use `channel-*` because those
+are compatibility names in release artifacts and service bindings. Each
+adapter's `adapter.json` owns that deployment metadata; the public Alchemy stack
+discovers it without a fixed adapter list.
 
 That is a naming artifact in the implementation, not a separate concept.
 
@@ -433,11 +428,10 @@ runtime.
 7. Exercise DM linking, shared surfaces, media cancellation, reconnects,
    request-bound approvals, duplicate ingress, canonical Messages, and directed
    endpoint routing.
-8. Add a bundled implementation to `adapters/catalog.json`. The release builder
-   and Rust CLI compile their component names, scripts, entrypoints, binding
-   reconciliation, and deployment order from this catalog. A separately operated
-   adapter can instead provide equivalent deployment metadata without joining the
-   bundled catalog.
+8. Add an `adapter.json` beside the implementation. The release and deployment
+   tools discover adapter directories and derive component identity, service
+   bindings, entrypoints, Durable Objects, required secrets, and deployment
+   order from that file. No central adapter list or CLI change is required.
 
 ## Why this matters
 

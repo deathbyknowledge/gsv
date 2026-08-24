@@ -268,7 +268,6 @@ pub(crate) async fn run() -> Result<(), Box<dyn std::error::Error>> {
                 .await
             }
         }
-        Commands::Infra { action } => commands::run_infra(action, &cfg).await,
         Commands::Version => run_version(),
     }
 }

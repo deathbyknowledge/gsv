@@ -46,17 +46,9 @@ pub struct CliConfig {
     #[serde(default)]
     pub gateway: GatewayConfig,
 
-    /// Cloudflare API settings (for deploy commands)
-    #[serde(default)]
-    pub cloudflare: CloudflareConfig,
-
     /// Release defaults (install/upgrade channel preference)
     #[serde(default)]
     pub release: ReleaseConfig,
-
-    /// R2 storage settings (for mount command)
-    #[serde(default)]
-    pub r2: R2Config,
 
     /// Machine daemon defaults (stored under the compatible `[device]` table)
     #[serde(default, alias = "node")]
@@ -100,39 +92,9 @@ pub struct GatewayConfig {
 }
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
-pub struct CloudflareConfig {
-    /// Cloudflare account ID
-    pub account_id: Option<String>,
-
-    /// Cloudflare API token
-    pub api_token: Option<String>,
-
-    #[serde(default, flatten)]
-    pub extra: toml::Table,
-}
-
-#[derive(Debug, Default, Clone, Serialize, Deserialize)]
 pub struct ReleaseConfig {
     /// Preferred release channel for setup/upgrade defaults (`stable` or `dev`)
     pub channel: Option<String>,
-
-    #[serde(default, flatten)]
-    pub extra: toml::Table,
-}
-
-#[derive(Debug, Default, Clone, Serialize, Deserialize)]
-pub struct R2Config {
-    /// Cloudflare Account ID
-    pub account_id: Option<String>,
-
-    /// R2 Access Key ID
-    pub access_key_id: Option<String>,
-
-    /// R2 Secret Access Key
-    pub secret_access_key: Option<String>,
-
-    /// R2 bucket name
-    pub bucket: Option<String>,
 
     #[serde(default, flatten)]
     pub extra: toml::Table,
@@ -644,11 +606,6 @@ impl CliConfig {
     pub fn gsv_home(&self) -> PathBuf {
         gsv_home()
     }
-
-    /// Get the R2 mount path
-    pub fn r2_mount_path(&self) -> PathBuf {
-        self.gsv_home().join("r2")
-    }
 }
 
 /// Generate a sample config file content
@@ -671,21 +628,9 @@ token = "your-token-here"
 # session_token_id = "uuid"
 # session_expires_at = 1735689600000
 
-[cloudflare]
-# Used by 'gsv deploy' commands
-# account_id = "your-cloudflare-account-id"
-# api_token = "your-cloudflare-api-token"
-
 [release]
 # Preferred release channel for installer/setup/upgrade defaults (`stable` or `dev`)
 # channel = "stable"
-
-[r2]
-# Cloudflare R2 credentials (for 'gsv mount' command)
-# account_id = "your-account-id"
-# access_key_id = "your-access-key"
-# secret_access_key = "your-secret-key"
-# bucket = "gsv-storage"
 
 [session]
 # Default session key

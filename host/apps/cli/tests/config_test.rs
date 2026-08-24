@@ -12,6 +12,6 @@ fn test_config_sample() {
     let sample = gsv::config::sample_config();
 
     assert!(sample.contains("[gateway]"));
-    assert!(sample.contains("[r2]"));
+    assert!(sample.contains("[release]"));
     assert!(sample.contains("[session]"));
 }

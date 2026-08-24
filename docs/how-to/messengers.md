@@ -21,7 +21,9 @@ still needs its own number and SIM, multi-SIM, or eSIM. See Meta's
 [multi-account setup](https://about.fb.com/news/2023/10/multiple-accounts-on-whatsapp/)
 and [iOS announcement](https://about.fb.com/news/2026/03/whatsapp-new-features-simplify-storage-switch-accounts/).
 
-1. If the worker is not installed, deploy it with `gsv infra deploy -c channel-whatsapp`. A normal full deployment already includes it.
+1. Confirm the deployment includes the WhatsApp adapter. Standalone includes
+   every bundled adapter by default; managed installations expose the adapters
+   enabled by their operator.
 2. In GSV, open **Messengers**, choose **WhatsApp**, and give this connection a stable account ID such as `personal`.
 3. Start pairing. Display GSV's QR code on a computer or another screen so the phone can scan it.
 4. On the phone that owns the second WhatsApp account, open **Settings → Linked Devices → Link a Device** and scan the code.

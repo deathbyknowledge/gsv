@@ -25,7 +25,6 @@ uuid = { version = "1", features = ["v4"] }
 hostname = "0.4.2"
 chrono = "0.4"
 dirs = "5"
-walkdir = "2"
 toml = "0.8"
 qrcode = "0.14"
 cliclack = "0.3.8"
@@ -33,15 +32,7 @@ whoami = "1"
 
 # TLS backends - use native-tls by default (respects system certs)
 # CI builds for Linux use rustls feature to avoid OpenSSL dependency
-reqwest = { version = "0.12", default-features = false, features = ["json", "multipart", "stream"] }
-sha2 = "0.10"
 base64 = "0.22"
-blake3 = "1.5"
-mime_guess = "2.0"
-flate2 = "1.0"
-tar = "0.4"
-json5 = "0.4"
-rpassword = "7"
 libc = "0.2"
 
 # Only needed when rustls feature is enabled
@@ -54,14 +45,12 @@ default = ["native-tls"]
 # This respects system certificate stores (important for corporate proxies/VPNs)
 native-tls = [
     "gateway-client/native-tls",
-    "reqwest/native-tls",
 ]
 
 # Use rustls with bundled Mozilla roots (no system dependencies)
 # Good for static Linux builds but ignores system cert store
 rustls = [
     "gateway-client/rustls",
-    "reqwest/rustls-tls",
     "rustls_crate",
 ]
 
@@ -115,7 +104,3 @@ dbg_macro = "warn"
 # Suppressions should be intentional and documented.
 allow_attributes = "warn"
 allow_attributes_without_reason = "warn"
-
-[build-dependencies]
-serde = { version = "1", features = ["derive"] }
-serde_json = "1"

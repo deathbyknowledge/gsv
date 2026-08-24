@@ -37,16 +37,24 @@ Under the hood, GSV is a distributed operating environment: agents are durable p
 
 **From the web (easiest, no terminal).** Go to [deploy.gsv.space](https://deploy.gsv.space/), connect your Cloudflare account, and GSV deploys itself into it.
 
-**Or from the terminal:**
+**Or deploy the open-source stack from the terminal:**
 
 ```bash
-# Install the CLI, machine daemon, and Desktop where supported
-curl -fsSL https://install.gsv.space | bash
-# Deploy all components into your own Cloudflare account
-gsv infra deploy --api-token <CLOUDFLARE-API-TOKEN>
+git clone https://github.com/deathbyknowledge/gsv.git
+cd gsv
+npm ci
+npx alchemy login
+npx alchemy cloudflare bootstrap
+npm run deployment:deploy
 ```
 
-Either way, open the URL it prints to finish onboarding in the web UI.
+Either way, open the deployed Gateway URL to finish onboarding in the web UI.
+
+Install the CLI, machine daemon, and Desktop separately where supported:
+
+```bash
+curl -fsSL https://install.gsv.space | bash
+```
 
 The verified host installer ships matching versions of `gsv` and `gsvd` on
 Linux x64/ARM64, macOS Intel/Apple Silicon, and Windows x64. Linux and macOS

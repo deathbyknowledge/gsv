@@ -1,12 +1,11 @@
 use clap::{Parser, Subcommand, ValueEnum};
-use gsv::deploy::CodeModePreference;
 use std::path::PathBuf;
 
 #[derive(Parser)]
 #[command(
     name = "gsv",
     version = gsv::build_info::BUILD_VERSION,
-    about = "GSV CLI - Chat, Device, and Infrastructure Control Plane"
+    about = "GSV CLI - Chat, Device, and Desktop Control Plane"
 )]
 pub(crate) struct Cli {
     /// Gateway URL (overrides config file)
@@ -89,12 +88,6 @@ pub(crate) enum Commands {
 
         #[command(subcommand)]
         action: ConfigAction,
-    },
-
-    /// Cloudflare infrastructure lifecycle
-    Infra {
-        #[command(subcommand)]
-        action: InfraAction,
     },
 
     /// Show CLI version and build metadata
@@ -208,142 +201,6 @@ pub(crate) enum DaemonAction {
         /// Follow logs
         #[arg(long)]
         follow: bool,
-    },
-}
-
-#[derive(Subcommand)]
-pub(crate) enum InfraAction {
-    /// Deploy infrastructure and finish onboarding in the web app
-    Deploy {
-        /// Release ref (e.g., stable, dev, v0.2.0, or latest stable)
-        #[arg(long, default_value = "latest")]
-        version: String,
-
-        /// Component to include (repeat for multiple)
-        #[arg(short = 'c', long = "component")]
-        component: Vec<String>,
-
-        /// Include all components
-        #[arg(long)]
-        all: bool,
-
-        /// Deployment instance prefix for Worker and bucket names
-        #[arg(long, env = "GSV_INSTANCE", default_value = "gsv")]
-        instance: String,
-
-        /// Overwrite existing extracted bundle directories
-        #[arg(long)]
-        force_fetch: bool,
-
-        /// Use local Cloudflare bundle directory instead of downloading from release assets
-        #[arg(long)]
-        bundle_dir: Option<PathBuf>,
-
-        /// Cloudflare API token (falls back to config `cloudflare.api_token`)
-        #[arg(long, env = "CF_API_TOKEN")]
-        api_token: Option<String>,
-
-        /// Cloudflare account ID override (falls back to config `cloudflare.account_id`)
-        #[arg(long, env = "CF_ACCOUNT_ID")]
-        account_id: Option<String>,
-
-        /// CodeMode availability: auto-detect Workers Paid, force on, or force off
-        #[arg(long, value_enum, default_value = "auto")]
-        codemode: CodeModePreference,
-
-        /// Discord bot token to upload as worker secret (`DISCORD_BOT_TOKEN`)
-        #[arg(long, env = "DISCORD_BOT_TOKEN")]
-        discord_bot_token: Option<String>,
-
-        /// Telegram bot token to upload as worker secret (`TELEGRAM_BOT_TOKEN`)
-        #[arg(long, env = "TELEGRAM_BOT_TOKEN")]
-        telegram_bot_token: Option<String>,
-    },
-
-    /// Upgrade deployed infrastructure components
-    Upgrade {
-        /// Release ref (e.g., stable, dev, v0.2.0, or latest stable)
-        #[arg(long, default_value = "latest")]
-        version: String,
-
-        /// Component to include (repeat for multiple)
-        #[arg(short = 'c', long = "component")]
-        component: Vec<String>,
-
-        /// Include all components
-        #[arg(long)]
-        all: bool,
-
-        /// Deployment instance prefix for Worker and bucket names
-        #[arg(long, env = "GSV_INSTANCE", default_value = "gsv")]
-        instance: String,
-
-        /// Overwrite existing extracted bundle directories (auto-enabled for mutable refs like dev/stable/latest)
-        #[arg(long)]
-        force_fetch: bool,
-
-        /// Use local Cloudflare bundle directory instead of downloading from release assets
-        #[arg(long)]
-        bundle_dir: Option<PathBuf>,
-
-        /// Cloudflare API token (falls back to config `cloudflare.api_token`)
-        #[arg(long, env = "CF_API_TOKEN")]
-        api_token: Option<String>,
-
-        /// Cloudflare account ID override (falls back to config `cloudflare.account_id`)
-        #[arg(long, env = "CF_ACCOUNT_ID")]
-        account_id: Option<String>,
-
-        /// CodeMode availability: auto-detect Workers Paid, force on, or force off
-        #[arg(long, value_enum, default_value = "auto")]
-        codemode: CodeModePreference,
-
-        /// Discord bot token to upload as worker secret (`DISCORD_BOT_TOKEN`)
-        #[arg(long, env = "DISCORD_BOT_TOKEN")]
-        discord_bot_token: Option<String>,
-
-        /// Telegram bot token to upload as worker secret (`TELEGRAM_BOT_TOKEN`)
-        #[arg(long, env = "TELEGRAM_BOT_TOKEN")]
-        telegram_bot_token: Option<String>,
-    },
-
-    /// Destroy deployed infrastructure and optionally keep local device daemon
-    Destroy {
-        /// Component to remove (repeat for multiple). Defaults to all when omitted.
-        #[arg(short = 'c', long = "component")]
-        component: Vec<String>,
-
-        /// Remove all components
-        #[arg(long)]
-        all: bool,
-
-        /// Deployment instance prefix for Worker and bucket names
-        #[arg(long, env = "GSV_INSTANCE", default_value = "gsv")]
-        instance: String,
-
-        /// Also delete the shared R2 storage bucket
-        #[arg(long)]
-        delete_bucket: bool,
-
-        /// Purge all objects from the shared R2 bucket before deleting it (requires --delete-bucket)
-        #[arg(long)]
-        purge_bucket: bool,
-
-        /// Run interactive teardown wizard
-        #[arg(long)]
-        wizard: bool,
-
-        /// Cloudflare API token (falls back to config `cloudflare.api_token`)
-        #[arg(long, env = "CF_API_TOKEN")]
-        api_token: Option<String>,
-
-        /// Cloudflare account ID override (falls back to config `cloudflare.account_id`)
-        #[arg(long, env = "CF_ACCOUNT_ID")]
-        account_id: Option<String>,
-
-        /// Keep local device daemon installed
-        #[arg(long = "keep-device", alias = "keep-node")]
-        keep_device: bool,
     },
 }
 
