@@ -22,27 +22,12 @@ export type PromptAssemblyInput = {
 export type PromptSection = {
   name: string;
   text: string;
-  source?: {
-    kind: "system-config" | "account-file" | "generated";
-    path: string;
-    text: string;
-    editable: boolean;
-  };
   contextRoot?: {
     key: "system" | "program" | "user";
     label: string;
     access: "read-only" | "editable";
     location: string;
   };
-};
-
-export type PromptInspectionSection = PromptSection & {
-  provider: string;
-};
-
-export type PromptInspection = {
-  prompt: string;
-  sections: PromptInspectionSection[];
 };
 
 export type PromptContextProvider = {

@@ -5,8 +5,6 @@ import type {
   AdapterPairInfoResult,
   AdapterPairInspectResult,
   AiTextGenerateConfig,
-  ProcPromptBlock,
-  ProcPromptInspectResult,
   SysOAuthDevicePollResult,
   SysOAuthDeviceStartResult,
 } from "@humansandmachines/gsv/protocol";
@@ -158,19 +156,6 @@ export type SaveConsoleConfigEntriesResult = {
   written: number;
 };
 
-export type ConsolePromptInspection = Extract<ProcPromptInspectResult, { ok: true }>;
-export type ConsolePromptBlock = ProcPromptBlock;
-
-export type SaveConsolePromptSourceInput = {
-  path: string;
-  content: string;
-};
-
-export type SaveConsolePromptSourceResult = {
-  ok: true;
-  path: string;
-};
-
 export type ValidateConsoleModelConfigInput = {
   values: Record<string, string>;
   presetId?: string;
@@ -284,32 +269,6 @@ export type LoadConsoleOverviewOptions = {
 
 export async function loadConsoleProcesses(client: Pick<GSVClient, "proc">): Promise<ConsoleProcess[]> {
   return normalizeProcessesPayload(await client.proc.list({}));
-}
-
-export async function loadConsolePromptInspection(
-  client: { proc: { prompt: Pick<GSVClient["proc"]["prompt"], "inspect"> } },
-  pid: string,
-): Promise<ConsolePromptInspection> {
-  const result = await client.proc.prompt.inspect({ pid });
-  if (!result.ok) {
-    throw new Error(result.error || "prompt inspection failed");
-  }
-  return result;
-}
-
-export async function saveConsolePromptSource(
-  client: Pick<GSVClient, "call">,
-  input: SaveConsolePromptSourceInput,
-): Promise<SaveConsolePromptSourceResult> {
-  const path = input.path.trim();
-  if (!/^\/(?:home\/[a-z_][a-z0-9_-]{0,31}|root)\/context\.d\/[^/]+$/.test(path)) {
-    throw new Error("only account context files can be edited here");
-  }
-  const result = await client.call("fs.write", { path, content: input.content });
-  if (!result.ok) {
-    throw new Error(result.error || `failed to write ${path}`);
-  }
-  return { ok: true, path };
 }
 
 export async function loadConsoleTargets(client: ConsoleClient): Promise<ConsoleTarget[]> {

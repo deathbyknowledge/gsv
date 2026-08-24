@@ -23,7 +23,6 @@ import {
   loadConsoleMcpServers,
   loadConsoleOverview,
   loadConsoleProcesses,
-  loadConsolePromptInspection,
   loadConsoleTargets,
   pollConsoleOpenAiCodexOAuth,
   refreshConsoleMcpServer,
@@ -34,7 +33,6 @@ import {
   saveConsoleConfigEntries,
   saveConsoleAgentBehavior,
   saveConsoleAgentContext,
-  saveConsolePromptSource,
   startConsoleOpenAiCodexOAuth,
   validateConsoleModelConfig,
   type AddConsoleMcpServerInput,
@@ -51,7 +49,6 @@ import {
   type DeleteConsoleMachineInput,
   type DeleteConsoleMachineResult,
   type ConsoleAgentContextFile,
-  type ConsolePromptInspection,
   type IdentityLinkMutationResult,
   type InspectConsoleAdapterPairingInput,
   type IssuedMachineNodeToken,
@@ -70,8 +67,6 @@ import {
   type SaveConsoleConfigResult,
   type SaveConsoleAgentContextInput,
   type SaveConsoleAgentContextResult,
-  type SaveConsolePromptSourceInput,
-  type SaveConsolePromptSourceResult,
   type StartConsoleOpenAiCodexOAuthResult,
   type ValidateConsoleModelConfigInput,
   type ValidateConsoleModelConfigResult,
@@ -101,7 +96,6 @@ export const consoleMcpServersQueryKey = ["mcp-servers", "gsv-console"] as const
 export const consoleConfigQueryKey = ["gsv-console", "config"] as const;
 export const consoleIdentityLinksQueryKey = ["gsv-console", "identity-links"] as const;
 export const consoleAgentContextQueryKey = ["gsv-console", "agent-context"] as const;
-export const consolePromptInspectionQueryKey = ["gsv-console", "prompt-inspection"] as const;
 
 type ConsoleQueryOptions = {
   enabled?: boolean;
@@ -163,21 +157,6 @@ export function useConsoleProcesses(options: ConsoleQueryOptions = {}) {
     processes: query.data ?? [],
     resource: toResourceState(query, enabled, isArrayEmpty),
   };
-}
-
-export function useConsolePromptInspection(pid: string | null, options: ConsoleQueryOptions = {}) {
-  const { client, connected } = useGateway();
-  const enabled = connected && Boolean(pid) && (options.enabled ?? true);
-  return useQuery<ConsolePromptInspection>({
-    queryKey: [...consolePromptInspectionQueryKey, pid ?? "none"],
-    enabled,
-    queryFn: () => {
-      if (!pid) {
-        throw new Error("process is required");
-      }
-      return loadConsolePromptInspection(client, pid);
-    },
-  });
 }
 
 export function useConsoleTargets(options: ConsoleQueryOptions = {}) {
@@ -495,21 +474,6 @@ export function useSaveConsoleAgentContext() {
     mutationFn: (input) => saveConsoleAgentContext(client, input),
     onSuccess: async (_result, input) => {
       await queryClient.invalidateQueries({ queryKey: [...consoleAgentContextQueryKey, input.username] });
-    },
-  });
-}
-
-export function useSaveConsolePromptSource() {
-  const { client } = useGateway();
-  const queryClient = useQueryClient();
-
-  return useMutation<SaveConsolePromptSourceResult, Error, SaveConsolePromptSourceInput>({
-    mutationFn: (input) => saveConsolePromptSource(client, input),
-    onSuccess: async () => {
-      await Promise.all([
-        queryClient.invalidateQueries({ queryKey: consolePromptInspectionQueryKey }),
-        queryClient.invalidateQueries({ queryKey: consoleAgentContextQueryKey }),
-      ]);
     },
   });
 }

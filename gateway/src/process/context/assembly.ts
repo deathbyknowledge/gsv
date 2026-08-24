@@ -1,26 +1,12 @@
-import type {
-  PromptAssemblyInput,
-  PromptContextProvider,
-  PromptInspection,
-  PromptInspectionSection,
-  PromptSection,
-} from "./types";
+import type { PromptAssemblyInput, PromptContextProvider, PromptSection } from "./types";
 import { resolvePromptProviders } from "./selection";
 
 export async function assembleSystemPrompt(
   input: PromptAssemblyInput,
   providers: PromptContextProvider[] = resolvePromptProviders(),
 ): Promise<string> {
-  return (await inspectSystemPrompt(input, providers)).prompt;
-}
-
-export async function inspectSystemPrompt(
-  input: PromptAssemblyInput,
-  providers: PromptContextProvider[] = resolvePromptProviders(),
-): Promise<PromptInspection> {
   const contextSections: PromptSection[] = [];
   const regularParts: string[] = [];
-  const inspectedSections: PromptInspectionSection[] = [];
 
   for (const provider of providers) {
     const sections = await provider.collect(input);
@@ -29,12 +15,10 @@ export async function inspectSystemPrompt(
       if (!text) {
         continue;
       }
-      const inspected = { ...section, text, provider: provider.name };
-      inspectedSections.push(inspected);
-      if (inspected.contextRoot) {
-        contextSections.push(inspected);
+      if (section.contextRoot) {
+        contextSections.push({ ...section, text });
       } else {
-        regularParts.push(renderSection(inspected.name, text));
+        regularParts.push(renderSection(section.name, text));
       }
     }
   }
@@ -43,10 +27,7 @@ export async function inspectSystemPrompt(
     ...(contextSections.length > 0 ? [renderContextSections(contextSections)] : []),
     ...regularParts,
   ];
-  return {
-    prompt: parts.join("\n\n"),
-    sections: inspectedSections,
-  };
+  return parts.join("\n\n");
 }
 
 function renderSection(name: string, text: string): string {

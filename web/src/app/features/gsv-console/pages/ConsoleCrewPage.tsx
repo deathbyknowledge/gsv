@@ -48,9 +48,7 @@ type ConsoleCrewPageProps = {
 
 /** Coerce a route `select` string into a defaults-editor section, or null. */
 function editDefaultsSectionFromSelect(select: string | undefined): EditDefaultsSection | null {
-  return select === "defaults" || select === "permissions" || select === "context" || select === "prompt"
-    ? select
-    : null;
+  return select === "defaults" || select === "permissions" || select === "context" ? select : null;
 }
 
 export function ConsoleCrewPage({ onManageAgent, onCreateAgent, select, onExitSection }: ConsoleCrewPageProps) {
@@ -205,7 +203,6 @@ function CrewRoster({
             onEditDefaults={() => setEditorSection("defaults")}
             onConfigureOverrides={() => setEditorSection("permissions")}
             onManageContext={() => setEditorSection("context")}
-            onReviewPrompt={() => setEditorSection("prompt")}
           />
         ) : undefined}
         listContent={viewer && editorSection ? (

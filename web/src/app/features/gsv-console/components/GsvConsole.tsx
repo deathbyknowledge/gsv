@@ -33,7 +33,6 @@ type GsvConsoleProps = {
   onClose?: () => void;
   libraryRoute?: ShellLibraryRoute;
   onLibraryRouteChange?: (route: ShellLibraryRoute) => void;
-  onOpenLibraryRoute?: (route: ShellLibraryRoute) => void;
   filesRoute?: ShellFilesRoute;
   onOpenSurface?: (surface: Exclude<ShellSurfaceId, "desktop">) => void;
   onOpenSectionCreate?: (kind: DesktopObjectId) => void;
@@ -182,7 +181,6 @@ export function GsvConsole({
   onBackToDesktop,
   onClose,
   onLibraryRouteChange,
-  onOpenLibraryRoute,
   onOpenSurface,
   onOpenSectionCreate,
   onOpenChat,
@@ -317,14 +315,6 @@ export function GsvConsole({
     }
     if (surface === "crew-instructions") {
       navigateSettingsRoute({ view: "crew", select: "context" });
-      return;
-    }
-    if (surface === "crew-prompt") {
-      navigateSettingsRoute({ view: "crew", select: "prompt" });
-      return;
-    }
-    if (surface === "manual") {
-      onOpenLibraryRoute?.({ view: "reader", db: "gsv-manual", path: "index.md" });
       return;
     }
     if (surface === "crew-permissions") {

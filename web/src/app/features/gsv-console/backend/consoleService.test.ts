@@ -7,7 +7,6 @@ import {
   createMachineNodeToken,
   createConsoleAgent,
   loadConsoleIdentityLinks,
-  loadConsolePromptInspection,
   loadConsoleAdapterAccounts,
   loadConsoleAdapters,
   pollConsoleOpenAiCodexOAuth,
@@ -17,7 +16,6 @@ import {
   saveConsoleConfigEntries,
   saveConsoleAgentBehavior,
   saveConsoleAgentContext,
-  saveConsolePromptSource,
   startConsoleOpenAiCodexOAuth,
   validateConsoleModelConfig,
 } from "./consoleService";
@@ -54,47 +52,6 @@ function createMockClient(uid = 42) {
 }
 
 describe("console agent service", () => {
-  it("loads the exact prompt inspection for a selected process", async () => {
-    const inspect = vi.fn(async () => ({
-      ok: true as const,
-      pid: "proc:personal",
-      appliesTo: "next-run" as const,
-      generatedAt: 100,
-      prompt: "<system>hello</system>",
-      bytes: 22,
-      characters: 22,
-      estimatedTokens: 6,
-      maxContextBytes: 65_536,
-      blocks: [],
-    }));
-
-    await expect(loadConsolePromptInspection({
-      proc: { prompt: { inspect } },
-    }, "proc:personal")).resolves.toMatchObject({
-      pid: "proc:personal",
-      appliesTo: "next-run",
-    });
-    expect(inspect).toHaveBeenCalledWith({ pid: "proc:personal" });
-  });
-
-  it("writes only account context sources from prompt review", async () => {
-    const call = vi.fn(async () => ({ ok: true as const, path: "/home/aria/context.d/05-voice.md", bytes: 12 }));
-
-    await expect(saveConsolePromptSource({ call }, {
-      path: " /home/aria/context.d/05-voice.md ",
-      content: "Speak plainly.",
-    })).resolves.toEqual({ ok: true, path: "/home/aria/context.d/05-voice.md" });
-    expect(call).toHaveBeenCalledWith("fs.write", {
-      path: "/home/aria/context.d/05-voice.md",
-      content: "Speak plainly.",
-    });
-
-    await expect(saveConsolePromptSource({ call }, {
-      path: "/sys/config/ai/context.d/01-gsv.md",
-      content: "not allowed",
-    })).rejects.toThrow("only account context files can be edited here");
-  });
-
   it("preserves the public adapter QR challenge contract", async () => {
     const result = {
       // SAFETY: Test fixture data is constructed with the asserted shape for this focused case.
