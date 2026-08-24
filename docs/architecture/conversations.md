@@ -33,15 +33,24 @@ work, or remain silent.
 Ordinary assistant text is Process activity. It is never implicitly sent to a user. Every
 human-facing model turn ends with exactly one direct Shell terminal command:
 
-- `message send --message '...'` commits one canonical user-visible message.
-- `message silence --reason '...'` records that no user-visible response is useful.
+- A literal block commits one canonical user-visible message without interpreting its contents:
+
+  ```bash
+  message send <<'GSV_MESSAGE'
+  your user-visible response
+  GSV_MESSAGE
+  ```
+
+- `message silence` records that no user-visible response is useful.
 
 The Process recognizes these exact, literal commands inside a direct `Shell` call before normal
 shell dispatch. They do not require `shell.exec` capability or approval, cannot target a device, and
 cannot be invoked indirectly through CodeMode. The model receives only the fixed Read, Write, Edit,
 Delete, Search, Shell, and CodeMode surface. If a generation returns ordinary text without a terminal
 command, the Process adds one `[GSV EVENT]` correction and retries once. A second omission ends the
-run with an inspectable error instead of looping indefinitely.
+run with an inspectable error instead of looping indefinitely. An attempted but malformed terminal
+command has its own five-attempt recovery budget. Delivery failures are tracked separately, so they
+cannot exhaust either omission or command correction.
 
 An IPC call has no implicit human delivery. Ordinary final assistant text becomes the durable
 Process result and returns to the caller as `ipc.reply`; it does not impersonate a user or append

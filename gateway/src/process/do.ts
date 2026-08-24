@@ -283,7 +283,8 @@ type RunState = {
   offeredToolNames?: string[];
   unofferedToolRounds?: number;
   terminalCorrectionRounds?: number;
-  terminalActionFailures?: number;
+  terminalCommandFailures?: number;
+  terminalDeliveryFailures?: number;
   config?: AiConfigResult;
   aiTextGenerateConfig?: AiTextGenerateConfig;
   tools?: ToolDefinition[];
@@ -323,13 +324,21 @@ type RunDelivery =
   | { kind: "message"; conversationId?: string; messageId?: string }
   | { kind: "silence"; reason?: string };
 
-type TerminalActionResult = {
-  ok: boolean;
-  action: "message" | "silence";
-  text: string;
-  delivery: RunDelivery;
-  error?: string;
-};
+type TerminalActionResult =
+  | {
+      ok: true;
+      action: "message" | "silence";
+      text: string;
+      delivery: RunDelivery;
+    }
+  | {
+      ok: false;
+      action: "message" | "silence";
+      text: string;
+      delivery: { kind: "none" };
+      failureKind: "command" | "delivery";
+      error: string;
+    };
 
 type RunOutputMedia = ProcMediaInput & {
   key: string;
@@ -508,7 +517,12 @@ const UNKNOWN_SHELL_SESSION_TARGET_MESSAGE =
   "Shell session continuation requires an explicit target because this process does not know which device owns the session";
 const USER_INTERRUPTED_TOOL_MESSAGE = "User interrupted tool execution";
 const MAX_TERMINAL_CORRECTION_ROUNDS = 1;
-const MAX_TERMINAL_ACTION_FAILURES = 2;
+const MAX_TERMINAL_COMMAND_FAILURES = 5;
+const MAX_TERMINAL_DELIVERY_FAILURES = 3;
+const TERMINAL_MESSAGE_BLOCK_EXAMPLE =
+  "message send <<'GSV_MESSAGE'\nyour user-visible response\nGSV_MESSAGE";
+const TERMINAL_ACTION_INSTRUCTION =
+  `After all work is complete, finish this interaction with exactly one direct Shell call using this literal block:\n${TERMINAL_MESSAGE_BLOCK_EXAMPLE}\nOr run \`message silence\` if no user-visible response is useful. Ordinary assistant text is Process activity and is not sent to the user.`;
 const USER_SUPERSEDED_TOOL_MESSAGE =
   "Cancelled for this agent run because a newer user message arrived; the underlying operation may still complete";
 const TOOL_EXECUTION_DENIED_BY_USER_MESSAGE = "Tool execution denied by user";
@@ -576,8 +590,7 @@ const terminalShellToolArgsSchema = z.object({
 }).strict();
 const TERMINAL_SHELL_TOOL: Tool = {
   name: "Shell",
-  description:
-    "Run a GSV shell command. After all work is complete, finish this interaction with exactly one direct Shell call to `message send --message '...'` or `message silence --reason '...'`. Ordinary assistant text is Process activity and is not sent to the user.",
+  description: `Run a GSV shell command. ${TERMINAL_ACTION_INSTRUCTION}`,
   parameters: {
     type: "object",
     properties: {
@@ -730,7 +743,8 @@ const runStateSchema: z.ZodType<RunState> = z.object({
   offeredToolNames: z.array(z.string()).optional(),
   unofferedToolRounds: z.number().optional(),
   terminalCorrectionRounds: z.number().optional(),
-  terminalActionFailures: z.number().optional(),
+  terminalCommandFailures: z.number().optional(),
+  terminalDeliveryFailures: z.number().optional(),
   config: aiConfigResultSchema.optional(),
   aiTextGenerateConfig: aiTextGenerateConfigSchema.optional(),
   tools: z.array(toolDefinitionSchema).optional(),
@@ -5923,9 +5937,26 @@ export class Process extends DurableObject<ProcessEnv> {
     }
 
     let terminalResult: TerminalActionResult | null = null;
+    let terminalFailureAttempt: { count: number; limit: number } | null = null;
     const terminalCall = terminalCombinationInvalid ? null : terminalShellCalls[0] ?? null;
     if (terminalCall) {
       terminalResult = await this.executeTerminalAction(runId, terminalCall.parsed, outputMedia);
+      if (!terminalResult.ok) {
+        if (terminalResult.failureKind === "command") {
+          run.terminalCommandFailures = (run.terminalCommandFailures ?? 0) + 1;
+          terminalFailureAttempt = {
+            count: run.terminalCommandFailures,
+            limit: MAX_TERMINAL_COMMAND_FAILURES,
+          };
+        } else {
+          run.terminalDeliveryFailures = (run.terminalDeliveryFailures ?? 0) + 1;
+          terminalFailureAttempt = {
+            count: run.terminalDeliveryFailures,
+            limit: MAX_TERMINAL_DELIVERY_FAILURES,
+          };
+        }
+        this.currentRun = run;
+      }
       this.store.appendToolResult(
         terminalCall.toolCall.id,
         "shell.exec",
@@ -5937,7 +5968,9 @@ export class Process extends DurableObject<ProcessEnv> {
             : terminalResult.delivery.kind === "silence"
               ? "Interaction completed silently"
               : "Result returned to caller without human delivery"
-          : terminalResult.error ?? "Terminal action failed",
+          : terminalResult.failureKind === "command"
+            ? `Terminal command rejected (attempt ${terminalFailureAttempt?.count ?? 1} of ${terminalFailureAttempt?.limit ?? MAX_TERMINAL_COMMAND_FAILURES}): ${terminalResult.error}\nUse a literal block:\n${TERMINAL_MESSAGE_BLOCK_EXAMPLE}`
+            : `Terminal delivery failed (attempt ${terminalFailureAttempt?.count ?? 1} of ${terminalFailureAttempt?.limit ?? MAX_TERMINAL_DELIVERY_FAILURES}): ${terminalResult.error}\nRetry the exact same terminal command unchanged.`,
         !terminalResult.ok,
         runId,
         terminalResult.ok ? "completed" : "failed",
@@ -5972,14 +6005,17 @@ export class Process extends DurableObject<ProcessEnv> {
         usage: response.usage,
       });
     } else if (terminalResult && !terminalResult.ok) {
-      run.terminalActionFailures = (run.terminalActionFailures ?? 0) + 1;
-      this.currentRun = run;
-      if (run.terminalActionFailures >= MAX_TERMINAL_ACTION_FAILURES) {
+      const exhausted = terminalResult.failureKind === "command"
+        ? (run.terminalCommandFailures ?? 0) >= MAX_TERMINAL_COMMAND_FAILURES
+        : (run.terminalDeliveryFailures ?? 0) >= MAX_TERMINAL_DELIVERY_FAILURES;
+      if (exhausted) {
         await this.finishRun(runId, {
-          reason: "message.action.failed",
+          reason: terminalResult.failureKind === "command"
+            ? "message.command.failed"
+            : "message.delivery.failed",
           status: "error",
           resultText: null,
-          error: terminalResult.error ?? "Terminal message action failed",
+          error: terminalResult.error,
           usage: response.usage,
         });
       } else {
@@ -6069,6 +6105,7 @@ export class Process extends DurableObject<ProcessEnv> {
         action: parsed.action,
         text: "",
         delivery: { kind: "none" },
+        failureKind: "command",
         error: parsed.error,
       };
     }
@@ -6099,6 +6136,7 @@ export class Process extends DurableObject<ProcessEnv> {
         action: "message",
         text: "",
         delivery: { kind: "none" },
+        failureKind: "command",
         error: "Message requires non-empty text or attached media",
       };
     }
@@ -6111,6 +6149,7 @@ export class Process extends DurableObject<ProcessEnv> {
           action: "message",
           text,
           delivery: { kind: "none" },
+          failureKind: "delivery",
           error: "Message run is no longer active",
         };
       }
@@ -6167,6 +6206,7 @@ export class Process extends DurableObject<ProcessEnv> {
         action: "message",
         text,
         delivery: { kind: "none" },
+        failureKind: "delivery",
         error: error instanceof Error ? error.message : String(error),
       };
     }
@@ -6200,7 +6240,9 @@ export class Process extends DurableObject<ProcessEnv> {
     run.terminalCorrectionRounds = (run.terminalCorrectionRounds ?? 0) + 1;
     this.currentRun = run;
     const message = [
-      "This interaction is not complete. Ordinary assistant text is Process activity and is not sent to the user. Finish with exactly one direct Shell call to `message send --message '...'`, or run `message silence --reason '...'` if no user-visible response is useful.",
+      "This interaction is not complete. Ordinary assistant text is Process activity and is not sent to the user.",
+      `Finish with exactly one direct Shell call using this literal block:\n${TERMINAL_MESSAGE_BLOCK_EXAMPLE}`,
+      "Or run `message silence` if no user-visible response is useful.",
     ].join("\n");
     this.store.appendMessage("system", message, { runId });
     await this.emitProcChanged(["messages"], {
@@ -9228,7 +9270,7 @@ function withTerminalShellInstructions(workTools: Tool[]): Tool[] {
     foundShell = true;
     return {
       ...tool,
-      description: `${tool.description} After all work is complete, finish with exactly one direct Shell call to \`message send --message '...'\` or \`message silence --reason '...'\`.`,
+      description: `${tool.description} ${TERMINAL_ACTION_INSTRUCTION}`,
     };
   });
   return foundShell ? tools : [...tools, TERMINAL_SHELL_TOOL];

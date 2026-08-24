@@ -144,12 +144,15 @@ The model response can contain text, thinking blocks, and tool calls:
   that explicitly called `proc.observe`.
 - Assistant text, thinking blocks, and tool calls are stored in the `messages`
   table.
-- In a human-facing run, a direct Shell call to `message send --message '...'` commits exactly one canonical user-visible
-  message and any media registered by `message attach`. `message silence` finishes without output.
+- In a human-facing run, a direct Shell call with a literal `message send <<'GSV_MESSAGE'` block
+  commits exactly one canonical user-visible message and any media registered by `message attach`.
+  `message silence` finishes without output.
 - Once the Process validates the terminal command, the originating client receives
   `message.started` and `message.delta`. Adapters wait for `message.committed`.
 - Ordinary assistant text in a human-facing run without either terminal command causes one `[GSV EVENT]`
   correction. A second omission ends the run with an inspectable bounded error.
+- A rejected terminal command gets five correction attempts. Delivery failures use a separate
+  three-attempt budget and tell the model to retry the exact same terminal command.
 - If there are tool calls, the process evaluates approval rules and dispatches
   each allowed call as a syscall frame.
 

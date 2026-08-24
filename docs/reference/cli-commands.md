@@ -110,9 +110,17 @@ destination id suitable for a later `message send --to`; raw provider ids stay
 hidden. `message attach` adds one or more GSV filesystem files to the run's
 eventual terminal message; it does not create an extra message. Existing files
 in the current process's `/var/media` directory
-are reused, while other readable files are staged there. Finish with a direct Shell call to
-`message send --message '...'`, or choose `message silence`. The Process recognizes those exact
-commands without shell approval. During an active run, `message send --to ... --also` creates an
+are reused, while other readable files are staged there. Finish with a direct Shell call using a
+literal block, or choose `message silence`:
+
+```bash
+message send <<'GSV_MESSAGE'
+your user-visible response
+GSV_MESSAGE
+```
+
+The Process recognizes those terminal commands without shell approval. During an active run,
+`message send --to ... --also` creates an
 additional outbound message or sends to another authorized destination.
 `message destinations` lists observed destinations that are online; `--all`
 also includes known authorized destinations whose adapter account is offline.

@@ -9,15 +9,73 @@ export type TerminalMessageCommandParseResult =
 export function parseTerminalMessageCommand(
   input: string,
 ): TerminalMessageCommandParseResult | null {
+  const heredoc = parseTerminalHeredoc(input);
+  if (heredoc) return heredoc;
+
   const words = tokenizeLiteralShellCommand(input);
-  if (!words || words[0] !== "message") return null;
+  if (!words) return parseOpaqueMessageSend(input);
+  if (words[0] !== "message") return null;
   const action = words[1];
   if (action !== "send" && action !== "silence") return null;
   if (action === "send" && hasAdditionalSendFlag(words.slice(2))) return null;
 
-  return action === "send"
+  const parsed = action === "send"
     ? parseMessageSend(words.slice(2))
     : parseMessageSilence(words.slice(2));
+  if (parsed.ok || action === "silence") return parsed;
+  return parseOpaqueMessageSend(input) ?? parsed;
+}
+
+function parseTerminalHeredoc(input: string): TerminalMessageCommandParseResult | null {
+  const normalized = input.replaceAll("\r\n", "\n");
+  const lines = normalized.split("\n");
+  if (lines.length < 2) return null;
+  const header = lines.shift() ?? "";
+  const match = /^message[ \t]+(send|silence)[ \t]+<<[ \t]*(?:'([^']+)'|"([^"]+)"|([A-Za-z_][A-Za-z0-9_]*))[ \t]*$/.exec(header);
+  if (!match) return null;
+  const action = match[1] === "send" ? "message" : "silence";
+  const delimiter = match[2] ?? match[3] ?? match[4] ?? "";
+  if (!/^[A-Za-z_][A-Za-z0-9_]{0,63}$/.test(delimiter)) {
+    return {
+      ok: false,
+      action,
+      error: "Terminal message block delimiter is invalid",
+    };
+  }
+  if (lines.at(-1) === "") lines.pop();
+  if (lines.pop() !== delimiter) {
+    return {
+      ok: false,
+      action,
+      error: `Terminal message block must end with ${delimiter} on its own line`,
+    };
+  }
+  const text = lines.join("\n");
+  return action === "message"
+    ? { ok: true, command: { action, text } }
+    : { ok: true, command: { action, reason: text } };
+}
+
+function parseOpaqueMessageSend(input: string): TerminalMessageCommandParseResult | null {
+  const match = /^message[ \t]+send[ \t]+--message(?:[ \t]+([\s\S]*))?$/.exec(input);
+  if (!match) return null;
+  const rawText = match[1];
+  if (rawText === undefined) {
+    return {
+      ok: false,
+      action: "message",
+      error: "Terminal message send requires a value after --message",
+    };
+  }
+  const text = rawText.trim();
+  const first = text[0];
+  const last = text.at(-1);
+  const unwrapped = text.length >= 2
+    && (first === "'" || first === '"')
+    && last === first
+    ? text.slice(1, -1)
+    : text;
+  return { ok: true, command: { action: "message", text: unwrapped } };
 }
 
 function hasAdditionalSendFlag(args: string[]): boolean {

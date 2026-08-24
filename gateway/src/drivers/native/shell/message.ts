@@ -202,7 +202,7 @@ async function showCurrentReplyDestination(
     `directed endpoint: ${current.label}`,
     `transport: ${current.transport}`,
     ...(destinationId ? [`destination: ${destinationId}`] : []),
-    "Finish with `message send --message '...'` here, or `message silence`.",
+    "Finish with a literal `message send <<'GSV_MESSAGE'` block here, or `message silence`.",
     "Use `message send --to ... --also` for a separate or cross-channel delivery.",
     "",
   ].join("\n"));
@@ -690,7 +690,7 @@ function messageUsage(): string {
     "  message silence [--reason TEXT]",
     "  message send --to DESTINATION [--message TEXT] [--attach PATH [--mime TYPE]] [--delivery-id ID] [--also]",
     "",
-    "Finish the current run with `message send --message '...'`, or `message silence`.",
+    "Finish the current run with a literal `message send <<'GSV_MESSAGE'` block, or `message silence`.",
     "`message attach` adds files to that eventual terminal message.",
     "Inside an active run, --also is required for a separate or cross-channel send.",
     "Use `message destinations` and copy its opaque GSV id; do not use provider ids.",

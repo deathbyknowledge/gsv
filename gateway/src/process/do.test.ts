@@ -168,7 +168,9 @@ function messageAction(text: string, id = `message-${crypto.randomUUID()}`) {
     type: "toolCall" as const,
     id,
     name: "Shell",
-    arguments: { input: `message send --message ${shellQuote(text)}` },
+    arguments: {
+      input: `message send <<'GSV_MESSAGE'\n${text}\nGSV_MESSAGE`,
+    },
   };
 // SAFETY: test fixture is constructed with the asserted domain shape.
 }
@@ -179,13 +181,11 @@ function silenceAction(reason: string, id = `silence-${crypto.randomUUID()}`) {
     type: "toolCall" as const,
     id,
     name: "Shell",
-    arguments: { input: `message silence --reason ${shellQuote(reason)}` },
+    arguments: {
+      input: `message silence <<'GSV_REASON'\n${reason}\nGSV_REASON`,
+    },
   };
 // SAFETY: test fixture is constructed with the asserted domain shape.
-}
-
-function shellQuote(value: string): string {
-  return `'${value.replaceAll("'", `'"'"'`)}'`;
 }
 
 function terminalTestConfig(pid: string) {
@@ -2561,6 +2561,139 @@ describe("Process DO — mechanical", () => {
           reason: "message.action.missing",
           error: "The model did not run message send or message silence after correction",
         });
+    });
+
+    it("gives rejected terminal commands an independent five-attempt budget", async () => {
+      const pid = "mech-terminal-command-recovery";
+      const runId = "run-terminal-command-recovery";
+      const stub = await initProcess(pid, ROOT_IDENTITY);
+
+// SAFETY: test fixture is constructed with the asserted domain shape.
+
+      await runInDurableObject(stub, async (instance: Process) => {
+        // SAFETY: test fixture is constructed with the asserted domain shape.
+        const process = instance as any;
+        const emitted: Array<{ signal: string; payload: any }> = [];
+        let generationCalls = 0;
+        process.sendSignal = vi.fn(async (signal: string, payload: any) => {
+          emitted.push({ signal, payload });
+        });
+        process.scheduleTick = vi.fn(async () => {});
+        process.generation = {
+          async generate() {
+            generationCalls += 1;
+            return terminalTestResponse([{
+              type: "toolCall",
+              id: `invalid-terminal-${generationCalls}`,
+              name: "Shell",
+              arguments: {
+                input: "message send --to here --message hello",
+              },
+            }]);
+          },
+          async generateText() {
+            return "unused";
+          },
+        };
+        process.store.appendMessage("user", "Say hello.", { runId });
+        process.currentRun = {
+          runId,
+          config: terminalTestConfig(pid),
+          tools: [],
+          devices: [],
+          systemPrompt: "Test system prompt.",
+          approvalPolicy: { default: "auto", rules: [] },
+        };
+
+        for (let attempt = 1; attempt < 5; attempt += 1) {
+          await process.runTick(runId);
+          expect(process.currentRun).toMatchObject({
+            terminalCommandFailures: attempt,
+          });
+          expect(process.currentRun.terminalCorrectionRounds).toBeUndefined();
+          expect(process.currentRun.terminalDeliveryFailures).toBeUndefined();
+        }
+        expect(process.scheduleTick).toHaveBeenCalledTimes(4);
+        expect(process.store.getMessages().find((message: any) => (
+          message.toolCallId === "invalid-terminal-1"
+        ))?.content).toContain("Terminal command rejected (attempt 1 of 5)");
+
+        await process.runTick(runId);
+
+        expect(emitted.findLast((entry) => entry.signal === "proc.run.finished")?.payload)
+          .toMatchObject({
+            status: "error",
+            reason: "message.command.failed",
+            error: "Terminal message send does not accept --to",
+          });
+      });
+    });
+
+    it("counts terminal delivery failures separately from command correction", async () => {
+      const pid = "mech-terminal-delivery-recovery";
+      const runId = "run-terminal-delivery-recovery";
+      const stub = await initProcess(pid, ROOT_IDENTITY);
+
+// SAFETY: test fixture is constructed with the asserted domain shape.
+
+      await runInDurableObject(stub, async (instance: Process) => {
+        // SAFETY: test fixture is constructed with the asserted domain shape.
+        const process = instance as any;
+        const emitted: Array<{ signal: string; payload: any }> = [];
+        let generationCalls = 0;
+        process.sendSignal = vi.fn(async (signal: string, payload: any) => {
+          emitted.push({ signal, payload });
+        });
+        process.scheduleTick = vi.fn(async () => {});
+        process.executeTerminalAction = vi.fn(async () => ({
+          ok: false,
+          action: "message",
+          text: "hello",
+          delivery: { kind: "none" },
+          failureKind: "delivery",
+          error: "temporary commit failure",
+        }));
+        process.generation = {
+          async generate() {
+            generationCalls += 1;
+            return terminalTestResponse([
+              messageAction("hello", `delivery-terminal-${generationCalls}`),
+            ]);
+          },
+          async generateText() {
+            return "unused";
+          },
+        };
+        process.store.appendMessage("user", "Say hello.", { runId });
+        process.currentRun = {
+          runId,
+          config: terminalTestConfig(pid),
+          tools: [],
+          devices: [],
+          systemPrompt: "Test system prompt.",
+          approvalPolicy: { default: "auto", rules: [] },
+        };
+
+        await process.runTick(runId);
+        await process.runTick(runId);
+        expect(process.currentRun).toMatchObject({
+          terminalDeliveryFailures: 2,
+        });
+        expect(process.currentRun.terminalCommandFailures).toBeUndefined();
+        expect(process.currentRun.terminalCorrectionRounds).toBeUndefined();
+        expect(process.store.getMessages().find((message: any) => (
+          message.toolCallId === "delivery-terminal-1"
+        ))?.content).toContain("Terminal delivery failed (attempt 1 of 3)");
+
+        await process.runTick(runId);
+
+        expect(emitted.findLast((entry) => entry.signal === "proc.run.finished")?.payload)
+          .toMatchObject({
+            status: "error",
+            reason: "message.delivery.failed",
+            error: "temporary commit failure",
+          });
+      });
     });
 
     it("finishes silently without committing a canonical message", async () => {

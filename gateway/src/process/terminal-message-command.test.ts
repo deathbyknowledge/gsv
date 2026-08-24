@@ -21,6 +21,50 @@ describe("parseTerminalMessageCommand", () => {
       ok: true,
       command: { action: "message", text: "that's two lines\nfrom GSV" },
     });
+    expect(parseTerminalMessageCommand(
+      `message send --message 'hey, i'm here. what's up?'`,
+    )).toEqual({
+      ok: true,
+      command: { action: "message", text: "hey, i'm here. what's up?" },
+    });
+  });
+
+  it("parses opaque terminal message blocks", () => {
+    expect(parseTerminalMessageCommand(
+      `message send <<'GSV_MESSAGE'
+Here's $HOME, \`literal code\`, and "both" quotes.
+
+Nothing is evaluated.
+GSV_MESSAGE`,
+    )).toEqual({
+      ok: true,
+      command: {
+        action: "message",
+        text: `Here's $HOME, \`literal code\`, and "both" quotes.\n\nNothing is evaluated.`,
+      },
+    });
+    expect(parseTerminalMessageCommand(
+      `message silence <<'GSV_REASON'
+The user's request was only informational.
+GSV_REASON`,
+    )).toEqual({
+      ok: true,
+      command: {
+        action: "silence",
+        reason: "The user's request was only informational.",
+      },
+    });
+  });
+
+  it("rejects an unterminated terminal message block", () => {
+    expect(parseTerminalMessageCommand(
+      `message send <<'GSV_MESSAGE'
+This block never closes.`,
+    )).toEqual({
+      ok: false,
+      action: "message",
+      error: "Terminal message block must end with GSV_MESSAGE on its own line",
+    });
   });
 
   it("accepts an attachment-only terminal send", () => {
@@ -55,21 +99,30 @@ describe("parseTerminalMessageCommand", () => {
     });
   });
 
-  it("does not terminalize compound shell programs", () => {
+  it("treats the message option tail as opaque text", () => {
     expect(parseTerminalMessageCommand(
       "message send --message safe; echo unsafe",
-    )).toBeNull();
+    )).toEqual({
+      ok: true,
+      command: { action: "message", text: "safe; echo unsafe" },
+    });
     expect(parseTerminalMessageCommand(
       "message send --message safe | tee /tmp/copy",
-    )).toBeNull();
-  });
-
-  it("does not evaluate shell expansions in a terminal command", () => {
+    )).toEqual({
+      ok: true,
+      command: { action: "message", text: "safe | tee /tmp/copy" },
+    });
     expect(parseTerminalMessageCommand(
       'message send --message "$HOME"',
-    )).toBeNull();
+    )).toEqual({
+      ok: true,
+      command: { action: "message", text: "$HOME" },
+    });
     expect(parseTerminalMessageCommand(
       'message send --message "$(cat /root/secret)"',
-    )).toBeNull();
+    )).toEqual({
+      ok: true,
+      command: { action: "message", text: "$(cat /root/secret)" },
+    });
   });
 });

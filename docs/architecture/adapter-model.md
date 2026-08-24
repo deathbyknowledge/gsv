@@ -184,7 +184,7 @@ The `message` shell command exposes delivery context and the explicit path for a
 separate or cross-channel message. `message current` describes the directed endpoint
 and includes its opaque destination id when it is an adapter surface,
 `message destinations` lists authorized observed surfaces, and `message attach`
-registers files for the eventual terminal message. `message send --message ...` finishes the run
+registers files for the eventual terminal message. A literal `message send <<'GSV_MESSAGE'` block finishes the run
 on its directed endpoint. `message send --to ... --also` sends a separate message. `--also` is
 required for every separate send during an active run,
 preventing an accidental duplicate.
