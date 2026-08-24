@@ -77,7 +77,7 @@ type CrewCard = {
 };
 
 type OverviewSurface = Exclude<ShellSurfaceId, "desktop">;
-export type ConsoleOverviewTarget = OverviewSurface | "models" | "model-default" | "new-agent" | "overrides" | "crew-instructions" | "crew-permissions" | "tasks";
+export type ConsoleOverviewTarget = OverviewSurface | "models" | "model-default" | "new-agent" | "overrides" | "crew-instructions" | "crew-permissions" | "crew-prompt" | "manual" | "tasks";
 export type OpenSurface = (surface: ConsoleOverviewTarget) => void;
 export type OpenAgent = (accountUid: number) => void;
 export type OpenListDetail = (kind: ConsoleListKind, detailId: string, detailLabel?: string) => void;
@@ -336,6 +336,8 @@ function SettingsCard({
   const openModels = onOpenSurface ? () => onOpenSurface("models") : undefined;
   const openCrewPermissions = onOpenSurface ? () => onOpenSurface("crew-permissions") : undefined;
   const openCrewInstructions = onOpenSurface ? () => onOpenSurface("crew-instructions") : undefined;
+  const openPromptReview = onOpenSurface ? () => onOpenSurface("crew-prompt") : undefined;
+  const openManual = onOpenSurface ? () => onOpenSurface("manual") : undefined;
   const openOverrides = onOpenSurface ? () => onOpenSurface("overrides") : undefined;
 
   const rows: DataCardRow[] = [
@@ -350,6 +352,8 @@ function SettingsCard({
     // Instructions live on the CREW page (GLOBAL INSTRUCTIONS / context.d), so
     // the CTA opens there directly — an "elsewhere" jump, not an in-place edit.
     { label: "AGENT INSTRUCTIONS", value: instructionsValue, linkLabel: "edit files", linkExternal: true, onLink: openCrewInstructions },
+    { label: "PROMPT REVIEW", value: "NEXT RUN", linkLabel: "inspect", linkExternal: true, onLink: openPromptReview },
+    { label: "PRODUCT MANUAL", value: "GSV MANUAL", linkLabel: "review", linkExternal: true, onLink: openManual },
     // System / runtime config (tool-approval fallback, network defaults, server
     // runtime) — its own entry point to the overrides config surface.
     {

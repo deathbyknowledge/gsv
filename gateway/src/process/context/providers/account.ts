@@ -36,7 +36,8 @@ export async function collectAccountContext(
           continue;
         }
 
-        const text = TEXT_DECODER.decode(file.bytes).trim();
+        const sourceText = TEXT_DECODER.decode(file.bytes);
+        const text = sourceText.trim();
         if (!text) {
           continue;
         }
@@ -49,7 +50,17 @@ export async function collectAccountContext(
           break;
         }
         usedBytes += bytes;
-        sections.push({ name, text, contextRoot });
+        sections.push({
+          name,
+          text,
+          contextRoot,
+          source: {
+            kind: "account-file",
+            path: `${account.home}/context.d/${name}`,
+            text: sourceText,
+            editable: true,
+          },
+        });
       }
 
       return sections;
@@ -73,7 +84,8 @@ export async function collectAccountContext(
     if (!object) {
       continue;
     }
-    const text = (await object.text()).trim();
+    const sourceText = await object.text();
+    const text = sourceText.trim();
     if (!text) {
       continue;
     }
@@ -86,7 +98,17 @@ export async function collectAccountContext(
       break;
     }
     usedBytes += bytes;
-    sections.push({ name: file.name, text, contextRoot });
+    sections.push({
+      name: file.name,
+      text,
+      contextRoot,
+      source: {
+        kind: "account-file",
+        path: `${account.home}/context.d/${file.name}`,
+        text: sourceText,
+        editable: true,
+      },
+    });
   }
 
   return sections;

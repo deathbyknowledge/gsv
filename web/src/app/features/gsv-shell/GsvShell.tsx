@@ -356,6 +356,9 @@ export function GsvShell({
   const openSettingsRoute = (target: SettingsRouteTarget): void => {
     guard.requestLeave(() => shell.openSettingsRoute(shellSettingsRouteForTarget(target)));
   };
+  const openLibraryRoute = (route: ShellLibraryRoute): void => {
+    guard.requestLeave(() => shell.openLibraryRoute(route));
+  };
   const activeSettingsRoute: ShellSettingsRoute = shell.activeSurface === "settings"
     ? shell.activePageTab?.settingsRoute ?? { view: "overview" }
     : { view: "overview" };
@@ -504,6 +507,7 @@ export function GsvShell({
                       onOpenChat={() => shell.setChatOpen(true)}
                       onNewTask={canStartNewWork ? requestNewTask : undefined}
                       onLibraryRouteChange={shell.syncActiveLibraryRoute}
+                      onOpenLibraryRoute={openLibraryRoute}
                       onSettingsRouteChange={shell.syncActiveSettingsRoute}
                       libraryRoute={activeLibraryRoute}
                       filesRoute={activeFilesRoute}

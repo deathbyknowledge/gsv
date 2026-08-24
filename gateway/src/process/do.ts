@@ -71,6 +71,8 @@ import type {
   ProcHistorySegmentReadResult,
   ProcHistorySegmentsArgs,
   ProcHistorySegmentsResult,
+  ProcPromptInspectArgs,
+  ProcPromptInspectResult,
   ProcArchiveEntry,
   ProcContextState,
   ProcUsageCostSource,
@@ -196,7 +198,7 @@ import {
   MAX_MESSAGE_MEDIA_PART_BYTES,
   MAX_MESSAGE_MEDIA_TOTAL_BYTES,
 } from "../shared/message-media-limits";
-import { assembleSystemPrompt } from "./context";
+import { assembleSystemPrompt, inspectSystemPrompt } from "./context";
 import {
   attachProcessRunStream,
   cancelProcessRequests,
@@ -1985,6 +1987,11 @@ export class Process extends DurableObject<ProcessEnv> {
             frame.args,
           );
           break;
+        case "proc.prompt.inspect":
+          data = await this.handleProcPromptInspect(
+            frame.args,
+          );
+          break;
         case "proc.run.attach":
           data = await this.handleProcRunAttach(
             frame.args,
@@ -2674,6 +2681,60 @@ export class Process extends DurableObject<ProcessEnv> {
     const config = redactProcessAiConfigSnapshot(snapshot);
     await this.emitProcChanged(["ai.config"], { aiConfig: config });
     return { ok: true, pid: this.pid, config };
+  }
+
+  private async handleProcPromptInspect(
+    _args: ProcPromptInspectArgs,
+  ): Promise<ProcPromptInspectResult> {
+    const config = await this.resolveAiConfig();
+    const tools = await this.kernelRpc("ai.tools", {});
+    const inspection = await inspectSystemPrompt({
+      config,
+      identity: this.identity,
+      ownerIdentity: config.owner ?? undefined,
+      devices: tools.devices,
+      mcpServers: tools.mcpServers,
+      storage: this.storage,
+      ripgit: this.ripgit,
+    });
+    const encoder = new TextEncoder();
+    const measure = (text: string) => {
+      const bytes = encoder.encode(text).length;
+      return {
+        bytes,
+        characters: [...text].length,
+        estimatedTokens: Math.ceil(bytes / 4),
+      };
+    };
+
+    return {
+      ok: true,
+      pid: this.pid,
+      appliesTo: "next-run",
+      generatedAt: Date.now(),
+      prompt: inspection.prompt,
+      ...measure(inspection.prompt),
+      maxContextBytes: config.maxContextBytes,
+      blocks: inspection.sections.map((section) => {
+        const kind = section.contextRoot?.key ?? "generated";
+        const source = section.source ?? {
+          kind: "generated" as const,
+          path: `/sys/prompt/${section.provider}/${section.name}`,
+          text: section.text,
+          editable: false,
+        };
+        return {
+          id: `${section.provider}:${kind}:${section.name}`,
+          provider: section.provider,
+          name: section.name,
+          kind,
+          label: section.contextRoot?.label ?? "GENERATED",
+          rendered: section.text,
+          ...measure(section.text),
+          source,
+        };
+      }),
+    };
   }
 
   private async handleProcIpcDeliver(args: ProcIpcDeliverArgs): Promise<ProcIpcDeliverResult> {

@@ -395,6 +395,48 @@ export type ProcAiConfigSetResult =
     }
   | { ok: false; error: string };
 
+export type ProcPromptBlockKind = "system" | "program" | "user" | "generated";
+
+export type ProcPromptBlockSource = {
+  kind: "system-config" | "account-file" | "generated";
+  path: string;
+  /** The persisted template/file text before runtime placeholders are rendered. */
+  text: string;
+  editable: boolean;
+};
+
+export type ProcPromptBlock = {
+  id: string;
+  provider: string;
+  name: string;
+  kind: ProcPromptBlockKind;
+  label: string;
+  rendered: string;
+  bytes: number;
+  characters: number;
+  estimatedTokens: number;
+  source: ProcPromptBlockSource;
+};
+
+export type ProcPromptInspectArgs = {
+  pid?: string;
+};
+
+export type ProcPromptInspectResult =
+  | {
+      ok: true;
+      pid: string;
+      appliesTo: "next-run";
+      generatedAt: number;
+      prompt: string;
+      bytes: number;
+      characters: number;
+      estimatedTokens: number;
+      maxContextBytes: number;
+      blocks: ProcPromptBlock[];
+    }
+  | { ok: false; error: string };
+
 export type ProcHistoryResult =
   | {
       ok: true;

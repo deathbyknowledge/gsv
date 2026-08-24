@@ -24,6 +24,7 @@ export interface DefaultsSummaryPanelProps {
   onEditDefaults?: () => void;
   onConfigureOverrides?: () => void;
   onManageContext?: () => void;
+  onReviewPrompt?: () => void;
   /** Narrow-panel mode: header toggles a collapsed-by-default disclosure. */
   compact?: boolean;
 }
@@ -62,6 +63,7 @@ export function DefaultsSummaryPanel({
   onEditDefaults,
   onConfigureOverrides,
   onManageContext,
+  onReviewPrompt,
   compact = false,
 }: DefaultsSummaryPanelProps) {
   const [collapsed, setCollapsed] = useState(true);
@@ -106,6 +108,11 @@ export function DefaultsSummaryPanel({
               value={filesLabel}
               field="GLOBAL INSTRUCTIONS"
               onClick={contextFilesCount === null ? undefined : openSection(onManageContext)}
+            />
+            <SummaryRow
+              value="NEXT RUN"
+              field="PROMPT REVIEW"
+              onClick={openSection(onReviewPrompt)}
             />
           </div>
         </>

@@ -25,6 +25,12 @@ function renderContextFiles(
       return {
         name: file.name,
         text,
+        source: {
+          kind: "system-config",
+          path: `/sys/config/ai/context.d/${file.name}`,
+          text: file.text,
+          editable: false,
+        },
         contextRoot: {
           key: "system",
           label: "SYSTEM",

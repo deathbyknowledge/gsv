@@ -16,7 +16,7 @@ import {
   ContextSectionsEditor,
   type ContextSection,
 } from "../../../components/ui/ContextSectionsEditor";
-import { useUnsavedGuard } from "../../gsv-shell/unsaved/unsavedGuard";
+import { useUnsavedGuard, useUnsavedGuardLeave } from "../../gsv-shell/unsaved/unsavedGuard";
 import { modelOptionsForConfig, type ConsoleModelOption } from "../domain/consoleAi";
 import {
   approvalForAgentSave,
@@ -32,9 +32,10 @@ import {
 } from "../domain/consoleAgentBehavior";
 import type { ConsoleAccount, ConsoleConfigEntry } from "../domain/consoleModels";
 import { useConsoleAgentContext, useSaveConsoleAgentBehavior, useSaveConsoleAgentContext } from "../hooks/useConsoleData";
+import { PromptReviewPanel } from "./PromptReviewPanel";
 import "./EditDefaultsPanel.css";
 
-export type EditDefaultsSection = "defaults" | "permissions" | "context";
+export type EditDefaultsSection = "defaults" | "permissions" | "context" | "prompt";
 
 /** Per-section surface copy. Each CREW default now opens its own titled
  *  surface (model defaults / permissions / global instructions). */
@@ -42,6 +43,7 @@ const SECTION_TITLE = {
   defaults: "MODEL DEFAULTS",
   permissions: "DEFAULT PERMISSIONS",
   context: "GLOBAL INSTRUCTIONS",
+  prompt: "PROMPT REVIEW",
 } satisfies Record<EditDefaultsSection, string>;
 
 const SECTION_DESC = {
@@ -49,6 +51,7 @@ const SECTION_DESC = {
   permissions:
     "When there are no overrides configured, all your agents will follow the default permission when using any tool. Overrides are machine or tool specific rules that take priority over the default action.",
   context: "Instructions all your agents follow. These do not take precedence over agent definitions.",
+  prompt: "Inspect the exact next-run prompt, its source blocks, and their contribution to the final context.",
 } satisfies Record<EditDefaultsSection, string>;
 
 /** Draft seed from the loaded context files (mirrors editorFilesForAccount). */
@@ -198,6 +201,7 @@ export function EditDefaultsPanel({
   // surface back to the top on switch.
   const isContext = section === "context";
   const isPermissions = section === "permissions";
+  const isPrompt = section === "prompt";
   useEffect(() => {
     rootRef.current?.scrollIntoView({ block: "start" });
   }, [section]);
@@ -211,6 +215,7 @@ export function EditDefaultsPanel({
   const contextDirty = contextEditable && contextSignature(filesDraft) !== baselineFilesSignature;
   const dirty = behaviorDirty || contextDirty;
   useUnsavedGuard(() => dirty);
+  const requestGuardedLeave = useUnsavedGuardLeave();
 
   const editable = viewer.runnable;
   const disabled = !editable || pending;
@@ -327,7 +332,7 @@ export function EditDefaultsPanel({
       setConfirmDiscard(true);
       return;
     }
-    onClose();
+    requestGuardedLeave(onClose);
   };
 
   const discardAndClose = () => {
@@ -379,7 +384,9 @@ export function EditDefaultsPanel({
         {SECTION_DESC[section]}
       </p>
 
-      {isContext ? (
+      {isPrompt ? (
+        <PromptReviewPanel />
+      ) : isContext ? (
         <ContextSectionsEditor
           files={filesDraft}
           onChange={(next) => {
@@ -480,7 +487,7 @@ export function EditDefaultsPanel({
             <Button variant="secondary" label="KEEP EDITING" onClick={() => setConfirmDiscard(false)} />
           </div>
         </div>
-      ) : isContext ? null : (
+      ) : isContext || isPrompt ? null : (
         <div style="display:flex;align-items:center;gap:12px;margin-top:42px;">
           {statusNode}
           <span style="flex:1;" />

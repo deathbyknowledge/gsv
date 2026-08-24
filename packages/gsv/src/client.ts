@@ -352,6 +352,7 @@ const SYSCALL_NAMES = [
   "proc.fork",
   "proc.ai.config.get",
   "proc.ai.config.set",
+  "proc.prompt.inspect",
   "proc.reset",
   "proc.setidentity",
   "repo.list",

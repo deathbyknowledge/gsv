@@ -65,6 +65,8 @@ import type {
   ProcListResult,
   ProcObserveArgs,
   ProcObserveResult,
+  ProcPromptInspectArgs,
+  ProcPromptInspectResult,
   ProcResetArgs,
   ProcResetResult,
   ProcSendArgs,
@@ -291,6 +293,7 @@ export type SyscallDomains = {
   "proc.fork": { args: ProcForkArgs; result: ProcForkResult };
   "proc.ai.config.get": { args: ProcAiConfigGetArgs; result: ProcAiConfigGetResult };
   "proc.ai.config.set": { args: ProcAiConfigSetArgs; result: ProcAiConfigSetResult };
+  "proc.prompt.inspect": { args: ProcPromptInspectArgs; result: ProcPromptInspectResult };
   "proc.reset": { args: ProcResetArgs; result: ProcResetResult };
   "proc.setidentity": { args: ProcSetIdentityArgs; result: ProcSetIdentityResult };
 

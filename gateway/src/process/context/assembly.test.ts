@@ -175,6 +175,12 @@ describe("createSystemContextProvider", () => {
     expect(sections).toEqual([
       expect.objectContaining({
         name: "00-runtime.md",
+        source: {
+          kind: "system-config",
+          path: "/sys/config/ai/context.d/00-runtime.md",
+          text: CONFIG.systemContextFiles?.[0]?.text,
+          editable: false,
+        },
         contextRoot: expect.objectContaining({
           key: "system",
           label: "SYSTEM",
@@ -324,6 +330,12 @@ describe("createHomeContextProvider", () => {
     expect(sections.map((section) => section.text)).toEqual([
       "alpha",
     ]);
+    expect(sections[0].source).toEqual({
+      kind: "account-file",
+      path: "/root/context.d/a.md",
+      text: "alpha",
+      editable: true,
+    });
   });
 });
 

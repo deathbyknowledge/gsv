@@ -29,6 +29,7 @@ import type {
   ProcessScheduleDeliverRequestFrame,
 } from "../protocol/process-frames";
 import { getProcessByPid, getKernelPtr } from "../shared/utils";
+import type { RipgitRepoRef } from "../fs/ripgit/client";
 import { stableOpaqueId } from "../shared/stable-id";
 import { TOOL_TO_SYSCALL } from "../syscalls/constants";
 import { DEFAULT_TOOL_APPROVAL_POLICY } from "./approval";
@@ -1219,6 +1220,103 @@ describe("Process DO — mechanical", () => {
         profile: { id: "fast", name: "Fast" },
         values: {},
       });
+    });
+  });
+
+  describe("proc.prompt.inspect", () => {
+    it("returns the exact next-run prompt with source and size metadata", async () => {
+      const pid = "mech-prompt-inspect";
+      const stub = await initProcess(pid, ROOT_IDENTITY);
+
+      // SAFETY: the fixture sends a successful, initialized Process request and asserts that response shape below.
+      const response = await runInDurableObject(stub, async (instance: Process) => {
+        // SAFETY: the test overrides private collaborators to isolate prompt assembly.
+        const process = instance as any;
+        process.resolveAiConfig = vi.fn(async () => ({
+          ...terminalTestConfig(pid),
+          systemContextFiles: [{
+            name: "00-runtime.md",
+            text: "Running as {{identity.username}} from {{identity.cwd}}.",
+          }],
+          skillIndex: [],
+          skillIndexMode: "summary",
+        }));
+        process.kernelRpc = vi.fn(async (call: string) => {
+          if (call === "ai.tools") {
+            return { tools: [], devices: [], mcpServers: [] };
+          }
+          throw new Error(`unexpected kernel call: ${call}`);
+        });
+        process.ripgit = {
+          async readPath(_repo: RipgitRepoRef, path: string) {
+            if (path === "context.d") {
+              return {
+                kind: "tree",
+                entries: [{ name: "05-voice.md", mode: "100644", hash: "voice", type: "blob" }],
+              };
+            }
+            if (path === "context.d/05-voice.md") {
+              return {
+                kind: "file",
+                bytes: new TextEncoder().encode("\nBe warm and concise.\n"),
+                size: 22,
+              };
+            }
+            return { kind: "missing" };
+          },
+        };
+        return await process.recvFrame(makeReq("proc.prompt.inspect", {}));
+      }) as ResponseOkFrame;
+
+      expect(response.ok).toBe(true);
+      expect(response.data).toMatchObject({
+        ok: true,
+        pid,
+        appliesTo: "next-run",
+        maxContextBytes: 32768,
+        blocks: [
+          {
+            id: "system.context:system:00-runtime.md",
+            kind: "system",
+            label: "SYSTEM",
+            rendered: "Running as root from /root.",
+            source: {
+              kind: "system-config",
+              path: "/sys/config/ai/context.d/00-runtime.md",
+              text: "Running as {{identity.username}} from {{identity.cwd}}.",
+              editable: false,
+            },
+          },
+          {
+            id: "home.context:program:05-voice.md",
+            kind: "program",
+            label: "PROGRAM",
+            rendered: "Be warm and concise.",
+            source: {
+              kind: "account-file",
+              path: "/root/context.d/05-voice.md",
+              text: "\nBe warm and concise.\n",
+              editable: true,
+            },
+          },
+          expect.objectContaining({
+            id: "available.skills:generated:available.skills",
+            kind: "generated",
+          }),
+        ],
+      });
+      // SAFETY: the successful response was asserted above and this test only reads prompt-inspection fields.
+      const data = response.data as {
+        prompt: string;
+        bytes: number;
+        characters: number;
+        estimatedTokens: number;
+      };
+      expect(data.prompt).toContain("<system path=\"/sys/config/ai/context.d/\">");
+      expect(data.prompt).toContain("<program path=\"/root/context.d/\">");
+      expect(data.bytes).toBe(new TextEncoder().encode(data.prompt).length);
+      expect(data.characters).toBe([...data.prompt].length);
+      expect(data.estimatedTokens).toBe(Math.ceil(data.bytes / 4));
     });
   });
 

@@ -9,10 +9,17 @@ export function createSkillIndexProvider(): PromptContextProvider {
       if (mode === "off") {
         return [];
       }
+      const text = renderSkillIndex(input.config.skillIndex ?? [], mode);
       return [
         {
           name: "available.skills",
-          text: renderSkillIndex(input.config.skillIndex ?? [], mode),
+          text,
+          source: {
+            kind: "generated",
+            path: "/sys/skills/index",
+            text,
+            editable: false,
+          },
         },
       ];
     },

@@ -22,6 +22,7 @@ export interface CrewDefaultsPanelProps {
   onEditDefaults?: () => void;
   onConfigureOverrides?: () => void;
   onManageContext?: () => void;
+  onReviewPrompt?: () => void;
 }
 
 function reasoningDisplayLabel(value: string): string {
@@ -41,6 +42,7 @@ export function CrewDefaultsPanel({
   onEditDefaults,
   onConfigureOverrides,
   onManageContext,
+  onReviewPrompt,
 }: CrewDefaultsPanelProps) {
   const context = useConsoleAgentContext(viewer.username);
 
@@ -69,6 +71,7 @@ export function CrewDefaultsPanel({
       onEditDefaults={onEditDefaults}
       onConfigureOverrides={onConfigureOverrides}
       onManageContext={onManageContext}
+      onReviewPrompt={onReviewPrompt}
       compact={compact}
     />
   );

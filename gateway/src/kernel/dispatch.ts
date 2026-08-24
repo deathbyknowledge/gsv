@@ -379,6 +379,7 @@ async function dispatchNative(
       case "proc.history":
       case "proc.ai.config.get":
       case "proc.ai.config.set":
+      case "proc.prompt.inspect":
       case "proc.history.policy.get":
       case "proc.history.policy.set":
       case "proc.history.compact":

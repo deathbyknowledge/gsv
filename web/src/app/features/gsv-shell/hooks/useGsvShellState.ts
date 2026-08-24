@@ -269,6 +269,11 @@ export function useGsvShellState({
     activateRoute({ surface: "settings", settingsRoute: route });
   };
 
+  const openLibraryRoute = (route: ShellLibraryRoute): void => {
+    recordCloseOrigin("library");
+    activateRoute({ surface: "library", libraryRoute: route });
+  };
+
   const syncActiveSettingsRoute = (route: ShellSettingsRoute): void => {
     if (activeSurface !== "settings") {
       return;
@@ -483,6 +488,7 @@ export function useGsvShellState({
     mobileLayout,
     mobileMenuOpen,
     openControlMenu,
+    openLibraryRoute,
     openMobileMenu,
     openObject,
     openSettingsRoute,
