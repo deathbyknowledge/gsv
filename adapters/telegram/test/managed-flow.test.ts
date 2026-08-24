@@ -191,6 +191,22 @@ describe("managed Telegram clean-instance flow", () => {
       }));
     });
 
+    expect((await SELF.fetch(update(4, 4, "__gateway_unavailable__"))).status).toBe(200);
+    await vi.waitFor(async () => {
+      expect(await gatewayCalls()).toContainEqual(expect.objectContaining({
+        args: expect.objectContaining({
+          message: expect.objectContaining({ text: "__gateway_unavailable__" }),
+        }),
+      }));
+    });
+    const messagesBeforePairCommand = (await telegramMessages()).length;
+    expect((await SELF.fetch(update(5, 5, "/start"))).status).toBe(200);
+    await vi.waitFor(async () => {
+      const messages = await telegramMessages();
+      expect(messages.length).toBeGreaterThan(messagesBeforePairCommand);
+      expect(messages.at(-1)?.body.text).toContain("Pairing code:");
+    });
+
     // SAFETY: The test environment exposes the declared Durable Object namespace binding.
     const peers = env.MANAGED_TELEGRAM_PEER as DurableObjectNamespace;
     const peer = typedStub<ManagedPeerStub>(peers.get(

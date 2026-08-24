@@ -140,6 +140,9 @@ export class ManagedTelegramPeer extends DurableObject<ManagedTelegramPeerEnv> {
       }));
       return { ok: true };
     }
+    if (isManagedTelegramPairCommand(inbound.text)) {
+      await this.attemptInbound(inbound.deliveryId);
+    }
     this.ctx.waitUntil(this.drainInbound());
     return { ok: true };
   }
@@ -316,18 +319,7 @@ export class ManagedTelegramPeer extends DurableObject<ManagedTelegramPeerEnv> {
     const running = (async () => {
       const ids = await this.inboundDeliveries.pendingIds(INBOUND_RETRY_BATCH_SIZE);
       for (const deliveryId of ids) {
-        const result = await this.inboundDeliveries.attempt(
-          deliveryId,
-          async (payload) => await this.forwardInbound(payload),
-          async (message, context) => await this.deliverMessage(
-            message,
-            context ?? { kind: "platform" },
-          ),
-        );
-        if (result.state === "pending") {
-          await this.inboundDeliveries.arm(Date.now() + INBOUND_RETRY_DELAY_MS);
-          break;
-        }
+        if (!await this.attemptInbound(deliveryId)) break;
       }
     })();
     this.drainPromise = running;
@@ -336,6 +328,20 @@ export class ManagedTelegramPeer extends DurableObject<ManagedTelegramPeerEnv> {
     } finally {
       if (this.drainPromise === running) this.drainPromise = undefined;
     }
+  }
+
+  private async attemptInbound(deliveryId: string): Promise<boolean> {
+    const result = await this.inboundDeliveries.attempt(
+      deliveryId,
+      async (payload) => await this.forwardInbound(payload),
+      async (message, context) => await this.deliverMessage(
+        message,
+        context ?? { kind: "platform" },
+      ),
+    );
+    if (result.state !== "pending") return true;
+    await this.inboundDeliveries.arm(Date.now() + INBOUND_RETRY_DELAY_MS);
+    return false;
   }
 
   private async forwardInbound(

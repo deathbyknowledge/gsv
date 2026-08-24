@@ -19,6 +19,7 @@ export default defineConfig({
                     ? Array.from(new Uint8Array(await new Response(frame.body.stream).arrayBuffer()))
                     : undefined;
                   calls.push({ installation, call: frame.call, args: frame.args, bodyBytes });
+                  if (frame.args.message?.text === "__gateway_unavailable__") return null;
                   return {
                     type: "res",
                     id: frame.id,
