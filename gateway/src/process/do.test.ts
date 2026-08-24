@@ -2314,7 +2314,8 @@ describe("Process DO — mechanical", () => {
         expect(emitted.findLast((entry) => entry.signal === "proc.run.finished")?.payload)
           .toMatchObject({
             status: "ok",
-            text: null,
+            result: { text: "Recovered from the invalid tool call." },
+            delivery: { kind: "message" },
           });
       });
     });
@@ -2440,7 +2441,8 @@ describe("Process DO — mechanical", () => {
         expect(emitted.findLast((entry) => entry.signal === "proc.run.finished")?.payload)
           .toMatchObject({
             status: "ok",
-            text: null,
+            result: { text: "Recovered from the rejected call." },
+            delivery: { kind: "message" },
           });
       });
     });
@@ -2618,10 +2620,15 @@ describe("Process DO — mechanical", () => {
         .toMatchObject({ content: "Interaction completed silently" });
       expect(result.dispatchCalls).toEqual([]);
       expect(result.emitted.findLast((entry) => entry.signal === "proc.run.finished")?.payload)
-        .toMatchObject({ status: "ok", reason: "message.silenced", text: null });
+        .toMatchObject({
+          status: "ok",
+          reason: "message.silenced",
+          result: { text: null },
+          delivery: { kind: "silence", reason: "Nothing useful to send." },
+        });
     });
 
-    it("returns an IPC Message to its caller without canonical delivery", async () => {
+    it("returns ordinary IPC output to its caller without a terminal message command", async () => {
       const pid = "mech-terminal-ipc-message";
       const runId = "run-terminal-ipc-message";
       const stub = await initProcess(pid, ROOT_IDENTITY);
@@ -2637,10 +2644,13 @@ describe("Process DO — mechanical", () => {
         });
         process.completeMessageStream = vi.fn(async () => {});
         process.generation = {
-          async generate() {
+          async generate(request: any) {
+            expect(request.context.systemPrompt).toContain(
+              "This run is a delegated Process call",
+            );
+            expect(request.context.tools).toBeUndefined();
             return terminalTestResponse([
               { type: "text", text: "Private worker result." },
-              messageAction("Private worker result.", "ipc-message"),
             ]);
           },
           async generateText() {
@@ -2662,13 +2672,60 @@ describe("Process DO — mechanical", () => {
         return { emitted, streamCalls: process.completeMessageStream.mock.calls };
       });
 
-      expect(result.streamCalls).toEqual([[runId, "Private worker result."]]);
+      expect(result.streamCalls).toEqual([]);
       expect(result.emitted.findLast((entry) => entry.signal === "proc.run.finished")?.payload)
         .toMatchObject({
           status: "ok",
-          reason: "message.sent",
-          text: "Private worker result.",
+          reason: "ipc.returned",
+          result: { text: "Private worker result." },
+          delivery: { kind: "none" },
         });
+    });
+
+    it("keeps an IPC result when a legacy worker also asks for silence", async () => {
+      const pid = "mech-terminal-ipc-silence";
+      const runId = "run-terminal-ipc-silence";
+      const stub = await initProcess(pid, ROOT_IDENTITY);
+
+      await runInDurableObject(stub, async (instance: Process) => {
+        // SAFETY: test fixture is constructed with the asserted domain shape.
+        const process = instance as any;
+        const emitted: Array<{ signal: string; payload: any }> = [];
+        process.sendSignal = vi.fn(async (signal: string, payload: any) => {
+          emitted.push({ signal, payload });
+        });
+        process.generation = {
+          async generate() {
+            return terminalTestResponse([
+              { type: "text", text: "Useful private result." },
+              silenceAction("No human delivery.", "ipc-silence"),
+            ]);
+          },
+          async generateText() {
+            return "unused";
+          },
+        };
+        process.store.appendMessage("user", "Return privately.", { runId });
+        process.currentRun = {
+          runId,
+          returnToCaller: true,
+          config: terminalTestConfig(pid),
+          tools: [],
+          devices: [],
+          systemPrompt: "Test system prompt.",
+          approvalPolicy: { default: "auto", rules: [] },
+        };
+
+        await process.runTick(runId);
+
+        expect(emitted.findLast((entry) => entry.signal === "proc.run.finished")?.payload)
+          .toMatchObject({
+            status: "ok",
+            reason: "ipc.returned",
+            result: { text: "Useful private result." },
+            delivery: { kind: "none" },
+          });
+      });
     });
 
     it("aborts a transient Message projection when its streamed text changes", async () => {
@@ -2943,7 +3000,7 @@ describe("Process DO — mechanical", () => {
         expect(contextMessages[0].content).toContain("[From: schedule sched-busy]");
         expect(contextMessages[0].content).not.toContain("[Directed endpoint:");
 
-        await process.finishRun("run-busy", { status: "ok", text: "done" });
+        await process.finishRun("run-busy", { status: "ok", resultText: "done" });
         expect(process.currentRun).not.toBeNull();
         expect(process.currentRun.runId).not.toBe("run-busy");
       });
@@ -3562,8 +3619,8 @@ describe("Process DO — mechanical", () => {
           }),
         ]),
       });
-      for (const signal of ["proc.run.output", "proc.run.finished"]) {
-        expect(result.emitted.find((entry) => entry.signal === signal)?.payload).toMatchObject({
+      expect(result.emitted.find((entry) => entry.signal === "proc.run.output")?.payload)
+        .toMatchObject({
           runId: "run-final-reply-media",
           media: [expect.objectContaining({
             type: "resource",
@@ -3572,8 +3629,19 @@ describe("Process DO — mechanical", () => {
             }),
           })],
         });
+      expect(result.emitted.find((entry) => entry.signal === "proc.run.finished")?.payload)
+        .toMatchObject({
+          runId: "run-final-reply-media",
+          result: {
+            media: [expect.objectContaining({
+              type: "resource",
+              ref: expect.objectContaining({
+                path: expect.stringMatching(/^\/root\/\.gsv\/media\/archived-media:[0-9a-f]{64}$/),
+              }),
+            })],
+          },
+        });
       // SAFETY: test fixture is constructed with the asserted domain shape.
-      }
       // SAFETY: test fixture is constructed with the asserted domain shape.
       const archivedKey = (result.history as any).messages
         .find((message: any) => message.role === "assistant").content.media[0].path
@@ -3840,7 +3908,8 @@ describe("Process DO — mechanical", () => {
       expect(finished).toMatchObject({
         status: "ok",
         reason: "message.sent",
-        text: null,
+        result: { text: "visible answer" },
+        delivery: { kind: "message" },
       });
     });
 
@@ -3997,7 +4066,8 @@ describe("Process DO — mechanical", () => {
       expect(finished).toMatchObject({
         status: "ok",
         reason: "message.sent",
-        text: null,
+        result: { text: "recovered" },
+        delivery: { kind: "message" },
       });
     });
 
@@ -7930,7 +8000,10 @@ describe("Process DO — mechanical", () => {
           payload: {
             pid: targetPid,
             runId: data.runId,
-            text: "status is green",
+            status: "ok",
+            reason: "ipc.returned",
+            result: { text: "status is green" },
+            delivery: { kind: "none" },
           },
         });
       });
@@ -7994,7 +8067,8 @@ describe("Process DO — mechanical", () => {
             runId: data.runId,
             status: "aborted",
             reason: "user.superseded",
-            text: null,
+            result: { text: null },
+            delivery: { kind: "none" },
           },
         }),
       );
@@ -10136,7 +10210,7 @@ describe("Process DO — mechanical", () => {
 
         process.emitRunFinished(
           { runId: "run-finish-outbox" },
-          { reason: "turn.complete", status: "ok", text: "done" },
+          { reason: "turn.complete", status: "ok", resultText: "done" },
         );
         await vi.waitFor(() => expect(process.schedule).toHaveBeenCalledWith(
           5,
@@ -10182,7 +10256,14 @@ describe("Process DO — mechanical", () => {
 
         await process.onRunFinishDelivery("run-finish-exhausted");
 
-        expect(process.sendSignal).toHaveBeenCalledOnce();
+        expect(process.sendSignal).toHaveBeenCalledWith(
+          "proc.run.finished",
+          expect.objectContaining({
+            runId: "run-finish-exhausted",
+            result: { text: "completed answer" },
+            delivery: { kind: "none" },
+          }),
+        );
         expect(process.schedule).not.toHaveBeenCalled();
         expect(process.store.getValue("pendingRunFinishes")).toBeNull();
         expect(process.store.getMessages()).toContainEqual(expect.objectContaining({
@@ -13566,7 +13647,9 @@ describe("Process DO — mechanical", () => {
       expect(result.finishPayload).toMatchObject({
         pid,
         runId,
-        media: [{ type: "resource", ref: { path: resource.ref.path } }],
+        result: {
+          media: [{ type: "resource", ref: { path: resource.ref.path } }],
+        },
       });
       expect(await env.STORAGE.head(key)).toBeNull();
       expect(await env.STORAGE.head(resource.ref.path.replace(/^\/+/, ""))).not.toBeNull();

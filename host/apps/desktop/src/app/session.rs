@@ -464,7 +464,7 @@ impl GsvApp {
             "proc.run.finished" => {
                 let before = self.visible_moment_key();
                 let error = payload.get("error").map(extract_text);
-                if let Some(media) = payload.get("media") {
+                if let Some(media) = payload.get("result").and_then(|result| result.get("media")) {
                     self.conversation
                         .replace_run_media(run_id, parse_media(media));
                 }

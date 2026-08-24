@@ -2974,13 +2974,17 @@ describe("Kernel IPC completion", () => {
         runId: "run-source",
         status: "aborted",
         reason: "user.superseded",
-        media: [{
-          type: "document",
-          mimeType: "application/pdf",
-          key: `home/worker/.gsv/media/archived-media:${"b".repeat(64)}`,
-          path: `/home/worker/.gsv/media/archived-media:${"b".repeat(64)}`,
-          size: 42,
-        }],
+        result: {
+          text: null,
+          media: [{
+            type: "document",
+            mimeType: "application/pdf",
+            key: `home/worker/.gsv/media/archived-media:${"b".repeat(64)}`,
+            path: `/home/worker/.gsv/media/archived-media:${"b".repeat(64)}`,
+            size: 42,
+          }],
+        },
+        delivery: { kind: "none" },
       },
     });
 
@@ -2999,6 +3003,42 @@ describe("Kernel IPC completion", () => {
         })],
       }),
     }));
+  });
+
+  it("completes a call from the Process result independently of human delivery", async () => {
+    const completeByRun = vi.fn(() => ["call-1"]);
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+    const kernel = Object.create(Kernel.prototype) as any;
+    kernel.procs = { getOwnerUid: vi.fn(() => 1000) };
+    kernel.ipcCalls = {
+      cancelBySourceRun: vi.fn(),
+      completeByRun,
+    };
+    kernel.queueIpcCallDelivery = vi.fn();
+
+    await kernel.completeIpcCallsForProcessSignal("proc-worker", {
+      type: "sig",
+      signal: "proc.run.finished",
+      payload: {
+        runId: "run-worker",
+        status: "ok",
+        reason: "ipc.returned",
+        result: { text: "Private worker result." },
+        delivery: { kind: "silence", reason: "No human delivery." },
+      },
+    });
+
+    expect(completeByRun).toHaveBeenCalledWith({
+      uid: 1000,
+      targetPid: "proc-worker",
+      runId: "run-worker",
+      response: {
+        text: "Private worker result.",
+        usage: null,
+      },
+      error: null,
+    });
+    expect(kernel.queueIpcCallDelivery).toHaveBeenCalledWith("call-1");
   });
 
   // SAFETY: test fixture is constructed with the asserted kernel domain shape.

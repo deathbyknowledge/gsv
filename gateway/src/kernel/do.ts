@@ -495,6 +495,19 @@ const userProcessSignalPayloadSchema = z.object({
   status: z.string().optional(),
   reason: z.string().optional(),
   text: z.string().nullable().optional(),
+  result: z.object({
+    text: z.string().nullable(),
+    media: z.array(z.union([resourceBlockSchema, procMediaInputSchema])).optional(),
+  }).optional(),
+  delivery: z.discriminatedUnion("kind", [
+    z.object({ kind: z.literal("none") }),
+    z.object({
+      kind: z.literal("message"),
+      conversationId: z.string().optional(),
+      messageId: z.string().optional(),
+    }),
+    z.object({ kind: z.literal("silence"), reason: z.string().optional() }),
+  ]).optional(),
   error: z.string().optional(),
   usage: z.json().optional(),
   media: z.array(z.union([resourceBlockSchema, procMediaInputSchema])).optional(),
@@ -1567,7 +1580,7 @@ export class Kernel extends DurableObject<Env> {
     }
     if (frame.signal === "proc.run.finished") {
       const payload = userFrame.payload;
-      if (payload?.reason !== "message.sent") {
+      if (payload?.delivery?.kind !== "message") {
         this.runRoutes.delete(runId);
         await setAdapterActivityForKernel(
           this.bindings,
@@ -1934,10 +1947,10 @@ export class Kernel extends DurableObject<Env> {
 
     const payload = frame.payload;
     const response: IpcCompletionResponse = {
-      text: payload?.text ?? null,
+      text: payload?.result?.text ?? null,
       usage: payload?.usage ?? null,
     };
-    if (payload?.media?.length) response.media = payload.media;
+    if (payload?.result?.media?.length) response.media = payload.result.media;
     const status = payload?.status ?? "ok";
     const reason = payload?.reason ?? null;
     const error = payload?.error

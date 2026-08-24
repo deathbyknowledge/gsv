@@ -240,7 +240,16 @@ describe("managed installation routing integration", () => {
         runId,
         status: "ok",
         reason: "message.sent",
-        text: null,
+        result: {
+          text: expect.stringMatching(
+            `^managed:inst_integration_first:uid:[0-9]+:pid:${pid}:run:${runId}$`,
+          ),
+        },
+        delivery: {
+          kind: "message",
+          conversationId: expect.any(String),
+          messageId: expect.any(String),
+        },
       },
     });
     await expect(committed).resolves.toMatchObject({

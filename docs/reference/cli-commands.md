@@ -93,7 +93,7 @@ another owned agent account. Its prompt is fire-and-forget, and any answer
 remains in that child process's history. Unknown options are
 rejected; use `--` before a positional prompt that begins with `-`. Use
 `--non-interactive` for scheduled background work. `proc delegate` creates a
-bounded child and reports the result to its caller as a process event; it
+bounded child whose ordinary final assistant output returns to its caller as a process event; it
 requires a process-backed caller and must not be placed in a crontab.
 `proc send` is asynchronous same-owner process mail. `proc call` is bounded:
 the source process receives either

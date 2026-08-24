@@ -24,6 +24,7 @@ import type {
 import type { ArgsOf, ResultOf, SyscallName, ToolDefinition } from "../syscalls";
 import type { CodeModeExecArgs, CodeModeRunArgs, CodeModeRunResult } from "../syscalls/codemode";
 import { COMPACTION_SUMMARY_SYSTEM_PROMPT } from "../prompts/compaction";
+import { GSV_DELEGATED_TASK_CONTEXT } from "../prompts/system";
 import type {
   AiConfigResult,
   AiTextMessage,
@@ -312,6 +313,24 @@ type TerminalShellCall = {
   parsed: TerminalMessageCommandParseResult;
 };
 
+type RunResult = {
+  text: string | null;
+  media?: MessageAttachment[];
+};
+
+type RunDelivery =
+  | { kind: "none" }
+  | { kind: "message"; conversationId?: string; messageId?: string }
+  | { kind: "silence"; reason?: string };
+
+type TerminalActionResult = {
+  ok: boolean;
+  action: "message" | "silence";
+  text: string;
+  delivery: RunDelivery;
+  error?: string;
+};
+
 type RunOutputMedia = ProcMediaInput & {
   key: string;
   path: string;
@@ -345,7 +364,8 @@ type RunFinishStatus = "ok" | "error" | "aborted";
 type RunFinishOptions = {
   reason: string;
   status?: RunFinishStatus;
-  text?: string | null;
+  resultText?: string | null;
+  delivery?: RunDelivery;
   error?: string | null;
   usage?: AssistantMessage["usage"];
 };
@@ -355,10 +375,10 @@ type RunFinishPayload = {
   runId: string;
   status: RunFinishStatus;
   reason?: string;
-  text: string | null;
+  result: RunResult;
+  delivery: RunDelivery;
   error?: string;
   usage?: AssistantMessage["usage"];
-  media?: MessageAttachment[];
   aborted?: true;
   queuedCount: number;
   timestamp: number;
@@ -727,6 +747,31 @@ const pendingRunFinishSchema: z.ZodType<RunFinishPayload> = z.object({
   runId: z.string(),
   status: z.enum(["ok", "error", "aborted"]),
   reason: z.string().optional(),
+  result: z.object({
+    text: z.string().nullable(),
+    media: z.array(z.union([resourceBlockSchema, runOutputMediaSchema])).optional(),
+  }),
+  delivery: z.discriminatedUnion("kind", [
+    z.object({ kind: z.literal("none") }),
+    z.object({
+      kind: z.literal("message"),
+      conversationId: z.string().optional(),
+      messageId: z.string().optional(),
+    }),
+    z.object({ kind: z.literal("silence"), reason: z.string().optional() }),
+  ]),
+  error: z.string().optional(),
+  usage: assistantUsageSchema.optional(),
+  aborted: z.literal(true).optional(),
+  queuedCount: z.number().int().nonnegative(),
+  timestamp: z.number(),
+  deliveryAttempts: z.number().int().nonnegative().optional(),
+});
+const legacyPendingRunFinishSchema = z.object({
+  pid: z.string(),
+  runId: z.string(),
+  status: z.enum(["ok", "error", "aborted"]),
+  reason: z.string().optional(),
   text: z.string().nullable(),
   error: z.string().optional(),
   usage: assistantUsageSchema.optional(),
@@ -736,7 +781,36 @@ const pendingRunFinishSchema: z.ZodType<RunFinishPayload> = z.object({
   timestamp: z.number(),
   deliveryAttempts: z.number().int().nonnegative().optional(),
 });
-const pendingRunFinishesSchema = z.array(pendingRunFinishSchema);
+const pendingRunFinishesSchema = z.array(z.union([
+  pendingRunFinishSchema,
+  legacyPendingRunFinishSchema,
+])).transform((finishes): RunFinishPayload[] => finishes.map((finish) => {
+  if ("result" in finish) return finish;
+  const delivery: RunDelivery = finish.reason === "message.sent"
+    ? { kind: "message" }
+    : finish.reason === "message.silenced"
+      ? { kind: "silence" }
+      : { kind: "none" };
+  const result: RunResult = { text: finish.text };
+  if (finish.media) result.media = finish.media;
+  const normalized: RunFinishPayload = {
+    pid: finish.pid,
+    runId: finish.runId,
+    status: finish.status,
+    result,
+    delivery,
+    queuedCount: finish.queuedCount,
+    timestamp: finish.timestamp,
+  };
+  if (finish.reason) normalized.reason = finish.reason;
+  if (finish.error) normalized.error = finish.error;
+  if (finish.usage) normalized.usage = finish.usage;
+  if (finish.aborted) normalized.aborted = true;
+  if (finish.deliveryAttempts !== undefined) {
+    normalized.deliveryAttempts = finish.deliveryAttempts;
+  }
+  return normalized;
+}));
 const routedFetchOptionsSchema = z.object({
   timeoutMs: z.number().optional(),
 }).passthrough();
@@ -2166,7 +2240,7 @@ export class Process extends DurableObject<ProcessEnv> {
             await this.finishRun(runId, {
               reason: "schedule.error",
               status: "error",
-              text: null,
+              resultText: null,
               error: error instanceof Error ? error.message : String(error),
             });
           }));
@@ -2230,7 +2304,7 @@ export class Process extends DurableObject<ProcessEnv> {
       this.currentRun = nextRun;
       if (activeRun) {
         this.emitRunFinished(activeRun, {
-          text: null,
+          resultText: null,
           status: "aborted",
           reason: "user.superseded",
         });
@@ -2256,7 +2330,7 @@ export class Process extends DurableObject<ProcessEnv> {
           await this.finishRun(runId, {
             reason: "schedule.error",
             status: "error",
-            text: null,
+            resultText: null,
             error: message,
           });
         }));
@@ -2543,7 +2617,7 @@ export class Process extends DurableObject<ProcessEnv> {
         await this.finishRun(runId, {
           reason: "schedule.error",
           status: "error",
-          text: null,
+          resultText: null,
           error: message,
         });
       }
@@ -2599,7 +2673,7 @@ export class Process extends DurableObject<ProcessEnv> {
       this.emitRunFinished(run, {
         reason,
         status: "error",
-        text: null,
+        resultText: null,
         error: message,
       });
       this.currentRun = null;
@@ -2751,7 +2825,7 @@ export class Process extends DurableObject<ProcessEnv> {
           .catch((error) => this.finishRun(runId, {
             reason: "schedule.error",
             status: "error",
-            text: null,
+            resultText: null,
             error: `Failed to schedule delegated task: ${errorMessageFromUnknown(error)}`,
           })));
 
@@ -2797,7 +2871,7 @@ export class Process extends DurableObject<ProcessEnv> {
       this.rejectCodeModeWaiters(runId, "User interrupted CodeMode execution");
 
       this.emitRunFinished(run, {
-        text: null,
+        resultText: null,
         status: "aborted",
         reason: "user",
       });
@@ -4428,7 +4502,7 @@ export class Process extends DurableObject<ProcessEnv> {
           {
             status: "aborted",
             reason: "process.kill",
-            text: null,
+            resultText: null,
           },
           0,
         )
@@ -4648,7 +4722,7 @@ export class Process extends DurableObject<ProcessEnv> {
       this.emitRunFinished(activeRun, {
         status: "aborted",
         reason,
-        text: null,
+        resultText: null,
       });
     }
     this.currentRun = null;
@@ -4936,7 +5010,7 @@ export class Process extends DurableObject<ProcessEnv> {
         await this.finishRun(runId, {
           reason: "schedule.error",
           status: "error",
-          text: null,
+          resultText: null,
           error: message,
         });
       }));
@@ -5156,7 +5230,7 @@ export class Process extends DurableObject<ProcessEnv> {
         await this.finishRun(runId, {
           reason: "schedule.error",
           status: "error",
-          text: null,
+          resultText: null,
           error: message,
         });
       }));
@@ -5207,7 +5281,7 @@ export class Process extends DurableObject<ProcessEnv> {
         return this.finishRun(runId, {
           reason: "tick.error",
           status: "error",
-          text: null,
+          resultText: null,
           error: `Process run failed: ${errorMessageFromUnknown(error)}`,
         });
       })
@@ -5220,7 +5294,7 @@ export class Process extends DurableObject<ProcessEnv> {
           return this.scheduleTick(runId).catch((error) => this.finishRun(runId, {
             reason: "schedule.error",
             status: "error",
-            text: null,
+            resultText: null,
             error: `Failed to schedule deferred process run: ${errorMessageFromUnknown(error)}`,
           }));
         }
@@ -5316,6 +5390,9 @@ export class Process extends DurableObject<ProcessEnv> {
       }
       this.currentRun = run;
     }
+    const generationSystemPrompt = run.returnToCaller
+      ? `${run.systemPrompt}\n\n${GSV_DELEGATED_TASK_CONTEXT}`
+      : run.systemPrompt;
 
     // Step 4: Build pi-ai Context
     const workTools: Tool[] = (run.tools ?? [])
@@ -5324,7 +5401,9 @@ export class Process extends DurableObject<ProcessEnv> {
         description: tool.description,
         parameters: piToolParametersSchema.parse(tool.inputSchema),
       }));
-    const tools = withTerminalShellInstructions(workTools);
+    const tools = run.returnToCaller
+      ? workTools
+      : withTerminalShellInstructions(workTools);
     run.offeredToolNames = [...new Set(workTools.map((tool) => tool.name))];
     this.currentRun = run;
     const buildGenerationContext = async (): Promise<Context> => {
@@ -5335,14 +5414,14 @@ export class Process extends DurableObject<ProcessEnv> {
       const messages = await this.buildContextMessages();
       this.consumeRuntimeEventsInContext(runId, pendingRuntimeEventsInContext);
       return {
-        systemPrompt: run.systemPrompt,
+        systemPrompt: generationSystemPrompt,
         messages,
         tools: tools.length > 0 ? tools : undefined,
       };
     };
 
     let context: Context = {
-      systemPrompt: run.systemPrompt,
+      systemPrompt: generationSystemPrompt,
       messages: [],
       tools: tools.length > 0 ? tools : undefined,
     };
@@ -5599,7 +5678,7 @@ export class Process extends DurableObject<ProcessEnv> {
         await this.finishRun(runId, {
           reason: "generation.error",
           status: "error",
-          text: null,
+          resultText: null,
           error: displayError,
         });
         return;
@@ -5685,7 +5764,7 @@ export class Process extends DurableObject<ProcessEnv> {
       await this.finishRun(runId, {
         reason: "generation.empty",
         status: "error",
-        text: null,
+        resultText: null,
         error: displayError,
       });
       return;
@@ -5843,12 +5922,7 @@ export class Process extends DurableObject<ProcessEnv> {
       }
     }
 
-    let terminalResult: {
-      ok: boolean;
-      action: "message" | "silence";
-      text: string;
-      error?: string;
-    } | null = null;
+    let terminalResult: TerminalActionResult | null = null;
     const terminalCall = terminalCombinationInvalid ? null : terminalShellCalls[0] ?? null;
     if (terminalCall) {
       terminalResult = await this.executeTerminalAction(runId, terminalCall.parsed, outputMedia);
@@ -5857,8 +5931,12 @@ export class Process extends DurableObject<ProcessEnv> {
         "shell.exec",
         terminalResult.ok
           ? terminalResult.action === "message"
-            ? "Message committed"
-            : "Interaction completed silently"
+            ? terminalResult.delivery.kind === "message"
+              ? "Message committed"
+              : "Result returned to caller"
+            : terminalResult.delivery.kind === "silence"
+              ? "Interaction completed silently"
+              : "Result returned to caller without human delivery"
           : terminalResult.error ?? "Terminal action failed",
         !terminalResult.ok,
         runId,
@@ -5881,11 +5959,16 @@ export class Process extends DurableObject<ProcessEnv> {
       const returnToCaller = this.currentRun?.runId === runId
         && this.currentRun.returnToCaller === true;
       await this.finishRun(runId, {
-        reason: terminalResult.action === "message" ? "message.sent" : "message.silenced",
+        reason: returnToCaller
+          ? "ipc.returned"
+          : terminalResult.action === "message"
+            ? "message.sent"
+            : "message.silenced",
         status: "ok",
-        text: returnToCaller && terminalResult.action === "message"
+        resultText: terminalResult.action === "message"
           ? terminalResult.text
-          : null,
+          : text || null,
+        delivery: terminalResult.delivery,
         usage: response.usage,
       });
     } else if (terminalResult && !terminalResult.ok) {
@@ -5895,7 +5978,7 @@ export class Process extends DurableObject<ProcessEnv> {
         await this.finishRun(runId, {
           reason: "message.action.failed",
           status: "error",
-          text: null,
+          resultText: null,
           error: terminalResult.error ?? "Terminal message action failed",
           usage: response.usage,
         });
@@ -5924,13 +6007,21 @@ export class Process extends DurableObject<ProcessEnv> {
         await this.finishRun(runId, {
           reason: "notify-only.unoffered-tools",
           status: "error",
-          text: text || null,
+          resultText: text || null,
           error: "Mail notification repeatedly returned tools that were not offered",
           usage: response.usage,
         });
       } else {
         await this.scheduleTick(runId);
       }
+    } else if (run.returnToCaller) {
+      await this.finishRun(runId, {
+        reason: "ipc.returned",
+        status: "ok",
+        resultText: text || null,
+        delivery: { kind: "none" },
+        usage: response.usage,
+      });
     } else {
       await this.requireTerminalAction(runId, response.usage, text);
     }
@@ -5971,17 +6062,13 @@ export class Process extends DurableObject<ProcessEnv> {
     runId: string,
     parsed: TerminalMessageCommandParseResult,
     media: RunOutputMedia[],
-  ): Promise<{
-    ok: boolean;
-    action: "message" | "silence";
-    text: string;
-    error?: string;
-  }> {
+  ): Promise<TerminalActionResult> {
     if (!parsed.ok) {
       return {
         ok: false,
         action: parsed.action,
         text: "",
+        delivery: { kind: "none" },
         error: parsed.error,
       };
     }
@@ -5999,6 +6086,9 @@ export class Process extends DurableObject<ProcessEnv> {
         ok: true,
         action: "silence",
         text: parsed.command.reason,
+        delivery: this.currentRun?.runId === runId && this.currentRun.returnToCaller
+          ? { kind: "none" }
+          : { kind: "silence", reason: parsed.command.reason },
       };
     }
 
@@ -6008,6 +6098,7 @@ export class Process extends DurableObject<ProcessEnv> {
         ok: false,
         action: "message",
         text: "",
+        delivery: { kind: "none" },
         error: "Message requires non-empty text or attached media",
       };
     }
@@ -6019,11 +6110,17 @@ export class Process extends DurableObject<ProcessEnv> {
           ok: false,
           action: "message",
           text,
+          delivery: { kind: "none" },
           error: "Message run is no longer active",
         };
       }
       if (run.returnToCaller) {
-        return { ok: true, action: "message", text };
+        return {
+          ok: true,
+          action: "message",
+          text,
+          delivery: { kind: "none" },
+        };
       }
       const commitArgs: ProcessMessageCommitRequestFrame["args"] = {
         runId,
@@ -6046,7 +6143,16 @@ export class Process extends DurableObject<ProcessEnv> {
         throw new Error("Kernel returned no valid message response");
       }
       if (!response.ok) throw new Error(response.error.message);
-      return { ok: true, action: "message", text };
+      return {
+        ok: true,
+        action: "message",
+        text,
+        delivery: {
+          kind: "message",
+          conversationId: response.data.message.conversationId,
+          messageId: response.data.message.id,
+        },
+      };
     } catch (error) {
       const projection = this.messageStreamProjections.get(runId);
       if (projection) {
@@ -6060,6 +6166,7 @@ export class Process extends DurableObject<ProcessEnv> {
         ok: false,
         action: "message",
         text,
+        delivery: { kind: "none" },
         error: error instanceof Error ? error.message : String(error),
       };
     }
@@ -6084,7 +6191,7 @@ export class Process extends DurableObject<ProcessEnv> {
       await this.finishRun(runId, {
         reason: "message.action.missing",
         status: "error",
-        text: draftText || null,
+        resultText: draftText || null,
         error: "The model did not run message send or message silence after correction",
         usage,
       });
@@ -6368,7 +6475,7 @@ export class Process extends DurableObject<ProcessEnv> {
     await this.finishRun(runId, {
       reason: CONTEXT_PROVIDER_OVERFLOW_REASON,
       status: "error",
-      text: null,
+      resultText: null,
       error: message,
     });
   }
@@ -6395,7 +6502,7 @@ export class Process extends DurableObject<ProcessEnv> {
       await this.finishRun(runId, {
         reason: "context.auto_compact.insufficient",
         status: "error",
-        text: null,
+        resultText: null,
         error: message,
       });
     }
@@ -6439,7 +6546,7 @@ export class Process extends DurableObject<ProcessEnv> {
       await this.finishRun(runId, {
         reason: "context.policy.fail",
         status: "error",
-        text: null,
+        resultText: null,
         error: message,
       });
       return "stopped";
@@ -6466,7 +6573,7 @@ export class Process extends DurableObject<ProcessEnv> {
       await this.finishRun(runId, {
         reason: "context.auto_compact.empty",
         status: "error",
-        text: null,
+        resultText: null,
         error: message,
       });
       return "stopped";
@@ -6499,7 +6606,7 @@ export class Process extends DurableObject<ProcessEnv> {
       await this.finishRun(runId, {
         reason: "context.auto_compact.failed",
         status: "error",
-        text: null,
+        resultText: null,
         error: message,
       });
       return "stopped";
@@ -7395,20 +7502,22 @@ export class Process extends DurableObject<ProcessEnv> {
     options: RunFinishOptions,
     queuedCount = this.store.queueSize(),
   ): RunFinishPayload {
+    const result: RunResult = { text: options.resultText ?? null };
+    if (run.outputMediaPersisted && run.outputMedia?.length) {
+      result.media = run.outputMedia.map((item) => this.runOutputMediaResource(item));
+    }
     const payload: RunFinishPayload = {
       pid: this.pid,
       runId: run.runId,
       status: options.status ?? "ok",
-      text: options.text ?? null,
+      result,
+      delivery: options.delivery ?? { kind: "none" },
       queuedCount,
       timestamp: Date.now(),
     };
     if (options.reason) payload.reason = options.reason;
     if (options.error) payload.error = options.error;
     if (options.usage !== undefined) payload.usage = options.usage;
-    if (run.outputMediaPersisted && run.outputMedia?.length) {
-      payload.media = run.outputMedia.map((item) => this.runOutputMediaResource(item));
-    }
     if (options.status === "aborted") payload.aborted = true;
     return payload;
   }
@@ -8326,7 +8435,7 @@ export class Process extends DurableObject<ProcessEnv> {
       await this.finishRun(runId, {
         reason: "schedule.error",
         status: "error",
-        text: null,
+        resultText: null,
         error: `Failed to resume after tool execution: ${errorMessageFromUnknown(error)}`,
       });
     }
@@ -9085,7 +9194,7 @@ export class Process extends DurableObject<ProcessEnv> {
       .catch((error) => this.finishRun(next.runId, {
         reason: "schedule.error",
         status: "error",
-        text: null,
+        resultText: null,
         error: error instanceof Error ? error.message : String(error),
       })));
     return next.runId;

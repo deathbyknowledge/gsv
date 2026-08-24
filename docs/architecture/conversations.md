@@ -30,8 +30,8 @@ work, or remain silent.
 
 ## Explicit delivery
 
-Ordinary assistant text is Process activity. It is never implicitly sent to a user. Every model turn
-ends with exactly one direct Shell terminal command:
+Ordinary assistant text is Process activity. It is never implicitly sent to a user. Every
+human-facing model turn ends with exactly one direct Shell terminal command:
 
 - `message send --message '...'` commits one canonical user-visible message.
 - `message silence --reason '...'` records that no user-visible response is useful.
@@ -43,8 +43,10 @@ Delete, Search, Shell, and CodeMode surface. If a generation returns ordinary te
 command, the Process adds one `[GSV EVENT]` correction and retries once. A second omission ends the
 run with an inspectable error instead of looping indefinitely.
 
-An IPC call is the exception to canonical user delivery: its terminal message returns to the
-calling Process. It does not impersonate a user or append to Ship.
+An IPC call has no implicit human delivery. Ordinary final assistant text becomes the durable
+Process result and returns to the caller as `ipc.reply`; it does not impersonate a user or append
+to Ship. `proc.run.finished` records `result` and `delivery` independently, so silence or failed
+human delivery cannot erase a caller result.
 
 ## Directed endpoints and synchronization
 

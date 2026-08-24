@@ -439,7 +439,8 @@ describe("gateway process controls integration", () => {
           pid: process.pid,
           runId: sent.runId,
           status: "error",
-          text: null,
+          result: { text: null },
+          delivery: { kind: "none" },
         }),
       }));
       const history = await processHistory(runtime, process.pid);

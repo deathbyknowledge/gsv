@@ -144,11 +144,11 @@ The model response can contain text, thinking blocks, and tool calls:
   that explicitly called `proc.observe`.
 - Assistant text, thinking blocks, and tool calls are stored in the `messages`
   table.
-- A direct Shell call to `message send --message '...'` commits exactly one canonical user-visible
+- In a human-facing run, a direct Shell call to `message send --message '...'` commits exactly one canonical user-visible
   message and any media registered by `message attach`. `message silence` finishes without output.
 - Once the Process validates the terminal command, the originating client receives
   `message.started` and `message.delta`. Adapters wait for `message.committed`.
-- Ordinary assistant text without either terminal command causes one `[GSV EVENT]`
+- Ordinary assistant text in a human-facing run without either terminal command causes one `[GSV EVENT]`
   correction. A second omission ends the run with an inspectable bounded error.
 - If there are tool calls, the process evaluates approval rules and dispatches
   each allowed call as a syscall frame.
@@ -201,7 +201,9 @@ schedules/continues the loop:
 4. Background-origin queued messages are promoted as separate runs after the
    current run finishes.
 
-This repeats until the model runs a valid `message send` or `message silence` terminal command.
+This repeats until a human-facing run uses a valid `message send` or `message silence` terminal
+command. A bounded IPC call omits the terminal-delivery instruction and finishes when the worker
+returns ordinary assistant output; that output becomes its caller result.
 
 Tool result content is stored as text. Non-string syscall output is JSON encoded
 for model history.

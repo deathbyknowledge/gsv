@@ -187,7 +187,12 @@ describe("gateway runtime integration", () => {
           runId,
           status: "ok",
           reason: "message.sent",
-          text: null,
+          result: { text: INTEGRATION_REPLY },
+          delivery: {
+            kind: "message",
+            conversationId: expect.any(String),
+            messageId: expect.any(String),
+          },
         }),
       }));
     }

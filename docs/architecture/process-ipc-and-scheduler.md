@@ -65,6 +65,18 @@ IPC acceptance is not completion. A successful send or call means the event was
 started or queued by the target. A call result is delivered later to the source
 process as `ipc.reply` or `ipc.timeout`.
 
+A bounded call is a worker run rather than a human conversation. The worker returns ordinary
+assistant text; it does not need `message send` or `message silence`. The Process finish record
+stores two independent projections:
+
+- `result` is the durable text and media returned to the calling Process;
+- `delivery` records a canonical human message, an explicit silence, or no human delivery.
+
+The Kernel completes `proc.ipc.call` only from `result`. When the reply reaches a caller that is
+already running, the Process persists the event immediately and includes it in the next model
+context; if no provider request is in flight, the current loop can react without waiting for a
+separate queued run.
+
 The target pid is sufficient: IPC cannot select another history inside the
 target process.
 

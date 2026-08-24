@@ -91,7 +91,15 @@ Error:
 {
   "type": "sig",
   "signal": "proc.run.finished",
-  "payload": {},
+  "payload": {
+    "pid": "proc-id",
+    "runId": "run-id",
+    "status": "ok",
+    "result": { "text": "completed work" },
+    "delivery": { "kind": "none" },
+    "queuedCount": 0,
+    "timestamp": 1710000000000
+  },
   "seq": 1
 }
 ```
@@ -373,8 +381,10 @@ current Kernel:
 Canonical `conversation.*` and `message.*` signals are independent of raw
 Process observation. All connected clients for the owner can synchronize the
 same conversation, while only the directed connection receives transient
-Message streaming. A model must explicitly finish an interaction through Shell
-with `message send` or `message silence`; ordinary assistant output remains Process activity.
+Message streaming. A model must explicitly finish a human-facing interaction through Shell with
+`message send` or `message silence`; ordinary assistant output remains Process activity. For a
+bounded IPC worker, ordinary final output becomes `proc.run.finished.payload.result` and
+`delivery.kind` remains `"none"`.
 
 ### Request cancellation
 
