@@ -1,0 +1,44 @@
+{
+  "version": 1,
+  "id": "telegram",
+  "displayName": "Telegram",
+  "description": "Telegram adapter worker",
+  "deployOrder": 3,
+  "wranglerConfig": "wrangler.jsonc",
+  "devStateDirectories": ["gsv-channel-telegram-TelegramAccount"],
+  "standalone": {
+    "main": "dist/cloudflare/channel-telegram/worker/index.js",
+    "bundle": false,
+    "gatewayEntrypoint": "TelegramChannel",
+    "adapterEntrypoint": "TelegramChannel",
+    "durableObjects": [
+      {
+        "binding": "TELEGRAM_ACCOUNT",
+        "className": "TelegramAccount"
+      }
+    ],
+    "requiredSecrets": [],
+    "selfUrlBinding": "TELEGRAM_WEBHOOK_BASE_URL"
+  },
+  "managed": {
+    "main": "adapters/telegram/src/managed.ts",
+    "bundle": true,
+    "gatewayEntrypoint": "ManagedTelegramChannel",
+    "adapterEntrypoint": "ManagedTelegramChannel",
+    "durableObjects": [
+      {
+        "binding": "MANAGED_TELEGRAM_PEER",
+        "className": "ManagedTelegramPeer"
+      },
+      {
+        "binding": "MANAGED_TELEGRAM_PAIRING",
+        "className": "ManagedTelegramPairing"
+      }
+    ],
+    "requiredSecrets": [
+      "TELEGRAM_BOT_TOKEN",
+      "TELEGRAM_WEBHOOK_SECRET",
+      "TELEGRAM_ALLOWED_ACTOR_IDS"
+    ]
+  }
+}

@@ -1,0 +1,22 @@
+{
+  "version": 1,
+  "id": "discord",
+  "displayName": "Discord",
+  "description": "Discord adapter worker",
+  "deployOrder": 2,
+  "wranglerConfig": "wrangler.jsonc",
+  "devStateDirectories": ["gsv-channel-discord-DiscordGateway"],
+  "standalone": {
+    "main": "dist/cloudflare/channel-discord/worker/index.js",
+    "bundle": false,
+    "gatewayEntrypoint": "DiscordChannel",
+    "adapterEntrypoint": "DiscordChannel",
+    "durableObjects": [
+      {
+        "binding": "DISCORD_GATEWAY",
+        "className": "DiscordGateway"
+      }
+    ],
+    "requiredSecrets": []
+  }
+}

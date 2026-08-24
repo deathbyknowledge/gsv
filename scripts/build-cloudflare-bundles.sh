@@ -7,12 +7,6 @@ OUT_DIR="${1:-${ROOT_DIR}/release/local}"
 GSV_RELEASE_REF="${GSV_RELEASE_REF:-dev}"
 GSV_RELEASE_DEFINE="$(node -p 'JSON.stringify(process.argv[1])' "${GSV_RELEASE_REF}")"
 
-ADAPTER_ROWS=()
-ADAPTER_CATALOG_ROWS="$(node "${ROOT_DIR}/scripts/adapter-catalog.mjs")"
-while IFS= read -r row; do
-  ADAPTER_ROWS+=("${row}")
-done <<< "${ADAPTER_CATALOG_ROWS}"
-
 # Prevent macOS tar/cp from emitting AppleDouble sidecar files in bundles.
 export COPYFILE_DISABLE=1
 export COPY_EXTENDED_ATTRIBUTES_DISABLE=1
@@ -22,24 +16,18 @@ install_dir() {
   npm ci --prefix "$dir" --workspaces=false
 }
 
-install_workspaces() {
-  local args=()
-  local workspace
-  for workspace in "$@"; do
-    args+=(--workspace "$workspace")
-  done
-  (
-    cd "${ROOT_DIR}"
-    npm ci "${args[@]}" --include-workspace-root=false --ignore-scripts
-  )
-}
-
 echo "==> Installing dependencies"
-install_workspaces "packages/gsv"
+(cd "${ROOT_DIR}" && npm ci --ignore-scripts)
 npm run build --workspace packages/gsv
 install_dir "${ROOT_DIR}/gateway"
 install_dir "${ROOT_DIR}/web"
 install_dir "${ROOT_DIR}/ripgit"
+
+ADAPTER_ROWS=()
+ADAPTER_CATALOG_ROWS="$(node "${ROOT_DIR}/scripts/adapter-catalog.mjs")"
+while IFS= read -r row; do
+  ADAPTER_ROWS+=("${row}")
+done <<< "${ADAPTER_CATALOG_ROWS}"
 
 for row in "${ADAPTER_ROWS[@]}"; do
   IFS=$'\t' read -r _adapter_id _display_name _component source_dir _wrangler_config _dev_state <<< "${row}"
@@ -123,6 +111,9 @@ writeFileSync(output, `${JSON.stringify({
 NODE
 done
 
+node "${ROOT_DIR}/scripts/build-deployment-manifest.mjs" \
+  "${DIST_DIR}/deployment-manifest.json"
+
 # Remove host-specific metadata files from bundle contents.
 find "${DIST_DIR}" \
   \( -name '._*' -o -name '.DS_Store' -o -path '*/__MACOSX/*' \) \
@@ -131,6 +122,8 @@ find "${DIST_DIR}" \
 echo "==> Creating local tarballs"
 mkdir -p "${OUT_DIR}"
 rm -f "${OUT_DIR}/gsv-cloudflare-"*.tar.gz "${OUT_DIR}/cloudflare-checksums.txt" 2>/dev/null || true
+cp "${DIST_DIR}/deployment-manifest.json" \
+  "${OUT_DIR}/gsv-cloudflare-deployment-manifest.json"
 
 tar -C "${DIST_DIR}" -czf "${OUT_DIR}/gsv-cloudflare-gateway.tar.gz" gateway
 tar -C "${DIST_DIR}" -czf "${OUT_DIR}/gsv-cloudflare-ripgit.tar.gz" ripgit
@@ -141,9 +134,15 @@ done
 
 (
   cd "${OUT_DIR}"
-  sha256sum gsv-cloudflare-*.tar.gz > cloudflare-checksums.txt
+  sha256sum \
+    gsv-cloudflare-*.tar.gz \
+    gsv-cloudflare-deployment-manifest.json \
+    > cloudflare-checksums.txt
 )
 
 echo ""
 echo "Cloudflare bundles ready in: ${OUT_DIR}"
-ls -lh "${OUT_DIR}"/gsv-cloudflare-*.tar.gz "${OUT_DIR}/cloudflare-checksums.txt"
+ls -lh \
+  "${OUT_DIR}"/gsv-cloudflare-*.tar.gz \
+  "${OUT_DIR}/gsv-cloudflare-deployment-manifest.json" \
+  "${OUT_DIR}/cloudflare-checksums.txt"

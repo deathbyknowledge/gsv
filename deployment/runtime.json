@@ -1,0 +1,8 @@
+{
+  "version": 1,
+  "runtime": {
+    "gatewayBundle": "dist/cloudflare/gateway/worker/index.js",
+    "webAssets": "dist/cloudflare/gateway/assets",
+    "ripgitBundle": "dist/cloudflare/ripgit/worker/index.js"
+  }
+}

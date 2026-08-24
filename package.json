@@ -2,6 +2,7 @@
   "name": "gsv",
   "version": "0.4.1",
   "private": true,
+  "type": "module",
   "workspaces": [
     "deployment",
     "extension",
@@ -22,7 +23,11 @@
     "extension:check": "npm run check --workspace extension",
     "extension:build": "npm run build --workspace extension",
     "extension:package": "bash ./scripts/build-extension-package.sh",
-    "deployment:check": "npm run check --workspace deployment",
+    "adapters:check": "node ./scripts/adapter-catalog.mjs >/dev/null",
+    "deployment:check": "npm run check --workspace deployment && npm run adapters:check",
+    "deployment:build": "bash ./scripts/build-cloudflare-bundles.sh ./release/local",
+    "deployment:plan": "npm run deployment:build && alchemy plan --stage standalone",
+    "deployment:deploy": "npm run deployment:build && alchemy deploy --stage standalone",
     "gsv:build": "npm run build --workspace packages/gsv",
     "gsv:check": "npm run typecheck --workspace packages/gsv && npm run gsv:build",
     "version:show": "node ./scripts/version.mjs show",
@@ -35,9 +40,12 @@
     "release:cut:stable": "node ./scripts/release.mjs cut-stable"
   },
   "devDependencies": {
+    "@effect/platform-node": "4.0.0-beta.107",
     "@oxlint/plugins": "1.79.0",
+    "alchemy": "2.0.0-beta.72",
     "ajv": "8.20.0",
     "oxlint": "1.79.0",
+    "effect": "4.0.0-beta.107",
     "ts-json-schema-generator": "2.9.0"
   }
 }
