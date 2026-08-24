@@ -33,6 +33,22 @@ export const adapterDeploymentSchema = z.strictObject({
   managed: z.optional(adapterWorkerDeploymentSchema),
 });
 
+export const adapterSourceManifestSchema = z.strictObject({
+  version: z.literal(GSV_DEPLOYMENT_MANIFEST_VERSION),
+  id: z.string().check(
+    z.minLength(1),
+    z.maxLength(64),
+    z.regex(/^[a-z][a-z0-9-]*$/),
+  ),
+  displayName: z.string().check(z.minLength(1), z.maxLength(80)),
+  description: z.string().check(z.minLength(1)),
+  deployOrder: z.number().check(z.int(), z.positive()),
+  wranglerConfig: z.string().check(z.minLength(1)),
+  devStateDirectories: z.array(z.string().check(z.minLength(1))),
+  standalone: adapterWorkerDeploymentSchema,
+  managed: z.optional(adapterWorkerDeploymentSchema),
+});
+
 const runtimeDeploymentSchema = z.strictObject({
   gatewayBundle: z.string().check(z.minLength(1)),
   webAssets: z.string().check(z.minLength(1)),
@@ -63,3 +79,20 @@ export type AdapterDeploymentManifest = z.infer<
 export type AdapterWorkerDeploymentManifest = z.infer<
   typeof adapterWorkerDeploymentSchema
 >;
+
+export type AdapterSourceManifest = z.infer<
+  typeof adapterSourceManifestSchema
+>;
+
+export const resolveAdapterDeploymentManifest = (
+  adapter: AdapterSourceManifest,
+): AdapterDeploymentManifest => {
+  const deployment: AdapterDeploymentManifest = {
+    id: adapter.id,
+    displayName: adapter.displayName,
+    gatewayBinding: `CHANNEL_${adapter.id.replaceAll("-", "_").toUpperCase()}`,
+    standalone: adapter.standalone,
+  };
+  if (adapter.managed) deployment.managed = adapter.managed;
+  return deployment;
+};

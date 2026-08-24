@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { gsvDeploymentManifestSchema } from "../src/manifest.ts";
+import {
+  gsvDeploymentManifestSchema,
+  resolveAdapterDeploymentManifest,
+} from "../src/manifest.ts";
 
 const manifest = {
   version: 1 as const,
@@ -38,5 +41,21 @@ describe("deployment manifest", () => {
         }],
       })
     ).toThrow();
+  });
+
+  it("resolves deployment identity from a self-contained adapter manifest", () => {
+    expect(resolveAdapterDeploymentManifest({
+      version: 1,
+      id: "matrix-room",
+      displayName: "Matrix",
+      description: "Matrix messaging",
+      deployOrder: 1,
+      wranglerConfig: "wrangler.jsonc",
+      devStateDirectories: [],
+      standalone: manifest.adapters[0].standalone,
+    })).toMatchObject({
+      id: "matrix-room",
+      gatewayBinding: "CHANNEL_MATRIX_ROOM",
+    });
   });
 });
