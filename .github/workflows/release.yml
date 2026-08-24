@@ -260,11 +260,8 @@ jobs:
         with:
           name: gsv-cloudflare-bundles
           path: |
-            release/gsv-cloudflare-gateway.tar.gz
-            release/gsv-cloudflare-ripgit.tar.gz
-            release/gsv-cloudflare-channel-whatsapp.tar.gz
-            release/gsv-cloudflare-channel-discord.tar.gz
-            release/gsv-cloudflare-channel-telegram.tar.gz
+            release/gsv-cloudflare-*.tar.gz
+            release/gsv-cloudflare-deployment-manifest.json
             release/cloudflare-checksums.txt
 
   build-browser-extension:
@@ -327,12 +324,9 @@ jobs:
           cp artifacts/gsv-desktop-darwin-x64/* release/
           cp artifacts/gsv-desktop-darwin-arm64/* release/
 
-          # Cloudflare deploy bundles (modular, per component/channel)
-          cp artifacts/gsv-cloudflare-bundles/gsv-cloudflare-gateway.tar.gz release/
-          cp artifacts/gsv-cloudflare-bundles/gsv-cloudflare-ripgit.tar.gz release/
-          cp artifacts/gsv-cloudflare-bundles/gsv-cloudflare-channel-whatsapp.tar.gz release/
-          cp artifacts/gsv-cloudflare-bundles/gsv-cloudflare-channel-discord.tar.gz release/
-          cp artifacts/gsv-cloudflare-bundles/gsv-cloudflare-channel-telegram.tar.gz release/
+          # Cloudflare deploy bundles (modular, per component/adapter)
+          cp artifacts/gsv-cloudflare-bundles/gsv-cloudflare-*.tar.gz release/
+          cp artifacts/gsv-cloudflare-bundles/gsv-cloudflare-deployment-manifest.json release/
           cp artifacts/gsv-cloudflare-bundles/cloudflare-checksums.txt release/
 
           # Browser extension
@@ -406,12 +400,10 @@ jobs:
 
           ### Cloudflare Bundles
 
-          Cloudflare artifacts are split by component:
-          - \`gsv-cloudflare-gateway.tar.gz\`
-          - \`gsv-cloudflare-ripgit.tar.gz\`
-          - \`gsv-cloudflare-channel-whatsapp.tar.gz\`
-          - \`gsv-cloudflare-channel-discord.tar.gz\`
-          - \`gsv-cloudflare-channel-telegram.tar.gz\`
+          Cloudflare artifacts are split into component archives. The
+          checksum-verified \`gsv-cloudflare-deployment-manifest.json\` describes
+          the runtime and every bundled adapter, so deployment tools do not need
+          a hardcoded adapter list.
 
           ### Browser Extension
 
@@ -495,11 +487,8 @@ jobs:
             release/gsv-transcribe-darwin-x64
             release/gsv-transcribe-darwin-arm64
             release/gsv-transcribe-THIRD_PARTY.md
-            release/gsv-cloudflare-gateway.tar.gz
-            release/gsv-cloudflare-ripgit.tar.gz
-            release/gsv-cloudflare-channel-whatsapp.tar.gz
-            release/gsv-cloudflare-channel-discord.tar.gz
-            release/gsv-cloudflare-channel-telegram.tar.gz
+            release/gsv-cloudflare-*.tar.gz
+            release/gsv-cloudflare-deployment-manifest.json
             release/cloudflare-checksums.txt
             release/gsv-browser-extension.zip
             release/install.sh
