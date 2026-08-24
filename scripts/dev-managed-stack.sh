@@ -2,11 +2,18 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-SERVICES_ROOT="${GSV_MANAGED_SERVICES_ROOT:?Set GSV_MANAGED_SERVICES_ROOT to a directory containing accounts/ and inference/ service implementations}"
+SERVICES_ROOT_INPUT="${GSV_MANAGED_SERVICES_ROOT:?Set GSV_MANAGED_SERVICES_ROOT to a directory containing accounts/ and inference/ service implementations}"
+SERVICES_ROOT="$(cd "$SERVICES_ROOT_INPUT" && pwd -P)"
 ACCOUNTS_DIR="$SERVICES_ROOT/accounts"
 INFERENCE_DIR="$SERVICES_ROOT/inference"
 STATE_DIR="${GSV_MANAGED_DEV_STATE_DIR:-$ROOT_DIR/.wrangler/managed-dev-state}"
 MANAGED_ENV_FILE="${GSV_MANAGED_ENV_FILE:-$ROOT_DIR/scripts/managed.env}"
+MANAGED_ENV_FILE="$(cd "$(dirname "$MANAGED_ENV_FILE")" && pwd -P)/$(basename "$MANAGED_ENV_FILE")"
+
+if [ ! -f "$MANAGED_ENV_FILE" ]; then
+  echo "managed environment file not found: $MANAGED_ENV_FILE" >&2
+  exit 1
+fi
 
 mkdir -p "$STATE_DIR"
 STATE_DIR="$(cd "$STATE_DIR" && pwd -P)"
