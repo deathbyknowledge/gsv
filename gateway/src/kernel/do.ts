@@ -1121,6 +1121,9 @@ export class Kernel extends DurableObject<Env> {
     if (!args.runId) {
       throw new Error("Message runId is invalid");
     }
+    if (!args.actionId) {
+      throw new Error("Message actionId is invalid");
+    }
     let conversation = args.conversationId
       ? this.conversations.get(args.conversationId)
       : null;
@@ -1144,7 +1147,7 @@ export class Kernel extends DurableObject<Env> {
       conversation.id,
       processId,
       args.runId,
-      "output",
+      args.actionId,
     ]);
     const origin: ConversationMessageOrigin = {
       kind: "process",
@@ -1153,7 +1156,7 @@ export class Kernel extends DurableObject<Env> {
     };
     const appendInput: ConversationAppendRequest = {
       messageId,
-      idempotencyKey: `output:${processId}:${args.runId}`,
+      idempotencyKey: `output:${processId}:${args.runId}:${args.actionId}`,
       author: { kind: "process", pid: processId, uid: process.uid },
       text: args.text,
       mediaOwner: {

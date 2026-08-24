@@ -239,7 +239,7 @@ describe("managed installation routing integration", () => {
         pid,
         runId,
         status: "ok",
-        reason: "message.sent",
+        reason: "run.yielded",
         result: {
           text: expect.stringMatching(
             `^managed:inst_integration_first:uid:[0-9]+:pid:${pid}:run:${runId}$`,

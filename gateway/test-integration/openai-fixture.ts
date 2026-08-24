@@ -218,7 +218,7 @@ function writeScriptedResponse(
           id: `message-integration-${requestNumber}`,
           name: "Shell",
           arguments: {
-            input: `message send --message ${shellQuote(scripted.text)}`,
+            input: `message send --message ${shellQuote(scripted.text)} && yield`,
           },
         }]
       : scripted.calls;

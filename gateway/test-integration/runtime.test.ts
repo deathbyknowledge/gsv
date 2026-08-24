@@ -186,7 +186,7 @@ describe("gateway runtime integration", () => {
           pid: spawned.pid,
           runId,
           status: "ok",
-          reason: "message.sent",
+          reason: "run.yielded",
           result: { text: INTEGRATION_REPLY },
           delivery: {
             kind: "message",

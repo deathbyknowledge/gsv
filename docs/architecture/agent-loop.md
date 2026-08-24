@@ -2,7 +2,7 @@
 
 The agent loop is the runtime inside a GSV process. It turns incoming messages,
 signals, and queued work into model calls, syscall requests, tool results, explicit
-`message send` or `message silence` choices, and `proc.run.*` / `proc.changed` signals. The loop is
+`message send` and `yield` choices, and `proc.run.*` / `proc.changed` signals. The loop is
 not tied to one client. CLI chat, browser apps, adapter messages, scheduled work,
 and signal watches all converge on the same Process DO model.
 
@@ -145,14 +145,16 @@ The model response can contain text, thinking blocks, and tool calls:
 - Assistant text, thinking blocks, and tool calls are stored in the `messages`
   table.
 - In a human-facing run, a direct Shell call with a literal `message send <<'GSV_MESSAGE'` block
-  commits exactly one canonical user-visible message and any media registered by `message attach`.
-  `message silence` finishes without output.
-- Once the Process validates the terminal command, the originating client receives
+  commits one canonical user-visible message and any media registered by `message attach`. The run
+  continues, allowing multiple exactly-once messages from one run.
+- A direct `yield` finishes the run. Composing the final send as `message send ... && yield` avoids
+  another generation; a bare `yield` finishes without another Message.
+- Once the Process validates a message command, the originating client receives
   `message.started` and `message.delta`. Adapters wait for `message.committed`.
-- Ordinary assistant text in a human-facing run without either terminal command causes one `[GSV EVENT]`
+- Ordinary assistant text in a human-facing run that stops without yielding causes one `[GSV EVENT]`
   correction. A second omission ends the run with an inspectable bounded error.
-- A rejected terminal command gets five correction attempts. Delivery failures use a separate
-  three-attempt budget and tell the model to retry the exact same terminal command.
+- A rejected message or run-control command gets five correction attempts. Delivery failures use a
+  separate three-attempt budget and tell the model to retry the exact same message command.
 - If there are tool calls, the process evaluates approval rules and dispatches
   each allowed call as a syscall frame.
 
@@ -169,7 +171,7 @@ tool names are `Read`, `Write`, `Edit`, `Delete`, `Search`, `Shell`, and `CodeMo
 they map to `fs.read`, `fs.write`, `fs.edit`, `fs.delete`, `fs.search`,
 `shell.exec`, and `codemode.exec`.
 
-The terminal message commands are Process-owned Shell intrinsics. They do not add model tools,
+The message and run-control commands are Process-owned Shell intrinsics. They do not add model tools,
 require `shell.exec` approval, target a device, or enlarge the composable tool surface. An explicit
 `message send --to ... --also` remains an ordinary approved shell operation for additional or
 cross-channel delivery.
@@ -204,8 +206,8 @@ schedules/continues the loop:
 4. Background-origin queued messages are promoted as separate runs after the
    current run finishes.
 
-This repeats until a human-facing run uses a valid `message send` or `message silence` terminal
-command. A bounded IPC call omits the terminal-delivery instruction and finishes when the worker
+This repeats until a human-facing run uses `yield`. `message send` alone commits a Message and
+continues the loop. A bounded IPC call omits the human-delivery instruction and finishes when the worker
 returns ordinary assistant output; that output becomes its caller result.
 
 Tool result content is stored as text. Non-string syscall output is JSON encoded

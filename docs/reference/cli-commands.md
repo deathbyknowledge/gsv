@@ -67,7 +67,7 @@ message route set --process PID_OR_LABEL [--to here|DESTINATION] [--json]
 message route clear [--to here|DESTINATION] [--json]
 message attach PATH... [--mime TYPE]
 message send [--message TEXT]
-message silence [--reason TEXT]
+yield
 message send --to DESTINATION [--message TEXT] [--attach PATH [--mime TYPE]] [--delivery-id ID] [--also]
 img2txt [caption] [--length short|normal|long] [--stream] IMAGE
 img2txt query --prompt TEXT [--reasoning] [--response-format FORMAT] [--schema JSON] [--stream] IMAGE
@@ -108,10 +108,10 @@ same personal-agent account.
 run, both text and JSON output include an opaque
 destination id suitable for a later `message send --to`; raw provider ids stay
 hidden. `message attach` adds one or more GSV filesystem files to the run's
-eventual terminal message; it does not create an extra message. Existing files
+next current-conversation message; it does not create an extra message. Existing files
 in the current process's `/var/media` directory
-are reused, while other readable files are staged there. Finish with a direct Shell call using a
-literal block, or choose `message silence`:
+are reused, while other readable files are staged there. A direct Shell call using a literal block
+sends a message and leaves the run active:
 
 ```bash
 message send <<'GSV_MESSAGE'
@@ -119,7 +119,9 @@ your user-visible response
 GSV_MESSAGE
 ```
 
-The Process recognizes those terminal commands without shell approval. During an active run,
+Run `yield` when the work is complete. A final message can commit and yield without another model
+turn by placing `&& yield` after the block declaration. The Process recognizes these message and
+run-control commands without shell approval. During an active run,
 `message send --to ... --also` creates an
 additional outbound message or sends to another authorized destination.
 `message destinations` lists observed destinations that are online; `--all`
@@ -138,7 +140,7 @@ app to return to personal intelligence; `route clear` does not clear a DM.
 opaque destination id or unambiguous label from `message destinations --all`.
 `route set` accepts a full or unique process-id prefix or an unambiguous process
 label. A route change controls future inbound messages only, so the run making
-the change keeps its terminal message directed to the conversation that started it.
+the change keeps its direct messages routed to the conversation that started it.
 Repeated `route set` calls from the same current run to the same work process
 are idempotent. Newer private activity or a newer selection fences a late call.
 
@@ -164,7 +166,7 @@ streams decoded UTF-8 chunks; the gateway shell collects those chunks into its
 final `shell.exec` stdout.
 
 `--to here` selects the current adapter endpoint. Any explicit destination send during an active
-run requires `--also`, acknowledging that it is intentionally separate from the terminal message.
+run requires `--also`, acknowledging that it is intentionally sent to an explicit destination.
 `--attach` streams one GSV filesystem
 file; `--mime` overrides the inferred MIME type. Copy a file from a connected
 target to GSV before attaching it:
@@ -172,7 +174,7 @@ target to GSV before attaching it:
 ```bash
 cp laptop:/home/alice/report.pdf /tmp/report.pdf
 message attach /tmp/report.pdf
-message send --message "Here is the report."
+message send --message "Here is the report." && yield
 message send --to here --message "Here is the report." --attach /tmp/report.pdf --also
 ```
 

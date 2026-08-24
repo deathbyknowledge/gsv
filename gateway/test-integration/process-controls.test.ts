@@ -111,7 +111,7 @@ describe("gateway process controls integration", () => {
             toolCalls: [expect.objectContaining({
               name: "Shell",
               arguments: {
-                input: "message send --message 'banana'",
+                input: "message send --message 'banana' && yield",
               },
             })],
           }),
@@ -122,7 +122,7 @@ describe("gateway process controls integration", () => {
           content: expect.objectContaining({
             toolName: "Shell",
             outcome: "completed",
-            output: "Message committed",
+            output: "Message committed and run yielded",
           }),
         }),
       ]);
@@ -261,7 +261,7 @@ describe("gateway process controls integration", () => {
             toolCalls: [expect.objectContaining({
               name: "Shell",
               arguments: {
-                input: `message send --message '${scenario.finalText}'`,
+                input: `message send --message '${scenario.finalText}' && yield`,
               },
             })],
           }),
@@ -271,7 +271,7 @@ describe("gateway process controls integration", () => {
           runId: sent.runId,
           content: expect.objectContaining({
             toolName: "Shell",
-            output: "Message committed",
+            output: "Message committed and run yielded",
           }),
         });
         expect(runtime.ai.requests).toHaveLength(2);

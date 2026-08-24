@@ -693,7 +693,8 @@ describe("native shell capability discovery", () => {
 
     expect(result.ok).toBe(true);
     expect(result.stdout).toContain("GSV live capability manual");
-    expect(result.stdout).toContain("message      Finish interactions, send messages, attach files, and route adapter chats");
+    expect(result.stdout).toContain("message      Send messages, attach files, and route adapter chats");
+    expect(result.stdout).toContain("yield        Finish the active agent run");
     expect(result.stdout).toContain("skills       Inspect and maintain reusable agent workflows");
     expect(result.stdout).not.toContain("GSV manual pages");
   });
@@ -784,7 +785,7 @@ describe("native shell capability discovery", () => {
     expect(result.stdout).toContain("message current [--json]");
     expect(result.stdout).toContain("[--delivery-id ID] [--also]");
     expect(result.stdout).toContain("message send [--message TEXT]");
-    expect(result.stdout).toContain("message silence [--reason TEXT]");
+    expect(result.stdout).toContain("append `&& yield`");
     expect(result.stdout).toContain("message send --to DESTINATION");
     expect(result.stdout).toContain("message route set --process PID_OR_LABEL");
     expect(result.stdout).toContain("personal intelligence");
@@ -3134,8 +3135,8 @@ describe("native administration shell commands", () => {
     const terminalFallback = await handleShellExec({
       input: 'message send --message "terminal reply"',
     }, ctx);
-    const silenceFallback = await handleShellExec({
-      input: 'message silence --reason "nothing useful"',
+    const yieldFallback = await handleShellExec({
+      input: "yield",
     }, ctx);
     const duplicate = await handleShellExec({
       input: 'message send --to here --message "duplicate reply"',
@@ -3146,7 +3147,7 @@ describe("native administration shell commands", () => {
 
     expect(current).toMatchObject({ status: "completed", exitCode: 0 });
     expect(current.stdout).toContain("directed endpoint: Telegram direct message");
-    expect(current.stdout).toContain("separate or cross-channel delivery");
+    expect(current.stdout).toContain("cross-channel delivery");
     const currentOutput = currentDestinationOutputSchema.safeParse(
       JSON.parse(currentJson.stdout),
     );
@@ -3158,12 +3159,12 @@ describe("native administration shell commands", () => {
     expect(current.stdout).not.toContain("chat-42");
     expect(currentJson.stdout).not.toContain("chat-42");
     expect(duplicate.status).toBe("failed");
-    expect(duplicate.stderr).toContain("terminal form");
+    expect(duplicate.stderr).toContain("current-conversation form");
     expect(duplicate.stderr).toContain("--also");
     expect(terminalFallback).toMatchObject({ status: "failed", exitCode: 1 });
     expect(terminalFallback.stderr).toContain("direct Shell tool call");
-    expect(silenceFallback).toMatchObject({ status: "failed", exitCode: 1 });
-    expect(silenceFallback.stderr).toContain("direct Shell tool call");
+    expect(yieldFallback).toMatchObject({ status: "failed", exitCode: 1 });
+    expect(yieldFallback.stderr).toContain("direct Shell tool call");
     expect(intentional).toMatchObject({ status: "completed", exitCode: 0 });
     expect(intentional.stdout).toContain("sent=true");
     expect(intentional.stdout).toMatch(/destination=message-destination:[0-9a-f]{64}/);
@@ -3609,7 +3610,7 @@ describe("native administration shell commands", () => {
     expect(result.stderr).toContain("retry with --delivery-id using this value");
   });
 
-  it("stages files for the active run's terminal message", async () => {
+  it("stages files for the active run's next message", async () => {
     const ctx = makeContext({
       capabilities: ["shell.exec", "fs.read", "fs.write"],
       processRunId: "run-native-file",

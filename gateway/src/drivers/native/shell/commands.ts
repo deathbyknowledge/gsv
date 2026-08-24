@@ -60,6 +60,11 @@ export function buildCustomCommands(
   const targets = buildTargetsCommands(ctx);
   const mediaCommands = buildMediaCommands(fs, ctx, options?.fsTransport);
   const message = buildMessageCommand(fs, ctx);
+  const yieldRun = defineCommand("yield", async (): Promise<ExecResult> => ({
+    stdout: "",
+    stderr: "yield: must be invoked as a direct Shell tool call to finish the active run\n",
+    exitCode: 1,
+  }));
   const netCommands = buildNetCommands(ctx, options?.netFetchTransport);
   const oauth = buildOAuthCommand(ctx);
   const flynn = defineCommand("flynn", async (): Promise<ExecResult> => ({
@@ -86,6 +91,7 @@ export function buildCustomCommands(
     mail,
     ...mediaCommands,
     message,
+    yieldRun,
     skills,
     wiki,
     flynn,

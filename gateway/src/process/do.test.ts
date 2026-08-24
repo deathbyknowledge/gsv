@@ -169,20 +169,33 @@ function messageAction(text: string, id = `message-${crypto.randomUUID()}`) {
     id,
     name: "Shell",
     arguments: {
-      input: `message send <<'GSV_MESSAGE'\n${text}\nGSV_MESSAGE`,
+      input: `message send <<'GSV_MESSAGE' && yield\n${text}\nGSV_MESSAGE`,
     },
   };
 // SAFETY: test fixture is constructed with the asserted domain shape.
 }
 
-function silenceAction(reason: string, id = `silence-${crypto.randomUUID()}`) {
+function messageUpdateAction(text: string, id = `message-${crypto.randomUUID()}`) {
   return {
     // SAFETY: test fixture is constructed with the asserted domain shape.
     type: "toolCall" as const,
     id,
     name: "Shell",
     arguments: {
-      input: `message silence <<'GSV_REASON'\n${reason}\nGSV_REASON`,
+      input: `message send <<'GSV_MESSAGE'\n${text}\nGSV_MESSAGE`,
+    },
+  };
+// SAFETY: test fixture is constructed with the asserted domain shape.
+}
+
+function yieldAction(id = `yield-${crypto.randomUUID()}`) {
+  return {
+    // SAFETY: test fixture is constructed with the asserted domain shape.
+    type: "toolCall" as const,
+    id,
+    name: "Shell",
+    arguments: {
+      input: "yield",
     },
   };
 // SAFETY: test fixture is constructed with the asserted domain shape.
@@ -1896,7 +1909,7 @@ describe("Process DO — mechanical", () => {
             content: 'Tool "CodeMode" was not offered for this generation',
           }),
           expect.objectContaining({
-            content: "Message committed",
+            content: "Message committed and run yielded",
             toolCallId: "mail-message",
           }),
         ]);
@@ -2435,7 +2448,7 @@ describe("Process DO — mechanical", () => {
         )).map((message: any) => [message.toolCallId, message.content])).toEqual([
           ["forged-shell-mixed", 'Tool "Shell" was not offered for this generation'],
           ["offered-read", "read completed"],
-          ["mixed-message", "Message committed"],
+          ["mixed-message", "Message committed and run yielded"],
         ]);
         expect(emitted.some((entry) => entry.signal === "proc.run.hil.requested")).toBe(false);
         expect(emitted.findLast((entry) => entry.signal === "proc.run.finished")?.payload)
@@ -2447,7 +2460,7 @@ describe("Process DO — mechanical", () => {
       });
     });
 
-    it("rejects work tools combined with a terminal action without dispatching them", async () => {
+    it("rejects work tools combined with run control without dispatching them", async () => {
       const pid = "mech-terminal-combination";
       const runId = "run-terminal-combination";
       const stub = await initProcess(pid, ROOT_IDENTITY);
@@ -2495,18 +2508,78 @@ describe("Process DO — mechanical", () => {
         )).map((message: any) => [message.toolCallId, message.content])).toEqual([
           [
             "combined-read",
-            "message send and message silence are terminal commands and cannot be combined with other actions",
+            "message send and yield must be issued separately from other tool actions",
           ],
           [
             "combined-message",
-            "message send and message silence are terminal commands and cannot be combined with other actions",
+            "message send and yield must be issued separately from other tool actions",
           ],
         ]);
         expect(process.scheduleTick).toHaveBeenCalledOnce();
       });
     });
 
-    it("requires one explicit terminal action and bounds the correction", async () => {
+    it("continues after sending an update and finishes only when yielded", async () => {
+      const pid = "mech-message-then-yield";
+      const runId = "run-message-then-yield";
+      const stub = await initProcess(pid, ROOT_IDENTITY);
+
+      await runInDurableObject(stub, async (instance: Process) => {
+        // SAFETY: test fixture is constructed with the asserted domain shape.
+        const process = instance as any;
+        const emitted: Array<{ signal: string; payload: any }> = [];
+        let generationCalls = 0;
+        process.sendSignal = vi.fn(async (signal: string, payload: any) => {
+          emitted.push({ signal, payload });
+        });
+        process.scheduleTick = vi.fn(async () => {});
+        process.generation = {
+          async generate() {
+            generationCalls += 1;
+            return terminalTestResponse(generationCalls === 1
+              ? [messageUpdateAction("I found the issue and I am fixing it.", "progress-send")]
+              : [messageAction("Fixed.", "final-send")]);
+          },
+          async generateText() {
+            return "unused";
+          },
+        };
+        process.store.appendMessage("user", "Fix it and keep me posted.", { runId });
+        process.currentRun = {
+          runId,
+          config: terminalTestConfig(pid),
+          tools: [],
+          devices: [],
+          systemPrompt: "Test system prompt.",
+          approvalPolicy: { default: "auto", rules: [] },
+        };
+
+        await process.runTick(runId);
+
+        expect(process.currentRun).toMatchObject({ runId });
+        expect(process.scheduleTick).toHaveBeenCalledOnce();
+        expect(emitted.some((entry) => entry.signal === "proc.run.finished")).toBe(false);
+        expect(process.store.getMessages().find((message: any) => (
+          message.toolCallId === "progress-send"
+        ))).toMatchObject({ content: "Message committed; run remains active" });
+
+        await process.runTick(runId);
+
+        expect(process.currentRun).toBeNull();
+        expect(process.store.getMessages().find((message: any) => (
+          message.toolCallId === "final-send"
+        ))).toMatchObject({ content: "Message committed and run yielded" });
+        expect(emitted.findLast((entry) => entry.signal === "proc.run.finished")?.payload)
+          .toMatchObject({
+            status: "ok",
+            reason: "run.yielded",
+            result: { text: "Fixed." },
+            delivery: { kind: "message" },
+          });
+      });
+    });
+
+    it("requires an explicit yield and bounds the correction", async () => {
       const pid = "mech-terminal-action-required";
       const runId = "run-terminal-action-required";
       const stub = await initProcess(pid, ROOT_IDENTITY);
@@ -2544,9 +2617,9 @@ describe("Process DO — mechanical", () => {
         const correction = process.store.getMessages().find((message: any) => (
           message.role === "system" && message.runId === runId
         ));
-        expect(correction?.content).toContain("Finish with exactly one direct Shell call");
+        expect(correction?.content).toContain("Run `yield` now");
         expect((await process.buildContextMessages("default"))
-          .find((message: any) => message.content.includes("Finish with exactly one direct Shell call"))
+          .find((message: any) => message.content.includes("Run `yield` now"))
           ?.content).toContain("[GSV EVENT]");
 
         await process.runTick(runId);
@@ -2559,11 +2632,11 @@ describe("Process DO — mechanical", () => {
         .toMatchObject({
           status: "error",
           reason: "message.action.missing",
-          error: "The model did not run message send or message silence after correction",
+          error: "The model did not yield after correction",
         });
     });
 
-    it("gives rejected terminal commands an independent five-attempt budget", async () => {
+    it("gives rejected message commands an independent five-attempt budget", async () => {
       const pid = "mech-terminal-command-recovery";
       const runId = "run-terminal-command-recovery";
       const stub = await initProcess(pid, ROOT_IDENTITY);
@@ -2616,7 +2689,7 @@ describe("Process DO — mechanical", () => {
         expect(process.scheduleTick).toHaveBeenCalledTimes(4);
         expect(process.store.getMessages().find((message: any) => (
           message.toolCallId === "invalid-terminal-1"
-        ))?.content).toContain("Terminal command rejected (attempt 1 of 5)");
+        ))?.content).toContain("Run-control command rejected (attempt 1 of 5)");
 
         await process.runTick(runId);
 
@@ -2624,7 +2697,7 @@ describe("Process DO — mechanical", () => {
           .toMatchObject({
             status: "error",
             reason: "message.command.failed",
-            error: "Terminal message send does not accept --to",
+            error: "message send does not accept --to for the current conversation",
           });
       });
     });
@@ -2645,7 +2718,7 @@ describe("Process DO — mechanical", () => {
           emitted.push({ signal, payload });
         });
         process.scheduleTick = vi.fn(async () => {});
-        process.executeTerminalAction = vi.fn(async () => ({
+        process.executeRunControlAction = vi.fn(async () => ({
           ok: false,
           action: "message",
           text: "hello",
@@ -2683,7 +2756,7 @@ describe("Process DO — mechanical", () => {
         expect(process.currentRun.terminalCorrectionRounds).toBeUndefined();
         expect(process.store.getMessages().find((message: any) => (
           message.toolCallId === "delivery-terminal-1"
-        ))?.content).toContain("Terminal delivery failed (attempt 1 of 3)");
+        ))?.content).toContain("Message delivery failed (attempt 1 of 3)");
 
         await process.runTick(runId);
 
@@ -2716,7 +2789,7 @@ describe("Process DO — mechanical", () => {
           async generate() {
             return terminalTestResponse([
               { type: "thinking", thinking: "No interruption is useful." },
-              silenceAction("Nothing useful to send.", "silence-action"),
+              yieldAction("yield-action"),
             ]);
           },
           async generateText() {
@@ -2747,21 +2820,21 @@ describe("Process DO — mechanical", () => {
       });
 
       expect(result.streamCalls).toEqual([
-        [runId, expect.objectContaining({ id: `draft:${runId}` }), "silenced"],
+        [runId, expect.objectContaining({ id: `draft:${runId}:yield-action` }), "silenced"],
       ]);
-      expect(result.messages.find((message: any) => message.toolCallId === "silence-action"))
-        .toMatchObject({ content: "Interaction completed silently" });
+      expect(result.messages.find((message: any) => message.toolCallId === "yield-action"))
+        .toMatchObject({ content: "Run yielded" });
       expect(result.dispatchCalls).toEqual([]);
       expect(result.emitted.findLast((entry) => entry.signal === "proc.run.finished")?.payload)
         .toMatchObject({
           status: "ok",
-          reason: "message.silenced",
+          reason: "run.yielded",
           result: { text: null },
-          delivery: { kind: "silence", reason: "Nothing useful to send." },
+          delivery: { kind: "none" },
         });
     });
 
-    it("returns ordinary IPC output to its caller without a terminal message command", async () => {
+    it("returns ordinary IPC output to its caller without human run control", async () => {
       const pid = "mech-terminal-ipc-message";
       const runId = "run-terminal-ipc-message";
       const stub = await initProcess(pid, ROOT_IDENTITY);
@@ -2831,7 +2904,7 @@ describe("Process DO — mechanical", () => {
           async generate() {
             return terminalTestResponse([
               { type: "text", text: "Useful private result." },
-              silenceAction("No human delivery.", "ipc-silence"),
+              yieldAction("ipc-yield"),
             ]);
           },
           async generateText() {
@@ -2873,8 +2946,8 @@ describe("Process DO — mechanical", () => {
         const process = instance as any;
         process.currentRun = { runId };
         process.emitMessageStream = vi.fn(async () => {});
-        await process.completeMessageStream(runId, "Hello");
-        await process.completeMessageStream(runId, "Goodbye");
+        await process.completeMessageStream(runId, "message-1", "Hello");
+        await process.completeMessageStream(runId, "message-1", "Goodbye");
         return process.emitMessageStream.mock.calls;
       });
 
@@ -3766,15 +3839,13 @@ describe("Process DO — mechanical", () => {
         .toMatchObject({
           runId: "run-final-reply-media",
           result: {
-            media: [expect.objectContaining({
-              type: "resource",
-              ref: expect.objectContaining({
-                path: expect.stringMatching(/^\/root\/\.gsv\/media\/archived-media:[0-9a-f]{64}$/),
-              }),
-            })],
+            text: "Here is the report.",
           },
         });
-      // SAFETY: test fixture is constructed with the asserted domain shape.
+      const finishedPayload = result.emitted.find((entry) =>
+        entry.signal === "proc.run.finished"
+      )?.payload;
+      expect(finishedPayload).not.toHaveProperty("result.media");
       // SAFETY: test fixture is constructed with the asserted domain shape.
       const archivedKey = (result.history as any).messages
         .find((message: any) => message.role === "assistant").content.media[0].path
@@ -4040,7 +4111,7 @@ describe("Process DO — mechanical", () => {
       const finished = result.emitted.find((entry) => entry.signal === "proc.run.finished")?.payload as any;
       expect(finished).toMatchObject({
         status: "ok",
-        reason: "message.sent",
+        reason: "run.yielded",
         result: { text: "visible answer" },
         delivery: { kind: "message" },
       });
@@ -4198,7 +4269,7 @@ describe("Process DO — mechanical", () => {
       const finished = result.emitted.find((entry) => entry.signal === "proc.run.finished")?.payload as any;
       expect(finished).toMatchObject({
         status: "ok",
-        reason: "message.sent",
+        reason: "run.yielded",
         result: { text: "recovered" },
         delivery: { kind: "message" },
       });
@@ -4517,7 +4588,7 @@ describe("Process DO — mechanical", () => {
       const finished = result.emitted.find((entry) => entry.signal === "proc.run.finished")?.payload as any;
       expect(finished).toMatchObject({
         status: "ok",
-        reason: "message.sent",
+        reason: "run.yielded",
       });
     });
 
@@ -13045,7 +13116,7 @@ describe("Process DO — mechanical", () => {
         "checking",
         "stable result",
         "provider completed during archive",
-        expect.stringContaining("This interaction is not complete"),
+        expect.stringContaining("This run is not complete"),
       ]);
       expect(result.origin).toMatchObject({
         kind: "adapter",

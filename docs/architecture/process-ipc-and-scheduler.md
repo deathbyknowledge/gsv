@@ -66,7 +66,7 @@ started or queued by the target. A call result is delivered later to the source
 process as `ipc.reply` or `ipc.timeout`.
 
 A bounded call is a worker run rather than a human conversation. The worker returns ordinary
-assistant text; it does not need `message send` or `message silence`. The Process finish record
+assistant text; it does not need `message send` or `yield`. The Process finish record
 stores two independent projections:
 
 - `result` is the durable text and media returned to the calling Process;

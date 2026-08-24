@@ -1,62 +1,96 @@
-export type TerminalMessageCommand =
-  | { action: "message"; text: string }
-  | { action: "silence"; reason: string };
+export type RunControlCommand =
+  | { action: "message"; text: string; finish: boolean }
+  | { action: "yield" };
 
-export type TerminalMessageCommandParseResult =
-  | { ok: true; command: TerminalMessageCommand }
-  | { ok: false; action: TerminalMessageCommand["action"]; error: string };
+export type RunControlCommandParseResult =
+  | { ok: true; command: RunControlCommand }
+  | { ok: false; action: RunControlCommand["action"]; error: string };
 
-export function parseTerminalMessageCommand(
+export function parseRunControlCommand(
   input: string,
-): TerminalMessageCommandParseResult | null {
-  const heredoc = parseTerminalHeredoc(input);
+): RunControlCommandParseResult | null {
+  const heredoc = parseMessageHeredoc(input);
   if (heredoc) return heredoc;
 
-  const words = tokenizeLiteralShellCommand(input);
-  if (!words) return parseOpaqueMessageSend(input);
-  if (words[0] !== "message") return null;
-  const action = words[1];
-  if (action !== "send" && action !== "silence") return null;
-  if (action === "send" && hasAdditionalSendFlag(words.slice(2))) return null;
+  const composed = splitYieldSuffix(input);
+  if (composed) {
+    const message = parseMessageCommand(composed);
+    if (!message) return null;
+    if (!message.ok) return message;
+    if (message.command.action !== "message") return null;
+    return {
+      ok: true,
+      command: { ...message.command, finish: true },
+    };
+  }
 
-  const parsed = action === "send"
-    ? parseMessageSend(words.slice(2))
-    : parseMessageSilence(words.slice(2));
-  if (parsed.ok || action === "silence") return parsed;
-  return parseOpaqueMessageSend(input) ?? parsed;
+  const words = tokenizeLiteralShellCommand(input);
+  if (!words) return parseOpaqueMessageSend(input, false);
+  if (words[0] === "yield") {
+    return words.length === 1
+      ? { ok: true, command: { action: "yield" } }
+      : { ok: false, action: "yield", error: "yield does not accept arguments" };
+  }
+  return parseMessageWords(input, words, false);
 }
 
-function parseTerminalHeredoc(input: string): TerminalMessageCommandParseResult | null {
+function parseMessageHeredoc(input: string): RunControlCommandParseResult | null {
   const normalized = input.replaceAll("\r\n", "\n");
   const lines = normalized.split("\n");
   if (lines.length < 2) return null;
   const header = lines.shift() ?? "";
-  const match = /^message[ \t]+(send|silence)[ \t]+<<[ \t]*(?:'([^']+)'|"([^"]+)"|([A-Za-z_][A-Za-z0-9_]*))[ \t]*$/.exec(header);
+  const match = /^message[ \t]+send[ \t]+<<[ \t]*(?:'([^']+)'|"([^"]+)"|([A-Za-z_][A-Za-z0-9_]*))(?:[ \t]+&&[ \t]+yield)?[ \t]*$/.exec(header);
   if (!match) return null;
-  const action = match[1] === "send" ? "message" : "silence";
-  const delimiter = match[2] ?? match[3] ?? match[4] ?? "";
+  const finish = /&&[ \t]+yield[ \t]*$/.test(header);
+  const delimiter = match[1] ?? match[2] ?? match[3] ?? "";
   if (!/^[A-Za-z_][A-Za-z0-9_]{0,63}$/.test(delimiter)) {
     return {
       ok: false,
-      action,
-      error: "Terminal message block delimiter is invalid",
+      action: "message",
+      error: "Message block delimiter is invalid",
     };
   }
   if (lines.at(-1) === "") lines.pop();
   if (lines.pop() !== delimiter) {
     return {
       ok: false,
-      action,
-      error: `Terminal message block must end with ${delimiter} on its own line`,
+      action: "message",
+      error: `Message block must end with ${delimiter} on its own line`,
     };
   }
-  const text = lines.join("\n");
-  return action === "message"
-    ? { ok: true, command: { action, text } }
-    : { ok: true, command: { action, reason: text } };
+  return {
+    ok: true,
+    command: { action: "message", text: lines.join("\n"), finish },
+  };
 }
 
-function parseOpaqueMessageSend(input: string): TerminalMessageCommandParseResult | null {
+function splitYieldSuffix(input: string): string | null {
+  const match = /^([\s\S]*\S)[ \t]+&&[ \t]+yield[ \t]*$/.exec(input);
+  return match?.[1] ?? null;
+}
+
+function parseMessageCommand(input: string): RunControlCommandParseResult | null {
+  const words = tokenizeLiteralShellCommand(input);
+  if (!words) return parseOpaqueMessageSend(input, false);
+  return parseMessageWords(input, words, false);
+}
+
+function parseMessageWords(
+  input: string,
+  words: string[],
+  finish: boolean,
+): RunControlCommandParseResult | null {
+  if (words[0] !== "message" || words[1] !== "send") return null;
+  if (hasAdditionalSendFlag(words.slice(2))) return null;
+  const parsed = parseMessageSend(words.slice(2), finish);
+  if (parsed.ok) return parsed;
+  return parseOpaqueMessageSend(input, finish) ?? parsed;
+}
+
+function parseOpaqueMessageSend(
+  input: string,
+  finish: boolean,
+): RunControlCommandParseResult | null {
   const match = /^message[ \t]+send[ \t]+--message(?:[ \t]+([\s\S]*))?$/.exec(input);
   if (!match) return null;
   const rawText = match[1];
@@ -64,7 +98,7 @@ function parseOpaqueMessageSend(input: string): TerminalMessageCommandParseResul
     return {
       ok: false,
       action: "message",
-      error: "Terminal message send requires a value after --message",
+      error: "message send requires a value after --message",
     };
   }
   const text = rawText.trim();
@@ -75,7 +109,7 @@ function parseOpaqueMessageSend(input: string): TerminalMessageCommandParseResul
     && last === first
     ? text.slice(1, -1)
     : text;
-  return { ok: true, command: { action: "message", text: unwrapped } };
+  return { ok: true, command: { action: "message", text: unwrapped, finish } };
 }
 
 function hasAdditionalSendFlag(args: string[]): boolean {
@@ -94,7 +128,10 @@ function hasAdditionalSendFlag(args: string[]): boolean {
   return false;
 }
 
-function parseMessageSend(args: string[]): TerminalMessageCommandParseResult {
+function parseMessageSend(
+  args: string[],
+  finish: boolean,
+): RunControlCommandParseResult {
   let text = "";
   let hasMessage = false;
   for (let index = 0; index < args.length; index += 1) {
@@ -103,14 +140,14 @@ function parseMessageSend(args: string[]): TerminalMessageCommandParseResult {
       return {
         ok: false,
         action: "message",
-        error: `Terminal message send does not accept ${current}`,
+        error: `message send does not accept ${current} for the current conversation`,
       };
     }
     if (hasMessage) {
       return {
         ok: false,
         action: "message",
-        error: "Terminal message send accepts --message once",
+        error: "message send accepts --message once",
       };
     }
     index += 1;
@@ -118,46 +155,13 @@ function parseMessageSend(args: string[]): TerminalMessageCommandParseResult {
       return {
         ok: false,
         action: "message",
-        error: "Terminal message send requires a value after --message",
+        error: "message send requires a value after --message",
       };
     }
     text = args[index];
     hasMessage = true;
   }
-  return { ok: true, command: { action: "message", text } };
-}
-
-function parseMessageSilence(args: string[]): TerminalMessageCommandParseResult {
-  let reason = "";
-  let hasReason = false;
-  for (let index = 0; index < args.length; index += 1) {
-    const current = args[index];
-    if (current !== "--reason") {
-      return {
-        ok: false,
-        action: "silence",
-        error: `Terminal message silence does not accept ${current}`,
-      };
-    }
-    if (hasReason) {
-      return {
-        ok: false,
-        action: "silence",
-        error: "Terminal message silence accepts --reason once",
-      };
-    }
-    index += 1;
-    if (index >= args.length) {
-      return {
-        ok: false,
-        action: "silence",
-        error: "Terminal message silence requires a value after --reason",
-      };
-    }
-    reason = args[index];
-    hasReason = true;
-  }
-  return { ok: true, command: { action: "silence", reason } };
+  return { ok: true, command: { action: "message", text, finish } };
 }
 
 function tokenizeLiteralShellCommand(input: string): string[] | null {

@@ -194,6 +194,7 @@ export type ProcessResourceResponseFrame =
 
 export type ProcessMessageCommitArgs = {
   runId: string;
+  actionId: string;
   conversationId?: string;
   text: string;
   media?: ResourceBlock[];

@@ -71,8 +71,6 @@ async function runMessageCommand(
       return attachToReply(rest, shellCtx, fs, ctx);
     case "send":
       return await sendMessage(rest, shellCtx, fs, ctx);
-    case "silence":
-      return silenceMessage(rest, ctx);
     default:
       throw new Error(`unknown command: ${subcommand}\n${messageUsage()}`);
   }
@@ -202,8 +200,9 @@ async function showCurrentReplyDestination(
     `directed endpoint: ${current.label}`,
     `transport: ${current.transport}`,
     ...(destinationId ? [`destination: ${destinationId}`] : []),
-    "Finish with a literal `message send <<'GSV_MESSAGE'` block here, or `message silence`.",
-    "Use `message send --to ... --also` for a separate or cross-channel delivery.",
+    "Use a literal `message send <<'GSV_MESSAGE'` block to send here without finishing the run.",
+    "Run `yield` when the work is complete, or compose the final send with `&& yield`.",
+    "Use `message send --to ... --also` for a cross-channel delivery.",
     "",
   ].join("\n"));
 }
@@ -474,10 +473,10 @@ async function sendMessage(
   const activeRun = Boolean(ctx.processId && ctx.processRunId);
   if (activeRun && !also) {
     throw new Error(
-      "the terminal form of message send must be invoked as a direct Shell tool call; use --also for an additional outbound message",
+      "the current-conversation form of message send must be invoked as a direct Shell tool call; use --also for an explicit outbound destination",
     );
   }
-  if (!to) throw new Error("message send requires --to outside its terminal form");
+  if (!to) throw new Error("message send requires --to outside its direct current-conversation form");
   if (!text?.trim() && !attachmentPath) {
     throw new Error("message send requires --message or --attach");
   }
@@ -539,23 +538,6 @@ async function sendMessage(
     ...(result.deliveryState ? [`delivery_state=${result.deliveryState}`] : []),
     "",
   ].join("\n"));
-}
-
-function silenceMessage(args: string[], ctx: KernelContext): ExecResult {
-  let reason: string | undefined;
-  for (let index = 0; index < args.length; index += 1) {
-    const current = args[index];
-    if (current !== "--reason") throw new Error(`unexpected argument: ${current}`);
-    if (reason !== undefined) throw new Error("message silence accepts --reason once");
-    index += 1;
-    reason = requireShellOptionValue(args[index], current);
-  }
-  if (!ctx.processId || !ctx.processRunId) {
-    throw new Error("message silence requires an active process run");
-  }
-  throw new Error(
-    "message silence must be invoked as a direct Shell tool call so the Process can finish the run",
-  );
 }
 
 async function openAttachment(
@@ -687,11 +669,11 @@ function messageUsage(): string {
     "  message route clear [--to here|DESTINATION] [--json]",
     "  message attach PATH... [--mime TYPE]",
     "  message send [--message TEXT]",
-    "  message silence [--reason TEXT]",
     "  message send --to DESTINATION [--message TEXT] [--attach PATH [--mime TYPE]] [--delivery-id ID] [--also]",
     "",
-    "Finish the current run with a literal `message send <<'GSV_MESSAGE'` block, or `message silence`.",
-    "`message attach` adds files to that eventual terminal message.",
+    "A literal `message send <<'GSV_MESSAGE'` block sends to the current conversation and keeps the run active.",
+    "Run `yield` when work is complete, or append `&& yield` to the message block header.",
+    "`message attach` adds files to the next current-conversation message.",
     "Inside an active run, --also is required for a separate or cross-channel send.",
     "Use `message destinations` and copy its opaque GSV id; do not use provider ids.",
     "Use `message route` to inspect routing, open a private-DM work direct line from personal,",
@@ -714,7 +696,7 @@ function messageRouteUsage(): string {
     "intelligence can use `set` to open a direct line to owned non-personal work.",
     "Use /ship inside the DM to return to Ship.",
     "The destination defaults to the current adapter chat. Changes affect future inbound messages;",
-    "the current run's terminal message remains directed to the endpoint that started it.",
+    "the current run's direct messages remain directed to the endpoint that started it.",
     "",
   ].join("\n");
 }

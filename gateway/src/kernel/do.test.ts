@@ -1029,6 +1029,7 @@ describe("Kernel canonical message commits", () => {
 
     const message = await kernel.commitProcessMessage("proc-1", {
       runId: "run-1",
+      actionId: "send-1",
       conversationId: conversation.id,
       text: "hello",
     });
@@ -1096,6 +1097,7 @@ describe("Kernel canonical message commits", () => {
 
     const message = await kernel.commitProcessMessage("proc-1", {
       runId: "run-background",
+      actionId: "send-background",
       text: "new mail",
     });
 
@@ -1122,12 +1124,43 @@ describe("Kernel canonical message commits", () => {
 
     await kernel.commitProcessMessage("proc-1", {
       runId: "run-disconnected-client",
+      actionId: "send-disconnected",
       conversationId: conversation.id,
       text: "stays in Ship",
     });
 
     expect(kernel.materializePersonalAdapterFallback).not.toHaveBeenCalled();
     expect(kernel.queueAdapterSignalDelivery).not.toHaveBeenCalled();
+  });
+
+  it("uses a distinct idempotency identity for every send in one run", async () => {
+    const kernel = buildCommitKernel(null);
+    kernel.connections = new Map();
+    const stub = conversationStub();
+    getConversationByIdMock.mockReset();
+    getConversationByIdMock.mockReturnValue(stub);
+
+    await kernel.commitProcessMessage("proc-1", {
+      runId: "run-multiple-sends",
+      actionId: "progress-send",
+      conversationId: conversation.id,
+      text: "Still working.",
+    });
+    await kernel.commitProcessMessage("proc-1", {
+      runId: "run-multiple-sends",
+      actionId: "final-send",
+      conversationId: conversation.id,
+      text: "Finished.",
+    });
+
+    expect(stub.append.mock.calls.map(([input]: [any]) => input.idempotencyKey)).toEqual([
+      "output:proc-1:run-multiple-sends:progress-send",
+      "output:proc-1:run-multiple-sends:final-send",
+    ]);
+    expect(stub.append.mock.calls.map(([input]: [any]) => input.messageId))
+      .toEqual([expect.any(String), expect.any(String)]);
+    expect(stub.append.mock.calls[0][0].messageId)
+      .not.toBe(stub.append.mock.calls[1][0].messageId);
   });
 });
 

@@ -230,9 +230,9 @@ import {
 } from "../codemode/request";
 import { formatAgentToolResponse, materializeToolResponse } from "./tool-response";
 import {
-  parseTerminalMessageCommand,
-  type TerminalMessageCommandParseResult,
-} from "./terminal-message-command";
+  parseRunControlCommand,
+  type RunControlCommandParseResult,
+} from "./run-control-command";
 import {
   extractStoredFsReadResource,
   extractFsReadResource,
@@ -309,9 +309,9 @@ type MessageStreamProjection = {
   aborted: boolean;
 };
 
-type TerminalShellCall = {
+type RunControlShellCall = {
   toolCall: ToolCall;
-  parsed: TerminalMessageCommandParseResult;
+  parsed: RunControlCommandParseResult;
 };
 
 type RunResult = {
@@ -324,16 +324,17 @@ type RunDelivery =
   | { kind: "message"; conversationId?: string; messageId?: string }
   | { kind: "silence"; reason?: string };
 
-type TerminalActionResult =
+type RunControlResult =
   | {
       ok: true;
-      action: "message" | "silence";
+      action: "message" | "yield";
+      finish: boolean;
       text: string;
       delivery: RunDelivery;
     }
   | {
       ok: false;
-      action: "message" | "silence";
+      action: "message" | "yield";
       text: string;
       delivery: { kind: "none" };
       failureKind: "command" | "delivery";
@@ -519,10 +520,10 @@ const USER_INTERRUPTED_TOOL_MESSAGE = "User interrupted tool execution";
 const MAX_TERMINAL_CORRECTION_ROUNDS = 1;
 const MAX_TERMINAL_COMMAND_FAILURES = 5;
 const MAX_TERMINAL_DELIVERY_FAILURES = 3;
-const TERMINAL_MESSAGE_BLOCK_EXAMPLE =
-  "message send <<'GSV_MESSAGE'\nyour user-visible response\nGSV_MESSAGE";
-const TERMINAL_ACTION_INSTRUCTION =
-  `After all work is complete, finish this interaction with exactly one direct Shell call using this literal block:\n${TERMINAL_MESSAGE_BLOCK_EXAMPLE}\nOr run \`message silence\` if no user-visible response is useful. Ordinary assistant text is Process activity and is not sent to the user.`;
+const FINAL_MESSAGE_BLOCK_EXAMPLE =
+  "message send <<'GSV_MESSAGE' && yield\nyour user-visible response\nGSV_MESSAGE";
+const RUN_CONTROL_INSTRUCTION =
+  `Use a direct \`message send\` Shell call whenever the user should receive a message; sending does not finish the run. After all work is complete, run \`yield\`, or compose the final message as:\n${FINAL_MESSAGE_BLOCK_EXAMPLE}\nOrdinary assistant text is Process activity and is not sent to the user.`;
 const USER_SUPERSEDED_TOOL_MESSAGE =
   "Cancelled for this agent run because a newer user message arrived; the underlying operation may still complete";
 const TOOL_EXECUTION_DENIED_BY_USER_MESSAGE = "Tool execution denied by user";
@@ -588,15 +589,15 @@ const terminalShellToolArgsSchema = z.object({
   cwd: z.string().optional(),
   timeout: z.number().optional(),
 }).strict();
-const TERMINAL_SHELL_TOOL: Tool = {
+const RUN_CONTROL_SHELL_TOOL: Tool = {
   name: "Shell",
-  description: `Run a GSV shell command. ${TERMINAL_ACTION_INSTRUCTION}`,
+  description: `Run a GSV shell command. ${RUN_CONTROL_INSTRUCTION}`,
   parameters: {
     type: "object",
     properties: {
       input: {
         type: "string",
-        description: "The terminal message command to run on GSV.",
+        description: "The message or run-control command to run on GSV.",
       },
     },
     required: ["input"],
@@ -5417,7 +5418,7 @@ export class Process extends DurableObject<ProcessEnv> {
       }));
     const tools = run.returnToCaller
       ? workTools
-      : withTerminalShellInstructions(workTools);
+      : withRunControlInstructions(workTools);
     run.offeredToolNames = [...new Set(workTools.map((tool) => tool.name))];
     this.currentRun = run;
     const buildGenerationContext = async (): Promise<Context> => {
@@ -5795,21 +5796,21 @@ export class Process extends DurableObject<ProcessEnv> {
     const returnedToolCalls = response.content.filter(
       (b): b is ToolCall => b.type === "toolCall",
     );
-    const terminalShellCalls = returnedToolCalls
-      .map(terminalShellCall)
-      .filter((call): call is TerminalShellCall => call !== null);
-    const terminalToolCallIds = new Set(
-      terminalShellCalls.map(({ toolCall }) => toolCall.id),
+    const runControlShellCalls = returnedToolCalls
+      .map(runControlShellCall)
+      .filter((call): call is RunControlShellCall => call !== null);
+    const runControlToolCallIds = new Set(
+      runControlShellCalls.map(({ toolCall }) => toolCall.id),
     );
     const workToolNames = new Set((run.tools ?? []).map((tool) => tool.name));
     const toolCalls = returnedToolCalls.filter((toolCall) => (
-      workToolNames.has(toolCall.name) && !terminalToolCallIds.has(toolCall.id)
+      workToolNames.has(toolCall.name) && !runControlToolCallIds.has(toolCall.id)
     ));
     const unofferedToolCalls = returnedToolCalls.filter((toolCall) => (
-      !workToolNames.has(toolCall.name) && !terminalToolCallIds.has(toolCall.id)
+      !workToolNames.has(toolCall.name) && !runControlToolCallIds.has(toolCall.id)
     ));
-    const terminalCombinationInvalid = terminalShellCalls.length > 1
-      || (terminalShellCalls.length === 1 && (
+    const runControlCombinationInvalid = runControlShellCalls.length > 1
+      || (runControlShellCalls.length === 1 && (
         toolCalls.length > 0 || unofferedToolCalls.length > 0
       ));
     if (unofferedToolCalls.length > 0) {
@@ -5871,11 +5872,11 @@ export class Process extends DurableObject<ProcessEnv> {
         }
       }
       for (const toolCall of toolCalls) {
-        if (terminalCombinationInvalid) {
+        if (runControlCombinationInvalid) {
           this.store.appendToolResult(
             toolCall.id,
             TOOL_TO_SYSCALL[toolCall.name] ?? toolCall.name,
-            "message send and message silence are terminal commands and cannot be combined with other actions",
+            "message send and yield must be issued separately from other tool actions",
             true,
             runId,
             "failed",
@@ -5910,12 +5911,12 @@ export class Process extends DurableObject<ProcessEnv> {
           "failed",
         );
       }
-      if (terminalCombinationInvalid) {
-        for (const { toolCall } of terminalShellCalls) {
+      if (runControlCombinationInvalid) {
+        for (const { toolCall } of runControlShellCalls) {
           this.store.appendToolResult(
             toolCall.id,
             "shell.exec",
-            "message send and message silence are terminal commands and cannot be combined with other actions",
+            "message send and yield must be issued separately from other tool actions",
             true,
             runId,
             "failed",
@@ -5936,21 +5937,26 @@ export class Process extends DurableObject<ProcessEnv> {
       }
     }
 
-    let terminalResult: TerminalActionResult | null = null;
-    let terminalFailureAttempt: { count: number; limit: number } | null = null;
-    const terminalCall = terminalCombinationInvalid ? null : terminalShellCalls[0] ?? null;
-    if (terminalCall) {
-      terminalResult = await this.executeTerminalAction(runId, terminalCall.parsed, outputMedia);
-      if (!terminalResult.ok) {
-        if (terminalResult.failureKind === "command") {
+    let runControlResult: RunControlResult | null = null;
+    let runControlFailureAttempt: { count: number; limit: number } | null = null;
+    const runControlCall = runControlCombinationInvalid ? null : runControlShellCalls[0] ?? null;
+    if (runControlCall) {
+      runControlResult = await this.executeRunControlAction(
+        runId,
+        runControlCall.toolCall.id,
+        runControlCall.parsed,
+        outputMedia,
+      );
+      if (!runControlResult.ok) {
+        if (runControlResult.failureKind === "command") {
           run.terminalCommandFailures = (run.terminalCommandFailures ?? 0) + 1;
-          terminalFailureAttempt = {
+          runControlFailureAttempt = {
             count: run.terminalCommandFailures,
             limit: MAX_TERMINAL_COMMAND_FAILURES,
           };
         } else {
           run.terminalDeliveryFailures = (run.terminalDeliveryFailures ?? 0) + 1;
-          terminalFailureAttempt = {
+          runControlFailureAttempt = {
             count: run.terminalDeliveryFailures,
             limit: MAX_TERMINAL_DELIVERY_FAILURES,
           };
@@ -5958,22 +5964,20 @@ export class Process extends DurableObject<ProcessEnv> {
         this.currentRun = run;
       }
       this.store.appendToolResult(
-        terminalCall.toolCall.id,
+        runControlCall.toolCall.id,
         "shell.exec",
-        terminalResult.ok
-          ? terminalResult.action === "message"
-            ? terminalResult.delivery.kind === "message"
-              ? "Message committed"
-              : "Result returned to caller"
-            : terminalResult.delivery.kind === "silence"
-              ? "Interaction completed silently"
-              : "Result returned to caller without human delivery"
-          : terminalResult.failureKind === "command"
-            ? `Terminal command rejected (attempt ${terminalFailureAttempt?.count ?? 1} of ${terminalFailureAttempt?.limit ?? MAX_TERMINAL_COMMAND_FAILURES}): ${terminalResult.error}\nUse a literal block:\n${TERMINAL_MESSAGE_BLOCK_EXAMPLE}`
-            : `Terminal delivery failed (attempt ${terminalFailureAttempt?.count ?? 1} of ${terminalFailureAttempt?.limit ?? MAX_TERMINAL_DELIVERY_FAILURES}): ${terminalResult.error}\nRetry the exact same terminal command unchanged.`,
-        !terminalResult.ok,
+        runControlResult.ok
+          ? runControlResult.action === "message"
+            ? runControlResult.finish
+              ? "Message committed and run yielded"
+              : "Message committed; run remains active"
+            : "Run yielded"
+          : runControlResult.failureKind === "command"
+            ? `Run-control command rejected (attempt ${runControlFailureAttempt?.count ?? 1} of ${runControlFailureAttempt?.limit ?? MAX_TERMINAL_COMMAND_FAILURES}): ${runControlResult.error}\nSend with a literal message block, and run \`yield\` only when the work is complete.`
+            : `Message delivery failed (attempt ${runControlFailureAttempt?.count ?? 1} of ${runControlFailureAttempt?.limit ?? MAX_TERMINAL_DELIVERY_FAILURES}): ${runControlResult.error}\nRetry the exact same message command unchanged.`,
+        !runControlResult.ok,
         runId,
-        terminalResult.ok ? "completed" : "failed",
+        runControlResult.ok ? "completed" : "failed",
       );
       await this.emitProcChanged(["messages"], { runId });
       if (this.handleRunStopped(runId)) return;
@@ -5988,41 +5992,41 @@ export class Process extends DurableObject<ProcessEnv> {
       return;
     }
 
-    if (terminalResult?.ok) {
-      const returnToCaller = this.currentRun?.runId === runId
-        && this.currentRun.returnToCaller === true;
-      await this.finishRun(runId, {
-        reason: returnToCaller
-          ? "ipc.returned"
-          : terminalResult.action === "message"
-            ? "message.sent"
-            : "message.silenced",
-        status: "ok",
-        resultText: terminalResult.action === "message"
-          ? terminalResult.text
-          : text || null,
-        delivery: terminalResult.delivery,
-        usage: response.usage,
-      });
-    } else if (terminalResult && !terminalResult.ok) {
-      const exhausted = terminalResult.failureKind === "command"
-        ? (run.terminalCommandFailures ?? 0) >= MAX_TERMINAL_COMMAND_FAILURES
-        : (run.terminalDeliveryFailures ?? 0) >= MAX_TERMINAL_DELIVERY_FAILURES;
-      if (exhausted) {
+    if (runControlResult?.ok) {
+      if (runControlResult.finish) {
+        const returnToCaller = this.currentRun?.runId === runId
+          && this.currentRun.returnToCaller === true;
         await this.finishRun(runId, {
-          reason: terminalResult.failureKind === "command"
-            ? "message.command.failed"
-            : "message.delivery.failed",
-          status: "error",
-          resultText: null,
-          error: terminalResult.error,
+          reason: returnToCaller ? "ipc.returned" : "run.yielded",
+          status: "ok",
+          resultText: runControlResult.action === "message"
+            ? runControlResult.text
+            : text || null,
+          delivery: runControlResult.delivery,
           usage: response.usage,
         });
       } else {
         await this.scheduleTick(runId);
       }
-    } else if (terminalCombinationInvalid) {
-      await this.requireTerminalAction(runId, response.usage, text);
+    } else if (runControlResult && !runControlResult.ok) {
+      const exhausted = runControlResult.failureKind === "command"
+        ? (run.terminalCommandFailures ?? 0) >= MAX_TERMINAL_COMMAND_FAILURES
+        : (run.terminalDeliveryFailures ?? 0) >= MAX_TERMINAL_DELIVERY_FAILURES;
+      if (exhausted) {
+        await this.finishRun(runId, {
+          reason: runControlResult.failureKind === "command"
+            ? "message.command.failed"
+            : "message.delivery.failed",
+          status: "error",
+          resultText: null,
+          error: runControlResult.error,
+          usage: response.usage,
+        });
+      } else {
+        await this.scheduleTick(runId);
+      }
+    } else if (runControlCombinationInvalid) {
+      await this.requireRunYield(runId, response.usage, text);
     } else if (toolCalls.length > 0) {
       const pendingHil = await this.processToolCalls(runId);
       if (this.handleRunStopped(runId)) {
@@ -6059,7 +6063,7 @@ export class Process extends DurableObject<ProcessEnv> {
         usage: response.usage,
       });
     } else {
-      await this.requireTerminalAction(runId, response.usage, text);
+      await this.requireRunYield(runId, response.usage, text);
     }
   }
 
@@ -6094,11 +6098,12 @@ export class Process extends DurableObject<ProcessEnv> {
     return adaptGeneratedAssistantMessage(result.message);
   }
 
-  private async executeTerminalAction(
+  private async executeRunControlAction(
     runId: string,
-    parsed: TerminalMessageCommandParseResult,
+    actionId: string,
+    parsed: RunControlCommandParseResult,
     media: RunOutputMedia[],
-  ): Promise<TerminalActionResult> {
+  ): Promise<RunControlResult> {
     if (!parsed.ok) {
       return {
         ok: false,
@@ -6109,23 +6114,18 @@ export class Process extends DurableObject<ProcessEnv> {
         error: parsed.error,
       };
     }
-    if (parsed.command.action === "silence") {
-      const projection = this.messageStreamProjections.get(runId);
-      if (projection) {
-        await this.abortMessageStream(runId, projection, "Interaction completed silently");
-      }
+    if (parsed.command.action === "yield") {
       await this.emitMessageStream(
         runId,
-        projection ?? this.messageStreamProjection(runId),
+        this.messageStreamProjection(runId, actionId),
         "silenced",
       );
       return {
         ok: true,
-        action: "silence",
-        text: parsed.command.reason,
-        delivery: this.currentRun?.runId === runId && this.currentRun.returnToCaller
-          ? { kind: "none" }
-          : { kind: "silence", reason: parsed.command.reason },
+        action: "yield",
+        finish: true,
+        text: "",
+        delivery: { kind: "none" },
       };
     }
 
@@ -6141,7 +6141,7 @@ export class Process extends DurableObject<ProcessEnv> {
       };
     }
     try {
-      await this.completeMessageStream(runId, text);
+      await this.completeMessageStream(runId, actionId, text);
       const run = this.currentRun;
       if (!run || run.runId !== runId) {
         return {
@@ -6157,12 +6157,14 @@ export class Process extends DurableObject<ProcessEnv> {
         return {
           ok: true,
           action: "message",
+          finish: parsed.command.finish,
           text,
           delivery: { kind: "none" },
         };
       }
       const commitArgs: ProcessMessageCommitRequestFrame["args"] = {
         runId,
+        actionId,
         text,
       };
       if (run.conversationId) {
@@ -6182,9 +6184,12 @@ export class Process extends DurableObject<ProcessEnv> {
         throw new Error("Kernel returned no valid message response");
       }
       if (!response.ok) throw new Error(response.error.message);
+      this.consumeRunOutputMedia(runId, media);
+      this.messageStreamProjections.delete(this.messageStreamProjectionKey(runId, actionId));
       return {
         ok: true,
         action: "message",
+        finish: parsed.command.finish,
         text,
         delivery: {
           kind: "message",
@@ -6193,7 +6198,9 @@ export class Process extends DurableObject<ProcessEnv> {
         },
       };
     } catch (error) {
-      const projection = this.messageStreamProjections.get(runId);
+      const projection = this.messageStreamProjections.get(
+        this.messageStreamProjectionKey(runId, actionId),
+      );
       if (projection) {
         await this.abortMessageStream(
           runId,
@@ -6212,27 +6219,20 @@ export class Process extends DurableObject<ProcessEnv> {
     }
   }
 
-  private async requireTerminalAction(
+  private async requireRunYield(
     runId: string,
     usage: AssistantMessage["usage"],
     draftText: string,
   ): Promise<void> {
     const run = this.currentRun;
     if (!run || run.runId !== runId) return;
-    const projection = this.messageStreamProjections.get(runId);
-    if (projection) {
-      await this.abortMessageStream(
-        runId,
-        projection,
-        "The model did not run a valid terminal message command",
-      );
-    }
+    await this.abortRunMessageStreams(runId, "The model did not yield");
     if ((run.terminalCorrectionRounds ?? 0) >= MAX_TERMINAL_CORRECTION_ROUNDS) {
       await this.finishRun(runId, {
         reason: "message.action.missing",
         status: "error",
         resultText: draftText || null,
-        error: "The model did not run message send or message silence after correction",
+        error: "The model did not yield after correction",
         usage,
       });
       return;
@@ -6240,9 +6240,9 @@ export class Process extends DurableObject<ProcessEnv> {
     run.terminalCorrectionRounds = (run.terminalCorrectionRounds ?? 0) + 1;
     this.currentRun = run;
     const message = [
-      "This interaction is not complete. Ordinary assistant text is Process activity and is not sent to the user.",
-      `Finish with exactly one direct Shell call using this literal block:\n${TERMINAL_MESSAGE_BLOCK_EXAMPLE}`,
-      "Or run `message silence` if no user-visible response is useful.",
+      "This run is not complete. Ordinary assistant text is Process activity and is not sent to the user.",
+      "Run `yield` now if the work is complete.",
+      `If the user still needs a final message, send and finish with:\n${FINAL_MESSAGE_BLOCK_EXAMPLE}`,
     ].join("\n");
     this.store.appendMessage("system", message, { runId });
     await this.emitProcChanged(["messages"], {
@@ -6447,7 +6447,7 @@ export class Process extends DurableObject<ProcessEnv> {
       this.emitRunFinished(run, options);
       this.currentRun = null;
       this.runAbortControllers.delete(runId);
-      this.messageStreamProjections.delete(runId);
+      this.deleteRunMessageStreams(runId);
       this.store.clearPendingHil();
       console.log(`[Process] Finished run ${runId}`);
 
@@ -7371,22 +7371,31 @@ export class Process extends DurableObject<ProcessEnv> {
     };
   }
 
-  private messageStreamProjection(runId: string): MessageStreamProjection {
-    let projection = this.messageStreamProjections.get(runId);
+  private messageStreamProjectionKey(runId: string, actionId: string): string {
+    return `${runId}:${actionId}`;
+  }
+
+  private messageStreamProjection(runId: string, actionId: string): MessageStreamProjection {
+    const key = this.messageStreamProjectionKey(runId, actionId);
+    let projection = this.messageStreamProjections.get(key);
     if (!projection) {
       projection = {
-        id: `draft:${runId}`,
+        id: `draft:${runId}:${actionId}`,
         started: false,
         text: "",
         aborted: false,
       };
-      this.messageStreamProjections.set(runId, projection);
+      this.messageStreamProjections.set(key, projection);
     }
     return projection;
   }
 
-  private async completeMessageStream(runId: string, text: string): Promise<void> {
-    const projection = this.messageStreamProjection(runId);
+  private async completeMessageStream(
+    runId: string,
+    actionId: string,
+    text: string,
+  ): Promise<void> {
+    const projection = this.messageStreamProjection(runId, actionId);
     if (projection.aborted) return;
     if (!projection.started) {
       projection.started = true;
@@ -7400,6 +7409,34 @@ export class Process extends DurableObject<ProcessEnv> {
     const delta = text.slice(projection.text.length);
     projection.text = text;
     if (delta) await this.emitMessageStream(runId, projection, "delta", delta);
+  }
+
+  private async abortRunMessageStreams(runId: string, reason: string): Promise<void> {
+    const prefix = `${runId}:`;
+    for (const [key, projection] of this.messageStreamProjections) {
+      if (!key.startsWith(prefix)) continue;
+      await this.abortMessageStream(runId, projection, reason);
+    }
+  }
+
+  private deleteRunMessageStreams(runId: string): void {
+    const prefix = `${runId}:`;
+    for (const key of this.messageStreamProjections.keys()) {
+      if (key.startsWith(prefix)) this.messageStreamProjections.delete(key);
+    }
+  }
+
+  private consumeRunOutputMedia(runId: string, media: RunOutputMedia[]): void {
+    const run = this.currentRun;
+    if (!run || run.runId !== runId || media.length === 0) return;
+    const consumed = new Set(media.map((item) => item.key));
+    run.outputMedia = (run.outputMedia ?? []).filter((item) => !consumed.has(item.key));
+    if (run.outputMedia.length === 0) {
+      delete run.outputMedia;
+      delete run.outputMediaPersisted;
+      delete run.stagedOutputMediaKeys;
+    }
+    this.currentRun = run;
   }
 
   private async abortMessageStream(
@@ -9263,24 +9300,24 @@ function conversationRunState(
   }
 }
 
-function withTerminalShellInstructions(workTools: Tool[]): Tool[] {
+function withRunControlInstructions(workTools: Tool[]): Tool[] {
   let foundShell = false;
   const tools = workTools.map((tool) => {
     if (tool.name !== "Shell") return tool;
     foundShell = true;
     return {
       ...tool,
-      description: `${tool.description} ${TERMINAL_ACTION_INSTRUCTION}`,
+      description: `${tool.description} ${RUN_CONTROL_INSTRUCTION}`,
     };
   });
-  return foundShell ? tools : [...tools, TERMINAL_SHELL_TOOL];
+  return foundShell ? tools : [...tools, RUN_CONTROL_SHELL_TOOL];
 }
 
-function terminalShellCall(toolCall: ToolCall): TerminalShellCall | null {
+function runControlShellCall(toolCall: ToolCall): RunControlShellCall | null {
   if (toolCall.name !== "Shell") return null;
   const args = terminalShellToolArgsSchema.safeParse(toolCall.arguments);
   if (!args.success) return null;
-  const parsed = parseTerminalMessageCommand(args.data.input);
+  const parsed = parseRunControlCommand(args.data.input);
   return parsed ? { toolCall, parsed } : null;
 }
 

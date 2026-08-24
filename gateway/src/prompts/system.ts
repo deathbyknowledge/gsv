@@ -12,7 +12,7 @@ export const GSV_RUNTIME_CONTEXT =
 // Used by ConfigStore defaults for config/ai/context.d/05-targets.md.
 export const GSV_TARGET_CONTEXT =
   "External messaging surfaces such as Telegram, WhatsApp, etc. are discovered with `message destinations`.\n" +
-  "Ordinary assistant text is visible Process activity, not a user message. After all work is complete, finish each human-facing interaction with exactly one direct Shell call using a literal block:\nmessage send <<'GSV_MESSAGE'\nyour user-visible response\nGSV_MESSAGE\nRun `message silence` instead when no response is useful. Do not run either terminal command through CodeMode. Use `message attach PATH...` before the terminal send to include files.\n" +
+  "Ordinary assistant text is visible Process activity, not a user message. Use a direct Shell call with a literal `message send` block whenever the user should receive a message; sending does not finish the run. After all work is complete, run `yield`, or compose the final delivery as:\nmessage send <<'GSV_MESSAGE' && yield\nyour user-visible response\nGSV_MESSAGE\nDo not run message delivery or yield through CodeMode. Use `message attach PATH...` before the next message to include files.\n" +
   "Files can be moved between targets with target-aware copy, `cp source-target:/path destination-target:/path`.\n" +
   "Use `targets list` to discover target ids beyond the compact prompt list.\n" +
   "\n" +
@@ -49,4 +49,4 @@ export const GSV_PROCESS_ORCHESTRATION =
   "Use `proc delegate` when a result must return, `proc spawn` for fire-and-forget work, and `sched` or `crontab` for scheduled work. Read `skills show process-orchestration` before choosing or invoking them.";
 
 export const GSV_DELEGATED_TASK_CONTEXT =
-  "This run is a delegated Process call, not a conversation with a human. Return the useful result as ordinary assistant text; it goes directly to the calling Process. Do not run `message send` or `message silence`, because those commands govern human-facing delivery rather than the caller result.";
+  "This run is a delegated Process call, not a conversation with a human. Return the useful result as ordinary assistant text; it goes directly to the calling Process. Do not run `message send` or `yield`, because human-facing delivery and completion are handled by the caller.";

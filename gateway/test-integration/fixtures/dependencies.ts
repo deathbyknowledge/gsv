@@ -150,7 +150,7 @@ export class ManagedInferenceFixture
           id: `managed-message-${input.logicalRequestId}`,
           name: "Shell",
           arguments: {
-            input: `message send --message ${shellQuote(text)}`,
+            input: `message send --message ${shellQuote(text)} && yield`,
           },
         }]
       : [{ type: "text", text }];

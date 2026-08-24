@@ -30,10 +30,11 @@ work, or remain silent.
 
 ## Explicit delivery
 
-Ordinary assistant text is Process activity. It is never implicitly sent to a user. Every
-human-facing model turn ends with exactly one direct Shell terminal command:
+Ordinary assistant text is Process activity. It is never implicitly sent to a user. Human-facing
+delivery and run completion are separate operations:
 
-- A literal block commits one canonical user-visible message without interpreting its contents:
+- A literal block commits a canonical user-visible message without interpreting its contents. The
+  run remains active, so the intelligence can update the user and then continue working:
 
   ```bash
   message send <<'GSV_MESSAGE'
@@ -41,16 +42,26 @@ human-facing model turn ends with exactly one direct Shell terminal command:
   GSV_MESSAGE
   ```
 
-- `message silence` records that no user-visible response is useful.
+- `yield` finishes the run while preserving its durable Process. A bare `yield` completes without
+  another user-visible message.
+- A final message composes both operations with ordinary shell success semantics:
 
-The Process recognizes these exact, literal commands inside a direct `Shell` call before normal
-shell dispatch. They do not require `shell.exec` capability or approval, cannot target a device, and
-cannot be invoked indirectly through CodeMode. The model receives only the fixed Read, Write, Edit,
-Delete, Search, Shell, and CodeMode surface. If a generation returns ordinary text without a terminal
-command, the Process adds one `[GSV EVENT]` correction and retries once. A second omission ends the
-run with an inspectable error instead of looping indefinitely. An attempted but malformed terminal
-command has its own five-attempt recovery budget. Delivery failures are tracked separately, so they
-cannot exhaust either omission or command correction.
+  ```bash
+  message send <<'GSV_MESSAGE' && yield
+  your final user-visible response
+  GSV_MESSAGE
+  ```
+
+The Process recognizes these exact commands inside a direct `Shell` call before normal shell
+dispatch. They do not require `shell.exec` capability or approval, cannot target a device, and cannot
+be invoked indirectly through CodeMode. The model receives only the fixed Read, Write, Edit, Delete,
+Search, Shell, and CodeMode surface. A successful send returns a tool result and schedules the next
+model turn unless it was composed with `yield`. If a generation stops without yielding, the Process
+adds one `[GSV EVENT]` correction and retries once. A second omission ends the run with an inspectable
+error instead of looping indefinitely. A malformed message or run-control command has its own
+five-attempt recovery budget. Delivery failures are tracked separately, so they cannot exhaust either
+omission or command correction. Each send has a stable action id, allowing several exactly-once
+Messages in one run and safe replay after an uncertain response.
 
 An IPC call has no implicit human delivery. Ordinary final assistant text becomes the durable
 Process result and returns to the caller as `ipc.reply`; it does not impersonate a user or append
@@ -63,7 +74,7 @@ The run route identifies the endpoint that caused the interaction. It controls i
 not conversation ownership:
 
 - The originating Web/Desktop/CLI connection receives `message.started` and `message.delta` once
-  the terminal command has been validated, then `message.committed`.
+  each message command has been validated, then `message.committed`.
 - Other signed-in clients receive only the committed canonical message as synchronization. They do
   not play a notification or act as though the response was directed to them.
 - Adapters buffer Process output and deliver only the committed message. Provider-specific reply
