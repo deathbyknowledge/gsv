@@ -1441,7 +1441,7 @@ async function resolveClaimedAdapterInbound(input: {
     return {
       ok: true,
       reply: {
-        text: `[PERSONAL HOME] Returned to ${personal ? describeProcessRoute(personal) : shortProcessId(personalPid)}.`,
+        text: `[SHIP] Returned to ${personal ? describeProcessRoute(personal) : shortProcessId(personalPid)}.`,
         replyToId: message.messageId,
       },
     };
@@ -1931,7 +1931,7 @@ function conversationForAdapterInbound(
   }
   if (message.surface.kind === "dm") {
     return process.isPersonalController
-      ? ctx.conversations.ensureHome(uid, pid)
+      ? ctx.conversations.ensureShip(uid, pid)
       : ctx.conversations.ensureWork(uid, pid, process.label);
   }
   return ctx.conversations.ensureGroup(
@@ -2589,19 +2589,19 @@ async function handleAdapterCommand(args: {
     return replyToAdapterCommand(
       message,
       selection.route
-        ? `[INTERNAL WORK / WORK SESSION] ${describeProcessRoute(selection.process)} [${selection.process.state}]. Use /home to return.`
-        : `[PERSONAL HOME] ${describeProcessRoute(selection.process)} [${selection.process.state}].`,
+        ? `[INTERNAL WORK / WORK SESSION] ${describeProcessRoute(selection.process)} [${selection.process.state}]. Use /ship to return.`
+        : `[SHIP] ${describeProcessRoute(selection.process)} [${selection.process.state}].`,
     );
   }
 
-  if (parsed.name === "home") {
+  if (parsed.name === "ship") {
     const selectedRoute = ctx.adapters.surfaceRoutes.resolveRoute(routeKey);
     if (!selectedRoute) {
       const personalPid = await ensurePersonalController(uid, ctx);
       const personal = ctx.procs.get(personalPid);
       return replyToAdapterCommand(
         message,
-        `[PERSONAL HOME] Already using ${personal ? describeProcessRoute(personal) : shortProcessId(personalPid)}.`,
+        `[SHIP] Already using ${personal ? describeProcessRoute(personal) : shortProcessId(personalPid)}.`,
       );
     }
 
@@ -2632,7 +2632,7 @@ async function handleAdapterCommand(args: {
     const personal = ctx.procs.get(personalPid);
     return replyToAdapterCommand(
       message,
-      `[PERSONAL HOME] Returned to ${personal ? describeProcessRoute(personal) : shortProcessId(personalPid)}.`,
+      `[SHIP] Returned to ${personal ? describeProcessRoute(personal) : shortProcessId(personalPid)}.`,
     );
   }
 

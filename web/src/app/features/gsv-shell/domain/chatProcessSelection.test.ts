@@ -71,7 +71,7 @@ describe("chat process selection", () => {
     expect(selectPersonalChatProcess([second, first], 1000, first.pid)).toBeNull();
   });
 
-  it("returns no home process when the canonical marker is absent", () => {
+  it("returns no Ship process when the canonical marker is absent", () => {
     expect(selectPersonalChatProcess([process("work")], 1000)).toBeNull();
   });
 
@@ -120,11 +120,11 @@ describe("chat process selection", () => {
   });
 
   it("resolves an explicit non-personal process only as a work session", () => {
-    const home = process("home", { personal: true });
+    const ship = process("ship", { personal: true });
     const work = process("work");
 
-    expect(selectWorkSessionProcess([home, work], work.pid, 1000)?.pid).toBe(work.pid);
-    expect(selectWorkSessionProcess([home, work], home.pid, 1000)).toBeNull();
+    expect(selectWorkSessionProcess([ship, work], work.pid, 1000)?.pid).toBe(work.pid);
+    expect(selectWorkSessionProcess([ship, work], ship.pid, 1000)).toBeNull();
   });
 
   it("rejects listed and pending work owned by another viewer", () => {
@@ -146,16 +146,16 @@ describe("chat process selection", () => {
   });
 
   it("rejects an unknown or stale process id as a Work session", () => {
-    const home = process("home", { personal: true });
+    const ship = process("ship", { personal: true });
     const targets = resolveChatProcessTargets({
       ownerUid: 1000,
-      processes: [home],
-      personalPid: home.pid,
+      processes: [ship],
+      personalPid: ship.pid,
       workSessionPid: "missing-work",
     });
 
     expect(targets).toMatchObject({
-      activeProcess: home,
+      activeProcess: ship,
       targetedProcess: null,
       workSessionActive: false,
       workSessionProcess: null,
@@ -176,39 +176,39 @@ describe("chat process selection", () => {
   });
 
   it("keeps the personal target stored while a temporary work session is active", () => {
-    const home = process("home", { personal: true });
+    const ship = process("ship", { personal: true });
     const work = process("work");
     const duringWork = resolveChatProcessTargets({
       ownerUid: 1000,
-      processes: [work, home],
-      personalPid: home.pid,
+      processes: [work, ship],
+      personalPid: ship.pid,
       workSessionPid: work.pid,
     });
     const afterWork = resolveChatProcessTargets({
       ownerUid: 1000,
-      processes: [work, home],
-      personalPid: home.pid,
+      processes: [work, ship],
+      personalPid: ship.pid,
       workSessionPid: null,
     });
 
-    expect(duringWork.personalProcess?.pid).toBe(home.pid);
+    expect(duringWork.personalProcess?.pid).toBe(ship.pid);
     expect(duringWork.activeProcess?.pid).toBe(work.pid);
     expect(duringWork.workSessionActive).toBe(true);
-    expect(afterWork.activeProcess?.pid).toBe(home.pid);
+    expect(afterWork.activeProcess?.pid).toBe(ship.pid);
   });
 
   it("opens newly spawned pending work without adopting it as personal", () => {
-    const home = process("home", { personal: true });
+    const ship = process("ship", { personal: true });
     const pendingWork = process("new-work");
     const targets = resolveChatProcessTargets({
       ownerUid: 1000,
-      processes: [home],
+      processes: [ship],
       pendingProcess: pendingWork,
-      personalPid: home.pid,
+      personalPid: ship.pid,
       workSessionPid: pendingWork.pid,
     });
 
-    expect(targets.personalProcess?.pid).toBe(home.pid);
+    expect(targets.personalProcess?.pid).toBe(ship.pid);
     expect(targets.activeProcess?.pid).toBe(pendingWork.pid);
     expect(targets.workSessionActive).toBe(true);
   });

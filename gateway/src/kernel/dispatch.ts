@@ -127,7 +127,7 @@ import { handleMailStatus } from "./outbound-status";
 import {
   handleConversationForProcess,
   handleConversationHistory,
-  handleConversationHome,
+  handleConversationShip,
   handleConversationList,
   handleConversationMediaRead,
   handleConversationSend,
@@ -334,8 +334,8 @@ async function dispatchNative(
         data = handleMailStatus(frame.args, ctx);
         break;
 
-      case "conversation.home":
-        data = await handleConversationHome(ctx);
+      case "conversation.ship":
+        data = await handleConversationShip(ctx);
         break;
       case "conversation.forProcess":
         data = await handleConversationForProcess(frame.args, ctx);

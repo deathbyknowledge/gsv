@@ -75,10 +75,10 @@ describe("Kernel personal controller connect lifecycle", () => {
     const ctx = {
       auth: { isPersonalAgentUid: vi.fn(() => false) },
       conversations: {
-        ensureHome: vi.fn(() => ({
-          id: "conv:home",
+        ensureShip: vi.fn(() => ({
+          id: "conv:ship",
           ownerUid: 1000,
-          kind: "home",
+          kind: "ship",
         })),
       },
     };
@@ -108,7 +108,7 @@ describe("Kernel personal controller connect lifecycle", () => {
     const kernel = Object.create(Kernel.prototype) as any;
     const ctx = {
       auth: { isPersonalAgentUid: vi.fn(() => false) },
-      conversations: { ensureHome: vi.fn() },
+      conversations: { ensureShip: vi.fn() },
     };
     const connection = { id: "connection-1", setState: vi.fn() };
     kernel.buildContext = vi.fn(() => ctx);

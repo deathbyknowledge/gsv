@@ -325,7 +325,7 @@ const SYSCALL_NAMES = [
   "codemode.run",
   "mail.send",
   "mail.status",
-  "conversation.home",
+  "conversation.ship",
   "conversation.forProcess",
   "conversation.list",
   "conversation.history",

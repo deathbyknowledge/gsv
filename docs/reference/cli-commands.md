@@ -30,7 +30,7 @@ gsv chat [MESSAGE] [--pid PID]
 gsv shell
 ```
 
-`chat` resolves the Home or selected Work conversation and sends with
+`chat` resolves the Ship or selected Work conversation and sends with
 `conversation.send`. With `MESSAGE`, it waits for the canonical
 `message.committed` and matching `proc.run.finished` signals for up to 120
 seconds. The
@@ -124,7 +124,7 @@ provider account, actor, surface, and message ids are not printed.
 set` and `route clear` manage persistent mappings for groups, channels, and
 threads. On a private DM, only the canonical personal process can use `route
 set`, only from the exact latest inbound run on that DM, and only to an owned
-interactive non-personal process. The human uses `/home` inside the messaging
+interactive non-personal process. The human uses `/ship` inside the messaging
 app to return to personal intelligence; `route clear` does not clear a DM.
 `--to` defaults to `here` during an adapter-originated run; elsewhere, pass an
 opaque destination id or unambiguous label from `message destinations --all`.

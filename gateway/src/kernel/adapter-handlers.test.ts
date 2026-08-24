@@ -87,7 +87,7 @@ function userIdentity(uid = 1000): KernelContext["identity"] {
 
 function makeConversationRegistry() {
   const conversations = new Map<string, ConversationSummary>();
-  const homeByOwner = new Map<number, string>();
+  const shipByOwner = new Map<number, string>();
   const workByProcess = new Map<string, string>();
   const groupBySurface = new Map<string, string>();
   const create = (
@@ -111,15 +111,15 @@ function makeConversationRegistry() {
     return conversation;
   };
   return {
-    ensureHome: vi.fn((ownerUid: number, handlerPid: string) => {
-      const id = homeByOwner.get(ownerUid);
+    ensureShip: vi.fn((ownerUid: number, handlerPid: string) => {
+      const id = shipByOwner.get(ownerUid);
       const existing = id ? conversations.get(id)! : null;
       if (existing) {
         existing.handlerPid = handlerPid;
         return { ...existing };
       }
-      const conversation = create(ownerUid, handlerPid, "home", "Home");
-      homeByOwner.set(ownerUid, conversation.id);
+      const conversation = create(ownerUid, handlerPid, "ship", "Ship");
+      shipByOwner.set(ownerUid, conversation.id);
       return { ...conversation };
     }),
     ensureWork: vi.fn((ownerUid: number, handlerPid: string, title: string | null) => {
@@ -2042,10 +2042,10 @@ describe("adapter lifecycle handlers", () => {
     expect(replay).toMatchObject({
       ok: true,
       replayed: "completed",
-      reply: { text: expect.stringContaining("/home - leave the work session") },
+      reply: { text: expect.stringContaining("/ship - leave the work session") },
     });
     expect(replay.reply?.text).not.toContain("/work");
-    expect(replay.reply?.text).toContain("/list - list personal home and work processes");
+    expect(replay.reply?.text).toContain("/list - list Ship and work processes");
     expect(ctx.adapters.surfaceRoutes.setRoute).not.toHaveBeenCalled();
     expect(receipts.complete).toHaveBeenCalledTimes(2);
   });
@@ -3050,7 +3050,7 @@ describe("adapter lifecycle handlers", () => {
       },
     }, ctx);
 
-    expect(result.reply?.text).toContain("[PERSONAL HOME] Sam [idle] (pid-1)");
+    expect(result.reply?.text).toContain("[SHIP] Sam [idle] (pid-1)");
     expect(request).toHaveBeenCalledOnce();
     const delegated = request.mock.calls[0][1];
     expect(delegated.peer).toMatchObject({
@@ -3072,7 +3072,7 @@ describe("adapter lifecycle handlers", () => {
     });
   });
 
-  it("returns home immediately while a selected work process is still running", async () => {
+  it("returns to Ship immediately while a selected work process is still running", async () => {
     const ctx = makeContext({}, { upsert: vi.fn() }, {
       surfaceRoute: {
         adapter: "whatsapp",
@@ -3122,11 +3122,11 @@ describe("adapter lifecycle handlers", () => {
         messageId: "leave-running-work",
         surface: { kind: "dm", id: "dm-1" },
         actor: { id: "wa:+123" },
-        text: "/home",
+        text: "/ship",
       },
     }, ctx);
 
-    expect(result.reply?.text).toContain("[PERSONAL HOME]");
+    expect(result.reply?.text).toContain("[SHIP]");
     expect(ctx.adapters.ingressReceipts.checkpoint).toHaveBeenCalledWith(
       expect.stringMatching(/^adapter-ingress:/),
       expect.stringMatching(/^claim:adapter-ingress:/),
@@ -3227,7 +3227,7 @@ describe("adapter lifecycle handlers", () => {
         messageId: "leave-unreachable-work",
         surface: { kind: "dm", id: "dm-1" },
         actor: { id: "wa:+123" },
-        text: "/home",
+        text: "/ship",
       },
     // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     } as const;
@@ -3236,7 +3236,7 @@ describe("adapter lifecycle handlers", () => {
     expect(ctx.adapters.surfaceRoutes.resolveRoute(expect.anything())).toBeNull();
 
     const recovered = await handleAdapterInbound(inbound, ctx);
-    expect(recovered.reply?.text).toContain("[PERSONAL HOME]");
+    expect(recovered.reply?.text).toContain("[SHIP]");
     expect(recovered.reply?.text).toContain(replacementPersonal.processId.slice(0, 13));
     expect(ctx.adapters.ingressReceipts.checkpoint).toHaveBeenCalledTimes(1);
     expect(ctx.adapters.surfaceRoutes.clearRouteIfMatches).toHaveBeenCalledTimes(2);
@@ -3310,7 +3310,7 @@ describe("adapter lifecycle handlers", () => {
         messageId: "home-before-reopen",
         surface: { kind: "dm", id: "dm-1" },
         actor: { id: "wa:+123" },
-        text: "/home",
+        text: "/ship",
       },
     // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     } as const;
@@ -3355,7 +3355,7 @@ describe("adapter lifecycle handlers", () => {
   it.each([
     { label: "equal timestamps", timestamp: 100, initialNow: 1_000, newerNow: 1_000, retryNow: 1_000 },
     { label: "missing timestamps", timestamp: undefined, initialNow: 1_000, newerNow: 2_000, retryNow: 3_000 },
-  ])("does not let recovered /home activity replace a newer private DM with $label", async ({
+  ])("does not let recovered /ship activity replace a newer private DM with $label", async ({
     timestamp,
     initialNow,
     newerNow,
@@ -3441,7 +3441,7 @@ describe("adapter lifecycle handlers", () => {
           messageId: "failed-home-a",
           surface: { kind: "dm", id: "dm-a" },
           actor: { id: "wa:+123" },
-          text: "/home",
+          text: "/ship",
           ...(timestamp === undefined ? undefined : { timestamp }),
         },
       // SAFETY: test fixture is constructed with the asserted kernel domain shape.
@@ -3467,7 +3467,7 @@ describe("adapter lifecycle handlers", () => {
         now = retryNow;
         await expect(handleAdapterInbound(home, ctx)).resolves.toMatchObject({
           ok: true,
-          reply: { text: expect.stringContaining("[PERSONAL HOME]") },
+          reply: { text: expect.stringContaining("[SHIP]") },
         });
       } finally {
         nowSpy.mockRestore();
@@ -3485,7 +3485,7 @@ describe("adapter lifecycle handlers", () => {
     });
   });
 
-  it("correlates a tokened approval to waiting work after the DM returned home", async () => {
+  it("correlates a tokened approval to waiting work after the DM returned to Ship", async () => {
     const ctx = makeContext({}, { upsert: vi.fn() });
     const personal = ctx.procs.get("pid-1")!;
     // SAFETY: test fixture is constructed with the asserted kernel domain shape.

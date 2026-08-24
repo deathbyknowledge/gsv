@@ -31,7 +31,7 @@ function createTableStatement(name: string): string {
 describe("kernel schema migrations", () => {
   it("starts the kernel component at a v1 baseline", () => {
     expect(KERNEL_SCHEMA_COMPONENT).toBe("kernel");
-    expect(KERNEL_MIGRATIONS).toHaveLength(27);
+    expect(KERNEL_MIGRATIONS).toHaveLength(28);
     expect(KERNEL_MIGRATIONS[0]).toMatchObject({
       id: 1,
       name: "initial_kernel_schema",
@@ -140,6 +140,10 @@ describe("kernel schema migrations", () => {
       id: 27,
       name: "own_durable_tasks",
     });
+    expect(KERNEL_MIGRATIONS[27]).toMatchObject({
+      id: 28,
+      name: "rename_home_conversation_to_ship",
+    });
   });
 
   it("creates the current kernel table set", () => {
@@ -247,6 +251,22 @@ describe("kernel schema migrations", () => {
       .toBe(true);
     expect(statements.some((statement) => statement.startsWith("CREATE TABLE conversation_surfaces")))
       .toBe(true);
+  });
+
+  it("renames the canonical Home conversation to Ship without losing its address", () => {
+    const statements = normalizedStatements();
+    expect(statements.some((statement) => (
+      statement.startsWith("CREATE TABLE conversations_v028")
+      && statement.includes("kind TEXT NOT NULL CHECK (kind IN ('ship', 'work', 'group'))")
+    ))).toBe(true);
+    expect(statements.some((statement) => (
+      statement.startsWith("INSERT INTO conversations_v028")
+      && statement.includes("CASE kind WHEN 'home' THEN 'ship' ELSE kind END")
+      && statement.includes("CASE WHEN kind = 'home' AND title = 'Home' THEN 'Ship' ELSE title END")
+    ))).toBe(true);
+    expect(statements).toContain(
+      "CREATE UNIQUE INDEX conversations_ship_owner_idx ON conversations (owner_uid) WHERE kind = 'ship'",
+    );
   });
 
   it("removes the parallel conversation registry", () => {

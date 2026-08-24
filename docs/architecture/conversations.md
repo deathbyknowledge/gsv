@@ -15,16 +15,16 @@ conversation. Users can inspect the referenced Process while it exists or read i
 
 The Kernel owns the conversation directory and membership:
 
-- **Home** is the stable conversation with the user's personal intelligence. Web, Desktop, CLI,
-  Telegram, WhatsApp, and other private surfaces all contribute to the same Home message stream.
-  The current personal Process is replaceable; the Home conversation is not.
+- **Ship** is the stable conversation with the user's personal intelligence. Web, Desktop, CLI,
+  Telegram, WhatsApp, and other private surfaces all contribute to the same Ship message stream.
+  The current personal Process is replaceable; the Ship conversation is not.
 - **Work** is a conversation handled by one explicit interactive work Process. Opening Work does not
-  replace Home or redefine the personal intelligence.
+  replace Ship or redefine the personal intelligence.
 - **Group** is tied to one normalized adapter surface and can retain multiple account and Process
   members. Current authorization remains owner-scoped, while the membership schema can represent
   later multi-user and multi-Process conversations.
 
-Delegated Process work is not copied into Home. A child returns a typed Process event to its caller;
+Delegated Process work is not copied into Ship. A child returns a typed Process event to its caller;
 the personal intelligence decides whether the result should become a canonical Message, cause more
 work, or remain silent.
 
@@ -44,7 +44,7 @@ command, the Process adds one `[GSV EVENT]` correction and retries once. A secon
 run with an inspectable error instead of looping indefinitely.
 
 An IPC call is the exception to canonical user delivery: its terminal message returns to the
-calling Process. It does not impersonate a user or append to Home.
+calling Process. It does not impersonate a user or append to Ship.
 
 ## Directed endpoints and synchronization
 

@@ -232,8 +232,8 @@ provider event
 
 `/list` demonstrates this path. It invokes the real `proc.list` syscall with a
 grant containing only `proc.list`, then applies bounded text formatting.
-`/help`, `/where`, and `/home` share Kernel-owned parsing and help metadata.
-`/home` intentionally remains a Kernel routing operation because it must clear
+`/help`, `/where`, and `/ship` share Kernel-owned parsing and help metadata.
+`/ship` intentionally remains a Kernel routing operation because it must clear
 the exact adapter route and preserve durable ingress/recovery fences.
 
 Managed adapter pairing remains an explicit human action through

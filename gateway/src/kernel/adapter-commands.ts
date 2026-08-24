@@ -1,6 +1,6 @@
 import type { ProcListEntry } from "@humansandmachines/gsv/protocol";
 
-export type AdapterCommandName = "help" | "list" | "where" | "home";
+export type AdapterCommandName = "help" | "list" | "where" | "ship";
 
 export type ParsedAdapterCommand = {
   name: AdapterCommandName | null;
@@ -13,9 +13,9 @@ const COMMANDS: ReadonlyArray<{
   description: string;
 }> = [
   { name: "help", description: "show available commands" },
-  { name: "list", description: "list personal home and work processes" },
-  { name: "where", description: "show personal home or the selected work session" },
-  { name: "home", description: "leave the work session and return to personal home" },
+  { name: "list", description: "list Ship and work processes" },
+  { name: "where", description: "show Ship or the selected work session" },
+  { name: "ship", description: "leave the work session and return to Ship" },
 ];
 
 export function parseAdapterCommand(text: string): ParsedAdapterCommand | null {
@@ -46,8 +46,8 @@ export function renderAdapterProcessList(processes: ProcListEntry[]): string {
   const work = visible.filter((process) => !process.personal);
   const lines = [
     personal
-      ? `[PERSONAL HOME] ${describeProcess(personal)}`
-      : "[PERSONAL HOME] unavailable",
+      ? `[SHIP] ${describeProcess(personal)}`
+      : "[SHIP] unavailable",
   ];
   if (work.length === 0) {
     lines.push("", "WORK: none");

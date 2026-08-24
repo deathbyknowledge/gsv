@@ -10,16 +10,16 @@ const ensurePersonalControllerMock = vi.spyOn(personalController, "ensurePersona
 
 import {
   handleConversationHistory,
-  handleConversationHome,
+  handleConversationShip,
   handleConversationMediaRead,
   handleConversationSend,
 } from "./conversation-handlers";
 
-const HOME: ConversationSummary = {
-  id: "conv:home",
+const SHIP: ConversationSummary = {
+  id: "conv:ship",
   ownerUid: 1000,
-  kind: "home",
-  title: "Home",
+  kind: "ship",
+  title: "Ship",
   handlerPid: "proc:personal",
   latestSequence: 0,
   createdAt: 1,
@@ -61,9 +61,9 @@ function context(ownerUid = 1000): KernelContext {
       get: vi.fn((pid: string) => pid === PROCESS.processId ? PROCESS : null),
     },
     conversations: {
-      ensureHome: vi.fn(() => HOME),
-      get: vi.fn((id: string) => id === HOME.id ? HOME : null),
-      list: vi.fn(() => [HOME]),
+      ensureShip: vi.fn(() => SHIP),
+      get: vi.fn((id: string) => id === SHIP.id ? SHIP : null),
+      list: vi.fn(() => [SHIP]),
       recordSequence: vi.fn(),
     },
     runRoutes: {
@@ -78,7 +78,7 @@ function context(ownerUid = 1000): KernelContext {
 function canonicalMessage(input: any): ConversationMessage {
   return {
     id: input.messageId,
-    conversationId: HOME.id,
+    conversationId: SHIP.id,
     sequence: 1,
     author: input.author,
     text: input.text,
@@ -98,16 +98,16 @@ describe("conversation handlers", () => {
     ensurePersonalControllerMock.mockResolvedValue(PROCESS.processId);
   });
 
-  it("resolves and initializes the stable Home conversation", async () => {
+  it("resolves and initializes the stable Ship conversation", async () => {
     const initialize = vi.fn(async () => undefined);
     getConversationByIdMock.mockReturnValue({ initialize });
     const ctx = context();
 
-    await expect(handleConversationHome(ctx)).resolves.toEqual({ conversation: HOME });
+    await expect(handleConversationShip(ctx)).resolves.toEqual({ conversation: SHIP });
 
     expect(ensurePersonalControllerMock).toHaveBeenCalledWith(1000, ctx);
-    expect(ctx.conversations.ensureHome).toHaveBeenCalledWith(1000, PROCESS.processId);
-    expect(initialize).toHaveBeenCalledWith({ ownerUid: 1000, kind: "home" });
+    expect(ctx.conversations.ensureShip).toHaveBeenCalledWith(1000, PROCESS.processId);
+    expect(initialize).toHaveBeenCalledWith({ ownerUid: 1000, kind: "ship" });
   });
 
   it("keeps an accepted user message when its Process admission fails", async () => {
@@ -125,7 +125,7 @@ describe("conversation handlers", () => {
     const ctx = context();
 
     await expect(handleConversationSend({
-      conversationId: HOME.id,
+      conversationId: SHIP.id,
       text: "remember this",
       idempotencyKey: "desktop:one",
     }, ctx)).rejects.toThrow("Process unavailable");
@@ -145,10 +145,10 @@ describe("conversation handlers", () => {
     const ctx = context();
     ctx.processId = PROCESS.processId;
 
-    await expect(handleConversationHome(ctx)).rejects.toThrow(
+    await expect(handleConversationShip(ctx)).rejects.toThrow(
       "Conversation operations require a direct user client",
     );
-    await expect(handleConversationHistory({ conversationId: HOME.id }, ctx)).rejects.toThrow(
+    await expect(handleConversationHistory({ conversationId: SHIP.id }, ctx)).rejects.toThrow(
       "Conversation operations require a direct user client",
     );
   });
@@ -168,7 +168,7 @@ describe("conversation handlers", () => {
     const ctx = context();
 
     const result = await handleConversationSend({
-      conversationId: HOME.id,
+      conversationId: SHIP.id,
       text: "hello",
       idempotencyKey: "desktop:two",
     }, ctx);
@@ -181,7 +181,7 @@ describe("conversation handlers", () => {
         args: expect.objectContaining({
           message: "hello",
           interaction: {
-            conversationId: HOME.id,
+            conversationId: SHIP.id,
             messageId: result.message.id,
           },
         }),
@@ -220,19 +220,19 @@ describe("conversation handlers", () => {
     getConversationByIdMock.mockReturnValue({ history, readMedia });
     const ctx = context();
 
-    await expect(handleConversationHistory({ conversationId: HOME.id }, ctx)).resolves.toEqual({
-      conversation: expect.objectContaining({ id: HOME.id }),
+    await expect(handleConversationHistory({ conversationId: SHIP.id }, ctx)).resolves.toEqual({
+      conversation: expect.objectContaining({ id: SHIP.id }),
       messages: [message],
       hasMore: false,
     });
     const media = await handleConversationMediaRead({
-      conversationId: HOME.id,
+      conversationId: SHIP.id,
       key: "conversations/conv%3Ahome/media/msg%3Aone/0",
     }, ctx);
-    expect(media.data).toMatchObject({ ok: true, conversationId: HOME.id, size: 3 });
+    expect(media.data).toMatchObject({ ok: true, conversationId: SHIP.id, size: 3 });
     expect(media.body.length).toBe(3);
 
-    await expect(handleConversationHistory({ conversationId: HOME.id }, context(2000)))
-      .rejects.toThrow(`Conversation not found: ${HOME.id}`);
+    await expect(handleConversationHistory({ conversationId: SHIP.id }, context(2000)))
+      .rejects.toThrow(`Conversation not found: ${SHIP.id}`);
   });
 });

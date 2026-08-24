@@ -52,12 +52,12 @@ function taskSummary(tasks: readonly ChatAgentTaskData[]) {
 
 describe("shell chat agent model", () => {
   it("keeps the personal intelligence identity during a specialist work session", () => {
-    const home = process({
-      pid: "proc:home",
+    const ship = process({
+      pid: "proc:ship",
       uid: 1000,
       username: "aria",
       personal: true,
-      title: "Home",
+      title: "Ship",
       createdAt: 10,
     });
     const work = process({
@@ -74,7 +74,7 @@ describe("shell chat agent model", () => {
         account({ uid: 1001, username: "aria", relation: "personal-agent", displayName: "Xanadu" }),
         account({ uid: 1002, username: "scout", relation: "agent", displayName: "Scout" }),
       ],
-      chatProcesses: [work, home],
+      chatProcesses: [work, ship],
       config: [],
       ownerUid: 1000,
       statusLabel: "running",
@@ -321,20 +321,20 @@ describe("shell chat agent model", () => {
     expect(agent.tasks?.find((task) => task.processId === "proc:scout")?.status).toBe("error");
   });
 
-  it("uses personal account behavior at home and never emits a run-as spawn override", () => {
-    const home = process({
-      pid: "proc:home",
+  it("uses personal account behavior aboard Ship and never emits a run-as spawn override", () => {
+    const ship = process({
+      pid: "proc:ship",
       uid: 1000,
       username: "aria",
       personal: true,
     });
     const agent = buildShellChatAgent({
-      activeProcess: home,
+      activeProcess: ship,
       accounts: [
         account({ uid: 1000, username: "sam", relation: "self" }),
         account({ uid: 1001, username: "aria", relation: "personal-agent", displayName: "Xanadu" }),
       ],
-      chatProcesses: [home],
+      chatProcesses: [ship],
       config: [
         { key: "config/ai/model", value: "system-model", redacted: false },
         { key: "users/1000/ai/model", value: "owner-model", redacted: false },

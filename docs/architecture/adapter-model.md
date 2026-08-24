@@ -142,7 +142,7 @@ The inbound path looks like this:
 4. The Kernel resolves the adapter account and external actor.
 5. The Kernel checks the identity link and non-DM activation policy.
 6. A private DM updates the owner's last-active linked private destination and
-   resolves PERSONAL HOME or an explicit work override. A shared surface
+   resolves SHIP or an explicit work override. A shared surface
    resolves its actor/thread-scoped persisted route.
 7. Media is streamed into process-owned storage, the canonical conversation input
    is committed, and the Kernel creates the run's directed endpoint before admission.
@@ -195,7 +195,7 @@ unambiguous generic labels rather than provider fields, and only accepts owned
 interactive processes. The canonical personal process may also set a private
 DM to an owned non-personal process when that exact latest DM message started
 its current run. This opens an explicitly labeled INTERNAL WORK / WORK SESSION;
-the human uses `/home` for the canonical PERSONAL HOME.
+the human uses `/ship` for the canonical SHIP.
 Changing a selection does not change an existing run route: the current Message
 stays directed to its origin, while the next inbound message enters the new selection.
 
@@ -324,7 +324,7 @@ After an actor is linked, a private DM defaults to the owner's one canonical
 personal controller. No default route row is stored. At the user's request,
 that controller can open a direct line to an existing non-personal process;
 the current answer confirms it and the next message enters work. The Kernel
-rejects a late handoff if a newer private message or selection won. `/home`
+rejects a late handoff if a newer private message or selection won. `/ship`
 clears the override immediately and gives the personal controller a typed
 return event containing the work PID without mirroring the transcript. Tokened
 HIL decisions search only the owner's `waiting_hil` interactive processes,

@@ -24,7 +24,7 @@ function message(sequence: number) {
 describe("Conversation Durable Object", () => {
   it("stores canonical messages idempotently and rejects changed replays", async () => {
     const stub = conversation("append");
-    await stub.initialize({ ownerUid: 1000, kind: "home" });
+    await stub.initialize({ ownerUid: 1000, kind: "ship" });
 
     const first = await stub.append(message(1));
     const replay = await stub.append(message(1));
@@ -42,7 +42,7 @@ describe("Conversation Durable Object", () => {
 
   it("moves old messages to immutable R2 segments without changing pagination", async () => {
     const stub = conversation("archive");
-    await stub.initialize({ ownerUid: 1000, kind: "home" });
+    await stub.initialize({ ownerUid: 1000, kind: "ship" });
     for (let index = 1; index <= 1_001; index += 1) {
       await stub.append(message(index));
     }
@@ -61,7 +61,7 @@ describe("Conversation Durable Object", () => {
 
   it("copies process media into conversation ownership before recording it", async () => {
     const stub = conversation("media");
-    await stub.initialize({ ownerUid: 1000, kind: "home" });
+    await stub.initialize({ ownerUid: 1000, kind: "ship" });
     const sourceKey = "var/media/1001/proc:test/image";
     await env.STORAGE.put(sourceKey, new Uint8Array([1, 2, 3]), {
       httpMetadata: { contentType: "image/png" },
@@ -86,7 +86,7 @@ describe("Conversation Durable Object", () => {
 
   it("stores one immutable resource reference without copying its bytes", async () => {
     const stub = conversation("resource");
-    await stub.initialize({ ownerUid: 1000, kind: "home" });
+    await stub.initialize({ ownerUid: 1000, kind: "ship" });
     const suffix = crypto.randomUUID().replaceAll("-", "").repeat(2);
     const key = `home/agent/.gsv/media/archived-media:${suffix}`;
     await env.STORAGE.put(key, new Uint8Array([4, 5, 6]), {
@@ -135,7 +135,7 @@ describe("Conversation Durable Object", () => {
   it("cannot read a different conversation's media", async () => {
     const first = conversation("first-media");
     const second = conversation("second-media");
-    await first.initialize({ ownerUid: 1000, kind: "home" });
+    await first.initialize({ ownerUid: 1000, kind: "ship" });
     await second.initialize({ ownerUid: 1000, kind: "work" });
     await expect(runInDurableObject(second, (instance: Conversation) => (
       instance.readMedia({ key: "conversations/conv%3Aother/media/msg/0" })

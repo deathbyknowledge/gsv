@@ -3,11 +3,11 @@ import { runWithRealKernelSql } from "../test-support/real-kernel-sql";
 import { ConversationRegistry } from "./conversations";
 
 describe("ConversationRegistry", () => {
-  it("keeps one stable Home address while rotating its process handler", async () => {
+  it("keeps one stable Ship address while rotating its process handler", async () => {
     await runWithRealKernelSql((sql) => {
       const registry = new ConversationRegistry(sql);
-      const first = registry.ensureHome(1000, "proc:first");
-      const second = registry.ensureHome(1000, "proc:second");
+      const first = registry.ensureShip(1000, "proc:first");
+      const second = registry.ensureShip(1000, "proc:second");
 
       expect(second.id).toBe(first.id);
       expect(second.handlerPid).toBe("proc:second");
@@ -19,28 +19,28 @@ describe("ConversationRegistry", () => {
     });
   });
 
-  it("keeps Work and shared-surface conversations separate from Home", async () => {
+  it("keeps Work and shared-surface conversations separate from Ship", async () => {
     await runWithRealKernelSql((sql) => {
       const registry = new ConversationRegistry(sql);
-      const home = registry.ensureHome(1000, "proc:personal");
+      const ship = registry.ensureShip(1000, "proc:personal");
       const work = registry.ensureWork(1000, "proc:work", "Research");
       const sameWork = registry.ensureWork(1000, "proc:work", "Renamed");
       const group = registry.ensureGroup(1000, "proc:group", "Team", "telegram:a:group:g");
       const movedGroup = registry.ensureGroup(1000, "proc:new-group", "Team", "telegram:a:group:g");
 
-      expect(new Set([home.id, work.id, group.id]).size).toBe(3);
+      expect(new Set([ship.id, work.id, group.id]).size).toBe(3);
       expect(sameWork.id).toBe(work.id);
       expect(movedGroup).toMatchObject({ id: group.id, handlerPid: "proc:new-group" });
       expect(registry.list(1000).map((item) => item.id).sort())
-        .toEqual([home.id, work.id, group.id].sort());
+        .toEqual([ship.id, work.id, group.id].sort());
     });
   });
 
   it("never crosses installation-local owner boundaries", async () => {
     await runWithRealKernelSql((sql) => {
       const registry = new ConversationRegistry(sql);
-      const first = registry.ensureHome(1000, "proc:first");
-      const second = registry.ensureHome(1001, "proc:second");
+      const first = registry.ensureShip(1000, "proc:first");
+      const second = registry.ensureShip(1001, "proc:second");
       expect(first.id).not.toBe(second.id);
       expect(registry.list(1000)).toEqual([first]);
       expect(registry.list(1001)).toEqual([second]);

@@ -7,7 +7,7 @@ not tied to one client. CLI chat, browser apps, adapter messages, scheduled work
 and signal watches all converge on the same Process DO model.
 
 Process history is raw execution activity, not the canonical user conversation.
-See [Conversations and Process Activity](./conversations.md) for Home, Work,
+See [Conversations and Process Activity](./conversations.md) for Ship, Work,
 message synchronization, endpoint delivery, and retention.
 
 ## Process, Not Session

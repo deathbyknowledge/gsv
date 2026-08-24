@@ -18,8 +18,8 @@ type ConversationRow = {
 export class ConversationRegistry {
   constructor(private readonly sql: SqlStorage) {}
 
-  ensureHome(ownerUid: number, handlerPid: string): ConversationSummary {
-    const existing = this.getHome(ownerUid);
+  ensureShip(ownerUid: number, handlerPid: string): ConversationSummary {
+    const existing = this.getShip(ownerUid);
     if (existing) {
       if (existing.handlerPid !== handlerPid) {
         this.setHandler(existing.id, handlerPid);
@@ -29,8 +29,8 @@ export class ConversationRegistry {
     return this.create({
       id: `conv:${crypto.randomUUID()}`,
       ownerUid,
-      kind: "home",
-      title: "Home",
+      kind: "ship",
+      title: "Ship",
       handlerPid,
     });
   }
@@ -124,10 +124,10 @@ export class ConversationRegistry {
     return row ? toSummary(row) : null;
   }
 
-  getHome(ownerUid: number): ConversationSummary | null {
+  getShip(ownerUid: number): ConversationSummary | null {
     const row = this.sql.exec<ConversationRow>(
       `SELECT * FROM conversations
-       WHERE owner_uid = ? AND kind = 'home'
+       WHERE owner_uid = ? AND kind = 'ship'
        LIMIT 1`,
       ownerUid,
     ).toArray()[0];

@@ -36,7 +36,7 @@ reactivation.
 |---|---|---|---|
 | CLI or browser client | WebSocket request frame | syscall name, caller capabilities, optional `target` | Kernel handler, Process DO, or device driver |
 | Agent process | `Kernel.recvFrame(pid, frame)` | process identity and syscall | Kernel handler or device driver |
-| Adapter worker | `adapter.inbound` syscall | linked actor identity, private-home selection, or shared-surface route | Personal controller or routed work/surface process |
+| Adapter worker | `adapter.inbound` syscall | linked actor identity, Ship selection, or shared-surface route | Personal controller or routed work/surface process |
 | Device driver | WebSocket response frame | persisted route id | Original client or process |
 
 All requests use the same frame shape:
@@ -164,7 +164,7 @@ unambiguous labels, and can show or list routing. Set and clear manage group,
 channel, and thread routes. The canonical personal process may also use set to
 open a private-DM direct line, but only from the exact latest run on that DM and
 only to an owned interactive non-personal process. DM clear remains the human's
-unconditional `/home` action.
+unconditional `/ship` action.
 
 Inbound behavior:
 
@@ -179,7 +179,7 @@ adapter account, surface, and optional thread:
 adapter + accountId + actorId + surface.kind + surface.id + threadId -> uid + pid
 ```
 
-No private-DM row means PERSONAL HOME: the message resolves the owner's
+No private-DM row means SHIP: the message resolves the owner's
 canonical personal controller without persisting a default surface route.
 When the user asks for a direct line, that controller selects the work process
 with `message route set`; the current personal answer confirms the transition,
@@ -187,7 +187,7 @@ and the next inbound message enters the explicit `work` override. The command
 requires its immutable run route to match the latest linked private activity
 and the newest Kernel ingress receipt for that DM. Later activity or selection
 therefore fences a slow tool call even when provider timestamps arrive out of
-order. Repeating the same run-and-target handoff is idempotent. `/home` clears
+order. Repeating the same run-and-target handoff is idempotent. `/ship` clears
 the override immediately,
 even while the work process is active, and admits a typed return event to the
 personal process with the work PID but no copied transcript. Exact run routes
@@ -202,7 +202,7 @@ owner's personal agent and binds that actor-scoped surface to it.
 Migration v023 adds the canonical personal-process slot. Migration v024
 classifies pre-upgrade DM rows as `legacy`. A legacy DM drains
 through its old process while it is active, queued, or waiting for HIL, then is
-cleared on idle and returns home. Checkpointed ingress recovery always uses its
+cleared on idle and returns to Ship. Checkpointed ingress recovery always uses its
 recorded PID and never rewrites a private-DM selection.
 
 Migration v025 stores the owner's latest linked private destination together
@@ -211,7 +211,7 @@ Independent Kernel ingress-receipt order completes the stale-handoff fence.
 
 Human-in-the-loop replies are routed specially. Each adapter DM prompt includes
 `hil[requestId]`. A tokened decision is correlated first against the owning
-human's interactive processes whose runtime state is `waiting_hil`, so `/home`
+human's interactive processes whose runtime state is `waiting_hil`, so `/ship`
 does not strand an approval from an earlier work run. Only one exact current
 token match resumes `proc.hil`; bare, stale, missing, and ambiguous matches fail
 closed. Provider reply threading does not authorize a decision.

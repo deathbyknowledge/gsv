@@ -1122,7 +1122,7 @@ export class Kernel extends DurableObject<Env> {
       throw new Error("Conversation does not exist");
     } else {
       conversation = process.isPersonalController
-        ? this.conversations.ensureHome(process.ownerUid, processId)
+        ? this.conversations.ensureShip(process.ownerUid, processId)
         : this.conversations.ensureWork(process.ownerUid, processId, process.label);
     }
     const stub = getConversationById(this.installationId, conversation.id);
@@ -3281,10 +3281,10 @@ export class Kernel extends DurableObject<Env> {
     ) {
       const ownerUid = outcome.peer.principal.account.uid;
       const pid = await ensurePersonalController(ownerUid, ctx);
-      const conversation = ctx.conversations.ensureHome(ownerUid, pid);
+      const conversation = ctx.conversations.ensureShip(ownerUid, pid);
       await getConversationById(this.installationId, conversation.id).initialize({
         ownerUid,
-        kind: "home",
+        kind: "ship",
       });
     }
 

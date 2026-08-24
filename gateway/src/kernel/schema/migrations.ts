@@ -50,6 +50,9 @@ import {
 } from "./v025_add_private_adapter_destinations";
 import { KERNEL_V026_ADD_CONVERSATIONS } from "./v026_add_conversations";
 import { KERNEL_V027_OWN_DURABLE_TASKS } from "./v027_own_durable_tasks";
+import {
+  KERNEL_V028_RENAME_HOME_CONVERSATION_TO_SHIP,
+} from "./v028_rename_home_conversation_to_ship";
 
 // Used by Kernel DO startup before the individual stores initialize.
 export const KERNEL_SCHEMA_COMPONENT = "kernel";
@@ -82,6 +85,7 @@ export const KERNEL_MIGRATIONS: readonly SqlMigration[] = [
   KERNEL_V025_ADD_PRIVATE_ADAPTER_DESTINATIONS,
   KERNEL_V026_ADD_CONVERSATIONS,
   KERNEL_V027_OWN_DURABLE_TASKS,
+  KERNEL_V028_RENAME_HOME_CONVERSATION_TO_SHIP,
 ];
 
 export function runKernelSqlMigrations(storage: DurableObjectStorage): void {

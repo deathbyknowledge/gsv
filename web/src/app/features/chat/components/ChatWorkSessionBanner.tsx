@@ -16,14 +16,14 @@ export function workSessionOpenedAnnouncement(session: ChatWorkSession): string 
   const title = session.title.trim() || "Untitled work";
   const personalName = session.personalName?.trim() || "";
   return personalName
-    ? `Work session opened: ${title}. ${personalName} remains your personal intelligence.`
+    ? `Work session opened: ${title}. ${personalName} remains your personal intelligence in Ship.`
     : `Work session opened: ${title}. This account has no personal intelligence.`;
 }
 
 export function workSessionClosedAnnouncement(session: ChatWorkSession): string {
   const personalName = session.personalName?.trim() || "";
   return personalName
-    ? `Returned to ${personalName}, your personal intelligence.`
+    ? "Returned to Ship."
     : "Returned to administration.";
 }
 
@@ -79,9 +79,9 @@ export function ChatWorkSessionBanner({
   const name = personalName?.trim() || "";
   const workTitle = title.trim() || "Untitled work";
   const description = name
-    ? `You're inside one piece of its work. ${name} is still your personal intelligence.`
+    ? `You're inside one piece of Ship's work. ${name} is still your personal intelligence.`
     : "You're inside an internal work process. This account has no personal intelligence.";
-  const returnLabel = name ? name.toUpperCase() : "ADMINISTRATION";
+  const returnLabel = name ? "SHIP" : "ADMINISTRATION";
   return (
     <section
       class="gsv-chat-work-session"

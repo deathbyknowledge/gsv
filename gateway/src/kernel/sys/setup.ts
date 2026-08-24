@@ -43,10 +43,10 @@ async function ensurePersonalConversation(
   preferredAgentName?: string,
 ): Promise<void> {
   const pid = await ensurePersonalController(ownerUid, ctx, preferredAgentName);
-  const conversation = ctx.conversations.ensureHome(ownerUid, pid);
+  const conversation = ctx.conversations.ensureShip(ownerUid, pid);
   await getConversationById(ctx.installationId, conversation.id).initialize({
     ownerUid,
-    kind: "home",
+    kind: "ship",
   });
 }
 

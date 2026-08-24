@@ -789,7 +789,7 @@ describe("native shell capability discovery", () => {
     expect(result.stdout).toContain("message route set --process PID_OR_LABEL");
     expect(result.stdout).toContain("personal intelligence");
     expect(result.stdout).toContain("temporary work direct line");
-    expect(result.stdout).toContain("Use /home inside that DM");
+    expect(result.stdout).toContain("Use /ship inside that DM");
     expect(result.stdout).toContain("--attach PATH");
   });
 
@@ -3362,7 +3362,7 @@ describe("native administration shell commands", () => {
     expect(setRoute).not.toHaveBeenCalled();
   });
 
-  it("fences a delayed handoff after a later /home with an older provider timestamp", async () => {
+  it("fences a delayed handoff after a later /ship with an older provider timestamp", async () => {
     const ctx = makeContext({
       capabilities: ["shell.exec", "adapter.route"],
       processRunId: "run-delayed-before-home",
@@ -3447,7 +3447,7 @@ describe("native administration shell commands", () => {
       input: "message route clear --to telegram",
     }, ctx);
     expect(cleared).toMatchObject({ status: "failed", exitCode: 1 });
-    expect(cleared.stderr).toContain("Use /home in the private DM");
+    expect(cleared.stderr).toContain("Use /ship in the private DM");
     expect(setRoute).not.toHaveBeenCalled();
     expect(clearRoute).not.toHaveBeenCalled();
   });
@@ -3460,7 +3460,7 @@ describe("native administration shell commands", () => {
 
     expect(result).toMatchObject({ status: "completed", exitCode: 0 });
     expect(result.stdout).toContain("intelligence can use `set`");
-    expect(result.stdout).toContain("Use /home inside the DM to return");
+    expect(result.stdout).toContain("Use /ship inside the DM to return");
   });
 
   it("only routes chats to owned interactive processes", async () => {

@@ -958,10 +958,10 @@ describe("Kernel canonical message commits", () => {
     label: "Personal",
   };
   const conversation = {
-    id: "conv:home",
+    id: "conv:ship",
     ownerUid: 1000,
-    kind: "home",
-    title: "Home",
+    kind: "ship",
+    title: "Ship",
     handlerPid: "proc-1",
     latestSequence: 1,
     createdAt: 1,
@@ -973,7 +973,7 @@ describe("Kernel canonical message commits", () => {
     kernel.procs = { get: vi.fn(() => process) };
     kernel.conversations = {
       get: vi.fn(() => conversation),
-      ensureHome: vi.fn(() => conversation),
+      ensureShip: vi.fn(() => conversation),
       recordSequence: vi.fn(),
     };
     kernel.runRoutes = {
@@ -1123,7 +1123,7 @@ describe("Kernel canonical message commits", () => {
     await kernel.commitProcessMessage("proc-1", {
       runId: "run-disconnected-client",
       conversationId: conversation.id,
-      text: "stays in Home",
+      text: "stays in Ship",
     });
 
     expect(kernel.materializePersonalAdapterFallback).not.toHaveBeenCalled();

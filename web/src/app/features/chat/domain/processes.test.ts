@@ -34,7 +34,7 @@ describe("normalizeProcessSummary", () => {
   });
 
   it("preserves the canonical personal marker", () => {
-    expect(normalizeProcessSummary(process("Home")).personal).toBe(true);
+    expect(normalizeProcessSummary(process("Ship")).personal).toBe(true);
   });
 });
 

@@ -48,9 +48,9 @@ describe("ChatWorkSessionBanner", () => {
     expect(collectText(banner)).toContain("WORK SESSION");
     expect(collectText(banner)).toContain("Audit release readiness");
     expect(collectText(banner)).toContain(
-      "You're inside one piece of its work. Xanadu is still your personal intelligence.",
+      "You're inside one piece of Ship's work. Xanadu is still your personal intelligence.",
     );
-    expect(backButton?.props.label).toBe("BACK TO XANADU");
+    expect(backButton?.props.label).toBe("BACK TO SHIP");
     backButton?.props.onClick?.();
     expect(onBack).toHaveBeenCalledOnce();
   });
@@ -83,10 +83,10 @@ describe("ChatWorkSessionBanner", () => {
     };
 
     expect(workSessionOpenedAnnouncement(session)).toBe(
-      "Work session opened: Audit release readiness. Xanadu remains your personal intelligence.",
+      "Work session opened: Audit release readiness. Xanadu remains your personal intelligence in Ship.",
     );
     expect(workSessionClosedAnnouncement(session)).toBe(
-      "Returned to Xanadu, your personal intelligence.",
+      "Returned to Ship.",
     );
     expect(workSessionClosedAnnouncement({
       personalName: null,

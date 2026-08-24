@@ -3,7 +3,7 @@ import type {
   ConversationForProcessResult,
   ConversationHistoryArgs,
   ConversationHistoryResult,
-  ConversationHomeResult,
+  ConversationShipResult,
   ConversationListResult,
   ConversationMediaReadArgs,
   ConversationMediaReadResult,
@@ -30,12 +30,12 @@ const conversationClientStateSchema = z.object({
   clientPlatform: z.optional(z.string()),
 });
 
-export async function handleConversationHome(
+export async function handleConversationShip(
   ctx: KernelContext,
-): Promise<ConversationHomeResult> {
+): Promise<ConversationShipResult> {
   const ownerUid = requireConversationClient(ctx);
   const pid = await ensurePersonalController(ownerUid, ctx);
-  const conversation = ctx.conversations.ensureHome(ownerUid, pid);
+  const conversation = ctx.conversations.ensureShip(ownerUid, pid);
   await initializeConversation(conversation, ctx);
   return { conversation };
 }
@@ -54,7 +54,7 @@ export async function handleConversationForProcess(
     throw new Error("Non-interactive work does not have a conversation");
   }
   const conversation = process.isPersonalController
-    ? ctx.conversations.ensureHome(ownerUid, pid)
+    ? ctx.conversations.ensureShip(ownerUid, pid)
     : ctx.conversations.ensureWork(ownerUid, pid, process.label);
   await initializeConversation(conversation, ctx);
   return { conversation };
@@ -64,7 +64,7 @@ export async function handleConversationList(
   ctx: KernelContext,
 ): Promise<ConversationListResult> {
   requireConversationClient(ctx);
-  await handleConversationHome(ctx);
+  await handleConversationShip(ctx);
   return { conversations: ctx.conversations.list(resolveCallerOwnerUid(ctx)) };
 }
 
@@ -102,8 +102,8 @@ export async function handleConversationSend(
   if (!handler || handler.ownerUid !== conversation.ownerUid || !handler.interactive) {
     throw new Error("Conversation handler is unavailable");
   }
-  if (conversation.kind === "home" && !handler.isPersonalController) {
-    throw new Error("Home conversation handler is not the personal intelligence");
+  if (conversation.kind === "ship" && !handler.isPersonalController) {
+    throw new Error("Ship conversation handler is not the personal intelligence");
   }
   const idempotencyKey = normalizeOptionalId(args.idempotencyKey) ?? crypto.randomUUID();
   const messageId = await stableOpaqueId("msg", [conversation.id, idempotencyKey]);

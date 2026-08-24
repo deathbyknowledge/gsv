@@ -180,7 +180,7 @@ export function renderManualPage(topic: string): string | null {
         "  clear manage persistent mappings for groups, channels, and threads. On the",
         "  exact private DM that started its current run, only the personal intelligence",
         "  can set an owned non-personal process as a temporary work direct line.",
-        "  Use /home inside that DM to return to personal intelligence. --to defaults to",
+        "  Use /ship inside that DM to return to Ship. --to defaults to",
         "  `here`, the adapter surface that started the current run. An explicit",
         "  destination is an opaque id or unambiguous label from",
         "  `message destinations --all`.",

@@ -15,7 +15,7 @@ The current architecture is described in
   controls directed streaming and immediate delivery, not message ownership.
 - `proc.observe` is a connection-scoped view of raw Process activity, not a
   conversation binding.
-- Private adapter DMs default to Home and may temporarily select Work. Shared
+- Private adapter DMs default to Ship and may temporarily select Work. Shared
   adapter surfaces retain their existing Kernel-owned route semantics.
 
 There is no public `route.*` graph, durable output-edge schema, generic sink

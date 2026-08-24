@@ -212,7 +212,7 @@ export function updateAdapterMessageDestinationRoute(
   }
   if (!pid) {
     if (normalized.surface.kind === "dm") {
-      throw new Error("Use /home in the private DM to return to personal intelligence");
+      throw new Error("Use /ship in the private DM to return to Ship");
     }
     if (existing) ctx.adapters.surfaceRoutes.clearRoute(key);
     return null;

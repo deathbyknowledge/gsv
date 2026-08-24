@@ -378,25 +378,25 @@ describe("gateway runtime integration", () => {
     const personalProcesses = beforePersonal.processes.filter(({ personal }) => personal);
     expect(personalProcesses).toHaveLength(1);
 
-    const homeFrame = inboundFrame({
-      id: "home",
-      deliveryId: "home-delivery",
-      messageId: "home-message",
-      text: "/home",
+    const shipFrame = inboundFrame({
+      id: "ship",
+      deliveryId: "ship-delivery",
+      messageId: "ship-message",
+      text: "/ship",
     });
-    const home = inboundResult(await sendServiceFrame(harness, homeFrame));
-    expect(home).toMatchObject({
+    const ship = inboundResult(await sendServiceFrame(harness, shipFrame));
+    expect(ship).toMatchObject({
       ok: true,
       reply: {
         deliveryId: expect.stringMatching(/^adapter-ingress:[0-9a-f]{64}:reply$/),
-        text: expect.stringContaining("[PERSONAL HOME]"),
-        replyToId: "home-message",
+        text: expect.stringContaining("[SHIP]"),
+        replyToId: "ship-message",
       },
     });
     expect(inboundResult(await sendServiceFrame(harness, {
-      ...homeFrame,
-      id: "home-replay",
-    }))).toEqual({ ...home, replayed: "completed" });
+      ...shipFrame,
+      id: "ship-replay",
+    }))).toEqual({ ...ship, replayed: "completed" });
 
     const afterPersonal = await client.proc.list();
     expect(afterPersonal.processes).toEqual(beforePersonal.processes);
@@ -632,32 +632,32 @@ describe("gateway runtime integration", () => {
       messageCount: 6,
     });
 
-    const returnHomeFrame = inboundFrame({
-      id: "return-home",
-      deliveryId: "return-home-delivery",
-      messageId: "return-home-message",
-      text: "/home",
+    const returnShipFrame = inboundFrame({
+      id: "return-ship",
+      deliveryId: "return-ship-delivery",
+      messageId: "return-ship-message",
+      text: "/ship",
     });
-    const returnedHome = inboundResult(await sendServiceFrame(harness, returnHomeFrame));
-    expect(returnedHome).toMatchObject({
+    const returnedShip = inboundResult(await sendServiceFrame(harness, returnShipFrame));
+    expect(returnedShip).toMatchObject({
       ok: true,
       reply: {
-        text: expect.stringContaining("[PERSONAL HOME]"),
-        replyToId: "return-home-message",
+        text: expect.stringContaining("[SHIP]"),
+        replyToId: "return-ship-message",
       },
     });
     expect(inboundResult(await sendServiceFrame(harness, {
-      ...returnHomeFrame,
-      id: "return-home-replay",
-    }))).toEqual({ ...returnedHome, replayed: "completed" });
+      ...returnShipFrame,
+      id: "return-ship-replay",
+    }))).toEqual({ ...returnedShip, replayed: "completed" });
 
-    const afterHome = inboundResult(await sendServiceFrame(harness, inboundFrame({
-      id: "after-home",
-      deliveryId: "after-home-delivery",
-      messageId: "after-home-message",
-      text: "back at personal home",
+    const afterShip = inboundResult(await sendServiceFrame(harness, inboundFrame({
+      id: "after-ship",
+      deliveryId: "after-ship-delivery",
+      messageId: "after-ship-message",
+      text: "back aboard Ship",
     })));
-    expect(afterHome).toMatchObject({
+    expect(afterShip).toMatchObject({
       ok: true,
       delivered: {
         pid: personalProcesses[0]!.pid,

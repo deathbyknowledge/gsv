@@ -712,7 +712,7 @@ function messageRouteUsage(): string {
     "`show` and `list` inspect adapter routing. Groups, channels, and threads support `set`",
     "and `clear`. On the exact private DM that started its current run, only the personal",
     "intelligence can use `set` to open a direct line to owned non-personal work.",
-    "Use /home inside the DM to return to personal intelligence.",
+    "Use /ship inside the DM to return to Ship.",
     "The destination defaults to the current adapter chat. Changes affect future inbound messages;",
     "the current run's terminal message remains directed to the endpoint that started it.",
     "",

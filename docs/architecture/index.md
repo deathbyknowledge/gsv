@@ -81,7 +81,7 @@ finishes each interaction through Shell with `message send` or `message silence`
 
 ### Conversations
 
-Conversations are the durable user-facing record. Home remains stable while its
+Conversations are the durable user-facing record. Ship remains stable while its
 personal Process can be reset or replaced; Work conversations reference explicit
 interactive work Processes; adapter groups retain their own conversations.
 Canonical Messages live in installation-scoped Conversation Durable Objects,
@@ -89,7 +89,7 @@ not Process history. Each Message records its handling PID and run ID so clients
 can inspect the corresponding raw execution while it exists or through its
 archive later.
 
-Web, Desktop, CLI, and linked private adapters synchronize the same Home. The
+Web, Desktop, CLI, and linked private adapters synchronize the same Ship. The
 endpoint that admitted a run receives transient Message streaming; other signed-in
 clients receive the committed Message as synchronization. Raw Process activity is
 sent only to the run's routed connection or a client that explicitly observes the

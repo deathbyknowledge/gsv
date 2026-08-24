@@ -166,11 +166,11 @@ function createCtx(overrides?: {
     // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     } as KernelContext["env"],
     conversations: {
-      ensureHome: vi.fn((ownerUid: number, handlerPid: string) => ({
-        id: `conv:home:${ownerUid}`,
+      ensureShip: vi.fn((ownerUid: number, handlerPid: string) => ({
+        id: `conv:ship:${ownerUid}`,
         ownerUid,
-        kind: "home",
-        title: "Home",
+        kind: "ship",
+        title: "Ship",
         handlerPid,
         latestSequence: 0,
         createdAt: 1,

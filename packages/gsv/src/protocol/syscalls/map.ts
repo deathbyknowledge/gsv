@@ -231,8 +231,8 @@ import type {
   ConversationForProcessResult,
   ConversationHistoryArgs,
   ConversationHistoryResult,
-  ConversationHomeArgs,
-  ConversationHomeResult,
+  ConversationShipArgs,
+  ConversationShipResult,
   ConversationListArgs,
   ConversationListResult,
   ConversationMediaReadArgs,
@@ -262,7 +262,7 @@ export type SyscallDomains = {
   "mail.send": { args: MailSendArgs; result: MailSendResult };
   "mail.status": { args: MailStatusArgs; result: MailStatusResult };
 
-  "conversation.home": { args: ConversationHomeArgs; result: ConversationHomeResult };
+  "conversation.ship": { args: ConversationShipArgs; result: ConversationShipResult };
   "conversation.forProcess": { args: ConversationForProcessArgs; result: ConversationForProcessResult };
   "conversation.list": { args: ConversationListArgs; result: ConversationListResult };
   "conversation.history": { args: ConversationHistoryArgs; result: ConversationHistoryResult };

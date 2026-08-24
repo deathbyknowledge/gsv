@@ -182,7 +182,7 @@ For unlinked actors, direct messages receive a link challenge such as
 linked, a direct message is delivered to the user's personal controller unless
 that controller opened a direct line to an owned work process from the exact
 current DM run. A newer private message or selection fences a late route
-change, and `/home` always returns the surface to personal intelligence. A
+change, and `/ship` always returns the surface to Ship. A
 linked group, channel, or thread follows its actor-scoped route; the first
 message on an unrouted shared surface creates a separate interactive process.
 Pending human-in-the-loop approvals can be answered from a linked DM surface.

@@ -426,7 +426,7 @@ function requireOwnerUid(value: number): void {
 }
 
 function requireConversationKind(value: ConversationKind): void {
-  if (value !== "home" && value !== "work" && value !== "group") {
+  if (value !== "ship" && value !== "work" && value !== "group") {
     throw new Error("Conversation kind is invalid");
   }
 }

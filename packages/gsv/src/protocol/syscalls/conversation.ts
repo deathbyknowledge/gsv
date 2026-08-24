@@ -1,7 +1,7 @@
 import type { MessageAttachment } from "./proc";
 import type { ResourceBlock } from "../resource";
 
-export type ConversationKind = "home" | "work" | "group";
+export type ConversationKind = "ship" | "work" | "group";
 
 export type ConversationMemberRole = "member" | "handler" | "observer";
 
@@ -66,8 +66,8 @@ export type ConversationMessage = {
   createdAt: number;
 };
 
-export type ConversationHomeArgs = Record<string, never>;
-export type ConversationHomeResult = { conversation: ConversationSummary };
+export type ConversationShipArgs = Record<string, never>;
+export type ConversationShipResult = { conversation: ConversationSummary };
 
 export type ConversationForProcessArgs = { pid: string };
 export type ConversationForProcessResult = { conversation: ConversationSummary };
