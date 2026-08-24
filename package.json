@@ -3,6 +3,7 @@
   "version": "0.4.1",
   "private": true,
   "workspaces": [
+    "deployment",
     "extension",
     "gateway",
     "web",
@@ -21,6 +22,7 @@
     "extension:check": "npm run check --workspace extension",
     "extension:build": "npm run build --workspace extension",
     "extension:package": "bash ./scripts/build-extension-package.sh",
+    "deployment:check": "npm run check --workspace deployment",
     "gsv:build": "npm run build --workspace packages/gsv",
     "gsv:check": "npm run typecheck --workspace packages/gsv && npm run gsv:build",
     "version:show": "node ./scripts/version.mjs show",

@@ -1,0 +1,24 @@
+{
+  "name": "@humansandmachines/gsv-deployment",
+  "version": "0.4.1",
+  "private": false,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./manifest": "./src/manifest.ts"
+  },
+  "scripts": {
+    "check": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "alchemy": "2.0.0-beta.72",
+    "effect": "4.0.0-beta.107",
+    "zod": "4.1.13"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "5.20260823.1",
+    "typescript": "7.0.2",
+    "vitest": "4.1.9"
+  }
+}
