@@ -1,0 +1,44 @@
+[Script Info]
+Title: GSV 1,000-device demo rough cut
+ScriptType: v4.00+
+PlayResX: 2560
+PlayResY: 1440
+WrapStyle: 2
+ScaledBorderAndShadow: yes
+YCbCr Matrix: TV.709
+
+[V4+ Styles]
+Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
+Style: Caption,Noto Sans,48,&H00FFF8F5,&H000000FF,&H50170D2B,&H50170D2B,-1,0,0,0,100,100,0,0,3,16,0,1,60,60,86,1
+Style: Speed,Noto Sans,30,&H00FFF8F5,&H000000FF,&H60170D2B,&H60170D2B,-1,0,0,0,100,100,1.5,0,3,11,0,7,60,60,90,1
+
+[Events]
+Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
+Dialogue: 1,0:00:00.00,0:00:06.20,Caption,,0,0,0,,1,000 devices. One fleet incident.
+Dialogue: 1,0:00:07.00,0:00:13.80,Caption,,0,0,0,,1,000 / 1,000 targets online
+Dialogue: 1,0:00:14.00,0:00:21.80,Caption,,0,0,0,,One prompt. No runbook.
+Dialogue: 1,0:00:22.00,0:00:32.55,Caption,,0,0,0,,It samples first — then scales out.
+Dialogue: 1,0:00:37.42,0:00:48.30,Caption,,0,0,0,,The all-at-once scan hits\NCodeMode's 60-second ceiling.
+Dialogue: 1,0:00:48.42,0:00:56.05,Caption,,0,0,0,,It adapts instead of stopping.
+Dialogue: 1,0:00:56.13,0:01:10.70,Caption,,0,0,0,,A timing probe finds the first degraded node.
+Dialogue: 1,0:01:16.25,0:01:27.15,Caption,,0,0,0,,First 500: 483 healthy · 17 affected
+Dialogue: 1,0:01:27.25,0:01:37.35,Caption,,0,0,0,,The second half runs in bounded batches.
+Dialogue: 1,0:01:37.45,0:01:51.35,Caption,,0,0,0,,Full fleet scanned. The affected cohort is isolated.
+Dialogue: 1,0:01:51.45,0:02:06.60,Caption,,0,0,0,,All 17 failures share one exact pattern.
+Dialogue: 1,0:02:06.70,0:02:29.25,Caption,,0,0,0,,Healthy canaries rule out the binary upgrade.
+Dialogue: 1,0:02:29.37,0:02:52.75,Caption,,0,0,0,,Root cause: canary-b pushed incompatible config.
+Dialogue: 1,0:02:52.87,0:03:14.75,Caption,,0,0,0,,Only 17 devices are changed — 983 stay untouched.
+Dialogue: 1,0:03:14.87,0:03:21.65,Caption,,0,0,0,,Then it verifies the repair — and checks for collateral damage.
+Dialogue: 1,0:03:21.73,0:03:34.00,Caption,,0,0,0,,17 recovered · 983 untouched
+Dialogue: 1,0:03:34.00,0:03:57.10,Caption,,0,0,0,,1,000 inspected · 0 still failing
+Dialogue: 2,0:00:22.00,0:00:32.67,Speed,,0,0,0,,3× TIME-LAPSE
+Dialogue: 2,0:00:32.67,0:00:37.42,Speed,,0,0,0,,20× TIME-LAPSE
+Dialogue: 2,0:00:48.42,0:00:56.13,Speed,,0,0,0,,24× TIME-LAPSE
+Dialogue: 2,0:00:56.13,0:01:10.79,Speed,,0,0,0,,1.5×
+Dialogue: 2,0:01:10.79,0:01:16.25,Speed,,0,0,0,,24× TIME-LAPSE
+Dialogue: 2,0:01:27.25,0:01:37.45,Speed,,0,0,0,,30× TIME-LAPSE
+Dialogue: 2,0:01:51.45,0:02:06.70,Speed,,0,0,0,,4× TIME-LAPSE
+Dialogue: 2,0:02:06.70,0:02:29.37,Speed,,0,0,0,,3× TIME-LAPSE
+Dialogue: 2,0:02:29.37,0:02:52.87,Speed,,0,0,0,,2× TIME-LAPSE
+Dialogue: 2,0:03:14.87,0:03:21.73,Speed,,0,0,0,,30× TIME-LAPSE
+Dialogue: 2,0:03:21.73,0:03:57.73,Speed,,0,0,0,,1.5×

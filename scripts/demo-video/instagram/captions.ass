@@ -1,0 +1,54 @@
+[Script Info]
+Title: GSV browser extension / Instagram demo
+ScriptType: v4.00+
+PlayResX: 2560
+PlayResY: 1440
+WrapStyle: 2
+ScaledBorderAndShadow: yes
+YCbCr Matrix: TV.709
+
+[V4+ Styles]
+Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
+Style: Caption,Noto Sans,48,&H00FFF8F5,&H000000FF,&H50170D2B,&H50170D2B,-1,0,0,0,100,100,0,0,3,16,0,1,60,60,86,1
+Style: Hook,Noto Sans,54,&H00FFF8F5,&H000000FF,&H50170D2B,&H50170D2B,-1,0,0,0,100,100,0,0,3,18,0,1,60,60,128,1
+Style: Speed,Noto Sans,30,&H00FFF8F5,&H000000FF,&H60170D2B,&H60170D2B,-1,0,0,0,100,100,1.5,0,3,11,0,7,60,60,105,1
+Style: ReportPatch,Noto Sans,24,&H00E7E1EC,&H000000FF,&H00090616,&H00090616,0,0,0,0,100,100,0,0,1,1,0,7,0,0,0,1
+
+[Events]
+Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
+Dialogue: 1,0:00:00.00,0:00:02.85,Hook,,0,0,0,,I don't want to see any of it.\NJust catch me up.
+Dialogue: 1,0:00:03.00,0:00:08.80,Caption,,0,0,0,,One prompt.
+Dialogue: 1,0:00:09.00,0:00:12.85,Caption,,0,0,0,,It finds the connected browser.
+Dialogue: 1,0:00:13.00,0:00:16.85,Caption,,0,0,0,,Then opens Instagram through the browser target.
+Dialogue: 1,0:00:17.00,0:00:21.65,Caption,,0,0,0,,The existing session is already logged in.
+Dialogue: 1,0:00:21.83,0:00:23.20,Caption,,0,0,0,,It starts collecting the feed.
+Dialogue: 1,0:00:23.33,0:00:28.50,Caption,,0,0,0,,Instagram virtualizes the feed.\NThe agent changes strategy.
+Dialogue: 1,0:00:28.67,0:00:33.50,Caption,,0,0,0,,It switches from recommendations\Nto the Following feed.
+Dialogue: 1,0:00:33.67,0:00:38.85,Caption,,0,0,0,,Then it works through the page.
+Dialogue: 1,0:00:39.00,0:00:45.80,Caption,,0,0,0,,Following feed found: 4 posts.
+Dialogue: 1,0:00:46.00,0:00:57.60,Caption,,0,0,0,,It collects post details\Nand checks active stories.
+Dialogue: 1,0:00:57.81,0:01:05.75,Caption,,0,0,0,,A quick pass checks the broader feed\Nfor anything else worth surfacing.
+Dialogue: 1,0:01:05.95,0:01:10.75,Caption,,0,0,0,,Then it checks notifications.
+Dialogue: 1,0:01:10.95,0:01:15.20,Caption,,0,0,0,,Got everything. Close the panel. Clean up.
+Dialogue: 1,0:01:15.35,0:01:20.40,Caption,,0,0,0,,Six minutes of browsing become\Na short, structured catch-up.
+Dialogue: 1,0:01:20.40,0:01:25.20,Caption,,0,0,0,,Catch up without looking at the feed.
+Dialogue: 2,0:00:03.00,0:00:05.00,Speed,,0,0,0,,6× TIME-LAPSE
+Dialogue: 2,0:00:09.00,0:00:13.00,Speed,,0,0,0,,2.25×
+Dialogue: 2,0:00:13.00,0:00:17.00,Speed,,0,0,0,,1.5×
+Dialogue: 2,0:00:17.00,0:00:18.33,Speed,,0,0,0,,3× TIME-LAPSE
+Dialogue: 2,0:00:21.83,0:00:23.33,Speed,,0,0,0,,4× TIME-LAPSE
+Dialogue: 2,0:00:23.33,0:00:28.67,Speed,,0,0,0,,1.5×
+Dialogue: 2,0:00:33.67,0:00:39.00,Speed,,0,0,0,,12× TIME-LAPSE
+Dialogue: 2,0:00:46.00,0:00:49.14,Speed,,0,0,0,,14× TIME-LAPSE
+Dialogue: 2,0:00:49.14,0:00:54.14,Speed,,0,0,0,,1.4×
+Dialogue: 2,0:00:54.14,0:00:57.81,Speed,,0,0,0,,9× TIME-LAPSE
+Dialogue: 2,0:00:57.81,0:01:01.81,Speed,,0,0,0,,1.5×
+Dialogue: 2,0:01:01.81,0:01:05.95,Speed,,0,0,0,,14× TIME-LAPSE
+Dialogue: 2,0:01:05.95,0:01:10.95,Speed,,0,0,0,,2×
+Dialogue: 2,0:01:15.35,0:01:25.35,Speed,,0,0,0,,2×
+Dialogue: 3,0:00:00.00,0:00:02.85,ReportPatch,,0,0,0,,{\pos(1245,850)}{\b1}Active stories right now: 12 accounts{\b0}\N12 accounts you follow have posted stories recently.
+Dialogue: 3,0:00:00.00,0:00:02.85,ReportPatch,,0,0,0,,{\pos(1245,956)}{\b1}Notifications worth knowing about:{\b0}\N• New follower and recent likes\N• One security alert worth checking\N• Two pending follow requests
+Dialogue: 3,0:00:00.00,0:00:02.85,ReportPatch,,0,0,0,,{\pos(1245,1112)}{\b1}Suggested follows:{\b0} several mutual connections.
+Dialogue: 3,0:01:15.35,0:01:25.20,ReportPatch,,0,0,0,,{\pos(1245,850)}{\b1}Active stories right now: 12 accounts{\b0}\N12 accounts you follow have posted stories recently.
+Dialogue: 3,0:01:15.35,0:01:25.20,ReportPatch,,0,0,0,,{\pos(1245,956)}{\b1}Notifications worth knowing about:{\b0}\N• New follower and recent likes\N• One security alert worth checking\N• Two pending follow requests
+Dialogue: 3,0:01:15.35,0:01:25.20,ReportPatch,,0,0,0,,{\pos(1245,1112)}{\b1}Suggested follows:{\b0} several mutual connections.
