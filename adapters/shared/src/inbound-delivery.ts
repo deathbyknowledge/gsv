@@ -90,13 +90,27 @@ export class InboundDeliveryLedger<Payload, ResponseContext = never> {
         const expired = [...records.entries()]
           .filter(([, record]) => record.state === "completed" && record.expiresAt <= now)
           .map(([recordKey]) => recordKey);
-        if (expired.length > 0) await txn.delete(expired);
-        if (
-          !records.has(key)
-          && records.size - expired.length >= (this.options.maxRecords ?? Infinity)
-        ) {
-          throw new Error("Inbound delivery ledger is at capacity");
+        const maxRecords = this.options.maxRecords ?? Infinity;
+        const retainedCount = records.size - expired.length;
+        let reclaimed: string[] = [];
+        if (!records.has(key) && retainedCount >= maxRecords) {
+          const required = retainedCount - maxRecords + 1;
+          const completed = [...records.entries()]
+            .flatMap(([recordKey, record]) => (
+              record.state === "completed" && record.expiresAt > now
+                ? [{ key: recordKey, expiresAt: record.expiresAt }]
+                : []
+            ))
+            .sort((left, right) => (
+              left.expiresAt - right.expiresAt || left.key.localeCompare(right.key)
+            ));
+          if (completed.length < required) {
+            throw new Error("Inbound delivery ledger is at capacity");
+          }
+          reclaimed = completed.slice(0, required).map((record) => record.key);
         }
+        const removed = [...expired, ...reclaimed];
+        if (removed.length > 0) await txn.delete(removed);
       }
       const existing = await txn.get<PendingInboundDelivery<Payload, ResponseContext>>(key);
       if (existing?.state === "completed" && existing.expiresAt <= now) {

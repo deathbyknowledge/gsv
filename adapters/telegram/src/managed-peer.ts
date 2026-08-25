@@ -127,19 +127,11 @@ export class ManagedTelegramPeer extends DurableObject<ManagedTelegramPeerEnv> {
       await txn.put(STATE_KEY, next);
       return next.activeRoute?.generation;
     });
-    try {
-      await this.inboundDeliveries.enqueueAndArm(
-        inbound.deliveryId,
-        { inbound, routeGeneration },
-        Date.now() + INBOUND_WAKE_DELAY_MS,
-      );
-    } catch {
-      console.warn(JSON.stringify({
-        component: "managed_telegram",
-        event: "inbound_backlog_rejected",
-      }));
-      return { ok: true };
-    }
+    await this.inboundDeliveries.enqueueAndArm(
+      inbound.deliveryId,
+      { inbound, routeGeneration },
+      Date.now() + INBOUND_WAKE_DELAY_MS,
+    );
     if (isManagedTelegramPairCommand(inbound.text)) {
       await this.attemptInbound(inbound.deliveryId);
     }

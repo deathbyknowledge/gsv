@@ -114,6 +114,22 @@ describe("managed Telegram HTTP boundary", () => {
     }));
   });
 
+  it("asks Telegram to retry when the peer cannot durably enqueue the update", async () => {
+    const { env, handleWebhook } = makeEnv();
+    handleWebhook.mockRejectedValueOnce(new Error("simulated storage failure"));
+
+    const response = await handleManagedTelegramRequest(
+      webhookRequest(JSON.stringify(telegramUpdate())),
+      env,
+    );
+
+    expect(response.status).toBe(503);
+    await expect(response.json()).resolves.toEqual({
+      ok: false,
+      error: "Telegram update could not be accepted",
+    });
+  });
+
   it("exposes only health and the exact webhook route", async () => {
     const { env } = makeEnv();
     const health = await handleManagedTelegramRequest(

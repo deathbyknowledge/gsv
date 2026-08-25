@@ -441,6 +441,48 @@ describe("InboundDeliveryLedger", () => {
     }
   });
 
+  it("reclaims the oldest completed id before admitting new provider work", async () => {
+    const storage = new MemoryStorage();
+    const pending = retainedLedger(storage);
+    const clock = vi.spyOn(Date, "now");
+    try {
+      for (let index = 1; index <= 4; index += 1) {
+        clock.mockReturnValue(10_000 + index);
+        const deliveryId = `update:000${index}`;
+        await pending.enqueueAndArm(deliveryId, { providerMessageId: deliveryId }, 100);
+        await pending.attempt(deliveryId, async () => ({ terminal: true }));
+      }
+
+      clock.mockReturnValue(10_500);
+      await pending.enqueueAndArm("update:0005", { providerMessageId: "update:0005" }, 100);
+
+      expect(storage.values.has("retained_inbound:update:0001")).toBe(false);
+      expect(storage.values.has("retained_inbound:update:0002")).toBe(true);
+      expect(storage.values.has("retained_inbound:update:0005")).toBe(true);
+      expect([...storage.values.keys()].filter((key) => key.startsWith("retained_inbound:")))
+        .toHaveLength(4);
+    } finally {
+      clock.mockRestore();
+    }
+  });
+
+  it("rejects new provider work rather than discarding pending work at capacity", async () => {
+    const storage = new MemoryStorage();
+    const pending = retainedLedger(storage);
+    for (let index = 1; index <= 4; index += 1) {
+      const deliveryId = `update:000${index}`;
+      await pending.enqueueAndArm(deliveryId, { providerMessageId: deliveryId }, 100);
+    }
+
+    await expect(pending.enqueueAndArm(
+      "update:0005",
+      { providerMessageId: "update:0005" },
+      100,
+    )).rejects.toThrow("Inbound delivery ledger is at capacity");
+    expect(storage.values.has("retained_inbound:update:0001")).toBe(true);
+    expect(storage.values.has("retained_inbound:update:0005")).toBe(false);
+  });
+
   it("can order pending provider ids by their stable key", async () => {
     const storage = new MemoryStorage();
     const pending = retainedLedger(storage);

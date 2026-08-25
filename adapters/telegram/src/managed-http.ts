@@ -69,7 +69,18 @@ export async function handleManagedTelegramRequest(
   );
   // SAFETY: the managed peer namespace is owned by this worker and exposes the handleWebhook RPC.
   const peer = env.MANAGED_TELEGRAM_PEER.get(id) as ManagedTelegramPeerStub;
-  await peer.handleWebhook(normalized.inbound);
+  try {
+    await peer.handleWebhook(normalized.inbound);
+  } catch {
+    console.warn(JSON.stringify({
+      component: "managed_telegram",
+      event: "inbound_backlog_rejected",
+    }));
+    return Response.json(
+      { ok: false, error: "Telegram update could not be accepted" },
+      { status: 503 },
+    );
+  }
   return Response.json({ ok: true });
 }
 
