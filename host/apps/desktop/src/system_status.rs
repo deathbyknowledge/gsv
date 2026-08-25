@@ -337,7 +337,7 @@ fn tray_icon_rgba() -> Result<Vec<u8>, String> {
         .ok_or_else(|| "could not allocate the status icon canvas".to_string())?;
     render_ship(&mut pixmap, 26.0, true)?;
     let mut rgba = pixmap.data().to_vec();
-    for pixel in rgba.chunks_exact_mut(4) {
+    for pixel in rgba.as_chunks_mut::<4>().0 {
         if pixel[3] != 0 {
             pixel[0] = 0xff;
             pixel[1] = 0xff;
@@ -654,7 +654,7 @@ impl ksni::Tray for LinuxStatusItem {
 #[cfg(target_os = "linux")]
 fn linux_tray_icon() -> Result<ksni::Icon, String> {
     let mut data = tray_icon_rgba()?;
-    for pixel in data.chunks_exact_mut(4) {
+    for pixel in data.as_chunks_mut::<4>().0 {
         pixel.rotate_right(1);
     }
     Ok(ksni::Icon {
@@ -673,13 +673,13 @@ mod tests {
     #[test]
     fn tray_mark_is_a_white_transparent_ship() {
         let rgba = tray_icon_rgba().expect("the embedded ship should render");
-        let visible = rgba.chunks_exact(4).filter(|pixel| pixel[3] != 0);
+        let visible = rgba.as_chunks::<4>().0.iter().filter(|pixel| pixel[3] != 0);
         let visible = visible.collect::<Vec<_>>();
         assert!(!visible.is_empty());
         assert!(visible
             .iter()
             .all(|pixel| pixel[0..3] == [0xff, 0xff, 0xff]));
-        assert!(rgba.chunks_exact(4).any(|pixel| pixel[3] == 0));
+        assert!(rgba.as_chunks::<4>().0.iter().any(|pixel| pixel[3] == 0));
     }
 
     #[test]

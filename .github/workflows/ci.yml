@@ -460,6 +460,9 @@ jobs:
     runs-on: ubuntu-22.04
     needs: [changes]
     if: needs.changes.outputs.desktop == 'true'
+    env:
+      CARGO_PROFILE_DEV_DEBUG: 0
+      CARGO_PROFILE_TEST_DEBUG: 0
     steps:
       - uses: actions/checkout@v4
 
@@ -467,6 +470,12 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy, rustfmt
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+        with:
+          workspaces: host -> target
+          cache-on-failure: true
 
       - name: Install native build dependencies
         run: |
@@ -493,12 +502,6 @@ jobs:
           bash -n host/scripts/package-macos.sh
           scripts/vision-native/benchmark.sh scripts/vision-native/fixtures.sh
           scripts/vision-native/parity.sh scripts/vision-native/prepare.sh
-
-      - name: Check Desktop and helpers
-        working-directory: host
-        run: >-
-          cargo check --locked --package desktop --package transcriber
-          --package gestures --package gesture-protocol
 
       - name: Check formatting
         working-directory: host

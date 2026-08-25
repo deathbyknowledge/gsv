@@ -195,7 +195,7 @@ fn configure_theme(cx: &mut App) {
 
 #[cfg(test)]
 mod tests {
-    use gpui::{AppContext as _, TestAppContext};
+    use gpui::TestAppContext;
 
     use super::*;
 

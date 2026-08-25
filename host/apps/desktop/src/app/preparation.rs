@@ -426,10 +426,8 @@ impl PreparedContentCache {
         };
         let target_id = if direct_match {
             result.id.clone()
-        } else if let Some(adopted_id) = self.result_adoptions.remove(&result_identity) {
-            adopted_id
         } else {
-            return None;
+            self.result_adoptions.remove(&result_identity)?
         };
         let entry = self.entries.get_mut(&target_id).filter(|entry| {
             entry_accepts_result(entry, result.revision, result.generation, result.mode)
