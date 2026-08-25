@@ -21,6 +21,14 @@ import * as z from "zod/mini";
 
 type TimerHandle = ReturnType<typeof globalThis.setTimeout>;
 
+function serializeOutgoingArguments(args: GsvOutgoingArguments): JsonValue {
+  const serialized = JSON.stringify(args);
+  if (serialized === undefined) {
+    throw new Error("Request arguments are not JSON serializable");
+  }
+  return jsonValueSchema.parse(JSON.parse(serialized));
+}
+
 export type GsvError = {
   code: number;
   message: string;
@@ -909,8 +917,8 @@ export class GSVClient {
     const id = makeId();
     const body = options.body;
     const signal = options.signal;
+    const wireArgs = serializeOutgoingArguments(args);
     const outgoing = body ? this.bodyChannel.prepare(body) : undefined;
-    const wireArgs = jsonValueSchema.parse(args);
     const frame: GsvRequestFrame = {
       type: "req",
       id,
@@ -996,7 +1004,7 @@ export class GSVClient {
       type: "req",
       id,
       call,
-      args: jsonValueSchema.parse(args),
+      args: serializeOutgoingArguments(args),
     };
     const timeoutMs = this.requestTimeoutMs(call);
 

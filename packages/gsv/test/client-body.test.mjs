@@ -350,6 +350,49 @@ test("sends a request body after its JSON descriptor", async () => {
   client.close();
 });
 
+test("normalizes optional request arguments before accepting a body", async () => {
+  const { client, socket } = await connectedClient();
+  const pending = client.request("test.echo", { optional: undefined }, {
+    body: body(new Uint8Array([1, 2, 3])),
+  });
+
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  const request = JSON.parse(socket.sent.at(-3));
+
+  assert.deepEqual(request.args, {});
+  assert.equal(request.body.streamId, 1);
+
+  socket.receive(JSON.stringify({ type: "res", id: request.id, ok: true, data: {} }));
+  await pending;
+  client.close();
+});
+
+test("rejects invalid request arguments before allocating a body stream", async () => {
+  const { client, socket } = await connectedClient();
+  const circular = {};
+  circular.self = circular;
+  const sentBefore = socket.sent.length;
+
+  await assert.rejects(
+    client.request("test.echo", circular, {
+      body: body(new Uint8Array([1, 2, 3])),
+    }),
+    /circular/i,
+  );
+  assert.equal(socket.sent.length, sentBefore);
+
+  const pending = client.request("test.echo", {}, {
+    body: body(new Uint8Array([4, 5, 6])),
+  });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  const request = JSON.parse(socket.sent.at(-3));
+  assert.equal(request.body.streamId, 1);
+
+  socket.receive(JSON.stringify({ type: "res", id: request.id, ok: true, data: {} }));
+  await pending;
+  client.close();
+});
+
 test("exposes a response body as a stream", async () => {
   const { client, socket } = await connectedClient();
   const pending = client.request("test.echo");
