@@ -6,7 +6,7 @@ import path from "node:path";
 import test from "node:test";
 
 import { MockCapture, MockPlayback } from "../src/audio.mjs";
-import { VoiceController } from "../src/controller.mjs";
+import { WearableController } from "../src/controller.mjs";
 import { MockBackend } from "../src/gateway.mjs";
 import { IpcServer } from "../src/ipc.mjs";
 
@@ -55,13 +55,13 @@ test("drives the complete mock voice flow through the emulator IPC contract", as
   let ipc;
   let latest;
   const backend = new MockBackend({
-    transcript: "is the whoop ready",
-    answer: "Battery secure. Props clear.",
+    transcript: "what needs my attention",
+    answer: "Your morning brief is ready.",
   }, {
     onSignal: (signal, payload) => controller?.handleSignal(signal, payload),
-    onStatus: (connection, status) => controller?.setConnection(connection, status),
+    onStatus: (connection, status) => controller?.setClientConnection(connection, status),
   });
-  controller = new VoiceController({
+  controller = new WearableController({
     backend,
     capture: new MockCapture(),
     playback: new MockPlayback(),
@@ -73,7 +73,7 @@ test("drives the complete mock voice flow through the emulator IPC contract", as
   });
   ipc = new IpcServer(socketPath, {
     getSnapshot: () => latest,
-    onCommand: (command) => controller.handleCommand(command),
+    onAction: (action) => controller.handleAction(action),
   });
   let socket;
   try {
@@ -81,16 +81,16 @@ test("drives the complete mock voice flow through the emulator IPC contract", as
     await backend.start();
     socket = net.createConnection(socketPath);
     const next = lineReader(socket);
-    await next((snapshot) => snapshot.connection === "online");
+    await next((snapshot) => snapshot.clientConnection === "online");
 
-    socket.write('{"type":"ptt.toggle"}\n');
+    socket.write('{"type":"voice.toggle"}\n');
     await next((snapshot) => snapshot.phase === "recording");
-    socket.write('{"type":"ptt.toggle"}\n');
+    socket.write('{"type":"voice.toggle"}\n');
     await next((snapshot) => snapshot.phase === "transcribing");
     const answer = await next((snapshot) => snapshot.phase === "answer");
 
-    assert.equal(answer.transcript, "is the whoop ready");
-    assert.equal(answer.answer, "Battery secure. Props clear.");
+    assert.equal(answer.transcript, "what needs my attention");
+    assert.equal(answer.answer, "Your morning brief is ready.");
     assert.equal(answer.runId, "");
   } finally {
     socket?.destroy();

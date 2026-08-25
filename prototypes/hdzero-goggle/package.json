@@ -3,7 +3,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "check": "node --check src/main.mjs && node --check src/controller.mjs && node --check src/gateway.mjs && node --check src/audio.mjs && node --check src/ipc.mjs",
+    "check": "node --check src/main.mjs && node --check src/controller.mjs && node --check src/driver.mjs && node --check src/filesystem.mjs && node --check src/shell.mjs && node --check src/reconnect.mjs && node --check src/gateway.mjs && node --check src/audio.mjs && node --check src/ipc.mjs",
     "test": "node --test test/*.test.mjs"
   }
 }

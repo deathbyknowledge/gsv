@@ -1,6 +1,8 @@
 import { GSVClient } from "@humansandmachines/gsv/client";
 import { bodyFromBytes, bodyToBytes } from "@humansandmachines/gsv/protocol";
 
+import { connectionFailureReason, ReconnectSupervisor } from "./reconnect.mjs";
+
 const MAX_SPEECH_BYTES = 16 * 1024 * 1024;
 
 function delay(ms, signal) {
@@ -29,6 +31,18 @@ function required(value, name) {
   return normalized;
 }
 
+function userCredential(config) {
+  const password = config.password?.trim();
+  const token = config.token?.trim();
+  if (password && token) {
+    throw new Error("Set only one of GSV_PASSWORD or GSV_TOKEN");
+  }
+  if (!password && !token) {
+    throw new Error("GSV_PASSWORD or GSV_TOKEN is required unless --mock is used");
+  }
+  return password ? { password } : { token };
+}
+
 function positiveInt(value, fallback) {
   const parsed = Number.parseInt(value || "", 10);
   return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : fallback;
@@ -39,7 +53,7 @@ export class GsvBackend {
     this.config = {
       url: required(config.url, "GSV_GATEWAY_URL"),
       username: required(config.username, "GSV_USERNAME"),
-      token: required(config.token, "GSV_TOKEN"),
+      ...userCredential(config),
       pid: config.pid?.trim() || undefined,
       conversationId: config.conversationId?.trim() || undefined,
       language: config.language?.trim() || undefined,
@@ -51,15 +65,26 @@ export class GsvBackend {
     this.client = new GSVClient({
       WebSocket: globalThis.WebSocket,
       client: {
-        id: "gsv-hdzero-emulator",
-        version: "0.1.0",
+        id: "hdzero-wearable",
+        version: "0.2.0",
         platform: "hdzero-emulator",
         role: "user",
       },
     });
-    this.stopped = false;
-    this.stopAbort = new AbortController();
-    this.connecting = null;
+    this.connection = new ReconnectSupervisor({
+      isConnected: () => this.client.isConnected(),
+      connect: () => this.client.connect({
+        url: this.config.url,
+        username: this.config.username,
+        ...(this.config.password
+          ? { password: this.config.password }
+          : { token: this.config.token }),
+      }),
+      onRetry: (error, retryMs) => {
+        const reason = connectionFailureReason(error, [this.config.password, this.config.token]);
+        this.log(`[bridge] gateway connect failed: ${reason}; retrying in ${retryMs}ms`);
+      },
+    });
     this.unsubscribeSignal = this.client.onSignal(onSignal);
     this.unsubscribeStatus = this.client.onStatus((status) => {
       if (status.state === "connected") {
@@ -68,46 +93,13 @@ export class GsvBackend {
         this.onStatusChange("connecting", "Connecting to gateway");
       } else {
         this.onStatusChange("offline", "Gateway offline");
-        if (!this.stopped) {
-          void this.ensureConnected();
-        }
+        this.connection.disconnected();
       }
     });
   }
 
   start() {
-    return this.ensureConnected();
-  }
-
-  async ensureConnected() {
-    if (this.stopped || this.client.isConnected()) {
-      return;
-    }
-    if (this.connecting) {
-      return this.connecting;
-    }
-    this.connecting = this.connectLoop().finally(() => {
-      this.connecting = null;
-    });
-    return this.connecting;
-  }
-
-  async connectLoop() {
-    let retryMs = 500;
-    while (!this.stopped && !this.client.isConnected()) {
-      try {
-        await this.client.connect({
-          url: this.config.url,
-          username: this.config.username,
-          token: this.config.token,
-        });
-        return;
-      } catch (error) {
-        this.log(`[bridge] gateway connect failed; retrying in ${retryMs}ms`);
-        await delay(retryMs, this.stopAbort.signal).catch(() => {});
-        retryMs = Math.min(retryMs * 2, 10_000);
-      }
-    }
+    return this.connection.start();
   }
 
   async transcribe(audio, signal) {
@@ -161,19 +153,18 @@ export class GsvBackend {
   }
 
   async stop() {
-    this.stopped = true;
-    this.stopAbort.abort(new Error("Backend stopped"));
     this.unsubscribeSignal();
     this.unsubscribeStatus();
+    const stopped = this.connection.stop();
     this.client.close();
-    await this.connecting?.catch(() => {});
+    await stopped;
   }
 }
 
 export class MockBackend {
   constructor(config, { onSignal, onStatus }) {
-    this.transcript = config.transcript || "Give me a concise pre-flight check for this tiny whoop.";
-    this.answer = config.answer || "Battery secure. Props clear. Video link solid. Arm switch safe. Launch area clear.";
+    this.transcript = config.transcript || "What needs my attention today?";
+    this.answer = config.answer || "Your morning brief is ready. One agent is active and there are no pending approvals.";
     this.onSignal = onSignal;
     this.onStatus = onStatus;
     this.runNumber = 0;

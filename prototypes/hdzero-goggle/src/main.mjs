@@ -1,7 +1,11 @@
 #!/usr/bin/env node
 
+import { fileURLToPath } from "node:url";
+import path from "node:path";
+
 import { AudioCapture, AudioPlayback, MockCapture, MockPlayback } from "./audio.mjs";
-import { VoiceController } from "./controller.mjs";
+import { WearableController } from "./controller.mjs";
+import { DisabledWearableDriver, MockWearableDriver, WearableDriver } from "./driver.mjs";
 import { GsvBackend, MockBackend } from "./gateway.mjs";
 import { IpcServer } from "./ipc.mjs";
 
@@ -11,13 +15,17 @@ function option(args, name) {
 }
 
 const args = process.argv.slice(2);
+const pocDirectory = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const mock = args.includes("--mock") || process.env.GSV_HDZERO_MOCK === "1";
+const clientOnly = args.includes("--gateway");
+const requireDual = args.includes("--dual");
 const socketPath = option(args, "--socket")
   || process.env.GSV_HDZERO_SOCKET
   || "/tmp/gsv-hdzero.sock";
 
 let controller;
 let backend;
+let driver;
 let ipc;
 let shuttingDown = false;
 
@@ -31,7 +39,7 @@ async function main() {
   };
   const backendOptions = {
     onSignal: (signal, payload) => controller?.handleSignal(signal, payload),
-    onStatus: (connection, status) => controller?.setConnection(connection, status),
+    onStatus: (connection, status) => controller?.setClientConnection(connection, status),
   };
   backend = mock
     ? new MockBackend({
@@ -41,6 +49,7 @@ async function main() {
     : new GsvBackend({
       url: process.env.GSV_GATEWAY_URL,
       username: process.env.GSV_USERNAME,
+      password: process.env.GSV_PASSWORD,
       token: process.env.GSV_TOKEN,
       pid: process.env.GSV_PID,
       conversationId: process.env.GSV_CONVERSATION_ID,
@@ -52,7 +61,7 @@ async function main() {
   const capture = mock ? new MockCapture() : new AudioCapture(audioConfig);
   const playback = mock ? new MockPlayback() : new AudioPlayback(audioConfig);
   let latestSnapshot;
-  controller = new VoiceController({
+  controller = new WearableController({
     backend,
     capture,
     playback,
@@ -61,19 +70,47 @@ async function main() {
       ipc?.broadcast(snapshot);
     },
   });
+  const deviceId = process.env.GSV_DEVICE_ID?.trim() || "hdzero-g2-emulator";
+  const driverOptions = {
+    getState: () => controller.publicDeviceState(),
+    getPresentation: () => controller.presentationState(),
+    onActivity: (activity) => controller.setDeviceActivity(activity),
+    onPresent: (presentation) => controller.setPresentation(presentation),
+    onStatus: (connection, status, id) => controller.setDriverConnection(connection, status, id),
+  };
+  if (mock) {
+    driver = new MockWearableDriver({ deviceId }, driverOptions);
+  } else if (!clientOnly && (process.env.GSV_DEVICE_TOKEN || requireDual)) {
+    driver = new WearableDriver({
+      url: process.env.GSV_GATEWAY_URL,
+      username: process.env.GSV_USERNAME,
+      token: process.env.GSV_DEVICE_TOKEN,
+      deviceId,
+      rootPath: process.env.GSV_DEVICE_ROOT
+        || path.join(pocDirectory, ".work/device-root"),
+      firmwareAppRoot: process.env.GSV_HDZERO_APP_ROOT
+        || path.join(pocDirectory, ".work/hdzero-goggle/mkapp/app"),
+    }, driverOptions);
+  } else {
+    driver = new DisabledWearableDriver({ deviceId }, driverOptions);
+  }
   ipc = new IpcServer(socketPath, {
     getSnapshot: () => latestSnapshot,
-    onCommand: (command) => controller.handleCommand(command),
+    onAction: (action) => controller.handleAction(action),
   });
   await ipc.start();
-  console.error(`[bridge] listening on ${socketPath}${mock ? " (mock gateway)" : ""}`);
+  console.error(`[bridge] listening on ${socketPath}${mock ? " (mock wearable)" : ""}`);
   void backend.start();
+  void driver.start().catch(() => {
+    controller.setDriverConnection("offline", "Machine target failed to start", deviceId);
+  });
 }
 
 async function shutdown() {
   if (shuttingDown) return;
   shuttingDown = true;
   await controller?.close().catch(() => {});
+  await driver?.stop().catch(() => {});
   await backend?.stop().catch(() => {});
   await ipc?.stop().catch(() => {});
 }

@@ -17,9 +17,11 @@
 
 enum {
     COMMAND_NONE = 0,
-    COMMAND_PTT,
+    COMMAND_VOICE,
     COMMAND_SPEECH,
     COMMAND_CANCEL,
+    COMMAND_VIEW_NEXT,
+    COMMAND_VIEW_PREVIOUS,
 };
 
 #define COMMAND_QUEUE_MAX 16
@@ -27,9 +29,14 @@ enum {
 static pthread_mutex_t state_mutex = PTHREAD_MUTEX_INITIALIZER;
 static gsv_snapshot_t latest = {
     .version = 1,
-    .connection = "offline",
+    .view = "conversation",
+    .client_connection = "offline",
+    .driver_connection = "offline",
+    .device_id = "hdzero-g2-emulator",
     .phase = "idle",
     .status = "Bridge offline",
+    .activity = "Wearable bridge offline",
+    .presentation_kind = "none",
 };
 static uint8_t command_queue[COMMAND_QUEUE_MAX];
 static size_t command_queue_head;
@@ -151,17 +158,32 @@ static bool json_bool(const char *json, const char *key, bool *output) {
 }
 
 static void publish_snapshot(const char *line) {
-    char type[24];
+    char type[32];
     gsv_snapshot_t next = {0};
-    if (!json_string(line, "type", type, sizeof(type)) || strcmp(type, "snapshot") != 0) {
+    if (!json_string(line, "type", type, sizeof(type)) ||
+        strcmp(type, "wearable.snapshot") != 0) {
         return;
     }
-    if (!json_string(line, "connection", next.connection, sizeof(next.connection)) ||
+    if (!json_string(line, "view", next.view, sizeof(next.view)) ||
+        !json_string(line, "clientConnection", next.client_connection,
+                     sizeof(next.client_connection)) ||
+        !json_string(line, "driverConnection", next.driver_connection,
+                     sizeof(next.driver_connection)) ||
         !json_string(line, "phase", next.phase, sizeof(next.phase))) {
         return;
     }
     json_bool(line, "speak", &next.speak);
+    json_string(line, "deviceId", next.device_id, sizeof(next.device_id));
     json_string(line, "status", next.status, sizeof(next.status));
+    json_string(line, "activity", next.activity, sizeof(next.activity));
+    json_string(line, "presentationKind", next.presentation_kind,
+                sizeof(next.presentation_kind));
+    json_string(line, "presentationTitle", next.presentation_title,
+                sizeof(next.presentation_title));
+    json_string(line, "presentationBody", next.presentation_body,
+                sizeof(next.presentation_body));
+    json_string(line, "presentationPath", next.presentation_path,
+                sizeof(next.presentation_path));
     json_string(line, "transcript", next.transcript, sizeof(next.transcript));
     json_string(line, "answer", next.answer, sizeof(next.answer));
     json_string(line, "error", next.error, sizeof(next.error));
@@ -175,10 +197,14 @@ static void publish_snapshot(const char *line) {
 
 static void publish_offline(void) {
     pthread_mutex_lock(&state_mutex);
-    if (strcmp(latest.connection, "offline") != 0) {
-        copy_string(latest.connection, sizeof(latest.connection), "offline");
+    if (strcmp(latest.client_connection, "offline") != 0 ||
+        strcmp(latest.driver_connection, "offline") != 0 ||
+        strcmp(latest.status, "Bridge offline") != 0) {
+        copy_string(latest.client_connection, sizeof(latest.client_connection), "offline");
+        copy_string(latest.driver_connection, sizeof(latest.driver_connection), "offline");
         copy_string(latest.phase, sizeof(latest.phase), "idle");
         copy_string(latest.status, sizeof(latest.status), "Bridge offline");
+        copy_string(latest.activity, sizeof(latest.activity), "Wearable bridge offline");
         latest.run_id[0] = '\0';
         ++latest.version;
     }
@@ -201,9 +227,9 @@ static void pop_command(void) {
     pthread_mutex_unlock(&state_mutex);
 }
 
-static bool send_command(int fd, const char *command) {
+static bool send_action(int fd, const char *action) {
     char line[96];
-    int length = snprintf(line, sizeof(line), "{\"type\":\"%s\"}\n", command);
+    int length = snprintf(line, sizeof(line), "{\"type\":\"%s\"}\n", action);
     if (length <= 0 || (size_t)length >= sizeof(line)) {
         return false;
     }
@@ -217,10 +243,12 @@ static bool flush_commands(int fd) {
         if (command == COMMAND_NONE) {
             return true;
         }
-        const char *name = command == COMMAND_PTT ? "ptt.toggle"
+        const char *name = command == COMMAND_VOICE ? "voice.toggle"
                            : command == COMMAND_SPEECH ? "speech.toggle"
-                                                      : "cancel";
-        if (!send_command(fd, name)) {
+                           : command == COMMAND_CANCEL ? "request.cancel"
+                           : command == COMMAND_VIEW_NEXT ? "view.next"
+                                                          : "view.previous";
+        if (!send_action(fd, name)) {
             return false;
         }
         pop_command();
@@ -352,14 +380,18 @@ void gsv_ipc_copy_snapshot(gsv_snapshot_t *snapshot) {
     pthread_mutex_unlock(&state_mutex);
 }
 
-void gsv_ipc_send_command(const char *command) {
+void gsv_ipc_send_action(const char *action) {
     uint8_t value = COMMAND_NONE;
-    if (strcmp(command, "ptt.toggle") == 0) {
-        value = COMMAND_PTT;
-    } else if (strcmp(command, "speech.toggle") == 0) {
+    if (strcmp(action, "voice.toggle") == 0) {
+        value = COMMAND_VOICE;
+    } else if (strcmp(action, "speech.toggle") == 0) {
         value = COMMAND_SPEECH;
-    } else if (strcmp(command, "cancel") == 0) {
+    } else if (strcmp(action, "request.cancel") == 0) {
         value = COMMAND_CANCEL;
+    } else if (strcmp(action, "view.next") == 0) {
+        value = COMMAND_VIEW_NEXT;
+    } else if (strcmp(action, "view.previous") == 0) {
+        value = COMMAND_VIEW_PREVIOUS;
     }
     if (value == COMMAND_NONE) {
         return;

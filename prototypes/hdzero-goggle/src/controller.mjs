@@ -9,6 +9,7 @@ const ACTIVE_PHASES = new Set([
 const MAX_TRANSCRIPT_CHARS = 2_000;
 const MAX_ANSWER_CHARS = 8_000;
 const MAX_BUFFERED_SIGNALS = 64;
+const WEARABLE_VIEWS = ["conversation", "activity", "device", "presentation"];
 
 function asRecord(value) {
   return value && typeof value === "object" && !Array.isArray(value) ? value : null;
@@ -27,7 +28,7 @@ function errorMessage(error, fallback) {
   return error instanceof Error && error.message ? error.message : fallback;
 }
 
-export class VoiceController {
+export class WearableController {
   constructor({
     backend,
     capture,
@@ -47,11 +48,19 @@ export class VoiceController {
     this.idleTimer = null;
     this.closed = false;
     this.state = {
-      type: "snapshot",
-      connection: "offline",
+      type: "wearable.snapshot",
+      view: "conversation",
+      clientConnection: "offline",
+      driverConnection: "offline",
+      deviceId: "hdzero-g2-emulator",
       phase: "idle",
       speak: false,
       status: "Bridge starting",
+      activity: "Wearable bridge starting",
+      presentationKind: "none",
+      presentationTitle: "",
+      presentationBody: "",
+      presentationPath: "",
       transcript: "",
       answer: "",
       error: "",
@@ -64,19 +73,84 @@ export class VoiceController {
     return { ...this.state };
   }
 
-  setConnection(connection, status = "") {
+  setClientConnection(connection, status = "") {
     if (this.closed) {
       return;
     }
-    this.state.connection = connection;
+    this.state.clientConnection = connection;
     if (this.state.phase === "idle" || connection !== "online") {
       this.state.status = status || (connection === "online" ? "Ready" : "Gateway offline");
     }
     this.publishState();
   }
 
-  async handleCommand(type) {
+  setDriverConnection(connection, status = "", deviceId = this.state.deviceId) {
     if (this.closed) {
+      return;
+    }
+    this.setState({
+      driverConnection: connection,
+      deviceId: boundedText(deviceId, 80) || this.state.deviceId,
+      activity: boundedText(status, 160) || (connection === "online"
+        ? "Machine target ready"
+        : "Machine target offline"),
+    });
+  }
+
+  setDeviceActivity(activity) {
+    if (!this.closed) {
+      this.setState({ activity: boundedText(activity, 160) });
+    }
+  }
+
+  setPresentation(presentation) {
+    if (this.closed) {
+      return;
+    }
+    const kind = ["none", "text", "image"].includes(presentation?.kind)
+      ? presentation.kind
+      : "none";
+    this.setState({
+      presentationKind: kind,
+      presentationTitle: boundedText(presentation?.title, 120),
+      presentationBody: boundedText(presentation?.body, 6_000),
+      presentationPath: boundedText(presentation?.path, 768),
+      ...(kind === "none"
+        ? { view: this.state.view === "presentation" ? "conversation" : this.state.view }
+        : { view: "presentation" }),
+    });
+  }
+
+  presentationState() {
+    return {
+      kind: this.state.presentationKind,
+      title: this.state.presentationTitle,
+      body: this.state.presentationBody,
+    };
+  }
+
+  publicDeviceState() {
+    return {
+      clientConnection: this.state.clientConnection,
+      driverConnection: this.state.driverConnection,
+      phase: this.state.phase,
+    };
+  }
+
+  async handleAction(action) {
+    if (this.closed) {
+      return;
+    }
+    const type = typeof action === "string" ? action : action?.type;
+    if (type === "view.next" || type === "view.previous") {
+      const current = WEARABLE_VIEWS.indexOf(this.state.view);
+      const direction = type === "view.next" ? 1 : -1;
+      const view = WEARABLE_VIEWS[(current + direction + WEARABLE_VIEWS.length) % WEARABLE_VIEWS.length];
+      this.setState({ view });
+      return;
+    }
+    if (type === "view.open" && WEARABLE_VIEWS.includes(action?.view)) {
+      this.setState({ view: action.view });
       return;
     }
     if (type === "speech.toggle") {
@@ -84,11 +158,11 @@ export class VoiceController {
       this.publishState();
       return;
     }
-    if (type === "cancel") {
+    if (type === "request.cancel") {
       await this.cancel("Cancelled");
       return;
     }
-    if (type !== "ptt.toggle") {
+    if (type !== "voice.toggle") {
       return;
     }
     if (this.state.phase === "recording") {
@@ -102,7 +176,7 @@ export class VoiceController {
   }
 
   async startRecording() {
-    if (this.state.connection !== "online") {
+    if (this.state.clientConnection !== "online") {
       this.fail("Gateway offline");
       return;
     }

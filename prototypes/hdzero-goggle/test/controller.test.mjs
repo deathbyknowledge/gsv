@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { VoiceController } from "../src/controller.mjs";
+import { WearableController } from "../src/controller.mjs";
 
 function tick() {
   return new Promise((resolve) => setImmediate(resolve));
@@ -64,14 +64,14 @@ function makeController(overrides = {}) {
       return { bytes: new Uint8Array([4, 5]), mimeType: "audio/wav" };
     },
   };
-  const controller = new VoiceController({
+  const controller = new WearableController({
     backend,
     capture,
     playback,
     publish: (snapshot) => snapshots.push(snapshot),
     answerDisplayMs: 60_000,
   });
-  controller.setConnection("online", "Ready");
+  controller.setClientConnection("online", "Ready");
   return { backend, capture, controller, playback, snapshots };
 }
 
@@ -105,10 +105,10 @@ test("runs capture, transcription, early run signals, streaming, and speech end 
   const setup = makeController({ backend });
   controller = setup.controller;
 
-  await controller.handleCommand("speech.toggle");
-  await controller.handleCommand("ptt.toggle");
+  await controller.handleAction({ type: "speech.toggle" });
+  await controller.handleAction({ type: "voice.toggle" });
   assert.equal(controller.snapshot().phase, "recording");
-  await controller.handleCommand("ptt.toggle");
+  await controller.handleAction({ type: "voice.toggle" });
   await tick();
   await tick();
 
@@ -136,11 +136,11 @@ test("cancellation aborts the active run and ignores late output", async () => {
     },
   };
   const { controller } = makeController({ backend });
-  await controller.handleCommand("ptt.toggle");
-  await controller.handleCommand("ptt.toggle");
+  await controller.handleAction({ type: "voice.toggle" });
+  await controller.handleAction({ type: "voice.toggle" });
   assert.equal(controller.snapshot().runId, "run-cancel");
 
-  await controller.handleCommand("cancel");
+  await controller.handleAction({ type: "request.cancel" });
   controller.handleSignal("proc.run.output", { runId: "run-cancel", text: "late" });
   controller.handleSignal("proc.run.finished", { runId: "run-cancel" });
 
@@ -165,16 +165,57 @@ test("cancellation during transcription prevents a superseded agent run", async 
     async speak() {},
   };
   const { controller } = makeController({ backend });
-  await controller.handleCommand("ptt.toggle");
-  const submission = controller.handleCommand("ptt.toggle");
+  await controller.handleAction({ type: "voice.toggle" });
+  const submission = controller.handleAction({ type: "voice.toggle" });
   await tick();
   assert.equal(controller.snapshot().phase, "transcribing");
 
-  await controller.handleCommand("cancel");
+  await controller.handleAction({ type: "request.cancel" });
   transcription.resolve({ text: "too late" });
   await submission;
 
   assert.equal(sends, 0);
   assert.equal(controller.snapshot().phase, "idle");
+  await controller.close();
+});
+
+test("tracks independent client and driver state and navigates wearable views", async () => {
+  const { controller } = makeController();
+
+  controller.setDriverConnection("online", "Filesystem target ready", "goggles-test");
+  assert.equal(controller.snapshot().clientConnection, "online");
+  assert.equal(controller.snapshot().driverConnection, "online");
+  assert.equal(controller.snapshot().deviceId, "goggles-test");
+
+  await controller.handleAction({ type: "view.next" });
+  assert.equal(controller.snapshot().view, "activity");
+  await controller.handleAction({ type: "view.open", view: "device" });
+  assert.equal(controller.snapshot().view, "device");
+  await controller.handleAction({ type: "view.previous" });
+  assert.equal(controller.snapshot().view, "activity");
+
+  await controller.close();
+});
+
+test("opens and clears agent presentations without leaking host paths in status", async () => {
+  const { controller } = makeController();
+
+  controller.setPresentation({
+    kind: "image",
+    title: "Architecture",
+    body: "/home/gsv/diagram.png",
+    path: "/tmp/emulator-root/home/gsv/diagram.png",
+  });
+  assert.equal(controller.snapshot().view, "presentation");
+  assert.equal(controller.snapshot().presentationKind, "image");
+  assert.deepEqual(controller.presentationState(), {
+    kind: "image",
+    title: "Architecture",
+    body: "/home/gsv/diagram.png",
+  });
+
+  controller.setPresentation({ kind: "none" });
+  assert.equal(controller.snapshot().view, "conversation");
+  assert.equal(controller.snapshot().presentationKind, "none");
   await controller.close();
 });

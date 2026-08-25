@@ -22,19 +22,24 @@ function nextLine(socket) {
   });
 }
 
-test("serves bounded local commands and snapshots over a private Unix socket", async () => {
+test("serves bounded local actions and snapshots over a private Unix socket", async () => {
   const directory = await mkdtemp(path.join(tmpdir(), "gsv-hdzero-ipc-test-"));
   const socketPath = path.join(directory, "bridge.sock");
-  const commands = [];
-  let commandReceived;
+  const actions = [];
+  let actionReceived;
   const received = new Promise((resolve) => {
-    commandReceived = resolve;
+    actionReceived = resolve;
   });
   const server = new IpcServer(socketPath, {
-    getSnapshot: () => ({ type: "snapshot", connection: "online", phase: "idle" }),
-    onCommand: async (command) => {
-      commands.push(command);
-      commandReceived();
+    getSnapshot: () => ({
+      type: "wearable.snapshot",
+      clientConnection: "online",
+      driverConnection: "offline",
+      phase: "idle",
+    }),
+    onAction: async (action) => {
+      actions.push(action);
+      actionReceived();
     },
   });
   let socket;
@@ -43,15 +48,22 @@ test("serves bounded local commands and snapshots over a private Unix socket", a
     assert.equal((await stat(socketPath)).mode & 0o777, 0o600);
     socket = net.createConnection(socketPath);
     const first = JSON.parse(await nextLine(socket));
-    assert.equal(first.connection, "online");
+    assert.equal(first.clientConnection, "online");
 
     socket.write("not-json\n");
     socket.write('{"type":"unknown"}\n');
     socket.write('{"type":"ptt.toggle"}\n');
+    socket.write('{"type":"view.open","view":"invalid"}\n');
+    socket.write('{"type":"voice.toggle"}\n');
     await received;
-    assert.deepEqual(commands, ["ptt.toggle"]);
+    assert.deepEqual(actions, [{ type: "voice.toggle" }]);
 
-    server.broadcast({ type: "snapshot", connection: "online", phase: "recording" });
+    server.broadcast({
+      type: "wearable.snapshot",
+      clientConnection: "online",
+      driverConnection: "online",
+      phase: "recording",
+    });
     const update = JSON.parse(await nextLine(socket));
     assert.equal(update.phase, "recording");
   } finally {

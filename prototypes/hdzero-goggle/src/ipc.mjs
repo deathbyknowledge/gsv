@@ -1,8 +1,17 @@
 import { lstat, chmod, unlink } from "node:fs/promises";
 import net from "node:net";
 
-const MAX_LINE_BYTES = 8 * 1024;
-const COMMANDS = new Set(["ptt.toggle", "speech.toggle", "cancel"]);
+const MAX_ACTION_BYTES = 1024;
+const MAX_SNAPSHOT_BYTES = 32 * 1024;
+const ACTIONS = new Set([
+  "voice.toggle",
+  "speech.toggle",
+  "request.cancel",
+  "view.next",
+  "view.previous",
+  "view.open",
+]);
+const VIEWS = new Set(["conversation", "activity", "device"]);
 
 async function removeStaleSocket(socketPath) {
   try {
@@ -19,9 +28,9 @@ async function removeStaleSocket(socketPath) {
 }
 
 export class IpcServer {
-  constructor(socketPath, { onCommand, getSnapshot, log = console.error }) {
+  constructor(socketPath, { onAction, getSnapshot, log = console.error }) {
     this.socketPath = socketPath;
-    this.onCommand = onCommand;
+    this.onAction = onAction;
     this.getSnapshot = getSnapshot;
     this.log = log;
     this.clients = new Set();
@@ -52,14 +61,14 @@ export class IpcServer {
       while ((newline = buffered.indexOf("\n")) !== -1) {
         const line = buffered.slice(0, newline);
         buffered = buffered.slice(newline + 1);
-        if (Buffer.byteLength(line) > MAX_LINE_BYTES) {
-          socket.destroy(new Error("IPC command exceeded limit"));
+        if (Buffer.byteLength(line) > MAX_ACTION_BYTES) {
+          socket.destroy(new Error("IPC action exceeded limit"));
           return;
         }
         this.handleLine(line);
       }
-      if (Buffer.byteLength(buffered) > MAX_LINE_BYTES) {
-        socket.destroy(new Error("IPC command exceeded limit"));
+      if (Buffer.byteLength(buffered) > MAX_ACTION_BYTES) {
+        socket.destroy(new Error("IPC action exceeded limit"));
       }
     });
     socket.on("error", () => {});
@@ -73,15 +82,21 @@ export class IpcServer {
     } catch {
       return;
     }
-    if (!message || !COMMANDS.has(message.type)) {
+    if (!message || !ACTIONS.has(message.type)) {
+      return;
+    }
+    if (message.type === "view.open" && !VIEWS.has(message.view)) {
       return;
     }
     try {
-      void Promise.resolve(this.onCommand(message.type)).catch((error) => {
-        this.log(`[bridge] command failed: ${error instanceof Error ? error.message : "unknown error"}`);
+      const action = message.type === "view.open"
+        ? { type: message.type, view: message.view }
+        : { type: message.type };
+      void Promise.resolve(this.onAction(action)).catch((error) => {
+        this.log(`[bridge] action failed: ${error instanceof Error ? error.message : "unknown error"}`);
       });
     } catch (error) {
-      this.log(`[bridge] command failed: ${error instanceof Error ? error.message : "unknown error"}`);
+      this.log(`[bridge] action failed: ${error instanceof Error ? error.message : "unknown error"}`);
     }
   }
 
@@ -92,8 +107,11 @@ export class IpcServer {
   }
 
   send(socket, message) {
-    if (!socket.destroyed && socket.writableLength <= MAX_LINE_BYTES * 8) {
-      socket.write(`${JSON.stringify(message)}\n`);
+    const line = `${JSON.stringify(message)}\n`;
+    if (Buffer.byteLength(line) > MAX_SNAPSHOT_BYTES) {
+      socket.destroy(new Error("IPC snapshot exceeded limit"));
+    } else if (!socket.destroyed && socket.writableLength <= MAX_SNAPSHOT_BYTES * 2) {
+      socket.write(line);
     } else if (!socket.destroyed) {
       socket.destroy(new Error("IPC client stopped reading snapshots"));
     }

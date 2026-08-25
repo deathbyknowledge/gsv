@@ -53,8 +53,13 @@ export GSV_HDZERO_SOCKET=${GSV_HDZERO_SOCKET:-"/tmp/gsv-hdzero-${UID}.sock"}
 
 node "$POC_DIR/src/main.mjs" --socket "$GSV_HDZERO_SOCKET" "$@" &
 BRIDGE_PID=$!
+EMULATOR_PID=
 
 cleanup() {
+  if [[ -n ${EMULATOR_PID:-} ]] && kill -0 "$EMULATOR_PID" 2>/dev/null; then
+    kill -TERM "$EMULATOR_PID" 2>/dev/null || true
+    wait "$EMULATOR_PID" 2>/dev/null || true
+  fi
   if kill -0 "$BRIDGE_PID" 2>/dev/null; then
     kill -TERM "$BRIDGE_PID" 2>/dev/null || true
     wait "$BRIDGE_PID" 2>/dev/null || true
@@ -77,4 +82,6 @@ if [[ ! -S "$GSV_HDZERO_SOCKET" ]]; then
 fi
 
 cd "$SOURCE_DIR"
-"$BINARY"
+"$BINARY" &
+EMULATOR_PID=$!
+wait "$EMULATOR_PID"
