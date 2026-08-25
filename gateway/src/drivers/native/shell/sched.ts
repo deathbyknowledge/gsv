@@ -29,10 +29,12 @@ const adapterDestinationSchema = z.strictObject({
   }),
   actorId: z.string(),
 });
+const responsibilityPrioritySchema = z.enum(["low", "normal", "high", "critical"]);
 const scheduleTargetSchema = z.union([
   z.strictObject({ kind: z.literal("command.exec"), command: z.string(), cwd: z.optional(z.string()), timeoutMs: z.optional(z.number()) }),
   z.strictObject({ kind: z.literal("process.spawn"), runAs: z.optional(z.string()), label: z.optional(z.string()), prompt: z.string(), parentPid: z.optional(z.string()), cwd: z.optional(z.string()) }),
   z.strictObject({ kind: z.literal("process.event"), pid: z.string(), message: z.string(), data: z.optional(jsonObjectSchema), replyTo: z.optional(adapterDestinationSchema) }),
+  z.strictObject({ kind: z.literal("responsibility"), message: z.string(), data: z.optional(jsonObjectSchema), priority: z.optional(responsibilityPrioritySchema) }),
   z.strictObject({ kind: z.literal("adapter.send"), destination: adapterDestinationSchema, text: z.string() }),
 ]);
 const scheduleExpressionSchema = z.union([
@@ -291,9 +293,15 @@ async function parseSchedAddCommand(args: string[], ctx: KernelContext): Promise
   const replyTo = route?.kind === "adapter" && route.processId === processId
     ? route.destination
     : undefined;
-  const target: Extract<ScheduleTarget, { kind: "process.event" }> = replyTo
-    ? { kind: "process.event", pid: processId, message, replyTo }
-    : { kind: "process.event", pid: processId, message };
+  const targetProcess = ctx.procs.get(processId);
+  if (!targetProcess) {
+    throw new Error(`target process not found: ${processId}`);
+  }
+  const target: ScheduleTarget = targetProcess.isPersonalController && !replyTo
+    ? { kind: "responsibility", message }
+    : replyTo
+      ? { kind: "process.event", pid: processId, message, replyTo }
+      : { kind: "process.event", pid: processId, message };
   return {
     name,
     expression,
@@ -317,6 +325,9 @@ function formatScheduleTarget(target: ScheduleTarget): string {
   }
   if (target.kind === "adapter.send") {
     return `message:${target.destination.adapter}`;
+  }
+  if (target.kind === "responsibility") {
+    return "r12y:ship";
   }
   return `event:${target.pid}`;
 }

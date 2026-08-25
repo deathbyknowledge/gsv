@@ -1472,13 +1472,13 @@ current process:
 sched add --here --name NAME (--every DURATION | --cron EXPR [--timezone ZONE] | --after DURATION | --at ISO_TIMESTAMP) --message MESSAGE
 ```
 
-The shell resolves `--here` into a typed `process.event` target for the current
-process. The target remains bound to that process id;
-recreate it after killing the process. When the shell belongs to an active
-adapter run, `--here` captures that run's authorized
-`AdapterMessageDestination` in `process.event.replyTo`, so the future
-terminal answer returns to that adapter surface. Without an adapter route, the
-answer remains in the GSV process history.
+The shell resolves `--here` against its current Process and any exact adapter
+reply route. A route-less Ship becomes a `responsibility` target, so each
+occurrence creates one deduplicated `schedule.due` record and survives Ship
+Process replacement. A non-Ship Process remains a `process.event` target. When
+the shell belongs to an active adapter run, `--here` captures that run's
+authorized `AdapterMessageDestination` in `process.event.replyTo`, so the future
+terminal Message returns to that adapter surface.
 
 For direct scheduled text that must not run the agent, use:
 
@@ -1510,7 +1510,8 @@ Runtime behavior:
 | `sched.run` | `handleSchedulerRun` | Runs due schedules or force-runs one schedule. `force` requires `id`. |
 
 Schedule status reports completion of target dispatch, not an implied model-run
-completion contract. For `process.event`, `ok` means the event was
+completion contract. For `responsibility`, `ok` means the occurrence's durable
+record was created or recovered. For `process.event`, `ok` means the event was
 accepted into the target process, not that a model turn or reply
 completed. For `adapter.send`, `ok` means the adapter accepted the direct
 delivery. For `process.spawn`, or a
@@ -1530,6 +1531,7 @@ type ScheduleTarget =
   | { kind: "command.exec"; command: string; cwd?: string; timeoutMs?: number }
   | { kind: "process.spawn"; runAs?: string; label?: string; prompt: string; parentPid?: string; cwd?: string }
   | { kind: "process.event"; pid: string; message: string; data?: Record<string, unknown>; replyTo?: AdapterMessageDestination }
+  | { kind: "responsibility"; message: string; data?: Record<string, unknown>; priority?: "low" | "normal" | "high" | "critical" }
   | { kind: "adapter.send"; destination: AdapterMessageDestination; text: string };
 
 type ScheduleRecord = {

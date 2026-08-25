@@ -880,6 +880,30 @@ describe("scheduler", () => {
     }, ctx)).rejects.toThrow("Permission denied: proc.send");
   });
 
+  it("requires r12y.create access for responsibility schedules", async () => {
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+    const ctx = makeSchedulerContext({
+      identity: {
+        role: "user",
+        process: USER_IDENTITY,
+        capabilities: ["sched.add"],
+      },
+      schedules: {
+        create: vi.fn(),
+      // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+      } as ScheduleStore,
+    });
+
+    await expect(handleSchedulerAdd({
+      name: "review",
+      expression: { kind: "after", afterMs: 1_000 },
+      target: {
+        kind: "responsibility",
+        message: "Review system health.",
+      },
+    }, ctx)).rejects.toThrow("Permission denied: r12y.create");
+  });
+
   it("lists only the caller owner for non-root, even when ownerUid is supplied", () => {
     const list = vi.fn(() => ({ records: [], count: 0 }));
     const ctx = makeSchedulerContext({
@@ -1514,15 +1538,23 @@ describe("scheduler", () => {
   it.each([
     {
       capability: "proc.spawn",
+      revoked: "proc.*",
       // SAFETY: test fixture is constructed with the asserted kernel domain shape.
       target: { kind: "process.spawn", prompt: "Do not run." } as const,
     },
     {
       capability: "proc.send",
+      revoked: "proc.*",
       // SAFETY: test fixture is constructed with the asserted kernel domain shape.
       target: { kind: "process.event", pid: "missing", message: "Do not deliver." } as const,
     },
-  ])("rechecks $capability when a process schedule fires", async ({ capability, target }) => {
+    {
+      capability: "r12y.create",
+      revoked: "r12y.*",
+      // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+      target: { kind: "responsibility", message: "Do not create." } as const,
+    },
+  ])("rechecks $capability when a process schedule fires", async ({ capability, revoked, target }) => {
     const kernel = await getDurableObjectByName<Env, Kernel>(
       env.KERNEL,
       `scheduler-revoked-capability-test-${crypto.randomUUID()}`,
@@ -1536,7 +1568,7 @@ describe("scheduler", () => {
         caps: { revoke: (gid: number, capability: string) => { ok: boolean; error?: string } };
       };
       addTestUser(k.auth);
-      k.caps.revoke(100, "proc.*");
+      k.caps.revoke(100, revoked);
     });
 
     await expect(runInDurableObject(kernel, (instance: Kernel) =>

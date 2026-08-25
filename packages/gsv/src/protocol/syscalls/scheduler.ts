@@ -1,5 +1,6 @@
 import type { AdapterMessageDestination, EventReplyTarget } from "./interaction-origin";
 import type { JsonObject } from "../json";
+import type { ResponsibilityPriority } from "./responsibility";
 
 export type ScheduleExpression =
   | { kind: "at"; atMs: number }
@@ -29,6 +30,12 @@ export type ScheduleTarget =
       message: string;
       data?: JsonObject;
       replyTo?: EventReplyTarget;
+    }
+  | {
+      kind: "responsibility";
+      message: string;
+      data?: JsonObject;
+      priority?: ResponsibilityPriority;
     }
   | {
       kind: "adapter.send";

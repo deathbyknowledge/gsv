@@ -88,6 +88,7 @@ describe("Kernel responsibility wakes", () => {
           event: expect.objectContaining({
             type: "r12y.ready",
             ledgerRevision: 1,
+            responsibilityIds: [responsibility.id],
           }),
         }),
       }),
@@ -2412,6 +2413,65 @@ describe("Kernel scheduled process reply routes", () => {
     sendFrameToProcessMock.mockReset();
   });
 
+  it("turns a Ship schedule occurrence into one durable responsibility", async () => {
+    const create = vi.fn(() => ({
+      record: { id: "r12y:schedule" },
+      created: true,
+      revision: 1,
+    }));
+    const waitUntil = vi.fn();
+    // SAFETY: test fixture is constructed with the asserted Kernel internals.
+    const kernel = Object.create(Kernel.prototype) as any;
+    kernel.ctx = { waitUntil };
+    kernel.buildScheduleContext = vi.fn(() => ({ identity: { capabilities: ["r12y.create"] } }));
+    kernel.responsibilities = { create };
+    kernel.reconcileResponsibilityWake = vi.fn(async () => {});
+    const record = {
+      id: "schedule-r12y",
+      name: "Daily review",
+      ownerUid: 1000,
+      target: {
+        kind: "responsibility",
+        message: "Review unresolved mail.",
+        data: { mailbox: "primary" },
+        priority: "high",
+      },
+    };
+
+    const result = await kernel.dispatchScheduleTarget(
+      record,
+      1_800_000_000_000,
+      1_800_000_000_100,
+      "due:1800000000000",
+    );
+
+    expect(result).toEqual({
+      kind: "responsibility",
+      responsibilityId: "r12y:schedule",
+    });
+    expect(create).toHaveBeenCalledWith(expect.objectContaining({
+      ownerUid: 1000,
+      title: "Run scheduled responsibility: Daily review",
+      details: {
+        eventType: "schedule.due",
+        scheduleId: "schedule-r12y",
+        occurrenceKey: "due:1800000000000",
+        scheduledAtMs: 1_800_000_000_000,
+        firedAtMs: 1_800_000_000_100,
+        message: "Review unresolved mail.",
+        data: { mailbox: "primary" },
+      },
+      source: { kind: "schedule", scheduleId: "schedule-r12y" },
+      assignee: { kind: "ship" },
+      state: "open",
+      priority: "high",
+      dedupeKey: "schedule.due:schedule-r12y:due:1800000000000",
+      actor: { kind: "system", component: "scheduler" },
+      observedByShip: false,
+    }));
+    expect(waitUntil).toHaveBeenCalledOnce();
+  });
+
   it("preserves a preallocated reply route when Process transport admission is ambiguous", async () => {
     const { kernel, record, setAdapterRoute, deleteRoute } = makeScheduledProcessKernel();
     sendFrameToProcessMock.mockRejectedValueOnce(new Error("Process response was lost"));
@@ -3083,11 +3143,13 @@ describe("Kernel IPC completion", () => {
       timeout: vi.fn(() => true),
     };
     kernel.queueIpcCallDelivery = vi.fn();
+    kernel.returnDelegatedResponsibility = vi.fn();
     kernel.terminateTimedOutIpcTarget = vi.fn(async () => {});
 
     await kernel.onIpcCallTimeout(input);
 
     expect(kernel.queueIpcCallDelivery).toHaveBeenCalledWith(call.callId);
+    expect(kernel.returnDelegatedResponsibility).toHaveBeenCalledWith(call);
     expect(kernel.terminateTimedOutIpcTarget).toHaveBeenCalledTimes(terminates ? 1 : 0);
   });
 
@@ -3145,8 +3207,10 @@ describe("Kernel IPC completion", () => {
     kernel.ipcCalls = {
       cancelBySourceRun: vi.fn(),
       completeByRun,
+      get: vi.fn(() => ({ callId: "call-1" })),
     };
     kernel.queueIpcCallDelivery = vi.fn();
+    kernel.returnDelegatedResponsibility = vi.fn();
 
     await kernel.completeIpcCallsForProcessSignal("proc-worker", {
       type: "sig",
@@ -3170,8 +3234,136 @@ describe("Kernel IPC completion", () => {
       },
       error: null,
     });
+    expect(kernel.returnDelegatedResponsibility).toHaveBeenCalledWith({ callId: "call-1" });
     expect(kernel.queueIpcCallDelivery).toHaveBeenCalledWith("call-1");
   });
+
+  it.each([
+    {
+      status: "completed",
+      error: null,
+      eventType: "process.delegation.completed",
+      blocker: null,
+    },
+    {
+      status: "timed_out",
+      error: "IPC call timed out",
+      eventType: "process.delegation.timed_out",
+      blocker: "IPC call timed out",
+    },
+    {
+      status: "completed",
+      error: "Worker run failed",
+      eventType: "process.delegation.failed",
+      blocker: "Worker run failed",
+    },
+    {
+      status: "completed",
+      error: "Target process was killed",
+      eventType: "process.delegation.killed",
+      blocker: "Target process was killed",
+    },
+  ] as const)(
+    "returns a $eventType responsibility to Ship exactly once",
+    ({ status, error, eventType, blocker }) => {
+      const responsibilityId = "r12y:11111111-1111-4111-8111-111111111111";
+      let responsibility = {
+        id: responsibilityId,
+        ownerUid: 1000,
+        title: "Inspect the deployment",
+        details: { request: "inspect" },
+        source: { kind: "process", processId: "proc:ship", runId: "run:ship" },
+        assignee: { kind: "process", processId: "proc:worker" },
+        state: "active",
+        priority: "normal",
+        leaseExpiresAtMs: 10_000,
+        revision: 4,
+        createdAtMs: 1,
+        updatedAtMs: 2,
+      };
+      const update = vi.fn((input) => {
+        responsibility = {
+          ...responsibility,
+          ...input.patch,
+          details: input.patch.details,
+          revision: responsibility.revision + 1,
+          updatedAtMs: input.now,
+        };
+        return {
+          record: responsibility,
+          revision: responsibility.revision,
+          changed: true,
+        };
+      });
+      const reconcileResponsibilityWake = vi.fn(async () => {});
+      const waitUntil = vi.fn();
+      // SAFETY: test fixture is constructed with the asserted Kernel boundary shape.
+      const kernel = Object.create(Kernel.prototype) as any;
+      kernel.responsibilities = {
+        get: vi.fn(() => responsibility),
+        update,
+      };
+      kernel.reconcileResponsibilityWake = reconcileResponsibilityWake;
+      kernel.ctx = { waitUntil };
+      const call = {
+        callId: "ipc:call-1",
+        ownerUid: 1000,
+        sourcePid: "proc:ship",
+        sourceRunId: "run:ship",
+        targetPid: "proc:worker",
+        targetRunId: "run:worker",
+        status,
+        deadlineAt: 9_000,
+        createdAt: 1_000,
+        response: status === "completed" && error === null ? { text: "done" } : null,
+        error,
+        responsibilityId,
+      };
+
+      kernel.returnDelegatedResponsibility(call);
+      kernel.returnDelegatedResponsibility(call);
+
+      expect(update).toHaveBeenCalledTimes(1);
+      expect(update).toHaveBeenCalledWith(expect.objectContaining({
+        ownerUid: 1000,
+        id: responsibilityId,
+        expectedRevision: 4,
+        patch: expect.objectContaining({
+          assignee: { kind: "ship" },
+          state: "open",
+          blocker,
+          nextCheckAtMs: null,
+          leaseExpiresAtMs: null,
+          details: {
+            request: "inspect",
+            delegation: expect.objectContaining({
+              eventType,
+              callId: "ipc:call-1",
+              processId: "proc:worker",
+              runId: "run:worker",
+              sourceRunId: "run:ship",
+              status,
+            }),
+          },
+        }),
+        actor: {
+          kind: "event",
+          eventType,
+          eventId: "ipc:call-1",
+        },
+        observedByShip: false,
+      }));
+      const delegation = update.mock.calls[0]![0].patch.details.delegation;
+      if (error) {
+        expect(delegation.error).toBe(error);
+      } else {
+        expect(delegation).not.toHaveProperty("error");
+      }
+      expect(responsibility.assignee).toEqual({ kind: "ship" });
+      expect(waitUntil).toHaveBeenCalledTimes(1);
+      expect(reconcileResponsibilityWake).toHaveBeenCalledWith(1000);
+    },
+  );
 
   // SAFETY: test fixture is constructed with the asserted kernel domain shape.
   it.each(["ipc.reply", "ipc.timeout"] as const)(
@@ -3235,6 +3427,7 @@ describe("Kernel IPC completion", () => {
       releaseDelivery,
       remove,
     };
+    kernel.returnDelegatedResponsibility = vi.fn();
     kernel.schedule = vi.fn(async () => ({ id: "ipc-delivery-retry" }));
     sendFrameToProcessMock.mockRejectedValue(new Error("source unavailable"));
 

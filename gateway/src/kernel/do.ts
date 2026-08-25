@@ -35,6 +35,7 @@ import type {
   BinaryBody,
   ConnectedPeer,
   InstallationOnboardingAuthorization,
+  JsonObject,
   JsonValue,
   ManagedInboundMailAccepted,
   ManagedInboundMailCompletion,
@@ -155,7 +156,6 @@ import type {
   ProcessMessageStreamSignal,
   ProcessOutboundFrame,
   ProcessRuntimeEventDeliverRequestFrame,
-  ProcessResponsibilityReadyRuntimeEvent,
   ProcessScheduleDeliverRequestFrame,
   ProcessScheduleDeliverResponseFrame,
 } from "../protocol/process-frames";
@@ -333,7 +333,7 @@ type SignalWatchDelivery = {
 };
 
 type ScheduleExecutionResult = {
-  kind?: "command.exec" | "process.spawn" | "adapter.send" | "process.event" | "unknown";
+  kind?: "command.exec" | "process.spawn" | "adapter.send" | "process.event" | "responsibility" | "unknown";
   error?: string;
   command?: string;
   exitCode?: number;
@@ -347,6 +347,7 @@ type ScheduleExecutionResult = {
   surfaceId?: string;
   messageId?: string;
   deliveryState?: string;
+  responsibilityId?: string;
 };
 
 type PendingKernelResponse = {
@@ -2008,6 +2009,8 @@ export class Kernel extends DurableObject<Env> {
     });
 
     for (const callId of completed) {
+      const call = this.ipcCalls.get(callId);
+      if (call) this.returnDelegatedResponsibility(call);
       this.queueIpcCallDelivery(callId);
     }
   }
@@ -2030,6 +2033,7 @@ export class Kernel extends DurableObject<Env> {
       return;
     }
     try {
+      this.returnDelegatedResponsibility(call);
       await this.deliverIpcCallSignal(call);
       this.ipcCalls.remove(callId);
     } catch (error) {
@@ -3061,8 +3065,69 @@ export class Kernel extends DurableObject<Env> {
 
   private failIpcCallsByTarget(uid: number, targetPid: string, error: string): void {
     for (const callId of this.ipcCalls.failByTargetPid({ uid, targetPid, error })) {
+      const call = this.ipcCalls.get(callId);
+      if (call) this.returnDelegatedResponsibility(call);
       this.queueIpcCallDelivery(callId);
     }
+  }
+
+  private returnDelegatedResponsibility(call: IpcCallRecord): void {
+    if (!call.responsibilityId) return;
+    const current = this.responsibilities.get(call.ownerUid, call.responsibilityId);
+    if (
+      !current
+      || current.state === "resolved"
+      || current.state === "cancelled"
+      || current.assignee.kind !== "process"
+      || current.assignee.processId !== call.targetPid
+    ) {
+      return;
+    }
+
+    const eventType = call.status === "timed_out"
+      ? "process.delegation.timed_out"
+      : call.error?.toLowerCase().includes("killed")
+        ? "process.delegation.killed"
+        : call.error
+          ? "process.delegation.failed"
+          : "process.delegation.completed";
+    const completedAtMs = Date.now();
+    const delegation: JsonObject = {
+      eventType,
+      callId: call.callId,
+      processId: call.targetPid,
+      runId: call.targetRunId,
+      status: call.status,
+      completedAtMs,
+    };
+    if (call.sourceRunId) delegation.sourceRunId = call.sourceRunId;
+    if (call.error) delegation.error = call.error.slice(0, 2_000);
+    this.responsibilities.update({
+      ownerUid: call.ownerUid,
+      id: current.id,
+      expectedRevision: current.revision,
+      patch: {
+        details: {
+          ...current.details,
+          delegation,
+        },
+        assignee: { kind: "ship" },
+        state: "open",
+        blocker: call.error ? call.error.slice(0, 2_000) : null,
+        nextCheckAtMs: null,
+        leaseExpiresAtMs: null,
+      },
+      actor: {
+        kind: "event",
+        eventType,
+        eventId: call.callId,
+      },
+      observedByShip: false,
+      now: completedAtMs,
+    });
+    this.ctx.waitUntil(this.reconcileResponsibilityWake(call.ownerUid).catch((error) => {
+      console.warn("[Kernel] Failed to schedule delegated responsibility return:", error);
+    }));
   }
 
   private async scheduleScheduleWake(scheduleId: string, dueAtMs: number): Promise<string> {
@@ -3870,6 +3935,8 @@ export class Kernel extends DurableObject<Env> {
     const call = this.ipcCalls.get(callId);
     const timedOut = this.ipcCalls.timeout(callId);
     if (!timedOut) return;
+    const timedOutCall = this.ipcCalls.get(callId);
+    if (timedOutCall) this.returnDelegatedResponsibility(timedOutCall);
     this.queueIpcCallDelivery(callId);
     if (timeout.terminateTargetOnTimeout && call) {
       await this.terminateTimedOutIpcTarget(call).catch((error) => {
@@ -4226,6 +4293,23 @@ export class Kernel extends DurableObject<Env> {
       };
     }
 
+    if (target.kind === "responsibility") {
+      if (!hasCapability(ctx.identity?.capabilities ?? [], "r12y.create")) {
+        throw new Error("Permission denied: r12y.create");
+      }
+      const responsibilityId = this.createScheduleResponsibility(
+        record,
+        target,
+        scheduledAtMs,
+        firedAtMs,
+        occurrenceKey,
+      );
+      return {
+        kind: "responsibility",
+        responsibilityId,
+      };
+    }
+
     if (target.kind === "process.event") {
       if (!hasCapability(ctx.identity?.capabilities ?? [], "proc.send")) {
         throw new Error("Permission denied: proc.send");
@@ -4242,6 +4326,22 @@ export class Kernel extends DurableObject<Env> {
       }
       if (proc.ownerUid !== record.ownerUid && record.ownerUid !== 0) {
         throw new Error(`Permission denied: schedule ${record.id} cannot access process ${target.pid}`);
+      }
+
+      const responsibilityId = proc.isPersonalController
+        ? this.createScheduleResponsibility(
+            record,
+            target,
+            scheduledAtMs,
+            firedAtMs,
+            occurrenceKey,
+          )
+        : null;
+      if (responsibilityId && !target.replyTo) {
+        return {
+          kind: "responsibility",
+          responsibilityId,
+        };
       }
 
       const runId = await stableOpaqueId("schedule-run", [record.id, occurrenceKey]);
@@ -4299,14 +4399,53 @@ export class Kernel extends DurableObject<Env> {
           false,
         );
       }
-      return {
+      const result: ScheduleExecutionResult = {
         kind: "process.event",
         pid: target.pid,
         runId: admittedRunId,
       };
+      if (responsibilityId) result.responsibilityId = responsibilityId;
+      return result;
     }
 
     return { kind: "unknown" };
+  }
+
+  private createScheduleResponsibility(
+    record: ScheduleRecord,
+    target: Extract<ScheduleRecord["target"], { kind: "responsibility" | "process.event" }>,
+    scheduledAtMs: number | null,
+    firedAtMs: number,
+    occurrenceKey: string,
+  ): string {
+    const details: JsonObject = {
+      eventType: "schedule.due",
+      scheduleId: record.id,
+      occurrenceKey,
+      scheduledAtMs,
+      firedAtMs,
+      message: target.message,
+    };
+    if (target.data !== undefined) details.data = target.data;
+    const outcome = this.responsibilities.create({
+      ownerUid: record.ownerUid,
+      title: `Run scheduled responsibility: ${record.name}`,
+      details,
+      source: { kind: "schedule", scheduleId: record.id },
+      assignee: { kind: "ship" },
+      state: "open",
+      priority: target.kind === "responsibility"
+        ? target.priority ?? "normal"
+        : "normal",
+      dedupeKey: `schedule.due:${record.id}:${occurrenceKey}`,
+      actor: { kind: "system", component: "scheduler" },
+      observedByShip: false,
+      now: firedAtMs,
+    });
+    this.ctx.waitUntil(this.reconcileResponsibilityWake(record.ownerUid).catch((error) => {
+      console.warn("[Kernel] Failed to schedule due responsibility:", error);
+    }));
+    return outcome.record.id;
   }
 
   private buildScheduleContext(record: ScheduleRecord): KernelContext {
@@ -4713,22 +4852,6 @@ function errFrame(id: string, code: number, message: string): ResponseFrame {
 function responsibilityRuntimeEventFrame(
   batch: ResponsibilityWakeBatch,
 ): ProcessRuntimeEventDeliverRequestFrame {
-  const responsibilities = batch.responsibilities.map((record) => {
-    const summary: ProcessResponsibilityReadyRuntimeEvent["responsibilities"][number] = {
-      id: record.id,
-      title: record.title,
-      state: record.state,
-      priority: record.priority,
-      assignee: record.assignee,
-    };
-    if (record.dueAtMs !== undefined) summary.dueAtMs = record.dueAtMs;
-    if (record.nextCheckAtMs !== undefined) summary.nextCheckAtMs = record.nextCheckAtMs;
-    if (record.leaseExpiresAtMs !== undefined) {
-      summary.leaseExpiresAtMs = record.leaseExpiresAtMs;
-    }
-    if (record.blocker) summary.blocker = record.blocker;
-    return summary;
-  });
   return {
     type: "req",
     id: crypto.randomUUID(),
@@ -4739,7 +4862,7 @@ function responsibilityRuntimeEventFrame(
         type: "r12y.ready",
         batchId: batch.id,
         ledgerRevision: batch.throughRevision,
-        responsibilities,
+        responsibilityIds: batch.responsibilities.map(({ id }) => id),
       },
     },
   };
@@ -4775,7 +4898,13 @@ function scheduleResultSummary(record: ScheduleRecord, result: ScheduleExecution
     return `spawned process ${result.pid}`;
   }
   if (record.target.kind === "process.event") {
+    if (result.responsibilityId && result.kind === "responsibility") {
+      return `created responsibility ${result.responsibilityId}`;
+    }
     return `delivered event to process ${record.target.pid}`;
+  }
+  if (record.target.kind === "responsibility" && result.responsibilityId) {
+    return `created responsibility ${result.responsibilityId}`;
   }
   if (record.target.kind === "adapter.send") {
     if (result.deliveryState === "ambiguous") {

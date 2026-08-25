@@ -2,6 +2,7 @@ export type IpcCallStatus = "pending" | "completed" | "timed_out";
 
 export type IpcCallRecord = {
   callId: string;
+  ownerUid: number;
   sourcePid: string;
   sourceRunId: string | null;
   targetPid: string;
@@ -11,10 +12,12 @@ export type IpcCallRecord = {
   createdAt: number;
   response: unknown;
   error: string | null;
+  responsibilityId: string | null;
 };
 
 type IpcCallRow = {
   call_id: string;
+  uid: number;
   source_pid: string;
   source_run_id: string | null;
   target_pid: string;
@@ -24,6 +27,7 @@ type IpcCallRow = {
   created_at: number;
   response_json: string;
   error: string | null;
+  responsibility_id: string | null;
 };
 
 export class IpcCallStore {
@@ -37,13 +41,15 @@ export class IpcCallStore {
     targetPid: string;
     targetRunId: string;
     deadlineAt: number;
+    responsibilityId?: string;
   }): void {
     const now = Date.now();
     this.sql.exec(
       `INSERT INTO ipc_calls (
         call_id, uid, source_pid, source_run_id, target_pid, target_run_id, status,
-        deadline_at, created_at, updated_at, response_json, error
-      ) VALUES (?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, 'null', NULL)`,
+        deadline_at, created_at, updated_at, response_json, error,
+        responsibility_id
+      ) VALUES (?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, 'null', NULL, ?)`,
       input.callId,
       input.uid,
       input.sourcePid,
@@ -53,6 +59,7 @@ export class IpcCallStore {
       input.deadlineAt,
       now,
       now,
+      input.responsibilityId ?? null,
     );
   }
 
@@ -225,6 +232,7 @@ export class IpcCallStore {
 function toIpcCallRecord(row: IpcCallRow): IpcCallRecord {
   return {
     callId: row.call_id,
+    ownerUid: row.uid,
     sourcePid: row.source_pid,
     sourceRunId: row.source_run_id,
     targetPid: row.target_pid,
@@ -235,5 +243,6 @@ function toIpcCallRecord(row: IpcCallRow): IpcCallRecord {
     createdAt: row.created_at,
     response: JSON.parse(row.response_json),
     error: row.error,
+    responsibilityId: row.responsibility_id,
   };
 }

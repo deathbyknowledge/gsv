@@ -84,15 +84,15 @@ bounded delivery and usage state.
 
 The handoff has two phases. Raw mail is stored first so inference failure never
 hides a message. A separate fixed, no-tools summarization call produces bounded
-metadata, which the Kernel delivers to the owner's Personal intelligence as a
-typed system event. That event contains only the opaque message ID, receipt
-time, bounded summary, category, attention flag, and optional confidence. It
-omits separate mailbox identifiers, address fields, display names, subjects,
-raw headers, and message bodies. Personal handles it in a notification-only
-run: it can tell the user, but cannot execute tools, MCP calls, or device
-actions in that run. The summary remains untrusted external context. Upgrades
-preserve historical Inbox accounts, processes, and mailbox notification fields,
-but new mail neither consults nor updates them.
+metadata, which the Kernel stores on one deduplicated `mail.received`
+responsibility for Ship. The record contains the opaque message ID, receipt time,
+bounded summary, category, attention flag, and optional confidence. It omits
+separate mailbox identifiers, address fields, display names, subjects, raw headers,
+and message bodies. Its title contains only the opaque id, so sender-controlled
+summary text enters model context only after Ship explicitly inspects the record.
+The summary remains untrusted external context. Upgrades preserve historical Inbox
+accounts, processes, and mailbox notification fields, but new mail neither consults
+nor updates them.
 
 Normalized message and body types live in
 `packages/gsv/src/protocol/adapters.ts`. The Worker RPC extension point is

@@ -825,20 +825,19 @@ describe("ProcessStore", () => {
         const store = (instance as any).store;
         const provenance = JSON.stringify({
           source: "kernel",
-          eventId: "mail-event-1",
-          eventType: "mail.received",
-          contentTrust: "untrusted",
+          eventId: "work-return-1",
+          eventType: "adapter.work.returned",
         });
-        store.enqueue("mail-run-1", "mail arrived", {
+        store.enqueue("work-return-run-1", "the user returned from work", {
           role: "system",
-          kind: "mail.received",
+          kind: "adapter.work.returned",
           provenance,
         });
 
         expect(store.dequeue()).toMatchObject({
-          runId: "mail-run-1",
+          runId: "work-return-run-1",
           role: "system",
-          kind: "mail.received",
+          kind: "adapter.work.returned",
           provenance,
         });
       });

@@ -197,12 +197,13 @@ apply normally.
 
 Inbound email is hostile content. The Kernel persists exact bytes before any
 inference call. Summarization uses a fixed server-owned model and prompt with no
-tools, and only its validated bounded result becomes a typed system event for
-the owner's Personal intelligence. The event omits separate mailbox
-identifiers, address fields, display names, subjects, raw headers, and bodies.
-Personal handles it in a notification-only run with tool, MCP, and device
-execution disabled. This reduces the instruction-injection surface but does not
-make the sender, links, attachments, or summary trusted.
+tools, and only its validated bounded result becomes details on a deduplicated
+`mail.received` responsibility for Ship. The responsibility projection omits
+separate mailbox identifiers, address fields, display names, subjects, raw headers,
+and bodies; its title contains only the opaque message id. The summary remains marked
+untrusted and is not automatically inserted into model context. Ship must explicitly
+inspect the record and mailbox before acting. This reduces the instruction-injection
+surface but does not make the sender, links, attachments, or summary trusted.
 
 Explicit outbound mail is a capability-gated `mail.send` syscall for one
 plain-text recipient. The Kernel ignores caller-supplied sender identity because

@@ -26,8 +26,16 @@ These boundaries are intentionally distinct:
 
 Deterministic components own ordinary retries and bookkeeping. They create or update
 a responsibility only when work remains unresolved, a deadline must survive, or the
-Ship's judgment is required. A user interaction becomes a responsibility when the
-Ship accepts work that will outlive the current run.
+Ship's judgment is required. The source subsystem keeps the authoritative evidence:
+mail bytes remain in the mailbox, schedule definitions and occurrences remain in the
+scheduler, and delegated results remain in Process IPC and activity. The responsibility
+stores the unresolved action and stable references to that evidence. A user interaction
+becomes a responsibility when the Ship accepts work that will outlive the current run.
+
+Not every `[GSV EVENT]` is an obligation. For example, returning from a Work session
+is immediate conversational context and remains a Process event. Responsibilities
+replace ad hoc action-bearing wake events; they do not replace typed evidence,
+lifecycle signals, or conversation input.
 
 ## Ownership
 
@@ -81,9 +89,11 @@ maintains at most one earliest wake task per owner. Persisting or changing a
 responsibility happens before its wake is scheduled.
 
 When work becomes actionable, the Kernel creates a batch containing the relevant
-responsibility ids and admits a typed `r12y.ready` runtime event to the existing
-personal Process. An idle Ship starts a run; a busy Ship receives the event in its
-current run. The event is a Process-context fact, not a canonical user Message.
+responsibility ids and admits a typed `r12y.ready` control event to the existing
+personal Process. An idle Ship starts a run; a busy Ship attaches the batch to its
+current run. The control event contributes no separate model-visible prose. The
+responsibility baseline or revisioned ledger transition is the sole model-visible
+projection of the obligation.
 
 A responsibility-triggered run may yield only after every record in its current batch
 is resolved, delegated, waiting, or explicitly deferred. The overall ledger need not
@@ -109,8 +119,9 @@ current responsibility names, ids, and initial states through the `{{ r12y }}` s
 context template. It records the corresponding Kernel ledger revision. That rendered
 system prompt remains byte-for-byte fixed for the epoch.
 
-Later responsibility changes do not rewrite the system prompt. The Kernel admits
-ordered typed delta events such as:
+Later responsibility changes do not rewrite the system prompt. Before each provider
+turn, Process synchronizes ordered transitions after the epoch's last observed ledger
+revision and persists them as events such as:
 
 ```text
 [GSV EVENT]
@@ -127,11 +138,34 @@ The model's current view is the frozen baseline plus ordered deltas. These event
 after the previously cached prompt and history, preserving provider prefix/KV cache
 reuse. `r12y list` remains the authoritative on-demand query.
 
-Normal run completion does not rebuild the epoch. On compaction or reset, Process
-renders a fresh baseline at the latest ledger revision and excludes superseded
-responsibility delta events from the next live context. A hard removal is logically
-effective as soon as its delta arrives; physically removing earlier prompt tokens
-requires an epoch rotation.
+If a responsibility is created while a provider call is already running, Process does
+not mutate that call's system prompt. The ready batch prevents the run from yielding
+the new work unseen. The next provider turn synchronizes and appends its transition.
+This remains true across normal run completion: the next run continues the same epoch
+and still does not rerender `{{ r12y }}`.
+
+On compaction, reset, Process replacement, or an effective standing-context change,
+Process closes the epoch and renders a fresh baseline at the latest ledger revision.
+That new epoch excludes superseded responsibility delta events from its live context.
+A hard removal is logically effective as soon as its delta arrives; physically
+removing earlier prompt tokens requires an epoch rotation.
+
+## Deterministic producers
+
+The first system-owned producers use the same ledger contract:
+
+- Managed mail completion creates one `mail.received` responsibility keyed by the
+  immutable message id. The title contains no sender-controlled text. Bounded summary
+  metadata is marked untrusted and is available only when the Ship inspects the record;
+  exact content stays in the mailbox.
+- A Ship-directed schedule occurrence creates one `schedule.due` responsibility keyed
+  by schedule id and occurrence id. Replaying the occurrence returns the same record.
+  Schedules explicitly bound to an adapter reply route retain that transport event so
+  the eventual Message can use the exact authorized destination.
+- `proc delegate --responsibility ID ...` stores the responsibility id on the durable
+  IPC call. Completion, failure, timeout, or kill returns a still-active assignment to
+  Ship exactly once, records the call and child run ids as evidence, and wakes Ship.
+  The child result itself remains an IPC event in Process Activity.
 
 ## Epoch archives
 

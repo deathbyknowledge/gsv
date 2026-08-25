@@ -293,7 +293,10 @@ async function runProcCommand(args: string[], ctx: KernelContext): Promise<ExecR
         if (parsed.responsibilityId) {
           callArgs.metadata = { responsibilityId: parsed.responsibilityId };
         }
-        result = await handleProcIpcCall(callArgs, ctx, { terminateTargetOnTimeout: true });
+        result = await handleProcIpcCall(callArgs, ctx, {
+          terminateTargetOnTimeout: true,
+          responsibilityId: parsed.responsibilityId,
+        });
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         return delegateFailureResult(ctx, spawned.pid, message, responsibilityRollback);

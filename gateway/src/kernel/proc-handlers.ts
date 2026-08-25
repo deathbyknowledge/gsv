@@ -584,7 +584,10 @@ export async function handleProcIpcSend(
 export async function handleProcIpcCall(
   args: ProcIpcCallArgs,
   ctx: KernelContext,
-  options: { terminateTargetOnTimeout?: boolean } = {},
+  options: {
+    terminateTargetOnTimeout?: boolean;
+    responsibilityId?: string;
+  } = {},
 ): Promise<ProcIpcCallResult> {
   const resolved = resolveSameOwnerIpc(args, ctx, "proc.ipc.call");
   if (!resolved.ok) return resolved;
@@ -601,6 +604,7 @@ export async function handleProcIpcCall(
     targetPid: resolved.args.pid,
     targetRunId: runId,
     deadlineAt,
+    responsibilityId: options.responsibilityId,
   });
 
   try {
@@ -820,13 +824,13 @@ function reconcileKilledProcess(
   pid: string,
   ctx: KernelContext,
 ): void {
+  ctx.failIpcCallsByTarget(ownerUid, pid, "Target process was killed");
   const reclaimed = ctx.responsibilities.reclaimProcessAssignments({
     ownerUid,
     processId: pid,
     now: Date.now(),
   });
   ctx.runRoutes.clearForProcess(pid);
-  ctx.failIpcCallsByTarget(ownerUid, pid, "Target process was killed");
   ctx.procs.kill(pid);
   if (reclaimed.length > 0) {
     ctx.defer(ctx.reconcileResponsibilityWake(ownerUid).catch((error) => {

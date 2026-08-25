@@ -31,7 +31,7 @@ function createTableStatement(name: string): string {
 describe("kernel schema migrations", () => {
   it("starts the kernel component at a v1 baseline", () => {
     expect(KERNEL_SCHEMA_COMPONENT).toBe("kernel");
-    expect(KERNEL_MIGRATIONS).toHaveLength(29);
+    expect(KERNEL_MIGRATIONS).toHaveLength(30);
     expect(KERNEL_MIGRATIONS[0]).toMatchObject({
       id: 1,
       name: "initial_kernel_schema",
@@ -147,6 +147,10 @@ describe("kernel schema migrations", () => {
     expect(KERNEL_MIGRATIONS[28]).toMatchObject({
       id: 29,
       name: "add_responsibilities",
+    });
+    expect(KERNEL_MIGRATIONS[29]).toMatchObject({
+      id: 30,
+      name: "link_ipc_responsibilities",
     });
   });
 
@@ -286,6 +290,13 @@ describe("kernel schema migrations", () => {
     expect(statements.some((statement) => (
       statement.startsWith("CREATE TABLE responsibility_wake_batches ")
     ))).toBe(true);
+  });
+
+  it("links delegated IPC calls to their responsibility", () => {
+    const statements = normalizedStatements();
+    expect(statements).toContain(
+      "ALTER TABLE ipc_calls ADD COLUMN responsibility_id TEXT",
+    );
   });
 
   it("removes the parallel conversation registry", () => {

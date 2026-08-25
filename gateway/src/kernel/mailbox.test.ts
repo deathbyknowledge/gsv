@@ -1,17 +1,17 @@
 function isString<T>(value: T): value is T & string { return String(value) === value; }
 
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { bodyFromBytes } from "@humansandmachines/gsv/protocol";
 import { runWithRealKernelSql } from "../test-support/real-kernel-sql";
 import { AdapterStore } from "./adapter-store";
 import type { KernelContext } from "./context";
 import { MailboxStore } from "./mailbox-store";
+import { ResponsibilityStore } from "./responsibility-store";
 import {
   acceptManagedInboundMail,
   completeManagedInboundMail,
   managedMailAddressForOwner,
-  type MailboxNotificationDependencies,
 } from "./mailbox";
 
 const RAW = new TextEncoder().encode([
@@ -68,28 +68,11 @@ const SENSITIVE_METADATA = {
   text: "PRIVATE-BODY-SENTINEL",
 };
 
-const ensurePersonalControllerMock = vi.fn<
-  MailboxNotificationDependencies["ensurePersonalController"]
->();
-const sendRuntimeEventMock = vi.fn<
-  MailboxNotificationDependencies["sendRuntimeEvent"]
->();
-const notificationDependencies: MailboxNotificationDependencies = {
-  ensurePersonalController: ensurePersonalControllerMock,
-  sendRuntimeEvent: sendRuntimeEventMock,
-};
-
 describe("managed Kernel mailbox", () => {
-  beforeEach(() => {
-    sendRuntimeEventMock.mockReset();
-    ensurePersonalControllerMock.mockReset();
-    ensurePersonalControllerMock.mockResolvedValue("proc:personal");
-  });
-
   it("stores exact mail under the primary human and aliases exact-byte retries", async () => {
-    await runWithRealKernelSql(async (sql) => {
+    await runWithRealKernelSql(async (sql, kernelStorage) => {
       const storage = new MemoryR2Bucket();
-      const ctx = mailboxContext(sql, storage);
+      const ctx = mailboxContext(sql, kernelStorage, storage);
 
       const accepted = await acceptManagedInboundMail(
         METADATA,
@@ -123,10 +106,12 @@ describe("managed Kernel mailbox", () => {
     });
   });
 
-  it("routes one reduced event to Personal even while a DM points to Work", async () => {
-    await runWithRealKernelSql(async (sql) => {
+  it("records one reduced mail responsibility even while a DM points to Work", async () => {
+    await runWithRealKernelSql(async (sql, kernelStorage) => {
       const storage = new MemoryR2Bucket();
-      const ctx = mailboxContext(sql, storage);
+      const ctx = mailboxContext(sql, kernelStorage, storage);
+      const reconcileWake = vi.fn(async () => {});
+      ctx.reconcileResponsibilityWake = reconcileWake;
       const accepted = await acceptManagedInboundMail(
         SENSITIVE_METADATA,
         bodyFromBytes(SENSITIVE_RAW),
@@ -150,17 +135,6 @@ describe("managed Kernel mailbox", () => {
         mode: "work",
         updatedByUid: 1000,
       });
-      sendRuntimeEventMock.mockImplementation(async (_installationId, _pid, frame) => ({
-        type: "res",
-        id: frame.id,
-        ok: true,
-        data: {
-          eventId: accepted.messageId,
-          runId: "runtime-event-run:1",
-          queued: false,
-        },
-      }));
-
       const completion = {
         // SAFETY: test fixture is constructed with the asserted kernel domain shape.
         version: 1 as const,
@@ -174,34 +148,39 @@ describe("managed Kernel mailbox", () => {
           confidence: 0.94,
         },
       };
-      await completeManagedInboundMail(completion, ctx, notificationDependencies);
-      await completeManagedInboundMail(completion, ctx, notificationDependencies);
+      await completeManagedInboundMail(completion, ctx);
+      await completeManagedInboundMail(completion, ctx);
 
-      expect(ensurePersonalControllerMock).toHaveBeenCalledOnce();
-      expect(ensurePersonalControllerMock).toHaveBeenCalledWith(1000, ctx);
-      expect(sendRuntimeEventMock).toHaveBeenCalledOnce();
-      expect(sendRuntimeEventMock).toHaveBeenCalledWith(
-        "installation-1",
-        "proc:personal",
-        expect.objectContaining({
-          call: "proc.runtime.event.deliver",
-          args: {
-            eventId: accepted.messageId,
-            event: {
-              type: "mail.received",
-              messageId: accepted.messageId,
-              receivedAt: SENSITIVE_METADATA.receivedAt,
-              summary: "Mike approved the contract.",
-              category: "work",
-              requiresAttention: true,
-              confidence: 0.94,
-            },
-          },
-        }),
-      );
-      const deliveredFrame = sendRuntimeEventMock.mock.calls[0]![2];
-      expect(deliveredFrame.args.event).not.toHaveProperty("eventId");
-      const serializedFrame = JSON.stringify(deliveredFrame);
+      const listed = ctx.responsibilities.list({
+        ownerUid: 1000,
+        includeTerminal: true,
+      });
+      expect(listed.records).toHaveLength(1);
+      expect(listed.records[0]).toMatchObject({
+        title: `Review received email ${accepted.messageId}`,
+        source: {
+          kind: "event",
+          eventType: "mail.received",
+          eventId: accepted.messageId,
+        },
+        assignee: { kind: "ship" },
+        state: "open",
+        priority: "high",
+        dedupeKey: `mail.received:${accepted.messageId}`,
+        details: {
+          eventType: "mail.received",
+          messageId: accepted.messageId,
+          receivedAt: SENSITIVE_METADATA.receivedAt,
+          summary: "Mike approved the contract.",
+          category: "work",
+          requiresAttention: true,
+          confidence: 0.94,
+          contentTrust: "untrusted",
+        },
+      });
+      expect(reconcileWake).toHaveBeenCalledOnce();
+      expect(reconcileWake).toHaveBeenCalledWith(1000);
+      const serializedResponsibility = JSON.stringify(listed.records[0]);
       for (const sentinel of [
         "mailbox:1000:primary",
         "private-envelope@example.com",
@@ -210,7 +189,7 @@ describe("managed Kernel mailbox", () => {
         "PRIVATE-RAW-HEADER-SENTINEL",
         "PRIVATE-BODY-SENTINEL",
       ]) {
-        expect(serializedFrame).not.toContain(sentinel);
+        expect(serializedResponsibility).not.toContain(sentinel);
       }
 
       const message = ctx.mailboxes.getMessage(1000, accepted.messageId)!;
@@ -231,9 +210,9 @@ describe("managed Kernel mailbox", () => {
     });
   });
 
-  it("retries Personal delivery with the same event id after a transient failure", async () => {
-    await runWithRealKernelSql(async (sql) => {
-      const ctx = mailboxContext(sql, new MemoryR2Bucket());
+  it("keeps the responsibility durable when wake scheduling fails", async () => {
+    await runWithRealKernelSql(async (sql, kernelStorage) => {
+      const ctx = mailboxContext(sql, kernelStorage, new MemoryR2Bucket());
       const accepted = await acceptManagedInboundMail(METADATA, bodyFromBytes(RAW), ctx);
       const completion = {
         // SAFETY: test fixture is constructed with the asserted kernel domain shape.
@@ -248,36 +227,28 @@ describe("managed Kernel mailbox", () => {
           confidence: 0.94,
         },
       };
-      sendRuntimeEventMock
-        .mockResolvedValueOnce(null)
-        .mockImplementationOnce(async (_installationId, _pid, frame) => ({
-          type: "res",
-          id: frame.id,
-          ok: true,
-          data: {
-            eventId: accepted.messageId,
-            runId: "runtime-event-run:retry",
-            queued: false,
-          },
-        }));
+      const warning = vi.spyOn(console, "warn").mockImplementation(() => {});
+      ctx.reconcileResponsibilityWake = vi.fn(async () => {
+        throw new Error("scheduler unavailable");
+      });
 
-      await expect(completeManagedInboundMail(completion, ctx, notificationDependencies))
-        .rejects.toThrow("Personal intelligence returned no valid response");
-      expect(ctx.mailboxes.getMessage(1000, accepted.messageId)?.eventDeliveredAt).toBeNull();
+      await completeManagedInboundMail(completion, ctx);
+      await Promise.resolve();
 
-      await completeManagedInboundMail(completion, ctx, notificationDependencies);
-
-      expect(sendRuntimeEventMock).toHaveBeenCalledTimes(2);
-      expect(sendRuntimeEventMock.mock.calls.map((call) => call[2].args.eventId))
-        .toEqual([accepted.messageId, accepted.messageId]);
+      expect(ctx.responsibilities.list({ ownerUid: 1000 }).records).toHaveLength(1);
       expect(ctx.mailboxes.getMessage(1000, accepted.messageId)?.eventDeliveredAt)
         .toEqual(expect.any(Number));
+      expect(warning).toHaveBeenCalledWith(
+        "[Kernel] Failed to schedule received-mail responsibility:",
+        expect.objectContaining({ message: "scheduler unavailable" }),
+      );
+      warning.mockRestore();
     });
   });
 
   it("derives the production and staging mailbox domains from canonical routing", async () => {
-    await runWithRealKernelSql((sql) => {
-      const production = mailboxContext(sql, new MemoryR2Bucket());
+    await runWithRealKernelSql((sql, kernelStorage) => {
+      const production = mailboxContext(sql, kernelStorage, new MemoryR2Bucket());
       expect(managedMailAddressForOwner(1000, production)).toBe("hank@gsv.space");
 
       const staging = {
@@ -294,7 +265,11 @@ describe("managed Kernel mailbox", () => {
   });
 });
 
-function mailboxContext(sql: SqlStorage, storage: MemoryR2Bucket): KernelContext {
+function mailboxContext(
+  sql: SqlStorage,
+  kernelStorage: DurableObjectStorage,
+  storage: MemoryR2Bucket,
+): KernelContext {
   const humans = [
     { username: "hank", uid: 1000, gid: 1000, gecos: "Hank", home: "/home/hank", shell: "/bin/sh" },
     { username: "sam", uid: 1001, gid: 1001, gecos: "Sam", home: "/home/sam", shell: "/bin/sh" },
@@ -320,7 +295,12 @@ function mailboxContext(sql: SqlStorage, storage: MemoryR2Bucket): KernelContext
     caps: { resolve: () => ["*"] },
     adapters: new AdapterStore(sql),
     mailboxes: new MailboxStore(sql),
+    responsibilities: new ResponsibilityStore(kernelStorage),
     procs: { list: () => [], get: () => null },
+    reconcileResponsibilityWake: async () => {},
+    defer: (promise) => {
+      void promise;
+    },
   // SAFETY: test fixture is constructed with the asserted kernel domain shape.
   } as KernelContext;
 }

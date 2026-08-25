@@ -834,6 +834,18 @@ function normalizeScheduleTarget(target: ScheduleTarget): ScheduleTarget {
     return event;
   }
 
+  if (target.kind === "responsibility") {
+    const responsibility: Extract<ScheduleTarget, { kind: "responsibility" }> = {
+      kind: "responsibility",
+      message: normalizeRequiredText(target.message, "responsibility message"),
+    };
+    if (target.data !== undefined) {
+      responsibility.data = normalizePlainObject(target.data, "responsibility data");
+    }
+    if (target.priority !== undefined) responsibility.priority = target.priority;
+    return responsibility;
+  }
+
   if (target.kind === "adapter.send") {
     return {
       kind: "adapter.send",
@@ -870,6 +882,11 @@ function validateScheduleTargetAccess(target: ScheduleTarget, ctx: KernelContext
         throw new Error("Permission denied: adapter.send");
       }
       assertAdapterMessageDestinationAccess(target.replyTo, ownerUid, ctx);
+    }
+  }
+  if (target.kind === "responsibility") {
+    if (!hasCapability(ctx.identity?.capabilities ?? [], "r12y.create")) {
+      throw new Error("Permission denied: r12y.create");
     }
   }
   if (target.kind === "adapter.send") {

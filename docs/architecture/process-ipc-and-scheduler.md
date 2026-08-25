@@ -95,18 +95,21 @@ Other processes may run as the same personal agent account, but they are work
 with independent histories and never become the personal process by recency or
 label. `proc.list` reports the distinction explicitly.
 
-The personal agent's account home contains its role, voice, and compact open
-commitments. Those files are shared by every process running as that account,
-while each process retains its own history and lifecycle. The personal process
-is the normal user-facing place where delegated results and ambient events
-return; real child processes still use ordinary parent pids for lifecycle and
-IPC. Commitments are model-maintained text rather than a Kernel schema.
+The personal agent's account home contains its role, voice, and durable memory.
+Unresolved work lives in the Kernel responsibility ledger and is projected into
+one immutable Process context epoch as a baseline plus ordered transitions. Each
+process retains its own history and lifecycle. The personal process is the normal
+user-facing place where delegated results and actionable system events return;
+real child processes still use ordinary parent pids for lifecycle and IPC.
 
 For bounded work, `proc delegate` creates a non-interactive child and a bounded
 `proc.ipc.call`. The child inherits the personal account unless `--as ACCOUNT`
 selects a specialized owned agent. The delegated-task envelope places an
-inherited child in worker mode. Acceptance returns immediately; completion or
-timeout later re-enters the caller as a process event.
+inherited child in worker mode. With `--responsibility ID`, the Kernel assigns
+that record to the child and persists the id on the IPC call. Completion, failure,
+timeout, or kill returns a still-active assignment to Ship once, with the IPC call
+and child run ids recorded as evidence. The result itself still re-enters the
+caller as a Process event; it is not copied into the responsibility record.
 
 During an adapter turn, `message current --json` exposes the current surface as
 an opaque GSV destination id. The personal intelligence can store that id with
@@ -165,7 +168,8 @@ The scheduler is Kernel-owned. The public surface is:
 It stores definitions, calculates next fire times, enforces permissions, tracks
 run history, and dispatches typed targets. Supported expressions are `at`,
 `after`, `every`, and timezone-aware five-field `cron`. Supported targets are
-`command.exec`, `process.spawn`, `process.event`, and `adapter.send`.
+`command.exec`, `process.spawn`, `process.event`, `responsibility`, and
+`adapter.send`.
 
 ```ts
 type ScheduleTarget =
@@ -191,6 +195,12 @@ type ScheduleTarget =
       replyTo?: AdapterMessageDestination;
     }
   | {
+      kind: "responsibility";
+      message: string;
+      data?: Record<string, unknown>;
+      priority?: "low" | "normal" | "high" | "critical";
+    }
+  | {
       kind: "adapter.send";
       destination: AdapterMessageDestination;
       text: string;
@@ -198,10 +208,11 @@ type ScheduleTarget =
 ```
 
 Schedule success reports target dispatch, not model-run completion. A successful
-`process.event` means the target process admitted the event. A successful
-`process.spawn` means the new process was created and accepted its initial
-prompt. Child answers remain in the child history unless another mechanism
-consumes them.
+`responsibility` occurrence means the Kernel durably created or recovered the
+deduplicated `schedule.due` record. A successful `process.event` means the target
+process admitted the transport-bound event. A successful `process.spawn` means the
+new process was created and accepted its initial prompt. Child answers remain in
+the child history unless another mechanism consumes them.
 
 ### Chat delivery contracts
 
@@ -212,12 +223,13 @@ sched add --here --name NAME --after 10m --message "Run the agent"
 sched add --to DESTINATION --name NAME --after 10m --message "Send this text"
 ```
 
-`--here` requires a process-backed shell and creates a `process.event` for the
-current pid. Inside a pending IPC call, it instead targets the calling process,
-so future work created by a delegated worker returns to its controller. During
-an adapter run it captures the authorized adapter destination in `replyTo`; the
-future terminal answer follows that destination. Without an adapter route, the
-result remains in the target process history.
+`--here` requires a process-backed shell. When its resolved target is Ship and
+there is no exact adapter reply route, it creates a `responsibility` target: every
+occurrence becomes one deduplicated `schedule.due` responsibility and survives
+replacement of the current Ship pid. Inside a pending IPC call, it resolves to the
+calling process. Non-Ship targets remain `process.event` targets. During an adapter
+run it captures the authorized adapter destination in `replyTo`; that transport
+event is retained so the eventual Message follows the exact destination.
 
 `--to` creates an `adapter.send` action and sends the stored text directly
 without running an agent. The scheduler validates destination ownership when a

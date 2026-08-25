@@ -45,8 +45,8 @@ Use `:quit`, `:exit`, or `:q` to leave.
 
 Inside the gateway shell, `proc` is the process IPC userland command.
 `message` inspects and uses external chat reply routes. `sched add --here`
-admits scheduled events to the current process and preserves the
-current authorized adapter reply destination when one exists.
+creates Ship responsibilities or admits transport-bound scheduled events,
+depending on the resolved Process and reply route.
 `crontab` schedules background shell commands, while the remaining `sched`
 commands inspect and control the Kernel schedule records:
 
@@ -105,7 +105,10 @@ rejected; use `--` before a positional prompt that begins with `-`. Use
 bounded child whose ordinary final assistant output returns to its caller as a process event; it
 requires a process-backed caller and must not be placed in a crontab. Passing
 `--responsibility ID` assigns that existing Kernel record to the child before
-IPC admission and restores its prior Ship state if admission fails.
+IPC admission and restores its prior Ship state if admission fails. Completion,
+failure, timeout, or kill returns a still-active assignment to Ship exactly once;
+the IPC event carries the child result and the responsibility retains stable call
+and run references.
 `proc send` is asynchronous same-owner process mail. `proc call` is bounded:
 the source process receives either
 `ipc.reply` or `ipc.timeout` as a delegated task event. In a process-backed
@@ -203,13 +206,13 @@ also report that id, including a failure while reopening the file for the
 automatic retry. An outcome that may have reached the provider is reported as
 `sent=false`, `delivery_confirmed=false`, and `delivery_state=ambiguous`.
 
-Use `sched add --here` from a process-backed shell when each firing should admit
-an event into the current process. It creates a typed
-`process.event` schedule for the current process. When invoked during an adapter
-run, `--here` captures the authorized adapter destination so the future final
-answer returns there. Without such a route, the answer remains in the GSV
-process history. The target is bound to the current process id and must be
-recreated after that process is killed.
+Use `sched add --here` from a process-backed shell when each firing should give
+the current intelligence work. For Ship without an adapter reply route, it creates
+a `responsibility` schedule; each occurrence becomes one deduplicated
+`schedule.due` record and is not bound to the current Ship pid. A non-Ship target
+uses `process.event`. When invoked during an adapter run, `--here` retains a
+`process.event` with the exact authorized destination so the future final Message
+returns there. A Process-bound target must be recreated after that Process is killed.
 
 Use `sched add --to DESTINATION` for direct scheduled text delivery. It creates
 an `adapter.send` scheduled action and does not run the agent. Destination
@@ -217,9 +220,10 @@ resolution includes known authorized offline destinations because the account
 may be online when the schedule fires. Run `message destinations --all` and
 copy its opaque GSV destination id; provider account, actor, and surface ids are
 not part of the agent-facing command contract.
-A successful `process.event` firing records event admission, not completion of
-a model turn or reply. Choose exactly one time expression. `--at` requires a
-future ISO timestamp with `Z` or an explicit numeric UTC offset.
+A successful `responsibility` firing records durable responsibility creation, not
+completion of its work. A successful `process.event` firing records event admission,
+not completion of a model turn or reply. Choose exactly one time expression. `--at`
+requires a future ISO timestamp with `Z` or an explicit numeric UTC offset.
 
 ```bash
 sched add --here --name animal-facts --every 2m --message "Send one obscure animal fact."

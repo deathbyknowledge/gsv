@@ -1823,6 +1823,9 @@ describe("proc native command", () => {
     expect(responsibility.assignee).toEqual({ kind: "process", processId: children[0] });
     expect(responsibility.state).toBe("active");
     expect(responsibility.leaseExpiresAtMs).toEqual(expect.any(Number));
+    expect(ipcCalls.create).toHaveBeenCalledWith(expect.objectContaining({
+      responsibilityId,
+    }));
     expect(result.stdout).toContain(`responsibility=${responsibilityId}`);
   });
 
@@ -4095,6 +4098,7 @@ describe("native administration shell commands", () => {
       processId: "proc:personal-chat",
       uid: 2000,
       ownerUid: IDENTITY.uid,
+      isPersonalController: true,
     };
 
     const result = await handleShellExec(
@@ -4102,7 +4106,7 @@ describe("native administration shell commands", () => {
         input: 'sched add --here --name "animal facts" --every 2m --message "Send a niche animal fact."',
       },
       makeContext({
-        capabilities: ["sched.add", "proc.send"],
+        capabilities: ["sched.add", "proc.send", "r12y.create"],
         procs: {
           get: vi.fn((pid: string) => [worker, caller].find((proc) => proc.processId === pid) ?? null),
           getOwnerUid: vi.fn(() => IDENTITY.uid),
@@ -4128,8 +4132,7 @@ describe("native administration shell commands", () => {
       name: "animal facts",
       expression: { kind: "every", everyMs: 120_000 },
       target: {
-        kind: "process.event",
-        pid: "proc:personal-chat",
+        kind: "responsibility",
         message: "Send a niche animal fact.",
       },
     }));

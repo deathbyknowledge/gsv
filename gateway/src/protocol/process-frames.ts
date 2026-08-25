@@ -1,26 +1,12 @@
 import type {
   AdapterInteractionOrigin,
   EventReplyTarget,
-  ManagedMailSummaryCategory,
   ProcMediaInput,
   ProcSendResult,
   ConversationMessage,
-  ResponsibilityAssignee,
-  ResponsibilityPriority,
-  ResponsibilityState,
   ResourceBlock,
 } from "@humansandmachines/gsv/protocol";
 import type { Frame, FrameBody, RequestFrame, ResponseErrFrame, SignalFrame } from "./frames";
-
-export type ProcessMailReceivedRuntimeEvent = {
-  type: "mail.received";
-  messageId: string;
-  receivedAt: number;
-  summary: string;
-  category: ManagedMailSummaryCategory;
-  requiresAttention: boolean;
-  confidence?: number;
-};
 
 export type ProcessAdapterWorkReturnedRuntimeEvent = {
   type: "adapter.work.returned";
@@ -31,21 +17,10 @@ export type ProcessResponsibilityReadyRuntimeEvent = {
   type: "r12y.ready";
   batchId: string;
   ledgerRevision: number;
-  responsibilities: Array<{
-    id: string;
-    title: string;
-    state: ResponsibilityState;
-    priority: ResponsibilityPriority;
-    assignee: ResponsibilityAssignee;
-    dueAtMs?: number;
-    nextCheckAtMs?: number;
-    leaseExpiresAtMs?: number;
-    blocker?: string;
-  }>;
+  responsibilityIds: string[];
 };
 
 export type ProcessRuntimeEvent =
-  | ProcessMailReceivedRuntimeEvent
   | ProcessAdapterWorkReturnedRuntimeEvent
   | ProcessResponsibilityReadyRuntimeEvent;
 

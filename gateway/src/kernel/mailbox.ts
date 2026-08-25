@@ -6,20 +6,15 @@ import type {
   ManagedMailAddress,
   ManagedMailAttachmentMetadata,
   ManagedMailSummary,
+  JsonObject,
   ProcessIdentity,
 } from "@humansandmachines/gsv/protocol";
 import { binaryBodySchema } from "@humansandmachines/gsv/protocol";
 import { z } from "zod";
 import { isLocked } from "../auth/shadow";
-import type {
-  ProcessRuntimeEventDeliverRequestFrame,
-  ProcessRuntimeEventDeliverResponseFrame,
-} from "../protocol/process-frames";
 import { stableOpaqueId } from "../shared/stable-id";
-import { sendFrameToProcess } from "../shared/utils";
 import { accountIdentity } from "./accounts";
 import type { KernelContext } from "./context";
-import { ensurePersonalController } from "./personal-controller";
 
 const MAX_RAW_MAIL_BYTES = 25 * 1024 * 1024;
 const MAX_PARSED_MAIL_TEXT_BYTES = 4 * 1024 * 1024;
@@ -75,20 +70,6 @@ const inboundMailCompletionSchema = z.strictObject({
   messageId: z.string(),
   summary: mailSummarySchema,
 });
-
-export type MailboxNotificationDependencies = {
-  ensurePersonalController(ownerUid: number, ctx: KernelContext): Promise<string>;
-  sendRuntimeEvent(
-    installationId: string,
-    pid: string,
-    frame: ProcessRuntimeEventDeliverRequestFrame,
-  ): Promise<ProcessRuntimeEventDeliverResponseFrame | null>;
-};
-
-const mailboxNotificationDependencies: MailboxNotificationDependencies = {
-  ensurePersonalController,
-  sendRuntimeEvent: sendFrameToProcess,
-};
 
 export async function acceptManagedInboundMail(
   metadataValue: ManagedInboundMailMetadata,
@@ -165,7 +146,6 @@ export async function acceptManagedInboundMail(
 export async function completeManagedInboundMail(
   completionValue: ManagedInboundMailCompletion,
   ctx: KernelContext,
-  dependencies: MailboxNotificationDependencies = mailboxNotificationDependencies,
 ): Promise<void> {
   const completion = normalizeCompletion(completionValue);
   const accepted = ctx.mailboxes.assertIntakeMessage(
@@ -180,34 +160,39 @@ export async function completeManagedInboundMail(
 
   const mailbox = ctx.mailboxes.getMailbox(summarized.mailboxId);
   if (!mailbox) throw new Error("Mail message belongs to an unknown mailbox");
-  const pid = await dependencies.ensurePersonalController(mailbox.ownerUid, ctx);
-  const frame: ProcessRuntimeEventDeliverRequestFrame = {
-    type: "req",
-    id: crypto.randomUUID(),
-    call: "proc.runtime.event.deliver",
-    args: {
-      eventId: summarized.messageId,
-      event: {
-        type: "mail.received",
-        messageId: summarized.messageId,
-        receivedAt: summarized.receivedAt,
-        summary: completion.summary.summary,
-        category: completion.summary.category,
-        requiresAttention: completion.summary.requiresAttention,
-        confidence: completion.summary.confidence,
-      },
-    },
+  const details: JsonObject = {
+    eventType: "mail.received",
+    messageId: summarized.messageId,
+    receivedAt: summarized.receivedAt,
+    summary: completion.summary.summary,
+    category: completion.summary.category,
+    requiresAttention: completion.summary.requiresAttention,
+    contentTrust: "untrusted",
   };
-  const response = await dependencies.sendRuntimeEvent(ctx.installationId, pid, frame);
-  if (!response || response.type !== "res" || response.id !== frame.id) {
-    throw new Error("Personal intelligence returned no valid response");
+  if (completion.summary.confidence !== undefined) {
+    details.confidence = completion.summary.confidence;
   }
-  if (!response.ok) throw new Error(response.error.message);
-  const result = response.data;
-  if (!result || result.eventId !== summarized.messageId) {
-    throw new Error("Personal intelligence admitted an unexpected mail event");
-  }
+  ctx.responsibilities.create({
+    ownerUid: mailbox.ownerUid,
+    title: `Review received email ${summarized.messageId}`,
+    details,
+    source: {
+      kind: "event",
+      eventType: "mail.received",
+      eventId: summarized.messageId,
+    },
+    assignee: { kind: "ship" },
+    state: "open",
+    priority: completion.summary.requiresAttention ? "high" : "normal",
+    dedupeKey: `mail.received:${summarized.messageId}`,
+    actor: { kind: "system", component: "mail" },
+    observedByShip: false,
+    now: Date.now(),
+  });
   ctx.mailboxes.markEventDelivered(summarized.messageId);
+  ctx.defer(ctx.reconcileResponsibilityWake(mailbox.ownerUid).catch((error) => {
+    console.warn("[Kernel] Failed to schedule received-mail responsibility:", error);
+  }));
 }
 
 export function managedMailAddressForOwner(

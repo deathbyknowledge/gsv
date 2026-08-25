@@ -94,21 +94,19 @@ System-provided skills are bundled into the gateway and seeded into user home
 `skills.d` during bootstrap. Before prompt skill discovery, the gateway restores
 any missing built-in paths while preserving existing files.
 
-The assembled prompt, config, tool list, device list, and approval policy are
-cached in `currentRun` for the duration of that run.
+The rendered standing prompt belongs to the live context epoch and may be reused
+across ordinary runs. Resolved model config, tool list, device list, and approval
+policy are run state. Responsibility changes after epoch creation are appended as
+ordered events; they never rewrite that epoch's prompt.
 
-Managed `mail.received` runtime events are a restricted notification path. The
-Kernel sends only the stable message id, receipt time, a summary of at most 280
-bytes, classification, attention flag, and optional confidence. The Process
-rejects extra fields, canonicalizes the summary to one line, and renders the
-quoted email-derived summary as untrusted data rather than instructions. A mail
-notification run is persisted as notify-only, including while queued, and that
-mode is recovered after Durable Object eviction. Notify-only generations
-receive no tools, devices, or MCP bindings. The next human message starts an
-ordinary run with the normal runtime surface restored. A notify-only run may
-take one recovery turn after a
-fabricated tool response; a second such response terminates the run so an
-untrusted email cannot create an unbounded inference loop.
+Managed mail completion creates a Kernel responsibility rather than injecting a
+separate mail event into Process history. Its stable title contains only the opaque
+message id. Bounded classification metadata and the summary are stored in the
+responsibility details with `contentTrust: "untrusted"`; exact mail remains in the
+mailbox. The Ship first sees only the responsibility title in its frozen baseline or
+an ordered ledger transition and must deliberately inspect the record and mailbox
+before acting. Mail therefore uses the same ordinary Ship loop, tool surface, yield
+rules, and responsibility lifecycle as other unresolved work.
 
 Endpoint routing does not alter that standing system prompt. The first
 model-visible message that owns a run, and the next such message whenever its
