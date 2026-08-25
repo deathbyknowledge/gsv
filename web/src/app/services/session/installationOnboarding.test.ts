@@ -43,6 +43,17 @@ describe("installation onboarding capability", () => {
     expect(readInstallationOnboardingToken()).toBe(TOKEN);
   });
 
+  it("keeps the capability in memory when tab storage rejects it", () => {
+    window.history.replaceState(null, "", `/onboarding#${TOKEN}`);
+    vi.spyOn(window.sessionStorage, "setItem").mockImplementation(() => {
+      throw new Error("storage blocked");
+    });
+
+    expect(readInstallationOnboardingToken()).toBe(TOKEN);
+    expect(window.location.pathname).toBe("/onboarding");
+    expect(window.location.hash).toBe("");
+  });
+
   it("rejects malformed fragments", () => {
     window.history.replaceState(null, "", "/onboarding#not-a-capability");
 

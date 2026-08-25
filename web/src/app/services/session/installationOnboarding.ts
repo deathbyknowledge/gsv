@@ -8,11 +8,8 @@ export function readInstallationOnboardingToken(): string | null {
     if (ONBOARDING_TOKEN_PATTERN.test(token)) {
       try {
         window.sessionStorage.setItem(STORAGE_ONBOARDING_TOKEN, token);
-      } catch {
-        return null;
-      } finally {
-        removeFragment();
-      }
+      } catch {}
+      removeFragment();
       return token;
     }
     removeFragment();
