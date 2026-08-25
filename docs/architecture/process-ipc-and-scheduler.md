@@ -538,8 +538,9 @@ Defer cross-user IPC until ACLs are in place.
 
 Implemented:
 
-- Kernel schedule store and `sched.*` syscall handlers. Legacy deployments
-  still host that store in `singleton` until per-user state migration.
+- User-Kernel schedule store and `sched.*` syscall handlers. Each human's
+  schedule definitions, wake ownership, and run history stay in
+  `user:<canonical-username>`.
 - `at`, `after`, `every`, and timezone-aware five-field cron expressions.
 - `process.spawn` targets for scheduled background work.
 - `process.event` targets that enter process context as visible process events.
@@ -548,10 +549,6 @@ Implemented:
 
 Still pending:
 
-- Migrate each explicit-legacy human's existing schedule rows and wake ownership
-  from `singleton` to a provisioned user Kernel, fence old alarms, and rearm
-  them without dual writers. Clean commissioning and active user-Kernel accounts
-  already keep schedule definitions and wakes in their owning shard.
 - `process.lifecycle` schedule targets.
 - package-owned user-Kernel schedules and package event targets.
 

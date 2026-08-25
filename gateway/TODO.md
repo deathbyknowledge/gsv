@@ -7,49 +7,58 @@ Items are grouped by subsystem and ordered roughly by dependency.
 
 ## Username-sharded Kernel split
 
-Implemented for clean commissioning and newly created login-capable humans:
+Implemented architecture:
 
 - [x] Keep `singleton` as the Master Control Program for immutable canonical
   usernames, never-reused uid/gid allocation, credentials, groups,
   capabilities, package/configuration/repository authority, adapter links, and
-  user-Kernel lifecycle.
+  commissioning/user-Kernel placement.
 - [x] Provision `user:<canonical-username>` for each login-capable human and
   keep that owner's WebSockets, devices, process registry, routes, schedules,
-  OAuth/MCP state, and runtime projections there.
-- [x] Route normal clients through `/ws/<canonical-username>` while reserving
-  `/ws` for commissioning and accounts explicitly marked `legacy` by v16.
-- [x] Persist the v21 monotonic Master projection revision, installed
-  username/uid/generation/digest, and crash-recoverable package fence. Package
-  changes drain Kernel, Process, schedule, and registered AppRunner work before
-  an exact target refresh clears admission.
-- [x] Persist the v22 actually-used AppRunner registry, binding exact control or
-  data runner name, package actor identity, controlling Kernel-owner identity,
-  and package. Package/lifecycle fences close admission, abort tracked
-  cancelable work, wait for tracked operation release, and fail closed across
-  recovery.
-- [x] Verify a Master-issued P-256 app-placement certificate at the edge before
-  selecting an active user DO, then require the target's generation-bound local
-  HMAC and session. Generation-less UUID sessions are explicit-legacy only.
-- [x] Resolve active app sessions at their user Kernel and send admitted bodies
-  directly to AppRunner; send active adapter frames directly to their user
-  Kernel. `singleton` receives only bounded authority or adapter-link metadata.
+  and OAuth/MCP state there.
+- [x] Keep all Master-owned authority in `singleton`; user Kernels resolve
+  current account, capability, configuration, package, repository, and link
+  decisions through narrow typed RPCs instead of durable replicas.
+- [x] Route normal clients through `/ws/<canonical-username>` and reserve `/ws`
+  for commissioning. Unknown user Kernels fail closed; a known `provisioning`
+  placement serves no work until the Master-owned ensure operation activates it.
+- [x] Bind app-session locators to username, uid, expiry, and nonce with a local
+  user-Kernel HMAC. The Gateway uses the bounded username only to select a
+  target; that target verifies its active marker, HMAC, and exact local session.
+- [x] Use one deterministic AppRunner per ship-global actor uid and package:
+  `app:<actorUid>:<packageId>`. The user Kernel validates current actor,
+  package, artifact, entrypoint, and call authority through the Master before
+  admitting package work.
+- [x] Route adapter traffic through the Master in both directions so every
+  delivery uses the live adapter-account, identity-link, owner, and surface
+  decision.
 - [x] Keep one shared R2 physical backing store and enforce uid/gid/mode plus
   ancestor permissions in `GsvFs` or an equivalent narrow typed store.
 
-Remaining release and migration work:
+Remaining release and product work:
 
-- [ ] Migrate v16 `legacy` Kernel runtime state owner by owner without dual
-  writers. There is no automatic singleton-to-user-Kernel migration today.
-- [ ] Migrate verified package-owned SQL from preserved legacy
-  `app:<actorUid>:<package>` and pre-owner-qualified `app-data:` objects into
-  isolated `app-data-v2:<kernelOwnerUid>:<actorUid>:<encodedPackageId>`
-  objects. Old objects are currently unreachable, not silently copied.
-- [ ] Replace the per-message Master adapter link/placement metadata lookup with
-  bounded generation projections after the sharded route is proven. Payloads
-  already bypass the Master.
-- [ ] Complete cross-shard root administration, legacy storage metadata cleanup,
-  security audit/budget ledgers, abuse controls, and the adversarial migrated
-  instance matrix required by the multiuser release contract.
+- [x] Make v16 an in-place cutoff: retain `singleton` and its authority, backfill
+  account identities and login-capable placements as `provisioning`, then
+  initialize each user Kernel idempotently on demand without copying or deleting
+  old singleton-local runtime coordination.
+- [ ] Validate a representative upgraded ship: provisioning completes before
+  normal login, old singleton-local runtime rows stay dormant, and existing R2
+  paths, ripgit repositories, AppRunner data, adapter accounts, and identity
+  links continue through their existing names and stores.
+- [ ] Add explicit root administration for suspension, retirement, recovery,
+  credential/capability changes, and cross-user runtime inspection. Define
+  stale-work invalidation together with those lifecycle operations.
+- [ ] Refactor package authority and storage as one deliberate package project;
+  do not add a second package cache, registry, or transition protocol here.
+- [ ] Complete storage metadata cleanup, security audit/budget ledgers, abuse
+  controls, and the adversarial upgraded-instance matrix required by the
+  multiuser release contract.
+- [ ] If measured adapter load requires it, add a bounded in-memory user-Kernel
+  link cache populated and invalidated by Master push. Keep the Master as the
+  only durable link authority and fall back to it on cold start or uncertainty.
+- [ ] Optionally add Cloudflare's edge rate-limit binding to shed bursts while
+  retaining durable Master login, link-code, admission, and cost limits as the
+  authoritative security decision.
 - [ ] Implement the charter and model-mediated admission design only after all
   public-registration gates pass. Public registration remains closed.
 
@@ -58,7 +67,7 @@ Remaining release and migration work:
 Consolidated plan for identity + auth work:
 
 - [x] **Phase 0: machine token primitives**
-  - token store in kernel SQLite
+  - token store in Master Kernel SQLite
   - token validation wired into `sys.connect` (driver/service/user)
   - password auth retained for interactive user login
   - remaining: audit metadata updates (`last_used_at` + client info)
@@ -121,7 +130,8 @@ different prompt.
 
 Use classic Linux flat-file formats so LLM agents can read/parse them naturally.
 The `shell` field in `/etc/passwd` is `/bin/init` — the user's persistent root AI process.
-Auth data lives in kernel SQLite (`AuthStore`), exposed at `/etc/*` via GsvFs virtual paths.
+Auth data lives only in Master Kernel SQLite (`AuthStore`) and is exposed through
+authorized `/etc/*` GsvFs views.
 No R2 round-trips for auth, no credentials in object storage.
 
 - [x] Define the in-memory types for passwd entries (uid, gid, username, home, shell)
@@ -137,10 +147,12 @@ No R2 round-trips for auth, no credentials in object storage.
 - [x] `AuthStore.serialize*()` — produce flat-file format for virtual FS reads
 - [x] `AuthStore.import*()` — parse flat-file writes back into SQLite
 - [x] `AuthStore.uidToName()` / `gidToName()` — name resolution for ls/stat
-- [x] Wire into `KernelContext`, initialize in Kernel DO
+- [x] Wire authorized Master reads into `KernelContext`; initialize the store in
+  the Master Kernel only
 - [x] GsvFs routes `/etc/passwd`, `/etc/shadow`, `/etc/group` as virtual paths (read/write)
 - [x] `/etc/shadow` read restricted to uid 0, stat shows mode 0640
-- [x] `sys.connect` uses `AuthStore` instead of R2 for auth
+- [x] `sys.connect` delegates credential verification to the Master `AuthStore`
+  instead of R2 or user-Kernel state
 - [x] Create `/root/` directory marker on first boot
 
 ## Credential model (passwords + machine tokens)
@@ -148,7 +160,7 @@ No R2 round-trips for auth, no credentials in object storage.
 Passwords are for humans (interactive login). Tokens are for non-interactive clients
 (nodes, services/channels, CI/automation) and must be revocable/rotatable.
 
-- [x] `auth_tokens` table in kernel SQLite with lifecycle metadata:
+- [x] `auth_tokens` table in Master Kernel SQLite with lifecycle metadata:
   - `token_id`, `uid`, `kind` (`node` | `service` | `user`), `label`
   - `token_hash`, `token_prefix`, `created_at`, `last_used_at`
   - `expires_at`, `revoked_at`, `revoked_reason`
@@ -165,13 +177,13 @@ Passwords are for humans (interactive login). Tokens are for non-interactive cli
 ## Identity links (channel → uid mapping)
 
 Map external channel identities to immutable canonical usernames/uids. The
-authoritative directory and persistent link generation live in Master Kernel
+authoritative directory and persistent monotonic link revision live in Master
 SQLite.
 
 - [x] `identity_links` table:
-  - `(adapter, account_id, actor_id)` primary key plus uid, generation,
+  - `(adapter, account_id, actor_id)` primary key plus uid, link revision,
     creation/linking metadata
-- [x] `identity_link_generations` retains and advances the generation even
+- [x] `identity_link_generations` retains and advances the link revision even
   after unlink so a removed route cannot become current again
 - [x] `link(adapter, accountId, actorId, uid)` / `unlink(...)` / `resolveUid(...)` / `list(uid?)` in `IdentityLinkStore`
 - [x] Pairing flow (Phase 2B base): unknown DM identity returns challenge prompt
@@ -180,9 +192,11 @@ SQLite.
 - [x] `sys.link` / `sys.unlink` / `sys.link.list` management syscalls (uid 0 or self)
 - [x] Decision: do not queue/replay first inbound message after link completion
 
-## Group-based capabilities (kernel SQLite)
+## Group-based capabilities (Master Kernel SQLite)
 
-Capabilities are NOT hardcoded — root can modify them. Stored in kernel DO SQLite.
+Capabilities are not hardcoded; root can modify them. The Master is their only
+durable store, and user Kernels resolve current capability sets through typed
+Master reads.
 
 - [x] Design the `group_capabilities` table schema
 - [x] Seed default capabilities on first boot:
@@ -210,8 +224,8 @@ Merged into unified `GsvFs`. The R2 permission logic now lives in `GsvFs` alongs
 
 ## `sys.connect` handler (kernel)
 
-- [x] Read `/etc/passwd` and `/etc/shadow` through the Kernel SQLite-backed
-  virtual filesystem, authenticate
+- [x] Read authorized `/etc/passwd` and `/etc/shadow` views from the Master and
+  authenticate through its credential store
 - [x] Build `ConnectionIdentity` with resolved capabilities
 - [x] Handle first-boot, setup mode, reconnect
 - [x] Handle driver + service connections
@@ -365,12 +379,15 @@ Replaces old `proc.*` for device-level shell execution. Always routable (require
 - [x] Native driver: unified `GsvFs` (R2 + virtual `/proc`, `/dev`, `/sys` mounts)
 - [x] Custom bash commands: `whoami`, `id`, `hostname`, `uname`, `chown`, `chmod`, `ps`
 - [x] Network access: `curl`/`wget` enabled via `dangerouslyAllowFullInternetAccess` (Workers are sandboxed)
-- [x] Shell limits/timeout/network read from `ConfigStore` at runtime
+- [x] Shell limits/timeout/network read through the Master-backed config context
+  at runtime
 - [x] `processInfo` wired with real uid/gid from identity
 - [x] Deleted obsolete `r2-bash-fs.ts` (fully replaced by `GsvFs`)
-- [x] Custom `ls` command: uses real mode bits, uid/gid from `statExtended`, resolves names via `AuthStore`
+- [x] Custom `ls` command: uses real mode bits, uid/gid from `statExtended`, and
+  resolves names through the authorized Master auth-file view
 - [x] Custom `stat` command: uses real mode/uid/gid, supports `-c FORMAT`
-- [x] Name cache (`uidToName`/`gidToName`) reads directly from `AuthStore` (no FS round-trip)
+- [x] Name cache (`uidToName`/`gidToName`) uses the authorized Master auth-file
+  view (no R2 round-trip)
 
 ## Syscall domain: `proc.*` (OS process management)
 
@@ -403,7 +420,7 @@ Kernel-internal process management. Not routable (no `target`).
 - [x] SQLite: `pending_tool_calls` + `process_meta` tables
 - [x] `registerToolCall` / `resolveToolCall` / `failToolCall` / `getToolResults`
 - [x] `dispatchSyscall` — send req to kernel, handle sync/async receipt
-- [x] Prompt assembly: system prompt (ConfigStore) + `~/context.d/*.md`
+- [x] Prompt assembly: Master-backed system configuration + `~/context.d/*.md`
 - [x] Response routing delegated to kernel `run_routes` (no process-local `lastInboundContext`)
 - [x] Agent loop: LLM call → tool dispatch → result collection → continue
 - [x] Export + bind in `wrangler.jsonc` / `index.ts`
@@ -454,9 +471,10 @@ kernel resolves uid via identity links, routes to user processes, and sends outb
 - [x] Export adapter-scoped Service Binding RPC entrypoints (`DiscordGatewayEntrypoint`, `TelegramGatewayEntrypoint`, `WhatsAppGatewayEntrypoint`, and `TestGatewayEntrypoint`); the generic `GatewayEntrypoint` rejects adapter frames
 - [x] `adapter.send` handler: route outbound messages to adapter via Service Binding RPC
 - [x] `adapter.status` handler: return last-known status with optional live refresh
-- [x] Adapter inbound flow: scoped Gateway entrypoint → bounded Master
-  link/placement lookup → direct active-user frame to owning user Kernel →
-  process routing; explicit legacy frames alone relay through `singleton`
+- [x] Adapter inbound flow: scoped Gateway entrypoint → Master live
+  account/link/placement decision → owning user Kernel → Process routing
+- [x] Adapter outbound flow: owning user Kernel → Master live route/link check →
+  adapter service binding
 - [x] Handle unknown DM identity (Phase 2B base): issue pairing challenge code
 - [x] Track adapter account status updates in kernel store and emit `adapter.status` signal
 - [x] Explicit adapter/account lifecycle: native `adapter.connect` / `adapter.disconnect` across adapters
@@ -480,16 +498,17 @@ Replaces the old separate `R2FS`, `R2BashFs`, `composeMounts`, and `InMemoryFs` 
 Routes paths internally:
 - `/proc/*` → reads from `ProcessRegistry` (kernel SQLite)
 - `/dev/*`  → inline device nodes
-- `/sys/*`  → reads/writes `ConfigStore` + `DeviceRegistry` + `CapabilityStore` (kernel SQLite)
+- `/sys/*`  → typed Master config/capability reads plus the owning user Kernel's
+  `DeviceRegistry`
 - `/*`      → R2 bucket (with uid/gid/mode permission checks)
 
 - [x] Create `GsvFs` class implementing `IFileSystem` with virtual path routing + R2 fallback
 - [x] `/proc/{pid}/status`, `/proc/{pid}/identity`, `/proc/self/*` — from `ProcessRegistry`
 - [x] `/dev/null`, `/dev/zero`, `/dev/random`, `/dev/urandom`
-- [x] `/sys/config/*` — read/write from `ConfigStore`
-- [x] `/sys/users/{uid}/*` — per-user config from `ConfigStore`
+- [x] `/sys/config/*` — authorized reads/writes through the Master `ConfigStore`
+- [x] `/sys/users/{uid}/*` — authorized per-user config through the Master
 - [x] `/sys/devices/*` — read-only from `DeviceRegistry`
-- [x] `/sys/capabilities/*` — read-only from `CapabilityStore`
+- [x] `/sys/capabilities/*` — read-only through the Master `CapabilityStore`
 - [x] Permission enforcement: root reads/writes all `/sys/`, non-root only own `/sys/users/{uid}/`
 - [x] Wire into shell driver (replace `R2BashFs` + `composeMounts` + `InMemoryFs`)
 - [x] Wire into `fs.*` syscall handlers (replace `R2FS`)
@@ -499,13 +518,15 @@ Routes paths internally:
 ## ConfigStore (`kernel/config.ts`)
 
 SQLite key-value store for runtime config exposed at `/sys/config/*` and `/sys/users/{uid}/*`.
-Master Kernel SQLite is authoritative. Active user Kernels receive filtered,
-revisioned runtime projections; R2 dotfiles are not a second config authority.
+Master Kernel SQLite is the only authority. User Kernels perform filtered typed
+reads and writes through the Master; neither user-Kernel SQLite nor R2 dotfiles
+are a second config authority.
 
 - [x] `config_kv` table: `(key TEXT PRIMARY KEY, value TEXT NOT NULL)`
 - [x] `get(key)`, `set(key, value)`, `delete(key)`, `list(prefix)`
 - [x] `seed(defaults)` — populate defaults on first boot
-- [x] Add to `KernelContext`, initialize in Kernel DO alongside other registries
+- [x] Expose authorized config reads through `KernelContext`; initialize the
+  store in the Master Kernel only
 - [x] Explicit `SYSTEM_CONFIG_DEFAULTS` with documented fields (ai, server, shell, process)
 - [x] `USER_OVERRIDABLE_PREFIXES` restricts which config keys users can override
 - [x] Kernel seeds defaults on init (INSERT OR IGNORE — never overwrites)
@@ -514,7 +535,8 @@ revisioned runtime projections; R2 dotfiles are not a second config authority.
 
 ## System config (`sys.config.*`)
 
-- [x] `sys.config.get` / `sys.config.set` handlers — thin wrappers around `ConfigStore` + permission checks
+- [x] `sys.config.get` / `sys.config.set` handlers — Master-owned operations with
+  capability and key-level permission checks
 - [x] Key-level permission model: root full access; non-root reads a literal
   allowlist of shared `config/*` keys plus own `users/{uid}/*`; writes only
   `users/{uid}/{overridable}/*`

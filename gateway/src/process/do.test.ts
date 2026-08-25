@@ -68,6 +68,7 @@ const SHARED_ARCHIVE_AGENT: ProcessIdentity = {
 };
 const DEFAULT_PROFILE = "task" as const;
 const ROOT_ARCHIVE_PREFIX = "process-conversation-archives/0/0";
+const registeredKernelNames = new Map<string, string>();
 
 function makeReq(call: string, args: unknown): RequestFrame {
   return { type: "req", id: crypto.randomUUID(), call, args } as RequestFrame;
@@ -192,28 +193,47 @@ async function registerInKernel(
   identity: ProcessIdentity,
   kernelName?: string,
   ownerIdentity: ProcessIdentity = identity,
-) {
-  const kernel = await getKernelPtr(kernelName);
-  await runInDurableObject(kernel, async (instance: Kernel, state) => {
+): Promise<string> {
+  const resolvedKernelName = kernelName ?? userKernelName(ownerIdentity.username);
+  const username = userKernelUsername(resolvedKernelName);
+  if (!username || username !== ownerIdentity.username) {
+    throw new Error(`Test process owner does not match user Kernel ${resolvedKernelName}`);
+  }
+
+  await provisionTestUserKernel(resolvedKernelName, ownerIdentity, identity);
+  const kernel = await getKernelPtr(resolvedKernelName);
+  await runInDurableObject(kernel, (instance: Kernel) => {
     const k = instance as any;
-    const username = kernelName ? userKernelUsername(kernelName) : null;
-    if (username) {
-      const marker: UserKernelInstanceMarker = {
-        version: 1,
-        kind: "user",
-        username,
-        uid: ownerIdentity.uid,
-        generation: 1,
-        lifecycle: "active",
-        updatedAt: Date.now(),
-      };
-      await state.storage.put(USER_KERNEL_INSTANCE_STORAGE_KEY, marker);
-      k.userKernelMarker = marker;
-    }
     k.caps.seed();
-    for (const account of [identity, ownerIdentity]) {
-      const existing = k.auth.getPasswdByUid(account.uid);
-      if (!existing) {
+    k.procs.spawn(pid, identity, {
+      profile: DEFAULT_PROFILE,
+      ownerUid: ownerIdentity.uid,
+    });
+  });
+  registeredKernelNames.set(pid, resolvedKernelName);
+  return resolvedKernelName;
+}
+
+async function provisionTestUserKernel(
+  kernelName: string,
+  ownerIdentity: ProcessIdentity,
+  runAsIdentity: ProcessIdentity = ownerIdentity,
+): Promise<void> {
+  const username = userKernelUsername(kernelName);
+  if (!username || username !== ownerIdentity.username) {
+    throw new Error(`Invalid test user Kernel owner for ${kernelName}`);
+  }
+
+  const master = await getKernelPtr(SHIP_KERNEL_NAME);
+  await runInDurableObject(master, async (instance: Kernel) => {
+    const k = instance as any;
+    await k.auth.bootstrap();
+    k.caps.seed();
+
+    for (const account of [ownerIdentity, runAsIdentity]) {
+      const byUid = k.auth.getPasswdByUid(account.uid);
+      const byName = k.auth.getPasswdByUsername(account.username);
+      if (!byUid && !byName) {
         k.auth.addUser({
           username: account.username,
           uid: account.uid,
@@ -226,12 +246,18 @@ async function registerInKernel(
           : account.uid === ownerIdentity.uid
             ? "human"
             : "agent");
+      } else if (
+        byUid?.username !== account.username
+        || byName?.uid !== account.uid
+      ) {
+        throw new Error(`Conflicting test account identity for ${account.username}`);
       }
+
       if (!k.auth.getGroupByGid(account.gid)) {
         k.auth.addGroup({
           name: account.username,
           gid: account.gid,
-          members: [account.username],
+          members: [],
         });
       }
       for (const gid of account.gids) {
@@ -248,39 +274,44 @@ async function registerInKernel(
         }
       }
     }
-    // Processes without an owning Kernel name exercise the v16 upgrade path.
-    // Production authorizes them in the Master only while their human owner
-    // has an explicit legacy placement, so the fixture must model that row.
-    if (!username) {
-      const placement = k.userKernels.getByUid(ownerIdentity.uid);
-      if (!placement) {
-        const reserved = k.userKernels.reserve(
-          ownerIdentity.username,
-          ownerIdentity.uid,
-        );
-        state.storage.sql.exec(
-          `UPDATE user_kernels
-           SET lifecycle = 'legacy', updated_at = ?
-           WHERE username = ? AND uid = ?
-             AND lifecycle = 'provisioning' AND generation = ?`,
-          Date.now(),
-          reserved.username,
-          reserved.uid,
-          reserved.generation,
-        );
-      } else if (
-        placement.username !== ownerIdentity.username
-        || placement.lifecycle !== "legacy"
-      ) {
-        throw new Error(`Unexpected legacy test placement for ${ownerIdentity.username}`);
-      }
+
+    if (runAsIdentity.uid !== ownerIdentity.uid) {
+      k.auth.setPersonalAgent(ownerIdentity.uid, runAsIdentity.uid);
     }
-    k.procs.spawn(pid, identity, {
-      profile: DEFAULT_PROFILE,
-      ownerUid: ownerIdentity.uid,
-      ...(username ? { kernelGeneration: 1 } : {}),
-    });
+    const placementByName = k.userKernels.get(username);
+    const placementByUid = k.userKernels.getByUid(ownerIdentity.uid);
+    if (
+      placementByName && placementByName.uid !== ownerIdentity.uid
+      || placementByUid && placementByUid.username !== username
+    ) {
+      throw new Error(`Conflicting test user Kernel placement for ${username}`);
+    }
+    k.userKernels.reserve(username, ownerIdentity.uid);
+    k.userKernels.markActive(username);
   });
+
+  const kernel = await getKernelPtr(kernelName);
+  await runInDurableObject(kernel, async (instance: Kernel, state) => {
+    const marker: UserKernelInstanceMarker = {
+      version: 1,
+      kind: "user",
+      username,
+      uid: ownerIdentity.uid,
+      lifecycle: "active",
+      updatedAt: Date.now(),
+    };
+    await state.storage.put(USER_KERNEL_INSTANCE_STORAGE_KEY, marker);
+    const k = instance as any;
+    k.userKernelMarker = marker;
+  });
+}
+
+async function getProcessKernelPtr(pid: string): Promise<DurableObjectStub<Kernel>> {
+  const kernelName = registeredKernelNames.get(pid);
+  if (!kernelName) {
+    throw new Error(`Test process ${pid} has no registered user Kernel`);
+  }
+  return getKernelPtr(kernelName);
 }
 
 /**
@@ -347,8 +378,12 @@ async function initProcess(
   opts?: { register?: boolean; kernelName?: string; ownerIdentity?: ProcessIdentity },
 ) {
   const ownerIdentity = opts?.ownerIdentity ?? identity;
+  let kernelName = opts?.kernelName ?? registeredKernelNames.get(pid);
   if (opts?.register !== false) {
-    await registerInKernel(pid, identity, opts?.kernelName, ownerIdentity);
+    kernelName = await registerInKernel(pid, identity, kernelName, ownerIdentity);
+  }
+  if (!kernelName) {
+    throw new Error(`Test process ${pid} has no provisioned user Kernel`);
   }
   const stub = await getProcessByPid(pid);
   const res = await stub.recvFrame(makeReq("proc.setidentity", {
@@ -356,7 +391,7 @@ async function initProcess(
     identity,
     ownerIdentity,
     profile: DEFAULT_PROFILE,
-    ...(opts?.kernelName ? { kernelName: opts.kernelName } : {}),
+    kernelName,
   }));
   expect((res as ResponseFrame).ok).toBe(true);
   return stub;
@@ -373,54 +408,13 @@ async function commissionUserKernel(kernelName: string): Promise<ProcessIdentity
   const identity: ProcessIdentity = {
     uid,
     gid: uid,
-    gids: [uid],
+    gids: [uid, 100],
     username,
     home: `/home/${username}`,
     cwd: `/home/${username}`,
   };
 
-  const master = await getKernelPtr(SHIP_KERNEL_NAME);
-  await runInDurableObject(master, (instance) => {
-    const k = instance as unknown as {
-      auth: {
-        addUser: (entry: unknown, kind: string) => void;
-        addGroup: (group: { name: string; gid: number; members: string[] }) => void;
-      };
-      caps: { grant: (gid: number, capability: string) => unknown };
-      userKernels: {
-        reserve: (name: string, uid: number) => void;
-        markActive: (name: string, generation: number) => void;
-      };
-    };
-    k.auth.addUser({
-      username,
-      uid,
-      gid: uid,
-      gecos: username,
-      home: identity.home,
-      shell: "/bin/init",
-    }, "human");
-    k.auth.addGroup({ name: username, gid: uid, members: [] });
-    k.caps.grant(uid, "sys.config.get");
-    k.caps.grant(uid, "account.get");
-    k.userKernels.reserve(username, uid);
-    k.userKernels.markActive(username, 1);
-  });
-
-  const kernel = await getKernelPtr(kernelName);
-  await runInDurableObject(kernel, async (instance, state) => {
-    const marker: UserKernelInstanceMarker = {
-      version: 1,
-      kind: "user",
-      username,
-      uid,
-      generation: 1,
-      lifecycle: "active",
-      updatedAt: Date.now(),
-    };
-    await state.storage.put(USER_KERNEL_INSTANCE_STORAGE_KEY, marker);
-    (instance as unknown as { userKernelMarker: UserKernelInstanceMarker }).userKernelMarker = marker;
-  });
+  await provisionTestUserKernel(kernelName, identity);
 
   return identity;
 }
@@ -433,7 +427,7 @@ describe("Process DO — mechanical", () => {
   it("projects proc.run signals into kernel process activity", async () => {
     const pid = "mech-kernel-process-activity";
     await registerInKernel(pid, ROOT_IDENTITY);
-    const kernel = await getKernelPtr();
+    const kernel = await getProcessKernelPtr(pid);
 
     const state = await runInDurableObject(kernel, async (instance: Kernel) => {
       const k = instance as any;
@@ -577,7 +571,7 @@ describe("Process DO — mechanical", () => {
       };
 
       await registerInKernel(pid, identity);
-      const kernel = await getKernelPtr();
+      const kernel = await getProcessKernelPtr(pid);
 
       const response = await runInDurableObject(kernel, (instance: Kernel) =>
         instance.recvFrame(pid, makeReq("ai.config", {})),
@@ -599,7 +593,7 @@ describe("Process DO — mechanical", () => {
       };
 
       await registerInKernel(pid, identity);
-      const kernel = await getKernelPtr();
+      const kernel = await getProcessKernelPtr(pid);
 
       const response = await runInDurableObject(kernel, (instance: Kernel) =>
         instance.recvFrame(pid, makeReq("ai.tools", {})),
@@ -670,22 +664,91 @@ describe("Process DO — mechanical", () => {
       });
 
       expect(config).toBeDefined();
-      const legacyKernel = await getKernelPtr();
-      await runInDurableObject(legacyKernel, (instance: Kernel) => {
+      const master = await getKernelPtr(SHIP_KERNEL_NAME);
+      await runInDurableObject(master, (instance: Kernel) => {
         expect((instance as any).procs.get(pid)).toBeNull();
       });
     });
 
-    it("falls back to the legacy Kernel when no owning name was stored", async () => {
-      const pid = `mech-setid-legacy-${crypto.randomUUID()}`;
-      const stub = await initProcess(pid, ROOT_IDENTITY);
+  });
 
-      await runInDurableObject(stub, (instance: Process) => {
-        const process = instance as any;
-        expect(process.store.getValue("kernelName")).toBeNull();
-        expect(process.kernelName).toBe(SHIP_KERNEL_NAME);
+  describe("legacy singleton Process dormancy", () => {
+    for (const legacy of [
+      { label: "missing Kernel ownership", kernelName: null },
+      { label: "explicit singleton ownership", kernelName: SHIP_KERNEL_NAME },
+    ]) {
+      it(`leaves recovered runtime state untouched with ${legacy.label}`, async () => {
+        const pid = `mech-legacy-dormant-${crypto.randomUUID()}`;
+        const stub = await initProcess(pid, ROOT_IDENTITY);
+
+        await runInDurableObject(stub, async (instance: Process) => {
+          const process = instance as any;
+          const runId = "run-legacy-dormant";
+          const dispatchId = "dispatch-legacy-dormant";
+          const mediaMessageId = process.store.appendMessage("user", "preserve me", {
+            runId,
+          });
+          process.currentRun = {
+            runId,
+            conversationId: "default",
+            pendingMediaMessageId: mediaMessageId,
+            tickGeneration: 3,
+          };
+          process.store.enqueue(
+            "run-legacy-queued",
+            "preserve queued input",
+            undefined,
+            "default",
+          );
+          process.store.register(
+            dispatchId,
+            "call-legacy-dormant",
+            runId,
+            "fs.read",
+            { path: "/preserve" },
+            "default",
+          );
+          process.store.markDispatched(dispatchId);
+          process.store.setValue("pendingRunFinishes", JSON.stringify([{
+            runId,
+            status: "ok",
+            text: "preserve finish",
+          }]));
+          if (legacy.kernelName === null) {
+            process.store.deleteValue("kernelName");
+          } else {
+            process.store.setValue("kernelName", legacy.kernelName);
+          }
+          process.schedule = vi.fn(async () => ({ id: "unexpected-schedule" }));
+          process.sendSignal = vi.fn(async () => {});
+
+          const before = {
+            currentRun: process.store.getValue("currentRun"),
+            messages: process.store.getMessages(),
+            queueSize: process.store.queueSize(),
+            results: process.store.getResults(runId),
+            pendingRunFinishes: process.store.getValue("pendingRunFinishes"),
+          };
+
+          await process.scheduleTick(runId);
+          await process.tick({ runId, generation: 3 });
+          await process.runTick(runId);
+          await process.onMediaPreparationTimeout(runId);
+          await process.onToolDispatchTimeout({ runId, dispatchId });
+          await process.onRunFinishDelivery(runId);
+
+          expect({
+            currentRun: process.store.getValue("currentRun"),
+            messages: process.store.getMessages(),
+            queueSize: process.store.queueSize(),
+            results: process.store.getResults(runId),
+            pendingRunFinishes: process.store.getValue("pendingRunFinishes"),
+          }).toEqual(before);
+          expect(process.schedule).not.toHaveBeenCalled();
+          expect(process.sendSignal).not.toHaveBeenCalled();
+        });
       });
-    });
+    }
   });
 
   describe("proc.ai.config", () => {
@@ -4265,7 +4328,7 @@ describe("Process DO — mechanical", () => {
         };
       });
 
-      const kernel = await getKernelPtr();
+      const kernel = await getProcessKernelPtr(sourcePid);
       const response = await runInDurableObject(kernel, (instance: Kernel) =>
         instance.recvFrame(
           sourcePid,
@@ -4305,7 +4368,7 @@ describe("Process DO — mechanical", () => {
       });
     });
 
-    it("rejects cross-owner process messages in the kernel", async () => {
+    it("does not resolve processes owned by another user Kernel", async () => {
       const sourcePid = "mech-ipc-foreign-source";
       const targetPid = "mech-ipc-foreign-target";
       const sourceIdentity: ProcessIdentity = {
@@ -4328,7 +4391,7 @@ describe("Process DO — mechanical", () => {
       await registerInKernel(sourcePid, sourceIdentity);
       await registerInKernel(targetPid, targetIdentity);
 
-      const kernel = await getKernelPtr();
+      const kernel = await getProcessKernelPtr(sourcePid);
       const response = await runInDurableObject(kernel, (instance: Kernel) =>
         instance.recvFrame(
           sourcePid,
@@ -4342,7 +4405,7 @@ describe("Process DO — mechanical", () => {
       expect(response.ok).toBe(true);
       expect(response.data).toEqual({
         ok: false,
-        error: "Permission denied: target process belongs to another user",
+        error: `Process not found: ${targetPid}`,
       });
     });
 
@@ -4370,7 +4433,7 @@ describe("Process DO — mechanical", () => {
         };
       });
 
-      const kernel = await getKernelPtr();
+      const kernel = await getProcessKernelPtr(sourcePid);
       const response = await runInDurableObject(kernel, (instance: Kernel) =>
         instance.recvFrame(
           sourcePid,
@@ -4449,7 +4512,7 @@ describe("Process DO — mechanical", () => {
         (instance as any).scheduleTick = vi.fn(async () => {});
       });
 
-      const kernel = await getKernelPtr();
+      const kernel = await getProcessKernelPtr(sourcePid);
       const response = await runInDurableObject(kernel, (instance: Kernel) =>
         instance.recvFrame(
           sourcePid,
@@ -4512,7 +4575,7 @@ describe("Process DO — mechanical", () => {
       }))) as ResponseOkFrame;
       const sourceRunId = (firstSend.data as any).runId as string;
 
-      const kernel = await getKernelPtr();
+      const kernel = await getProcessKernelPtr(sourcePid);
       const ipcResponse = await runInDurableObject(kernel, (instance: Kernel) =>
         instance.recvFrame(sourcePid, {
           ...makeReq("proc.ipc.call", {
@@ -4935,7 +4998,7 @@ describe("Process DO — mechanical", () => {
         return token;
       });
 
-      const kernel = await getKernelPtr();
+      const kernel = await getProcessKernelPtr(sourcePid);
       const response = await runInDurableObject(kernel, (instance: Kernel) =>
         instance.recvFrame(
           sourcePid,
@@ -4998,7 +5061,7 @@ describe("Process DO — mechanical", () => {
         (instance as any).scheduleTick = async () => {};
       });
 
-      const kernel = await getKernelPtr();
+      const kernel = await getProcessKernelPtr(sourcePid);
       const response = await runInDurableObject(kernel, (instance: Kernel) =>
         instance.recvFrame(
           sourcePid,
@@ -6636,55 +6699,6 @@ describe("Process DO — mechanical", () => {
       });
     });
 
-    it("uses exact lifecycle-fence authority and leaves queued work paused", async () => {
-      const pid = "mech-abort-lifecycle-fence";
-      const stub = await initProcess(pid, ROOT_IDENTITY);
-      const authority = vi
-        .spyOn(Kernel.prototype as any, "resolveProcessLifecycleFenceAuthority")
-        .mockResolvedValue({
-          ok: true,
-          authority: {
-            processId: pid,
-            identity: ROOT_IDENTITY,
-            ownerIdentity: ROOT_IDENTITY,
-          },
-        });
-
-      try {
-        await runInDurableObject(stub, (instance: Process) => {
-          const process = instance as any;
-          const provider = new AbortController();
-          process.currentRun = { runId: "run-active", conversationId: "default" };
-          process.store.enqueue("run-queued", "wait until reactivation");
-          process.runAbortControllers.set("run-active", provider);
-          process.lifecycleFenceProviderSignal = provider.signal;
-        });
-
-        const response = await stub.recvFrame(makeReq("proc.abort", {
-          lifecycleFenceGeneration: 4,
-        } as any)) as ResponseOkFrame;
-
-        expect(response.data).toMatchObject({
-          ok: true,
-          pid,
-          aborted: true,
-          runId: "run-active",
-        });
-        expect(response.data).not.toHaveProperty("continuedQueuedRunId");
-        expect(authority).toHaveBeenCalledWith(pid, ROOT_IDENTITY, 4);
-        await runInDurableObject(stub, (instance: Process) => {
-          const process = instance as any;
-          expect(process.currentRun).toBeNull();
-          expect(process.store.queueSize()).toBe(1);
-          expect(process.lifecycleFenceProviderSignal.reason).toEqual(
-            new Error("User Kernel lifecycle was fenced"),
-          );
-        });
-      } finally {
-        authority.mockRestore();
-      }
-    });
-
     it("promotes a queued successor without waiting for finish delivery", async () => {
       const pid = "mech-finish-claims-successor";
       const stub = await initProcess(pid, ROOT_IDENTITY);
@@ -6924,7 +6938,7 @@ describe("Process DO — mechanical", () => {
           kernel.testCancellationFinished = true;
           return 1;
         });
-      const kernel = await getKernelPtr();
+      const kernel = await getProcessKernelPtr(pid);
 
       try {
         const response = await runInDurableObject(stub, async (instance: Process) => {
@@ -6967,7 +6981,7 @@ describe("Process DO — mechanical", () => {
         const delivery = vi.fn(async () => {
           await signalDispatchBlocked;
         });
-        process.onRunFinishDelivery = delivery;
+        process.deliverRunFinish = delivery;
 
         try {
           const response = await process.recvFrame(makeReq("proc.abort", {}));
@@ -7650,7 +7664,7 @@ describe("Process DO — mechanical", () => {
     it("runs codemode from the native shell command", async () => {
       const pid = "mech-codemode-shell";
       await initProcess(pid, ROOT_IDENTITY);
-      const kernel = await getKernelPtr();
+      const kernel = await getProcessKernelPtr(pid);
 
       const response = await runInDurableObject(kernel, (instance: Kernel) =>
         instance.recvFrame(pid, makeReq("shell.exec", {
@@ -7674,7 +7688,7 @@ describe("Process DO — mechanical", () => {
     it("runs codemode script files from the native shell command", async () => {
       const pid = "mech-codemode-shell-file";
       await initProcess(pid, ROOT_IDENTITY);
-      const kernel = await getKernelPtr();
+      const kernel = await getProcessKernelPtr(pid);
 
       const response = await runInDurableObject(kernel, (instance: Kernel) =>
         instance.recvFrame(pid, makeReq("shell.exec", {
@@ -7734,7 +7748,7 @@ describe("Process DO — mechanical", () => {
     it("returns failed json for malformed codemode eval source", async () => {
       const pid = "mech-codemode-shell-syntax-error";
       await initProcess(pid, ROOT_IDENTITY);
-      const kernel = await getKernelPtr();
+      const kernel = await getProcessKernelPtr(pid);
 
       const response = await runInDurableObject(kernel, (instance: Kernel) =>
         instance.recvFrame(pid, makeReq("shell.exec", {
@@ -8053,8 +8067,8 @@ describe("Process DO — mechanical", () => {
         cwd: "/home/limited",
       };
       const stub = await initProcess(pid, identity);
-      const kernel = await getKernelPtr();
-      await runInDurableObject(kernel, (instance: Kernel) => {
+      const master = await getKernelPtr(SHIP_KERNEL_NAME);
+      await runInDurableObject(master, (instance: Kernel) => {
         const k = instance as any;
         k.caps.grant(3000, "codemode.run");
       });
@@ -8173,62 +8187,6 @@ describe("Process DO — mechanical", () => {
   });
 
   describe("legacy process authority migration", () => {
-    it("drains an admitted archive migration before acknowledging a lifecycle fence", async () => {
-      const pid = `mech-legacy-archive-fence-${crypto.randomUUID()}`;
-      const stub = await initProcess(pid, ROOT_IDENTITY);
-      const fenceAuthority = vi
-        .spyOn(Kernel.prototype as any, "resolveProcessLifecycleFenceAuthority")
-        .mockResolvedValue({
-          ok: true,
-          authority: {
-            processId: pid,
-            identity: ROOT_IDENTITY,
-            ownerIdentity: ROOT_IDENTITY,
-          },
-        });
-
-      try {
-        const result = await runInDurableObject(stub, async (instance: Process) => {
-          const process = instance as any;
-          let migrationStarted!: () => void;
-          let releaseMigration!: () => void;
-          const started = new Promise<void>((resolve) => {
-            migrationStarted = resolve;
-          });
-          const blocked = new Promise<void>((resolve) => {
-            releaseMigration = resolve;
-          });
-          const migrate = process.migrateLegacyConversationArchivePointers.bind(process);
-          process.store.deleteValue("ownerIdentity");
-          process.migrateLegacyConversationArchivePointers = async (authority: unknown) => {
-            migrationStarted();
-            await blocked;
-            await migrate(authority);
-          };
-          const normalAuthority = process.ensureProcessAuthority();
-          await started;
-          let fenceSettled = false;
-          const fence = process.ensureProcessLifecycleFenceAuthority(7).finally(() => {
-            fenceSettled = true;
-          });
-
-          await new Promise((resolve) => setTimeout(resolve, 20));
-          const settledBeforeRelease = fenceSettled;
-          releaseMigration();
-          await Promise.all([normalAuthority, fence]);
-          return { settledBeforeRelease, fenceSettled };
-        });
-
-        expect(result).toEqual({
-          settledBeforeRelease: false,
-          fenceSettled: true,
-        });
-        expect(fenceAuthority).toHaveBeenCalledWith(pid, ROOT_IDENTITY, 7);
-      } finally {
-        fenceAuthority.mockRestore();
-      }
-    });
-
     it("relocates an exact durable legacy segment and keeps it readable", async () => {
       const pid = `mech-legacy-archive-${crypto.randomUUID()}`;
       const stub = await initProcess(pid, SHARED_ARCHIVE_AGENT, {
@@ -8680,6 +8638,7 @@ describe("Process DO — mechanical", () => {
           pid,
           identity: ROOT_IDENTITY,
           ownerIdentity: ROOT_IDENTITY,
+          kernelName: registeredKernelNames.get(pid),
         }),
       )).resolves.toMatchObject({
         ok: true,
@@ -8724,6 +8683,7 @@ describe("Process DO — mechanical", () => {
         pid: resumedPid,
         identity: SHARED_ARCHIVE_AGENT,
         ownerIdentity: ARCHIVE_OWNER_ALICE,
+        kernelName: registeredKernelNames.get(resumedPid),
         hydrateFrom: archivePath,
       }));
       expect(initialized).toMatchObject({ ok: true, data: { ok: true } });
@@ -8735,7 +8695,7 @@ describe("Process DO — mechanical", () => {
       await env.STORAGE.delete(archivePath.replace(/^\/+/, ""));
     });
 
-    it("fails an orphaned legacy kill without erasing Process SQL", async () => {
+    it("fails an orphaned kill without erasing Process SQL", async () => {
       const pid = `mech-kill-orphaned-owner-${crypto.randomUUID()}`;
       const stub = await initProcess(pid, SHARED_ARCHIVE_AGENT, {
         ownerIdentity: ARCHIVE_OWNER_ALICE,
@@ -8745,7 +8705,7 @@ describe("Process DO — mechanical", () => {
         process.store.appendMessage("user", "must survive failed kill");
         process.store.deleteValue("ownerIdentity");
       });
-      const kernel = await getKernelPtr();
+      const kernel = await getProcessKernelPtr(pid);
       await runInDurableObject(kernel, (instance: Kernel) => {
         (instance as any).procs.kill(pid);
       });
@@ -8771,9 +8731,10 @@ describe("Process DO — mechanical", () => {
         ownerIdentity: ARCHIVE_OWNER_ALICE,
       });
       await runInDurableObject(stub, (instance: Process) => {
-        (instance as any).store.appendMessage("user", "alice-owned history");
+        const process = instance as any;
+        process.store.appendMessage("user", "alice-owned history");
+        process.store.setValue("ownerIdentity", JSON.stringify(ARCHIVE_OWNER_BOB));
       });
-      await registerInKernel(pid, SHARED_ARCHIVE_AGENT, undefined, ARCHIVE_OWNER_BOB);
 
       const history = await stub.recvFrame(makeReq("proc.history", {})) as ResponseFrame;
       expect(history).toMatchObject({
@@ -8787,7 +8748,7 @@ describe("Process DO — mechanical", () => {
       });
     });
 
-    it("does not resume a recovered run when legacy authority is orphaned", async () => {
+    it("does not resume a recovered run when its Kernel record is gone", async () => {
       const pid = `mech-run-orphaned-owner-${crypto.randomUUID()}`;
       const stub = await initProcess(pid, ROOT_IDENTITY);
       await runInDurableObject(stub, (instance: Process) => {
@@ -8796,7 +8757,7 @@ describe("Process DO — mechanical", () => {
         process.currentRun = { runId: "run-orphaned", conversationId: "default" };
         process.store.deleteValue("ownerIdentity");
       });
-      const kernel = await getKernelPtr();
+      const kernel = await getProcessKernelPtr(pid);
       await runInDurableObject(kernel, (instance: Kernel) => {
         (instance as any).procs.kill(pid);
       });
@@ -8804,7 +8765,7 @@ describe("Process DO — mechanical", () => {
       await runInDurableObject(stub, async (instance: Process) => {
         const process = instance as any;
         await expect(process.runTick("run-orphaned")).rejects.toThrow(
-          "user Kernel is not active",
+          "process registry record not found",
         );
         expect(process.currentRun).toMatchObject({ runId: "run-orphaned" });
         expect(process.store.getMessages()).toEqual([
@@ -10172,10 +10133,10 @@ describeIf(OPENAI_KEY)("Process DO — agent loop (real LLM)", () => {
   it("handles invalid API key gracefully", async () => {
     const pid = "llm-error-1";
 
-    const kernel = await getKernelPtr();
-    await runInDurableObject(kernel, (instance: Kernel) => {
+    await registerInKernel(pid, ROOT_IDENTITY);
+    const master = await getKernelPtr(SHIP_KERNEL_NAME);
+    await runInDurableObject(master, (instance: Kernel) => {
       const k = instance as any;
-      k.procs.spawn(pid, ROOT_IDENTITY, { profile: DEFAULT_PROFILE });
       k.config.set("users/0/ai/api_key", "sk-invalid-key-for-testing");
     });
 
@@ -10194,7 +10155,7 @@ describeIf(OPENAI_KEY)("Process DO — agent loop (real LLM)", () => {
       expect(store.getValue("currentRun")).toBeNull();
     });
 
-    await runInDurableObject(kernel, (instance: Kernel) => {
+    await runInDurableObject(master, (instance: Kernel) => {
       const k = instance as any;
       k.config.delete("users/0/ai/api_key");
     });

@@ -7,6 +7,7 @@ import type { RequestFrame, ResponseFrame } from "../../../protocol/frames";
 import type { ProcessIdentity } from "@humansandmachines/gsv/protocol";
 import type { FsCopyDeviceTransport } from "../fs";
 import { buildNotifyCommands } from "../notify-shell";
+import { buildAccountCommand } from "./account";
 import { buildCodeModeCommand } from "./codemode";
 import { buildCoreCommands } from "./core";
 import { buildCpCommand } from "./cp";
@@ -42,6 +43,7 @@ export function buildCustomCommands(
   options?: NativeShellCommandOptions,
 ) {
   const coreCommands = buildCoreCommands(fs, identity, ctx);
+  const account = buildAccountCommand(ctx, options?.request);
   const ls = buildLsCommand(fs, identity, ctx);
   const llm = buildLlmCommand(ctx, options?.netFetchTransport);
   const stat = buildStatCommand(fs, identity, ctx);
@@ -69,6 +71,7 @@ export function buildCustomCommands(
 
   return [
     ...coreCommands,
+    account,
     ls,
     stat,
     cp,

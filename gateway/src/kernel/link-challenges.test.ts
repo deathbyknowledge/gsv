@@ -60,4 +60,23 @@ describe("LinkChallengeStore attempt limits", () => {
     expect(result.firstResult).toMatchObject({ usedByUid: 1000 });
     expect(result.secondResult).toMatchObject({ usedByUid: 1000 });
   });
+
+  it("shares one failed-attempt budget across an owner's agents", async () => {
+    const kernel = await getAgentByName(env.KERNEL, crypto.randomUUID());
+    const result = await runInDurableObject(kernel, (instance: Kernel) => {
+      const store = (instance as any).adapters.linkChallenges as LinkChallengeStore;
+      const challenge = issueChallenge(store, "actor:owner-budget");
+      for (let attempt = 0; attempt < 4; attempt += 1) {
+        expect(store.consume("WWWW-WWWW", 2000, 1000)).toBeNull();
+        expect(store.consume("VVVV-VVVV", 2001, 1000)).toBeNull();
+      }
+      return {
+        blockedAgent: store.consume(challenge.code, 2000, 1000),
+        otherOwner: store.consume(challenge.code, 3000, 1001),
+      };
+    });
+
+    expect(result.blockedAgent).toBeNull();
+    expect(result.otherOwner).toMatchObject({ usedByUid: 3000 });
+  });
 });

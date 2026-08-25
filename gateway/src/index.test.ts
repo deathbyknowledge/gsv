@@ -13,15 +13,11 @@ import gateway, {
   trustedLoginSourceAddress,
 } from "./index";
 import { buildRoutedAppSessionId } from "./protocol/app-session";
-import { APP_PLACEMENT_VERIFICATION_KEY_OBJECT } from "./shared/app-placement-certificate";
 import { AuthStore } from "./kernel/auth-store";
 import { hashPassword } from "./auth/shadow";
 import type { Kernel } from "./kernel/do";
 import { SHIP_KERNEL_NAME } from "./shared/utils";
-import {
-  USER_KERNEL_GENERATION_HEADER,
-  USER_KERNEL_LOGIN_SOURCE_HEADER,
-} from "./shared/kernel-names";
+import { USER_KERNEL_LOGIN_SOURCE_HEADER } from "./shared/kernel-names";
 
 const adapterFrame = {
   type: "req" as const,
@@ -45,22 +41,19 @@ const adapterFrame = {
 };
 
 const APP_LAUNCH_TOKEN = "01234567-89ab-4def-8abc-0123456789ab";
-const APP_PLACEMENT_CERTIFICATE =
-  "KfWFW2CEKnR0tdXxEO2urttEvaP0sHkJ5EScvHrVSvu-VvxF8sm6Uw74-WCk0YN7sBY_LX6Qntv9pkvgtoU9uQ";
-const APP_PLACEMENT_VERIFICATION_KEY = JSON.stringify({
-  version: 1,
-  algorithm: "ECDSA-P256-SHA256",
-  publicKeySpki:
-    "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE2_0F87q_2jkiMchP21FoZF-hrz-CyXjr61LpE5epMhjYdTvESv9GhqcYPJx8mAtV3f33ffFMVE1K10kNrIedJg",
-});
 
 function buildAppLaunchHarness(
   sessionId: string,
   options: {
     routeAuthorized?: boolean;
-    masterRoute?:
+    placement?:
       | { ok: false }
-      | { ok: true; kernelName: string; lifecycle: "legacy" };
+      | {
+          ok: true;
+          kernelName: string;
+          lifecycle: "active";
+          loginSourceScope: string;
+        };
   } = {},
 ) {
   const resolvedSession = (input: { sessionId: string; secret: string }) => {
@@ -74,9 +67,6 @@ function buildAppLaunchHarness(
       appFrame: {
         uid: 1000,
         username: "alice",
-        kernelOwnerUid: 1000,
-        kernelUsername: "alice",
-        ...(!input.sessionId.startsWith("gsv1b~") ? {} : { kernelGeneration: 3 }),
         sessionId: input.sessionId,
         clientId: "window-1",
         packageId: "pkg-chat",
@@ -104,7 +94,12 @@ function buildAppLaunchHarness(
   };
   const master = {
     setName: vi.fn(async () => undefined),
-    resolveAppSessionKernel: vi.fn(async () => options.masterRoute ?? { ok: false as const }),
+    resolveUserKernelRoute: vi.fn(async () => options.placement ?? {
+      ok: true as const,
+      kernelName: "user:alice",
+      lifecycle: "active" as const,
+      loginSourceScope: "source:0:app",
+    }),
     resolvePackageAppRpcSession: vi.fn(async (input: {
       sessionId: string;
       secret: string;
@@ -127,6 +122,7 @@ function buildAppLaunchHarness(
     }) => resolvedSession(input)),
   };
   const runner = {
+    ensureRuntime: vi.fn(async () => undefined),
     gsvFetch: vi.fn(async () => new Response("package asset", {
       headers: { "content-type": "text/javascript" },
     })),
@@ -136,20 +132,11 @@ function buildAppLaunchHarness(
     idFromName: vi.fn((name: string) => name),
     get: vi.fn((id: string) => id === SHIP_KERNEL_NAME ? master : target),
   };
-  const storage = {
-    get: vi.fn(async (key: string) => key === APP_PLACEMENT_VERIFICATION_KEY_OBJECT
-      ? {
-          size: APP_PLACEMENT_VERIFICATION_KEY.length,
-          text: async () => APP_PLACEMENT_VERIFICATION_KEY,
-        }
-      : null),
-  };
   return {
-    env: { KERNEL: namespace, STORAGE: storage } as unknown as Env,
+    env: { KERNEL: namespace } as unknown as Env,
     master,
     namespace,
     runner,
-    storage,
     target,
     ctx: {
       exports: {
@@ -165,35 +152,35 @@ function buildAppLaunchHarness(
   };
 }
 
-function buildDiscordEntrypoint(route: unknown) {
+function buildDiscordEntrypoint(
+  response: unknown = {
+    type: "res",
+    id: adapterFrame.id,
+    ok: true,
+    data: { ok: true },
+  },
+) {
   const events: string[] = [];
   const master = {
     setName: vi.fn(async () => undefined),
-    issueAdapterInboundRoute: vi.fn(async () => {
-      events.push("master-route");
-      return route;
+    receiveAdapterInbound: vi.fn(async () => {
+      events.push("master-inbound");
+      return response;
     }),
     serviceFrame: vi.fn(async () => {
-      events.push("master-frame");
-      return { type: "res", id: adapterFrame.id, ok: true, data: { ok: true } };
-    }),
-  };
-  const target = {
-    setName: vi.fn(async () => undefined),
-    serviceLinkedAdapterFrame: vi.fn(async () => {
-      events.push("target-frame");
+      events.push("master-service-frame");
       return { type: "res", id: adapterFrame.id, ok: true, data: { ok: true } };
     }),
   };
   const namespace = {
     idFromName: vi.fn((name: string) => name),
-    get: vi.fn((id: string) => id === SHIP_KERNEL_NAME ? master : target),
+    get: vi.fn(() => master),
   };
   const entrypoint = new DiscordGatewayEntrypoint(
     {} as any,
     { KERNEL: namespace } as any,
   );
-  return { entrypoint, events, master, namespace, target };
+  return { entrypoint, events, master, namespace };
 }
 
 describe("gateway public routes", () => {
@@ -246,28 +233,19 @@ describe("gateway public routes", () => {
       headers: {
         "CF-Connecting-IP": "203.0.113.8",
         [USER_KERNEL_LOGIN_SOURCE_HEADER]: `source:1:${"b".repeat(64)}`,
-        [USER_KERNEL_GENERATION_HEADER]: "999",
+        "x-gsv-kernel-generation": "999",
         upgrade: "websocket",
       },
     });
     const scope = `source:2:${"a".repeat(64)}` as const;
 
-    const routed = buildUserKernelWebSocketRequest(request, scope, 7);
+    const routed = buildUserKernelWebSocketRequest(request, scope);
 
     expect(routed.url).toBe(request.url);
     expect(routed.headers.get("CF-Connecting-IP")).toBeNull();
     expect(routed.headers.get(USER_KERNEL_LOGIN_SOURCE_HEADER)).toBe(scope);
-    expect(routed.headers.get(USER_KERNEL_GENERATION_HEADER)).toBe("7");
+    expect(routed.headers.get("x-gsv-kernel-generation")).toBeNull();
     expect(routed.headers.get("upgrade")).toBe("websocket");
-  });
-
-  it("rejects invalid user Kernel generations before routing", () => {
-    const request = new Request("https://gsv.test/ws/alice");
-    expect(() => buildUserKernelWebSocketRequest(
-      request,
-      `source:2:${"a".repeat(64)}`,
-      0,
-    )).toThrow("Invalid user Kernel generation");
   });
 
   it("forwards distinct Git request sources into pseudonymous limiter scopes", async () => {
@@ -328,7 +306,7 @@ describe("gateway public routes", () => {
     });
   });
 
-  it("never invokes RIPGIT after lifecycle authorization is denied", async () => {
+  it("never invokes RIPGIT for a non-active placement", async () => {
     const kernel = await getAgentByName(env.KERNEL, SHIP_KERNEL_NAME);
     await runInDurableObject(kernel, async (_instance: Kernel, state) => {
       const auth = new AuthStore(state.storage.sql);
@@ -337,8 +315,8 @@ describe("gateway public routes", () => {
       const now = Date.now();
       state.storage.sql.exec(
         `INSERT INTO user_kernels (
-           username, uid, lifecycle, generation, created_at, updated_at, retired_at
-         ) VALUES ('root', 0, 'suspended', 2, ?, ?, NULL)`,
+           username, uid, lifecycle, created_at, updated_at
+         ) VALUES ('root', 0, 'provisioning', ?, ?)`,
         now,
         now,
       );
@@ -368,16 +346,8 @@ describe("gateway public routes", () => {
 });
 
 describe("gateway adapter routing", () => {
-  it("sends an active user's full frame directly to the scoped user Kernel", async () => {
-    const harness = buildDiscordEntrypoint({
-      kind: "active",
-      authorization: "one-shot-1",
-      targetKernelName: "user:alice",
-      username: "alice",
-      ownerUid: 1000,
-      generation: 7,
-      linkGeneration: 3,
-    });
+  it("forwards a validated inbound frame to Master exactly once", async () => {
+    const harness = buildDiscordEntrypoint();
 
     await expect(harness.entrypoint.serviceFrame(adapterFrame)).resolves.toMatchObject({
       type: "res",
@@ -385,28 +355,20 @@ describe("gateway adapter routing", () => {
       ok: true,
     });
 
-    expect(harness.master.issueAdapterInboundRoute).toHaveBeenCalledWith({
-      adapter: "discord",
-      accountId: "primary",
-      actorId: "actor-1",
-      frameId: adapterFrame.id,
-      surfaceKind: "dm",
-      surfaceId: "dm-1",
-    });
+    expect(harness.master.receiveAdapterInbound).toHaveBeenCalledOnce();
+    expect(harness.master.receiveAdapterInbound).toHaveBeenCalledWith(adapterFrame);
     expect(harness.master.serviceFrame).not.toHaveBeenCalled();
-    expect(harness.target.serviceLinkedAdapterFrame).toHaveBeenCalledWith(
-      expect.objectContaining({
-        source: "scoped-adapter-entrypoint",
-        authorization: "one-shot-1",
-        frame: adapterFrame,
-      }),
-    );
-    expect(harness.events).toEqual(["master-route", "target-frame"]);
+    expect(harness.namespace.get.mock.calls.every(
+      ([name]) => name === SHIP_KERNEL_NAME,
+    )).toBe(true);
+    expect(harness.events).toEqual(["master-inbound"]);
   });
 
-  it("keeps unknown-user text and media out of the Master challenge request", async () => {
+  it("returns the Master admission result without interpreting it at the edge", async () => {
     const harness = buildDiscordEntrypoint({
-      kind: "response",
+      type: "res",
+      id: adapterFrame.id,
+      ok: true,
       data: {
         ok: true,
         challenge: {
@@ -424,29 +386,38 @@ describe("gateway adapter routing", () => {
       data: { challenge: { code: "ABCD-2345" } },
     });
 
-    const masterInput = harness.master.issueAdapterInboundRoute.mock.calls[0]?.[0];
-    expect(JSON.stringify(masterInput)).not.toContain("closest private device secret");
-    expect(JSON.stringify(masterInput)).not.toContain("private-base64-payload");
-    expect(masterInput).not.toHaveProperty("message");
-    expect(masterInput).not.toHaveProperty("frame");
+    expect(harness.master.receiveAdapterInbound).toHaveBeenCalledWith(adapterFrame);
     expect(harness.master.serviceFrame).not.toHaveBeenCalled();
-    expect(harness.target.serviceLinkedAdapterFrame).not.toHaveBeenCalled();
   });
 
-  it("forwards the full frame to singleton only for an explicit legacy route", async () => {
-    const harness = buildDiscordEntrypoint({ kind: "legacy" });
+  it("keeps adapter state updates on the existing Master service-frame path", async () => {
+    const harness = buildDiscordEntrypoint();
+    const stateFrame = {
+      type: "req" as const,
+      id: "adapter-state-1",
+      call: "adapter.state.update" as const,
+      args: {
+        adapter: "discord",
+        accountId: "primary",
+        status: {
+          accountId: "primary",
+          connected: true,
+          authenticated: true,
+        },
+      },
+    };
 
-    await expect(harness.entrypoint.serviceFrame(adapterFrame)).resolves.toMatchObject({
+    await expect(harness.entrypoint.serviceFrame(stateFrame)).resolves.toMatchObject({
       ok: true,
     });
 
-    expect(harness.master.serviceFrame).toHaveBeenCalledWith(adapterFrame);
-    expect(harness.target.serviceLinkedAdapterFrame).not.toHaveBeenCalled();
-    expect(harness.events).toEqual(["master-route", "master-frame"]);
+    expect(harness.master.serviceFrame).toHaveBeenCalledWith(stateFrame);
+    expect(harness.master.receiveAdapterInbound).not.toHaveBeenCalled();
+    expect(harness.events).toEqual(["master-service-frame"]);
   });
 
   it("rejects scoped request bodies before consulting Master", async () => {
-    const harness = buildDiscordEntrypoint({ kind: "legacy" });
+    const harness = buildDiscordEntrypoint();
     const cancel = vi.fn();
 
     await expect(harness.entrypoint.serviceFrame({
@@ -461,13 +432,12 @@ describe("gateway adapter routing", () => {
     });
 
     expect(cancel).toHaveBeenCalledOnce();
-    expect(harness.master.issueAdapterInboundRoute).not.toHaveBeenCalled();
+    expect(harness.master.receiveAdapterInbound).not.toHaveBeenCalled();
     expect(harness.master.serviceFrame).not.toHaveBeenCalled();
-    expect(harness.target.serviceLinkedAdapterFrame).not.toHaveBeenCalled();
   });
 
   it("rejects oversized route metadata before consulting Master", async () => {
-    const harness = buildDiscordEntrypoint({ kind: "legacy" });
+    const harness = buildDiscordEntrypoint();
 
     await expect(harness.entrypoint.serviceFrame({
       ...adapterFrame,
@@ -483,9 +453,8 @@ describe("gateway adapter routing", () => {
       error: { code: 400 },
     });
 
-    expect(harness.master.issueAdapterInboundRoute).not.toHaveBeenCalled();
+    expect(harness.master.receiveAdapterInbound).not.toHaveBeenCalled();
     expect(harness.master.serviceFrame).not.toHaveBeenCalled();
-    expect(harness.target.serviceLinkedAdapterFrame).not.toHaveBeenCalled();
   });
 });
 
@@ -494,10 +463,8 @@ describe("gateway app session routing", () => {
     return buildRoutedAppSessionId({
       username: "alice",
       uid: 1000,
-      generation: 3,
       expiresAt: Date.now() + 60_000,
       nonce: "4f57c735-a614-4e0f-a36a-e5c60b94db15",
-      placementCertificate: APP_PLACEMENT_CERTIFICATE,
     }, "A".repeat(43));
   }
 
@@ -505,10 +472,8 @@ describe("gateway app session routing", () => {
     const sessionId = buildRoutedAppSessionId({
       username: "alice",
       uid: 1000,
-      generation: 3,
       expiresAt: 2_000_000_000_000,
       nonce: "4f57c735-a614-4e0f-a36a-e5c60b94db15",
-      placementCertificate: APP_PLACEMENT_CERTIFICATE,
     }, "A".repeat(43));
 
     expect(matchPackageAppSessionPath(
@@ -522,7 +487,7 @@ describe("gateway app session routing", () => {
 
   it("rejects malformed app session route handles", () => {
     expect(matchPackageAppSessionPath(
-      `/apps/sessions/gsv1b~Alice~1000~3~2000000000000~bad~${"A".repeat(86)}~${"A".repeat(43)}/clients/window-1/`,
+      `/apps/sessions/gsv1b~Alice~1000~2000000000000~bad~${"A".repeat(43)}/clients/window-1/`,
     )).toBeNull();
     expect(matchPackageAppSessionPath(
       `/apps/sessions/${encodeURIComponent(` ${routedSessionId()}`)}/clients/window-1/`,
@@ -560,7 +525,7 @@ describe("gateway app session routing", () => {
   it("rejects a forged active signature before reading or forwarding a launch body", async () => {
     const validSessionId = routedSessionId();
     const parts = validSessionId.split("~");
-    parts[7] = `B${parts[7]!.slice(1)}`;
+    parts[5] = `B${parts[5]!.slice(1)}`;
     const sessionId = parts.join("~");
     const harness = buildAppLaunchHarness(sessionId, { routeAuthorized: false });
     const pull = vi.fn();
@@ -580,20 +545,16 @@ describe("gateway app session routing", () => {
     );
 
     expect(response.status).toBe(404);
+    expect(harness.master.resolveUserKernelRoute).toHaveBeenCalledWith("alice");
     expect(harness.target.authorizeAppSessionRoute).toHaveBeenCalledWith(sessionId);
     expect(harness.target.resolvePackageAppRpcSession).not.toHaveBeenCalled();
-    expect(harness.master.resolveAppSessionKernel).not.toHaveBeenCalled();
-    expect(harness.namespace.idFromName).not.toHaveBeenCalledWith(SHIP_KERNEL_NAME);
     expect(pull).not.toHaveBeenCalled();
     expect(cancel).toHaveBeenCalledOnce();
   });
 
-  it("rejects a forged placement certificate before selecting its user Kernel", async () => {
-    const sessionId = routedSessionId().replace(
-      APP_PLACEMENT_CERTIFICATE,
-      `L${APP_PLACEMENT_CERTIFICATE.slice(1)}`,
-    );
-    const harness = buildAppLaunchHarness(sessionId);
+  it("uses Master placement only to select an active target", async () => {
+    const sessionId = routedSessionId();
+    const harness = buildAppLaunchHarness(sessionId, { placement: { ok: false } });
     const pull = vi.fn();
     const cancel = vi.fn();
     const response = await gateway.fetch(
@@ -609,11 +570,7 @@ describe("gateway app session routing", () => {
     );
 
     expect(response.status).toBe(404);
-    expect(harness.storage.get).toHaveBeenCalledWith(
-      APP_PLACEMENT_VERIFICATION_KEY_OBJECT,
-    );
-    expect(harness.namespace.idFromName).not.toHaveBeenCalled();
-    expect(harness.namespace.get).not.toHaveBeenCalled();
+    expect(harness.master.resolveUserKernelRoute).toHaveBeenCalledWith("alice");
     expect(harness.target.authorizeAppSessionRoute).not.toHaveBeenCalled();
     expect(harness.target.resolvePackageAppRpcSession).not.toHaveBeenCalled();
     expect(pull).not.toHaveBeenCalled();
@@ -641,11 +598,10 @@ describe("gateway app session routing", () => {
     expect(response.headers.get("set-cookie")).toContain("gsv_app_");
     expect(harness.target.authorizeAppSessionRoute.mock.invocationCallOrder[0])
       .toBeLessThan(harness.target.resolvePackageAppRpcSession.mock.invocationCallOrder[0]);
-    expect(harness.master.resolveAppSessionKernel).not.toHaveBeenCalled();
-    expect(harness.namespace.idFromName).not.toHaveBeenCalledWith(SHIP_KERNEL_NAME);
+    expect(harness.master.resolveUserKernelRoute).toHaveBeenCalledWith("alice");
   });
 
-  it("caches the public verifier while replay still reauthorizes the genuine target", async () => {
+  it("resolves current placement and reauthorizes the target on every replay", async () => {
     const sessionId = routedSessionId();
     const harness = buildAppLaunchHarness(sessionId);
     for (let index = 0; index < 2; index += 1) {
@@ -661,10 +617,9 @@ describe("gateway app session routing", () => {
       expect(response.status).toBe(200);
     }
 
-    expect(harness.storage.get).toHaveBeenCalledOnce();
+    expect(harness.master.resolveUserKernelRoute).toHaveBeenCalledTimes(2);
     expect(harness.target.authorizeAppSessionRoute).toHaveBeenCalledTimes(2);
     expect(harness.target.resolvePackageAppRpcSession).toHaveBeenCalledTimes(2);
-    expect(harness.master.resolveAppSessionKernel).not.toHaveBeenCalled();
   });
 
   it("rejects an oversized launch body before consulting the target Kernel", async () => {
@@ -684,12 +639,12 @@ describe("gateway app session routing", () => {
     );
 
     expect(response.status).toBe(413);
+    expect(harness.master.resolveUserKernelRoute).toHaveBeenCalledWith("alice");
     expect(harness.target.authorizeAppSessionRoute).toHaveBeenCalledOnce();
     expect(harness.target.resolvePackageAppRpcSession).not.toHaveBeenCalled();
-    expect(harness.master.resolveAppSessionKernel).not.toHaveBeenCalled();
   });
 
-  it("serves an active app asset without consulting the Master", async () => {
+  it("serves an active app asset after Master placement and target authorization", async () => {
     const sessionId = routedSessionId();
     const harness = buildAppLaunchHarness(sessionId);
     const response = await gateway.fetch(
@@ -707,11 +662,10 @@ describe("gateway app session routing", () => {
       secret: APP_LAUNCH_TOKEN,
     });
     expect(harness.runner.gsvFetch).toHaveBeenCalledOnce();
-    expect(harness.master.resolveAppSessionKernel).not.toHaveBeenCalled();
-    expect(harness.namespace.idFromName).not.toHaveBeenCalledWith(SHIP_KERNEL_NAME);
+    expect(harness.master.resolveUserKernelRoute).toHaveBeenCalledWith("alice");
   });
 
-  it("opens an active app socket without consulting the Master", async () => {
+  it("opens an active app socket after Master placement and target authorization", async () => {
     const sessionId = routedSessionId();
     const harness = buildAppLaunchHarness(sessionId);
     const response = await gateway.fetch(
@@ -732,19 +686,12 @@ describe("gateway app session routing", () => {
       secret: APP_LAUNCH_TOKEN,
     });
     expect(harness.runner.fetch).toHaveBeenCalledOnce();
-    expect(harness.master.resolveAppSessionKernel).not.toHaveBeenCalled();
-    expect(harness.namespace.idFromName).not.toHaveBeenCalledWith(SHIP_KERNEL_NAME);
+    expect(harness.master.resolveUserKernelRoute).toHaveBeenCalledWith("alice");
   });
 
-  it("retains Master routing only for an explicit legacy app session", async () => {
+  it("rejects a legacy UUID without consulting placement or a target", async () => {
     const sessionId = "4f57c735-a614-4e0f-a36a-e5c60b94db15";
-    const harness = buildAppLaunchHarness(sessionId, {
-      masterRoute: {
-        ok: true,
-        kernelName: SHIP_KERNEL_NAME,
-        lifecycle: "legacy",
-      },
-    });
+    const harness = buildAppLaunchHarness(sessionId);
     const response = await gateway.fetch(
       new Request(harness.url, {
         method: "POST",
@@ -755,12 +702,8 @@ describe("gateway app session routing", () => {
       harness.ctx,
     );
 
-    expect(response.status).toBe(200);
-    expect(harness.master.resolveAppSessionKernel).toHaveBeenCalledWith(sessionId);
-    expect(harness.master.resolvePackageAppRpcSession).toHaveBeenCalledWith({
-      sessionId,
-      secret: APP_LAUNCH_TOKEN,
-    });
+    expect(response.status).toBe(404);
+    expect(harness.master.resolveUserKernelRoute).not.toHaveBeenCalled();
     expect(harness.target.authorizeAppSessionRoute).not.toHaveBeenCalled();
     expect(harness.target.resolvePackageAppRpcSession).not.toHaveBeenCalled();
   });

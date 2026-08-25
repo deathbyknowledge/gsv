@@ -8,6 +8,7 @@ import { resolvePromptProviders } from "./selection";
 import type { PromptAssemblyInput, PromptContextProvider } from "./types";
 import type { AiConfigResult, ProcessIdentity } from "@humansandmachines/gsv/protocol";
 import { accountHomeRepoRef } from "../../fs";
+import { provisionR2Directory } from "../../fs/backends/r2";
 
 const CONFIG: AiConfigResult = {
   executor: { kind: "process", pid: "proc-test" },
@@ -453,6 +454,7 @@ async function putContextDirectory(
   mode: string,
   owner: ProcessIdentity,
 ): Promise<void> {
+  await provisionR2Directory(env.STORAGE, account.home, account, "750");
   await env.STORAGE.put(`${account.home.slice(1)}/context.d/.dir`, "", {
     customMetadata: {
       uid: String(owner.uid),

@@ -441,6 +441,21 @@ describe("handleAiConfig", () => {
           : null),
         resolveGids: vi.fn((_username: string, gid: number) => [gid]),
       },
+      accountGet: vi.fn(async (query: { uid?: number }) => {
+        if (query.uid !== ownerUid) return null;
+        return {
+          uid: ownerUid,
+          gid: ownerUid,
+          gids: [ownerUid],
+          username: ownerUid === 0 ? "root" : "sam",
+          home: ownerUid === 0 ? "/root" : "/home/sam",
+          shell: "/bin/init",
+          kind: ownerUid === 0 ? "system" : "human",
+          state: "active",
+          displayName: ownerUid === 0 ? "root" : "sam",
+          capabilities: ["*"],
+        };
+      }),
       procs: {
         getOwnerUid: vi.fn(() => ownerUid),
       },
@@ -1737,6 +1752,20 @@ describe("handleAiTranscriptionCreate", () => {
       configListExplicit: vi.fn(async (prefix: string) => Object.entries(config)
         .filter(([key]) => key.startsWith(`${prefix.replace(/\/$/, "")}/`))
         .map(([key, value]) => ({ key, value }))),
+      accountGet: vi.fn(async (query: { uid?: number }) => query.uid === 1000
+        ? {
+            uid: 1000,
+            gid: 1000,
+            gids: [1000],
+            username: "sam",
+            home: "/home/sam",
+            shell: "/bin/init",
+            kind: "human" as const,
+            state: "active" as const,
+            displayName: "sam",
+            capabilities: ["*"],
+          }
+        : null),
       env: {
         AI: {
           run: vi.fn(async () => options.response ?? ({

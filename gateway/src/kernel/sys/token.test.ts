@@ -14,7 +14,7 @@ type FakeAuth = {
   getAccountIdentity: ReturnType<typeof vi.fn>;
 };
 
-function makeContext(uid: number, auth: FakeAuth): KernelContext {
+function makeContext(uid: number, auth: FakeAuth, callerOwnerUid?: number): KernelContext {
   return {
     identity: {
       role: "user",
@@ -28,6 +28,7 @@ function makeContext(uid: number, auth: FakeAuth): KernelContext {
       },
       capabilities: ["*"],
     },
+    ...(callerOwnerUid === undefined ? {} : { callerOwnerUid }),
     auth: auth as unknown as KernelContext["auth"],
   } as KernelContext;
 }
@@ -140,6 +141,23 @@ describe("sys.token handlers", () => {
       { kind: "user" },
       makeContext(0, auth),
     )).resolves.toMatchObject({ token: { uid: 0, kind: "user" } });
+  });
+
+  it("scopes an owned agent's token operations to its human owner", async () => {
+    const ctx = makeContext(2000, auth, 1000);
+
+    await expect(handleSysTokenCreate(
+      { kind: "user" },
+      ctx,
+    )).resolves.toMatchObject({ token: { uid: 1000, kind: "user" } });
+    handleSysTokenList({}, ctx);
+    handleSysTokenRevoke({ tokenId: "tok-123" }, ctx);
+
+    expect(auth.issueToken).toHaveBeenCalledWith(expect.objectContaining({ uid: 1000 }));
+    expect(auth.listTokens).toHaveBeenCalledWith(1000);
+    expect(auth.revokeToken).toHaveBeenCalledWith("tok-123", undefined, 1000);
+    expect(() => handleSysTokenList({ uid: 2000 }, ctx))
+      .toThrow("cannot list tokens for another user");
   });
 
   it("rejects user tokens for agent accounts even when requested by root", async () => {

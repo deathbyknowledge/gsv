@@ -9,12 +9,10 @@ import type { AppFrameContext } from "./protocol/app-frame";
 import {
   buildAppClientRouteBase,
   buildAppRunnerName,
-  isLegacyAppSessionId,
   MAX_APP_SESSION_ID_LENGTH,
   parseRoutedAppSessionId,
 } from "./protocol/app-session";
 import type { PackageArtifactMetadata } from "./kernel/packages";
-import { captureAppRunnerRuntime } from "./app-runner";
 import { buildOAuthClientMetadata } from "./oauth-http";
 import {
   createPublicAssetFileSystem,
@@ -28,7 +26,6 @@ import {
 import {
   matchUserKernelWebSocketPath,
   SHIP_KERNEL_NAME,
-  USER_KERNEL_GENERATION_HEADER,
   USER_KERNEL_LOGIN_SOURCE_HEADER,
   userKernelName,
 } from "./shared/kernel-names";
@@ -39,20 +36,15 @@ import {
   parseRoutedOAuthState,
 } from "./shared/callback-routes";
 import {
-  ADAPTER_INBOUND_GATEWAY_SOURCE,
   adapterInboundRouteMetadata,
-  type AdapterInboundRouteMetadata,
-  type AdapterInboundRouteResult,
 } from "./shared/adapter-inbound-route";
 import {
   cancelAppLaunchRequestBody,
   readAppLaunchToken,
 } from "./shared/app-launch-token";
-import { verifyAppPlacementAtEdge } from "./shared/app-placement-verifier";
 
 export { Kernel } from "./kernel/do";
 export { Process } from "./process/do";
-export { KernelBinding } from "./kernel/packages";
 export { AppRunner, GsvApiBinding } from "./app-runner";
 
 export default {
@@ -74,24 +66,19 @@ export default {
 
     if (url.pathname === "/.well-known/oauth-client/gsv.json" && request.method === "GET") {
       const rawUsername = url.searchParams.get("username");
-      const rawGeneration = url.searchParams.get("generation");
       let metadataOptions: { clientId?: string; redirectUri?: string } = {};
-      if (rawUsername !== null || rawGeneration !== null) {
-        const generation = Number(rawGeneration);
+      if (rawUsername !== null) {
         const master = await getAgentByName(env.KERNEL, SHIP_KERNEL_NAME);
-        const route = await master.resolveUserKernelCallbackRoute(
-          rawUsername ?? "",
-          generation,
-        );
-        if (!route.ok) {
+        const route = await master.resolveUserKernelCallbackRoute(rawUsername);
+        if (
+          !route.ok
+          || route.kernelName !== userKernelName(rawUsername)
+        ) {
           return new Response("Not Found", { status: 404 });
         }
         metadataOptions = {
           clientId: url.toString(),
-          redirectUri: `${url.origin}${buildUserMcpOAuthCallbackPath(
-            rawUsername!,
-            generation,
-          )}`,
+          redirectUri: `${url.origin}${buildUserMcpOAuthCallbackPath(rawUsername)}`,
         };
       }
       return Response.json(buildOAuthClientMetadata(url.origin, metadataOptions), {
@@ -108,7 +95,6 @@ export default {
         const kernel = await resolveActiveUserCallbackKernel(
           env,
           routed.username,
-          routed.generation,
         );
         return kernel
           ? kernel.fetch(request)
@@ -123,7 +109,6 @@ export default {
       const kernel = await resolveActiveUserCallbackKernel(
         env,
         mcpOAuthRoute.username,
-        mcpOAuthRoute.generation,
       );
       return kernel
         ? kernel.fetch(request)
@@ -151,14 +136,18 @@ export default {
           headers: { "cache-control": "no-store" },
         });
       }
-      const kernel = await getAgentByName(env.KERNEL, route.kernelName);
-      if (route.lifecycle === "legacy") {
-        return kernel.fetch(request);
+      if (
+        route.kernelName !== userKernelName(username)
+      ) {
+        return new Response("Not Found", {
+          status: 404,
+          headers: { "cache-control": "no-store" },
+        });
       }
+      const kernel = await getAgentByName(env.KERNEL, route.kernelName);
       return kernel.fetch(buildUserKernelWebSocketRequest(
         request,
         route.loginSourceScope,
-        route.generation,
       ));
     }
 
@@ -237,26 +226,23 @@ export function trustedLoginSourceAddress(request: Request): string | undefined 
 export function buildUserKernelWebSocketRequest(
   request: Request,
   loginSourceScope: LoginSourceScope,
-  generation: number,
 ): Request {
-  if (!Number.isSafeInteger(generation) || generation <= 0) {
-    throw new Error("Invalid user Kernel generation");
-  }
   const headers = new Headers(request.headers);
   headers.delete("CF-Connecting-IP");
+  headers.delete("x-gsv-kernel-generation");
   headers.set(USER_KERNEL_LOGIN_SOURCE_HEADER, loginSourceScope);
-  headers.set(USER_KERNEL_GENERATION_HEADER, String(generation));
   return new Request(request, { headers });
 }
 
 async function resolveActiveUserCallbackKernel(
   env: Env,
   username: string,
-  generation: number,
 ) {
   const master = await getAgentByName(env.KERNEL, SHIP_KERNEL_NAME);
-  const route = await master.resolveUserKernelCallbackRoute(username, generation);
-  return route.ok ? getAgentByName(env.KERNEL, route.kernelName) : null;
+  const route = await master.resolveUserKernelCallbackRoute(username);
+  return route.ok && route.kernelName === userKernelName(username)
+    ? getAgentByName(env.KERNEL, route.kernelName)
+    : null;
 }
 
 const RUNTIME_THEME_CSS = [
@@ -355,6 +341,7 @@ type PackageAppSessionPathMatch = {
 
 type ResolvedPackageRoute = {
   ok: true;
+  kernelName: string;
   packageId: string;
   packageName: string;
   routeBase: string;
@@ -400,7 +387,7 @@ export function matchPackageAppSessionPath(pathname: string): PackageAppSessionP
   }
   if (
     sessionId !== sessionId.trim()
-    || (!isLegacyAppSessionId(sessionId) && !parseRoutedAppSessionId(sessionId))
+    || !parseRoutedAppSessionId(sessionId)
   ) {
     return null;
   }
@@ -657,18 +644,21 @@ async function handlePackageAppSessionRequest(
   }
 
   const runner = ctx.exports.AppRunner.getByName(buildAppRunnerName(
-    resolved.appFrame.kernelOwnerUid,
     resolved.auth.uid,
     resolved.packageId,
   ));
-  const runtime = captureAppRunnerRuntime({
+  await runner.ensureRuntime({
+    kernelName: resolved.kernelName,
+    packageId: resolved.packageId,
+    packageName: resolved.packageName,
+    routeBase: resolved.routeBase,
+    entrypointName: resolved.appFrame.entrypointName,
     artifact: resolved.artifact,
     appFrame: resolved.appFrame,
   });
 
   const response = await runner.gsvFetch(
     buildPackageWorkerRequest(request, resolved, match.suffix),
-    runtime,
   );
   return await withPackageAppClientSession(response, resolved);
 }
@@ -686,17 +676,17 @@ async function handlePackageAppSessionLaunchRequest(
     });
   }
 
-  let kernel: Awaited<ReturnType<typeof resolvePackageAppSessionKernel>>;
+  let target: Awaited<ReturnType<typeof resolvePackageAppSessionKernel>>;
   try {
     // Select the bounded routed locator and verify the target's exact active
     // marker before accepting any caller-controlled body bytes. The full
     // session id and launch secret are authorized together after parsing.
-    kernel = await resolvePackageAppSessionKernel(env, match.sessionId);
+    target = await resolvePackageAppSessionKernel(env, match.sessionId);
   } catch (error) {
     await cancelAppLaunchRequestBody(request, "App session route failed");
     throw error;
   }
-  if (!kernel) {
+  if (!target) {
     await cancelAppLaunchRequestBody(request, "App session route rejected");
     return new Response("Not Found", { status: 404 });
   }
@@ -707,7 +697,7 @@ async function handlePackageAppSessionLaunchRequest(
     });
   }
   const secret = token.token;
-  const resolved = await kernel.resolvePackageAppRpcSession({
+  const resolved = await target.kernel.resolvePackageAppRpcSession({
     sessionId: match.sessionId,
     secret,
   });
@@ -718,7 +708,7 @@ async function handlePackageAppSessionLaunchRequest(
 
   return packageAppSessionLaunchResponse(
     request,
-    resolved,
+    { ...resolved, kernelName: target.kernelName },
     secret,
   );
 }
@@ -737,11 +727,11 @@ async function handlePackageAppSessionRefreshRequest(
 
   const secret = getPackageAppSessionSecret(request, match.sessionId, match.clientId);
 
-  const kernel = await resolvePackageAppSessionKernel(env, match.sessionId);
-  if (!kernel) {
+  const target = await resolvePackageAppSessionKernel(env, match.sessionId);
+  if (!target) {
     return new Response("Not Found", { status: 404 });
   }
-  const resolved = await kernel.refreshPackageAppRpcSession({
+  const resolved = await target.kernel.refreshPackageAppRpcSession({
     sessionId: match.sessionId,
     secret,
   });
@@ -753,7 +743,10 @@ async function handlePackageAppSessionRefreshRequest(
     return new Response("Unauthorized", { status: 401 });
   }
 
-  return Response.json(buildPackageAppBoot(resolved), {
+  return Response.json(buildPackageAppBoot({
+    ...resolved,
+    kernelName: target.kernelName,
+  }), {
     headers: {
       "cache-control": "no-store",
       "set-cookie": buildPackageAppSessionCookie(
@@ -787,11 +780,15 @@ async function handlePackageAppSocketRequest(
     });
   }
   const runner = ctx.exports.AppRunner.getByName(buildAppRunnerName(
-    resolved.appFrame.kernelOwnerUid,
     resolved.auth.uid,
     resolved.packageId,
   ));
-  const runtime = captureAppRunnerRuntime({
+  await runner.ensureRuntime({
+    kernelName: resolved.kernelName,
+    packageId: resolved.packageId,
+    packageName: resolved.packageName,
+    routeBase: resolved.routeBase,
+    entrypointName: resolved.appFrame.entrypointName,
     artifact: resolved.artifact,
     appFrame: resolved.appFrame,
   });
@@ -804,7 +801,7 @@ async function handlePackageAppSocketRequest(
       rpcBase: resolved.clientSession.rpcBase,
       expiresAt: resolved.clientSession.expiresAt,
     },
-    runtime,
+    appFrame: resolved.appFrame,
   })));
   return runner.fetch(new Request(request, { headers }));
 }
@@ -820,11 +817,11 @@ async function resolvePackageAppSessionFromCookie(
     return { ok: false, status: 401, message: "Unauthorized" };
   }
 
-  const kernel = await resolvePackageAppSessionKernel(env, sessionId);
-  if (!kernel) {
+  const target = await resolvePackageAppSessionKernel(env, sessionId);
+  if (!target) {
     return { ok: false, status: 404, message: "Not Found" };
   }
-  const resolved = await kernel.resolvePackageAppRpcSession({
+  const resolved = await target.kernel.resolvePackageAppRpcSession({
     sessionId,
     secret,
   });
@@ -834,46 +831,29 @@ async function resolvePackageAppSessionFromCookie(
   if (resolved.clientSession.clientId !== clientId) {
     return { ok: false, status: 401, message: "Unauthorized" };
   }
-  return resolved;
+  return { ...resolved, kernelName: target.kernelName };
 }
 
 async function resolvePackageAppSessionKernel(env: Env, sessionId: string) {
   const routed = parseRoutedAppSessionId(sessionId);
-  if (routed) {
-    if (routed.expiresAt <= Date.now()) {
-      return null;
-    }
-    // Keep public ingress controls and cryptographic placement verification on
-    // the edge side of target selection. A forged locator must never create or
-    // wake a caller-chosen Durable Object name.
-    if (!await verifyAppPlacementAtEdge(
-      env.STORAGE,
-      {
-        username: routed.username,
-        uid: routed.uid,
-        generation: routed.generation,
-      },
-      routed.placementCertificate,
-    )) {
-      return null;
-    }
-    // The Master certificate is only a placement proof. The selected user
-    // Kernel must still match its exact active marker and authorize the local
-    // HMAC/session state.
-    const kernel = await getAgentByName(
-      env.KERNEL,
-      userKernelName(routed.username),
-    );
-    return await kernel.authorizeAppSessionRoute(sessionId) ? kernel : null;
-  }
-
-  if (!isLegacyAppSessionId(sessionId)) {
+  if (!routed || routed.expiresAt <= Date.now()) {
     return null;
   }
+
   const master = await getAgentByName(env.KERNEL, SHIP_KERNEL_NAME);
-  const route = await master.resolveAppSessionKernel(sessionId);
-  return route.ok && route.lifecycle === "legacy" && route.kernelName === SHIP_KERNEL_NAME
-    ? master
+  const route = await master.resolveUserKernelRoute(routed.username);
+  if (
+    !route.ok
+    || route.kernelName !== userKernelName(routed.username)
+  ) {
+    return null;
+  }
+
+  // Placement only selects a target. The target's local HMAC and exact
+  // session record authorize the request, including the uid in the handle.
+  const kernel = await getAgentByName(env.KERNEL, route.kernelName);
+  return await kernel.authorizeAppSessionRoute(sessionId)
+    ? { kernel, kernelName: route.kernelName }
     : null;
 }
 
@@ -1078,78 +1058,17 @@ abstract class ScopedGatewayAdapterEntrypoint
           error: { code: 400, message: "Invalid adapter request" },
         };
       }
-      const route = await (master as unknown as {
-        issueAdapterInboundRoute: (
-          input: typeof metadata,
-        ) => Promise<AdapterInboundRouteResult>;
-      }).issueAdapterInboundRoute(metadata);
-      if (route.kind === "response") {
-        return { type: "res", id: frame.id, ok: true, data: route.data };
-      }
-      if (route.kind === "error") {
-        return {
-          type: "res",
-          id: frame.id,
-          ok: false,
-          error: { code: route.code, message: route.message },
-        };
-      }
-      if (route.kind === "legacy") {
-        return await master.serviceFrame(frame);
-      }
-      if (!isActiveAdapterInboundRoute(route)) {
-        return {
-          type: "res",
-          id: frame.id,
-          ok: false,
-          error: { code: 401, message: "Authentication failed" },
-        };
-      }
-      const userKernel = await getAgentByName(
-        this.env.KERNEL,
-        route.targetKernelName,
-      ) as unknown as {
-        serviceLinkedAdapterFrame: (input: AdapterInboundRouteMetadata & {
-          source: typeof ADAPTER_INBOUND_GATEWAY_SOURCE;
-          authorization: string;
-          username: string;
-          ownerUid: number;
-          generation: number;
-          linkGeneration: number;
-          frame: RequestFrame<"adapter.inbound">;
-        }) => Promise<ResponseFrame>;
-      };
-      return await userKernel.serviceLinkedAdapterFrame({
-        source: ADAPTER_INBOUND_GATEWAY_SOURCE,
-        authorization: route.authorization,
-        username: route.username,
-        ownerUid: route.ownerUid,
-        generation: route.generation,
-        linkGeneration: route.linkGeneration,
-        ...metadata,
-        frame: inboundFrame,
-      });
+      return await (master as unknown as {
+        receiveAdapterInbound: (
+          input: RequestFrame<"adapter.inbound">,
+        ) => Promise<ResponseFrame>;
+      }).receiveAdapterInbound(inboundFrame);
     } catch (e) {
       await cancelFrameRequestBody(frame, "Gateway service forwarding failed");
       console.error("[GatewayEntrypoint] serviceFrame failed:", e);
       return null;
     }
   }
-}
-
-function isActiveAdapterInboundRoute(
-  route: Extract<AdapterInboundRouteResult, { kind: "active" }>,
-): boolean {
-  return typeof route.authorization === "string"
-    && route.authorization.length > 0
-    && typeof route.username === "string"
-    && route.targetKernelName === userKernelName(route.username)
-    && Number.isSafeInteger(route.ownerUid)
-    && route.ownerUid >= 0
-    && Number.isSafeInteger(route.generation)
-    && route.generation > 0
-    && Number.isSafeInteger(route.linkGeneration)
-    && route.linkGeneration > 0;
 }
 
 export class DiscordGatewayEntrypoint extends ScopedGatewayAdapterEntrypoint {

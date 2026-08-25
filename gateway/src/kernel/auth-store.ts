@@ -953,36 +953,6 @@ export class AuthStore {
     }
   }
 
-  replaceRuntimeDirectory(input: {
-    accounts: Array<{
-      entry: PasswdEntry;
-      kind: AccountIdentityKind;
-      locked: boolean;
-    }>;
-    groups: GroupEntry[];
-    ownerUid: number;
-    personalAgentUid: number | null;
-  }): void {
-    this.sql.exec("DELETE FROM personal_agents");
-    this.sql.exec("DELETE FROM groups");
-    this.sql.exec("DELETE FROM shadow");
-    this.sql.exec("DELETE FROM passwd");
-
-    for (const account of input.accounts) {
-      this.addUser(account.entry, account.kind);
-      this.setShadow(makeShadowEntry(
-        account.entry.username,
-        account.locked ? "!" : "$master-auth$",
-      ));
-    }
-    for (const group of input.groups) {
-      this.addGroup(group);
-    }
-    if (input.personalAgentUid !== null) {
-      this.setPersonalAgent(input.ownerUid, input.personalAgentUid);
-    }
-  }
-
   importShadow(raw: string): void {
     const entries = parseShadow(raw);
     this.sql.exec("DELETE FROM shadow");

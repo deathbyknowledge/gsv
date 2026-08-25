@@ -1,7 +1,6 @@
 import type { KernelContext } from "./context";
 import { assertLocalUserKernelUid, resolveCallerOwnerUid } from "./context";
 import { hasCapability } from "./capabilities";
-import { packageAgentRuntimeSecurityRevision } from "./package-agents";
 import type {
   ConnectionIdentity,
   ScheduleExpression,
@@ -336,7 +335,7 @@ export class ScheduleStore {
   /**
    * Release only executions owned by one account runtime. Master lifecycle
    * recovery uses this path so one user's fence cannot disturb another user's
-   * schedules that happen to be running in the same legacy Kernel.
+   * schedules that happen to be running in the same Kernel.
    */
   releaseInterruptedRunsForOwner(
     ownerUid: number,
@@ -591,17 +590,25 @@ export async function handleSchedulerAdd(
 ): Promise<SchedulerAddResult> {
   const store = ctx.schedules;
   const now = Date.now();
-  const expression = normalizeScheduleExpression(args.expression, ctx);
+  const defaultTimezone = args.expression.kind === "cron" && !args.expression.timezone
+    ? await ctx.configGet("config/server/timezone")
+    : null;
+  const expression = normalizeScheduleExpression(args.expression, ctx, defaultTimezone);
   assertSchedulableAtExpression(expression, args.enabled !== false, now);
   const target = normalizeScheduleTarget(args.target);
   validateScheduleTargetAccess(target, ctx);
 
   const principal = principalFromContext(ctx);
   const ownerUid = resolveCallerOwnerUid(ctx);
-  const packageSecurityRevision = packageAgentRuntimeSecurityRevision(
-    ctx,
-    ctx.identity!.process.uid,
-  );
+  const runAs = await ctx.resolveRunAsAccount({
+    ownerUid,
+    callerUid: ctx.identity!.process.uid,
+    selector: String(ctx.identity!.process.uid),
+  });
+  if (!runAs.ok) {
+    throw new Error(runAs.error);
+  }
+  const packageSecurityRevision = runAs.account.packageSecurityRevision;
   const schedule = store.create({
     ownerUid,
     creator: principal,
@@ -636,9 +643,13 @@ export async function handleSchedulerUpdate(
   validateScheduleTargetAccess(nextTarget, ctx);
 
   const now = Date.now();
+  const defaultTimezone = args.patch.expression?.kind === "cron"
+    && !args.patch.expression.timezone
+    ? await ctx.configGet("config/server/timezone")
+    : null;
   const nextExpression = args.patch.expression === undefined
     ? existing.expression
-    : normalizeScheduleExpression(args.patch.expression, ctx);
+    : normalizeScheduleExpression(args.patch.expression, ctx, defaultTimezone);
   const nextEnabled = args.patch.enabled ?? existing.enabled;
   if (args.patch.expression !== undefined || args.patch.enabled === true) {
     assertSchedulableAtExpression(nextExpression, nextEnabled, now);
@@ -695,6 +706,7 @@ export async function handleSchedulerRun(
 export function normalizeScheduleExpression(
   expression: ScheduleExpression,
   ctx?: KernelContext,
+  defaultTimezone?: string | null,
 ): ScheduleExpression {
   if (!expression || typeof expression !== "object") {
     throw new Error("schedule expression must be an object");
@@ -722,7 +734,12 @@ export function normalizeScheduleExpression(
   if (expression.kind === "cron") {
     const expr = normalizeRequiredText(expression.expr, "cron expression");
     parseCronFields(expr);
-    const timezone = normalizeTimezone(expression.timezone || ctx?.config.get("config/server/timezone") || "UTC");
+    const timezone = normalizeTimezone(
+      expression.timezone
+      || defaultTimezone
+      || ctx?.config.get("config/server/timezone")
+      || "UTC",
+    );
     return { kind: "cron", expr, timezone };
   }
   throw new Error(`unsupported schedule expression kind: ${(expression as { kind?: unknown }).kind}`);

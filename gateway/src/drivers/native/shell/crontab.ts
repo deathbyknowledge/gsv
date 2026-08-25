@@ -35,7 +35,7 @@ async function runCrontabCommand(
 
   if (parsed.action === "list") {
     requireCommandCapability(ctx, "sched.list");
-    const content = service.readUserCrontab(parsed.username);
+    const content = await service.readUserCrontab(parsed.username);
     if (content === undefined) {
       return { stdout: "", stderr: `no crontab for ${parsed.username}\n`, exitCode: 1 };
     }

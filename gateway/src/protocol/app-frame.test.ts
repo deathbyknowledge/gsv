@@ -12,9 +12,6 @@ function appFrame(
   return {
     uid: 1000,
     username: "alice",
-    kernelOwnerUid: 1000,
-    kernelUsername: "alice",
-    kernelGeneration: 3,
     packageId: "pkg-chat",
     packageName: "chat",
     packageUpdatedAt: NOW - 10_000,

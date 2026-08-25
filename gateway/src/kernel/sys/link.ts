@@ -1,4 +1,4 @@
-import type { KernelContext } from "../context";
+import { resolveCallerOwnerUid, type KernelContext } from "../context";
 import type {
   UserIdentity,
   SysLinkArgs,
@@ -16,13 +16,18 @@ export function handleSysLinkConsume(
   ctx: KernelContext,
 ): SysLinkConsumeResult {
   const identity = requireUserIdentity(ctx);
+  const ownerUid = resolveCallerOwnerUid(ctx);
 
   const code = typeof args.code === "string" ? args.code.trim().toUpperCase() : "";
   if (!code) {
     throw new Error("code is required");
   }
 
-  const challenge = ctx.adapters.linkChallenges.consume(code, identity.process.uid);
+  const challenge = ctx.adapters.linkChallenges.consume(
+    code,
+    identity.process.uid,
+    ownerUid,
+  );
   if (!challenge) {
     throw new Error("Invalid or expired link code");
   }
@@ -31,7 +36,7 @@ export function handleSysLinkConsume(
     challenge.adapter,
     challenge.accountId,
     challenge.actorId,
-    identity.process.uid,
+    ownerUid,
     identity.process.uid,
     { code: challenge.code, surfaceKind: challenge.surfaceKind, surfaceId: challenge.surfaceId },
   );
@@ -87,6 +92,7 @@ export function handleSysUnlink(
   ctx: KernelContext,
 ): SysUnlinkResult {
   const identity = requireUserIdentity(ctx);
+  const ownerUid = resolveCallerOwnerUid(ctx);
 
   const adapter = normalizeRequired(args.adapter, "adapter");
   const accountId = normalizeRequired(args.accountId, "accountId");
@@ -97,7 +103,7 @@ export function handleSysUnlink(
     return { removed: false };
   }
 
-  if (identity.process.uid !== 0 && existing.uid !== identity.process.uid) {
+  if (identity.process.uid !== 0 && existing.uid !== ownerUid) {
     throw new Error("Permission denied");
   }
 
@@ -118,15 +124,16 @@ export function handleSysLinkList(
   ctx: KernelContext,
 ): SysLinkListResult {
   const identity = requireUserIdentity(ctx);
+  const ownerUid = resolveCallerOwnerUid(ctx);
 
   let uidFilter: number | undefined;
   if (typeof args.uid === "number") {
-    if (identity.process.uid !== 0 && args.uid !== identity.process.uid) {
+    if (identity.process.uid !== 0 && args.uid !== ownerUid) {
       throw new Error("Permission denied");
     }
     uidFilter = args.uid;
   } else if (identity.process.uid !== 0) {
-    uidFilter = identity.process.uid;
+    uidFilter = ownerUid;
   }
 
   const links = ctx.adapters.identityLinks.list(uidFilter).map((link) => ({

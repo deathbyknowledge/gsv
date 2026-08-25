@@ -1,8 +1,9 @@
 # Security Model
 
-> Status: security contract for the username-sharded Kernel architecture. The
-> current implementation is migrating from the legacy all-traffic `singleton`;
-> public registration remains closed until the multiuser release gates pass.
+> Status: security contract for the username-sharded Kernel architecture.
+> Existing deployments retain `singleton` as the Master and provision fresh
+> user runtimes in place; public registration remains closed until the
+> multiuser release gates pass.
 
 GSV is powerful personal infrastructure. It can run agent processes, execute
 shell commands, read and write files, connect external devices, install
@@ -26,8 +27,9 @@ uid/gid allocation, password/token verification, groups, capabilities,
 cross-user grants, provisioning, and the current package/configuration records.
 Admission remains closed and unimplemented. An active Kernel named
 `user:<canonical-username>` owns that human's connections, sessions, devices,
-process registry, routes, schedules, OAuth/MCP state, and projected package and
-configuration runtime view.
+process registry, routes, schedules, and OAuth/MCP state. It reads current
+Master-owned authority through narrow typed RPCs and stores no durable account,
+capability, configuration, package, repository, or link copy.
 
 Process Durable Objects run agent loops under a Kernel-issued process identity
 and retain the owning user-Kernel route.
@@ -37,9 +39,8 @@ remain the final boundary on those machines.
 
 ## Authentication
 
-`sys.connect` is the WebSocket login syscall. `/ws` serves commissioning and
-accounts explicitly recorded as `legacy`. Active user-Kernel clients connect to
-`/ws/<canonical-username>`, which deterministically addresses
+`sys.connect` is the WebSocket login syscall. `/ws` serves commissioning only.
+Provisioned clients connect to `/ws/<canonical-username>`, which deterministically addresses
 `user:<canonical-username>`, and then authenticate as one of three roles:
 
 - `user`: interactive clients and user tokens; password auth is allowed.
@@ -49,13 +50,14 @@ accounts explicitly recorded as `legacy`. Active user-Kernel clients connect to
 
 The path is a locator, not identity. The Gateway canonicalizes it, and the user
 Kernel requires `sys.connect` credentials for the same canonical account. It
-checks its persisted username, uid, lifecycle, and provisioning generation, then
-asks `singleton` to verify the password or token. Arbitrary Durable Object names
-exist on demand, so the Gateway first checks the Master placement and an
-unprovisioned object never bootstraps itself. Only `active` accepts scoped
-authentication. Unknown and non-active placements return HTTP 404 before
-upgrade; credential failures occur inside the socket. Canonical usernames are
-public, so username non-enumerability is not promised.
+checks its persisted username, uid, and active provisioning marker, then asks
+`singleton` to verify the password or token. Arbitrary Durable Object names
+exist on demand, so the Gateway first checks the Master placement and an unknown
+object never bootstraps itself. The Master may idempotently complete a known
+`provisioning` placement before selection; only `active` accepts scoped
+authentication. Unknown or unsuccessfully provisioned placements return HTTP
+404 before upgrade; credential failures occur inside the socket. Canonical
+usernames are public, so username non-enumerability is not promised.
 
 Setup mode on `/ws` accepts only commissioning syscalls until the first
 user/root credential and user-Kernel provisioning state are created. Passwords
@@ -108,6 +110,9 @@ One source can no longer lock another source out of a target or exhaust its
 work budget. Cloudflare WAF/source limiting remains a public-registration gate
 as defense in depth against distributed abuse, rotating botnets, shared-source
 pressure, and traffic that reaches the fixed unavailable-source scope.
+Cloudflare's Workers Rate Limiting binding may shed edge bursts, but its
+per-location, asynchronously updated counters do not replace these durable
+Master limits for an authentication decision.
 
 First-run commissioning on `/ws` claims a durable leased state before bootstrap
 or account mutations begin. Concurrent setup requests are rejected. The exact
@@ -124,21 +129,12 @@ group/world-readable.
 
 Deployment secrets live in Cloudflare configuration and bound services.
 Both ship-wide `config/...` values and authoritative personal
-`users/{uid}/...` values live in Master Control Program SQLite. Active user
-Kernels receive filtered, replaceable runtime projections and forward
-`sys.config.get` and `sys.config.set` to the Master. Non-root projections and
-reads use a positive allowlist of deliberately shared system settings. Unknown
-`config/...` keys and credential-bearing settings remain Master/root-only even
-when their names do not resemble a conventional secret.
-
-The v21 projection record binds each installed snapshot to its canonical
-username, uid, user-Kernel generation, monotonically increasing Master revision,
-and SHA-256 digest. An older revision, or different bytes under the same
-revision, fails closed. Package-authority changes additionally persist a fence,
-abort and drain package-stamped Kernel, Process, schedule, and registered
-AppRunner work, install the exact committed projection, and clear only after
-exact acknowledgements. Interrupted transitions remain fenced while durable
-recovery retries them.
+`users/{uid}/...` values live only in Master Control Program SQLite. User
+Kernels forward `sys.config.get` and `sys.config.set` and other internal config
+reads to the Master. Non-root reads use a positive allowlist of deliberately
+shared system settings. Unknown `config/...` keys and credential-bearing
+settings remain Master/root-only even when their names do not resemble a
+conventional secret.
 
 OAuth account credentials live in the owning user Kernel SQLite, separate from
 runtime config.
@@ -148,12 +144,12 @@ tokens are managed by the owning user Kernel Agent MCP client manager; GSV keeps
 separate user ownership metadata so MCP listing and tool calls are scoped before
 CodeMode or shell can use them.
 
-Migration v23 binds each newly created `oauth_flows` row to the human Kernel
-owner that admitted it. Generic authorization-code callbacks acquire that exact
-owner's lifecycle admission before consuming the opaque state and retain it
-through the bounded provider exchange and credential commit. Pre-v23 callback
-rows keep a `NULL` owner and fail closed; the run-as uid and routing locator are
-never used to guess the missing owner.
+Each `oauth_flows` row binds the human Kernel owner that admitted it. Generic
+authorization-code callbacks route to the candidate Kernel by canonical
+username, then verify that exact owner and atomically consume the full opaque
+state before the bounded provider exchange and credential commit. A missing
+owner fails closed; the run-as uid and routing locator are never used to guess
+one.
 
 Agent processes receive the AI runtime configuration they need to call the
 selected model provider, including the resolved provider key. That key is used
@@ -169,6 +165,13 @@ Capabilities are group based. The Master Control Program stores grants such as
 unless the caller's Master-issued capabilities match the exact syscall, the
 syscall domain wildcard, or `*`.
 
+`account.get` is the identity-resolution surface: it returns the canonical
+account record and exposes run-as fields such as capabilities or
+`personalAgentUid` only when the caller may delegate to that account.
+`sys.cap.list` returns current Master-owned capability grants filtered to the
+caller's visible groups. Neither result is persisted as a user-Kernel authority
+store.
+
 The full `*` capability is reserved for gid `0`; migrations remove it from any
 non-root group and account provisioning rejects it. Object-level root checks
 use uid `0`, not possession of a capability string.
@@ -183,11 +186,15 @@ Default groups are intentionally OS-like:
 - `services` (`gid 102`) receives `adapter.*`.
 
 Capabilities are necessary but not always sufficient. Handlers also enforce
-object ownership. Non-root users can access only their own processes and
-workspaces. Non-root config reads include their own `users/{uid}/...` keys and
-only explicitly shared `config/...` keys. A new system key is private by
-default until its semantics are reviewed and added to that allowlist. Non-root
-config writes are limited to user-overridable `users/{uid}/ai/...` keys.
+object ownership. A non-root human and processes run by that human see only the
+human's owner-scoped processes and runtime state. Personal and owned agents use
+their own uid/gids for Unix and device permissions, but human-owned control
+plane state such as OAuth, tokens, links, and schedules remains scoped to the
+controlling human. Non-root config reads include the run-as account's own
+namespace, the controlling human's user-overridable keys, and only explicitly
+shared `config/...` keys. A new system key is private by default until its
+semantics are reviewed and added to that allowlist. Non-root config writes are
+limited to authorized user-overridable `users/{uid}/ai/...` keys.
 
 ## Files and Shell
 
@@ -208,8 +215,12 @@ R2's unconditional delete cannot erase a concurrent replacement.
 
 Process media, package runtime artifacts, and process source overlays are
 internal R2 namespaces and are not mounted into a non-root process filesystem.
-`/public` remains readable but is root-managed. Non-root callers cannot search
-the raw filesystem root or `/home`, which would bypass account-home routing.
+`/public` remains readable but is root-managed. `/home` is a virtual account
+directory: it lists the caller's runnable accounts plus registered account
+homes whose explicit directory marker grants read and execute access. Paths
+inside those homes still use the caller's uid/gids and ordinary Unix mode bits;
+seeing a username never grants file access. Non-root callers cannot search the
+raw filesystem root, which would bypass the mounted authorization boundaries.
 
 Device file tools and shell tools are not a sandbox. Relative paths resolve
 against the device workspace, but absolute paths are used as-is on the device.
@@ -240,11 +251,10 @@ runs the native implementation. A device target is forwarded only when:
 The forwarded request keeps the same syscall shape. Agents always see the same
 tools; `target` selects the hardware.
 
-These checks currently apply to the device registry owned by the selected
-Kernel. A legacy `singleton` root can see the devices in that legacy registry,
-but `user:root` cannot yet discover or route devices owned by another active
-user Kernel. Cross-shard root administration and group/ACL device forwarding
-remain multiuser release gates and fail closed today.
+These checks apply to the device registry owned by the selected user Kernel.
+`user:root` cannot yet discover or route devices owned by another user Kernel.
+Cross-shard root administration and group/ACL device forwarding remain
+multiuser release gates and fail closed today.
 
 ## Adapters and External Actors
 
@@ -254,15 +264,20 @@ actor must be linked to an immutable canonical username and uid before messages
 are delivered through that user's Kernel to their processes.
 
 The Master Control Program owns global adapter-account/link uniqueness. It
-currently resolves the authoritative link and active user-Kernel placement from
-bounded adapter/account/actor/frame/surface metadata for each inbound message.
-For an active placement it issues an exact, expiring, one-shot grant; the
-Gateway sends the full frame directly to the target, which consumes the grant
-and rechecks local lifecycle before delivery. Active-user and unknown-actor
-text, media, reply context, and full frames never enter `singleton`; only an
-explicit `legacy` placement retains that relay. Payload usernames never select
-a Kernel. Generation-bound adapter projections that remove the remaining
-per-message Master metadata lookup remain target work.
+routes adapter traffic in both directions today. For inbound work, the scoped
+Gateway entrypoint calls the Master with the normalized frame. The Master
+validates bounded adapter/account/actor/surface fields and resolves the current
+identity link. It idempotently completes a known `provisioning` owner placement
+and invokes only the resulting active user Kernel. The target verifies the
+Master source and its own username/uid marker before delivery. Payload usernames
+never select a Kernel.
+
+For outbound replies, the user Kernel presents the stored adapter run route to
+the Master. The Master rechecks the active owner, adapter account, external
+actor, surface, and monotonic link revision before invoking the adapter worker.
+If measured traffic makes this path material, a short-lived in-memory cache may
+be populated and invalidated by Master push; it must never become a durable
+link-authority store.
 
 For unlinked actors, direct messages receive a link challenge such as
 `gsv auth link CODE`. Non-DM messages from unlinked actors are dropped. Once
@@ -282,37 +297,21 @@ declared by the package entrypoint. The owning user Kernel executes those
 syscalls as the authenticated user and still applies normal
 syscall/device/resource checks.
 
-An active app-session route binds canonical username, uid, Kernel generation,
-expiry, nonce, and a Master-issued P-256 placement certificate into a separate
-user-Kernel HMAC. The Gateway verifies the certificate with the internal public
-SPKI record before it selects `user:<username>`; the target then checks its exact
-active marker, HMAC, and local session. A forged route therefore cannot wake a
-caller-selected user DO. Active app request and response bodies bypass
-`singleton`. A generation-less UUID route is valid only when the Master records
-that owner as explicit `legacy`; it is never an active-user fallback.
+An active app-session route has the bounded form
+`gsv1b~username~uid~expiresAt~nonce~signature`. The signature is a local
+user-Kernel HMAC over the locator fields. The Gateway parses the canonical
+username and bounds to select `user:<username>`; the target then checks its
+active marker, HMAC, expiry, launch/client secret, and exact local session. A
+forged route may wake only the bounded named object and fails there without
+acquiring authority. Active app request and response bodies bypass `singleton`.
 
-Authority-bearing runtime state and package-reachable data are separated.
-HTTP, sockets, commands, signals, sessions, and daemon schedules use
-`app-control-v3:<kernelOwnerUid>:<actorUid>:<encodedPackageId>`. Approved
-package SQL uses the data-only
-`app-data-v2:<kernelOwnerUid>:<actorUid>:<encodedPackageId>` object. The
-pre-owner-qualified `app-control-v2:` and `app-data:` objects and the older
-combined `app:<uid>:<package-id>` objects remain preserved but unreachable; no
-automatic package-SQL migration is claimed.
-
-The v22 registry records only control and data objects that successfully pass
-current Kernel authorization. It binds the exact runner name, package actor
-username/uid, controlling human Kernel-owner username/uid, and package id; the
-Kernel owner, actor, and package jointly determine the runner name while the
-Kernel owner determines fence authority. Failure to record denies the call.
-Package and user-lifecycle fences use that observed set to persist a new,
-never-reused local runtime epoch, close admission, sockets, and alarms, abort
-tracked cancelable streams, and wait for each tracked wrapper to release before
-the Kernel fence clears. Uncancelable Loader RPC promises are abandoned on
-fence abort and remain observed; their permanently revoked epoch cannot re-enter
-the AppRunner or call the GSV platform as current work. An object name alone
-never grants authority, and unused deterministic names are not instantiated
-merely to fence them.
+One deterministic `app:<actorUid>:<packageId>` AppRunner owns package
+runtime, live sockets, daemon schedules, and package-reachable SQLite for that
+ship-global actor uid and package. Its name is a locator, not authority. The
+active user Kernel validates the current run-as account, enabled/reviewed
+package, artifact hash, entrypoint, and requested call against the Master
+before admitting package work. AppRunner re-entry into the platform carries an
+exact app frame and is reauthorized through that user Kernel.
 
 Assembler artifacts are untrusted input. The Kernel recomputes their canonical
 SHA-256 identity, validates module and public-file shape again whenever an
@@ -327,8 +326,8 @@ compatibility path that validates the canonical requested and claimed hash plus
 all retained module structure, but cannot reconstruct the original full digest.
 Migration must reassemble the full artifact from trusted package source, verify
 that its canonical digest equals the installed hash, and conditionally replace
-the exact legacy loader object with the versioned record. The compatibility
-path is removed after upgraded ships have no legacy records left.
+the exact older loader object with the versioned record. The compatibility path
+is removed after upgraded ships have no unversioned records left.
 
 Non-builtin packages require review before they can be enabled. Package metadata
 records requested bindings and egress grants; default egress is `none`.
@@ -341,18 +340,14 @@ source repositories are readable only when their package is visible to the
 caller. Pushes require the repo owner or root.
 
 Git authentication is a bounded Master admission check, not a repository data
-path. For an authenticated request, the Master snapshots an active or
-explicit-legacy placement, enters that username's lifecycle-transition
-barrier, runs the bounded password-or-token verifier, and then rechecks the
-exact username, uid, placement generation, lifecycle, capabilities, and
-repository ACL. Unknown, suspended, retired, and transitioning accounts still
-receive bounded verifier work and the same generic external authentication
-shape, but cannot be admitted as that identity. An explicitly public read may
-still proceed anonymously. Once admitted, the Gateway sends the original request
-directly to RIPGIT; neither its body nor repository response data transits a
-Kernel. A lifecycle transition prevents new admission and drains credential
-checks already inside the barrier, while requests admitted before that boundary
-may finish in RIPGIT.
+path. For an authenticated request, the Master applies the durable abuse limit,
+runs the bounded password-or-token verifier, and checks the exact username,
+uid, active placement, capabilities, repository owner, and ACL. Unknown or
+non-active accounts receive bounded verifier work and the same generic external
+authentication shape but cannot be admitted as that identity. An explicitly
+public read may still proceed anonymously. Once admitted, the Gateway sends the
+original request directly to RIPGIT; neither its body nor repository response
+data transits a Kernel.
 
 ## What GSV Does Not Protect Against
 

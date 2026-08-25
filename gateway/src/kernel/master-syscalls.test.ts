@@ -1,11 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { SyscallName } from "../syscalls";
-import {
-  failedMasterMutationNeedsGlobalPackageInvalidation,
-  failedMasterMutationNeedsGlobalRepoInvalidation,
-  isMasterOwnedSyscall,
-  masterMutationNeedsProjectionRefresh,
-} from "./master-syscalls";
+import { isMasterOwnedSyscall } from "./master-syscalls";
 
 const USER_KERNEL_INTEGRATION_SYSCALLS = [
   "sys.oauth.start",
@@ -46,33 +41,11 @@ describe("master syscall ownership", () => {
     "pkg.remote.add",
     "pkg.remote.remove",
     "pkg.public.set",
-  ] satisfies SyscallName[])("refreshes the caller projection after %s", (call) => {
-    expect(masterMutationNeedsProjectionRefresh(call)).toBe(true);
+  ] satisfies SyscallName[])("routes %s directly to the Master", (call) => {
+    expect(isMasterOwnedSyscall(call)).toBe(true);
   });
 
-  it.each([
-    "sys.bootstrap",
-    "pkg.add",
-    "pkg.create",
-    "pkg.sync",
-    "pkg.checkout",
-    "pkg.install",
-    "pkg.review.approve",
-    "pkg.remove",
-    "pkg.public.set",
-  ] satisfies SyscallName[])("globally invalidates package projections when %s fails", (call) => {
-    expect(failedMasterMutationNeedsGlobalPackageInvalidation(call)).toBe(true);
-  });
-
-  it("keeps failed caller-private mutations out of global invalidation", () => {
-    expect(failedMasterMutationNeedsGlobalPackageInvalidation("pkg.remote.add")).toBe(false);
-    expect(failedMasterMutationNeedsGlobalPackageInvalidation("pkg.remote.remove")).toBe(false);
-    expect(failedMasterMutationNeedsGlobalRepoInvalidation("pkg.create")).toBe(true);
-    expect(failedMasterMutationNeedsGlobalRepoInvalidation("pkg.public.set")).toBe(true);
-    expect(failedMasterMutationNeedsGlobalRepoInvalidation("pkg.install")).toBe(false);
-  });
-
-  it("does not infer Master ownership or projection refresh from a namespace prefix", () => {
+  it("does not infer Master ownership from a namespace prefix", () => {
     const futurePackageCall = "pkg.future.data-plane" as SyscallName;
     const futureAccountCall = "account.future.local" as SyscallName;
     const futureAdapterCall = "adapter.future.local" as SyscallName;
@@ -80,6 +53,5 @@ describe("master syscall ownership", () => {
     expect(isMasterOwnedSyscall(futurePackageCall)).toBe(false);
     expect(isMasterOwnedSyscall(futureAccountCall)).toBe(false);
     expect(isMasterOwnedSyscall(futureAdapterCall)).toBe(false);
-    expect(masterMutationNeedsProjectionRefresh(futurePackageCall)).toBe(false);
   });
 });

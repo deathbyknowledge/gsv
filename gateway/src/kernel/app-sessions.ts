@@ -1,6 +1,5 @@
 import {
   buildAppClientRpcBase,
-  isLegacyAppSessionId,
   parseRoutedAppSessionId,
   type AppClientSessionContext,
   type AppSessionClientContext,
@@ -62,7 +61,7 @@ export type AppSessionIdFactory = (input: {
 export class AppSessionStore {
   constructor(
     private readonly sql: SqlStorage,
-    private readonly createSessionId: AppSessionIdFactory = async () => crypto.randomUUID(),
+    private readonly createSessionId: AppSessionIdFactory,
   ) {}
 
   async issue(input: {
@@ -81,12 +80,17 @@ export class AppSessionStore {
       uid: input.uid,
       username: input.username,
     });
-    if (!isLegacyAppSessionId(sessionId) && !parseRoutedAppSessionId(sessionId)) {
+    const route = parseRoutedAppSessionId(sessionId);
+    if (
+      !route
+      || route.uid !== input.uid
+      || route.username !== input.username
+    ) {
       throw new Error("Invalid app session id");
     }
     const expiresAt = Math.min(
       now + input.ttlMs,
-      routeExpiryLimit(sessionId) ?? Number.MAX_SAFE_INTEGER,
+      route.expiresAt,
     );
     if (expiresAt <= now) {
       throw new Error("App session route expired before issuance");
@@ -148,6 +152,10 @@ export class AppSessionStore {
     ttlMs: number;
   }): Promise<IssuedAppClientSession | null> {
     this.pruneExpired();
+    const route = parseRoutedAppSessionId(input.sessionId);
+    if (!route || route.uid !== input.uid) {
+      return null;
+    }
     const session = this.getSessionRow(input.sessionId);
     if (!this.isActiveSessionForUid(session, input.uid)) {
       return null;
@@ -156,7 +164,7 @@ export class AppSessionStore {
     const now = Date.now();
     const expiresAt = Math.min(
       now + input.ttlMs,
-      routeExpiryLimit(input.sessionId) ?? Number.MAX_SAFE_INTEGER,
+      route.expiresAt,
     );
     if (expiresAt <= now) {
       return null;
@@ -191,6 +199,10 @@ export class AppSessionStore {
     assertCurrent?: () => void,
   ): Promise<AppClientSessionContext | null> {
     this.pruneExpired();
+    const route = parseRoutedAppSessionId(sessionId);
+    if (!route) {
+      return null;
+    }
     const verified = await this.verifySecret(sessionId, secret);
     if (!verified.ok) {
       return null;
@@ -229,6 +241,10 @@ export class AppSessionStore {
     assertCurrent?: () => void,
   ): Promise<AppClientSessionContext | null> {
     this.pruneExpired();
+    const route = parseRoutedAppSessionId(sessionId);
+    if (!route) {
+      return null;
+    }
     const verified = await this.verifySecret(sessionId, secret);
     if (!verified.ok) {
       return null;
@@ -238,7 +254,7 @@ export class AppSessionStore {
     const now = Date.now();
     const expiresAt = Math.min(
       now + ttlMs,
-      routeExpiryLimit(sessionId) ?? Number.MAX_SAFE_INTEGER,
+      route.expiresAt,
     );
     if (expiresAt <= now) {
       return null;
@@ -284,7 +300,9 @@ export class AppSessionStore {
        ORDER BY last_used_at DESC, created_at DESC`,
       uid,
       Date.now(),
-    ).toArray().map((row) => this.toSessionContext(row));
+    ).toArray()
+      .filter(isRoutedSessionRow)
+      .map((row) => this.toSessionContext(row));
   }
 
   getActiveForUid(uid: number, sessionId: string): AppSessionContext | null {
@@ -387,7 +405,8 @@ export class AppSessionStore {
       "SELECT * FROM app_sessions WHERE session_id = ? LIMIT 1",
       sessionId,
     )];
-    return rows[0] ?? null;
+    const row = rows[0] ?? null;
+    return row && isRoutedSessionRow(row) ? row : null;
   }
 
   private getActiveClientRows(sessionId: string): AppSessionClientRow[] {
@@ -576,6 +595,12 @@ function sessionState(row: AppSessionRow, clients: AppClientSessionContext[]): A
   return clients.length > 0 ? "active" : "detached";
 }
 
-function routeExpiryLimit(sessionId: string): number | null {
-  return parseRoutedAppSessionId(sessionId)?.expiresAt ?? null;
+function isRoutedSessionRow(row: AppSessionRow): boolean {
+  const route = parseRoutedAppSessionId(row.session_id);
+  return Boolean(
+    route
+    && route.uid === row.uid
+    && route.username === row.username
+    && row.expires_at <= route.expiresAt
+  );
 }

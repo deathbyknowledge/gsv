@@ -85,7 +85,7 @@ export class GsvFs implements IFileSystem {
 
   async readFile(path: string, options?: { encoding?: BufferEncoding | null } | BufferEncoding): Promise<string> {
     const p = await this.resolveFinalPath(path);
-    return (await this.backendForPath(p)).readFile(p, options);
+    return await (await this.backendForPath(p)).readFile(p, options);
   }
 
   async readFileBuffer(path: string): Promise<Uint8Array> {
@@ -265,7 +265,11 @@ export class GsvFs implements IFileSystem {
       return this.readdirVar();
     }
 
-    if (normalized === "/home" && this.identity.uid !== 0) {
+    if (
+      normalized === "/home"
+      && this.identity.uid !== 0
+      && !(this.accountHomeBackend && await this.accountHomeBackend.handles(normalized))
+    ) {
       throw new Error("EACCES: permission denied, '/home'");
     }
 
@@ -391,9 +395,13 @@ export class GsvFs implements IFileSystem {
   ): Promise<FsSearchBackendResult> {
     signal?.throwIfAborted();
     const requestedPath = normalizePath(path);
+    if (this.identity.uid !== 0 && requestedPath === "/") {
+      throw new Error(`EACCES: permission denied, '${requestedPath}'`);
+    }
     if (
       this.identity.uid !== 0
-      && (requestedPath === "/" || requestedPath === "/home")
+      && requestedPath === "/home"
+      && !(this.accountHomeBackend && await this.accountHomeBackend.handles(requestedPath))
     ) {
       throw new Error(`EACCES: permission denied, '${requestedPath}'`);
     }
@@ -474,10 +482,6 @@ export class GsvFs implements IFileSystem {
   }
 
   private async backendForPath(path: string): Promise<MountBackend> {
-    if (hasInternalDirectoryMarkerSegment(path)) {
-      throw new Error(`EACCES: permission denied, '${normalizePath(path)}'`);
-    }
-
     if (this.identity.uid !== 0 && isInternalStoragePath(path)) {
       throw new Error(`EACCES: permission denied, '${normalizePath(path)}'`);
     }
@@ -487,6 +491,12 @@ export class GsvFs implements IFileSystem {
         throw new Error(`ENOSYS: source backend is unavailable for '${path}'`);
       }
       return this.sourceBackend;
+    }
+
+    // `.dir` is R2's private marker name, not a globally reserved filename.
+    // Source repositories may legitimately contain that name.
+    if (hasInternalDirectoryMarkerSegment(path)) {
+      throw new Error(`EACCES: permission denied, '${normalizePath(path)}'`);
     }
 
     const accountHomeBackend = this.accountHomeBackend;
@@ -547,8 +557,9 @@ export class GsvFs implements IFileSystem {
     }
 
     if (this.accountHomeBackend) {
+      entries.add("home");
       const homeRoot = this.identity.home.replace(/^\/+/, "").split("/", 1)[0];
-      if (homeRoot) {
+      if (homeRoot && homeRoot !== "home") {
         entries.add(homeRoot);
       }
     }
@@ -595,13 +606,7 @@ export class GsvFs implements IFileSystem {
 
 function isInternalStoragePath(path: string): boolean {
   const normalized = normalizePath(path);
-  return INTERNAL_STORAGE_ROOTS.some((root) => isPathWithin(normalized, root))
-    || isLegacyConversationArchivePath(normalized);
-}
-
-/** Legacy transcripts were stored in a shared run-as account's home. */
-function isLegacyConversationArchivePath(path: string): boolean {
-  return /^\/(?:root|home\/[^/]+)\/conversations(?:\/|$)/.test(path);
+  return INTERNAL_STORAGE_ROOTS.some((root) => isPathWithin(normalized, root));
 }
 
 function isPathWithin(path: string, root: string): boolean {

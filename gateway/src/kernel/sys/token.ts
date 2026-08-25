@@ -1,4 +1,4 @@
-import type { KernelContext } from "../context";
+import { resolveCallerOwnerUid, type KernelContext } from "../context";
 import type { AuthTokenKind, AuthTokenRole } from "../auth-store";
 import type {
   SysTokenCreateArgs,
@@ -32,6 +32,22 @@ function parseOptionalUid(input: unknown): number | undefined {
     throw new Error("uid must be a non-negative integer");
   }
   return input;
+}
+
+function resolveTokenUid(
+  ctx: KernelContext,
+  callerUid: number,
+  requestedUid: number | undefined,
+  action: string,
+  rootDefault: number | undefined,
+): number | undefined {
+  if (callerUid === 0) return requestedUid ?? rootDefault;
+
+  const ownerUid = resolveCallerOwnerUid(ctx);
+  if (requestedUid !== undefined && requestedUid !== ownerUid) {
+    throw new Error(`Permission denied: cannot ${action} tokens for another user`);
+  }
+  return ownerUid;
 }
 
 function parseTokenKind(input: unknown): AuthTokenKind {
@@ -96,10 +112,13 @@ export async function handleSysTokenCreate(
   const isRoot = callerUid === 0;
 
   const raw = args as Record<string, unknown>;
-  const targetUid = parseOptionalUid(raw.uid) ?? callerUid;
-  if (!isRoot && targetUid !== callerUid) {
-    throw new Error("Permission denied: cannot create tokens for another user");
-  }
+  const targetUid = resolveTokenUid(
+    ctx,
+    callerUid,
+    parseOptionalUid(raw.uid),
+    "create",
+    callerUid,
+  )!;
 
   const kind = parseTokenKind(raw.kind);
   if (kind === "user") {
@@ -141,15 +160,10 @@ export function handleSysTokenList(
   ctx: KernelContext,
 ): SysTokenListResult {
   const callerUid = requireUid(ctx);
-  const isRoot = callerUid === 0;
   const raw = args as Record<string, unknown>;
 
   const requestedUid = parseOptionalUid(raw.uid);
-  if (!isRoot && requestedUid !== undefined && requestedUid !== callerUid) {
-    throw new Error("Permission denied: cannot list tokens for another user");
-  }
-
-  const effectiveUid = isRoot ? requestedUid : callerUid;
+  const effectiveUid = resolveTokenUid(ctx, callerUid, requestedUid, "list", undefined);
   return { tokens: ctx.auth.listTokens(effectiveUid) };
 }
 
@@ -158,7 +172,6 @@ export function handleSysTokenRevoke(
   ctx: KernelContext,
 ): SysTokenRevokeResult {
   const callerUid = requireUid(ctx);
-  const isRoot = callerUid === 0;
   const raw = args as Record<string, unknown>;
 
   const tokenId = parseOptionalString(raw.tokenId);
@@ -167,11 +180,7 @@ export function handleSysTokenRevoke(
   }
 
   const requestedUid = parseOptionalUid(raw.uid);
-  if (!isRoot && requestedUid !== undefined && requestedUid !== callerUid) {
-    throw new Error("Permission denied: cannot revoke tokens for another user");
-  }
-
-  const effectiveUid = isRoot ? requestedUid : callerUid;
+  const effectiveUid = resolveTokenUid(ctx, callerUid, requestedUid, "revoke", undefined);
   const revoked = ctx.auth.revokeToken(
     tokenId,
     parseOptionalString(raw.reason),

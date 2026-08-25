@@ -48,24 +48,6 @@ export function canOwnerRunAsAccount(
   return canOwnerDelegateRunAs(auth, ownerUid, target);
 }
 
-/**
- * Whether `ownerUid` may use the account-home (ripgit) overlay for `targetUsername`'s
- * home tree. Used when a human edits another account's `~/context.d` via fs.*.
- */
-export function canOwnerAccessAccountHome(
-  auth: AuthStore,
-  ownerUid: number,
-  viewerUsername: string,
-  targetUsername: string,
-  isRoot: boolean,
-): boolean {
-  if (targetUsername === viewerUsername) return true;
-  if (isRoot) return true;
-  const entry = auth.getPasswdByUsername(targetUsername);
-  if (!entry) return false;
-  return canOwnerRunAsAccount(auth, ownerUid, entry, false);
-}
-
 /** Parse `/home/<username>/...` when present. */
 export function homeUsernameFromPath(path: string): string | null {
   const normalized = path.replace(/\/+/g, "/").replace(/\/$/, "") || "/";

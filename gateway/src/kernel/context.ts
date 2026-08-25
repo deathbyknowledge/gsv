@@ -61,12 +61,23 @@ export type KernelAuthenticationResult =
     }
   | { ok: false; error: string };
 
+export type RunnableAccount = {
+  identity: ProcessIdentity;
+  capabilities: string[];
+  displayName: string;
+  relation: "self" | "personal-agent" | "agent" | "human";
+  packageSecurityRevision: string | null;
+};
+
+export type RunAsAccountResult =
+  | { ok: true; account: RunnableAccount; ownerIdentity: ProcessIdentity }
+  | { ok: false; error: string };
+
 export type KernelContext = {
   env: Env;
   kernelName: string;
   kernelKind: KernelInstanceKind;
   kernelUsername?: string;
-  kernelGeneration?: number;
   /** True only for the target's Master-authorized non-active provisioning pass. */
   kernelProvisioning?: boolean;
   /** Human owner recorded by this active user Kernel's provisioning marker. */
@@ -96,14 +107,10 @@ export type KernelContext = {
   processId?: string;
   processRunId?: string;
   requestSignal?: AbortSignal;
-  /** Throws synchronously when this request's Kernel generation is no longer current. */
+  /** Throws synchronously when this request's user-Kernel marker is no longer current. */
   assertCurrentKernel: () => void;
-  /** True after this admitted operation crosses into package-derived authority. */
-  isPackageProjectionOperation?: () => boolean;
-  /** Marks the operation package-derived before the first package authority await. */
-  markPackageProjectionOperation?: () => void;
   callerOwnerUid?: number;
-  /** Owner selected by a trusted, Master-issued adapter route projection. */
+  /** Owner selected by the Master after resolving the current adapter identity link. */
   routedAdapterOwnerUid?: number;
   /** Master-authoritative identity-link generation for routed inbound delivery. */
   routedAdapterLinkGeneration?: number;
@@ -122,6 +129,15 @@ export type KernelContext = {
    * never hold replicas of account, capability, config, or package state.
    */
   accountGet: (query: AccountGetArgs) => Promise<AccountDetail | null>;
+  resolveRunAsAccount: (input: {
+    ownerUid: number;
+    callerUid: number;
+    selector?: string;
+  }) => Promise<RunAsAccountResult>;
+  listRunnableAccounts: (input: {
+    ownerUid: number;
+    callerUid: number;
+  }) => Promise<RunnableAccount[]>;
   readAuthFile: (kind: "passwd" | "group" | "shadow") => Promise<string>;
   configGet: (key: string) => Promise<string | null>;
   configList: (prefix: string) => Promise<SysConfigEntry[]>;

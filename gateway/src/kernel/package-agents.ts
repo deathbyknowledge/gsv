@@ -21,7 +21,6 @@ import { ensureAccountHomeLayout } from "./account-home";
 import { canOwnerRunAsAccount } from "./account-access";
 import { hasCapability } from "./capabilities";
 import type { KernelContext } from "./context";
-import type { UserKernelProvisioningSnapshot } from "./user-kernels";
 import {
   packageScopeKey,
   resolvePackageProfileReference,
@@ -160,9 +159,8 @@ export type PackageAgentRuntimeAuthorization = {
 
 /**
  * The single package-agent runtime authorization algorithm. It deliberately
- * accepts only stores that are either Master-authoritative or installed from a
- * verified user-Kernel projection, so both boundaries enforce identical
- * account, delegation, package, revision, and capability semantics.
+ * runs only against Master-authoritative stores, so account, delegation,
+ * package, revision, and capability semantics have one source of truth.
  */
 export async function isPackageAgentRuntimeAuthorized(
   ctx: Pick<KernelContext, "auth" | "caps" | "config" | "packages">,
@@ -299,146 +297,6 @@ export async function isPackageAgentRuntimeAuthorized(
     [...desiredCapabilities],
     input.requiredCall,
   );
-}
-
-/**
- * Recompute every projected package security revision before it can become
- * local authority. This rejects partial stamps, duplicate tuples, stale
- * package/profile hashes, delegation drift, and capability amplification.
- */
-export async function validatePackageAgentProjectionSecurity(
-  snapshot: Pick<
-    UserKernelProvisioningSnapshot,
-    "uid" | "username" | "accounts" | "groups" | "capabilities" | "config" | "packages"
-  >,
-): Promise<void> {
-  const config = new Map<string, string>();
-  for (const entry of snapshot.config) {
-    if (
-      !entry
-      || typeof entry.key !== "string"
-      || typeof entry.value !== "string"
-      || config.has(entry.key)
-    ) {
-      throw new Error("User Kernel config projection is invalid");
-    }
-    config.set(entry.key, entry.value);
-  }
-  const groups = new Map(snapshot.groups.map((group) => [group.name, group]));
-  if (groups.size !== snapshot.groups.length) {
-    throw new Error("User Kernel group projection is invalid");
-  }
-  const capabilities = new Map<number, Set<string>>();
-  for (const grant of snapshot.capabilities) {
-    const current = capabilities.get(grant.gid) ?? new Set<string>();
-    if (current.has(grant.capability)) {
-      throw new Error("User Kernel capability projection is invalid");
-    }
-    current.add(grant.capability);
-    capabilities.set(grant.gid, current);
-  }
-  const packages = new Map<string, InstalledPackageRecord>();
-  for (const record of snapshot.packages) {
-    const key = `${packageScopeKey(record.scope)}\0${record.packageId}`;
-    if (packages.has(key)) throw new Error("User Kernel package projection is invalid");
-    packages.set(key, record);
-  }
-  const accountsByUid = new Map(snapshot.accounts.map((account) => [account.entry.uid, account]));
-  if (accountsByUid.size !== snapshot.accounts.length) {
-    throw new Error("User Kernel account projection is invalid");
-  }
-  const tupleOwners = new Set<string>();
-  for (const account of snapshot.accounts) {
-    const entry = account.entry;
-    const values = {
-      packageId: config.get(packageAgentOwnerKey(entry.uid)) ?? null,
-      scope: config.get(packageAgentScopeKey(entry.uid)) ?? null,
-      profileName: config.get(packageAgentProfileKey(entry.uid)) ?? null,
-      humanUid: config.get(packageAgentHumanUidKey(entry.uid)) ?? null,
-      accessGroup: config.get(packageAgentAccessGroupKey(entry.uid)) ?? null,
-      contextFiles: config.get(packageAgentContextFilesKey(entry.uid)) ?? null,
-      revision: config.get(packageAgentSecurityRevisionKey(entry.uid)) ?? null,
-    };
-    if (Object.values(values).every((value) => value === null)) continue;
-    if (
-      !values.packageId
-      || !values.scope
-      || !values.profileName
-      || !values.accessGroup
-      || values.contextFiles === null
-      || !values.revision
-      || account.kind !== "agent"
-      || !account.locked
-      || !/^sha256:[0-9a-f]{64}$/.test(values.revision)
-    ) {
-      throw new Error(`Package agent projection is invalid for uid ${entry.uid}`);
-    }
-    const humanUid = parseHumanUid(values.humanUid);
-    const scope = parsePackageAgentScope(values.scope);
-    const humanOwner = humanUid === null ? null : accountsByUid.get(humanUid);
-    const rootProjection = snapshot.uid === 0 && snapshot.username === "root";
-    const projectedOwnerIsActiveLogin = Boolean(
-      humanOwner
-      && !humanOwner.locked
-      && (
-        humanOwner.kind === "human"
-        || (
-          humanOwner.kind === "system"
-          && humanOwner.entry.uid === 0
-          && humanOwner.entry.username === "root"
-        )
-      ),
-    );
-    if (
-      humanUid === null
-      || (!rootProjection && humanUid !== snapshot.uid)
-      || !projectedOwnerIsActiveLogin
-      || !scope
-      || (scope.kind === "user" && scope.uid !== humanUid)
-    ) {
-      throw new Error(`Package agent owner projection is invalid for uid ${entry.uid}`);
-    }
-    const tuple = JSON.stringify([values.scope, values.packageId, values.profileName, humanUid]);
-    if (tupleOwners.has(tuple)) throw new Error("Package agent projection tuple is duplicated");
-    tupleOwners.add(tuple);
-
-    const record = packages.get(`${values.scope}\0${values.packageId}`);
-    const profile = record?.manifest.profiles?.find((candidate) => (
-      candidate.name === values.profileName
-    ));
-    if (!record || !isActivePackageAgentRecord(record) || !profile) {
-      throw new Error(`Package agent package projection is invalid for uid ${entry.uid}`);
-    }
-    if (await packageAgentSecurityRevision(record, profile) !== values.revision) {
-      throw new Error(`Package agent security revision projection is invalid for uid ${entry.uid}`);
-    }
-    const accessGroup = groups.get(values.accessGroup);
-    if (
-      values.accessGroup !== packageAgentAccessGroup(entry.username)
-      || !accessGroup
-      || accessGroup.members.length !== 1
-      || accessGroup.members[0] !== humanOwner?.entry.username
-    ) {
-      throw new Error(`Package agent delegation projection is invalid for uid ${entry.uid}`);
-    }
-    const desired = new Set(profile.capabilities ?? []);
-    const actual = capabilities.get(entry.gid) ?? new Set<string>();
-    if (
-      desired.size !== actual.size
-      || [...desired].some((capability) => !actual.has(capability))
-    ) {
-      throw new Error(`Package agent capability projection is invalid for uid ${entry.uid}`);
-    }
-  }
-
-  for (const key of config.keys()) {
-    const match = /^users\/(\d+)\/pkg\/security_revision$/.exec(key);
-    if (!match) continue;
-    const uid = Number(match[1]);
-    if (!snapshot.accounts.some((account) => account.entry.uid === uid)) {
-      throw new Error("Package agent security revision has no projected account");
-    }
-  }
 }
 
 export function parsePackageAgentScope(value: string): InstalledPackageRecord["scope"] | null {

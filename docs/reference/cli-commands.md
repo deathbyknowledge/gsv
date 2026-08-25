@@ -188,8 +188,10 @@ canonical username.
 
 `auth setup` commissions a new ship; it is not a public registration command.
 Model-mediated admission and public self-registration remain closed and have no
-CLI or Gateway endpoint. Existing accounts classified as `legacy` by migration
-v16 continue using `/ws` until an explicit state migration exists.
+CLI or Gateway endpoint. Every login-capable account uses
+`/ws/<canonical-username>` and must reach an active
+`user:<canonical-username>` Kernel before normal login; first login may cause
+the Master to idempotently complete a backfilled `provisioning` placement.
 
 `login` connects to `/ws/<username>`, authenticates through that provisioned user
 Kernel, creates a short-lived user token with `sys.token.create`, and caches it
@@ -287,12 +289,10 @@ Both accept `--bundle-dir PATH` for local bundles, `--api-token` or
 `CF_API_TOKEN`, `--account-id` or `CF_ACCOUNT_ID`, and `--discord-bot-token` or
 `DISCORD_BOT_TOKEN`.
 
-Adapter entrypoints are a coordinated hard cutover. Upgrade the complete
-component set (the default, or `--all`) when moving from a release that used the
-generic Gateway adapter binding. The rollout uploads a Gateway exporting the
-scoped entrypoints and redeploys every selected adapter with its matching
-binding; deploying only the Gateway intentionally makes older generic adapter
-bindings fail closed.
+Adapter entrypoints and adapter workers are one coordinated deployment unit.
+Upgrade the complete component set (the default, or `--all`) so the Gateway
+exports each scoped entrypoint and every adapter uses its matching binding. A
+missing, generic, or mismatched adapter binding fails closed.
 
 `destroy` tears down Workers. If no component or `--all` is supplied, it targets
 all components. `--delete-bucket` removes the shared R2 bucket; `--purge-bucket`

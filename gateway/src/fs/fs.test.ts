@@ -5,7 +5,6 @@ import type { KernelRefs } from "./index";
 import { visiblePackageScopesForActor } from "../kernel/packages";
 import type { ProcessIdentity } from "@humansandmachines/gsv/protocol";
 import { provisionR2Directory, R2MountBackend } from "./backends/r2";
-import { APP_PLACEMENT_VERIFICATION_KEY_OBJECT } from "../shared/app-placement-certificate";
 
 const ROOT: ProcessIdentity = {
   uid: 0,
@@ -103,6 +102,7 @@ describe("GsvFs openFile", () => {
 function makeConfigBackedFs(
   identity: ProcessIdentity,
   initialEntries: Record<string, string>,
+  process?: { pid: string; ownerUid: number },
 ): GsvFs {
   const entries = new Map<string, string>(Object.entries(initialEntries));
   const config = {
@@ -127,11 +127,17 @@ function makeConfigBackedFs(
 
   return new GsvFs(env.STORAGE, identity, {
     auth: null as never,
-    procs: null as never,
+    procs: process
+      ? {
+          getOwnerUid(pid: string) {
+            return pid === process.pid ? process.ownerUid : null;
+          },
+        } as never
+      : null as never,
     devices: null as never,
     caps: null as never,
     config: config as never,
-  });
+  }, process?.pid);
 }
 
 function makeRuntimeViewFs(identity: ProcessIdentity, selfPid?: string): GsvFs {
@@ -443,7 +449,9 @@ function makeRuntimeViewFs(identity: ProcessIdentity, selfPid?: string): GsvFs {
     ["users/1000/ai/model_profiles/fast-stack/api_key", "sk-profile"],
     ["users/1000/ai/model_profiles/fast-stack/image/read/api_key", "sk-image"],
     ["users/1000/ai/model_profiles/fast-stack/speech/api_key", "sk-speech"],
+    ["users/2000/ai/model", "agent-model"],
   ]);
+  const ownerUid = selfPid === "task-personal" ? SAM.uid : identity.uid;
   let processAiConfig: any = null;
   const passwdEntries = [ROOT, SAM, ALICE, SAM_AGENT].map((user) => ({
     username: user.username,
@@ -453,7 +461,8 @@ function makeRuntimeViewFs(identity: ProcessIdentity, selfPid?: string): GsvFs {
     home: user.home,
     shell: "/bin/sh",
   }));
-  const canAccessCrontab = (username: string) => identity.uid === 0 || identity.username === username;
+  const canAccessCrontab = (username: string) =>
+    identity.uid === 0 || (ownerUid === SAM.uid && [SAM.username, SAM_AGENT.username].includes(username));
 
   const kernel: KernelRefs = {
     auth: {
@@ -505,6 +514,9 @@ function makeRuntimeViewFs(identity: ProcessIdentity, selfPid?: string): GsvFs {
           .filter(([key]) => key.startsWith(withSlash))
           .map(([key, value]) => ({ key, value }));
       },
+    },
+    async writeConfig(key: string, value: string) {
+      configEntries.set(key, value);
     },
     packages: {
       async listVisible(options?: { enabled?: boolean }) {
@@ -837,6 +849,29 @@ describe("GsvFs permissions", () => {
     expect(content).toBe("hello world");
   });
 
+  it("fails closed when filesystem ownership metadata is missing or malformed", async () => {
+    const missing = `${TEST_PREFIX}missing-metadata.txt`;
+    const malformed = `${TEST_PREFIX}malformed-metadata.txt`;
+    await env.STORAGE.put(missing, "not implicitly public");
+    await env.STORAGE.put(malformed, "also private", {
+      customMetadata: { uid: "1000x", gid: "1000", mode: "644" },
+    });
+
+    const fs = makeFs(SAM);
+    for (const path of [`/${missing}`, `/${malformed}`]) {
+      await expect(fs.exists(path)).rejects.toThrow("EACCES");
+      await expect(fs.stat(path)).rejects.toThrow("EACCES");
+      await expect(fs.readFile(path)).rejects.toThrow("EACCES");
+      await expect(fs.openFile(path)).rejects.toThrow("EACCES");
+      await expect(fs.search(path, "private")).rejects.toThrow("EACCES");
+      await expect(fs.writeFile(path, "changed")).rejects.toThrow("EACCES");
+    }
+
+    await expect(makeFs(ROOT).readFile(`/${missing}`))
+      .resolves
+      .toBe("not implicitly public");
+  });
+
   it("non-owner is denied writing a 644 file", async () => {
     await putFile(`${TEST_PREFIX}readonly.txt`, "original", {
       uid: "0", gid: "0", mode: "644",
@@ -1088,6 +1123,7 @@ describe("R2 creation parent permissions", () => {
       `${TOP_LEVEL_DIRECTORY}/.dir`,
       TOP_LEVEL_LINK,
     ]);
+    await provisionR2Directory(env.STORAGE, `/${PREFIX}`, ROOT, "755");
   });
 
   it("denies non-root creation directly beneath the root", async () => {
@@ -1437,6 +1473,12 @@ describe("GsvFs chmod", () => {
     for (const obj of listed.objects) {
       await env.STORAGE.delete(obj.key);
     }
+    await provisionR2Directory(
+      env.STORAGE,
+      `/${TEST_PREFIX.replace(/\/$/, "")}`,
+      ROOT,
+      "777",
+    );
   });
 
   it("owner can chmod their file", async () => {
@@ -1486,6 +1528,12 @@ describe("GsvFs chown", () => {
     for (const obj of listed.objects) {
       await env.STORAGE.delete(obj.key);
     }
+    await provisionR2Directory(
+      env.STORAGE,
+      `/${TEST_PREFIX.replace(/\/$/, "")}`,
+      ROOT,
+      "777",
+    );
   });
 
   it("root can chown a file", async () => {
@@ -1643,15 +1691,14 @@ describe("GsvFs system storage boundaries", () => {
   const PUBLIC_KEY = "public/security-test/asset.js";
   const RUNTIME_KEY = "runtime/package-artifacts/security-test.json";
   const ARCHIVE_KEY = "process-conversation-archives/1000/2000/conversation/archive.jsonl.gz";
-  const LEGACY_ARCHIVE_KEY = "home/shared-agent/conversations/conversation/archive.jsonl.gz";
+  const HOME_CONVERSATION_KEY = "home/shared-agent/conversations/conversation/archive.jsonl.gz";
 
   beforeEach(async () => {
     await env.STORAGE.delete([
       PUBLIC_KEY,
       RUNTIME_KEY,
-      APP_PLACEMENT_VERIFICATION_KEY_OBJECT,
       ARCHIVE_KEY,
-      LEGACY_ARCHIVE_KEY,
+      HOME_CONVERSATION_KEY,
     ]);
   });
 
@@ -1679,47 +1726,30 @@ describe("GsvFs system storage boundaries", () => {
     await expect(fs.readdir("/process-source-overlays")).rejects.toThrow("EACCES");
   });
 
-  it("keeps the edge placement trust anchor root-owned and off mounted paths", async () => {
-    await env.STORAGE.put(APP_PLACEMENT_VERIFICATION_KEY_OBJECT, "public-key", {
-      customMetadata: {
-        uid: "0",
-        gid: "0",
-        mode: "444",
-        gsvInternal: "app-placement-verification-key-v1",
-      },
-    });
-    const fs = makeFs(SAM);
-    const mountedPath = `/${APP_PLACEMENT_VERIFICATION_KEY_OBJECT}`;
-
-    await expect(fs.readFile(mountedPath)).rejects.toThrow("EACCES");
-    await expect(fs.writeFile(mountedPath, "forged-key")).rejects.toThrow("EACCES");
-    await expect(fs.rm(mountedPath)).rejects.toThrow("EACCES");
-    await expect(env.STORAGE.head(APP_PLACEMENT_VERIFICATION_KEY_OBJECT))
-      .resolves.toMatchObject({
-        customMetadata: expect.objectContaining({
-          uid: "0",
-          mode: "444",
-          gsvInternal: "app-placement-verification-key-v1",
-        }),
-      });
-  });
-
-  it("keeps current and legacy conversation archives off the non-root filesystem", async () => {
+  it("keeps internal archives private without reserving ordinary conversation paths", async () => {
     await env.STORAGE.put(ARCHIVE_KEY, "private transcript", {
       customMetadata: { uid: "1000", gid: "1000", mode: "600" },
     });
-    await env.STORAGE.put(LEGACY_ARCHIVE_KEY, "legacy transcript", {
-      customMetadata: { uid: "2000", gid: "2000", mode: "600" },
+    await provisionR2Directory(env.STORAGE, "/home/shared-agent", SAM, "700");
+    await provisionR2Directory(env.STORAGE, "/home/shared-agent/conversations", SAM, "700");
+    await provisionR2Directory(
+      env.STORAGE,
+      "/home/shared-agent/conversations/conversation",
+      SAM,
+      "700",
+    );
+    await env.STORAGE.put(HOME_CONVERSATION_KEY, "ordinary user file", {
+      customMetadata: { uid: "1000", gid: "1000", mode: "600" },
     });
     const fs = makeFs(SAM);
 
     await expect(fs.readFile(`/${ARCHIVE_KEY}`)).rejects.toThrow("EACCES");
-    await expect(fs.readFile(`/${LEGACY_ARCHIVE_KEY}`)).rejects.toThrow("EACCES");
+    await expect(fs.readFile(`/${HOME_CONVERSATION_KEY}`)).resolves.toBe("ordinary user file");
     await expect(fs.readdir("/process-conversation-archives")).rejects.toThrow("EACCES");
 
     const rootFs = makeFs(ROOT);
     await expect(rootFs.readFile(`/${ARCHIVE_KEY}`)).resolves.toBe("private transcript");
-    await expect(rootFs.readFile(`/${LEGACY_ARCHIVE_KEY}`)).resolves.toBe("legacy transcript");
+    await expect(rootFs.readFile(`/${HOME_CONVERSATION_KEY}`)).resolves.toBe("ordinary user file");
   });
 
   it("does not expose or mutate the shared home root through raw R2", async () => {
@@ -1881,6 +1911,57 @@ describe("GsvFs virtual /sys config tree", () => {
 
     await expect(fs.readdir("/sys/users/1001")).rejects.toThrow("ENOENT");
   });
+
+  it("does not grant root config visibility to a non-root agent owned by root", async () => {
+    const fs = makeConfigBackedFs(SAM_AGENT, {
+      "config/ai/model": "shared-model",
+      "config/ai/api_key": "root-secret",
+      "users/0/ai/model": "root-model",
+      "users/1000/ai/model": "sam-model",
+    }, { pid: "root-agent", ownerUid: 0 });
+
+    await expect(fs.readdir("/sys/config/ai")).resolves.toEqual(["model"]);
+    await expect(fs.readFile("/sys/config/ai/api_key")).rejects.toThrow("ENOENT");
+    await expect(fs.readdir("/sys/users")).resolves.toEqual(["0", "2000"]);
+    await expect(fs.readFile("/sys/users/0/ai/model")).resolves.toBe("root-model\n");
+    await expect(fs.readdir("/sys/users/1000")).rejects.toThrow("ENOENT");
+  });
+
+  it("does not expose a guessed inaccessible device directory", async () => {
+    const devices = [
+      { device_id: "sam-device", owner_uid: SAM.uid },
+      { device_id: "alice-device", owner_uid: ALICE.uid },
+    ];
+    const fs = new GsvFs(env.STORAGE, SAM, {
+      auth: null as never,
+      procs: null as never,
+      caps: null as never,
+      config: null as never,
+      devices: {
+        get(deviceId: string) {
+          return devices.find((device) => device.device_id === deviceId) ?? null;
+        },
+        canAccess(deviceId: string, uid: number) {
+          return devices.some((device) => device.device_id === deviceId && device.owner_uid === uid);
+        },
+        listForUser(uid: number) {
+          return devices.filter((device) => device.owner_uid === uid);
+        },
+      } as never,
+    });
+
+    await expect(fs.readdir("/sys/devices")).resolves.toEqual(["sam-device"]);
+    await expect(fs.readdir("/sys/devices/sam-device")).resolves.toEqual([
+      "description",
+      "implements",
+      "owner",
+      "platform",
+      "status",
+      "version",
+    ]);
+    await expect(fs.readdir("/sys/devices/alice-device")).rejects.toThrow("ENOENT");
+    await expect(fs.stat("/sys/devices/alice-device")).rejects.toThrow("ENOENT");
+  });
 });
 
 describe("GsvFs Linux-like runtime views", () => {
@@ -1999,6 +2080,23 @@ describe("GsvFs Linux-like runtime views", () => {
     const siblingStatus = await fs.readFile("/proc/task-alpha/status");
     expect(siblingStatus).toContain("Pid:\ttask-alpha");
     await expect(fs.readdir("/proc/task-foreign")).rejects.toThrow("ENOENT");
+  });
+
+  it("projects the controlling human's user config into a personal-agent executor", async () => {
+    const fs = makeRuntimeViewFs(SAM_AGENT, "task-personal");
+
+    await expect(fs.readdir("/sys/users")).resolves.toEqual(["1000", "2000"]);
+    await expect(fs.readdir("/sys/users/1000/ai")).resolves.toEqual([
+      "model_profiles",
+    ]);
+    await expect(fs.readFile("/sys/users/1000/ai/model_profiles"))
+      .resolves.toContain("fast-stack");
+    await expect(fs.readFile("/sys/users/2000/ai/model"))
+      .resolves.toBe("agent-model\n");
+
+    await fs.writeFile("/sys/users/1000/ai/model", "gpt-owner\n");
+    await expect(fs.readFile("/sys/users/1000/ai/model"))
+      .resolves.toBe("gpt-owner\n");
   });
 
   it("hides another user's process conversation view from non-root users", async () => {
@@ -2198,6 +2296,20 @@ describe("GsvFs Linux-like runtime views", () => {
     ]);
   });
 
+  it("shows owner-scoped cron and scheduler views inside a personal agent", async () => {
+    const fs = makeRuntimeViewFs(SAM_AGENT, "task-personal");
+
+    await expect(fs.readdir("/var/spool/cron")).resolves.toEqual(["sam"]);
+    await expect(fs.readFile("/var/spool/cron/sam")).resolves.toContain("daily-pulse");
+    const logLines = (await fs.readFile("/var/log/gsv/scheduler"))
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line));
+    expect(logLines).toEqual([
+      expect.objectContaining({ scheduleId: "sched-1", ownerUid: SAM.uid }),
+    ]);
+  });
+
   it("resolves system crontabs through virtual /etc parents", async () => {
     const fs = makeRuntimeViewFs(SAM);
 
@@ -2226,6 +2338,12 @@ describe("GsvFs search", () => {
     for (const obj of listed.objects) {
       await env.STORAGE.delete(obj.key);
     }
+    await provisionR2Directory(
+      env.STORAGE,
+      `/${TEST_PREFIX.replace(/\/$/, "")}`,
+      ROOT,
+      "777",
+    );
   });
 
   it("treats metacharacters as literal plain text", async () => {
@@ -2303,7 +2421,7 @@ describe("GsvFs search", () => {
       body,
       customMetadata: { uid: "1000", gid: "1000", mode: "644" },
       httpMetadata: { contentType: "text/plain" },
-      key: `${TEST_PREFIX}slow.txt`,
+      key: "slow-search-test.txt",
       size: 1,
     };
     const backend = new R2MountBackend({

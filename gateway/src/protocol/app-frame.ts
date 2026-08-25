@@ -5,12 +5,6 @@
 export type AppFrameContext = {
   uid: number;
   username: string;
-  /** Immutable uid of the human whose Kernel controls this runtime. */
-  kernelOwnerUid: number;
-  /** Canonical human owner used to select `user:<username>`. */
-  kernelUsername?: string;
-  /** Present for provisioned user Kernels; omitted only by explicit legacy frames. */
-  kernelGeneration?: number;
   /** Browser UI frames are bound to one live local app session client. */
   sessionId?: string;
   clientId?: string;
@@ -33,10 +27,6 @@ export type PackageAppSignalWatchInfo = {
   createdAt?: number;
 };
 
-export type KernelBindingProps = {
-  appFrame: AppFrameContext;
-};
-
 export const DEFAULT_APP_FRAME_TTL_MS = 5 * 60 * 1000;
 const MAX_APP_FRAME_LIFETIME_MS = 366 * 24 * 60 * 60 * 1000;
 const MAX_APP_FRAME_CLOCK_SKEW_MS = 5 * 60 * 1000;
@@ -45,9 +35,7 @@ export function isAppFrameContextExpired(
   context: AppFrameContext,
   now: number = Date.now(),
 ): boolean {
-  return !Number.isSafeInteger(context.kernelOwnerUid)
-    || context.kernelOwnerUid < 0
-    || !Number.isSafeInteger(context.issuedAt)
+  return !Number.isSafeInteger(context.issuedAt)
     || !Number.isSafeInteger(context.expiresAt)
     || !Number.isSafeInteger(context.packageUpdatedAt)
     || context.packageUpdatedAt <= 0

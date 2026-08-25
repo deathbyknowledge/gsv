@@ -512,11 +512,13 @@ export async function handleRepoDelete(
   const repo = parseRepoSlug(args.repo);
   assertCanWriteRepo(repo, ctx);
   const slug = repoSlug(repo);
-  const dependents = ctx.packages.list().filter((record) => record.manifest.source.repo === slug);
-  if (dependents.length > 0) {
-    const names = dependents.map((record) => record.manifest.name || record.packageId).slice(0, 3).join(", ");
-    const suffix = dependents.length > 3 ? `, +${dependents.length - 3}` : "";
-    throw new Error(`Repository ${slug} backs installed packages: ${names}${suffix}`);
+  if (ctx.kernelKind === "master") {
+    const dependents = ctx.packages.list().filter((record) => record.manifest.source.repo === slug);
+    if (dependents.length > 0) {
+      const names = dependents.map((record) => record.manifest.name || record.packageId).slice(0, 3).join(", ");
+      const suffix = dependents.length > 3 ? `, +${dependents.length - 3}` : "";
+      throw new Error(`Repository ${slug} backs installed packages: ${names}${suffix}`);
+    }
   }
 
   const actor = requireIdentity(ctx).process;
@@ -577,12 +579,16 @@ async function authorizeRepoOperationWithMaster(
 }
 
 function assertCanReadRepo(repo: RipgitRepoRef, ctx: KernelContext): void {
+  // User Kernels perform the exact check through authorizeRepoOperation before
+  // RIPGIT receives work; they intentionally hold no local authority stores.
+  if (ctx.kernelKind === "user") return;
   if (!canReadRepo(repoSlug(repo), ctx)) {
     throw new Error(`Forbidden: cannot read repo ${repoSlug(repo)}`);
   }
 }
 
 function assertCanWriteRepo(repo: RipgitRepoRef, ctx: KernelContext): void {
+  if (ctx.kernelKind === "user") return;
   if (!canWriteRepo(repoSlug(repo), ctx)) {
     throw new Error(`Forbidden: cannot write repo ${repoSlug(repo)}`);
   }

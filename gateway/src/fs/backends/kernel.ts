@@ -4,6 +4,7 @@ import type {
   RmOptions,
 } from "just-bash";
 import { canReadConfigKey } from "../../kernel/config-access";
+import { USER_OVERRIDABLE_PREFIXES } from "../../kernel/config";
 import type { KernelRefs, ProcessViewCall } from "../refs";
 import type { ArgsOf, ResultOf } from "../../syscalls";
 import type {
@@ -560,7 +561,27 @@ export class KernelMountBackend implements MountBackend {
     const entries = await this.kernel.config.list(prefix);
     if (this.identity.uid === 0) return entries;
 
-    return entries.filter((entry) => canReadConfigKey(this.identity.uid, entry.key));
+    return entries.filter((entry) => this.canViewerReadConfigKey(entry.key));
+  }
+
+  private canViewerReadConfigKey(key: string): boolean {
+    if (this.identity.uid === 0) return true;
+    if (canReadConfigKey(this.identity.uid, key)) return true;
+
+    const ownerPrefix = `users/${this.viewerOwnerUid()}/`;
+    if (!key.startsWith(ownerPrefix)) return false;
+    const subkey = key.slice(ownerPrefix.length);
+    return USER_OVERRIDABLE_PREFIXES.some((prefix) => subkey.startsWith(prefix));
+  }
+
+  private canViewerAccessUserConfigUid(uid: number): boolean {
+    return this.identity.uid === 0
+      || uid === this.identity.uid
+      || uid === this.viewerOwnerUid();
+  }
+
+  private viewerUserConfigUids(): number[] {
+    return [...new Set([this.identity.uid, this.viewerOwnerUid()])].sort((a, b) => a - b);
   }
 
   private async readSys(path: string): Promise<string | undefined> {
@@ -569,7 +590,7 @@ export class KernelMountBackend implements MountBackend {
 
     if (rel.startsWith("config/")) {
       const configKey = rel;
-      if (!canReadConfigKey(this.identity.uid, configKey)) return undefined;
+      if (!this.canViewerReadConfigKey(configKey)) return undefined;
       const value = await this.kernel.config.get(configKey);
       if (value !== null) return value + "\n";
       return undefined;
@@ -581,7 +602,7 @@ export class KernelMountBackend implements MountBackend {
       const uid = parseInt(uidStr, 10);
       if (isNaN(uid)) return undefined;
 
-      if (!canReadConfigKey(this.identity.uid, userKey)) return undefined;
+      if (!this.canViewerReadConfigKey(userKey)) return undefined;
 
       const value = await this.kernel.config.get(userKey);
       if (value !== null) return value + "\n";
@@ -664,7 +685,7 @@ export class KernelMountBackend implements MountBackend {
       const uidStr = rel.split("/")[1];
       const uid = parseInt(uidStr, 10);
       if (isNaN(uid)) throw new Error(`EINVAL: invalid uid in path '${path}'`);
-      if (this.identity.uid !== 0 && this.identity.uid !== uid) {
+      if (!this.canViewerAccessUserConfigUid(uid)) {
         throw new Error(`EPERM: permission denied, '${path}'`);
       }
       await this.kernel.writeConfig(rel, content.trim());
@@ -923,7 +944,7 @@ export class KernelMountBackend implements MountBackend {
     return undefined;
   }
 
-  private readEtcCron(path: string): string | undefined {
+  private async readEtcCron(path: string): Promise<string | undefined> {
     if (path.startsWith("/etc/cron.d/")) {
       const name = decodePathSegment(path.slice("/etc/cron.d/".length));
       if (!name) return undefined;
@@ -937,7 +958,7 @@ export class KernelMountBackend implements MountBackend {
     if (path.startsWith("/var/spool/cron/")) {
       const username = decodePathSegment(path.slice("/var/spool/cron/".length));
       if (!username) return undefined;
-      const content = this.kernel.cron.readUserCrontab(username);
+      const content = await this.kernel.cron.readUserCrontab(username);
       if (content === undefined) return undefined;
       const user = this.kernel.auth
         ? await this.kernel.auth.getAccountByUsername(username)
@@ -948,7 +969,7 @@ export class KernelMountBackend implements MountBackend {
     }
 
     if (path.startsWith("/etc/cron.d/")) {
-      const content = this.readEtcCron(path);
+      const content = await this.readEtcCron(path);
       if (content === undefined) return undefined;
       return cronFileStat(content, 0o644, 0, 0);
     }
@@ -1015,7 +1036,7 @@ export class KernelMountBackend implements MountBackend {
     let count = 0;
     do {
       const listed = schedules.list({
-        ownerUid: this.identity.uid === 0 ? undefined : this.identity.uid,
+        ownerUid: this.identity.uid === 0 ? undefined : this.viewerOwnerUid(),
         includeDisabled: true,
         limit: SCHEDULER_VIEW_PAGE_SIZE,
         offset,
@@ -1110,13 +1131,13 @@ export class KernelMountBackend implements MountBackend {
 
     if (path.startsWith("/sys/devices/") && !path.slice("/sys/devices/".length).includes("/")) {
       const deviceId = path.slice("/sys/devices/".length);
-      return this.kernel.devices.get(deviceId) !== null;
+      return this.kernel.devices.canAccess(deviceId, this.identity.uid, this.identity.gids);
     }
 
     if (path.startsWith("/sys/users/") && !path.slice("/sys/users/".length).includes("/")) {
       const uid = parseInt(path.slice("/sys/users/".length), 10);
       if (isNaN(uid)) return false;
-      if (this.identity.uid !== 0 && this.identity.uid !== uid) return false;
+      if (!this.canViewerAccessUserConfigUid(uid)) return false;
       return true;
     }
 
@@ -1134,7 +1155,7 @@ export class KernelMountBackend implements MountBackend {
       if (parts.length >= 2) {
         const uid = parseInt(parts[0], 10);
         if (!isNaN(uid)) {
-          if (this.identity.uid !== 0 && this.identity.uid !== uid) return false;
+          if (!this.canViewerAccessUserConfigUid(uid)) return false;
           const suffix = parts.slice(1).join("/");
           const nested = await this.listReadableConfig(`users/${uid}/${suffix}`);
           if (nested.length > 0) return true;
@@ -1182,7 +1203,7 @@ export class KernelMountBackend implements MountBackend {
       if (this.identity.uid === 0) {
         return uniquePrefixes(await this.listReadableConfig("users/"), "users/");
       }
-      return [String(this.identity.uid)];
+      return this.viewerUserConfigUids().map(String);
     }
 
     if (path.startsWith("/sys/users/")) {
@@ -1191,7 +1212,7 @@ export class KernelMountBackend implements MountBackend {
       if (parts.length >= 1) {
         const uid = parseInt(parts[0], 10);
         if (isNaN(uid)) return undefined;
-        if (this.identity.uid !== 0 && this.identity.uid !== uid) return undefined;
+        if (!this.canViewerAccessUserConfigUid(uid)) return undefined;
 
         if (parts.length === 1) {
           const entries = await this.listReadableConfig(`users/${uid}`);
@@ -1289,7 +1310,7 @@ export class KernelMountBackend implements MountBackend {
       return ["cron"];
     }
     if (path === "/var/spool/cron") {
-      return this.kernel?.cron?.listUserCrontabs().map(encodePathSegment).sort() ?? [];
+      return (await this.kernel?.cron?.listUserCrontabs())?.map(encodePathSegment).sort() ?? [];
     }
     if (path === "/var/log") {
       return ["gsv"];
@@ -1298,14 +1319,15 @@ export class KernelMountBackend implements MountBackend {
       return ["scheduler"];
     }
     if (path === "/etc/cron.d") {
-      return this.kernel?.cron?.listSystemCrontabs().map(encodePathSegment).sort() ?? [];
+      return (await this.kernel?.cron?.listSystemCrontabs())?.map(encodePathSegment).sort() ?? [];
     }
 
     if (path.startsWith("/sys/devices/")) {
       const parts = path.slice("/sys/devices/".length).split("/");
       if (parts.length === 1 && parts[0]) {
-        const device = this.kernel.devices.get(parts[0]);
-        if (device) return ["description", "implements", "owner", "platform", "status", "version"];
+        if (this.kernel.devices.canAccess(parts[0], this.identity.uid, this.identity.gids)) {
+          return ["description", "implements", "owner", "platform", "status", "version"];
+        }
       }
     }
 

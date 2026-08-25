@@ -4,12 +4,10 @@ GSV routing is kernel-level message and syscall routing. It is not only chat
 routing. The owning `user:<canonical-username>` Kernel is the central router for
 one human's WebSocket clients, agent processes, package apps, adapter
 deliveries, and connected devices. The Master Control Program named `singleton`
-handles global authority and provisioning, current package/configuration
-operations, app-route verification, and adapter link/placement resolution.
-
-> Clean commissioning and newly created human accounts use the per-user split.
-> Accounts discovered by migration v16 remain explicitly `legacy` and continue
-> through `singleton`; an automated state migration is not implemented yet.
+handles commissioning and global authority, including current account,
+capability, package, configuration, repository, and adapter-link decisions.
+Adapter frames traverse the Master in both directions today; other user payload
+and execution data planes remain on their owning paths.
 
 ## Routing Surfaces
 
@@ -17,8 +15,8 @@ operations, app-route verification, and adapter link/placement resolution.
 |---|---|---|---|
 | CLI or browser client | `/ws/<username>` WebSocket request frame | owning user Kernel, syscall name, caller capabilities, optional `target` | User-Kernel handler, Process DO, or device driver |
 | Agent process | owning `Kernel.recvFrame(pid, frame)` | installed user-Kernel route, process identity, and syscall | User-Kernel handler or device driver |
-| Package app | certified session route locator, then owning `Kernel.appRequest(...)` | edge P-256 placement verification before DO selection; target-local HMAC/session, package manifest, entrypoint grants | User-Kernel handler, AppRunner, or device driver |
-| Adapter worker | service-bound `adapter.inbound` through Gateway | Master identity-link and active placement lookup; target uid/generation check | Owning user Kernel, then init or routed process |
+| Package app | generationless session route locator, then owning `Kernel.appRequest(...)` | bounded username locator; target-local HMAC/session; live Master package/actor validation | User-Kernel handler, AppRunner, or device driver |
+| Adapter worker | service-bound `adapter.inbound` through Gateway | Master identity-link decision, idempotent ensure for a known provisioning placement, then active target username/uid marker | Owning user Kernel, then init or routed Process |
 | Device driver | owner-routed WebSocket response frame | persisted route id in the owning user Kernel | Original client, process, or app |
 
 All requests use the same frame shape:
@@ -115,51 +113,41 @@ signal to its connected user clients. HIL requests are always broadcast to every
 connected user client for the owning uid so another session can answer them.
 Adapter-originated HIL requests are also delivered back to their adapter surface.
 
-WebSocket and app routes bind the current user-Kernel generation. An explicit
-lifecycle transition fences the target and invalidates that generation. A
-Process persists its owning Kernel object name, while the owning Kernel registry
-binds its PID to the exact generation. Process RPCs, authority resolution,
-cancellation, queued signals, and post-I/O results reject a stale binding.
+A Process persists its owning user-Kernel object name, human owner uid, and
+run-as identity. The owning Kernel registry binds that PID to the same record.
+Process RPCs, authority resolution, cancellation, queued signals, and post-I/O
+results accept only the owning active user Kernel; a PID or frame-supplied
+identity cannot authenticate a caller.
 
-The target persists its non-active marker and fences local ingress before it
-sends an exact lifecycle abort to every Process DO registered to the old
-generation. Lifecycle abort cancels the active run but does not claim the next
-queued turn or delete queued input, history, or media. On authorized activation,
-only same-owner registry records from the exact immediate predecessor generation
-may be rebound to the new generation. Activation failure re-fences and aborts
-the activating generation while preserving its executors. Wiring credential
-reset and destructive group changes to lifecycle transitions remains
-release-gated migration work.
+`proc.abort` cancels the active run while preserving queued input, history, and
+media. `proc.reset` resets conversation state and `proc.kill` archives and tears
+the Process down. Late output from cancelled or superseded work cannot mutate
+the active run.
 
 ## Git HTTP Routing
 
 Git HTTP does not route through a user Kernel. The Gateway asks `singleton` for
-a bounded credential and repository-metadata admission decision. The Master
-snapshots the active or explicit-legacy placement, joins the per-user lifecycle
-barrier, performs bounded password-or-token verification, then rechecks the
-exact placement and repository ACL. Closed or transitioning accounts receive
-generic verifier behavior but no access as that identity; explicitly public
-reads may still proceed anonymously.
+a bounded credential and repository admission decision. The Master applies the
+durable abuse limit, performs bounded password-or-token verification, then
+checks the exact username, uid, active placement, capabilities, repository
+owner, and ACL. Unknown or non-active accounts receive generic verifier behavior
+but no access as that identity; explicitly public reads may proceed anonymously.
 
 After a successful decision, the Gateway forwards the original request directly
-to RIPGIT. The admission decision is the lifecycle linearization point: a
-transition prevents new admissions and waits for verifier work already in the
-barrier, while a request admitted before it may complete in RIPGIT. Git request
-bodies, packfiles, and response streams do not pass through either Kernel.
+to RIPGIT. Git request bodies, packfiles, and response streams do not pass
+through either Kernel.
 
 ## Adapter Routing
 
 Messaging adapters call `adapter.inbound` through a service identity.
 Adapter-specific normalization stays in the adapter worker. The Master Control
-Program owns the authoritative identity-link table and currently resolves the
-normalized adapter, account, and external actor from bounded metadata on every
-message. For a linked active owner it returns an exact, expiring, one-shot route
-grant without receiving the payload. The Gateway sends the full frame directly
-to the user Kernel; that target consumes the grant, rechecks current link
-generation and placement at the Master, then rechecks local lifecycle before
-delivery. Active-user and unlinked text, media, reply context, and full frames
-never enter `singleton`; only an explicit `legacy` placement uses the old
-relay.
+Program owns the authoritative adapter-account and identity-link tables and
+routes adapter traffic in both directions. On inbound delivery, the scoped
+Gateway entrypoint calls the Master with the normalized frame. The Master
+validates bounded adapter/account/actor/surface fields and resolves the live
+link. For a known `provisioning` owner placement it idempotently completes
+provisioning, then invokes only the active user Kernel. The target verifies the
+Master source and its own active username/uid marker before delivery.
 
 Inbound behavior:
 
@@ -167,17 +155,15 @@ Inbound behavior:
 - Unlinked DM actor: return a link challenge such as `gsv auth link CODE`.
 - Unlinked non-DM actor: drop the message as `unlinked_actor`.
 
-Unknown DMs receive a compact Master-generated linking challenge from actor and
-surface metadata; unknown non-DM events receive a compact drop response.
-Generation-bound projections that remove the remaining per-message Master
-metadata lookup are a future optimization, not current behavior.
+Unknown DMs receive a Master-generated linking challenge; unknown non-DM events
+receive a compact drop response. Outbound replies return to the Master with the
+stored run route. It rechecks the owner, adapter account, external actor,
+surface, and monotonic link revision before invoking the adapter worker.
 
 Adapter-backed `shell.exec` targets are separate from inbound message delivery.
-The active user-Kernel projection does not yet include the authoritative adapter
-account/status/link catalog used to discover those targets, so adapter-shell
-target discovery and routing remain release-gated on the sharded path. Legacy
-`singleton` behavior does not imply that an active user Kernel can discover the
-same target.
+Adapter-shell discovery and routing require their own explicit target and
+capability decision; a messaging identity link alone does not grant shell
+access.
 
 The default delivery target is the user's `init:{uid}` process. A `surface_routes` entry can override this for a specific adapter account and surface:
 
@@ -197,33 +183,19 @@ user Kernel verifies:
 - The entrypoint grants the requested syscall.
 - The user identity in the app frame is still valid.
 
-The opaque active app-session handle binds canonical username, uid, Kernel
-generation, expiry, nonce, and a Master-issued P-256 placement certificate into
-a separate local user-Kernel HMAC. The Gateway verifies the certificate from
-the internal public SPKI record before it selects `user:<username>`. A forged
-locator therefore returns `404` without creating or waking a caller-selected
-user DO. The selected target then requires its exact active marker, the matching
-local HMAC and app session, owner, package, capabilities, expiry, and generation.
+The active app-session handle has the bounded form
+`gsv1b~username~uid~expiresAt~nonce~signature`. The signature is a local
+user-Kernel HMAC over the locator fields. The Gateway parses the canonical
+username and bounds before selecting `user:<username>`. Waking that bounded
+object is acceptable; the target requires its active marker, matching HMAC,
+expiry, launch/client secret, and exact local session before granting access.
 
-Generation-bearing app frames route directly to the named user Kernel and are
-reauthorized there. A generation-less route must be an exact legacy UUID and
-resolves through `singleton` only when that owner is explicitly `legacy`; it is
-not an active-user fallback. Active app request bodies, response streams, and
-AppRunner calls do not transit the Master.
-
-The v21 package-projection fence prevents app or package-agent work from running
-across mixed Master projection revisions. The v22 actually-used AppRunner
-registry binds each authorized control/data runner to its exact package actor
-and controlling human Kernel owner. The Kernel owner, run-as actor, and package
-jointly determine the owner-qualified
-`app-control-v3:<kernelOwnerUid>:<actorUid>:<encodedPackageId>` or
-`app-data-v2:<kernelOwnerUid>:<actorUid>:<encodedPackageId>` name; the Kernel
-owner determines fence authority. Package and lifecycle transitions use that
-registry to persist a new runtime epoch, close admission, abort tracked
-cancelable work, and wait for tracked wrappers to release before Kernel
-admission clears. Uncancelable Loader promises are abandoned on abort and
-cannot use their revoked epoch to reacquire current platform authority. An
-unused deterministic object name is never instantiated merely for enumeration.
+The active user Kernel asks the Master to validate the current run-as account,
+enabled/reviewed package, artifact hash, entrypoint, and requested call. It then
+routes to the deterministic `app:<actorUid>:<packageId>` AppRunner.
+That name is a locator, not authority. AppRunner callbacks carry an exact app
+frame and are reauthorized through the same user Kernel. App request bodies,
+response streams, and package execution do not transit the Master.
 
 Package app syscalls can use the same device routing path as clients and processes. Async device responses are held in memory as pending app responses until the device reply or timeout arrives.
 
@@ -268,7 +240,7 @@ Device routing does not rename syscalls. Agents and clients always see the same 
 | `run_routes` | Routes process run signals back to connections or adapter surfaces. |
 | `processes` | User-Kernel process registry and process ownership. |
 | `devices`, `device_access` | Device catalog and group ACLs. |
-| Master `identity_links` directory | Authoritative external adapter actor to immutable canonical username/uid mapping used for each inbound lookup. |
+| Master `identity_links` directory | Authoritative external adapter actor to immutable canonical username/uid mapping used for inbound and outbound delivery. |
 | User-Kernel `surface_routes` | Adapter surface to process mapping. |
 
 ## See also

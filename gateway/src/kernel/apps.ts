@@ -20,7 +20,6 @@ import {
   type InstalledPackageRecord,
   type PackageEntrypoint,
   packageRouteBase,
-  visiblePackageScopesForActor,
 } from "./packages";
 import { APP_CLIENT_SESSION_TTL_MS } from "./app-sessions";
 
@@ -37,7 +36,7 @@ export async function handleAppOpen(args: AppOpenArgs, ctx: KernelContext): Prom
   const packageName = normalizeRequiredString(args.packageName, "packageName");
   const entrypointName = normalizeOptionalString(args.entrypointName);
   const routeBase = packageRouteBase(packageName);
-  const resolved = findLaunchableUiPackage(ctx, actor.uid, packageName, routeBase, entrypointName);
+  const resolved = await findLaunchableUiPackage(ctx, packageName, routeBase, entrypointName);
 
   const clientSession = await ctx.appSessions.issue({
     uid: actor.uid,
@@ -66,9 +65,8 @@ export async function handleAppAttach(args: AppAttachArgs, ctx: KernelContext): 
     throw new AppSyscallError(404, "App session not found");
   }
 
-  const resolved = findLaunchableUiPackage(
+  const resolved = await findLaunchableUiPackage(
     ctx,
-    actor.uid,
     clientSession.packageName,
     clientSession.routeBase,
     clientSession.entrypointName,
@@ -121,19 +119,16 @@ function currentActor(ctx: KernelContext): { uid: number; username: string } {
   };
 }
 
-function findLaunchableUiPackage(
+async function findLaunchableUiPackage(
   ctx: KernelContext,
-  uid: number,
   packageName: string,
   routeBase: string,
   entrypointName: string | null,
-): { record: InstalledPackageRecord; entrypoint: PackageEntrypoint } {
-  for (const record of ctx.packages.list({
-    enabled: true,
-    name: packageName,
-    runtime: "web-ui",
-    scopes: visiblePackageScopesForActor({ uid }),
-  })) {
+): Promise<{ record: InstalledPackageRecord; entrypoint: PackageEntrypoint }> {
+  for (const record of await ctx.packagesList({ enabled: true })) {
+    if (record.manifest.name !== packageName || record.manifest.runtime !== "web-ui") {
+      continue;
+    }
     const entrypoint = record.manifest.entrypoints.find((candidate) => {
       return candidate.kind === "ui" &&
         candidate.route === routeBase &&

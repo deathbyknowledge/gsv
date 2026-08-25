@@ -32,7 +32,7 @@ type FakeOAuth = {
 function makeContext(
   uid: number,
   oauth: FakeOAuth,
-  userKernel?: { username: string; generation: number; ownerUid?: number },
+  userKernel?: { username: string; ownerUid?: number; callerOwnerUid?: number },
 ): KernelContext {
   const username = userKernel?.username ?? (uid === 0 ? "root" : `user${uid}`);
   return {
@@ -41,7 +41,6 @@ function makeContext(
     ...(userKernel
       ? {
           kernelUsername: userKernel.username,
-          kernelGeneration: userKernel.generation,
           kernelOwnerUid: userKernel.ownerUid ?? uid,
         }
       : {}),
@@ -57,6 +56,9 @@ function makeContext(
       },
       capabilities: ["*"],
     },
+    ...(userKernel?.callerOwnerUid === undefined
+      ? {}
+      : { callerOwnerUid: userKernel.callerOwnerUid }),
     oauth,
     assertCurrentKernel: vi.fn(),
   } as unknown as KernelContext;
@@ -92,6 +94,7 @@ function createFakeOAuth(): FakeOAuth {
 const flow: OAuthFlowRecord = {
   flowId: "flow-1",
   uid: 1000,
+  kernelOwnerUid: 1000,
   kind: "ai-provider",
   provider: "openai-codex",
   accountKey: "default",
@@ -139,8 +142,8 @@ describe("sys.oauth handlers", () => {
     vi.spyOn(Date, "now").mockReturnValue(1_700_000_000_000);
   });
 
-  it("starts a user-Kernel PKCE flow with a routed, generation-bound state", async () => {
-    const ctx = makeContext(1000, oauth, { username: "alice", generation: 7 });
+  it("starts a user-Kernel PKCE flow with a username-routed state", async () => {
+    const ctx = makeContext(1000, oauth, { username: "alice" });
 
     const result = await handleSysOAuthStart(
       {
@@ -169,7 +172,6 @@ describe("sys.oauth handlers", () => {
     const createdFlow = oauth.createFlow.mock.calls[0]?.[0];
     expect(parseRoutedOAuthState(state)).toEqual({
       username: "alice",
-      generation: 7,
       flowId: createdFlow.flowId,
     });
     expect(url.searchParams.get("prompt")).toBe("consent");
@@ -206,7 +208,6 @@ describe("sys.oauth handlers", () => {
   it("rejects root OAuth access outside an active user Kernel's owner", async () => {
     const ctx = makeContext(0, oauth, {
       username: "alice",
-      generation: 7,
       ownerUid: 1000,
     });
     const fetcher = vi.fn();
@@ -250,6 +251,38 @@ describe("sys.oauth handlers", () => {
     expect(oauth.deleteAccount).toHaveBeenCalledWith("acct-1", 1001);
   });
 
+  it("defaults root OAuth operations to uid 0 in the root user Kernel", async () => {
+    const ctx = makeContext(0, oauth, { username: "root", ownerUid: 0 });
+    oauth.getFlow.mockReturnValue({
+      ...flow,
+      uid: 0,
+      kernelOwnerUid: 0,
+      authorizationEndpoint: "https://auth.openai.com/codex/device",
+      tokenEndpoint: "https://auth.openai.com/oauth/token",
+      redirectUri: "https://auth.openai.com/deviceauth/callback",
+      scope: "openid profile email offline_access",
+      extraAuthParams: {
+        device_auth_id: "device-auth-1",
+        user_code: "ABCD-EFGH",
+        interval_seconds: "5",
+      },
+    });
+    const fetcher = vi.fn(async () => new Response(JSON.stringify({
+      error: "deviceauth_authorization_pending",
+    }), {
+      status: 403,
+      headers: { "content-type": "application/json" },
+    }));
+
+    handleSysOAuthList({}, ctx);
+    handleSysOAuthForget({ accountId: "acct-1" }, ctx);
+    await handleSysOAuthDevicePoll({ flowId: "flow-1" }, ctx, fetcher);
+
+    expect(oauth.listAccounts).toHaveBeenCalledWith(0);
+    expect(oauth.deleteAccount).toHaveBeenCalledWith("acct-1", 0);
+    expect(oauth.getFlow).toHaveBeenCalledWith("flow-1", 0);
+  });
+
   it("rejects non-root OAuth start for another uid", async () => {
     const ctx = makeContext(1000, oauth);
 
@@ -266,6 +299,41 @@ describe("sys.oauth handlers", () => {
       ctx,
     )).rejects.toThrow("Permission denied: cannot start OAuth for another user");
     expect(oauth.createFlow).not.toHaveBeenCalled();
+  });
+
+  it("scopes an owned agent's OAuth operations to its human owner", async () => {
+    const ctx = makeContext(2000, oauth, {
+      username: "alice",
+      ownerUid: 1000,
+      callerOwnerUid: 1000,
+    });
+
+    await handleSysOAuthStart({
+      kind: "generic",
+      provider: "example",
+      authorizationEndpoint: "https://auth.example.com/oauth/authorize",
+      tokenEndpoint: "https://auth.example.com/oauth/token",
+      clientId: "client-123",
+      redirectUri: "https://gsv.example.com/oauth/callback",
+    }, ctx);
+    handleSysOAuthList({}, ctx);
+    handleSysOAuthForget({ accountId: "acct-1" }, ctx);
+
+    expect(oauth.createFlow).toHaveBeenCalledWith(expect.objectContaining({
+      uid: 1000,
+      kernelOwnerUid: 1000,
+    }));
+    expect(oauth.listAccounts).toHaveBeenCalledWith(1000);
+    expect(oauth.deleteAccount).toHaveBeenCalledWith("acct-1", 1000);
+    await expect(handleSysOAuthStart({
+      uid: 2000,
+      kind: "generic",
+      provider: "example",
+      authorizationEndpoint: "https://auth.example.com/oauth/authorize",
+      tokenEndpoint: "https://auth.example.com/oauth/token",
+      clientId: "client-123",
+      redirectUri: "https://gsv.example.com/oauth/callback",
+    }, ctx)).rejects.toThrow("cannot start OAuth for another user");
   });
 
   it("rejects attempts to override reserved authorization parameters", async () => {
@@ -491,10 +559,10 @@ describe("sys.oauth handlers", () => {
     expect(oauth.deleteFlow).not.toHaveBeenCalled();
   });
 
-  it("does not persist device OAuth tokens from a stale Kernel generation", async () => {
+  it("does not persist device OAuth tokens after the user Kernel becomes inactive", async () => {
     const ctx = makeContext(1000, oauth);
     ctx.assertCurrentKernel = vi.fn(() => {
-      throw new Error("User Kernel generation is no longer current");
+      throw new Error("User Kernel is not active");
     });
     oauth.getFlow.mockReturnValue({
       ...flow,
@@ -532,7 +600,7 @@ describe("sys.oauth handlers", () => {
 
     await expect(handleSysOAuthDevicePoll({
       flowId: "flow-1",
-    }, ctx, fetcher)).rejects.toThrow("User Kernel generation is no longer current");
+    }, ctx, fetcher)).rejects.toThrow("User Kernel is not active");
 
     expect(ctx.assertCurrentKernel).toHaveBeenCalledTimes(1);
     expect(oauth.upsertAccount).not.toHaveBeenCalled();
@@ -718,31 +786,17 @@ describe("sys.oauth handlers", () => {
     expect(oauth.upsertAccount).not.toHaveBeenCalled();
   });
 
-  it.each([
-    [
-      "username",
-      "gsv1o~bob~7~01234567-89ab-4def-8123-456789abcdef~abcdefghijklmnopqrstuvwxyz_ABCDEF",
-      { username: "bob", generation: 7 },
-    ],
-    [
-      "generation",
-      "gsv1o~alice~8~01234567-89ab-4def-8123-456789abcdef~abcdefghijklmnopqrstuvwxyz_ABCDEF",
-      { username: "alice", generation: 8 },
-    ],
-  ])("rejects a routed state with a swapped %s at the consuming Kernel", async (
-    _field,
-    tamperedState,
-    tamperedRoute,
-  ) => {
+  it("rejects a state routed to a different username at the consuming Kernel", async () => {
+    const tamperedState =
+      "gsv1o~bob~01234567-89ab-4def-8123-456789abcdef~abcdefghijklmnopqrstuvwxyz_ABCDEF";
     const validState = buildRoutedOAuthState(
       "alice",
-      7,
       "01234567-89ab-4def-8123-456789abcdef",
       "abcdefghijklmnopqrstuvwxyz_ABCDEF",
     );
     const validStateHash = await sha256Hex(validState);
     expect(parseRoutedOAuthState(tamperedState)).toEqual({
-      ...tamperedRoute,
+      username: "bob",
       flowId: "01234567-89ab-4def-8123-456789abcdef",
     });
     oauth.consumeFlowByStateHash.mockImplementation((stateHash: string) =>

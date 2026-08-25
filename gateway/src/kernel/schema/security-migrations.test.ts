@@ -18,9 +18,6 @@ import {
 import {
   KERNEL_V018_FENCE_AUTH_TOKEN_SESSIONS,
 } from "./v018_fence_auth_token_sessions";
-import {
-  KERNEL_V019_BIND_PROCESS_KERNEL_GENERATION,
-} from "./v019_bind_process_kernel_generation";
 
 type CapabilityRow = {
   gid: number;
@@ -41,33 +38,12 @@ function applyMigration(sql: SqlStorage, migration: SqlMigration): void {
   }
 }
 
+function resetV16Tables(sql: SqlStorage): void {
+  sql.exec("DROP TABLE IF EXISTS user_kernels");
+  sql.exec("DROP TABLE IF EXISTS account_identities");
+}
+
 describe("kernel security migration data", () => {
-  it("leaves legacy process rows unbound and rejects invalid generations", async () => {
-    const kernel = await getAgentByName(env.KERNEL, crypto.randomUUID());
-
-    await runInDurableObject(kernel, (_instance: Kernel, state) => {
-      const sql = state.storage.sql;
-      sql.exec("DROP TABLE processes");
-      sql.exec("CREATE TABLE processes (process_id TEXT PRIMARY KEY)");
-      sql.exec("INSERT INTO processes (process_id) VALUES ('legacy-process')");
-
-      applyMigration(sql, KERNEL_V019_BIND_PROCESS_KERNEL_GENERATION);
-
-      expect(sql.exec<{ kernel_generation: number | null }>(
-        "SELECT kernel_generation FROM processes WHERE process_id = 'legacy-process'",
-      ).toArray()).toEqual([{ kernel_generation: null }]);
-      expect(() => sql.exec(
-        "UPDATE processes SET kernel_generation = 0 WHERE process_id = 'legacy-process'",
-      )).toThrow();
-      sql.exec(
-        "UPDATE processes SET kernel_generation = 4 WHERE process_id = 'legacy-process'",
-      );
-      expect(sql.exec<{ kernel_generation: number | null }>(
-        "SELECT kernel_generation FROM processes WHERE process_id = 'legacy-process'",
-      ).toArray()).toEqual([{ kernel_generation: 4 }]);
-    });
-  });
-
   it("atomically queues new token revocations without copying credential material", async () => {
     const kernel = await getAgentByName(env.KERNEL, crypto.randomUUID());
 
@@ -126,8 +102,7 @@ describe("kernel security migration data", () => {
 
     await runInDurableObject(kernel, (_instance: Kernel, state) => {
       const sql = state.storage.sql;
-      sql.exec("DROP TABLE user_kernels");
-      sql.exec("DROP TABLE account_identities");
+      resetV16Tables(sql);
       sql.exec(`
         INSERT INTO passwd (username, uid, gid, gecos, home, shell) VALUES
           ('root', 0, 0, 'root', '/root', '/bin/init'),
@@ -177,20 +152,19 @@ describe("kernel security migration data", () => {
         FROM user_kernels
         ORDER BY uid
       `).toArray()).toEqual([
-        { username: "root", uid: 0, lifecycle: "legacy" },
-        { username: "alice", uid: 1000, lifecycle: "legacy" },
-        { username: "bob", uid: 1002, lifecycle: "legacy" },
+        { username: "root", uid: 0, lifecycle: "provisioning" },
+        { username: "alice", uid: 1000, lifecycle: "provisioning" },
+        { username: "bob", uid: 1002, lifecycle: "provisioning" },
       ]);
     });
   });
 
-  it("rejects non-canonical legacy account names instead of normalizing or dropping them", async () => {
+  it("rejects non-canonical existing account names instead of normalizing or dropping them", async () => {
     const kernel = await getAgentByName(env.KERNEL, crypto.randomUUID());
 
     await runInDurableObject(kernel, (_instance: Kernel, state) => {
       const sql = state.storage.sql;
-      sql.exec("DROP TABLE user_kernels");
-      sql.exec("DROP TABLE account_identities");
+      resetV16Tables(sql);
 
       const invalidAccounts = [
         { username: "Alice", uid: 2000 },
@@ -235,8 +209,7 @@ describe("kernel security migration data", () => {
 
     await runInDurableObject(kernel, (_instance: Kernel, state) => {
       const sql = state.storage.sql;
-      sql.exec("DROP TABLE user_kernels");
-      sql.exec("DROP TABLE account_identities");
+      resetV16Tables(sql);
       sql.exec(`
         INSERT INTO passwd (username, uid, gid, gecos, home, shell) VALUES
           ('alice', 2000, 2000, 'Alice', '/home/alice', '/bin/init'),
@@ -268,8 +241,7 @@ describe("kernel security migration data", () => {
 
     await runInDurableObject(kernel, (_instance: Kernel, state) => {
       const sql = state.storage.sql;
-      sql.exec("DROP TABLE user_kernels");
-      sql.exec("DROP TABLE account_identities");
+      resetV16Tables(sql);
       sql.exec("DELETE FROM shadow WHERE username = 'root'");
       sql.exec("DELETE FROM passwd WHERE username = 'root'");
 

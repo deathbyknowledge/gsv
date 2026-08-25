@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { AppSessionStore } from "./app-sessions";
+import { AppSessionStore, type AppSessionIdFactory } from "./app-sessions";
 import { buildRoutedAppSessionId } from "../protocol/app-session";
 import { mockSqlRows, type MockSqlRow } from "../test-support/mock-sql";
 
@@ -295,6 +295,17 @@ function createMockSql() {
   return { exec };
 }
 
+function routedSessionIdFactory(
+  routeExpiresAt = Number.MAX_SAFE_INTEGER,
+): AppSessionIdFactory {
+  return async ({ uid, username }) => buildRoutedAppSessionId({
+    username,
+    uid,
+    expiresAt: routeExpiresAt,
+    nonce: crypto.randomUUID(),
+  }, "A".repeat(43));
+}
+
 describe("AppSessionStore", () => {
   afterEach(() => {
     vi.restoreAllMocks();
@@ -303,7 +314,10 @@ describe("AppSessionStore", () => {
   it("issues cookie-backed app sessions with a session socket rpc base", async () => {
     vi.spyOn(Date, "now").mockReturnValue(10_000);
 
-    const store = new AppSessionStore(createMockSql() as unknown as SqlStorage);
+    const store = new AppSessionStore(
+      createMockSql() as unknown as SqlStorage,
+      routedSessionIdFactory(),
+    );
 
     const issued = await store.issue({
       uid: 1000,
@@ -328,15 +342,92 @@ describe("AppSessionStore", () => {
     expect(resolved?.lastUsedAt).toBe(20_000);
   });
 
+  it("rejects bare UUID session ids at issuance", async () => {
+    vi.spyOn(Date, "now").mockReturnValue(10_000);
+    const store = new AppSessionStore(
+      createMockSql() as unknown as SqlStorage,
+      async () => "4f57c735-a614-4e0f-a36a-e5c60b94db15",
+    );
+
+    await expect(store.issue({
+      uid: 1000,
+      username: "alice",
+      packageId: "pkg-chat",
+      packageName: "chat",
+      entrypointName: "Chat",
+      routeBase: "/apps/chat",
+      clientId: "win-1",
+      ttlMs: 60_000,
+    })).rejects.toThrow("Invalid app session id");
+  });
+
+  it("keeps pre-cutover UUID rows unreachable", async () => {
+    vi.spyOn(Date, "now").mockReturnValue(10_000);
+    const legacySessionId = "4f57c735-a614-4e0f-a36a-e5c60b94db15";
+    const sql = createMockSql();
+    sql.exec(
+      `INSERT INTO app_sessions (
+        session_id, uid, username, package_id, package_name, entrypoint_name,
+        route_base, created_at, last_used_at, expires_at, closed_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      legacySessionId,
+      1000,
+      "alice",
+      "pkg-chat",
+      "chat",
+      "Chat",
+      "/apps/chat",
+      1,
+      null,
+      70_000,
+      null,
+    );
+    const store = new AppSessionStore(
+      sql as unknown as SqlStorage,
+      routedSessionIdFactory(),
+    );
+
+    expect(store.getActiveRoute(legacySessionId)).toBeNull();
+    expect(store.list(1000)).toEqual([]);
+    await expect(store.attach({
+      uid: 1000,
+      sessionId: legacySessionId,
+      clientId: "win-2",
+      ttlMs: 60_000,
+    })).resolves.toBeNull();
+  });
+
+  it("rejects routed ids bound to another account", async () => {
+    vi.spyOn(Date, "now").mockReturnValue(10_000);
+    const issue = {
+      uid: 1000,
+      username: "bob",
+      packageId: "pkg-chat",
+      packageName: "chat",
+      entrypointName: "Chat",
+      routeBase: "/apps/chat",
+      clientId: "win-1",
+      ttlMs: 60_000,
+    };
+    const mismatchedStore = new AppSessionStore(
+      createMockSql() as unknown as SqlStorage,
+      async () => buildRoutedAppSessionId({
+        username: "alice",
+        uid: 1000,
+        expiresAt: 70_000,
+        nonce: crypto.randomUUID(),
+      }, "A".repeat(43)),
+    );
+    await expect(mismatchedStore.issue(issue)).rejects.toThrow("Invalid app session id");
+  });
+
   it("uses a routed id factory and never extends past its locator expiry", async () => {
     vi.spyOn(Date, "now").mockReturnValue(100_000);
     const sessionId = buildRoutedAppSessionId({
       username: "alice",
       uid: 1000,
-      generation: 2,
       expiresAt: 125_000,
       nonce: "4f57c735-a614-4e0f-a36a-e5c60b94db15",
-      placementCertificate: "A".repeat(86),
     }, "A".repeat(43));
     const store = new AppSessionStore(
       createMockSql() as unknown as SqlStorage,
@@ -364,7 +455,10 @@ describe("AppSessionStore", () => {
   it("refreshes an existing session without changing its socket path", async () => {
     vi.spyOn(Date, "now").mockReturnValue(100_000);
 
-    const store = new AppSessionStore(createMockSql() as unknown as SqlStorage);
+    const store = new AppSessionStore(
+      createMockSql() as unknown as SqlStorage,
+      routedSessionIdFactory(),
+    );
 
     const issued = await store.issue({
       uid: 1000,
@@ -390,7 +484,10 @@ describe("AppSessionStore", () => {
     "checks the target lease after secret verification and before %s mutation",
     async (mode) => {
       vi.spyOn(Date, "now").mockReturnValue(100_000);
-      const store = new AppSessionStore(createMockSql() as unknown as SqlStorage);
+      const store = new AppSessionStore(
+        createMockSql() as unknown as SqlStorage,
+        routedSessionIdFactory(),
+      );
       const issued = await store.issue({
         uid: 1000,
         username: "alice",
@@ -426,7 +523,10 @@ describe("AppSessionStore", () => {
   it("attaches additional clients without invalidating existing sessions", async () => {
     vi.spyOn(Date, "now").mockReturnValue(200_000);
 
-    const store = new AppSessionStore(createMockSql() as unknown as SqlStorage);
+    const store = new AppSessionStore(
+      createMockSql() as unknown as SqlStorage,
+      routedSessionIdFactory(),
+    );
 
     const issued = await store.issue({
       uid: 1000,
@@ -473,7 +573,10 @@ describe("AppSessionStore", () => {
   it("lists and closes active sessions for the owning user", async () => {
     vi.spyOn(Date, "now").mockReturnValue(300_000);
 
-    const store = new AppSessionStore(createMockSql() as unknown as SqlStorage);
+    const store = new AppSessionStore(
+      createMockSql() as unknown as SqlStorage,
+      routedSessionIdFactory(),
+    );
 
     const issued = await store.issue({
       uid: 1000,

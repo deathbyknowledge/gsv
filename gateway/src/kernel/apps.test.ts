@@ -67,9 +67,7 @@ function makeContext(overrides: Partial<KernelContext> = {}): KernelContext {
         cwd: "/home/alice",
       },
     },
-    packages: {
-      list: vi.fn(() => [makePackageRecord()]),
-    },
+    packagesList: vi.fn(async () => [makePackageRecord()]),
     appSessions: {
       issue: vi.fn(async (input) => ({
         sessionId: "session-1",
@@ -253,9 +251,7 @@ describe("app syscalls", () => {
 
   it("returns a typed 404 when the package app is missing", async () => {
     const ctx = makeContext({
-      packages: {
-        list: vi.fn(() => []),
-      } as unknown as KernelContext["packages"],
+      packagesList: vi.fn(async () => []),
     });
 
     await expect(handleAppOpen({ packageName: "chat" }, ctx)).rejects.toMatchObject({

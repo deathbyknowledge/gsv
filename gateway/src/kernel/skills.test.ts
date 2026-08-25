@@ -35,9 +35,7 @@ describe("collectFilesystemSkillDocuments", () => {
     const foreign = makePackage("pkg-foreign", "foreign-tools", "alice/tools");
     const owned = makePackage("pkg-owned", "owned-tools", "sam/tools");
     const ctx = {
-      packages: {
-        list: () => [foreign, owned],
-      },
+      packagesList: async () => [foreign, owned],
     } as unknown as KernelContext;
     const fs = makeSkillFs({
       "/src/repos/alice/tools/skills.d": ["guide.md"],
@@ -81,9 +79,7 @@ describe("collectFilesystemSkillDocuments", () => {
     const globalPackage = makePackage(packageId, "tools", "sam/tools", { kind: "global" });
     const userPackage = makePackage(packageId, "tools", "sam/tools", { kind: "user", uid: IDENTITY.uid });
     const ctx = {
-      packages: {
-        list: () => [userPackage, globalPackage],
-      },
+      packagesList: async () => [userPackage, globalPackage],
     } as unknown as KernelContext;
     const fs = makeSkillFs({
       "/src/repos/sam/tools/skills.d": ["workflow.md"],
@@ -121,7 +117,7 @@ describe("collectFilesystemSkillDocuments", () => {
   it("uses both owning human and agent skills.d for agent processes", async () => {
     const ownerPackage = makePackage("pkg-owner-tools", "owner-tools", "sam/tools", { kind: "user", uid: IDENTITY.uid });
     const agentPackage = makePackage("pkg-agent-tools", "agent-tools", "friday/tools", { kind: "user", uid: AGENT_IDENTITY.uid });
-    const listCalls: Array<{ scopes?: unknown }> = [];
+    const listCalls: Array<{ enabled?: boolean }> = [];
     const ctx = makeAgentOwnedContext({
       packages: [ownerPackage, agentPackage],
       listCalls,
@@ -159,19 +155,12 @@ describe("collectFilesystemSkillDocuments", () => {
       },
     });
     expect(docs.find((doc) => doc.name === "owner-workflow")?.source.writable).toBe(false);
-    expect(listCalls[0]).toMatchObject({
-      scopes: [
-        { kind: "user", uid: IDENTITY.uid },
-        { kind: "global" },
-      ],
-    });
+    expect(listCalls[0]).toEqual({ enabled: true });
   });
 
   it("discovers nested skills.d children without exposing them in top-level-only collection", async () => {
     const ctx = {
-      packages: {
-        list: () => [],
-      },
+      packagesList: async () => [],
     } as unknown as KernelContext;
     const fs = makeSkillFs({
       "/home/sam/skills.d": ["device-management"],
@@ -293,9 +282,7 @@ describe("collectKernelSkillDocuments", () => {
         process: IDENTITY,
         capabilities: ["*"],
       },
-      packages: {
-        list: () => [],
-      },
+      packagesList: async () => [],
       env: {
         RIPGIT: makeRipgitFetcher({
           "sam/home:skills.d": [
@@ -380,7 +367,7 @@ function makePackage(
 
 function makeAgentOwnedContext(options: {
   packages?: InstalledPackageRecord[];
-  listCalls?: Array<{ scopes?: unknown }>;
+  listCalls?: Array<{ enabled?: boolean }>;
   ripgitEntries?: Record<string, string | Array<{ name: string; mode: string; hash: string; type: "tree" | "blob" | "symlink" }>>;
   readKeys?: string[];
 } = {}): KernelContext {
@@ -391,33 +378,37 @@ function makeAgentOwnedContext(options: {
       process: AGENT_IDENTITY,
       capabilities: ["*"],
     },
-    auth: {
-      getPasswdByUid(uid: number) {
-        if (uid === IDENTITY.uid) {
-          return {
-            uid: IDENTITY.uid,
-            gid: IDENTITY.gid,
-            username: IDENTITY.username,
-            gecos: "sam",
-            home: IDENTITY.home,
-            shell: "/bin/init",
-          };
-        }
-        if (uid === AGENT_IDENTITY.uid) {
-          return {
-            uid: AGENT_IDENTITY.uid,
-            gid: AGENT_IDENTITY.gid,
-            username: AGENT_IDENTITY.username,
-            gecos: "friday",
-            home: AGENT_IDENTITY.home,
-            shell: "/bin/init",
-          };
-        }
-        return null;
-      },
-      resolveGids(_username: string, gid: number) {
-        return [gid];
-      },
+    accountGet: async (query: { uid?: number }) => {
+      const uid = query.uid;
+      if (uid === IDENTITY.uid) {
+        return {
+          uid: IDENTITY.uid,
+          gid: IDENTITY.gid,
+          username: IDENTITY.username,
+          gecos: "sam",
+          home: IDENTITY.home,
+          shell: "/bin/init",
+          gids: IDENTITY.gids,
+          kind: "human" as const,
+          state: "active" as const,
+          displayName: "sam",
+        };
+      }
+      if (uid === AGENT_IDENTITY.uid) {
+        return {
+          uid: AGENT_IDENTITY.uid,
+          gid: AGENT_IDENTITY.gid,
+          username: AGENT_IDENTITY.username,
+          gecos: "friday",
+          home: AGENT_IDENTITY.home,
+          shell: "/bin/init",
+          gids: AGENT_IDENTITY.gids,
+          kind: "agent" as const,
+          state: "active" as const,
+          displayName: "friday",
+        };
+      }
+      return null;
     },
     procs: {
       getOwnerUid() {
@@ -425,17 +416,11 @@ function makeAgentOwnedContext(options: {
       },
     },
     processId: "task-1",
-    packages: {
-      list(args: { scopes?: Array<{ kind: string; uid?: number }> }) {
-        options.listCalls?.push(args);
-        const scopeKeys = new Set((args.scopes ?? []).map((scope) =>
-          scope.kind === "user" ? `user:${scope.uid}` : scope.kind
-        ));
-        return packages.filter((pkg) => {
-          const scope = pkg.scope.kind === "user" ? `user:${pkg.scope.uid}` : pkg.scope.kind;
-          return scopeKeys.has(scope);
-        });
-      },
+    packagesList: async (args: { enabled?: boolean } = {}) => {
+      options.listCalls?.push(args);
+      return packages.filter((pkg) => {
+        return pkg.scope.kind === "global" || pkg.scope.uid === IDENTITY.uid;
+      });
     },
     env: {
       RIPGIT: options.ripgitEntries ? makeRipgitFetcher(options.ripgitEntries, options.readKeys) : undefined,

@@ -22,7 +22,11 @@ type FakeAdapters = {
   };
 };
 
-function makeContext(uid: number, adapters: FakeAdapters): KernelContext {
+function makeContext(
+  uid: number,
+  adapters: FakeAdapters,
+  callerOwnerUid?: number,
+): KernelContext {
   return {
     identity: {
       role: "user",
@@ -36,6 +40,7 @@ function makeContext(uid: number, adapters: FakeAdapters): KernelContext {
       },
       capabilities: ["*"],
     },
+    ...(callerOwnerUid === undefined ? {} : { callerOwnerUid }),
     adapters,
   } as unknown as KernelContext;
 }
@@ -221,9 +226,40 @@ describe("sys.link handlers", () => {
     });
 
     const result = handleSysLinkConsume({ code: "abcd-1234" }, ctx);
-    expect(adapters.linkChallenges.consume).toHaveBeenCalledWith("ABCD-1234", 1000);
+    expect(adapters.linkChallenges.consume).toHaveBeenCalledWith("ABCD-1234", 1000, 1000);
     expect(adapters.identityLinks.link).toHaveBeenCalled();
     expect(result.linked).toBe(true);
+  });
+
+  it("binds an owned agent's link to its human owner", () => {
+    const ctx = makeContext(2000, adapters, 1000);
+    adapters.linkChallenges.consume.mockReturnValue({
+      code: "ABCD-1234",
+      adapter: "whatsapp",
+      accountId: "default",
+      actorId: "wa:+123",
+      surfaceKind: "dm",
+      surfaceId: "wa:+123",
+      createdAt: 1_700_000_000_000,
+      expiresAt: 1_700_000_600_000,
+      usedAt: 1_700_000_010_000,
+      usedByUid: 2000,
+    });
+
+    const result = handleSysLinkConsume({ code: "abcd-1234" }, ctx);
+    expect(adapters.linkChallenges.consume).toHaveBeenCalledWith("ABCD-1234", 2000, 1000);
+    expect(adapters.identityLinks.link).toHaveBeenCalledWith(
+      "whatsapp",
+      "default",
+      "wa:+123",
+      1000,
+      2000,
+      expect.objectContaining({ code: "ABCD-1234" }),
+    );
+    expect(result.link?.uid).toBe(1000);
+
+    handleSysLinkList({}, ctx);
+    expect(adapters.identityLinks.list).toHaveBeenCalledWith(1000);
   });
 
   it("fails consume with invalid/expired code", () => {

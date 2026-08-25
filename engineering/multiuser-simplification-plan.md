@@ -1,8 +1,10 @@
 # Multiuser simplification execution plan
 
-Working plan for rebuilding the `multi-user-dos` branch as a clean Master +
-user-Kernel split with no projection/fence/generation machinery. Delete this
-file (or fold its remnants into `docs/architecture/`) once executed.
+Historical execution plan for rebuilding the `multi-user-dos` branch as a clean
+Master + user-Kernel split with no projection/fence/generation machinery. The
+current contract is `multiuser-simplification-state.md`; it supersedes this file
+where the implementation evolved. Delete this plan, or fold any useful history
+into `docs/architecture/`, once the branch lands.
 
 Base: branch `multi-user-dos` @ `3fb7d8a2` (merge-base with main: `88a5aea1`).
 Validation baseline at branch tip: `npx tsc --noEmit` clean, 107 test files /
@@ -43,10 +45,11 @@ These are agreed and must not be relitigated during execution:
    Kernels, Master push on link/unlink, lazy pull on miss) is documented as
    future work, not built.
 7. **`account.get` public syscall** is the identity-resolution surface.
-8. **Clean from scratch.** Migrations renumbered with zero residue, docs
-   rewritten to final state, no comments referencing deleted machinery,
-   branch history restructured at the end so the result reads as if the
-   deleted approach never existed.
+8. **Clean implementation history, preserved deployment state.** Migrations are
+   renumbered with no abandoned implementation machinery, docs describe the
+   final model, and branch history reads cleanly. Deployed `singleton`, R2,
+   AppRunner, ripgit, and adapter data is retained in place; clean code history
+   does not authorize destructive storage cleanup.
 
 ### Micro-decisions (recommendations, flag if you disagree)
 
@@ -58,9 +61,7 @@ These are agreed and must not be relitigated during execution:
   with `assertActiveUserKernelSource(sourceKernelName, username)` on every
   user-kernel→Master RPC. Deletes `rotate/verify/authorize/requireLocal*`
   (~150 lines + tests).
-- **D2 — Cap legacy app-session sliding renewal** with the same route expiry
-  as routed sessions (one-line fix for the unbounded-refresh finding).
-- **D3 — Username/uid name resolution may be cached forever** in user-Kernel
+- **D2 — Username/uid name resolution may be cached forever** in user-Kernel
   memory. Usernames are immutable and uids are never reused, so
   `uidToName`/`gidToName` is the one dataset that needs no invalidation.
 
@@ -79,8 +80,9 @@ client → /ws/<username>
          auth-file reads · config reads · package validation
 ```
 
-- `/ws` remains commissioning + v16-`legacy` accounts (they run entirely in
-  `singleton`, unchanged).
+- `/ws` is commissioning-only. V16 backfills login-capable placements as
+  `provisioning`; the Master idempotently provisions their fresh user Kernels on
+  wake or first bounded demand. Old singleton runtime rows remain dormant.
 - The user Kernel constructs **no** AuthStore/CapabilityStore/ConfigStore/
   PackagesStore access paths. (Tables may exist empty from the shared schema;
   no code reads them in user-Kernel mode.)
@@ -101,7 +103,7 @@ where applicable:
 | `readAuthFile("passwd" \| "group" \| "shadow")` | serialized flat file; `shadow` requires requester uid 0 | `/etc/*` via GsvFs |
 | `configGet(key)` / `configList(prefix)` | allowlist-enforced config reads | `/sys/config/*`, shell limits, `ai.config` |
 | `validatePackageRuntime({packageId, actorUid, packageUpdatedAt, packageArtifactHash})` | package exists, actor authorized, hash/revision current | appFrame authorization, package-agent spawn |
-| `receiveAdapterInbound(envelope)` | resolves identity link, forwards frame to owning kernel (or handles legacy locally) | adapter ingress |
+| `receiveAdapterInbound(envelope)` | resolves identity link, ensures a known provisioning placement, and forwards only to its active owning Kernel | adapter ingress |
 | `resolveUserKernelRoute(username)` | placement lookup for edge | `/ws/<username>`, app routes, OAuth callbacks |
 | `dispatchMasterSyscall(frame)` | existing Master-owned forwarding | the allowlist |
 
@@ -146,7 +148,7 @@ Rewire user-Kernel consumers off local stores:
   `/sys/capabilities/*` → `accountGet`-backed. `/proc`, `/dev`,
   `/sys/devices` stay local.
 - `AuthStore` name cache (`uidToName`/`gidToName`) → in-memory Map over
-  `accountGet` (D3: cache forever).
+  `accountGet` (D2: cache forever).
 - `proc.spawn` / cron / `agents.ts`: actor identity + caps via `accountGet`.
 - Process `ai.config` path: resolve via `configGet`.
 - appFrame authorization (`do.ts` ~8173–8294): package validation via
@@ -227,12 +229,11 @@ Delete store methods: `capabilities.ts:162`, `config.ts:185`,
   12080–12114; `index.ts` edge verify 849–859; `placementCertificate` field
   in `protocol/app-session.ts`.
 - Simplify routed session id to `gsv1b~username~uid~expiresAt~nonce~sig`
-  (drop generation + cert). Edge app routes: parse →
-  `resolveUserKernelRoute(username)` → forward; legacy bare UUID →
-  `resolveAppSessionKernel` (Master). Target validates HMAC + local session.
+  (drop generation + cert). Edge app routes parse the username locator and
+  forward to the active user Kernel. The target validates HMAC + local session;
+  no bare-UUID compatibility form is accepted.
 - `AppFrameContext`: drop `kernelOwnerUid`, `kernelUsername`,
   `kernelGeneration` (runner naming no longer needs owner qualification).
-- D2: cap legacy session sliding renewal.
 
 Tests: delete cert/verifier suites; rewrite `app-runner.test.ts` authority
 blocks ("request-scoped runtime authority", "daemon schedule authority",
@@ -244,8 +245,8 @@ app-session describe.
 
 - Delete grant machinery: do.ts `adapterInboundAuthorizations`,
   `issueAdapterInboundRoute` → replaced by `receiveAdapterInbound` (Master
-  resolves link + placement, calls target `serviceAdapterFrame`, or handles
-  legacy inline), `consumeAdapterInboundAuthorization` 4119–4177,
+  resolves link + placement, ensures a known provisioning owner, and calls the
+  active target `serviceAdapterFrame`), `consumeAdapterInboundAuthorization` 4119–4177,
   `isMasterAdapterInboundAuthorized`; `shared/adapter-inbound-route.ts`
   reduced to the metadata envelope + validation (keep strict shape checks).
 - `index.ts` scoped adapter entrypoints: call Master `receiveAdapterInbound`
@@ -299,7 +300,7 @@ Reduce the transition suite to a single idempotent provisioning path:
 - DELETE: `transitionUserKernelLifecycle`/`commitUserKernelLifecycle
   Transition`/`applyUserKernelLifecycleTargetFence` 2039–2408,
   `consumeUserKernelLifecycleAuthorization`/`isMasterUserKernelLifecycle
-  Authorized` 1989–2039/2660–2668, legacy + target fence/recovery loops
+  Authorized` 1989–2039/2660–2668, obsolete target fence/recovery loops
   2156–2594, `abortFencedUserKernelProcesses` 2594–2658, activation/rebind
   suite 2671–3340 (`activateUserKernelFromProjection`,
   `restoreProvisioningAfterActivationFailure`,
@@ -319,7 +320,9 @@ Reduce the transition suite to a single idempotent provisioning path:
   `v022_register_app_runtimes.ts`. Renumber: v020 → v019
   (`bind_package_security_revisions`, KEEP), v023 → v020
   (`bind_oauth_flow_kernel_owner`). Update `kernel/schema/migrations.ts`.
-- Edit `v016_add_user_kernels.ts`: drop `generation` from `user_kernels`.
+- Edit `v016_add_user_kernels.ts`: drop `generation` from `user_kernels`; locally
+  backfill `account_identities` and login-capable `provisioning` placements in
+  the retained Master. Do not add cross-DO state-transfer machinery.
 - App-runner schema: delete v002; `app-runner/schema/migrations.ts` back to
   v001 only; delete `control-schema.ts` (batch 3) and revert
   `schema/runner.ts` export if unused.
@@ -367,10 +370,10 @@ Reduce the transition suite to a single idempotent provisioning path:
 - `docs/reference/configuration.md`, `cli-commands.md`, `package-sdk.md`,
   `r2-storage.md`, `hardware-tools.md`: final-state edits.
 - `gateway/TODO.md`: split section now reads — done: clean split, Master
-  RPC authority, token fencing, rate limiting; remaining: legacy state
-  migration, package refactor (authority model TBD), admin lifecycle ops
-  (introduce epochs then), link-cache projection (when measured), CF edge
-  rate-limit complement, audit/abuse ledgers.
+  RPC authority, token fencing, rate limiting, in-place v16 backfill; remaining:
+  upgraded-instance cutoff validation, package refactor (authority model TBD),
+  admin lifecycle ops (introduce epochs then), link-cache projection (when
+  measured), CF edge rate-limit complement, audit/abuse ledgers.
 
 ### Batch 10 — final validation + history
 
@@ -418,7 +421,8 @@ suites, `run-routes`, `adapter-handlers`, `routing.test.ts`.
   refactor). Until then: `validatePackageRuntime` per-call RPC, no cache.
 - App sessions not fenced by token revocation (review finding B5) —
   design a `revoke sessions for uid` path in the package/session work.
-- Legacy (`v16`) runtime state migration off `singleton`.
+- Upgraded-instance validation for the in-place v16 cutoff, including retryable
+  activation and proof that retained singleton-local runtime stays dormant.
 - Admin lifecycle ops (suspend/retire/reactivate) — introduce epochs there.
 - Adapter link-cache projection for message scale; CF edge rate-limit
   complement; audit/abuse ledgers; cross-shard root administration.

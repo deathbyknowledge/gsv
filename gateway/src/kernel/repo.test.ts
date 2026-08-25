@@ -76,6 +76,8 @@ function makeContext(
     env: {
       RIPGIT: fetcher,
     } as Env,
+    kernelName: "singleton",
+    kernelKind: "master",
     config,
     identity: {
       role: "user",

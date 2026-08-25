@@ -71,10 +71,10 @@ export class LinkChallengeStore {
     };
   }
 
-  consume(code: string, uid: number): LinkChallengeRecord | null {
+  consume(code: string, usedByUid: number, attemptOwnerUid = usedByUid): LinkChallengeRecord | null {
     this.pruneExpired();
     const now = Date.now();
-    const userScope = `uid:${uid}`;
+    const userScope = `uid:${attemptOwnerUid}`;
 
     if (
       this.isAttemptBlocked(userScope, USER_ATTEMPT_LIMIT, now)
@@ -114,7 +114,7 @@ export class LinkChallengeStore {
     this.sql.exec(
       `UPDATE link_challenges SET used_at = ?, used_by_uid = ? WHERE code = ?`,
       usedAt,
-      uid,
+      usedByUid,
       code,
     );
     this.sql.exec("DELETE FROM link_challenge_attempts WHERE scope = ?", userScope);
@@ -129,7 +129,7 @@ export class LinkChallengeStore {
       createdAt: row.created_at,
       expiresAt: row.expires_at,
       usedAt,
-      usedByUid: uid,
+      usedByUid,
     };
   }
 

@@ -1,37 +1,34 @@
-import type { PasswdEntry } from "../auth/passwd";
 import type {
   ConnectionIdentity,
   ProcessIdentity,
   ScheduleExpression,
   SchedulePrincipal,
 } from "@humansandmachines/gsv/protocol";
-import { canOwnerDelegateRunAs } from "./account-access";
 import { hasCapability } from "./capabilities";
-import type { KernelContext } from "./context";
+import type { KernelContext, RunnableAccount } from "./context";
 import { resolveCallerOwnerUid } from "./context";
 import {
   armSchedule,
   normalizeScheduleExpression,
 } from "./scheduler";
-import { packageAgentRuntimeSecurityRevision } from "./package-agents";
 
 const USER_CRON_PREFIX = "/var/spool/cron/";
 const SYSTEM_CRON_PREFIX = "/etc/cron.d/";
 
 type CronJobSpec = {
   lineNumber: number;
-  user: PasswdEntry;
+  account: RunnableAccount;
   expression: Extract<ScheduleExpression, { kind: "cron" }>;
   command: string;
 };
 
 export type CronFileService = {
-  listUserCrontabs(): string[];
-  readUserCrontab(username: string): string | undefined;
+  listUserCrontabs(): Promise<string[]>;
+  readUserCrontab(username: string): Promise<string | undefined>;
   installUserCrontab(username: string, content: string): Promise<void>;
   removeUserCrontab(username: string): Promise<boolean>;
-  listSystemCrontabs(): string[];
-  readSystemCrontab(name: string): string | undefined;
+  listSystemCrontabs(): Promise<string[]>;
+  readSystemCrontab(name: string): Promise<string | undefined>;
   installSystemCrontab(name: string, content: string): Promise<void>;
   removeSystemCrontab(name: string): Promise<boolean>;
 };
@@ -65,46 +62,45 @@ export function createCronFileService(ctx: KernelContext): CronFileService {
   };
 }
 
-function listUserCrontabs(ctx: KernelContext): string[] {
+async function listUserCrontabs(ctx: KernelContext): Promise<string[]> {
   const store = ctx.schedules;
-  const actorUid = requireActor(ctx).process.uid;
-  if (actorUid !== 0) {
-    const user = ctx.auth.getPasswdByUid(actorUid);
-    if (!user) return [];
-    return store.getCronFile(userCronPath(user.username)) ? [user.username] : [];
-  }
+  const actor = requireActor(ctx).process;
+  const visibleAccounts = await ctx.listRunnableAccounts({
+    ownerUid: resolveCallerOwnerUid(ctx),
+    callerUid: actor.uid,
+  });
+  const visibleUsernames = new Set(
+    visibleAccounts.map((account) => account.identity.username),
+  );
   return store.listCronFiles({ prefix: USER_CRON_PREFIX })
     .map((record) => record.path.slice(USER_CRON_PREFIX.length))
-    .filter(Boolean)
+    .filter((username) => username && visibleUsernames.has(username))
     .sort();
 }
 
-function readUserCrontab(ctx: KernelContext, username: string): string | undefined {
-  const user = requireUser(ctx, username);
-  assertCanManageUserCrontab(ctx, user);
-  return ctx.schedules.getCronFile(userCronPath(user.username))?.content;
+async function readUserCrontab(ctx: KernelContext, username: string): Promise<string | undefined> {
+  const account = await requireRunnableAccount(ctx, username);
+  return ctx.schedules.getCronFile(userCronPath(account.identity.username))?.content;
 }
 
 async function installUserCrontab(ctx: KernelContext, username: string, content: string): Promise<void> {
-  const user = requireUser(ctx, username);
-  assertCanManageUserCrontab(ctx, user);
+  const account = await requireRunnableAccount(ctx, username);
   const normalized = normalizeCronFileContent(content);
-  const jobs = parseUserCrontab(ctx, normalized, user);
+  const jobs = await parseUserCrontab(ctx, normalized, account);
   await replaceCronFile(ctx, {
-    path: userCronPath(user.username),
-    ownerUid: user.uid,
+    path: userCronPath(account.identity.username),
+    ownerUid: account.identity.uid,
     content: normalized,
     jobs,
   });
 }
 
 async function removeUserCrontab(ctx: KernelContext, username: string): Promise<boolean> {
-  const user = requireUser(ctx, username);
-  assertCanManageUserCrontab(ctx, user);
-  return removeCronFile(ctx, userCronPath(user.username));
+  const account = await requireRunnableAccount(ctx, username);
+  return removeCronFile(ctx, userCronPath(account.identity.username));
 }
 
-function listSystemCrontabs(ctx: KernelContext): string[] {
+async function listSystemCrontabs(ctx: KernelContext): Promise<string[]> {
   assertRoot(ctx, "list system crontabs");
   return ctx.schedules.listCronFiles({ prefix: SYSTEM_CRON_PREFIX, ownerUid: null })
     .map((record) => record.path.slice(SYSTEM_CRON_PREFIX.length))
@@ -112,7 +108,7 @@ function listSystemCrontabs(ctx: KernelContext): string[] {
     .sort();
 }
 
-function readSystemCrontab(ctx: KernelContext, name: string): string | undefined {
+async function readSystemCrontab(ctx: KernelContext, name: string): Promise<string | undefined> {
   assertRoot(ctx, "read system crontabs");
   return ctx.schedules.getCronFile(systemCronPath(name))?.content;
 }
@@ -120,7 +116,7 @@ function readSystemCrontab(ctx: KernelContext, name: string): string | undefined
 async function installSystemCrontab(ctx: KernelContext, name: string, content: string): Promise<void> {
   assertRoot(ctx, "install system crontabs");
   const normalized = normalizeCronFileContent(content);
-  const jobs = parseSystemCrontab(ctx, normalized);
+  const jobs = await parseSystemCrontab(ctx, normalized);
   await replaceCronFile(ctx, {
     path: systemCronPath(name),
     ownerUid: null,
@@ -146,10 +142,10 @@ async function replaceCronFile(
   const store = ctx.schedules;
   const now = Date.now();
   for (const job of input.jobs) {
-    const process = processIdentityForUser(ctx, job.user);
-    const capabilities = ctx.caps.resolve(process.gids);
-    if (!hasCapability(capabilities, "shell.exec")) {
-      throw new Error(`Permission denied: ${job.user.username} cannot run shell.exec`);
+    if (!hasCapability(job.account.capabilities, "shell.exec")) {
+      throw new Error(
+        `Permission denied: ${job.account.identity.username} cannot run shell.exec`,
+      );
     }
   }
 
@@ -162,11 +158,11 @@ async function replaceCronFile(
   });
 
   for (const job of input.jobs) {
-    const process = processIdentityForUser(ctx, job.user);
+    const process = job.account.identity;
     const ownerUid = input.ownerUid === null
-      ? job.user.uid
-      : scheduleOwnerUidForUserCrontab(ctx, job.user);
-    const packageSecurityRevision = packageAgentRuntimeSecurityRevision(ctx, process.uid);
+      ? process.uid
+      : scheduleOwnerUidForUserCrontab(ctx, process);
+    const packageSecurityRevision = job.account.packageSecurityRevision;
     const schedule = store.create({
       ownerUid,
       creator: principalFromIdentity(requireActor(ctx), ctx.processId),
@@ -209,7 +205,11 @@ async function removeLinkedSchedules(ctx: KernelContext, path: string): Promise<
   store.clearCronFileScheduleLinks(path);
 }
 
-function parseUserCrontab(ctx: KernelContext, content: string, user: PasswdEntry): CronJobSpec[] {
+async function parseUserCrontab(
+  ctx: KernelContext,
+  content: string,
+  account: RunnableAccount,
+): Promise<CronJobSpec[]> {
   return parseCrontabLines(ctx, content, (line, lineNumber, timezone) => {
     const match = line.match(/^(\S+)\s+(\S+)\s+(\S+)\s+(\S+)\s+(\S+)\s+(.+)$/);
     if (!match) {
@@ -218,37 +218,41 @@ function parseUserCrontab(ctx: KernelContext, content: string, user: PasswdEntry
     return cronJobFromParts(ctx, {
       lineNumber,
       timezone,
-      user,
+      account,
       fields: match.slice(1, 6),
       command: match[6],
     });
   });
 }
 
-function parseSystemCrontab(ctx: KernelContext, content: string): CronJobSpec[] {
-  return parseCrontabLines(ctx, content, (line, lineNumber, timezone) => {
+async function parseSystemCrontab(ctx: KernelContext, content: string): Promise<CronJobSpec[]> {
+  return parseCrontabLines(ctx, content, async (line, lineNumber, timezone) => {
     const match = line.match(/^(\S+)\s+(\S+)\s+(\S+)\s+(\S+)\s+(\S+)\s+(\S+)\s+(.+)$/);
     if (!match) {
       throw new Error(`invalid crontab line ${lineNumber}: expected five schedule fields, user, and command`);
     }
-    const user = requireUser(ctx, match[6]);
+    const account = await requireRunnableAccount(ctx, match[6]);
     return cronJobFromParts(ctx, {
       lineNumber,
       timezone,
-      user,
+      account,
       fields: match.slice(1, 6),
       command: match[7],
     });
   });
 }
 
-function parseCrontabLines(
+async function parseCrontabLines(
   ctx: KernelContext,
   content: string,
-  parseJob: (line: string, lineNumber: number, timezone: string) => CronJobSpec,
-): CronJobSpec[] {
+  parseJob: (
+    line: string,
+    lineNumber: number,
+    timezone: string,
+  ) => CronJobSpec | Promise<CronJobSpec>,
+): Promise<CronJobSpec[]> {
   const jobs: CronJobSpec[] = [];
-  let timezone = ctx.config.get("config/server/timezone") || "UTC";
+  let timezone = await ctx.configGet("config/server/timezone") || "UTC";
   const lines = content.split("\n");
   for (let index = 0; index < lines.length; index += 1) {
     const lineNumber = index + 1;
@@ -265,7 +269,7 @@ function parseCrontabLines(
       continue;
     }
 
-    jobs.push(parseJob(trimmed, lineNumber, timezone));
+    jobs.push(await parseJob(trimmed, lineNumber, timezone));
   }
   return jobs;
 }
@@ -275,7 +279,7 @@ function cronJobFromParts(
   input: {
     lineNumber: number;
     timezone: string;
-    user: PasswdEntry;
+    account: RunnableAccount;
     fields: string[];
     command: string;
   },
@@ -291,7 +295,7 @@ function cronJobFromParts(
   }, ctx) as Extract<ScheduleExpression, { kind: "cron" }>;
   return {
     lineNumber: input.lineNumber,
-    user: input.user,
+    account: input.account,
     expression,
     command,
   };
@@ -341,19 +345,20 @@ function requireActor(ctx: KernelContext): ConnectionIdentity {
   return ctx.identity;
 }
 
-function requireUser(ctx: KernelContext, username: string): PasswdEntry {
-  const user = ctx.auth.getPasswdByUsername(cronPathSegment(username));
-  if (!user) {
-    throw new Error(`Unknown user: ${username}`);
+async function requireRunnableAccount(
+  ctx: KernelContext,
+  username: string,
+): Promise<RunnableAccount> {
+  const actor = requireActor(ctx).process;
+  const resolved = await ctx.resolveRunAsAccount({
+    ownerUid: resolveCallerOwnerUid(ctx),
+    callerUid: actor.uid,
+    selector: cronPathSegment(username),
+  });
+  if (!resolved.ok) {
+    throw new Error(resolved.error);
   }
-  return user;
-}
-
-function assertCanManageUserCrontab(ctx: KernelContext, user: PasswdEntry): void {
-  const actorUid = requireActor(ctx).process.uid;
-  if (actorUid === 0 || actorUid === user.uid) return;
-  if (canOwnerDelegateRunAs(ctx.auth, resolveCallerOwnerUid(ctx), user)) return;
-  throw new Error(`Permission denied: cannot access crontab for ${user.username}`);
+  return resolved.account;
 }
 
 function assertRoot(ctx: KernelContext, action: string): void {
@@ -362,26 +367,15 @@ function assertRoot(ctx: KernelContext, action: string): void {
   }
 }
 
-function processIdentityForUser(ctx: KernelContext, user: PasswdEntry): ProcessIdentity {
-  return {
-    uid: user.uid,
-    gid: user.gid,
-    gids: ctx.auth.resolveGids(user.username, user.gid),
-    username: user.username,
-    home: user.home,
-    cwd: user.home,
-  };
-}
-
-function scheduleOwnerUidForUserCrontab(ctx: KernelContext, user: PasswdEntry): number {
+function scheduleOwnerUidForUserCrontab(
+  ctx: KernelContext,
+  user: ProcessIdentity,
+): number {
   const actorUid = requireActor(ctx).process.uid;
   if (actorUid === 0) {
     return user.uid;
   }
-  if (actorUid === user.uid || canOwnerDelegateRunAs(ctx.auth, resolveCallerOwnerUid(ctx), user)) {
-    return resolveCallerOwnerUid(ctx);
-  }
-  return user.uid;
+  return resolveCallerOwnerUid(ctx);
 }
 
 function principalFromIdentity(identity: ConnectionIdentity, processId?: string): SchedulePrincipal {

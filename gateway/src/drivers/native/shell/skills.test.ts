@@ -51,11 +51,19 @@ describe("skills shell command", () => {
 
 function makeContext(): KernelContext {
   return {
-    packages: {
-      list() {
-        return [];
-      },
-    },
+    packagesList: async () => [],
+    accountGet: async () => ({
+      uid: IDENTITY.uid,
+      username: IDENTITY.username,
+      gid: IDENTITY.gid,
+      gids: IDENTITY.gids,
+      home: IDENTITY.home,
+      shell: "/bin/init",
+      kind: "human",
+      state: "active",
+      displayName: IDENTITY.username,
+      capabilities: [],
+    }),
   } as unknown as KernelContext;
 }
 

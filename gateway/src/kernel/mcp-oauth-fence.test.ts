@@ -3,7 +3,7 @@ import { runInDurableObject } from "cloudflare:test";
 import { getAgentByName } from "agents";
 import { describe, expect, it, vi } from "vitest";
 import { buildUserMcpOAuthCallbackPath } from "../shared/callback-routes";
-import { userKernelName } from "../shared/kernel-names";
+import { SHIP_KERNEL_NAME, userKernelName } from "../shared/kernel-names";
 import { Kernel } from "./do";
 import {
   USER_KERNEL_INSTANCE_STORAGE_KEY,
@@ -11,22 +11,10 @@ import {
 } from "./user-kernels";
 
 const OWNER_UID = 1000;
-const GENERATION = 7;
 const SERVER_ID = "mcp-server-1";
 
 type TestKernelInternals = {
   userKernelMarker: UserKernelInstanceMarker;
-  appRuntimes: {
-    beginLifecycleFence(input: {
-      ownerUid: number;
-      ownerUsername: string;
-      sourceKernelName: string;
-      generation: number;
-      fenceId: string;
-      targetLifecycle: "suspended";
-      createdAt: number;
-    }): unknown;
-  };
   mcpServers: {
     get(serverId: string): {
       serverId: string;
@@ -48,43 +36,40 @@ type TestKernelInternals = {
     establishConnection(serverId: string): Promise<void>;
     closeConnection(serverId: string): Promise<void>;
   };
-  closeUserKernelTargetAdmission(
-    generation: number,
-    reason: string,
-  ): void;
+  createMcpOAuthProvider(callbackUrl: string): any;
 };
 
-function activeMarker(username: string, generation = GENERATION): UserKernelInstanceMarker {
+function marker(
+  username: string,
+  lifecycle: "provisioning" | "active" = "active",
+): UserKernelInstanceMarker {
   return {
     version: 1,
     kind: "user",
     username,
     uid: OWNER_UID,
-    generation,
-    lifecycle: "active",
+    lifecycle,
     updatedAt: Date.now(),
-  };
+  } as UserKernelInstanceMarker;
 }
 
 async function newUserKernel(): Promise<{
   kernel: DurableObjectStub<Kernel>;
-  kernelName: string;
   username: string;
 }> {
   const username = `mcp-${crypto.randomUUID().replaceAll("-", "").slice(0, 16)}`;
-  const kernelName = userKernelName(username);
-  const kernel = await getAgentByName<Env, Kernel>(env.KERNEL, kernelName);
+  const kernel = await getAgentByName<Env, Kernel>(env.KERNEL, userKernelName(username));
   await runInDurableObject(kernel, async (instance: Kernel, state) => {
-    const marker = activeMarker(username);
-    await state.storage.put(USER_KERNEL_INSTANCE_STORAGE_KEY, marker);
-    (instance as unknown as TestKernelInternals).userKernelMarker = marker;
+    const active = marker(username);
+    await state.storage.put(USER_KERNEL_INSTANCE_STORAGE_KEY, active);
+    (instance as unknown as TestKernelInternals).userKernelMarker = active;
   });
-  return { kernel, kernelName, username };
+  return { kernel, username };
 }
 
 function callbackRequest(username: string): Request {
   return new Request(
-    `https://gsv.test${buildUserMcpOAuthCallbackPath(username, GENERATION)}`
+    `https://gsv.test${buildUserMcpOAuthCallbackPath(username)}`
       + `?state=nonce.${SERVER_ID}&code=oauth-code`,
   );
 }
@@ -99,29 +84,51 @@ function serverRecord() {
   };
 }
 
-describe("Kernel MCP OAuth callback fencing", () => {
-  it("runs the Agents callback hook through the Kernel shadow and denies before state processing", async () => {
-    const { kernel, kernelName, username } = await newUserKernel();
+describe("Master MCP runtime cutoff", () => {
+  it("leaves old singleton MCP rows stored without restoring transports", async () => {
+    const master = await getAgentByName<Env, Kernel>(env.KERNEL, SHIP_KERNEL_NAME);
 
-    await runInDurableObject(kernel, async (instance: Kernel) => {
+    await runInDurableObject(master, async (instance: Kernel, state) => {
+      state.storage.sql.exec(
+        `INSERT OR REPLACE INTO cf_agents_mcp_servers (
+           id, name, server_url, callback_url, client_id, auth_url, server_options
+         ) VALUES (?, ?, ?, ?, NULL, NULL, NULL)`,
+        "old-http-server",
+        "Old HTTP Server",
+        "https://mcp.example.test",
+        "https://gsv.test/oauth/callback",
+      );
+      state.storage.sql.exec(
+        `INSERT OR REPLACE INTO cf_agents_mcp_servers (
+           id, name, server_url, callback_url, client_id, auth_url, server_options
+         ) VALUES (?, ?, ?, ?, NULL, NULL, ?)`,
+        "old-rpc-server",
+        "Old RPC Server",
+        "rpc://old-server",
+        "",
+        JSON.stringify({ bindingName: "OLD_MCP" }),
+      );
+
+      const mcp = (instance as any).mcp;
+      await expect(mcp.restoreConnectionsFromStorage(SHIP_KERNEL_NAME))
+        .resolves.toBeUndefined();
+      expect(mcp.getRpcServersFromStorage()).toEqual([]);
+      expect(state.storage.sql.exec<{ count: number }>(
+        "SELECT COUNT(*) AS count FROM cf_agents_mcp_servers",
+      ).one().count).toBe(2);
+    });
+  });
+});
+
+describe("Kernel MCP OAuth callback admission", () => {
+  it("denies an inactive user Kernel before callback state processing", async () => {
+    const { kernel, username } = await newUserKernel();
+
+    await runInDurableObject(kernel, async (instance: Kernel, state) => {
       const internals = instance as unknown as TestKernelInternals;
-      const hook = Object.getOwnPropertyDescriptor(instance, "handleMcpOAuthCallback");
-      expect(hook).toMatchObject({
-        configurable: false,
-        enumerable: false,
-        writable: false,
-      });
-      expect(hook?.value).toBeTypeOf("function");
-
-      internals.appRuntimes.beginLifecycleFence({
-        ownerUid: OWNER_UID,
-        ownerUsername: username,
-        sourceKernelName: kernelName,
-        generation: GENERATION,
-        fenceId: crypto.randomUUID(),
-        targetLifecycle: "suspended",
-        createdAt: Date.now(),
-      });
+      const inactive = marker(username, "provisioning");
+      await state.storage.put(USER_KERNEL_INSTANCE_STORAGE_KEY, inactive);
+      internals.userKernelMarker = inactive;
 
       const handleCallbackRequest = vi.fn(async () => ({
         authSuccess: true,
@@ -149,64 +156,46 @@ describe("Kernel MCP OAuth callback fencing", () => {
     });
   });
 
-  it("rejects an in-flight callback after its Kernel generation is fenced", async () => {
+  it("commits provider tokens only while the durable owner marker is active", async () => {
     const { kernel, username } = await newUserKernel();
 
     await runInDurableObject(kernel, async (instance: Kernel, state) => {
       const internals = instance as unknown as TestKernelInternals;
-      let resolveCallback!: (result: {
-        authSuccess: true;
-        serverId: string;
-      }) => void;
-      let markCallbackStarted!: () => void;
-      const callbackStarted = new Promise<void>((resolve) => {
-        markCallbackStarted = resolve;
-      });
-      const callbackResult = new Promise<{
-        authSuccess: true;
-        serverId: string;
-      }>((resolve) => {
-        resolveCallback = resolve;
-      });
-      const establishConnection = vi.fn(async () => undefined);
-      const closeConnection = vi.fn(async () => undefined);
-      internals.mcpServers = {
-        get: vi.fn((serverId: string) => serverId === SERVER_ID ? serverRecord() : null),
-        list: vi.fn(() => []),
-      };
-      internals.mcp = {
-        isCallbackRequest: vi.fn(() => true),
-        handleCallbackRequest: vi.fn(() => {
-          markCallbackStarted();
-          return callbackResult;
-        }),
-        mcpConnections: {},
-        establishConnection,
-        closeConnection,
-      };
+      const provider = internals.createMcpOAuthProvider(
+        `https://gsv.test${buildUserMcpOAuthCallbackPath(username)}`,
+      );
+      provider.serverId = SERVER_ID;
+      provider.clientId = "active-client";
 
-      const responsePromise = instance.onRequest(callbackRequest(username));
-      await callbackStarted;
-      internals.closeUserKernelTargetAdmission(GENERATION, "generation changed");
-      const replacement = activeMarker(username, GENERATION + 1);
-      await state.storage.put(USER_KERNEL_INSTANCE_STORAGE_KEY, replacement);
-      internals.userKernelMarker = replacement;
-      resolveCallback({ authSuccess: true, serverId: SERVER_ID });
+      await provider.saveTokens({
+        access_token: "active-private-token",
+        token_type: "Bearer",
+      });
+      await expect(state.storage.get(provider.tokenKey("active-client")))
+        .resolves.toMatchObject({ access_token: "active-private-token" });
 
-      const response = await responsePromise;
-      expect(response.status).toBe(409);
-      expect(establishConnection).not.toHaveBeenCalled();
-      expect(closeConnection).toHaveBeenCalledExactlyOnceWith(SERVER_ID);
+      const inactive = marker(username, "provisioning");
+      await state.storage.put(USER_KERNEL_INSTANCE_STORAGE_KEY, inactive);
+      internals.userKernelMarker = inactive;
+      provider.clientId = "blocked-client";
+
+      await expect(provider.saveTokens({
+        access_token: "blocked-private-token",
+        token_type: "Bearer",
+      })).rejects.toThrow("User Kernel is not active");
+      await expect(state.storage.get(provider.tokenKey("blocked-client")))
+        .resolves.toBeUndefined();
     });
   });
 
-  it("denies token and client writes resumed after callback abort invalidates the epoch", async () => {
+  it("denies late writes after a cancelled callback invalidates its local epoch", async () => {
     const { kernel, username } = await newUserKernel();
 
     await runInDurableObject(kernel, async (instance: Kernel, state) => {
-      const provider = instance.createMcpOAuthProvider(
-        `https://gsv.test${buildUserMcpOAuthCallbackPath(username, GENERATION)}`,
-      ) as any;
+      const internals = instance as unknown as TestKernelInternals;
+      const provider = internals.createMcpOAuthProvider(
+        `https://gsv.test${buildUserMcpOAuthCallbackPath(username)}`,
+      );
       provider.serverId = SERVER_ID;
       provider.clientId = "existing-client";
 
@@ -243,8 +232,8 @@ describe("Kernel MCP OAuth callback fencing", () => {
         },
       );
 
-      operation.abort(new Error("callback generation fenced"));
-      await expect(callback).rejects.toThrow("callback generation fenced");
+      operation.abort(new Error("callback cancelled"));
+      await expect(callback).rejects.toThrow("callback cancelled");
       resumeLateCallback();
       const results = await lateCallbackFinished;
 
@@ -257,12 +246,10 @@ describe("Kernel MCP OAuth callback fencing", () => {
           );
         }
       }
-      await expect(state.storage.get(
-        provider.tokenKey("existing-client"),
-      )).resolves.toBeUndefined();
-      await expect(state.storage.get(
-        provider.clientInfoKey("late-client"),
-      )).resolves.toBeUndefined();
+      await expect(state.storage.get(provider.tokenKey("existing-client")))
+        .resolves.toBeUndefined();
+      await expect(state.storage.get(provider.clientInfoKey("late-client")))
+        .resolves.toBeUndefined();
     });
   });
 });

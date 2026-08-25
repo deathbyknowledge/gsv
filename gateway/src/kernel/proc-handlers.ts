@@ -30,19 +30,12 @@ import { REQUEST_CANCEL_SIGNAL } from "@humansandmachines/gsv/protocol";
 import { sendFrameToProcess } from "../shared/utils";
 import { raceWithAbort } from "../shared/abort";
 import { resolveUserPath } from "../fs";
-import { ensureDefaultConversationExecutor, ensurePersonalAgent } from "./agents";
-import { accountIdentity } from "./accounts";
-import { canOwnerDelegateRunAs } from "./account-access";
-import {
-  packageAgentRuntimeSecurityRevision,
-  resolvePackageAgentRunAs,
-} from "./package-agents";
+import { ensureDefaultConversationExecutor } from "./agents";
 import { DEFAULT_CONVERSATION_ID } from "../process/conversations";
 import {
   findProcessAiModelProfile,
   omitProcessAiConfigSecrets,
 } from "../process/ai-config";
-import { processKernelGenerationMatches } from "./processes";
 
 const DEFAULT_IPC_CALL_TIMEOUT_MS = 60_000;
 const MIN_IPC_CALL_TIMEOUT_MS = 1_000;
@@ -60,9 +53,7 @@ export function handleProcList(
   const uid = isRoot ? args.uid : callerOwnerUid;
   assertLocalUserKernelUid(ctx, uid, "process listing");
 
-  const records = ctx.procs.list(uid).filter((record) => (
-    processKernelGenerationMatches(record, ctx.kernelGeneration)
-  ));
+  const records = ctx.procs.list(uid);
 
   const processes: ProcListEntry[] = records.map((r) => {
     const conversation = ctx.conversations.getByActivePid(r.processId);
@@ -112,7 +103,7 @@ export async function handleProcSpawn(
     !args.parentPid;
 
   if (useDefaultExecutor) {
-    const human = resolveCallerOwnerIdentity(ctx, identity.process);
+    const human = await resolveCallerOwnerIdentity(ctx, identity.process);
     const pidResolved = await ensureDefaultConversationExecutor(ctx, human);
     ctx.requestSignal?.throwIfAborted();
     const record = ctx.procs.get(pidResolved);
@@ -172,22 +163,26 @@ export async function handleProcSpawn(
   // of an agent also run as that agent), or — for a parentless spawn — the
   // caller's personal agent (processes run as an agent, not the human).
   const ownerUid = parent ? parent.ownerUid : callerOwnerUid;
-  const ownerEntry = ownerUid === identity.process.uid
-    ? null
-    : ctx.auth.getPasswdByUid(ownerUid);
-  if (ownerUid !== identity.process.uid && !ownerEntry) {
-    return { ok: false, error: `Cannot resolve process owner uid ${ownerUid}` };
-  }
-  const ownerIdentity = ownerEntry
-    ? accountIdentity(ctx.auth, ownerEntry)
-    : identity.process;
   const inheritParentIdentity = parent && (
     parentIsCurrentCaller ||
     parentRunsAsCaller ||
     !args.parentPid ||
     identity.process.uid === 0
   );
-  let baseIdentity: ProcessIdentity = inheritParentIdentity
+  const resolved = await ctx.resolveRunAsAccount({
+    ownerUid,
+    callerUid: identity.process.uid,
+    ...(explicitRunAs
+      ? { selector: args.runAs! }
+      : inheritParentIdentity
+        ? { selector: String(parent.uid) }
+        : {}),
+  });
+  if (!resolved.ok) {
+    return { ok: false, error: resolved.error };
+  }
+  const ownerIdentity = resolved.ownerIdentity;
+  const baseIdentity: ProcessIdentity = inheritParentIdentity
     ? {
         uid: parent.uid,
         gid: parent.gid,
@@ -196,26 +191,11 @@ export async function handleProcSpawn(
         home: parent.home,
         cwd: parent.cwd,
       }
-    : identity.process;
-
-  if (explicitRunAs) {
-    const resolved = resolveRunAsIdentity(ctx, args.runAs!, ownerUid);
-    if (!resolved.ok) {
-      return { ok: false, error: resolved.error };
-    }
-    baseIdentity = resolved.identity;
-  } else if (!parent) {
-    const agent = await ensurePersonalAgent(ctx, identity.process);
-    ctx.requestSignal?.throwIfAborted();
-    baseIdentity = agent.identity;
-  }
-
-  let packageSecurityRevision: string | null;
-  try {
-    packageSecurityRevision = packageAgentRuntimeSecurityRevision(ctx, baseIdentity.uid);
-  } catch (error) {
-    return { ok: false, error: error instanceof Error ? error.message : String(error) };
-  }
+    : resolved.account.identity;
+  const packageSecurityRevision = inheritParentIdentity
+    ? parent.packageSecurityRevision
+    : resolved.account.packageSecurityRevision;
+  ctx.requestSignal?.throwIfAborted();
   if (
     ctx.authorizePackageAgentRuntime
     && !await ctx.authorizePackageAgentRuntime(
@@ -245,9 +225,6 @@ export async function handleProcSpawn(
       label: args.label,
       cwd: spawnIdentity.cwd,
       contextFiles: args.assignment?.contextFiles ?? [],
-      ...(ctx.kernelGeneration !== undefined
-        ? { kernelGeneration: ctx.kernelGeneration }
-        : {}),
       ...(packageSecurityRevision ? { packageSecurityRevision } : {}),
     });
 
@@ -390,39 +367,19 @@ async function rollbackSpawn(
  * own account, their personal agent, an account whose private group they belong
  * to, or when the caller is root.
  */
-export function resolveRunAsIdentity(
+export async function resolveRunAsIdentity(
   ctx: KernelContext,
   runAs: string,
   ownerUid: number,
-): { ok: true; identity: ProcessIdentity } | { ok: false; error: string } {
-  const auth = ctx.auth;
-  const trimmed = runAs.trim();
-  const isRoot = ctx.identity!.process.uid === 0;
-
-  if (trimmed.includes("#")) {
-    return resolvePackageAgentRunAs(ctx, trimmed, ownerUid, isRoot);
-  }
-
-  const entry = /^\d+$/.test(trimmed)
-    ? auth.getPasswdByUid(Number(trimmed))
-    : auth.getPasswdByUsername(trimmed);
-  if (!entry) {
-    return { ok: false, error: `Unknown account: ${runAs}` };
-  }
-
-  // "Self" is the caller's *actual* run-as identity, not the owning human.
-  // Otherwise an agent-backed process could pass runAs=<owner human> and assume
-  // the human's identity (and its `users` capabilities), escalating past the
-  // agent's least-privilege isolation. The owner's delegated run-as rights
-  // (personal agent, group-member agents) are still honored below.
-  const isSelf = entry.uid === ctx.identity!.process.uid;
-  const canDelegate = canOwnerDelegateRunAs(auth, ownerUid, entry);
-
-  if (!isRoot && !isSelf && !canDelegate) {
-    return { ok: false, error: `Permission denied: cannot run as ${entry.username}` };
-  }
-
-  return { ok: true, identity: accountIdentity(auth, entry) };
+): Promise<{ ok: true; identity: ProcessIdentity } | { ok: false; error: string }> {
+  const resolved = await ctx.resolveRunAsAccount({
+    ownerUid,
+    callerUid: ctx.identity!.process.uid,
+    selector: runAs,
+  });
+  return resolved.ok
+    ? { ok: true, identity: resolved.account.identity }
+    : resolved;
 }
 
 function withProcSendOrigin(frame: RequestFrame, ctx: KernelContext): RequestFrame {
@@ -643,7 +600,7 @@ export async function forwardToProcess(
   // agent.
   const pid = args.pid ?? await ensureDefaultConversationExecutor(
     ctx,
-    resolveCallerOwnerIdentity(ctx, identity.process),
+    await resolveCallerOwnerIdentity(ctx, identity.process),
   );
 
   const proc = ctx.procs.get(pid);
@@ -679,7 +636,11 @@ export async function forwardToProcess(
     : frame.call === "proc.ai.config.get"
       ? withRedactedProcAiConfigGet(frame as RequestFrame<"proc.ai.config.get">)
     : frame.call === "proc.ai.config.set"
-      ? withProcAiConfigProfile(frame as RequestFrame<"proc.ai.config.set">, ctx, proc.ownerUid)
+      ? await withProcAiConfigProfile(
+          frame as RequestFrame<"proc.ai.config.set">,
+          ctx,
+          proc.ownerUid,
+        )
       : frame;
   const responsePromise = sendFrameToProcess(pid, processFrame);
   let cancellation: Promise<unknown> | undefined;
@@ -808,11 +769,11 @@ function withRedactedProcAiConfigGet(
   };
 }
 
-function withProcAiConfigProfile(
+async function withProcAiConfigProfile(
   frame: RequestFrame<"proc.ai.config.set">,
   ctx: KernelContext,
   ownerUid: number,
-): RequestFrame<"proc.ai.config.set"> {
+): Promise<RequestFrame<"proc.ai.config.set">> {
   const args = (frame.args ?? {}) as ProcAiConfigSetArgs & { pid?: string };
   if (
     !args ||
@@ -832,7 +793,7 @@ function withProcAiConfigProfile(
   }
 
   const profile = findProcessAiModelProfile(
-    ctx.config.get(`users/${ownerUid}/ai/model_profiles`),
+    await ctx.configGet(`users/${ownerUid}/ai/model_profiles`),
     ownerUid,
     selector,
   );
@@ -861,16 +822,26 @@ function clearLatestArchiveForConversation(
   }
 }
 
-function resolveCallerOwnerIdentity(ctx: KernelContext, fallback: ProcessIdentity): ProcessIdentity {
+async function resolveCallerOwnerIdentity(
+  ctx: KernelContext,
+  fallback: ProcessIdentity,
+): Promise<ProcessIdentity> {
   const ownerUid = resolveCallerOwnerUid(ctx);
   if (ownerUid === fallback.uid) {
     return fallback;
   }
-  const entry = ctx.auth.getPasswdByUid(ownerUid);
-  if (!entry) {
+  const account = await ctx.accountGet({ uid: ownerUid });
+  if (!account || account.state !== "active") {
     throw new Error(`Cannot resolve caller owner uid ${ownerUid}`);
   }
-  return accountIdentity(ctx.auth, entry);
+  return {
+    uid: account.uid,
+    gid: account.gid,
+    gids: account.gids,
+    username: account.username,
+    home: account.home,
+    cwd: account.home,
+  };
 }
 
 function normalizeText(value: unknown): string {

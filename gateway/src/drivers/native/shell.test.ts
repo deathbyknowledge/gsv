@@ -151,6 +151,7 @@ function makeContext(options?: {
   aiRun?: (model: string, input: Record<string, unknown>) => Promise<unknown>;
   ripgit?: Fetcher;
   mutateRepoMetadata?: KernelContext["mutateRepoMetadata"];
+  listRunnableAccounts?: KernelContext["listRunnableAccounts"];
 }): KernelContext {
   const records = [...(options?.packages ?? [options?.pkg ?? makePackage()])];
   const identity = options?.identity ?? IDENTITY;
@@ -197,6 +198,8 @@ function makeContext(options?: {
     new Set(visiblePackageScopesForActor({ uid: resolveOwnerUid() }).map(packageScopeKey))
   );
   const context = {
+    kernelName: "singleton",
+    kernelKind: "master",
     env: {
       STORAGE: env.STORAGE,
       RIPGIT: options?.ripgit ?? {} as Fetcher,
@@ -333,6 +336,53 @@ function makeContext(options?: {
         ...(runnable ? { capabilities: [] } : {}),
       };
     },
+    resolveRunAsAccount: async (input) => {
+      const auth = context.auth as KernelContext["auth"];
+      const selector = input.selector?.trim();
+      let entry = selector
+        ? /^\d+$/.test(selector)
+          ? auth.getPasswdByUid(Number(selector))
+          : auth.getPasswdByUsername(selector)
+        : null;
+      if (!entry) {
+        const personalUid = auth.getPersonalAgentUid?.(input.ownerUid) ?? null;
+        entry = auth.getPasswdByUid(personalUid ?? input.ownerUid);
+      }
+      if (!entry) return { ok: false as const, error: "Unknown account" };
+      const gids = auth.resolveGids(entry.username, entry.gid);
+      return {
+        ok: true as const,
+        ownerIdentity: {
+          uid: input.ownerUid,
+          gid: input.ownerUid,
+          gids: [input.ownerUid],
+          username: input.ownerUid === identity.uid ? identity.username : `user-${input.ownerUid}`,
+          home: input.ownerUid === identity.uid ? identity.home : `/home/user-${input.ownerUid}`,
+          cwd: input.ownerUid === identity.uid ? identity.home : `/home/user-${input.ownerUid}`,
+        },
+        account: {
+          identity: {
+            uid: entry.uid,
+            gid: entry.gid,
+            gids,
+            username: entry.username,
+            home: entry.home,
+            cwd: entry.home,
+          },
+          capabilities: context.caps.resolve(gids),
+          displayName: entry.gecos?.trim() || entry.username,
+          relation: entry.uid === input.ownerUid ? "self" as const : "agent" as const,
+          packageSecurityRevision: null,
+        },
+      };
+    },
+    listRunnableAccounts: options?.listRunnableAccounts ?? (async (input) => {
+      const resolved = await context.resolveRunAsAccount({
+        ...input,
+        selector: String(input.callerUid),
+      });
+      return resolved.ok ? [resolved.account] : [];
+    }),
     readAuthFile: async () => "",
     configGet: async (key: string) => {
       if (key === "config/server/name") return "gsv";
@@ -445,6 +495,7 @@ describe("native shell execution", () => {
     const bytes = new Uint8Array([0x89, 0x50, 0x4e, 0x47]);
     await env.STORAGE.put("tmp/fs-read-image", bytes, {
       httpMetadata: { contentType: "image/png" },
+      customMetadata: { uid: "1000", gid: "1000", mode: "644" },
     });
 
     const ctx = makeContext();
@@ -469,6 +520,7 @@ describe("native shell execution", () => {
     const svg = '<svg xmlns="http://www.w3.org/2000/svg"><text>hello</text></svg>';
     await env.STORAGE.put("tmp/fs-read-vector", svg, {
       httpMetadata: { contentType: "image/svg+xml" },
+      customMetadata: { uid: "1000", gid: "1000", mode: "644" },
     });
 
     const read = await handleFsRead({ path: "/tmp/fs-read-vector" }, makeContext());
@@ -482,7 +534,9 @@ describe("native shell execution", () => {
   });
 
   it("rejects invalid UTF-8 in text-classified files", async () => {
-    await env.STORAGE.put("tmp/fs-read-invalid", new Uint8Array([0xff]));
+    await env.STORAGE.put("tmp/fs-read-invalid", new Uint8Array([0xff]), {
+      customMetadata: { uid: "1000", gid: "1000", mode: "644" },
+    });
 
     const read = await handleFsRead({ path: "/tmp/fs-read-invalid" }, makeContext());
 
@@ -2459,6 +2513,14 @@ describe("pkg shell command", () => {
         : null),
       resolveGids: vi.fn(() => IDENTITY.gids),
     } as unknown as KernelContext["auth"];
+    const agentIdentity: ProcessIdentity = {
+      uid: 2000,
+      gid: 2000,
+      gids: [2000],
+      username: "sam-agent",
+      home: "/home/sam-agent",
+      cwd: "/home/sam-agent",
+    };
     const ctx = makeContext({
       capabilities: ["sched.add", "sched.remove", "sched.list"],
       auth,
@@ -2499,10 +2561,27 @@ describe("pkg shell command", () => {
         }),
       } as unknown as KernelContext["schedules"],
       scheduleScheduleWake: wake,
+      listRunnableAccounts: async () => [
+        {
+          identity: IDENTITY,
+          capabilities: ["shell.exec"],
+          displayName: "Sam",
+          relation: "self",
+          packageSecurityRevision: null,
+        },
+        {
+          identity: agentIdentity,
+          capabilities: ["shell.exec"],
+          displayName: "Sam Agent",
+          relation: "personal-agent",
+          packageSecurityRevision: null,
+        },
+      ],
     });
     await env.STORAGE.put(
       "home/sam/jobs.cron",
       "CRON_TZ=Europe/Amsterdam\n0 9 * * * proc spawn --as sam-agent --non-interactive --label daily-brief \"Daily brief\"\n",
+      { customMetadata: { uid: "1000", gid: "1000", mode: "644" } },
     );
 
     const result = await handleShellExec(
@@ -2530,6 +2609,27 @@ describe("pkg shell command", () => {
     );
     expect(listed.ok).toBe(true);
     expect(listed.stdout).toBe("CRON_TZ=Europe/Amsterdam\n0 9 * * * proc spawn --as sam-agent --non-interactive --label daily-brief \"Daily brief\"\n");
+
+    cronFiles.set("/var/spool/cron/sam-agent", {
+      path: "/var/spool/cron/sam-agent",
+      ownerUid: IDENTITY.uid,
+      content: "*/5 * * * * printf agent\n",
+      createdAtMs: 1,
+      updatedAtMs: 1,
+    });
+    cronFiles.set("/var/spool/cron/foreign-human", {
+      path: "/var/spool/cron/foreign-human",
+      ownerUid: 1001,
+      content: "*/5 * * * * printf foreign\n",
+      createdAtMs: 1,
+      updatedAtMs: 1,
+    });
+    const directory = await handleShellExec(
+      { input: "ls /var/spool/cron" },
+      ctx,
+    );
+    expect(directory.ok).toBe(true);
+    expect(directory.stdout.trim().split(/\s+/).sort()).toEqual(["sam", "sam-agent"]);
   });
 
   it("lists agent-installed user crontabs through the owning user's sched view", async () => {
@@ -2679,9 +2779,11 @@ describe("pkg shell command", () => {
       } as unknown as KernelContext["schedules"],
       scheduleScheduleWake: wake,
     });
+    await provisionR2Directory(env.STORAGE, agent.home, agent, "750");
     await env.STORAGE.put(
       "home/sam-agent/jobs.cron",
       "*/5 * * * * printf 'agent cron fired\\n'\n",
+      { customMetadata: { uid: "2000", gid: "2000", mode: "644" } },
     );
 
     const result = await handleShellExec(
@@ -3217,8 +3319,11 @@ describe("pkg shell command", () => {
   });
 
   it("runs package commands through app runner", async () => {
-    const calls: Array<{ kind: "run"; value: unknown }> = [];
+    const calls: Array<{ kind: "ensure" | "run"; value: unknown }> = [];
     const runner = {
+      async ensureRuntime(input: unknown) {
+        calls.push({ kind: "ensure", value: input });
+      },
       async runCommand(input: unknown) {
         calls.push({ kind: "run", value: input });
         return {
@@ -3256,29 +3361,39 @@ describe("pkg shell command", () => {
 
     expect(result.ok).toBe(true);
     expect(result.stdout).toContain("hello from runner");
-    expect(calls).toHaveLength(1);
+    expect(calls).toHaveLength(2);
     expect(calls[0]).toEqual({
+      kind: "ensure",
+      value: expect.objectContaining({
+        kernelName: "singleton",
+        packageId: expect.any(String),
+        artifact: expect.objectContaining({ hash: expect.any(String) }),
+        appFrame: expect.objectContaining({
+          uid: 1000,
+          username: "sam",
+          entrypointName: "hello-world",
+        }),
+      }),
+    });
+    expect(calls[1]).toEqual({
       kind: "run",
       value: {
-        runtime: {
-          artifact: expect.objectContaining({ hash: expect.any(String) }),
-          appFrame: expect.objectContaining({
-            uid: 1000,
-            username: "sam",
-            entrypointName: "hello-world",
-          }),
-        },
         commandName: "hello-world",
         args: ["alpha", "beta"],
         cwd: "/home/sam",
+        uid: 1000,
         gid: 1000,
+        username: "sam",
       },
     });
   });
 
   it("registers owner-scoped package commands for agent-backed shells", async () => {
-    const calls: Array<{ kind: "run"; value: unknown }> = [];
+    const calls: Array<{ kind: "ensure" | "run"; value: unknown }> = [];
     const runner = {
+      async ensureRuntime(input: unknown) {
+        calls.push({ kind: "ensure", value: input });
+      },
       async runCommand(input: unknown) {
         calls.push({ kind: "run", value: input });
         return {
@@ -3346,22 +3461,29 @@ describe("pkg shell command", () => {
 
     expect(result.ok).toBe(true);
     expect(result.stdout).toBe("human tool ran\n");
-    expect(calls).toHaveLength(1);
+    expect(calls).toHaveLength(2);
     expect(calls[0]).toEqual({
+      kind: "ensure",
+      value: expect.objectContaining({
+        kernelName: "singleton",
+        packageId: "user:1000:human-tools",
+        artifact: expect.objectContaining({ hash: expect.any(String) }),
+        appFrame: expect.objectContaining({
+          uid: 2000,
+          username: "sam-agent",
+          packageId: "user:1000:human-tools",
+        }),
+      }),
+    });
+    expect(calls[1]).toEqual({
       kind: "run",
       value: {
-        runtime: {
-          artifact: expect.objectContaining({ hash: expect.any(String) }),
-          appFrame: expect.objectContaining({
-            uid: 2000,
-            username: "sam-agent",
-            packageId: "user:1000:human-tools",
-          }),
-        },
         commandName: "human-tool",
         args: ["alpha"],
         cwd: "/home/sam-agent",
+        uid: 2000,
         gid: 2000,
+        username: "sam-agent",
       },
     });
   });

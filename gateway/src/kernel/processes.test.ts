@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { ProcessRegistry, processKernelGenerationMatches } from "./processes";
+import { ProcessRegistry } from "./processes";
 import type { ProcessIdentity } from "@humansandmachines/gsv/protocol";
 import {
   handleMockSchemaStatement,
@@ -55,7 +55,6 @@ function createMockSql() {
       const [
         process_id,
         parent_pid,
-        kernel_generation,
         package_security_revision,
         uid,
         owner_uid,
@@ -71,7 +70,6 @@ function createMockSql() {
       ] = bindings as [
         string,
         string | null,
-        number | null,
         string | null,
         number,
         number,
@@ -89,7 +87,6 @@ function createMockSql() {
       table.set(process_id, {
         process_id,
         parent_pid,
-        kernel_generation,
         package_security_revision,
         uid,
         owner_uid,
@@ -175,15 +172,6 @@ function createMockSql() {
       return mockSqlRows<T>();
     }
 
-    if (q.startsWith("UPDATE processes\n          SET kernel_generation = ?")) {
-      const [nextGeneration, processId, expectedGeneration] = bindings as [number, string, number];
-      const row = table.get(processId);
-      if (row?.kernel_generation === expectedGeneration) {
-        row.kernel_generation = nextGeneration;
-      }
-      return mockSqlRows<T>();
-    }
-
     if (q.startsWith("UPDATE processes")) {
       const [uid, gid, gids, username, home, cwd, processId] =
         bindings as [number, number, string, string, string, string, string];
@@ -251,47 +239,6 @@ describe("ProcessRegistry", () => {
       home: "/home/sam",
       cwd: "/srv/work/demo",
     });
-  });
-
-  it("persists the owning user-Kernel generation on spawn", () => {
-    const sql = createMockSql();
-    const registry = new ProcessRegistry(sql as unknown as SqlStorage);
-
-    registry.spawn("task:generation", makeIdentity("/home/sam"), {
-      kernelGeneration: 7,
-    });
-
-    expect(registry.get("task:generation")?.kernelGeneration).toBe(7);
-  });
-
-  it("keeps Master and legacy process rows generationless", () => {
-    const sql = createMockSql();
-    const registry = new ProcessRegistry(sql as unknown as SqlStorage);
-
-    registry.spawn("task:legacy", makeIdentity("/home/sam"), {});
-
-    expect(registry.get("task:legacy")?.kernelGeneration).toBeNull();
-  });
-
-  it("matches executor ownership only to the exact Kernel generation", () => {
-    expect(processKernelGenerationMatches({ kernelGeneration: 7 }, 7)).toBe(true);
-    expect(processKernelGenerationMatches({ kernelGeneration: 7 }, 8)).toBe(false);
-    expect(processKernelGenerationMatches({ kernelGeneration: null })).toBe(true);
-    expect(processKernelGenerationMatches({ kernelGeneration: null }, 1)).toBe(false);
-  });
-
-  it("rebinds only the exact fenced generation", () => {
-    const sql = createMockSql();
-    const registry = new ProcessRegistry(sql as unknown as SqlStorage);
-    registry.spawn("task:fenced", makeIdentity("/home/sam"), {
-      kernelGeneration: 7,
-    });
-
-    expect(registry.rebindKernelGeneration("task:fenced", 6, 8)).toBe(false);
-    expect(registry.get("task:fenced")?.kernelGeneration).toBe(7);
-    expect(registry.rebindKernelGeneration("task:fenced", 7, 8)).toBe(true);
-    expect(registry.get("task:fenced")?.kernelGeneration).toBe(8);
-    expect(registry.rebindKernelGeneration("task:fenced", 7, 9)).toBe(false);
   });
 
   it("remaps cwd inside home when identity home changes", () => {

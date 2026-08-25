@@ -60,28 +60,24 @@ export const KERNEL_V016_ADD_USER_KERNELS: SqlMigration = {
           AND uid BETWEEN 0 AND 9007199254740991
         ),
         lifecycle  TEXT    NOT NULL CHECK (
-          lifecycle IN ('legacy', 'provisioning', 'active', 'suspended', 'retired')
+          lifecycle IN ('provisioning', 'active')
         ),
-        generation INTEGER NOT NULL CHECK (generation > 0),
         created_at INTEGER NOT NULL,
         updated_at INTEGER NOT NULL,
-        retired_at INTEGER,
         CHECK ((username = 'root') = (uid = 0)),
         FOREIGN KEY (username) REFERENCES account_identities(username)
       )
     `,
     `
       INSERT INTO user_kernels (
-        username, uid, lifecycle, generation, created_at, updated_at, retired_at
+        username, uid, lifecycle, created_at, updated_at
       )
       SELECT
         passwd.username,
         passwd.uid,
-        'legacy',
-        1,
+        'provisioning',
         unixepoch() * 1000,
-        unixepoch() * 1000,
-        NULL
+        unixepoch() * 1000
       FROM passwd
       LEFT JOIN shadow ON shadow.username = passwd.username
       WHERE passwd.uid = 0

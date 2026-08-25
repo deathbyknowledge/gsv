@@ -7,7 +7,7 @@ import {
   AUTHENTICATION_FAILED_MESSAGE,
   AuthStore,
 } from "./auth-store";
-import { hashPassword, isLocked, makeShadowEntry, verify } from "../auth/shadow";
+import { hashPassword, makeShadowEntry, verify } from "../auth/shadow";
 import { LOGIN_TARGET_ATTEMPT_LIMIT } from "./login-attempts";
 import { LOGIN_CREDENTIAL_MAX_CHARACTERS } from "../auth/login";
 import type { Kernel } from "./do";
@@ -538,68 +538,6 @@ describe("AuthStore permanent account identities", () => {
       }, "human")).toThrow(/canonical account username/i);
       expect(auth.getAccountIdentity("Alice")).toBeNull();
       expect(auth.getPasswdByUsername("Alice")).toBeNull();
-    });
-  });
-});
-
-describe("AuthStore runtime directory projection", () => {
-  it("materializes projected kinds while keeping inaccessible credentials locked", async () => {
-    const kernel = await getAgentByName(env.KERNEL, crypto.randomUUID());
-
-    await runInDurableObject(kernel, async (_instance: Kernel, state) => {
-      const auth = new AuthStore(state.storage.sql);
-      auth.replaceRuntimeDirectory({
-        accounts: [
-          {
-            entry: {
-              username: "root",
-              uid: 0,
-              gid: 0,
-              gecos: "root",
-              home: "/root",
-              shell: "/bin/init",
-            },
-            kind: "system",
-            locked: true,
-          },
-          {
-            entry: {
-              username: "alice",
-              uid: 1000,
-              gid: 1000,
-              gecos: "alice",
-              home: "/home/alice",
-              shell: "/bin/init",
-            },
-            kind: "human",
-            locked: false,
-          },
-          {
-            entry: {
-              username: "bob",
-              uid: 1001,
-              gid: 1001,
-              gecos: "bob",
-              home: "/home/bob",
-              shell: "/bin/init",
-            },
-            kind: "human",
-            locked: true,
-          },
-        ],
-        groups: [
-          { name: "root", gid: 0, members: [] },
-          { name: "alice", gid: 1000, members: [] },
-          { name: "bob", gid: 1001, members: [] },
-        ],
-        ownerUid: 1000,
-        personalAgentUid: null,
-      });
-
-      expect(auth.getAccountIdentity("bob")).toMatchObject({ kind: "human" });
-      expect(isLocked(auth.getShadowByUsername("root")!)).toBe(true);
-      expect(isLocked(auth.getShadowByUsername("bob")!)).toBe(true);
-      expect(isLocked(auth.getShadowByUsername("alice")!)).toBe(false);
     });
   });
 });

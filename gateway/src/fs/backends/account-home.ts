@@ -4,13 +4,8 @@ import type {
   MkdirOptions,
   RmOptions,
 } from "just-bash";
-import type { AccountDetail, ProcessIdentity } from "@humansandmachines/gsv/protocol";
-import type { AuthStore } from "../../kernel/auth-store";
-import { accountIdentity } from "../../kernel/accounts";
-import {
-  canOwnerAccessAccountHome,
-  homeUsernameFromPath,
-} from "../../kernel/account-access";
+import type { ProcessIdentity } from "@humansandmachines/gsv/protocol";
+import { homeUsernameFromPath } from "../../kernel/account-access";
 import type {
   ExtendedMountStat,
   FsSearchBackendResult,
@@ -30,8 +25,12 @@ import { accountHomeRepoRef } from "../ripgit/repos";
 import { concatBytes, normalizePath } from "../utils";
 
 const DIRECTORY_MARKER = ".dir";
+const HOME_SEARCH_LIMIT = 500;
+const HOME_VISIBILITY_CONCURRENCY = 16;
 const TEXT_DECODER = new TextDecoder();
 const TEXT_ENCODER = new TextEncoder();
+
+type AccountHomeDirectoryEntry = Pick<ProcessIdentity, "username" | "home">;
 
 type HomePathKind =
   | "home"
@@ -43,12 +42,16 @@ type HomePathKind =
 
 export type AccountHomeBackendOptions = {
   /**
-   * Master-authoritative directory lookup (local on the Master, by RPC from
-   * user Kernels). The returned account carries capabilities only when the
-   * viewer may run as it — the delegation gate.
+   * Master-authoritative account directory for the current owning human. Only
+   * accounts returned here are exposed as children of the virtual `/home`.
    */
-  getAccount?: (username: string) => Promise<AccountDetail | null>;
-  isRoot?: boolean;
+  listAccounts?: () => Promise<readonly ProcessIdentity[]>;
+  /** Public active account directory used to discover Unix-shared homes. */
+  listPublicAccounts?: () => Promise<readonly AccountHomeDirectoryEntry[]>;
+  /** Targeted form of the same authority check for child-path routing. */
+  resolveAccount?: (username: string) => Promise<ProcessIdentity | null>;
+  /** Public account lookup; identity existence alone grants no access. */
+  resolvePublicAccount?: (username: string) => Promise<AccountHomeDirectoryEntry | null>;
 };
 
 export function createAccountHomeBackend(
@@ -68,17 +71,19 @@ export function createAccountHomeBackend(
     identity,
   );
 
-  if (!options?.getAccount) {
-    return primary;
-  }
-
   return new DelegatingAccountHomeMountBackend(
     primary,
     client,
     bucket,
     identity,
-    options.getAccount,
-    options.isRoot ?? identity.uid === 0,
+    options?.listAccounts ?? (async () => [identity]),
+    options?.listPublicAccounts ?? (async () => [identity]),
+    options?.resolveAccount ?? (async (username) => (
+      username === identity.username ? identity : null
+    )),
+    options?.resolvePublicAccount ?? (async (username) => (
+      username === identity.username ? identity : null
+    )),
   );
 }
 
@@ -87,6 +92,10 @@ export function isAccountHomeReservedPath(path: string): boolean {
   return homeUsernameFromPath(normalized) !== null
     || normalized === "/root"
     || normalized.startsWith("/root/");
+}
+
+function isAccountHomeOverlayPath(path: string): boolean {
+  return /^\/home\/[^/]+\/(?:context\.d|skills\.d)(?:\/|$)/.test(normalizePath(path));
 }
 
 class AccountHomeMountBackend implements MountBackend {
@@ -467,40 +476,92 @@ class AccountHomeMountBackend implements MountBackend {
     }
 
     const combined = new Map<string, FsSearchBackendResult["matches"][number]>();
+    let truncated = false;
 
     if (kind === "home") {
       if (this.allowHomeR2Fallback) {
-        const fallbackMatches = await this.fallback.search!(normalized, query, include, signal).catch(() => {
+        const fallbackMatches: FsSearchBackendResult = await this.fallback.search!(
+          normalized,
+          query,
+          include,
+          signal,
+        ).catch(() => {
           signal?.throwIfAborted();
           return { matches: [] as FsSearchBackendResult["matches"] };
         });
+        truncated ||= fallbackMatches.truncated === true;
         for (const match of fallbackMatches.matches) {
           combined.set(`${match.path}:${match.line}:${match.content}`, match);
         }
       }
-      for (const match of await this.searchRepo(query, undefined, signal)) {
+      const repoMatches = await this.searchRepo(query, undefined, signal);
+      truncated ||= repoMatches.truncated === true;
+      for (const match of repoMatches.matches) {
         combined.set(`${match.path}:${match.line}:${match.content}`, match);
       }
-      return { matches: [...combined.values()] };
+      return {
+        matches: [...combined.values()],
+        ...(truncated ? { truncated: true } : {}),
+      };
     }
 
     const relativePrefix = this.relativePathForOverlay(normalized);
     const repoMatches = await this.searchRepo(query, relativePrefix, signal);
-    for (const match of repoMatches) {
+    truncated ||= repoMatches.truncated === true;
+    for (const match of repoMatches.matches) {
       combined.set(`${match.path}:${match.line}:${match.content}`, match);
     }
 
     if (this.canFallbackToR2(normalized)) {
-      const fallbackMatches = await this.fallback.search!(normalized, query, include, signal).catch(() => {
+      const fallbackMatches: FsSearchBackendResult = await this.fallback.search!(
+        normalized,
+        query,
+        include,
+        signal,
+      ).catch(() => {
         signal?.throwIfAborted();
         return { matches: [] as FsSearchBackendResult["matches"] };
       });
+      truncated ||= fallbackMatches.truncated === true;
       for (const match of fallbackMatches.matches) {
         combined.set(`${match.path}:${match.line}:${match.content}`, match);
       }
     }
 
-    return { matches: [...combined.values()] };
+    return {
+      matches: [...combined.values()],
+      ...(truncated ? { truncated: true } : {}),
+    };
+  }
+
+  async chmod(path: string, mode: number): Promise<void> {
+    const normalized = normalizePath(path);
+    const kind = this.classify(normalized);
+    if (kind === "home" || kind === "other") {
+      if (!this.allowHomeR2Fallback) throwPermissionDenied(normalized);
+      return await this.fallback.chmod(normalized, mode);
+    }
+    throw new Error(`ENOSYS: chmod is unavailable for home overlay '${normalized}'`);
+  }
+
+  async chown(path: string, uid?: number, gid?: number): Promise<void> {
+    const normalized = normalizePath(path);
+    const kind = this.classify(normalized);
+    if (kind === "home" || kind === "other") {
+      if (!this.allowHomeR2Fallback) throwPermissionDenied(normalized);
+      return await this.fallback.chown(normalized, uid, gid);
+    }
+    throw new Error(`ENOSYS: chown is unavailable for home overlay '${normalized}'`);
+  }
+
+  async utimes(path: string, atime: Date, mtime: Date): Promise<void> {
+    const normalized = normalizePath(path);
+    const kind = this.classify(normalized);
+    if (kind === "home" || kind === "other") {
+      if (!this.allowHomeR2Fallback) throwPermissionDenied(normalized);
+      return await this.fallback.utimes(normalized, atime, mtime);
+    }
+    throw new Error(`ENOSYS: utimes is unavailable for home overlay '${normalized}'`);
   }
 
   async symlink(target: string, linkPath: string): Promise<void> {
@@ -617,13 +678,16 @@ class AccountHomeMountBackend implements MountBackend {
     query: string,
     prefix?: string,
     signal?: AbortSignal,
-  ): Promise<FsSearchBackendResult["matches"]> {
+  ): Promise<FsSearchBackendResult> {
     const result = await this.client.search(this.repo, query, prefix, signal);
-    return result.matches.map((match) => ({
-      path: `${this.home}/${match.path}`.replace(/\/+/g, "/"),
-      line: match.line,
-      content: match.content,
-    }));
+    return {
+      matches: result.matches.map((match) => ({
+        path: `${this.home}/${match.path}`.replace(/\/+/g, "/"),
+        line: match.line,
+        content: match.content,
+      })),
+      ...(result.truncated ? { truncated: true } : {}),
+    };
   }
 
   private async applyPut(path: string, bytes: Uint8Array, message: string): Promise<void> {
@@ -680,33 +744,46 @@ class AccountHomeMountBackend implements MountBackend {
  */
 class DelegatingAccountHomeMountBackend implements MountBackend {
   private readonly delegates = new Map<string, AccountHomeMountBackend>();
+  private readonly viewerR2: R2MountBackend;
 
   constructor(
     private readonly primary: AccountHomeMountBackend,
     private readonly client: RipgitClient,
     private readonly bucket: R2Bucket,
     private readonly viewerIdentity: ProcessIdentity,
-    private readonly getAccount: (username: string) => Promise<AccountDetail | null>,
-    private readonly isRoot: boolean,
-  ) {}
+    private readonly listAccounts: () => Promise<readonly ProcessIdentity[]>,
+    private readonly listPublicAccounts: () => Promise<readonly AccountHomeDirectoryEntry[]>,
+    private readonly resolveAccount: (username: string) => Promise<ProcessIdentity | null>,
+    private readonly resolvePublicAccount: (
+      username: string,
+    ) => Promise<AccountHomeDirectoryEntry | null>,
+  ) {
+    this.viewerR2 = new R2MountBackend(bucket, viewerIdentity);
+  }
 
   async handles(path: string): Promise<boolean> {
+    if (normalizePath(path) === "/home") return true;
     return (await this.resolve(path)) != null;
   }
 
   async readFile(path: string): Promise<string> {
+    if (normalizePath(path) === "/home") throwIsDirectory(path, "read");
     return (await this.require(path)).readFile(path);
   }
 
   async readFileBuffer(path: string): Promise<Uint8Array> {
+    if (normalizePath(path) === "/home") throwIsDirectory(path, "read");
     return (await this.require(path)).readFileBuffer(path);
   }
 
   async openFile(path: string, options?: OpenFileOptions): Promise<OpenFileResult | undefined> {
-    return (await this.require(path)).openFile(path, options);
+    if (normalizePath(path) === "/home") return undefined;
+    const backend = await this.require(path);
+    return backend.openFile ? backend.openFile(path, options) : undefined;
   }
 
   async writeFile(path: string, content: FileContent, options?: WriteFileOptions | BufferEncoding): Promise<void> {
+    if (normalizePath(path) === "/home") throwPermissionDenied(path);
     return (await this.require(path)).writeFile(path, content, options);
   }
 
@@ -715,39 +792,57 @@ class DelegatingAccountHomeMountBackend implements MountBackend {
     content: ReadableStream<Uint8Array>,
     options: WriteFileStreamOptions,
   ): Promise<WriteFileStreamResult | undefined> {
-    return (await this.require(path)).writeFileStream(path, content, options);
+    if (normalizePath(path) === "/home") throwPermissionDenied(path);
+    const backend = await this.require(path);
+    return backend.writeFileStream
+      ? backend.writeFileStream(path, content, options)
+      : undefined;
   }
 
   async appendFile(path: string, content: FileContent): Promise<void> {
+    if (normalizePath(path) === "/home") throwPermissionDenied(path);
     return (await this.require(path)).appendFile(path, content);
   }
 
   async exists(path: string): Promise<boolean> {
+    if (normalizePath(path) === "/home") return true;
     return (await this.require(path)).exists(path);
   }
 
   async stat(path: string): Promise<ExtendedMountStat> {
+    if (normalizePath(path) === "/home") return homeRootStat();
     return (await this.require(path)).stat(path);
   }
 
   async lstat(path: string): Promise<ExtendedMountStat> {
+    if (normalizePath(path) === "/home") return homeRootStat();
     const backend = await this.require(path);
     return backend.lstat ? backend.lstat(path) : backend.stat(path);
   }
 
   async mkdir(path: string, options?: MkdirOptions): Promise<void> {
+    if (normalizePath(path) === "/home") throwPermissionDenied(path);
     return (await this.require(path)).mkdir(path, options);
   }
 
   async readdir(path: string): Promise<string[]> {
-    return (await this.require(path)).readdir(path);
+    if (normalizePath(path) === "/home") {
+      return (await this.visibleHomeEntries()).map((entry) => entry.username);
+    }
+    const backend = await this.require(path);
+    const entries = await backend.readdir(path);
+    return backend === this.viewerR2 && isAccountHomeRoot(path)
+      ? entries.filter((entry) => entry !== "context.d" && entry !== "skills.d")
+      : entries;
   }
 
   async rm(path: string, options?: RmOptions): Promise<void> {
+    if (normalizePath(path) === "/home") throwPermissionDenied(path);
     return (await this.require(path)).rm(path, options);
   }
 
   async symlink(target: string, linkPath: string): Promise<void> {
+    if (normalizePath(linkPath) === "/home") throwPermissionDenied(linkPath);
     const backend = await this.require(linkPath);
     if (!backend.symlink) {
       throw new Error(`ENOSYS: symlink is unavailable for '${linkPath}'`);
@@ -756,6 +851,9 @@ class DelegatingAccountHomeMountBackend implements MountBackend {
   }
 
   async readlink(path: string): Promise<string> {
+    if (normalizePath(path) === "/home") {
+      throw new Error(`EINVAL: invalid argument, readlink '${normalizePath(path)}'`);
+    }
     const backend = await this.require(path);
     if (!backend.readlink) {
       throw new Error(`ENOSYS: readlink is unavailable for '${path}'`);
@@ -769,10 +867,155 @@ class DelegatingAccountHomeMountBackend implements MountBackend {
     include?: string,
     signal?: AbortSignal,
   ): Promise<FsSearchBackendResult> {
-    return (await this.require(path)).search(path, query, include, signal);
+    signal?.throwIfAborted();
+    if (normalizePath(path) === "/home") {
+      const combined = new Map<string, FsSearchBackendResult["matches"][number]>();
+      let truncated = false;
+      for (const entry of await this.visibleHomeEntries(signal)) {
+        signal?.throwIfAborted();
+        if (combined.size >= HOME_SEARCH_LIMIT) {
+          truncated = true;
+          break;
+        }
+        const result = await this.searchHome(entry.home, query, include, signal);
+        if (!result) continue;
+        truncated ||= result.truncated === true;
+        for (const match of result.matches) {
+          const key = `${match.path}:${match.line}:${match.content}`;
+          if (combined.has(key)) continue;
+          if (combined.size >= HOME_SEARCH_LIMIT) {
+            truncated = true;
+            break;
+          }
+          combined.set(key, match);
+        }
+      }
+      return {
+        matches: [...combined.values()],
+        ...(truncated ? { truncated: true } : {}),
+      };
+    }
+    const backend = await this.require(path);
+    if (!backend.search) {
+      throw new Error(`ENOSYS: search is unavailable for '${normalizePath(path)}'`);
+    }
+    if (backend === this.viewerR2 && isAccountHomeRoot(path)) {
+      return this.searchSharedHome(path, query, include, signal);
+    }
+    return backend.search(path, query, include, signal);
   }
 
-  private async require(path: string): Promise<AccountHomeMountBackend> {
+  async chmod(path: string, mode: number): Promise<void> {
+    if (normalizePath(path) === "/home") throwPermissionDenied(path);
+    const backend = await this.require(path);
+    if (!backend.chmod) throw new Error(`ENOSYS: chmod is unavailable for '${normalizePath(path)}'`);
+    return await backend.chmod(path, mode);
+  }
+
+  async chown(path: string, uid?: number, gid?: number): Promise<void> {
+    if (normalizePath(path) === "/home") throwPermissionDenied(path);
+    const backend = await this.require(path);
+    if (!backend.chown) throw new Error(`ENOSYS: chown is unavailable for '${normalizePath(path)}'`);
+    return await backend.chown(path, uid, gid);
+  }
+
+  async utimes(path: string, atime: Date, mtime: Date): Promise<void> {
+    if (normalizePath(path) === "/home") throwPermissionDenied(path);
+    const backend = await this.require(path);
+    if (!backend.utimes) throw new Error(`ENOSYS: utimes is unavailable for '${normalizePath(path)}'`);
+    return await backend.utimes(path, atime, mtime);
+  }
+
+  private async searchHome(
+    home: string,
+    query: string,
+    include?: string,
+    signal?: AbortSignal,
+  ): Promise<FsSearchBackendResult | null> {
+    const backend = await this.resolve(home);
+    if (!backend?.search) return null;
+    if (backend === this.viewerR2) {
+      return this.searchSharedHome(home, query, include, signal);
+    }
+    return backend.search(home, query, include, signal);
+  }
+
+  private async searchSharedHome(
+    home: string,
+    query: string,
+    include?: string,
+    signal?: AbortSignal,
+  ): Promise<FsSearchBackendResult> {
+    signal?.throwIfAborted();
+    const matches: FsSearchBackendResult["matches"] = [];
+    let truncated = false;
+    const entries = (await this.viewerR2.readdir(home))
+      .filter((entry) => entry !== "context.d" && entry !== "skills.d");
+
+    for (const entry of entries) {
+      signal?.throwIfAborted();
+      if (matches.length >= HOME_SEARCH_LIMIT) {
+        truncated = true;
+        break;
+      }
+      try {
+        const result = await this.viewerR2.search(
+          normalizePath(`${home}/${entry}`),
+          query,
+          include,
+          signal,
+        );
+        truncated ||= result.truncated === true;
+        for (const match of result.matches) {
+          if (matches.length >= HOME_SEARCH_LIMIT) {
+            truncated = true;
+            break;
+          }
+          matches.push(match);
+        }
+      } catch (error) {
+        if (!isUnavailableSearchEntry(error)) throw error;
+      }
+    }
+
+    return {
+      matches,
+      ...(truncated ? { truncated: true } : {}),
+    };
+  }
+
+  private async visibleHomeEntries(signal?: AbortSignal): Promise<AccountHomeDirectoryEntry[]> {
+    signal?.throwIfAborted();
+    const entries = new Map<string, AccountHomeDirectoryEntry>();
+    for (const account of await this.listAccounts()) {
+      const username = account.username;
+      const home = normalizePath(account.home);
+      if (home !== `/home/${username}`) continue;
+      entries.set(username, { username, home });
+    }
+
+    signal?.throwIfAborted();
+    const candidates = (await this.listPublicAccounts()).flatMap((account) => {
+      const username = account.username;
+      const home = normalizePath(account.home);
+      if (home !== `/home/${username}` || entries.has(username)) return [];
+      return [{ username, home }];
+    });
+    for (let offset = 0; offset < candidates.length; offset += HOME_VISIBILITY_CONCURRENCY) {
+      signal?.throwIfAborted();
+      const batch = candidates.slice(offset, offset + HOME_VISIBILITY_CONCURRENCY);
+      const visible = await Promise.all(batch.map(async (account) => (
+        await this.viewerR2.canListDirectory(account.home) ? account : null
+      )));
+      for (const account of visible) {
+        if (account) entries.set(account.username, account);
+      }
+    }
+    signal?.throwIfAborted();
+    return [...entries.values()].sort((left, right) => left.username.localeCompare(right.username));
+  }
+
+  private async require(path: string): Promise<MountBackend> {
     const backend = await this.resolve(path);
     if (!backend) {
       throw new Error(`ENOENT: no such file or directory, open '${normalizePath(path)}'`);
@@ -780,7 +1023,7 @@ class DelegatingAccountHomeMountBackend implements MountBackend {
     return backend;
   }
 
-  private async resolve(path: string): Promise<AccountHomeMountBackend | null> {
+  private async resolve(path: string): Promise<MountBackend | null> {
     const normalized = normalizePath(path);
     if (this.primary.handles(normalized)) {
       return this.primary;
@@ -791,35 +1034,66 @@ class DelegatingAccountHomeMountBackend implements MountBackend {
       return null;
     }
 
-    // account.get includes capabilities only when the viewer may run as the
-    // target — the Master-side delegation gate for agent-home overlays.
-    const account = await this.getAccount(username);
-    if (!account || account.capabilities === undefined) return null;
-
-    let delegate = this.delegates.get(username);
-    if (!delegate) {
-      delegate = new AccountHomeMountBackend(
-        this.client,
-        new R2MountBackend(this.bucket, this.viewerIdentity),
-        {
-          uid: account.uid,
-          gid: account.gid,
-          gids: account.gids,
-          username: account.username,
-          home: account.home,
-          cwd: account.home,
-        },
-        this.isRoot,
-      );
-      this.delegates.set(username, delegate);
+    const account = await this.resolveAccount(username);
+    if (account && normalizePath(account.home) === `/home/${username}`) {
+      let delegate = this.delegates.get(username);
+      if (!delegate) {
+        delegate = new AccountHomeMountBackend(
+          this.client,
+          this.viewerR2,
+          {
+            uid: account.uid,
+            gid: account.gid,
+            gids: account.gids,
+            username: account.username,
+            home: account.home,
+            cwd: account.home,
+          },
+          true,
+        );
+        this.delegates.set(username, delegate);
+      }
+      return delegate.handles(normalized) ? delegate : null;
     }
 
-    return delegate.handles(normalized) ? delegate : null;
+    if (isAccountHomeOverlayPath(normalized)) return null;
+    const publicAccount = await this.resolvePublicAccount(username);
+    return publicAccount && normalizePath(publicAccount.home) === `/home/${username}`
+      ? this.viewerR2
+      : null;
   }
 }
 
 function throwPermissionDenied(path: string): never {
-  throw new Error(`EACCES: permission denied, '${path}'`);
+  throw new Error(`EACCES: permission denied, '${normalizePath(path)}'`);
+}
+
+function isAccountHomeRoot(path: string): boolean {
+  const normalized = normalizePath(path);
+  const username = homeUsernameFromPath(normalized);
+  return username !== null && normalized === `/home/${username}`;
+}
+
+function isUnavailableSearchEntry(error: unknown): boolean {
+  return error instanceof Error
+    && /^(?:EACCES|ENOENT|EINVAL):/.test(error.message);
+}
+
+function throwIsDirectory(path: string, operation: string): never {
+  throw new Error(`EISDIR: illegal operation on a directory, ${operation} '${normalizePath(path)}'`);
+}
+
+function homeRootStat(): ExtendedMountStat {
+  return {
+    isFile: false,
+    isDirectory: true,
+    isSymbolicLink: false,
+    mode: 0o755,
+    size: 0,
+    mtime: new Date(),
+    uid: 0,
+    gid: 0,
+  };
 }
 
 function asBytes(content: FileContent): Uint8Array {

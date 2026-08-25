@@ -22,8 +22,6 @@ import type {
   SignalFrame,
 } from "../protocol/frames";
 import type {
-  AccountGetArgs,
-  AccountDetail,
   AccountGetResult,
   ConnectArgs,
   ConnectionIdentity,
@@ -60,7 +58,6 @@ import {
 import { ShellSessionStore, type ShellSessionStatus } from "./shell-sessions";
 import {
   ProcessRegistry,
-  processKernelGenerationMatches,
   type ProcessRecord,
   type ProcessState,
 } from "./processes";
@@ -91,7 +88,12 @@ import {
 import { dispatch, type DispatchDeps } from "./dispatch";
 import { bindStreamToAbort } from "../shared/streams";
 import { raceWithAbort } from "../shared/abort";
-import { resolveCallerOwnerUid, type KernelContext } from "./context";
+import {
+  resolveCallerOwnerUid,
+  type KernelContext,
+  type RunAsAccountResult,
+  type RunnableAccount,
+} from "./context";
 import { sendFrameToProcess } from "../shared/utils";
 import {
   handleSysSetup as handleKernelSetup,
@@ -101,7 +103,6 @@ import {
   buildAppRunnerName,
   buildRoutedAppSessionId,
   buildRoutedAppSessionSigningInput,
-  isLegacyAppSessionId,
   parseRoutedAppSessionId,
   type AppClientSessionContext,
 } from "../protocol/app-session";
@@ -131,6 +132,11 @@ import {
   isAppFrameContextExpired,
   type AppFrameContext,
 } from "../protocol/app-frame";
+import type {
+  AppRunnerProps,
+  PreservedAppRuntimeDescriptor,
+  PreservedAppRuntimeRefreshResult,
+} from "../app-runner";
 import type { ProcessScheduleDeliverRequestFrame } from "../protocol/process-frames";
 import { listLocalPublicPackages } from "./pkg";
 import { isRepoPublic } from "./repo-visibility";
@@ -170,50 +176,40 @@ import {
 } from "../shared/process-authority";
 import { isLocked } from "../auth/shadow";
 import { serializeGroup } from "../auth/group";
-import { canOwnerRunAsAccount } from "./account-access";
+import { canOwnerDelegateRunAs, canOwnerRunAsAccount } from "./account-access";
 import {
   findPackageAgentAccount,
   isPackageAgentRuntimeAuthorized,
   packageAgentAccessGroup,
-  packageAgentRuntimeIdentity,
+  packageAgentRuntimeSecurityRevision,
   packageAgentSecurityRevision,
   packageAgentSecuritySurface,
   packageAgentSecurityRevisionKey,
   reconcilePackageAgentEntitlements,
-  validatePackageAgentProjectionSecurity,
+  resolvePackageAgentRunAs,
 } from "./package-agents";
 import { canonicalizeLoginUsername } from "../auth/login";
+import { accountIdentity } from "./accounts";
 import { isSharedSystemConfigKey } from "./config-access";
 import {
   isMasterKernelName,
   SHIP_KERNEL_NAME,
-  USER_KERNEL_GENERATION_HEADER,
   USER_KERNEL_LOGIN_SOURCE_HEADER,
   userKernelName,
   userKernelUsername,
 } from "../shared/kernel-names";
 import {
-  ADAPTER_INBOUND_GATEWAY_SOURCE,
   adapterInboundRouteMetadata,
-  normalizeAdapterInboundRouteMetadata,
-  sameAdapterInboundRouteMetadata,
-  type AdapterInboundRouteMetadata,
-  type AdapterInboundRouteResult,
 } from "../shared/adapter-inbound-route";
 import {
   USER_KERNEL_INSTANCE_STORAGE_KEY,
   UserKernelRegistry,
   type UserKernelInstanceMarker,
   type UserKernelLifecycle,
-  type UserKernelProvisioningSnapshot,
   type UserKernelRecord,
 } from "./user-kernels";
 import {
-  failedMasterMutationNeedsGlobalPackageInvalidation,
-  failedMasterMutationNeedsGlobalRepoInvalidation,
   isMasterOwnedSyscall,
-  masterMutationNeedsPackageProjectionFence,
-  masterMutationNeedsProjectionRefresh,
 } from "./master-syscalls";
 import {
   buildUserMcpOAuthCallbackPath,
@@ -231,27 +227,27 @@ const MAX_PROCESS_REQUEST_CANCELLATIONS = 1024;
 const MAX_REQUEST_CANCEL_REASON_LENGTH = 512;
 const GIT_REPO_SEGMENT_MAX_CHARACTERS = 128;
 const APP_SESSION_ROUTE_SECRET_KEY = "gsv/app-session-route-secret/v1";
-const APP_PLACEMENT_SIGNING_KEY_STORAGE_KEY = "gsv/app-placement-signing-key/v1";
-const APP_PLACEMENT_CERTIFICATE_STORAGE_KEY = "gsv/app-placement-certificate/v1";
 const APP_SESSION_ROUTE_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 const APP_SESSION_ROUTE_SECRET_BYTES = 32;
-const USER_KERNEL_LIFECYCLE_AUTHORIZATION_TTL_MS = 30_000;
 const PROCESS_ROLLBACK_AUTHORIZATION_TTL_MS = 30_000;
-const ADAPTER_INBOUND_AUTHORIZATION_TTL_MS = 30_000;
-const MAX_PENDING_ADAPTER_INBOUND_AUTHORIZATIONS = 4_096;
 const MASTER_USER_SIGNAL_AUTHORIZATION_TTL_MS = 30_000;
-const PACKAGE_PROJECTION_FENCE_AUTHORIZATION_TTL_MS = 30_000;
-const APP_RUNNER_RUNTIME_FENCE_AUTHORIZATION_TTL_MS = 30_000;
-const MAX_PENDING_APP_RUNNER_RUNTIME_FENCE_AUTHORIZATIONS = 4_096;
-const PACKAGE_PROJECTION_TARGET_CONCURRENCY = 8;
-const APP_RUNNER_RUNTIME_FENCE_CONCURRENCY = 8;
-const PACKAGE_PROJECTION_RECOVERY_MAX_DELAY_SECONDS = 60;
 const TEXT_ENCODER = new TextEncoder();
+const PACKAGE_AUTHORITY_MUTATIONS = new Set<SyscallName>([
+  "sys.bootstrap",
+  "account.create",
+  "pkg.add",
+  "pkg.create",
+  "pkg.sync",
+  "pkg.checkout",
+  "pkg.install",
+  "pkg.review.approve",
+  "pkg.remove",
+  "pkg.public.set",
+]);
 
 type ConnectionState = {
   step: "pending" | "connected" | "superseded";
   loginSourceScope?: LoginSourceScope;
-  kernelGeneration?: number;
   identity?: ConnectionIdentity;
   credential?: AuthenticatedCredential;
   credentialExpiryScheduleId?: string;
@@ -260,12 +256,9 @@ type ConnectionState = {
 };
 
 type UserKernelRouteResult =
-  | { ok: true; kernelName: string; lifecycle: "legacy" }
   | {
       ok: true;
       kernelName: string;
-      lifecycle: "active";
-      generation: number;
       loginSourceScope: LoginSourceScope;
     }
   | { ok: false };
@@ -273,21 +266,9 @@ type UserKernelRouteResult =
 type UserKernelAuthenticationInput = {
   sourceKernelName: string;
   username: string;
-  generation: number;
   args: ConnectArgs;
   loginSourceScope: LoginSourceScope;
 };
-
-type AppKernelRouteResult =
-  | {
-      ok: true;
-      kernelName: string;
-      lifecycle: "active" | "legacy";
-      username: string;
-      uid: number;
-      generation: number;
-    }
-  | { ok: false };
 
 type MasterRpcValue =
   | null
@@ -300,7 +281,6 @@ type MasterRpcValue =
 type MasterSyscallInput = {
   sourceKernelName: string;
   callerOwnerUid: number;
-  generation: number;
   identity: ConnectionIdentity;
   frame: {
     type: "req";
@@ -314,7 +294,6 @@ type MasterSyscallInput = {
 type MasterRepoMetadataMutationInput = {
   sourceKernelName: string;
   callerOwnerUid: number;
-  generation: number;
   identity: ConnectionIdentity;
   mutation: RepoMetadataMutation;
 };
@@ -322,7 +301,6 @@ type MasterRepoMetadataMutationInput = {
 type UserRepoOperationAuthorizationInput = {
   sourceKernelName: string;
   callerOwnerUid: number;
-  generation: number;
   identity: ConnectionIdentity;
   call: AuthoritativeRepoOperationCall;
   repo?: string;
@@ -333,33 +311,10 @@ type UserRepoOperationAuthorizationResult =
   | { ok: true; repoList?: RepoListResult }
   | { ok: false; error: { code: number; message: string } };
 
-type UserKernelLifecycleTransition = {
-  sourceKernelName: string;
-  authorization: string;
-  username: string;
-  uid: number;
-  expectedLifecycle: UserKernelLifecycle;
-  expectedGeneration: number;
-  generation: number;
-  lifecycle: Extract<UserKernelLifecycle, "provisioning" | "suspended" | "retired">;
-};
-
-type UserKernelLifecycleAuthorizationInput = Omit<
-  UserKernelLifecycleTransition,
-  "sourceKernelName"
-> & {
-  targetKernelName: string;
-};
-
-type UserKernelLifecycleTargetRecord = Omit<UserKernelRecord, "lifecycle"> & {
-  lifecycle: Extract<UserKernelLifecycle, "provisioning" | "suspended" | "retired">;
-};
-
 type UserKernelProvisioningTargetInput = {
   sourceKernelName: string;
   username: string;
   uid: number;
-  generation: number;
   /** Master-resolved runtime payload; the target holds no Master state. */
   ownerIdentity: ProcessIdentity;
   personalAgent?: ProcessIdentity;
@@ -370,7 +325,6 @@ type UserKernelActivationTargetInput = {
   sourceKernelName: string;
   username: string;
   uid: number;
-  generation: number;
 };
 
 type ProcessRollbackAuthorizationInput = {
@@ -382,14 +336,12 @@ type MasterSyscallResult = {
   response:
     | { type: "res"; id: string; ok: true; data?: MasterRpcValue }
     | { type: "res"; id: string; ok: false; error: { code: number; message: string; details?: MasterRpcValue } };
-  refreshProjection: boolean;
   tokenRevocations?: TokenRevocationNotice[];
 };
 
 type UserKernelDeviceRevocationInput = {
   sourceKernelName: string;
   ownerUid: number;
-  generation: number;
   deviceId: string;
 };
 
@@ -397,7 +349,6 @@ type MasterTokenRevocationDeliveryInput = {
   sourceKernelName: string;
   username: string;
   uid: number;
-  generation: number;
   notice: TokenRevocationNotice;
 };
 
@@ -405,33 +356,19 @@ type TokenRevocationConfirmationInput = {
   sourceKernelName: string;
   username: string;
   uid: number;
-  generation: number;
   notice: TokenRevocationNotice;
 };
 
-type RoutedAdapterInboundInput = AdapterInboundRouteMetadata & {
-  source: typeof ADAPTER_INBOUND_GATEWAY_SOURCE;
-  authorization: string;
-  username: string;
+type AdapterInboundDeliveryInput = {
+  sourceKernelName: string;
   ownerUid: number;
-  generation: number;
   linkGeneration: number;
   frame: RequestFrame<"adapter.inbound">;
-};
-
-type AdapterInboundAuthorizationInput = AdapterInboundRouteMetadata & {
-  authorization: string;
-  targetKernelName: string;
-  username: string;
-  ownerUid: number;
-  generation: number;
-  linkGeneration: number;
 };
 
 type AdapterRunRouteAuthorizationInput = {
   sourceKernelName: string;
   ownerUid: number;
-  kernelGeneration: number;
   adapter: string;
   accountId: string;
   actorId: string;
@@ -441,48 +378,89 @@ type AdapterRunRouteAuthorizationInput = {
 type UserKernelPlacementProof = {
   sourceKernelName: string;
   uid: number;
-  generation: number;
 };
 
-type AppPlacementCertificateGrant = {
-  version: 1;
-  username: string;
-  uid: number;
-  generation: number;
-  certificate: string;
+type PackageRuntimeAuthorizationInput = UserKernelPlacementProof & {
+  ownerUid: number;
+  runAs: ProcessIdentity;
+  packageSecurityRevision: string | null;
+  requiredCall?: string;
 };
 
-type PackageProjectionFenceTargetInput = Omit<
-  PackageProjectionFenceAuthorizationInput,
-  "targetKernelName"
-> & {
-  sourceKernelName: string;
+type ProcessIdentityResolutionInput = UserKernelPlacementProof & {
+  ownerUid: number;
+  runAs: ProcessIdentity;
 };
 
-type PackageProjectionRefreshTargetInput = {
-  sourceKernelName: string;
-  username: string;
-  uid: number;
-  generation: number;
-  fenceId: string;
-  expectedProjectionRevision: number;
+type ProcessIdentityResolutionResult =
+  | {
+      ok: true;
+      runAs: ProcessIdentity;
+      owner: ProcessIdentity;
+    }
+  | { ok: false; error: string };
+
+type AccountIdentityResolutionInput = UserKernelPlacementProof & {
+  ownerUid: number;
+  actorUid: number;
 };
 
-type UserKernelTargetOperationLease = {
-  generation: number;
-  signal: AbortSignal;
-  markPackageStamped: () => void;
-  isPackageStamped: () => boolean;
-  assertCurrent: () => void;
-  release: () => void;
+type AccountIdentityResolutionResult =
+  | { ok: true; identity: ProcessIdentity; capabilities: string[] }
+  | { ok: false; error: string };
+
+type RunAsAccountResolutionInput = UserKernelPlacementProof & {
+  ownerUid: number;
+  callerUid: number;
+  selector?: string;
 };
+
+type RunnableAccountListInput = UserKernelPlacementProof & {
+  ownerUid: number;
+  callerUid: number;
+};
+
+type AdapterServiceIdentityInput = UserKernelPlacementProof & {
+  ownerUid: number;
+  channel: string;
+};
+
+type AppFrameAuthorizationInput = UserKernelPlacementProof & {
+  appFrame: AppFrameContext;
+  requiredCall?: string;
+};
+
+type AppFrameAuthorizationResult =
+  | {
+      ok: true;
+      identity: ConnectionIdentity;
+      entrypointKind: PackageEntrypoint["kind"];
+    }
+  | { ok: false };
+
+type PreservedAppRuntimeAuthorityInput = UserKernelPlacementProof & {
+  ownerUid: number;
+  runtime: PreservedAppRuntimeDescriptor;
+};
+
+type PreservedAppRuntimeAuthorityResult =
+  | {
+      ok: true;
+      identity: ProcessIdentity;
+      packageId: string;
+      packageName: string;
+      packageUpdatedAt: number;
+      artifact: PackageArtifactMetadata;
+      entrypointName: string;
+      routeBase: string;
+    }
+  | { ok: false };
 
 type MasterUserSignalAuthorizationInput = {
   authorization: string;
   targetKernelName: string;
   username: string;
   uid: number;
-  generation: number;
   signal: string;
   payloadJson?: string;
 };
@@ -508,6 +486,33 @@ type MasterKernelControlStub = {
     requesterUid: number;
     enabled?: boolean;
   }) => Promise<{ packages: InstalledPackageRecord[] }>;
+  validatePackageRuntime: (
+    input: PackageRuntimeAuthorizationInput,
+  ) => Promise<boolean>;
+  resolveProcessIdentity: (
+    input: ProcessIdentityResolutionInput,
+  ) => Promise<ProcessIdentityResolutionResult>;
+  resolveAccountIdentity: (
+    input: AccountIdentityResolutionInput,
+  ) => Promise<AccountIdentityResolutionResult>;
+  resolveRunAsAccount: (
+    input: RunAsAccountResolutionInput,
+  ) => Promise<RunAsAccountResult>;
+  listRunnableAccounts: (
+    input: RunnableAccountListInput,
+  ) => Promise<RunnableAccount[]>;
+  resolveAdapterServiceIdentity: (
+    input: AdapterServiceIdentityInput,
+  ) => Promise<ConnectionIdentity | null>;
+  validateAppFrame: (
+    input: AppFrameAuthorizationInput,
+  ) => Promise<AppFrameAuthorizationResult>;
+  validateAppDaemonFrame: (
+    input: AppFrameAuthorizationInput,
+  ) => Promise<AppFrameAuthorizationResult>;
+  authorizePreservedAppRuntime: (
+    input: PreservedAppRuntimeAuthorityInput,
+  ) => Promise<PreservedAppRuntimeAuthorityResult>;
   dispatchMasterSyscall: (input: MasterSyscallInput) => Promise<MasterSyscallResult>;
   revokeUserKernelDeviceCredentials: (
     input: UserKernelDeviceRevocationInput,
@@ -521,19 +526,9 @@ type MasterKernelControlStub = {
   authorizeUserRepoOperation: (
     input: UserRepoOperationAuthorizationInput,
   ) => Promise<UserRepoOperationAuthorizationResult>;
-  resolveAppFrameKernel: (
-    appFrame: AppFrameContext,
-    call?: string,
-  ) => Promise<AppKernelRouteResult>;
-  consumeUserKernelLifecycleAuthorization: (
-    input: UserKernelLifecycleAuthorizationInput,
-  ) => Promise<boolean>;
-  consumeAdapterInboundAuthorization: (
-    input: AdapterInboundAuthorizationInput,
-  ) => Promise<boolean>;
-  issueAdapterInboundRoute: (
-    input: AdapterInboundRouteMetadata,
-  ) => Promise<AdapterInboundRouteResult>;
+  receiveAdapterInbound: (
+    frame: RequestFrame<"adapter.inbound">,
+  ) => Promise<ResponseFrame>;
   authorizeAdapterRunRoute: (
     input: AdapterRunRouteAuthorizationInput,
   ) => Promise<boolean>;
@@ -669,13 +664,12 @@ class BoundedMcpOAuthProvider extends DurableObjectOAuthClientProvider {
   }
 }
 
-class GenerationFencedMcpOAuthProvider extends BoundedMcpOAuthProvider {
+class UserKernelMcpOAuthProvider extends BoundedMcpOAuthProvider {
   constructor(
     storage: DurableObjectStorage,
     clientName: string,
     callbackUrl: string,
     private readonly expectedUsername: string,
-    private readonly expectedGeneration: number,
     private readonly authorizeCommit: () => boolean,
   ) {
     super(storage, clientName, callbackUrl);
@@ -696,7 +690,6 @@ class GenerationFencedMcpOAuthProvider extends BoundedMcpOAuthProvider {
         !marker
         || marker.lifecycle !== "active"
         || marker.username !== this.expectedUsername
-        || marker.generation !== this.expectedGeneration
         || !this.authorizeCommit()
       ) {
         throw new Error("User Kernel is not active");
@@ -721,53 +714,46 @@ const KERNEL_RPC_METHOD_ALLOWLIST = new Set([
   "webSocketClose",
   "webSocketError",
   "setName",
-  // Exact one-shot Master control handshakes.
-  "consumeUserKernelLifecycleAuthorization",
-  "applyMasterUserKernelLifecycle",
-  "consumeUserKernelProvisioningAuthorization",
+  // Exact Master provisioning operations.
   "provisionUserKernel",
-  "consumeUserKernelActivationAuthorization",
   "activateProvisionedUserKernel",
-  // Scoped Gateway routing plus exact one-shot adapter target admission.
-  "issueAdapterInboundRoute",
-  "consumeAdapterInboundAuthorization",
-  "serviceLinkedAdapterFrame",
+  // Scoped Gateway ingress and direct Master-to-user adapter delivery.
+  "receiveAdapterInbound",
+  "serviceAdapterFrame",
   "consumeMasterUserSignalAuthorization",
   "receiveMasterUserSignal",
-  // Master-to-user notices that pull or confirm authoritative Master state.
-  "receiveMasterProjection",
-  "consumePackageProjectionFenceAuthorization",
-  "preparePackageProjectionFence",
-  "refreshPackageProjectionFence",
-  "consumeAppRunnerRuntimeFenceAuthorization",
-  "onAppRuntimeLifecycleFenceRecoveryDue",
+  // Master-to-user notices that confirm authoritative Master state.
   "onUserKernelScheduleRearmRecoveryDue",
   "receiveMasterTokenRevocation",
-  // Per-generation user-Kernel-capability authenticated Master operations.
+  // Placement-authenticated user-Kernel Master operations.
   "authorizeAdapterRunRoute",
-  "issueAppPlacementCertificate",
   "authenticateUserKernelConnection",
   "masterReadAuthFile",
   "masterPackagesList",
+  "validatePackageRuntime",
+  "resolveProcessIdentity",
+  "resolveAccountIdentity",
+  "resolveRunAsAccount",
+  "listRunnableAccounts",
+  "resolveAdapterServiceIdentity",
+  "validateAppFrame",
+  "validateAppDaemonFrame",
+  "authorizePreservedAppRuntime",
   "revokeUserKernelDeviceCredentials",
   "confirmTokenRevocationDelivery",
   "dispatchMasterSyscall",
   "mutateUserRepoMetadata",
   "authorizeUserRepoOperation",
-  "getUserKernelProjection",
   // Gateway HTTP routing and public read seams.
   "resolveUserKernelRoute",
   "resolveUserKernelCallbackRoute",
-  "resolveAppSessionKernel",
-  "resolveAppFrameKernel",
+  "resolvePreservedAppRuntimeRoute",
   "authorizeGitHttp",
   "listPublicPackages",
   // Process-DO RPC, authenticated today by Kernel namespace plus registry pid.
   "recvFrame",
   "resolveProcessAuthority",
   "resolveProcessTeardownAuthority",
-  "resolveProcessLifecycleFenceAuthority",
-  "resolveProcessPackageProjectionFenceAuthority",
   "consumeProcessRollbackAuthorization",
   "requestProcessNetFetch",
   "cancelProcessRequests",
@@ -775,7 +761,10 @@ const KERNEL_RPC_METHOD_ALLOWLIST = new Set([
   "serviceFrame",
   // AppRunner/package RPC; session-bearing calls also reauthorize local state.
   "appRequest",
+  "appDaemonRequest",
   "authorizeAppFrame",
+  "authorizeAppDaemonFrame",
+  "refreshPreservedAppRuntime",
   "authorizeAppSessionRoute",
   "resolvePackageAppRpcSession",
   "refreshPackageAppRpcSession",
@@ -861,33 +850,15 @@ export class Kernel extends Host<Env> {
   private readonly revokedProcessTeardowns = new Map<string, Promise<void>>();
   private readonly deferredCredentialClosures = new Set<string>();
   private tokenRevocationFlush: Promise<void> | null = null;
-  private readonly userKernelLifecycleAuthorizations = new Map<
-    string,
-    { expiresAt: number; transition: Omit<UserKernelLifecycleAuthorizationInput, "authorization"> }
-  >();
   private readonly processRollbackAuthorizations = new Map<
     string,
-    { expiresAt: number; processId: string; generation: number | null }
-  >();
-  private readonly adapterInboundAuthorizations = new Map<
-    string,
-    {
-      expiresAt: number;
-      delivery: Omit<AdapterInboundAuthorizationInput, "authorization">;
-    }
+    { expiresAt: number; processId: string }
   >();
   private readonly masterUserSignalAuthorizations = new Map<
     string,
     {
       expiresAt: number;
       signal: Omit<MasterUserSignalAuthorizationInput, "authorization">;
-    }
-  >();
-  private readonly packageProjectionFenceAuthorizations = new Map<
-    string,
-    {
-      expiresAt: number;
-      fence: Omit<PackageProjectionFenceAuthorizationInput, "authorization">;
     }
   >();
   private readonly cancelledProcessRequests = new Map<
@@ -903,27 +874,9 @@ export class Kernel extends Host<Env> {
     string,
     Promise<UserKernelRecord>
   >();
-  private projectionInstallTail: Promise<void> = Promise.resolve();
-  private masterProjectionMutationTail: Promise<void> = Promise.resolve();
-  private pendingMasterProjectionCommit: Promise<void> | null = null;
-  /** Set before a package transition enters the projection queue. */
-  private masterPackageProjectionTransitionPending: string | null = null;
-  private appPlacementSigningKeyPromise: Promise<MasterAppPlacementSigningKey> | null = null;
-  private masterPackageFenceRecoveryQueued = false;
-  private masterPackageFenceRecoveryAttempt = 0;
-  private appRuntimeLifecycleFenceRecoveryQueued = false;
-  private appRuntimeLifecycleFenceRecoveryAttempt = 0;
+  private readonly confirmedUserKernelActivations = new Map<string, number>();
   private userKernelScheduleRearmRecoveryQueued = false;
   private userKernelScheduleRearmRecoveryAttempt = 0;
-  private closedTargetOperationGeneration: number | null = null;
-  private readonly activeTargetOperations = new Map<
-    string,
-    { generation: number; packageStamped: boolean; controller: AbortController }
-  >();
-  private readonly targetOperationDrainWaiters = new Map<
-    number,
-    Set<{ packageOnly: boolean; resolve: () => void }>
-  >();
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
@@ -937,6 +890,14 @@ export class Kernel extends Host<Env> {
       value: this.handleAuthorizedMcpOAuthCallback.bind(this),
     });
     privatizeKernelRpcSurface(this);
+    if (this.instanceKind === "master") {
+      // The Agents SDK restores persisted MCP transports before Kernel.onStart.
+      // Those rows predate the runtime split and belong to the old singleton
+      // user runtime, not to the Master control plane. Leave them stored for
+      // recovery, but never reconnect them from the Master object.
+      this.mcp.restoreConnectionsFromStorage = async () => {};
+      this.mcp.getRpcServersFromStorage = () => [];
+    }
     const sql = ctx.storage.sql;
     runKernelSqlMigrations(ctx.storage);
 
@@ -950,7 +911,9 @@ export class Kernel extends Host<Env> {
     }
 
     this.caps = new CapabilityStore(sql);
-    this.caps.seed();
+    if (this.instanceKind === "master") {
+      this.caps.seed();
+    }
 
     this.config = new ConfigStore(sql);
 
@@ -1010,30 +973,10 @@ export class Kernel extends Host<Env> {
       this.broadcastMcpChanged();
     });
 
-    if (this.instanceKind === "user" && this.userKernelMarker) {
-      const lifecycleFence = this.appRuntimes.getLifecycleFence(
-        this.userKernelMarker.uid,
-      );
-      if (lifecycleFence) {
-        if (
-          lifecycleFence.ownerUsername !== this.userKernelMarker.username
-          || lifecycleFence.sourceKernelName !== this.name
-        ) {
-          throw new Error("AppRunner lifecycle fence identity mismatch");
-        }
-        this.closeUserKernelTargetAdmission(
-          this.userKernelMarker.generation,
-          "User Kernel lifecycle recovery is fenced",
-        );
-        this.fenceUserKernelRuntime("User Kernel lifecycle recovery is fenced");
-      }
-    }
-
     this.rehydrateConnections();
     if (
       this.instanceKind === "user"
       && this.userKernelMarker?.lifecycle === "active"
-      && this.appRuntimes.getLifecycleFence(this.userKernelMarker.uid) === null
     ) {
       this.ctx.waitUntil(this.rearmInterruptedScheduleRuns().catch(() => {
         this.queueUserKernelScheduleRearmRecovery();
@@ -1045,8 +988,10 @@ export class Kernel extends Host<Env> {
         "onTokenRevocationOutboxDue",
       ).then(() => undefined));
     }
-    for (const callId of this.ipcCalls.recoverDeliveryIds()) {
-      this.queueIpcCallDelivery(callId);
+    if (this.instanceKind === "user") {
+      for (const callId of this.ipcCalls.recoverDeliveryIds()) {
+        this.queueIpcCallDelivery(callId);
+      }
     }
   }
 
@@ -1097,7 +1042,9 @@ export class Kernel extends Host<Env> {
       for (const resolve of active.waiters) resolve();
       active.waiters.clear();
     };
-  }  private async waitForMasterUserOperations(username: string): Promise<void> {
+  }
+
+  private async waitForMasterUserOperations(username: string): Promise<void> {
     const active = this.activeMasterUserOperations?.get(username);
     if (!active || active.count === 0) return;
     await new Promise<void>((resolve) => active.waiters.add(resolve));
@@ -1115,22 +1062,14 @@ export class Kernel extends Host<Env> {
     return this.userKernelMarker;
   }
 
-  private async requireActiveUserKernel(
-    expectedGeneration?: number,
-    options: { allowLifecycleFence?: boolean } = {},
-  ): Promise<UserKernelInstanceMarker | null> {
-    if (this.instanceKind === "master") {
-      return null;
+  private async requireActiveUserKernel(): Promise<UserKernelInstanceMarker> {
+    if (this.instanceKind !== "user") {
+      throw new Error("User Kernel is not active");
     }
     const marker = await this.loadUserKernelMarker();
     if (
       !marker
       || marker.lifecycle !== "active"
-      || (expectedGeneration !== undefined && marker.generation !== expectedGeneration)
-      || (
-        this.appRuntimes.getLifecycleFence(marker.uid) !== null
-        && options.allowLifecycleFence !== true
-      )
     ) {
       throw new Error("User Kernel is not active");
     }
@@ -1138,11 +1077,7 @@ export class Kernel extends Host<Env> {
   }
 
 
-  private authorizeUserKernelSource(proof: {
-    sourceKernelName: string;
-    uid: number;
-    generation: number;
-  }): UserKernelRecord | null {
+  private authorizeUserKernelSource(proof: UserKernelPlacementProof): UserKernelRecord | null {
     this.assertMasterKernel();
     const username = userKernelUsername(proof.sourceKernelName);
     const placement = username ? this.userKernels.get(username) : null;
@@ -1154,7 +1089,6 @@ export class Kernel extends Host<Env> {
       || !placement
       || (placement.lifecycle !== "active" && placement.lifecycle !== "provisioning")
       || placement.uid !== proof.uid
-      || placement.generation !== proof.generation
     ) {
       return null;
     }
@@ -1164,13 +1098,45 @@ export class Kernel extends Host<Env> {
       && sameUserKernelPlacement(current, placement)
       ? current
       : null;
-  }  private async authorizeCurrentPackageAgentRuntime(
+  }
+
+  private async authorizeCurrentPackageAgentRuntime(
     ownerUid: number,
     runAs: ProcessIdentity,
     packageSecurityRevision: string | null,
     requiredCall?: string,
     processId?: string,
   ): Promise<boolean> {
+    if (this.instanceKind === "user") {
+      let marker: UserKernelInstanceMarker | null = null;
+      try {
+        marker = await this.requireActiveUserKernel();
+      } catch {
+        // Authorization fails closed below.
+      }
+      if (!marker || marker.uid !== ownerUid) {
+        if (processId) {
+          this.queueRevokedProcessTeardown(processId, "Process owner is no longer active");
+        }
+        return false;
+      }
+      const master = this.env.KERNEL.get(
+        this.env.KERNEL.idFromName(SHIP_KERNEL_NAME),
+      ) as unknown as MasterKernelControlStub;
+      const authorized = await master.validatePackageRuntime({
+        sourceKernelName: this.name,
+        uid: marker.uid,
+        ownerUid,
+        runAs,
+        packageSecurityRevision,
+        ...(requiredCall === undefined ? {} : { requiredCall }),
+      });
+      if (!authorized && processId) {
+        this.queueRevokedProcessTeardown(processId, "Package agent authority was revoked");
+      }
+      return authorized;
+    }
+
     const localAccount = this.auth.getPasswdByUid(runAs.uid);
     const localGids = localAccount
       ? this.auth.resolveGids(localAccount.username, localAccount.gid)
@@ -1188,20 +1154,6 @@ export class Kernel extends Host<Env> {
       return false;
     }
 
-    const localPackageIdentity = packageAgentRuntimeIdentity(
-      { config: this.config },
-      runAs.uid,
-    );
-    if (packageSecurityRevision === null && localPackageIdentity.kind === "ordinary") {
-      return true;
-    }
-    if (
-      this.instanceKind === "master"
-      && localPackageIdentity.kind !== "ordinary"
-      && this.projectionState.packageFence() !== null
-    ) {
-      return false;
-    }
     if (
       !localAccount
       || !canOwnerRunAsAccount(this.auth, ownerUid, localAccount, ownerUid === 0)
@@ -1210,42 +1162,7 @@ export class Kernel extends Host<Env> {
       return false;
     }
 
-    let authorized = false;
-    let marker: UserKernelInstanceMarker | null = null;
-    if (this.instanceKind === "user") {
-      try {
-        marker = await this.requireActiveUserKernel();
-      } catch {
-        marker = null;
-      }
-      const installed = this.projectionState.installed();
-      if (
-        !marker
-        || marker.uid !== ownerUid
-        || !installed
-        || installed.username !== marker.username
-        || installed.uid !== marker.uid
-        || installed.kernelGeneration !== marker.generation
-      ) {
-        if (processId && localPackageIdentity.kind !== "ordinary") {
-          this.queueRevokedProcessTeardown(processId, "Package projection is unavailable");
-        }
-        return false;
-      }
-      if (
-        localPackageIdentity.kind !== "ordinary"
-        && this.projectionState.packageFence()?.kernelGeneration === marker.generation
-      ) {
-        if (processId) {
-          this.queueRevokedProcessTeardown(
-            processId,
-            "Package authority projection is fenced",
-          );
-        }
-        return false;
-      }
-    }
-    authorized = await isPackageAgentRuntimeAuthorized(
+    const authorized = await isPackageAgentRuntimeAuthorized(
       {
         auth: this.auth,
         caps: this.caps,
@@ -1260,25 +1177,6 @@ export class Kernel extends Host<Env> {
         requiredCall,
       },
     );
-    if (
-      this.instanceKind === "master"
-      && localPackageIdentity.kind !== "ordinary"
-      && this.projectionState.packageFence() !== null
-    ) {
-      authorized = false;
-    }
-    if (
-      marker
-      && (
-        !this.isCurrentUserKernelMarker(marker)
-        || (
-          localPackageIdentity.kind !== "ordinary"
-          && this.projectionState.packageFence()?.kernelGeneration === marker.generation
-        )
-      )
-    ) {
-      authorized = false;
-    }
     if (!authorized && processId) {
       this.queueRevokedProcessTeardown(processId, "Package agent authority was revoked");
     }
@@ -1311,40 +1209,28 @@ export class Kernel extends Host<Env> {
     uid: number;
     username: string;
   }): Promise<string> {
-    const actor = this.auth.getPasswdByUid(input.uid);
-    if (!actor || actor.username !== input.username) {
+    if (
+      !Number.isSafeInteger(input.uid)
+      || input.uid < 0
+      || canonicalizeLoginUsername(input.username) !== input.username
+    ) {
       throw new Error("App session actor is invalid");
-    }
-
-    if (this.instanceKind === "master") {
-      const placement = this.userKernels.get(input.username);
-      if (
-        !placement
-        || placement.lifecycle !== "legacy"
-        || placement.uid !== input.uid
-      ) {
-        throw new Error("App sessions require an active user Kernel");
-      }
-      return crypto.randomUUID();
     }
 
     const marker = await this.requireActiveUserKernel();
     if (!marker || this.name !== userKernelName(marker.username)) {
       throw new Error("App sessions require an active user Kernel");
     }
-    const placementCertificate = await this.appPlacementCertificate(marker);
     const route = {
       username: marker.username,
       uid: marker.uid,
-      generation: marker.generation,
       expiresAt: Date.now() + APP_SESSION_ROUTE_TTL_MS,
       nonce: crypto.randomUUID(),
-      placementCertificate,
     };
     const signature = await this.signAppSessionRoute(
       buildRoutedAppSessionSigningInput(route),
     );
-    const current = await this.requireActiveUserKernel(marker.generation);
+    const current = await this.requireActiveUserKernel();
     if (
       !current
       || current.username !== marker.username
@@ -1415,7 +1301,9 @@ export class Kernel extends Host<Env> {
       signatureBytes,
       TEXT_ENCODER.encode(signingInput),
     );
-  }  private async cancelPendingScheduleWakes(): Promise<void> {
+  }
+
+  private async cancelPendingScheduleWakes(): Promise<void> {
     const wakeIds: string[] = [];
     this.ctx.storage.transactionSync(() => {
       for (const record of this.schedules.listWakeable()) {
@@ -1439,8 +1327,6 @@ export class Kernel extends Host<Env> {
       || this.name !== userKernelName(input.username)
       || !Number.isSafeInteger(input.uid)
       || input.uid < 0
-      || !Number.isSafeInteger(input.generation)
-      || input.generation <= 0
       || !isProcessIdentity(input.ownerIdentity)
       || input.ownerIdentity.uid !== input.uid
       || input.ownerIdentity.username !== input.username
@@ -1457,7 +1343,6 @@ export class Kernel extends Host<Env> {
     if (existing && (
       existing.username !== input.username
       || existing.uid !== input.uid
-      || existing.generation !== input.generation
       || (existing.lifecycle !== "provisioning" && existing.lifecycle !== "active")
     )) {
       throw new Error("User Kernel provisioning identity mismatch");
@@ -1468,7 +1353,6 @@ export class Kernel extends Host<Env> {
       kind: "user",
       username: input.username,
       uid: input.uid,
-      generation: input.generation,
       lifecycle: "provisioning",
       updatedAt: Date.now(),
     };
@@ -1514,8 +1398,6 @@ export class Kernel extends Host<Env> {
       || canonicalizeLoginUsername(input.username) !== input.username
       || !Number.isSafeInteger(input.uid)
       || input.uid < 0
-      || !Number.isSafeInteger(input.generation)
-      || input.generation <= 0
     ) {
       throw new Error("User Kernel activation denied");
     }
@@ -1526,7 +1408,6 @@ export class Kernel extends Host<Env> {
       !existing
       || existing.username !== input.username
       || existing.uid !== input.uid
-      || existing.generation !== input.generation
       || (existing.lifecycle !== "provisioning" && existing.lifecycle !== "active")
     ) {
       throw new Error("User Kernel activation identity mismatch");
@@ -1556,10 +1437,11 @@ export class Kernel extends Host<Env> {
     // Master syscalls are unavailable; the input payload stands in. After
     // activation the owner record is re-resolved against the Master.
     if (marker.lifecycle === "active") {
-      const account = await this.accountGetForIdentity(connectionIdentity, { uid: ownerIdentity.uid });
-      if (account?.capabilities) {
-        connectionIdentity.capabilities = account.capabilities;
+      const account = await this.resolveUserKernelAccountIdentity(ownerIdentity.uid);
+      if (!account.ok || !processIdentityEquals(account.identity, ownerIdentity)) {
+        throw new Error("User Kernel owner identity is no longer authorized");
       }
+      connectionIdentity.capabilities = account.capabilities;
     }
     const context = this.buildKernelContext({
       identity: connectionIdentity,
@@ -1594,7 +1476,6 @@ export class Kernel extends Host<Env> {
     let rollbackError: unknown;
     const rollbackAuthorization = this.issueProcessRollbackAuthorization(
       pid,
-      this.userKernelMarker?.generation ?? null,
     );
     try {
       const requestId = crypto.randomUUID();
@@ -1634,7 +1515,9 @@ export class Kernel extends Host<Env> {
     }
 
     if (rollbackError) throw rollbackError;
-  }  async resolveUserKernelRoute(
+  }
+
+  async resolveUserKernelRoute(
     usernameInput: string,
     trustedLoginSourceAddress?: string,
   ): Promise<UserKernelRouteResult> {
@@ -1647,15 +1530,19 @@ export class Kernel extends Host<Env> {
       return { ok: false };
     }
 
-    const placement = this.userKernels.get(username);
+    let placement = this.userKernels.get(username);
     if (!placement) {
       return { ok: false };
     }
-    if (this.transitioningUserKernels?.has(username)) {
-      return { ok: false };
-    }
-    if (placement.lifecycle === "legacy") {
-      return { ok: true, kernelName: SHIP_KERNEL_NAME, lifecycle: "legacy" };
+    if (
+      placement.lifecycle === "provisioning"
+      || !this.isUserKernelActivationConfirmed(placement)
+    ) {
+      try {
+        placement = await this.ensureUserKernelProvisioned(username);
+      } catch {
+        return { ok: false };
+      }
     }
     if (!this.isActiveUserKernelPlacement(placement)) {
       return { ok: false };
@@ -1668,37 +1555,93 @@ export class Kernel extends Host<Env> {
     if (
       !this.isActiveUserKernelPlacement(currentPlacement)
       || currentPlacement.uid !== placement.uid
-      || currentPlacement.generation !== placement.generation
     ) {
       return { ok: false };
     }
     return {
       ok: true,
       kernelName: userKernelName(username),
-      lifecycle: "active",
-      generation: placement.generation,
       loginSourceScope,
     };
   }
   async resolveUserKernelCallbackRoute(
     usernameInput: string,
-    generation: number,
   ): Promise<{ ok: true; kernelName: string } | { ok: false }> {
     this.assertMasterKernel();
     const username = canonicalizeLoginUsername(usernameInput);
-    const placement = username ? this.userKernels.get(username) : null;
+    if (!username || username !== usernameInput) {
+      return { ok: false };
+    }
+    let placement = this.userKernels.get(username);
+    if (!placement) return { ok: false };
     if (
-      !username
-      || username !== usernameInput
-      || !Number.isSafeInteger(generation)
-      || generation <= 0
-      || !placement
-      || !this.isActiveUserKernelPlacement(placement)
-      || placement.generation !== generation
+      placement.lifecycle === "provisioning"
+      || !this.isUserKernelActivationConfirmed(placement)
+    ) {
+      try {
+        placement = await this.ensureUserKernelProvisioned(username);
+      } catch {
+        return { ok: false };
+      }
+    }
+    const currentPlacement = this.userKernels.get(username);
+    if (
+      !this.isActiveUserKernelPlacement(placement)
+      || !this.isActiveUserKernelPlacement(currentPlacement)
+      || currentPlacement.uid !== placement.uid
     ) {
       return { ok: false };
     }
     return { ok: true, kernelName: userKernelName(username) };
+  }
+
+  async resolvePreservedAppRuntimeRoute(
+    input: Pick<PreservedAppRuntimeDescriptor, "uid" | "username">,
+  ): Promise<{ ok: true; kernelName: string } | { ok: false }> {
+    this.assertMasterKernel();
+    if (
+      !input
+      || !Number.isSafeInteger(input.uid)
+      || input.uid < 0
+      || typeof input.username !== "string"
+      || !input.username
+    ) {
+      return { ok: false };
+    }
+    const actor = this.auth.getPasswdByUid(input.uid);
+    const actorAccount = actor ? this.auth.getAccountIdentity(actor.username) : null;
+    if (
+      !actor
+      || actor.username !== input.username
+      || !actorAccount
+      || actorAccount.uid !== actor.uid
+      || actorAccount.state !== "active"
+    ) {
+      return { ok: false };
+    }
+
+    const personalAgentOwners = this.auth.getPasswdEntries().filter(
+      (entry) => this.auth.getPersonalAgentUid(entry.uid) === actor.uid,
+    );
+    if (personalAgentOwners.length > 1) {
+      return { ok: false };
+    }
+    if (this.auth.isPersonalAgentUid(actor.uid) && personalAgentOwners.length !== 1) {
+      return { ok: false };
+    }
+    const owner = personalAgentOwners[0] ?? actor;
+    const ownerAccount = this.auth.getAccountIdentity(owner.username);
+    const placement = this.userKernels.getByUid(owner.uid);
+    if (
+      !ownerAccount
+      || ownerAccount.uid !== owner.uid
+      || ownerAccount.state !== "active"
+      || !placement
+      || placement.username !== owner.username
+    ) {
+      return { ok: false };
+    }
+    return this.resolveUserKernelCallbackRoute(owner.username);
   }
 
   async authorizeAdapterRunRoute(
@@ -1709,7 +1652,6 @@ export class Kernel extends Host<Env> {
     const placement = await this.authorizeUserKernelSource({
       sourceKernelName: input.sourceKernelName,
       uid: input.ownerUid,
-      generation: input.kernelGeneration,
     });
     const adapter = typeof input.adapter === "string"
       ? input.adapter.trim().toLowerCase()
@@ -1724,7 +1666,6 @@ export class Kernel extends Host<Env> {
       !username
       || !placement
       || placement.uid !== input.ownerUid
-      || placement.generation !== input.kernelGeneration
       || input.adapter !== adapter
       || input.accountId !== accountId
       || input.actorId !== actorId
@@ -1748,67 +1689,6 @@ export class Kernel extends Host<Env> {
         adapter,
         accountId,
         actorId,
-        input.linkGeneration,
-      )
-    );
-  }
-
-  /** Consume a one-shot adapter delivery authorization at the target admission point. */
-  async consumeAdapterInboundAuthorization(
-    input: AdapterInboundAuthorizationInput,
-  ): Promise<boolean> {
-    this.assertMasterKernel();
-    const authorization = typeof input?.authorization === "string"
-      ? input.authorization
-      : "";
-    const pending = this.adapterInboundAuthorizations.get(authorization);
-    this.adapterInboundAuthorizations.delete(authorization);
-    if (
-      !pending
-      || pending.expiresAt <= Date.now()
-      || !sameAdapterInboundAuthorization(pending.delivery, input)
-    ) {
-      return false;
-    }
-
-    const username = canonicalizeLoginUsername(input.username);
-    const route = normalizeAdapterInboundRouteMetadata({
-      adapter: input.adapter,
-      accountId: input.accountId,
-      actorId: input.actorId,
-      frameId: input.frameId,
-      surfaceKind: input.surfaceKind,
-      surfaceId: input.surfaceId,
-    });
-    const placement = username ? this.userKernels.get(username) : null;
-    if (
-      !username
-      || username !== input.username
-      || input.targetKernelName !== userKernelName(username)
-      || !placement
-      || !this.isActiveUserKernelPlacement(placement)
-      || placement.uid !== input.ownerUid
-      || placement.generation !== input.generation
-      || !route
-      || !Number.isSafeInteger(input.linkGeneration)
-      || input.linkGeneration <= 0
-    ) {
-      return false;
-    }
-
-    const link = this.adapters.identityLinks.get(
-      route.adapter,
-      route.accountId,
-      route.actorId,
-    );
-    return Boolean(
-      link
-      && link.uid === placement.uid
-      && link.generation === input.linkGeneration
-      && this.adapters.identityLinks.isCurrentGeneration(
-        route.adapter,
-        route.accountId,
-        route.actorId,
         input.linkGeneration,
       )
     );
@@ -1840,170 +1720,10 @@ export class Kernel extends Host<Env> {
       && input.targetKernelName === userKernelName(username)
       && placement
       && this.isActiveUserKernelPlacement(placement)
-      && placement.uid === input.uid
-      && placement.generation === input.generation,
+      && placement.uid === input.uid,
     );
   }
 
-  async resolveAppSessionKernel(sessionIdInput: string): Promise<AppKernelRouteResult> {
-    this.assertMasterKernel();
-    const sessionId = typeof sessionIdInput === "string" ? sessionIdInput : "";
-    if (parseRoutedAppSessionId(sessionId)) {
-      // Active route signatures belong exclusively to their user Kernel.
-      // Gateway active routing is deterministic and target-verified, so the
-      // Master compatibility resolver must never accept these locators.
-      return { ok: false };
-    }
-
-    if (!isLegacyAppSessionId(sessionId)) {
-      return { ok: false };
-    }
-    const legacy = this.appSessions.getActiveRoute(sessionId);
-    const placement = legacy ? this.userKernels.get(legacy.username) : null;
-    if (
-      !legacy
-      || !placement
-      || placement.lifecycle !== "legacy"
-      || placement.uid !== legacy.uid
-      || this.transitioningUserKernels.has(placement.username)
-      || this.appRuntimes.getLifecycleFence(placement.uid) !== null
-    ) {
-      return { ok: false };
-    }
-    return {
-      ok: true,
-      kernelName: SHIP_KERNEL_NAME,
-      lifecycle: "legacy",
-      username: placement.username,
-      uid: placement.uid,
-      generation: placement.generation,
-    };
-  }
-
-  async resolveAppFrameKernel(
-    appFrame: AppFrameContext,
-    call?: string,
-    runnerName?: string,
-  ): Promise<AppKernelRouteResult> {
-    this.assertMasterKernel();
-    const ownerUsername = canonicalizeLoginUsername(
-      appFrame?.kernelUsername ?? appFrame?.username,
-    );
-    const placement = ownerUsername ? this.userKernels.get(ownerUsername) : null;
-    const releaseMasterOperation = placement?.lifecycle === "legacy"
-      && this.appRuntimes.getLifecycleFence(placement.uid) === null
-      ? this.beginMasterUserOperation(placement.username)
-      : null;
-    if (!releaseMasterOperation) return { ok: false };
-    let operation: UserKernelTargetOperationLease;
-    try {
-      operation = this.beginUserKernelTargetOperation(
-        this.projectionState.masterRevision(),
-        { packageStamped: true },
-      );
-    } catch {
-      releaseMasterOperation();
-      return { ok: false };
-    }
-    try {
-      const route = await this.resolveAppFrameKernelAdmitted(
-        appFrame,
-        call,
-        runnerName,
-      );
-      operation.assertCurrent();
-      return route;
-    } catch {
-      return { ok: false };
-    } finally {
-      operation.release();
-      releaseMasterOperation();
-    }
-  }
-
-  private async resolveAppFrameKernelAdmitted(
-    appFrame: AppFrameContext,
-    call?: string,
-    runnerName?: string,
-  ): Promise<AppKernelRouteResult> {
-    if (
-      !appFrame
-      || typeof appFrame !== "object"
-      || isAppFrameContextExpired(appFrame)
-      || (call !== undefined && (typeof call !== "string" || call.trim().length === 0))
-      || appFrame.kernelGeneration !== undefined
-    ) {
-      return { ok: false };
-    }
-
-    if (appFrame.sessionId !== undefined) {
-      if (!isLegacyAppSessionId(appFrame.sessionId)) {
-        return { ok: false };
-      }
-      const route = await this.resolveAppSessionKernel(appFrame.sessionId);
-      if (!route.ok || route.lifecycle !== "legacy") {
-        return { ok: false };
-      }
-      if (!this.isMasterAppFrameActorAuthorized(appFrame, route.uid)) {
-        return { ok: false };
-      }
-      if (!this.isMasterPackageRuntimeAuthorized(appFrame, call)) {
-        return { ok: false };
-      }
-      if (
-        appFrame.kernelOwnerUid !== route.uid
-        || (appFrame.kernelUsername !== undefined
-          && appFrame.kernelUsername !== route.username)
-      ) {
-        return { ok: false };
-      }
-      return this.rememberAuthorizedAppRuntime(appFrame, runnerName)
-        ? route
-        : { ok: false };
-    }
-
-    const username = canonicalizeLoginUsername(
-      appFrame.kernelUsername ?? appFrame.username,
-    );
-    const placement = username ? this.userKernels.get(username) : null;
-    if (
-      !username
-      || !placement
-      || placement.lifecycle !== "legacy"
-      || appFrame.kernelOwnerUid !== placement.uid
-    ) {
-      return { ok: false };
-    }
-    if (!this.isMasterAppFrameActorAuthorized(appFrame, placement.uid)) {
-      return { ok: false };
-    }
-    if (!this.isMasterPackageRuntimeAuthorized(appFrame, call)) {
-      return { ok: false };
-    }
-    if (!this.rememberAuthorizedAppRuntime(appFrame, runnerName)) {
-      return { ok: false };
-    }
-    return {
-      ok: true,
-      kernelName: SHIP_KERNEL_NAME,
-      lifecycle: "legacy",
-      username,
-      uid: placement.uid,
-      generation: placement.generation,
-    };
-  }
-
-  private isMasterAppFrameActorAuthorized(
-    appFrame: AppFrameContext,
-    ownerUid: number,
-  ): boolean {
-    const actor = this.auth.getPasswdByUid(appFrame.uid);
-    return Boolean(
-      actor
-      && actor.username === appFrame.username
-      && canOwnerRunAsAccount(this.auth, ownerUid, actor, ownerUid === 0)
-    );
-  }
   async authenticateUserKernelConnection(
     input: UserKernelAuthenticationInput,
   ): Promise<import("./context").KernelAuthenticationResult> {
@@ -2013,20 +1733,14 @@ export class Kernel extends Host<Env> {
       !username
       || input.sourceKernelName !== userKernelName(username)
       || canonicalizeLoginUsername(input.args.auth?.username) !== username
-      || !Number.isSafeInteger(input.generation)
-      || input.generation <= 0
     ) {
       return { ok: false, error: "Authentication failed" };
     }
     const placement = await this.authorizeUserKernelSource({
       sourceKernelName: input.sourceKernelName,
       uid: this.userKernels.get(username)?.uid ?? -1,
-      generation: input.generation,
     });
-    if (
-      !placement
-      || placement.generation !== input.generation
-    ) {
+    if (!placement) {
       return { ok: false, error: "Authentication failed" };
     }
 
@@ -2040,7 +1754,6 @@ export class Kernel extends Host<Env> {
       !authenticated.ok
       || !this.isActiveUserKernelPlacement(currentPlacement)
       || currentPlacement.uid !== placement.uid
-      || currentPlacement.generation !== input.generation
       || authenticated.identity.username !== username
       || authenticated.identity.uid !== placement.uid
     ) {
@@ -2164,6 +1877,456 @@ export class Kernel extends Host<Env> {
     };
   }
 
+  /** Authoritative package-agent check for a provisioned user Kernel. */
+  async validatePackageRuntime(
+    input: PackageRuntimeAuthorizationInput,
+  ): Promise<boolean> {
+    this.assertMasterKernel();
+    if (
+      !isProcessIdentity(input.runAs)
+      || input.ownerUid !== input.uid
+      || !this.authorizeUserKernelSource(input)
+    ) {
+      return false;
+    }
+    return this.authorizeCurrentPackageAgentRuntime(
+      input.ownerUid,
+      input.runAs,
+      input.packageSecurityRevision,
+      input.requiredCall,
+    );
+  }
+
+  /** Resolve Process DO authority from the Master-owned account directory. */
+  async resolveProcessIdentity(
+    input: ProcessIdentityResolutionInput,
+  ): Promise<ProcessIdentityResolutionResult> {
+    this.assertMasterKernel();
+    const placement = this.authorizeUserKernelSource(input);
+    if (
+      !placement
+      || input.ownerUid !== placement.uid
+      || !isProcessIdentity(input.runAs)
+    ) {
+      return { ok: false, error: "process identity authentication failed" };
+    }
+    const owner = this.auth.getPasswdByUid(input.ownerUid);
+    const runAs = this.auth.getPasswdByUid(input.runAs.uid);
+    if (
+      !owner
+      || owner.username !== placement.username
+      || !runAs
+      || runAs.username !== input.runAs.username
+      || !canOwnerRunAsAccount(this.auth, owner.uid, runAs, owner.uid === 0)
+    ) {
+      return { ok: false, error: "process identity is no longer authorized" };
+    }
+    const authoritativeRunAs: ProcessIdentity = {
+      uid: runAs.uid,
+      gid: runAs.gid,
+      gids: this.auth.resolveGids(runAs.username, runAs.gid),
+      username: runAs.username,
+      home: runAs.home,
+      cwd: input.runAs.cwd,
+    };
+    if (!processIdentityEquals(authoritativeRunAs, input.runAs, { includeCwd: true })) {
+      return { ok: false, error: "process identity does not match the account directory" };
+    }
+    return {
+      ok: true,
+      runAs: authoritativeRunAs,
+      owner: {
+        uid: owner.uid,
+        gid: owner.gid,
+        gids: this.auth.resolveGids(owner.username, owner.gid),
+        username: owner.username,
+        home: owner.home,
+        cwd: owner.home,
+      },
+    };
+  }
+
+  /** Resolve a runnable account and capabilities without copying the directory. */
+  async resolveAccountIdentity(
+    input: AccountIdentityResolutionInput,
+  ): Promise<AccountIdentityResolutionResult> {
+    this.assertMasterKernel();
+    const placement = this.authorizeUserKernelSource(input);
+    const owner = placement ? this.auth.getPasswdByUid(placement.uid) : null;
+    const actor = Number.isSafeInteger(input.actorUid)
+      ? this.auth.getPasswdByUid(input.actorUid)
+      : null;
+    if (
+      !placement
+      || input.ownerUid !== placement.uid
+      || !owner
+      || owner.username !== placement.username
+      || !actor
+      || !canOwnerRunAsAccount(this.auth, owner.uid, actor, owner.uid === 0)
+    ) {
+      return { ok: false, error: "account identity is no longer authorized" };
+    }
+    const identity = accountIdentity(this.auth, actor);
+    return {
+      ok: true,
+      identity,
+      capabilities: this.caps.resolve(identity.gids),
+    };
+  }
+
+  private resolveAuthoritativeRunAsAccount(
+    ownerUid: number,
+    callerUid: number,
+    selector?: string,
+  ): RunAsAccountResult {
+    const owner = this.auth.getPasswdByUid(ownerUid);
+    const caller = this.auth.getPasswdByUid(callerUid);
+    if (
+      !owner
+      || !caller
+      || !canOwnerRunAsAccount(this.auth, owner.uid, caller, owner.uid === 0)
+    ) {
+      return { ok: false, error: "Process owner or caller is no longer authorized" };
+    }
+
+    const normalizedSelector = selector?.trim() ?? "";
+    let identity: ProcessIdentity;
+    if (!normalizedSelector) {
+      if (owner.uid < 1000 || this.auth.isPersonalAgentUid(owner.uid)) {
+        identity = accountIdentity(this.auth, owner);
+      } else {
+        const personalAgentUid = this.auth.getPersonalAgentUid(owner.uid);
+        const personalAgent = personalAgentUid === null
+          ? null
+          : this.auth.getPasswdByUid(personalAgentUid);
+        if (!personalAgent) {
+          return { ok: false, error: `Personal agent is not provisioned for ${owner.username}` };
+        }
+        identity = accountIdentity(this.auth, personalAgent);
+      }
+    } else if (normalizedSelector.includes("#")) {
+      const callerIdentity = accountIdentity(this.auth, caller);
+      const resolved = resolvePackageAgentRunAs(
+        this.buildKernelContext({
+          identity: {
+            role: "user",
+            process: callerIdentity,
+            capabilities: this.caps.resolve(callerIdentity.gids),
+          },
+          callerOwnerUid: owner.uid,
+        }),
+        normalizedSelector,
+        owner.uid,
+        caller.uid === 0,
+      );
+      if (!resolved.ok) return resolved;
+      identity = resolved.identity;
+    } else {
+      const entry = /^\d+$/.test(normalizedSelector)
+        ? this.auth.getPasswdByUid(Number(normalizedSelector))
+        : this.auth.getPasswdByUsername(normalizedSelector);
+      if (!entry) {
+        return { ok: false, error: `Unknown account: ${selector}` };
+      }
+      const isSelf = entry.uid === caller.uid;
+      if (
+        caller.uid !== 0
+        && !isSelf
+        && !canOwnerDelegateRunAs(this.auth, owner.uid, entry)
+      ) {
+        return { ok: false, error: `Permission denied: cannot run as ${entry.username}` };
+      }
+      identity = accountIdentity(this.auth, entry);
+    }
+
+    const entry = this.auth.getPasswdByUid(identity.uid);
+    const account = entry ? this.auth.getAccountIdentity(entry.username) : null;
+    if (!entry || !account || account.uid !== entry.uid || account.state !== "active") {
+      return { ok: false, error: "Run-as account is no longer active" };
+    }
+    let packageSecurityRevision: string | null;
+    try {
+      packageSecurityRevision = packageAgentRuntimeSecurityRevision(
+        { config: this.config },
+        entry.uid,
+      );
+    } catch (error) {
+      return { ok: false, error: errorMessage(error) };
+    }
+    const personalAgentUid = this.auth.getPersonalAgentUid(owner.uid);
+    return {
+      ok: true,
+      ownerIdentity: accountIdentity(this.auth, owner),
+      account: {
+        identity,
+        capabilities: this.caps.resolve(identity.gids),
+        displayName: entry.gecos?.trim() || entry.username,
+        relation: entry.uid === owner.uid
+          ? "self"
+          : entry.uid === personalAgentUid
+            ? "personal-agent"
+            : account.kind === "agent"
+              ? "agent"
+              : "human",
+        packageSecurityRevision,
+      },
+    };
+  }
+
+  private listAuthoritativeRunnableAccounts(
+    ownerUid: number,
+    callerUid: number,
+  ): RunnableAccount[] {
+    const owner = this.auth.getPasswdByUid(ownerUid);
+    const caller = this.auth.getPasswdByUid(callerUid);
+    if (
+      !owner
+      || !caller
+      || !canOwnerRunAsAccount(this.auth, owner.uid, caller, owner.uid === 0)
+    ) {
+      throw new Error("Process owner or caller is no longer authorized");
+    }
+    const personalAgentUid = this.auth.getPersonalAgentUid(owner.uid);
+    const accounts = this.auth.getPasswdEntries().flatMap((entry): RunnableAccount[] => {
+      if (entry.uid !== 0 && entry.uid < 1000) return [];
+      if (!canOwnerRunAsAccount(this.auth, owner.uid, entry, owner.uid === 0)) return [];
+      const account = this.auth.getAccountIdentity(entry.username);
+      if (!account || account.uid !== entry.uid || account.state !== "active") return [];
+      const packageSecurityRevision = packageAgentRuntimeSecurityRevision(
+        { config: this.config },
+        entry.uid,
+      );
+      return [{
+        identity: accountIdentity(this.auth, entry),
+        capabilities: this.caps.resolve(
+          this.auth.resolveGids(entry.username, entry.gid),
+        ),
+        displayName: entry.gecos?.trim() || entry.username,
+        relation: entry.uid === owner.uid
+          ? "self"
+          : entry.uid === personalAgentUid
+            ? "personal-agent"
+            : account.kind === "agent"
+              ? "agent"
+              : "human",
+        packageSecurityRevision,
+      }];
+    });
+    const relationRank: Record<RunnableAccount["relation"], number> = {
+      "self": 0,
+      "personal-agent": 1,
+      "agent": 2,
+      "human": 3,
+    };
+    return accounts.sort((left, right) => (
+      relationRank[left.relation] - relationRank[right.relation]
+      || left.identity.username.localeCompare(right.identity.username)
+    ));
+  }
+
+  async resolveRunAsAccount(
+    input: RunAsAccountResolutionInput,
+  ): Promise<RunAsAccountResult> {
+    this.assertMasterKernel();
+    const placement = this.authorizeUserKernelSource(input);
+    if (!placement || input.ownerUid !== placement.uid) {
+      return { ok: false, error: "Run-as resolution authentication failed" };
+    }
+    return this.resolveAuthoritativeRunAsAccount(
+      input.ownerUid,
+      input.callerUid,
+      input.selector,
+    );
+  }
+
+  async listRunnableAccounts(
+    input: RunnableAccountListInput,
+  ): Promise<RunnableAccount[]> {
+    this.assertMasterKernel();
+    const placement = this.authorizeUserKernelSource(input);
+    if (!placement || input.ownerUid !== placement.uid) {
+      throw new Error("Runnable-account listing authentication failed");
+    }
+    return this.listAuthoritativeRunnableAccounts(input.ownerUid, input.callerUid);
+  }
+
+  async resolveAdapterServiceIdentity(
+    input: AdapterServiceIdentityInput,
+  ): Promise<ConnectionIdentity | null> {
+    this.assertMasterKernel();
+    const placement = this.authorizeUserKernelSource(input);
+    const owner = placement ? this.auth.getPasswdByUid(placement.uid) : null;
+    const channel = input.channel.trim().toLowerCase();
+    if (
+      !placement
+      || input.ownerUid !== placement.uid
+      || !owner
+      || owner.username !== placement.username
+      || !channel
+    ) {
+      return null;
+    }
+    return {
+      role: "service",
+      process: accountIdentity(this.auth, owner),
+      capabilities: this.caps.resolve([102]),
+      channel,
+    };
+  }
+
+  /** Validate package and actor authority from the Master-owned stores. */
+  async validateAppFrame(
+    input: AppFrameAuthorizationInput,
+  ): Promise<AppFrameAuthorizationResult> {
+    return this.validateAppFrameAuthority(input, false);
+  }
+
+  async validateAppDaemonFrame(
+    input: AppFrameAuthorizationInput,
+  ): Promise<AppFrameAuthorizationResult> {
+    return this.validateAppFrameAuthority(input, true);
+  }
+
+  private validateAppFrameAuthority(
+    input: AppFrameAuthorizationInput,
+    requireDaemonAccess: boolean,
+  ): AppFrameAuthorizationResult {
+    this.assertMasterKernel();
+    const placement = this.authorizeUserKernelSource(input);
+    const appFrame = input.appFrame;
+    if (
+      !placement
+      || !appFrame
+      || typeof appFrame !== "object"
+      || isAppFrameContextExpired(appFrame)
+      || (input.requiredCall !== undefined
+        && (typeof input.requiredCall !== "string" || !input.requiredCall))
+    ) {
+      return { ok: false };
+    }
+    const actor = this.auth.getPasswdByUid(appFrame.uid);
+    const actorAccount = actor ? this.auth.getAccountIdentity(actor.username) : null;
+    if (
+      !actor
+      || actor.username !== appFrame.username
+      || !actorAccount
+      || actorAccount.uid !== actor.uid
+      || actorAccount.state !== "active"
+      || !canOwnerRunAsAccount(this.auth, placement.uid, actor, placement.uid === 0)
+    ) {
+      return { ok: false };
+    }
+    const record = this.packages.resolve(
+      appFrame.packageId,
+      visiblePackageScopesForActor({ uid: actor.uid }),
+    );
+    if (
+      !record
+      || !record.enabled
+      || (record.reviewRequired && !record.reviewedAt)
+      || record.manifest.name !== appFrame.packageName
+      || record.updatedAt !== appFrame.packageUpdatedAt
+      || record.artifact.hash !== appFrame.packageArtifactHash
+      || (requireDaemonAccess
+        && record.artifact.runtimeAccess?.daemon?.rpcSchedules !== true)
+    ) {
+      return { ok: false };
+    }
+    const entrypoint = findAppFrameEntrypoint(
+      record.manifest.entrypoints,
+      appFrame.entrypointName,
+      appFrame.routeBase,
+    );
+    if (
+      !entrypoint
+      || (input.requiredCall !== undefined
+        && !entrypoint.syscalls?.includes(input.requiredCall))
+    ) {
+      return { ok: false };
+    }
+    const gids = this.auth.resolveGids(actor.username, actor.gid);
+    const capabilities = this.caps.resolve(gids);
+    if (
+      input.requiredCall !== undefined
+      && !hasCapability(capabilities, input.requiredCall)
+    ) {
+      return { ok: false };
+    }
+    return {
+      ok: true,
+      entrypointKind: entrypoint.kind,
+      identity: {
+        role: "user",
+        process: {
+          uid: actor.uid,
+          gid: actor.gid,
+          gids,
+          username: actor.username,
+          home: actor.home,
+          cwd: actor.home,
+        },
+        capabilities,
+      },
+    };
+  }
+
+  async authorizePreservedAppRuntime(
+    input: PreservedAppRuntimeAuthorityInput,
+  ): Promise<PreservedAppRuntimeAuthorityResult> {
+    this.assertMasterKernel();
+    const placement = this.authorizeUserKernelSource(input);
+    const runtime = input.runtime;
+    const owner = placement ? this.auth.getPasswdByUid(placement.uid) : null;
+    const actor = isPreservedAppRuntimeDescriptor(runtime)
+      ? this.auth.getPasswdByUid(runtime.uid)
+      : null;
+    const actorAccount = actor ? this.auth.getAccountIdentity(actor.username) : null;
+    if (
+      !placement
+      || input.ownerUid !== placement.uid
+      || !owner
+      || owner.username !== placement.username
+      || !actor
+      || actor.username !== runtime.username
+      || !actorAccount
+      || actorAccount.uid !== actor.uid
+      || actorAccount.state !== "active"
+      || !canOwnerRunAsAccount(this.auth, owner.uid, actor, owner.uid === 0)
+    ) {
+      return { ok: false };
+    }
+
+    const record = this.packages.resolve(
+      runtime.packageId,
+      visiblePackageScopesForActor({ uid: actor.uid }),
+    );
+    if (
+      !record
+      || !record.enabled
+      || (record.reviewRequired && !record.reviewedAt)
+      || record.manifest.name !== runtime.packageName
+      || record.artifact.runtimeAccess?.daemon?.rpcSchedules !== true
+      || !findAppFrameEntrypoint(
+        record.manifest.entrypoints,
+        runtime.entrypointName,
+        runtime.routeBase,
+      )
+    ) {
+      return { ok: false };
+    }
+
+    return {
+      ok: true,
+      identity: accountIdentity(this.auth, actor),
+      packageId: record.packageId,
+      packageName: record.manifest.name,
+      packageUpdatedAt: record.updatedAt,
+      artifact: record.artifact,
+      entrypointName: runtime.entrypointName,
+      routeBase: runtime.routeBase,
+    };
+  }
+
   /** Authoritative half of user-Kernel device forgetting. */
   async revokeUserKernelDeviceCredentials(
     input: UserKernelDeviceRevocationInput,
@@ -2173,13 +2336,11 @@ export class Kernel extends Host<Env> {
     const placement = await this.authorizeUserKernelSource({
       sourceKernelName: input.sourceKernelName,
       uid: input.ownerUid,
-      generation: input.generation,
     });
     if (
       !username
       || !placement
       || placement.uid !== input.ownerUid
-      || placement.generation !== input.generation
       || typeof input.deviceId !== "string"
       || input.deviceId.trim().length === 0
     ) {
@@ -2205,14 +2366,12 @@ export class Kernel extends Host<Env> {
     const placement = await this.authorizeUserKernelSource({
       sourceKernelName: input.sourceKernelName,
       uid: input.uid,
-      generation: input.generation,
     });
     if (
       !username
       || username !== input.username
       || !placement
       || placement.uid !== input.uid
-      || placement.generation !== input.generation
       || input.notice.uid !== input.uid
       || typeof input.notice.tokenId !== "string"
       || input.notice.tokenId.length === 0
@@ -2247,7 +2406,6 @@ export class Kernel extends Host<Env> {
       || marker.lifecycle !== "active"
       || marker.username !== input.username
       || marker.uid !== input.uid
-      || marker.generation !== input.generation
     ) {
       return false;
     }
@@ -2260,7 +2418,6 @@ export class Kernel extends Host<Env> {
       sourceKernelName: this.name,
       username: marker.username,
       uid: marker.uid,
-      generation: marker.generation,
       notice: input.notice,
     });
     if (!confirmed) {
@@ -2279,7 +2436,6 @@ export class Kernel extends Host<Env> {
     if (!isMasterOwnedSyscall(input.frame.call)) {
       return {
         response: masterErrorFrame(input.frame.id, 403, "Operation is not master-routable"),
-        refreshProjection: false,
       };
     }
 
@@ -2287,20 +2443,15 @@ export class Kernel extends Host<Env> {
     const placement = await this.authorizeUserKernelSource({
       sourceKernelName: input.sourceKernelName,
       uid: input.callerOwnerUid,
-      generation: input.generation,
     });
     if (
       !sourceUsername
       || !placement
       || placement.username !== sourceUsername
       || placement.uid !== input.callerOwnerUid
-      || !Number.isSafeInteger(input.generation)
-      || input.generation <= 0
-      || placement.generation !== input.generation
     ) {
       return {
         response: masterErrorFrame(input.frame.id, 401, "Authentication failed"),
-        refreshProjection: false,
       };
     }
 
@@ -2308,7 +2459,6 @@ export class Kernel extends Host<Env> {
     if (!identity || !hasCapability(identity.capabilities, input.frame.call)) {
       return {
         response: masterErrorFrame(input.frame.id, 403, `Permission denied: ${input.frame.call}`),
-        refreshProjection: false,
       };
     }
 
@@ -2316,7 +2466,6 @@ export class Kernel extends Host<Env> {
     if (!releaseOperation) {
       return {
         response: masterErrorFrame(input.frame.id, 401, "Authentication failed"),
-        refreshProjection: false,
       };
     }
     try {
@@ -2329,43 +2478,9 @@ export class Kernel extends Host<Env> {
     } finally {
       releaseOperation();
     }
-  }  private async runSerializedMasterProjectionOperation<T>(
-    operation: () => Promise<T>,
-    packageFenceId?: string,
-  ): Promise<T> {
-    const pendingFenceId = this.masterPackageProjectionTransitionPending;
-    if (pendingFenceId !== null && pendingFenceId !== packageFenceId) {
-      throw new Error("Master projection is blocked by a pending package transition");
-    }
-    const admittedFence = this.projectionState.packageFence();
-    if (admittedFence && admittedFence.fenceId !== packageFenceId) {
-      this.queueMasterPackageFenceRecovery();
-      throw new Error("Master projection is fenced pending package recovery");
-    }
-    const previous = this.masterProjectionMutationTail;
-    let releaseQueue!: () => void;
-    const queued = new Promise<void>((resolve) => {
-      releaseQueue = resolve;
-    });
-    this.masterProjectionMutationTail = previous.then(() => queued);
-    await previous;
-
-    try {
-      const pending = this.masterPackageProjectionTransitionPending;
-      if (pending !== null && pending !== packageFenceId) {
-        throw new Error("Master projection is blocked by a pending package transition");
-      }
-      const fence = this.projectionState.packageFence();
-      if (fence && fence.fenceId !== packageFenceId) {
-        this.queueMasterPackageFenceRecovery();
-        throw new Error("Master projection is fenced pending package recovery");
-      }
-      return await operation();
-    } finally {
-      releaseQueue();
-    }
   }
-  private async provisionCreatedHumanAfterProjectionCommit(
+
+  private async provisionCreatedHuman(
     response: ResponseFrame,
   ): Promise<void> {
     if (!response.ok) return;
@@ -2383,17 +2498,12 @@ export class Kernel extends Host<Env> {
     placement: UserKernelRecord,
     identity: ConnectionIdentity,
   ): Promise<MasterSyscallResult> {
-    const packageRuntime = packageAgentRuntimeIdentity(
-      { config: this.config },
-      identity.process.uid,
-    );
     const ctx = this.buildKernelContext({
       identity,
       callerOwnerUid: input.callerOwnerUid,
-      packageProjectionOperation: packageRuntime.kind !== "ordinary",
     });
     const frame = input.frame as RequestFrame;
-    const result = await this.dispatchWithMasterProjectionGate(
+    const result = await this.dispatchKernelFrame(
       frame,
       { type: "process", id: `user-kernel:${sourceUsername}` },
       ctx,
@@ -2401,7 +2511,6 @@ export class Kernel extends Host<Env> {
     if (!result.handled) {
       return {
         response: masterErrorFrame(input.frame.id, 500, "Master operation cannot be deferred"),
-        refreshProjection: false,
       };
     }
 
@@ -2412,14 +2521,10 @@ export class Kernel extends Host<Env> {
         500,
         "Master operation returned an unsupported body",
       );
-      this.applyFailedMasterMutationProjectionEffects(frame, response);
       return {
         response,
-        refreshProjection: masterMutationNeedsProjectionRefresh(frame.call),
       };
     }
-    this.applyPostDispatchEffects(frame, result.response);
-    this.applyFailedMasterMutationProjectionEffects(frame, result.response);
     const tokenRevocations = this.tokenRevocationsFromResponse(frame, result.response);
     if (tokenRevocations.length > 0) {
       this.ctx.waitUntil(this.schedule(
@@ -2429,10 +2534,6 @@ export class Kernel extends Host<Env> {
     }
     return {
       response: result.response as MasterSyscallResult["response"],
-      // A mutating handler may persist authoritative state before a later
-      // reconciliation step fails. Refresh even on errors so the originating
-      // shard converges to what the Master actually committed.
-      refreshProjection: masterMutationNeedsProjectionRefresh(frame.call),
       ...(tokenRevocations.some((notice) => notice.uid === placement.uid)
         ? {
             tokenRevocations: tokenRevocations.filter(
@@ -2472,14 +2573,12 @@ export class Kernel extends Host<Env> {
     const placement = await this.authorizeUserKernelSource({
       sourceKernelName: input.sourceKernelName,
       uid: input.callerOwnerUid,
-      generation: input.generation,
     });
     if (
       !sourceUsername
       || !placement
       || placement.username !== sourceUsername
       || placement.uid !== input.callerOwnerUid
-      || placement.generation !== input.generation
     ) {
       return { ok: false, error: { code: 401, message: "Authentication failed" } };
     }
@@ -2522,16 +2621,12 @@ export class Kernel extends Host<Env> {
     const placement = await this.authorizeUserKernelSource({
       sourceKernelName: input.sourceKernelName,
       uid: input.callerOwnerUid,
-      generation: input.generation,
     });
     if (
       !sourceUsername
       || !placement
       || placement.username !== sourceUsername
       || placement.uid !== input.callerOwnerUid
-      || !Number.isSafeInteger(input.generation)
-      || input.generation <= 0
-      || placement.generation !== input.generation
     ) {
       throw new Error("Repository metadata authentication failed");
     }
@@ -2545,7 +2640,6 @@ export class Kernel extends Host<Env> {
       const identity = this.resolveMasterSyscallIdentity({
         sourceKernelName: input.sourceKernelName,
         callerOwnerUid: input.callerOwnerUid,
-        generation: input.generation,
         identity: input.identity,
         frame: {
           type: "req",
@@ -2593,21 +2687,16 @@ export class Kernel extends Host<Env> {
     if (!canWriteRepo(repo, context)) {
       throw new Error(`Forbidden: cannot write repo ${repo}`);
     }
-    const { value: result } = await this.runMasterProjectionMutation(async () => {
-      assertAuthority?.();
-      return this.ctx.storage.transactionSync(() => (
-        applyRepoMetadataMutation(this.config, mutation)
-      ));
-    });
-    this.broadcastRepoProjection();
-    return result;
-  }  private async ensureUserKernelProvisioned(
+    assertAuthority?.();
+    return this.ctx.storage.transactionSync(() => (
+      applyRepoMetadataMutation(this.config, mutation)
+    ));
+  }
+
+  private async ensureUserKernelProvisioned(
     usernameInput: string,
   ): Promise<UserKernelRecord> {
     this.assertMasterKernel();
-    if (this.projectionState.packageFence() !== null) {
-      throw new Error("User Kernel provisioning is blocked by package projection recovery");
-    }
     const username = canonicalizeLoginUsername(usernameInput);
     if (!username) {
       throw new Error("Invalid canonical username");
@@ -2646,11 +2735,6 @@ export class Kernel extends Host<Env> {
     if (!placement) {
       throw new Error(`User Kernel is not reserved: ${username}`);
     }
-    if (
-      placement.lifecycle === "legacy"
-    ) {
-      return placement;
-    }
     if (placement.lifecycle === "active") {
       return this.completeUserKernelActivation(placement);
     }
@@ -2681,7 +2765,6 @@ export class Kernel extends Host<Env> {
       sourceKernelName: this.name,
       username,
       uid: placement.uid,
-      generation: placement.generation,
       ownerIdentity,
       ...(agentEntry ? { personalAgent: accountIdentity(this.auth, agentEntry) } : {}),
       capabilities: this.caps.resolve(ownerIdentity.gids),
@@ -2690,11 +2773,10 @@ export class Kernel extends Host<Env> {
       marker.lifecycle !== "provisioning"
       || marker.username !== placement.username
       || marker.uid !== placement.uid
-      || marker.generation !== placement.generation
     ) {
       throw new Error(`User Kernel failed to prepare: ${username}`);
     }
-    const active = this.userKernels.markActive(username, placement.generation);
+    const active = this.userKernels.markActive(username);
     return this.completeUserKernelActivation(active);
   }
 
@@ -2716,13 +2798,11 @@ export class Kernel extends Host<Env> {
       sourceKernelName: this.name,
       username: placement.username,
       uid: placement.uid,
-      generation: placement.generation,
     });
     if (
       marker.lifecycle !== "active"
       || marker.username !== placement.username
       || marker.uid !== placement.uid
-      || marker.generation !== placement.generation
     ) {
       throw new Error(`User Kernel failed to confirm activation: ${placement.username}`);
     }
@@ -2730,7 +2810,13 @@ export class Kernel extends Host<Env> {
     if (!current || !sameUserKernelPlacement(current, placement)) {
       throw new Error(`User Kernel placement changed for ${placement.username}`);
     }
+    this.confirmedUserKernelActivations.set(current.username, current.uid);
     return current;
+  }
+
+  private isUserKernelActivationConfirmed(placement: UserKernelRecord): boolean {
+    return placement.lifecycle === "active"
+      && this.confirmedUserKernelActivations.get(placement.username) === placement.uid;
   }
 
   private async provisionSetupUserKernels(username: string): Promise<void> {
@@ -2751,7 +2837,6 @@ export class Kernel extends Host<Env> {
   private async authenticateConnectionViaMaster(
     args: ConnectArgs,
     loginSourceScope: LoginSourceScope,
-    expectedGeneration?: number,
   ): Promise<import("./context").KernelAuthenticationResult> {
     const marker = await this.loadUserKernelMarker();
     const username = canonicalizeLoginUsername(args.auth?.username);
@@ -2761,7 +2846,6 @@ export class Kernel extends Host<Env> {
       || !username
       || username !== marker.username
       || this.name !== userKernelName(username)
-      || expectedGeneration !== marker.generation
     ) {
       return { ok: false, error: "Authentication failed" };
     }
@@ -2772,27 +2856,9 @@ export class Kernel extends Host<Env> {
     const authenticated = await master.authenticateUserKernelConnection({
       sourceKernelName: this.name,
       username,
-      generation: marker.generation,
       args,
       loginSourceScope,
     });
-    if (authenticated.ok) {
-      let projection: UserKernelProvisioningSnapshot;
-      try {
-        projection = await master.getUserKernelProjection(
-          this.name,
-          username,
-          marker.generation,
-        );
-      } catch {
-        return { ok: false, error: "Authentication failed" };
-      }
-      if (!this.isCurrentUserKernelMarker(marker)) {
-        return { ok: false, error: "Authentication failed" };
-      }
-      validateUserKernelProvisioningSnapshot(projection, marker.username);
-      await this.installUserKernelProjection(projection);
-    }
     return authenticated;
   }
 
@@ -2805,7 +2871,7 @@ export class Kernel extends Host<Env> {
     }
     let marker: UserKernelInstanceMarker | null;
     try {
-      marker = await this.requireActiveUserKernel(ctx.kernelGeneration);
+      marker = await this.requireActiveUserKernel();
     } catch {
       return errFrame(frame.id, 401, "Authentication failed");
     }
@@ -2820,7 +2886,6 @@ export class Kernel extends Host<Env> {
     const result = await master.dispatchMasterSyscall({
       sourceKernelName: this.name,
       callerOwnerUid: resolveCallerOwnerUid(ctx),
-      generation: marker.generation,
       identity: ctx.identity,
       frame: {
         type: "req",
@@ -2831,15 +2896,6 @@ export class Kernel extends Host<Env> {
       },
     });
     ctx.assertCurrentKernel();
-    if (result.refreshProjection) {
-      const projection = await master.getUserKernelProjection(
-        this.name,
-        this.instanceUsername,
-        marker.generation,
-      );
-      await this.installUserKernelProjection(projection);
-      ctx.assertCurrentKernel();
-    }
     if (result.tokenRevocations?.length) {
       this.persistAndFenceTokenRevocations(
         result.tokenRevocations,
@@ -2900,7 +2956,7 @@ export class Kernel extends Host<Env> {
       return notices;
     }
 
-    const marker = await this.requireActiveUserKernel(context.kernelGeneration);
+    const marker = await this.requireActiveUserKernel();
     if (!marker || marker.uid !== ownerUid) {
       throw new Error("Device credential revocation authentication failed");
     }
@@ -2911,7 +2967,6 @@ export class Kernel extends Host<Env> {
     const notices = await master.revokeUserKernelDeviceCredentials({
       sourceKernelName: this.name,
       ownerUid,
-      generation: marker.generation,
       deviceId,
     });
     this.persistAndFenceTokenRevocations(notices, context.connection?.id);
@@ -3008,13 +3063,12 @@ export class Kernel extends Host<Env> {
 
   private async deliverTokenRevocation(record: TokenRevocationOutboxRecord): Promise<void> {
     const placement = this.userKernels.getByUid(record.uid);
-    if (!placement || placement.lifecycle === "legacy") {
+    if (!placement) {
       this.persistAndFenceTokenRevocations([record]);
       return;
     }
     if (!this.isActiveUserKernelPlacement(placement)) {
-      // Non-active generations are already fenced, and revoked credentials
-      // cannot authenticate when a later generation becomes active.
+      // A non-active target cannot accept credentials or runtime notices.
       return;
     }
 
@@ -3030,7 +3084,6 @@ export class Kernel extends Host<Env> {
       sourceKernelName: this.name,
       username: placement.username,
       uid: placement.uid,
-      generation: placement.generation,
       notice: {
         tokenId: record.tokenId,
         uid: record.uid,
@@ -3074,10 +3127,7 @@ export class Kernel extends Host<Env> {
     const notices = this.tokenRevocationsFromResponse(frame, response);
     if (notices.length === 0) return;
 
-    const locallyOwned = notices.filter((notice) => {
-      const placement = this.userKernels.getByUid(notice.uid);
-      return !placement || placement.lifecycle === "legacy";
-    });
+    const locallyOwned = notices.filter((notice) => !this.userKernels.getByUid(notice.uid));
     this.persistAndFenceTokenRevocations(locallyOwned, deferConnectionId);
     for (const notice of locallyOwned) {
       this.tokenRevocations.acknowledge(notice.tokenId, notice.uid);
@@ -3106,7 +3156,7 @@ export class Kernel extends Host<Env> {
       );
     }
 
-    const marker = await this.requireActiveUserKernel(context.kernelGeneration);
+    const marker = await this.requireActiveUserKernel();
     if (!marker || !this.instanceUsername || marker.username !== this.instanceUsername) {
       throw new Error("Repository metadata authentication failed");
     }
@@ -3117,18 +3167,9 @@ export class Kernel extends Host<Env> {
     const result = await master.mutateUserRepoMetadata({
       sourceKernelName: this.name,
       callerOwnerUid,
-      generation: marker.generation,
       identity: context.identity,
       mutation,
     });
-    context.assertCurrentKernel();
-    const refreshed = await this.receiveMasterProjection({
-      sourceKernelName: SHIP_KERNEL_NAME,
-      generation: marker.generation,
-    });
-    if (!refreshed) {
-      throw new Error("Repository metadata projection refresh failed");
-    }
     context.assertCurrentKernel();
     return result;
   }
@@ -3150,7 +3191,7 @@ export class Kernel extends Host<Env> {
     ) {
       throw new Error("Authoritative repository operation requires a user Kernel identity");
     }
-    const marker = await this.requireActiveUserKernel(context.kernelGeneration);
+    const marker = await this.requireActiveUserKernel();
     if (!marker || marker.username !== this.instanceUsername) {
       throw new Error("Repository operation authentication failed");
     }
@@ -3161,7 +3202,6 @@ export class Kernel extends Host<Env> {
     const authorization = await master.authorizeUserRepoOperation({
       sourceKernelName: this.name,
       callerOwnerUid: resolveCallerOwnerUid(context),
-      generation: marker.generation,
       identity: context.identity,
       call,
       ...(normalizedRepo !== undefined ? { repo: normalizedRepo } : {}),
@@ -3241,20 +3281,17 @@ export class Kernel extends Host<Env> {
     }
     const provider = (
       callbackRoute
-        ? new GenerationFencedMcpOAuthProvider(
+        ? new UserKernelMcpOAuthProvider(
             this.ctx.storage,
             this.name,
             callbackUrl,
             callbackRoute.username,
-            callbackRoute.generation,
             () => {
               const marker = this.userKernelMarker;
               return Boolean(
                 marker
                 && marker.lifecycle === "active"
                 && marker.username === callbackRoute.username
-                && marker.generation === callbackRoute.generation
-                && this.appRuntimes.getLifecycleFence(marker.uid) === null
               );
             },
           )
@@ -3284,53 +3321,29 @@ export class Kernel extends Host<Env> {
       }, 409);
     }
 
-    let operation: UserKernelTargetOperationLease | null = null;
-    let releaseMasterOperation: (() => void) | null = null;
-    if (this.instanceKind === "user") {
-      const marker = await this.loadUserKernelMarker();
-      if (
-        !marker
-        || marker.lifecycle !== "active"
-        || marker.uid !== server.uid
-      ) {
-        return oauthCallbackHtmlResponse({
-          ok: false,
-          message: "MCP OAuth session is no longer active",
-        }, 409);
-      }
-      try {
-        operation = this.beginUserKernelTargetOperation(marker.generation);
-      } catch {
-        return oauthCallbackHtmlResponse({
-          ok: false,
-          message: "MCP OAuth session is no longer active",
-        }, 409);
-      }
-    } else {
-      releaseMasterOperation = this.beginMasterLegacyOwnerOperation(server.uid);
-      if (!releaseMasterOperation) {
-        return oauthCallbackHtmlResponse({
-          ok: false,
-          message: "MCP OAuth session is no longer active",
-        }, 409);
-      }
+    const marker = await this.loadUserKernelMarker();
+    if (
+      this.instanceKind !== "user"
+      || !marker
+      || marker.lifecycle !== "active"
+      || marker.uid !== server.uid
+    ) {
+      return oauthCallbackHtmlResponse({
+        ok: false,
+        message: "MCP OAuth session is no longer active",
+      }, 409);
     }
 
     const authProvider = this.mcp.mcpConnections[serverId]
       ?.options.transport.authProvider;
-    if (authProvider instanceof BoundedMcpOAuthProvider) {
-      authProvider.setCallbackOperationSignal(operation?.signal);
-    }
     try {
       const result = await this.mcp.handleCallbackRequest(request);
-      operation?.assertCurrent();
       if (result.authSuccess) {
         try {
           await this.mcp.establishConnection(result.serverId);
         } catch (error) {
           console.warn("[Kernel] MCP connection establishment failed after OAuth:", error);
         }
-        operation?.assertCurrent();
       }
       this.broadcastMcpChanged();
       return oauthCallbackHtmlResponse(
@@ -3349,9 +3362,6 @@ export class Kernel extends Host<Env> {
         result.authSuccess ? 200 : 400,
       );
     } catch {
-      if (operation?.signal.aborted) {
-        await this.mcp.closeConnection(serverId).catch(() => {});
-      }
       return oauthCallbackHtmlResponse({
         ok: false,
         message: "MCP OAuth session is no longer active",
@@ -3360,8 +3370,6 @@ export class Kernel extends Host<Env> {
       if (authProvider instanceof BoundedMcpOAuthProvider) {
         authProvider.setCallbackOperationSignal(undefined);
       }
-      operation?.release();
-      releaseMasterOperation?.();
     }
   }
 
@@ -3371,46 +3379,29 @@ export class Kernel extends Host<Env> {
       return new Response("Not Found", { status: 404 });
     }
 
-    let callbackMarker: UserKernelInstanceMarker | null = null;
-    if (this.instanceKind === "user") {
-      callbackMarker = await this.loadUserKernelMarker();
-      const routedState = parseRoutedOAuthState(url.searchParams.get("state"));
-      if (
-        !callbackMarker
-        || callbackMarker.lifecycle !== "active"
-        || !routedState
-        || routedState.username !== callbackMarker.username
-        || routedState.generation !== callbackMarker.generation
-      ) {
-        return new Response("Not Found", { status: 404 });
-      }
+    const callbackMarker = await this.loadUserKernelMarker();
+    const routedState = parseRoutedOAuthState(url.searchParams.get("state"));
+    if (
+      this.instanceKind !== "user"
+      || !callbackMarker
+      || callbackMarker.lifecycle !== "active"
+      || !routedState
+      || routedState.username !== callbackMarker.username
+    ) {
+      return new Response("Not Found", { status: 404 });
     }
 
-    const acquireOAuthOperation = callbackMarker
-      ? (flow: import("./oauth-store").OAuthFlowRecord) => {
-          if (flow.kernelOwnerUid !== callbackMarker.uid) return null;
-          try {
-            const operation = this.beginUserKernelTargetOperation(callbackMarker.generation);
-            return { release: operation.release, signal: operation.signal };
-          } catch {
-            return null;
-          }
-        }
-      : (flow: import("./oauth-store").OAuthFlowRecord) => {
-          if (!Number.isSafeInteger(flow.kernelOwnerUid) || flow.kernelOwnerUid! < 0) {
-            return null;
-          }
-          const release = this.beginMasterLegacyOwnerOperation(flow.kernelOwnerUid!);
-          return release ? { release } : null;
-        };
+    const acquireOAuthOperation = (flow: import("./oauth-store").OAuthFlowRecord) => (
+      flow.kernelOwnerUid === callbackMarker.uid
+        ? { release: () => {} }
+        : null
+    );
     const result = await completeOAuthCallbackFlow({
       state: url.searchParams.get("state"),
       code: url.searchParams.get("code"),
       error: url.searchParams.get("error"),
       errorDescription: url.searchParams.get("error_description"),
-    }, this.oauth, fetch, callbackMarker
-      ? () => this.isCurrentUserKernelMarker(callbackMarker)
-      : undefined, acquireOAuthOperation);
+    }, this.oauth, fetch, () => this.isCurrentUserKernelMarker(callbackMarker), acquireOAuthOperation);
     return oauthCallbackHtmlResponse(result, result.ok ? 200 : result.status);
   }
 
@@ -3425,7 +3416,7 @@ export class Kernel extends Host<Env> {
     }
     const marker = this.instanceKind === "user" ? await this.loadUserKernelMarker() : null;
     const callbackPath = marker?.lifecycle === "active"
-      ? buildUserMcpOAuthCallbackPath(marker.username, marker.generation)
+      ? buildUserMcpOAuthCallbackPath(marker.username)
       : "/oauth/callback";
     const callbackUrl = callbackHost
       ? `${callbackHost.replace(/\/$/, "")}${callbackPath}`
@@ -3434,7 +3425,6 @@ export class Kernel extends Host<Env> {
     if (callbackHost && marker?.lifecycle === "active") {
       const metadataUrl = new URL("/.well-known/oauth-client/gsv.json", callbackHost);
       metadataUrl.searchParams.set("username", marker.username);
-      metadataUrl.searchParams.set("generation", String(marker.generation));
       clientMetadataUrl = metadataUrl.toString();
     }
     const authProvider = callbackUrl
@@ -3535,15 +3525,9 @@ export class Kernel extends Host<Env> {
       : normalizeLoginSourceScope(
           ctx.request.headers.get(USER_KERNEL_LOGIN_SOURCE_HEADER),
         );
-    const kernelGeneration = this.instanceKind === "user"
-      ? parseUserKernelGenerationHeader(
-          ctx.request.headers.get(USER_KERNEL_GENERATION_HEADER),
-        )
-      : undefined;
     const state: ConnectionState = {
       step: "pending",
       loginSourceScope,
-      ...(kernelGeneration !== undefined ? { kernelGeneration } : {}),
     };
     connection.setState(state);
   }
@@ -3588,85 +3572,66 @@ export class Kernel extends Host<Env> {
       connection.close(1008, "Authentication expired");
       return;
     }
-    let operation: UserKernelTargetOperationLease | null = null;
+    if (
+      this.instanceKind === "master"
+      && connection.state?.step === "connected"
+    ) {
+      connection.close(1008, "Username-scoped connection required");
+      return;
+    }
     if (this.instanceKind === "user") {
       try {
-        if (connection.state?.kernelGeneration === undefined) {
-          throw new Error("Missing user Kernel generation");
-        }
-        operation = this.beginUserKernelTargetOperation(connection.state.kernelGeneration);
-        await this.requireActiveUserKernel(connection.state?.kernelGeneration);
-        operation.assertCurrent();
+        await this.requireActiveUserKernel();
       } catch {
-        operation?.release();
         connection.close(1008, "Authentication failed");
         return;
       }
-    } else {
-      operation = this.beginUserKernelTargetOperation(
-        this.projectionState.masterRevision(),
-      );
     }
+    if (typeof message !== "string") {
+      this.handleBinaryMessage(connection, message);
+      return;
+    }
+
+    let parsed: Frame;
     try {
-      if (typeof message !== "string") {
-        operation?.assertCurrent();
-        this.handleBinaryMessage(connection, message);
-        return;
+      const value = JSON.parse(message) as unknown;
+      if (!value || typeof value !== "object") {
+        throw new Error("Invalid frame");
       }
+      parsed = value as Frame;
+    } catch {
+      this.sendError(connection, "?", 400, "Malformed JSON");
+      return;
+    }
 
-      let parsed: Frame;
-      try {
-        const value = JSON.parse(message) as unknown;
-        if (!value || typeof value !== "object") {
-          throw new Error("Invalid frame");
+    const valid = parsed.type === "req"
+      ? typeof parsed.id === "string" && typeof parsed.call === "string"
+      : parsed.type === "res"
+        ? typeof parsed.id === "string" && typeof parsed.ok === "boolean"
+        : parsed.type === "sig" && typeof parsed.signal === "string";
+    if (!valid) {
+      this.sendError(connection, "?", 400, "Invalid frame");
+      return;
+    }
+
+    switch (parsed.type) {
+      case "req":
+        await this.handleReq(connection, parsed);
+        break;
+      case "res":
+        this.handleRes(connection, parsed);
+        break;
+      case "sig":
+        if ((parsed as unknown as { body?: unknown }).body !== undefined) {
+          this.sendError(connection, "?", 400, "Signals cannot carry bodies");
+          return;
         }
-        parsed = value as Frame;
-      } catch {
-        this.sendError(connection, "?", 400, "Malformed JSON");
-        return;
-      }
-
-      const valid = parsed.type === "req"
-        ? typeof parsed.id === "string" && typeof parsed.call === "string"
-        : parsed.type === "res"
-          ? typeof parsed.id === "string" && typeof parsed.ok === "boolean"
-          : parsed.type === "sig" && typeof parsed.signal === "string";
-      if (!valid) {
-        this.sendError(connection, "?", 400, "Invalid frame");
-        return;
-      }
-      if (parsed.type === "res" && operation) {
-        const route = this.routes.get(parsed.id);
-        const packageBound = route?.origin.type === "app"
-          || (route?.origin.type === "process"
-            && this.procs.get(route.origin.id)?.packageSecurityRevision !== null);
-        if (packageBound) operation.markPackageStamped();
-      }
-      operation?.assertCurrent();
-
-      switch (parsed.type) {
-        case "req":
-          await this.handleReq(connection, parsed, operation ?? undefined);
-          break;
-        case "res":
-          operation?.assertCurrent();
-          this.handleRes(connection, parsed);
-          break;
-        case "sig":
-          if ((parsed as unknown as { body?: unknown }).body !== undefined) {
-            this.sendError(connection, "?", 400, "Signals cannot carry bodies");
-            return;
-          }
-          operation?.assertCurrent();
-          if (parsed.signal === REQUEST_CANCEL_SIGNAL) {
-            this.handleRequestCancel(connection, parsed);
-          } else {
-            this.handleSig(connection, parsed);
-          }
-          break;
-      }
-    } finally {
-      operation?.release();
+        if (parsed.signal === REQUEST_CANCEL_SIGNAL) {
+          this.handleRequestCancel(connection, parsed);
+        } else {
+          this.handleSig(connection, parsed);
+        }
+        break;
     }
   }
 
@@ -3697,26 +3662,23 @@ export class Kernel extends Host<Env> {
    */
   async recvFrame(processId: string, frame: Frame): Promise<Frame | null> {
     const registered = this.procs.get(processId);
-    const releaseMasterOperation = this.instanceKind === "master"
-      ? this.beginMasterLegacyProcessOperation(registered)
-      : null;
-    if (this.instanceKind === "master" && !releaseMasterOperation) {
+    if (this.instanceKind !== "user") {
       if (frame.type === "req") {
         await cancelUnlockedBody(frame.body, "Process request rejected");
-        return errFrame(frame.id, 503, "User Kernel is not active");
+        return errFrame(frame.id, 404, "Unknown process");
       }
       return null;
     }
-    const expectedGeneration = this.instanceKind === "user"
-      ? this.userKernelMarker?.generation ?? registered?.kernelGeneration ?? 0
-      : 0;
-    let operation: UserKernelTargetOperationLease;
+    if (!registered) {
+      if (frame.type === "req") {
+        await cancelUnlockedBody(frame.body, "Process request rejected");
+        return errFrame(frame.id, 404, "Unknown process");
+      }
+      return null;
+    }
     try {
-      operation = this.beginUserKernelTargetOperation(expectedGeneration, {
-        packageStamped: typeof registered?.packageSecurityRevision === "string",
-      });
+      await this.requireActiveUserKernel();
     } catch (error) {
-      releaseMasterOperation?.();
       if (frame.type === "req") {
         await cancelUnlockedBody(frame.body, "Process request rejected");
         return errFrame(frame.id, 503, errorMessage(error));
@@ -3724,71 +3686,39 @@ export class Kernel extends Host<Env> {
       return null;
     }
 
-    try {
-      const marker = await this.requireActiveUserKernel();
-      operation.assertCurrent();
-      const generationError = this.processKernelGenerationError(processId, marker);
-      if (generationError) {
-        if (frame.type === "req") {
-          await cancelUnlockedBody(frame.body, "Process request rejected");
-          return errFrame(
-            frame.id,
-            generationError === "Process registry record not found" ? 404 : 410,
-            generationError,
-          );
-        }
-        return null;
-      }
-      const requiredCall = frame.type === "req" && !isInternalOnlySyscall(frame.call)
-        ? frame.call
-        : undefined;
-      if (!await this.authorizeRegisteredProcessRuntime(processId, requiredCall)) {
-        if (frame.type === "req") {
-          await cancelUnlockedBody(frame.body, "Process package authority revoked");
-          return errFrame(frame.id, 403, "Process package-agent authority was revoked");
-        }
-        return null;
-      }
-      operation.assertCurrent();
+    const requiredCall = frame.type === "req" && !isInternalOnlySyscall(frame.call)
+      ? frame.call
+      : undefined;
+    if (!await this.authorizeRegisteredProcessRuntime(processId, requiredCall)) {
       if (frame.type === "req") {
-        try {
-          return await this.handleProcessReq(
-            processId,
-            frame,
-            marker?.generation,
-            operation,
-          );
-        } finally {
-          await cancelUnlockedBody(frame.body, "Process request completed");
-        }
+        await cancelUnlockedBody(frame.body, "Process package authority revoked");
+        return errFrame(frame.id, 403, "Process package-agent authority was revoked");
       }
+      return null;
+    }
+    if (frame.type === "req") {
+      try {
+        return await this.handleProcessReq(processId, frame);
+      } finally {
+        await cancelUnlockedBody(frame.body, "Process request completed");
+      }
+    }
 
-      if (frame.type === "sig") {
-        const runId = this.extractRunId(frame.payload);
-        operation.assertCurrent();
-        if (!this.updateProcessRuntimeFromSignal(processId, frame, runId)) {
-          if (frame.signal === "proc.run.finished" && runId) {
-            this.runRoutes.delete(runId);
-          }
-          return null;
-        }
-        const delivered = this.enqueueProcessSignal(
-          processId,
-          frame,
-          marker?.generation,
-        );
-        this.completeIpcCallsForProcessSignal(processId, frame);
-        if (frame.signal === "proc.run.finished") {
-          await delivered;
+    if (frame.type === "sig") {
+      const runId = this.extractRunId(frame.payload);
+      if (!this.updateProcessRuntimeFromSignal(processId, frame, runId)) {
+        if (frame.signal === "proc.run.finished" && runId) {
+          this.runRoutes.delete(runId);
         }
         return null;
       }
-
-      return null;
-    } finally {
-      operation.release();
-      releaseMasterOperation?.();
+      const delivered = this.enqueueProcessSignal(processId, frame);
+      this.completeIpcCallsForProcessSignal(processId, frame);
+      if (frame.signal === "proc.run.finished") {
+        await delivered;
+      }
     }
+    return null;
   }
 
   /**
@@ -3812,14 +3742,11 @@ export class Kernel extends Host<Env> {
     ) {
       return false;
     }
-    if (this.instanceKind === "master") {
-      return pending.generation === null;
-    }
     const marker = await this.loadUserKernelMarker();
     return Boolean(
-      marker
+      this.instanceKind === "user"
+      && marker
       && (marker.lifecycle === "provisioning" || marker.lifecycle === "active")
-      && pending.generation === marker.generation,
     );
   }
 
@@ -3827,96 +3754,46 @@ export class Kernel extends Host<Env> {
     processId: string,
     claimedIdentity: unknown,
   ): Promise<ProcessAuthorityResult> {
-    const record = this.procs.get(processId);
-    const releaseMasterOperation = this.instanceKind === "master"
-      ? this.beginMasterLegacyProcessOperation(record)
-      : null;
-    if (this.instanceKind === "master" && !releaseMasterOperation) {
-      return { ok: false, error: "user Kernel is not active" };
-    }
-    let operation: UserKernelTargetOperationLease;
     try {
-      operation = this.beginUserKernelTargetOperation(
-        this.instanceKind === "user"
-          ? this.userKernelMarker?.generation ?? record?.kernelGeneration ?? 0
-          : this.projectionState.masterRevision(),
-        { packageStamped: typeof record?.packageSecurityRevision === "string" },
-      );
+      await this.requireActiveUserKernel();
     } catch {
-      releaseMasterOperation?.();
       return { ok: false, error: "user Kernel is not active" };
     }
-    try {
-      let marker: UserKernelInstanceMarker | null;
-      try {
-        marker = await this.requireActiveUserKernel();
-        operation.assertCurrent();
-      } catch {
-        return { ok: false, error: "user Kernel is not active" };
-      }
-      const authority = this.resolveProcessRegistryAuthority(
-        processId,
-        claimedIdentity,
-        marker?.generation,
-      );
-      if (!authority.ok) return authority;
-      const current = this.procs.get(processId)!;
-      if (!await this.authorizeCurrentPackageAgentRuntime(
-        current.ownerUid,
-        authority.authority.identity,
-        current.packageSecurityRevision,
-        undefined,
-        processId,
-      )) {
-        return { ok: false, error: "process package-agent authority was revoked" };
-      }
-      operation.assertCurrent();
-      return authority;
-    } finally {
-      operation.release();
-      releaseMasterOperation?.();
+    const authority = await this.resolveProcessRegistryAuthority(processId, claimedIdentity);
+    if (!authority.ok) return authority;
+    const current = this.procs.get(processId)!;
+    if (!await this.authorizeCurrentPackageAgentRuntime(
+      current.ownerUid,
+      authority.authority.identity,
+      current.packageSecurityRevision,
+      undefined,
+      processId,
+    )) {
+      return { ok: false, error: "process package-agent authority was revoked" };
     }
+    return authority;
   }
 
-  /** Registry/generation-only authority used exclusively to exact-ack proc.kill. */
+  /** Registry authority used exclusively to exact-ack proc.kill. */
   async resolveProcessTeardownAuthority(
     processId: string,
     claimedIdentity: unknown,
   ): Promise<ProcessAuthorityResult> {
-    const marker = this.instanceKind === "master"
-      ? null
-      : await this.loadUserKernelMarker();
+    const marker = await this.loadUserKernelMarker();
     if (
-      this.instanceKind === "user"
-      && (!marker || (marker.lifecycle !== "active" && marker.lifecycle !== "provisioning"))
+      this.instanceKind !== "user"
+      || !marker
+      || (marker.lifecycle !== "active" && marker.lifecycle !== "provisioning")
     ) {
       return { ok: false, error: "user Kernel teardown authority is unavailable" };
     }
-    let registryGeneration = marker?.generation;
-    if (marker?.lifecycle === "provisioning") {
-      const record = this.procs.get(processId);
-      const registered = record?.kernelGeneration;
-      if (
-        registered === marker.generation
-        || (
-          typeof registered === "number"
-          && marker.generation > 1
-          && registered === marker.generation - 1
-        )
-      ) {
-        registryGeneration = registered;
-      }
-    }
-    return this.resolveProcessRegistryAuthority(
-      processId,
-      claimedIdentity,
-      registryGeneration,
-    );
-  }  private resolveProcessRegistryAuthority(
+    return this.resolveProcessRegistryAuthority(processId, claimedIdentity);
+  }
+
+  private async resolveProcessRegistryAuthority(
     processId: string,
     claimedIdentity: unknown,
-    kernelGeneration?: number,
-  ): ProcessAuthorityResult {
+  ): Promise<ProcessAuthorityResult> {
     if (typeof processId !== "string" || processId.length === 0) {
       return { ok: false, error: "invalid process id" };
     }
@@ -3926,9 +3803,6 @@ export class Kernel extends Host<Env> {
     const record = this.procs.get(processId);
     if (!record) {
       return { ok: false, error: "process registry record not found" };
-    }
-    if (!processKernelGenerationMatches(record, kernelGeneration)) {
-      return { ok: false, error: "process belongs to a stale user Kernel generation" };
     }
     const registryIdentity: ProcessIdentity = {
       uid: record.uid,
@@ -3941,38 +3815,32 @@ export class Kernel extends Host<Env> {
     if (!processIdentityEquals(registryIdentity, claimedIdentity, { includeCwd: true })) {
       return { ok: false, error: "process identity does not match registry" };
     }
-    const runAsEntry = this.auth.getPasswdByUid(record.uid);
-    if (!runAsEntry) {
-      return { ok: false, error: "process run-as account not found" };
+    const marker = await this.loadUserKernelMarker();
+    if (
+      this.instanceKind !== "user"
+      || !marker
+      || (marker.lifecycle !== "active" && marker.lifecycle !== "provisioning")
+      || marker.uid !== record.ownerUid
+    ) {
+      return { ok: false, error: "user Kernel process authority is unavailable" };
     }
-    const runAsIdentity: ProcessIdentity = {
-      uid: runAsEntry.uid,
-      gid: runAsEntry.gid,
-      gids: this.auth.resolveGids(runAsEntry.username, runAsEntry.gid),
-      username: runAsEntry.username,
-      home: runAsEntry.home,
-      cwd: record.cwd,
-    };
-    if (!processIdentityEquals(registryIdentity, runAsIdentity, { includeCwd: true })) {
-      return { ok: false, error: "process registry identity does not match auth store" };
-    }
-    const ownerEntry = this.auth.getPasswdByUid(record.ownerUid);
-    if (!ownerEntry) {
-      return { ok: false, error: "process owner account not found" };
-    }
+    const master = await getAgentByName(
+      this.env.KERNEL,
+      SHIP_KERNEL_NAME,
+    ) as unknown as MasterKernelControlStub;
+    const resolved = await master.resolveProcessIdentity({
+      sourceKernelName: this.name,
+      uid: marker.uid,
+      ownerUid: record.ownerUid,
+      runAs: registryIdentity,
+    });
+    if (!resolved.ok) return resolved;
     return {
       ok: true,
       authority: {
         processId,
-        identity: registryIdentity,
-        ownerIdentity: {
-          uid: ownerEntry.uid,
-          gid: ownerEntry.gid,
-          gids: this.auth.resolveGids(ownerEntry.username, ownerEntry.gid),
-          username: ownerEntry.username,
-          home: ownerEntry.home,
-          cwd: ownerEntry.home,
-        },
+        identity: resolved.runAs,
+        ownerIdentity: resolved.owner,
       },
     };
   }
@@ -3984,33 +3852,13 @@ export class Kernel extends Host<Env> {
     options: ProcessNetFetchOptions = {},
   ): Promise<ResponseOkFrame<"net.fetch">> {
     const registered = this.procs.get(processId);
-    const releaseMasterOperation = this.instanceKind === "master"
-      ? this.beginMasterLegacyProcessOperation(registered)
-      : null;
-    if (this.instanceKind === "master" && !releaseMasterOperation) {
-      throw new Error("User Kernel is not active");
-    }
-    let operation: UserKernelTargetOperationLease;
-    try {
-      operation = this.beginUserKernelTargetOperation(
-        this.instanceKind === "user"
-          ? this.userKernelMarker?.generation ?? registered?.kernelGeneration ?? 0
-          : 0,
-        { packageStamped: typeof registered?.packageSecurityRevision === "string" },
-      );
-    } catch (error) {
-      releaseMasterOperation?.();
-      throw error;
+    if (this.instanceKind !== "user" || !registered) {
+      throw new Error("Unknown process");
     }
     let controller: AbortController | null = null;
     const origin: RouteOrigin = { type: "process", id: processId };
     try {
-      const marker = await this.requireActiveUserKernel();
-      operation.assertCurrent();
-      const generationError = this.processKernelGenerationError(processId, marker);
-      if (generationError) {
-        throw new Error(generationError);
-      }
+      await this.requireActiveUserKernel();
       const requiredCall = options.internalPurpose === "model-transport"
         ? undefined
         : "net.fetch";
@@ -4038,9 +3886,6 @@ export class Kernel extends Host<Env> {
       if (options.requestId) {
         controller = this.registerActiveRequest(origin, options.requestId);
       }
-      const requestSignal = controller
-        ? AbortSignal.any([controller.signal, operation.signal])
-        : operation.signal;
       const response = await this.requestDevice(
         device.targetId,
         "net.fetch",
@@ -4049,30 +3894,20 @@ export class Kernel extends Host<Env> {
           ttlMs: options.ttlMs,
           ...(options.body ? { body: options.body } : {}),
           ...(options.requestId ? { id: options.requestId } : {}),
-          signal: requestSignal,
+          ...(controller ? { signal: controller.signal } : {}),
         },
       );
       try {
-        const currentMarker = await this.requireActiveUserKernel(marker?.generation);
-        const currentGenerationError = this.processKernelGenerationError(
-          processId,
-          currentMarker,
-        );
-        if (currentGenerationError) {
-          throw new Error(currentGenerationError);
-        }
+        await this.requireActiveUserKernel();
         if (!await this.authorizeRegisteredProcessRuntime(processId, requiredCall)) {
           throw new Error("Process package-agent authority was revoked");
         }
-        operation.assertCurrent();
       } catch (error) {
         await cancelUnlockedBody(response.body, "Process net.fetch result rejected");
         throw error;
       }
       return response as ResponseOkFrame<"net.fetch">;
     } finally {
-      operation.release();
-      releaseMasterOperation?.();
       if (options.requestId && controller) {
         this.finishActiveRequest(options.requestId, controller);
       }
@@ -4088,13 +3923,12 @@ export class Kernel extends Host<Env> {
     if (!processId || !Array.isArray(requestIds)) {
       return 0;
     }
-    let marker: UserKernelInstanceMarker | null;
     try {
-      marker = await this.requireActiveUserKernel();
+      await this.requireActiveUserKernel();
     } catch {
       return 0;
     }
-    if (this.processKernelGenerationError(processId, marker)) {
+    if (!this.procs.get(processId)) {
       return 0;
     }
     const origin: RouteOrigin = { type: "process", id: processId };
@@ -4119,323 +3953,330 @@ export class Kernel extends Host<Env> {
       }
       return null;
     }
-    await this.requireActiveUserKernel();
     if (frame.type !== "req") {
       return null;
     }
 
-    let releaseMasterOperation: (() => void) | null = null;
     try {
-      if (this.instanceKind === "master" && frame.call === "adapter.inbound") {
-        const routed = adapterInboundRouteMetadata(
-          frame as RequestFrame<"adapter.inbound">,
-        );
-        const link = routed
-          ? this.adapters.identityLinks.get(
-              routed.adapter,
-              routed.accountId,
-              routed.actorId,
-            )
-          : null;
-        const placement = link ? this.userKernels.getByUid(link.uid) : null;
-        if (
-          !routed
-          || !link
-          || !this.adapters.identityLinks.isCurrentGeneration(
-            routed.adapter,
-            routed.accountId,
-            routed.actorId,
-            link.generation,
-          )
-          || placement?.lifecycle !== "legacy"
-          || this.transitioningUserKernels.has(placement.username)
-          || this.appRuntimes.getLifecycleFence(placement.uid) !== null
-        ) {
-          return errFrame(frame.id, 401, "Authentication failed");
-        }
-        releaseMasterOperation = this.beginMasterUserOperation(placement.username);
-        if (!releaseMasterOperation) {
-          return errFrame(frame.id, 401, "Authentication failed");
-        }
+      if (frame.call !== "adapter.state.update") {
+        return errFrame(frame.id, 400, `${frame.call} requires a scoped ingress RPC`);
       }
       return await this.handleServiceReq(frame);
     } finally {
-      releaseMasterOperation?.();
       await cancelUnlockedBody(frame.body, "Service request completed");
     }
   }
 
-  async serviceLinkedAdapterFrame(
-    input: RoutedAdapterInboundInput,
+  /** Resolve live adapter ownership once, then forward the original payload. */
+  async receiveAdapterInbound(
+    frame: RequestFrame<"adapter.inbound">,
   ): Promise<ResponseFrame> {
-    const frame = input?.frame;
-    let operation: UserKernelTargetOperationLease | null = null;
+    this.assertMasterKernel();
+    const routed = adapterInboundRouteMetadata(frame);
     try {
-      operation = this.beginUserKernelTargetOperation(input.generation);
-      const marker = await this.requireActiveUserKernel(input.generation);
-      operation.assertCurrent();
+      if (!routed || frame.body) {
+        return errFrame(typeof frame?.id === "string" ? frame.id : "", 400, "Invalid adapter request");
+      }
+
+      const link = this.adapters.identityLinks.get(
+        routed.adapter,
+        routed.accountId,
+        routed.actorId,
+      );
+      if (!link) {
+        if (routed.surfaceKind !== "dm") {
+          return {
+            type: "res",
+            id: frame.id,
+            ok: true,
+            data: { ok: true, droppedReason: "unlinked_actor" },
+          };
+        }
+        const challenge = this.adapters.linkChallenges.issue({
+          adapter: routed.adapter,
+          accountId: routed.accountId,
+          actorId: routed.actorId,
+          surfaceKind: routed.surfaceKind,
+          surfaceId: routed.surfaceId,
+        });
+        return {
+          type: "res",
+          id: frame.id,
+          ok: true,
+          data: {
+            ok: true,
+            challenge: {
+              code: challenge.code,
+              prompt: `UNKNOWN USER. Who are you? 🧐.\n\nIdentify yourself in your GSV by using this access code: ${challenge.code}`,
+              expiresAt: challenge.expiresAt,
+            },
+          },
+        };
+      }
+      if (!this.adapters.identityLinks.isCurrentGeneration(
+        routed.adapter,
+        routed.accountId,
+        routed.actorId,
+        link.generation,
+      )) {
+        return errFrame(frame.id, 401, "Authentication failed");
+      }
+
+      let placement = this.userKernels.getByUid(link.uid);
+      if (
+        placement
+        && (
+          placement.lifecycle === "provisioning"
+          || !this.isUserKernelActivationConfirmed(placement)
+        )
+      ) {
+        try {
+          placement = await this.ensureUserKernelProvisioned(placement.username);
+        } catch {
+          return errFrame(frame.id, 503, "Adapter owner is unavailable");
+        }
+      }
+      if (!this.isActiveUserKernelPlacement(placement)) {
+        return errFrame(frame.id, 503, "Adapter owner is unavailable");
+      }
+      const currentLink = this.adapters.identityLinks.get(
+        routed.adapter,
+        routed.accountId,
+        routed.actorId,
+      );
+      const currentPlacement = this.userKernels.get(placement.username);
+      if (
+        !currentLink
+        || currentLink.uid !== link.uid
+        || currentLink.generation !== link.generation
+        || !this.isActiveUserKernelPlacement(currentPlacement)
+        || currentPlacement.uid !== placement.uid
+      ) {
+        return errFrame(frame.id, 401, "Authentication failed");
+      }
+      const target = await getAgentByName(
+        this.env.KERNEL,
+        userKernelName(placement.username),
+      ) as unknown as {
+        serviceAdapterFrame(input: AdapterInboundDeliveryInput): Promise<ResponseFrame>;
+      };
+      return await target.serviceAdapterFrame({
+        sourceKernelName: SHIP_KERNEL_NAME,
+        ownerUid: placement.uid,
+        linkGeneration: link.generation,
+        frame,
+      });
+    } finally {
+      await cancelUnlockedBody(frame?.body, "Adapter ingress completed");
+    }
+  }
+
+  async serviceAdapterFrame(input: AdapterInboundDeliveryInput): Promise<ResponseFrame> {
+    const frame = input?.frame;
+    try {
+      const marker = await this.requireActiveUserKernel();
       const routed = adapterInboundRouteMetadata(frame);
       if (
-        !marker
-        || input.source !== ADAPTER_INBOUND_GATEWAY_SOURCE
-        || typeof input.authorization !== "string"
-        || input.authorization.length === 0
-        || input.username !== marker.username
-        || input.ownerUid !== marker.uid
-        || !Number.isSafeInteger(input.generation)
-        || input.generation <= 0
+        this.instanceKind !== "user"
+        || input.sourceKernelName !== SHIP_KERNEL_NAME
+        || !marker
+        || marker.uid !== input.ownerUid
         || !Number.isSafeInteger(input.linkGeneration)
         || input.linkGeneration <= 0
         || !routed
-        || !sameAdapterInboundRouteMetadata(input, routed)
         || frame.body
       ) {
         return errFrame(typeof frame?.id === "string" ? frame.id : "", 401, "Authentication failed");
       }
-
-      const authorized = await this.isMasterAdapterInboundAuthorized({
-        authorization: input.authorization,
-        targetKernelName: this.name,
-        username: marker.username,
-        ownerUid: marker.uid,
-        generation: marker.generation,
-        adapter: routed.adapter,
-        accountId: routed.accountId,
-        actorId: routed.actorId,
-        linkGeneration: input.linkGeneration,
-        frameId: routed.frameId,
-        surfaceKind: routed.surfaceKind,
-        surfaceId: routed.surfaceId,
-      });
-      if (!authorized) {
-        return errFrame(frame.id, 401, "Authentication failed");
-      }
-      operation.assertCurrent();
-
-      let currentMarker: UserKernelInstanceMarker | null;
-      try {
-        currentMarker = await this.requireActiveUserKernel(marker.generation);
-      } catch {
-        return errFrame(frame.id, 401, "Authentication failed");
-      }
-      if (
-        !currentMarker
-        || currentMarker.username !== marker.username
-        || currentMarker.uid !== marker.uid
-      ) {
-        return errFrame(frame.id, 401, "Authentication failed");
-      }
-
       return await this.handleServiceReq(frame, {
-        routedAdapterOwnerUid: currentMarker.uid,
+        routedAdapterOwnerUid: marker.uid,
         routedAdapterLinkGeneration: input.linkGeneration,
-        targetOperation: operation,
       });
     } catch {
       return errFrame(typeof frame?.id === "string" ? frame.id : "", 401, "Authentication failed");
     } finally {
-      operation?.release();
       await cancelUnlockedBody(frame?.body, "Adapter request completed");
     }
-  }
-
-  private async isMasterAdapterInboundAuthorized(
-    input: AdapterInboundAuthorizationInput,
-  ): Promise<boolean> {
-    const master = await getAgentByName(
-      this.env.KERNEL,
-      SHIP_KERNEL_NAME,
-    ) as unknown as MasterKernelControlStub;
-    return master.consumeAdapterInboundAuthorization(input);
-  }
-
-  async issueAdapterInboundRoute(
-    input: AdapterInboundRouteMetadata,
-  ): Promise<AdapterInboundRouteResult> {
-    this.assertMasterKernel();
-    const routed = normalizeAdapterInboundRouteMetadata(input);
-    if (!routed) {
-      return { kind: "error", code: 400, message: "Invalid adapter request" };
-    }
-    const link = this.adapters.identityLinks.get(
-      routed.adapter,
-      routed.accountId,
-      routed.actorId,
-    );
-    if (!link) {
-      if (routed.surfaceKind !== "dm") {
-        return {
-          kind: "response",
-          data: { ok: true, droppedReason: "unlinked_actor" },
-        };
-      }
-      const challenge = this.adapters.linkChallenges.issue({
-        adapter: routed.adapter,
-        accountId: routed.accountId,
-        actorId: routed.actorId,
-        surfaceKind: routed.surfaceKind,
-        surfaceId: routed.surfaceId,
-      });
-      return {
-        kind: "response",
-        data: {
-          ok: true,
-          challenge: {
-            code: challenge.code,
-            prompt: `UNKNOWN USER. Who are you? 🧐.\n\nIdentify yourself in your GSV by using this access code: ${challenge.code}`,
-            expiresAt: challenge.expiresAt,
-          },
-        },
-      };
-    }
-    if (!this.adapters.identityLinks.isCurrentGeneration(
-      routed.adapter,
-      routed.accountId,
-      routed.actorId,
-      link.generation,
-    )) {
-      return { kind: "error", code: 401, message: "Authentication failed" };
-    }
-    const ownerUid = link.uid;
-
-    const placement = this.userKernels.getByUid(ownerUid);
-    if (!placement) {
-      return { kind: "error", code: 503, message: "Adapter owner is unavailable" };
-    }
-    if (placement.lifecycle === "legacy") {
-      if (
-        this.transitioningUserKernels.has(placement.username)
-        || this.appRuntimes.getLifecycleFence(placement.uid) !== null
-      ) {
-        return { kind: "error", code: 503, message: "Adapter owner is unavailable" };
-      }
-      return { kind: "legacy" };
-    }
-    if (!this.isActiveUserKernelPlacement(placement)) {
-      return { kind: "error", code: 503, message: "Adapter owner is unavailable" };
-    }
-
-    pruneExpiredAuthorizations(this.adapterInboundAuthorizations);
-    if (
-      this.adapterInboundAuthorizations.size
-      >= MAX_PENDING_ADAPTER_INBOUND_AUTHORIZATIONS
-    ) {
-      return { kind: "error", code: 503, message: "Adapter route is busy" };
-    }
-    const authorization = crypto.randomUUID();
-    const delivery: Omit<AdapterInboundAuthorizationInput, "authorization"> = {
-      targetKernelName: userKernelName(placement.username),
-      username: placement.username,
-      ownerUid,
-      generation: placement.generation,
-      adapter: routed.adapter,
-      accountId: routed.accountId,
-      actorId: routed.actorId,
-      linkGeneration: link.generation,
-      frameId: routed.frameId,
-      surfaceKind: routed.surfaceKind,
-      surfaceId: routed.surfaceId,
-    };
-    this.adapterInboundAuthorizations.set(authorization, {
-      expiresAt: Date.now() + ADAPTER_INBOUND_AUTHORIZATION_TTL_MS,
-      delivery,
-    });
-    return {
-      kind: "active",
-      authorization,
-      targetKernelName: delivery.targetKernelName,
-      username: placement.username,
-      ownerUid,
-      generation: placement.generation,
-      linkGeneration: link.generation,
-    };
   }
 
   async appRequest(
     appFrame: AppFrameContext,
     frame: RequestFrame,
-    runnerName?: string,
+    _runnerName?: string,
   ): Promise<ResponseFrame> {
-    let releaseMasterOperation: (() => void) | null = null;
-    if (this.instanceKind === "master") {
-      const ownerUsername = canonicalizeLoginUsername(
-        appFrame.kernelUsername ?? appFrame.username,
-      );
-      const placement = ownerUsername ? this.userKernels.get(ownerUsername) : null;
-      releaseMasterOperation = placement?.lifecycle === "legacy"
-        ? this.beginMasterUserOperation(placement.username)
-        : null;
-      if (!releaseMasterOperation) {
-        await cancelUnlockedBody(frame.body, "Package app request rejected");
-        return errFrame(frame.id, 503, "User Kernel is not active");
-      }
-    }
-    let operation: UserKernelTargetOperationLease;
     try {
-      operation = this.beginUserKernelTargetOperation(appFrame.kernelGeneration ?? 0, {
-        packageStamped: true,
-      });
+      await this.requireActiveUserKernel();
     } catch (error) {
-      releaseMasterOperation?.();
       await cancelUnlockedBody(frame.body, "Package app request rejected");
       return errFrame(frame.id, 503, errorMessage(error));
     }
     try {
-      return await this.handleAppRequest(appFrame, frame, operation, runnerName);
+      return await this.handleAppRequest(appFrame, frame);
     } finally {
-      operation.release();
-      releaseMasterOperation?.();
       await cancelUnlockedBody(frame.body, "App request completed");
+    }
+  }
+
+  async appDaemonRequest(
+    appFrame: AppFrameContext,
+    frame: RequestFrame,
+    _runnerName?: string,
+  ): Promise<ResponseFrame> {
+    try {
+      await this.requireActiveUserKernel();
+    } catch (error) {
+      await cancelUnlockedBody(frame.body, "Package daemon request rejected");
+      return errFrame(frame.id, 503, errorMessage(error));
+    }
+    try {
+      return await this.handleAppRequest(appFrame, frame, true);
+    } finally {
+      await cancelUnlockedBody(frame.body, "App daemon request completed");
     }
   }
 
   async authorizeAppFrame(
     appFrame: AppFrameContext,
-    runnerName?: string,
+    _runnerName?: string,
   ): Promise<boolean> {
-    let operation: UserKernelTargetOperationLease;
     try {
-      operation = this.beginUserKernelTargetOperation(appFrame.kernelGeneration ?? 0, {
-        packageStamped: true,
-      });
+      return (await this.authorizeLocalAppFrame(appFrame)) !== null;
     } catch {
       return false;
     }
+  }
+
+  async authorizeAppDaemonFrame(
+    appFrame: AppFrameContext,
+    _runnerName?: string,
+  ): Promise<boolean> {
     try {
-      if (isAppFrameContextExpired(appFrame) || !(await this.isLocalAppFrameOwnerActive(appFrame))) {
-        return false;
-      }
-      operation.assertCurrent();
-      const record = this.packages.resolve(
-        appFrame.packageId,
-        visiblePackageScopesForActor({ uid: appFrame.uid }),
-      );
-      if (
-        !record
-        || !record.enabled
-        || (record.reviewRequired && !record.reviewedAt)
-        || record.manifest.name !== appFrame.packageName
-        || record.updatedAt !== appFrame.packageUpdatedAt
-        || record.artifact.hash !== appFrame.packageArtifactHash
-      ) {
-        return false;
-      }
-      const entrypoint = findAppFrameEntrypoint(
-        record.manifest.entrypoints,
-        appFrame.entrypointName,
-        appFrame.routeBase,
-      );
-      if (
-        !entrypoint
-        || (entrypoint.kind === "ui" && !this.isActiveLocalAppClient(appFrame))
-      ) {
-        return false;
-      }
-      operation.assertCurrent();
-      return this.rememberAuthorizedAppRuntime(appFrame, runnerName);
-    } finally {
-      operation.release();
+      return (await this.authorizeLocalAppDaemonFrame(appFrame)) !== null;
+    } catch {
+      return false;
     }
+  }
+
+  async refreshPreservedAppRuntime(
+    runtime: PreservedAppRuntimeDescriptor,
+  ): Promise<PreservedAppRuntimeRefreshResult> {
+    if (!isPreservedAppRuntimeDescriptor(runtime)) {
+      return { ok: false };
+    }
+    const marker = await this.requireActiveUserKernel();
+    if (
+      this.instanceKind !== "user"
+      || userKernelUsername(this.name) !== marker.username
+    ) {
+      return { ok: false };
+    }
+    const master = await getAgentByName(
+      this.env.KERNEL,
+      SHIP_KERNEL_NAME,
+    ) as unknown as MasterKernelControlStub;
+    const authority = await master.authorizePreservedAppRuntime({
+      sourceKernelName: this.name,
+      uid: marker.uid,
+      ownerUid: marker.uid,
+      runtime,
+    });
+    if (
+      !authority.ok
+      || authority.identity.uid !== runtime.uid
+      || authority.identity.username !== runtime.username
+      || authority.packageId !== runtime.packageId
+      || authority.packageName !== runtime.packageName
+      || authority.entrypointName !== runtime.entrypointName
+      || authority.routeBase !== runtime.routeBase
+      || authority.artifact.hash.length === 0
+    ) {
+      return { ok: false };
+    }
+
+    const currentMarker = await this.requireActiveUserKernel();
+    if (
+      currentMarker.uid !== marker.uid
+      || currentMarker.username !== marker.username
+    ) {
+      throw new Error("User Kernel placement changed during runtime refresh");
+    }
+    const now = Date.now();
+    const appFrame: AppFrameContext = {
+      uid: authority.identity.uid,
+      username: authority.identity.username,
+      packageId: authority.packageId,
+      packageName: authority.packageName,
+      packageUpdatedAt: authority.packageUpdatedAt,
+      packageArtifactHash: authority.artifact.hash,
+      entrypointName: authority.entrypointName,
+      routeBase: authority.routeBase,
+      issuedAt: now,
+      expiresAt: now + DEFAULT_APP_FRAME_TTL_MS,
+    };
+    const props: AppRunnerProps = {
+      kernelName: this.name,
+      packageId: authority.packageId,
+      packageName: authority.packageName,
+      routeBase: authority.routeBase,
+      entrypointName: authority.entrypointName,
+      artifact: authority.artifact,
+      appFrame,
+    };
+    return { ok: true, props };
+  }
+
+  private async authorizeLocalAppFrame(
+    appFrame: AppFrameContext,
+    requiredCall?: string,
+  ): Promise<ConnectionIdentity | null> {
+    if (this.instanceKind !== "user" || isAppFrameContextExpired(appFrame)) {
+      return null;
+    }
+    const marker = await this.requireActiveUserKernel();
+    if (!marker) return null;
+    const master = await getAgentByName(
+      this.env.KERNEL,
+      SHIP_KERNEL_NAME,
+    ) as unknown as MasterKernelControlStub;
+    const authorization = await master.validateAppFrame({
+      sourceKernelName: this.name,
+      uid: marker.uid,
+      appFrame,
+      ...(requiredCall === undefined ? {} : { requiredCall }),
+    });
+    if (
+      !authorization.ok
+      || (authorization.entrypointKind === "ui" && !this.isActiveLocalAppClient(appFrame))
+    ) {
+      return null;
+    }
+    await this.requireActiveUserKernel();
+    return authorization.identity;
+  }
+
+  private async authorizeLocalAppDaemonFrame(
+    appFrame: AppFrameContext,
+    requiredCall?: string,
+  ): Promise<ConnectionIdentity | null> {
+    if (this.instanceKind !== "user" || isAppFrameContextExpired(appFrame)) {
+      return null;
+    }
+    const marker = await this.requireActiveUserKernel();
+    const master = await getAgentByName(
+      this.env.KERNEL,
+      SHIP_KERNEL_NAME,
+    ) as unknown as MasterKernelControlStub;
+    const authorization = await master.validateAppDaemonFrame({
+      sourceKernelName: this.name,
+      uid: marker.uid,
+      appFrame,
+      ...(requiredCall === undefined ? {} : { requiredCall }),
+    });
+    if (!authorization.ok) {
+      return null;
+    }
+    await this.requireActiveUserKernel();
+    return authorization.identity;
   }
 
   /**
@@ -4453,85 +4294,31 @@ export class Kernel extends Host<Env> {
       return false;
     }
 
-    let operation: UserKernelTargetOperationLease;
     try {
-      operation = this.beginUserKernelTargetOperation(routed.generation, {
-        packageStamped: true,
-      });
+      return await this.acceptsLocalAppSessionRoute(sessionId);
     } catch {
       return false;
-    }
-    try {
-      if (!(await this.acceptsLocalAppSessionRoute(sessionId))) {
-        return false;
-      }
-      operation.assertCurrent();
-      return true;
-    } catch {
-      return false;
-    } finally {
-      operation.release();
     }
   }
 
   private async handleAppRequest(
     appFrame: AppFrameContext,
     frame: RequestFrame,
-    operation: UserKernelTargetOperationLease,
-    runnerName?: string,
+    daemon = false,
   ): Promise<ResponseFrame> {
     if (isAppFrameContextExpired(appFrame)) {
       return errFrame(frame.id, 401, "App frame expired");
     }
 
-    if (!(await this.isLocalAppFrameOwnerActive(appFrame))) {
-      return errFrame(frame.id, 401, "Authentication failed");
-    }
-    operation.assertCurrent();
-
     if (isInternalOnlySyscall(frame.call)) {
       return errFrame(frame.id, 403, `Permission denied: ${frame.call}`);
     }
-
-    const record = this.packages.resolve(
-      appFrame.packageId,
-      visiblePackageScopesForActor({ uid: appFrame.uid }),
-    );
-    if (
-      !record
-      || !record.enabled
-      || (record.reviewRequired && !record.reviewedAt)
-      || record.manifest.name !== appFrame.packageName
-      || record.updatedAt !== appFrame.packageUpdatedAt
-      || record.artifact.hash !== appFrame.packageArtifactHash
-    ) {
-      return errFrame(frame.id, 404, "Package app not found");
-    }
-
-    const entrypoint = findAppFrameEntrypoint(record.manifest.entrypoints, appFrame.entrypointName, appFrame.routeBase);
-    if (!entrypoint) {
-      return errFrame(frame.id, 404, "Package app entrypoint not found");
-    }
-
-    if (entrypoint.kind === "ui" && !this.isActiveLocalAppClient(appFrame)) {
-      return errFrame(frame.id, 401, "Authentication failed");
-    }
-    operation.assertCurrent();
-    if (!this.rememberAuthorizedAppRuntime(appFrame, runnerName)) {
-      return errFrame(frame.id, 401, "Authentication failed");
-    }
-
-    if (!entrypoint.syscalls?.includes(frame.call)) {
-      return errFrame(frame.id, 403, `Permission denied: ${frame.call}`);
-    }
-
-    const identity = this.buildAppBindingIdentity(appFrame);
+    const authorize = daemon
+      ? this.authorizeLocalAppDaemonFrame.bind(this)
+      : this.authorizeLocalAppFrame.bind(this);
+    const identity = await authorize(appFrame, frame.call);
     if (!identity) {
       return errFrame(frame.id, 401, "Authentication failed");
-    }
-
-    if (!hasCapability(identity.capabilities, frame.call)) {
-      return errFrame(frame.id, 403, `Permission denied: ${frame.call}`);
     }
 
     const origin: RouteOrigin = { type: "app", id: frame.id };
@@ -4541,22 +4328,27 @@ export class Kernel extends Host<Env> {
     } catch (error) {
       return errFrame(frame.id, 409, error instanceof Error ? error.message : String(error));
     }
-    const requestSignal = AbortSignal.any([controller.signal, operation.signal]);
+    const requestSignal = controller.signal;
     frame = this.bindRequestBodyCancellation(frame, requestSignal);
     const ctx = this.buildKernelContext({
       identity,
       appFrame,
       requestSignal,
-      targetOperation: operation,
     });
     const pending = this.createPendingAppResponse(frame.id);
     try {
-      const result = await this.dispatchWithMasterProjectionGate(frame, origin, ctx);
+      const result = await this.dispatchKernelFrame(frame, origin, ctx);
       if (requestSignal.aborted) {
         return errFrame(frame.id, 503, "User Kernel is not active");
       }
-      await this.requireActiveUserKernel(appFrame.kernelGeneration);
-      operation.assertCurrent();
+      await this.requireActiveUserKernel();
+      if (!(await authorize(appFrame, frame.call))) {
+        await cancelUnlockedBody(
+          result.handled && result.response.ok ? result.response.body : undefined,
+          "Package app authority revoked",
+        );
+        return errFrame(frame.id, 401, "Authentication failed");
+      }
       if (!result.handled) {
         return await raceWithAbort(pending.promise, requestSignal, {
           abortReason: () => requestAbortError(requestSignal.reason),
@@ -4572,7 +4364,6 @@ export class Kernel extends Host<Env> {
       }
 
       this.applyDirectTokenRevocationEffects(frame, result.response);
-      this.applyPostDispatchEffects(frame, result.response);
       return result.response;
     } finally {
       pending.cleanup();
@@ -4600,49 +4391,26 @@ export class Kernel extends Host<Env> {
       return { ok: false, status: 401, message: "Authentication required" };
     }
 
-    let operation: UserKernelTargetOperationLease | null = null;
-    if (this.instanceKind === "user") {
-      const routed = parseRoutedAppSessionId(sessionId);
-      if (!routed) {
-        return { ok: false, status: 401, message: "Authentication failed" };
-      }
-      try {
-        operation = this.beginUserKernelTargetOperation(routed.generation, {
-          packageStamped: true,
-        });
-      } catch {
-        return { ok: false, status: 401, message: "Authentication failed" };
-      }
-    } else {
-      try {
-        operation = this.beginUserKernelTargetOperation(
-          this.projectionState.masterRevision(),
-          { packageStamped: true },
-        );
-      } catch {
-        return { ok: false, status: 503, message: "Package authority projection is fenced" };
-      }
+    if (this.instanceKind !== "user" || !parseRoutedAppSessionId(sessionId)) {
+      return { ok: false, status: 401, message: "Authentication failed" };
     }
 
     try {
+      await this.requireActiveUserKernel();
       if (!(await this.acceptsLocalAppSessionRoute(sessionId))) {
         return { ok: false, status: 401, message: "Authentication failed" };
       }
-      operation?.assertCurrent();
 
       const clientSession = mode === "refresh"
         ? await this.appSessions.refresh(
             sessionId,
             secret,
             APP_CLIENT_SESSION_TTL_MS,
-            operation?.assertCurrent,
           )
         : await this.appSessions.resolve(
             sessionId,
             secret,
-            operation?.assertCurrent,
           );
-      operation?.assertCurrent();
       if (!clientSession) {
         return { ok: false, status: 401, message: "Authentication failed" };
       }
@@ -4651,30 +4419,35 @@ export class Kernel extends Host<Env> {
       }
 
       const resolved = await this.resolvePackageAppSessionContext(clientSession);
-      operation?.assertCurrent();
       return resolved;
-    } finally {
-      operation?.release();
+    } catch {
+      return { ok: false, status: 401, message: "Authentication failed" };
     }
   }
 
   private async resolvePackageAppSessionContext(
     clientSession: AppClientSessionContext,
   ): Promise<ResolvePackageAppRpcResult> {
-    const routeOwner = await this.resolveLocalAppSessionOwner(clientSession);
-    if (!routeOwner) {
+    const marker = await this.requireActiveUserKernel();
+    if (!marker || !(await this.acceptsLocalAppSessionRoute(clientSession.sessionId))) {
       return { ok: false, status: 401, message: "Authentication failed" };
     }
-    const authUser = this.auth.getPasswdByUid(clientSession.uid);
-    if (!authUser || authUser.username !== clientSession.username) {
-      return { ok: false, status: 401, message: "Authentication failed" };
-    }
-
-    const capabilities = this.caps.resolve(this.auth.resolveGids(authUser.username, authUser.gid));
-    const record = this.packages.resolve(
-      clientSession.packageId,
-      visiblePackageScopesForActor({ uid: clientSession.uid }),
-    );
+    const master = await getAgentByName(
+      this.env.KERNEL,
+      SHIP_KERNEL_NAME,
+    ) as unknown as MasterKernelControlStub;
+    const { packages } = await master.masterPackagesList({
+      sourceKernelName: this.name,
+      requesterUid: clientSession.uid,
+      enabled: true,
+    });
+    const record = visiblePackageScopesForActor({ uid: clientSession.uid })
+      .map((scope) => packages.find((candidate) => (
+        candidate.packageId === clientSession.packageId
+        && packageScopeKey(candidate.scope) === packageScopeKey(scope)
+      )))
+      .find((candidate): candidate is InstalledPackageRecord => candidate !== undefined)
+      ?? null;
     if (
       !record
       || !record.enabled
@@ -4695,11 +4468,6 @@ export class Kernel extends Host<Env> {
     const appFrame: AppFrameContext = {
       uid: clientSession.uid,
       username: clientSession.username,
-      kernelOwnerUid: routeOwner.uid,
-      kernelUsername: routeOwner.username,
-      ...(routeOwner.lifecycle === "active"
-        ? { kernelGeneration: routeOwner.generation }
-        : {}),
       sessionId: clientSession.sessionId,
       clientId: clientSession.clientId,
       packageId: record.packageId,
@@ -4711,7 +4479,8 @@ export class Kernel extends Host<Env> {
       issuedAt: clientSession.createdAt,
       expiresAt: clientSession.expiresAt,
     };
-    if (!(await this.isAuthoritativeLocalAppFrame(appFrame))) {
+    const identity = await this.authorizeLocalAppFrame(appFrame);
+    if (!identity) {
       return { ok: false, status: 404, message: "Package app not found" };
     }
 
@@ -4726,16 +4495,14 @@ export class Kernel extends Host<Env> {
       auth: {
         uid: clientSession.uid,
         username: clientSession.username,
-        capabilities,
+        capabilities: identity.capabilities,
       },
       hasRpc: record.manifest.entrypoints.some((candidateEntrypoint) => candidateEntrypoint.kind === "rpc"),
     };
   }
 
   private async acceptsLocalAppSessionRoute(sessionId: string): Promise<boolean> {
-    if (this.instanceKind === "master") {
-      return isLegacyAppSessionId(sessionId);
-    }
+    if (this.instanceKind !== "user") return false;
     const marker = await this.loadUserKernelMarker();
     const routed = parseRoutedAppSessionId(sessionId);
     if (
@@ -4745,121 +4512,14 @@ export class Kernel extends Host<Env> {
       || routed.expiresAt <= Date.now()
       || routed.username !== marker.username
       || routed.uid !== marker.uid
-      || routed.generation !== marker.generation
+      || !this.appSessions.getActiveRoute(sessionId)
     ) {
       return false;
     }
     return this.verifyAppSessionRoute(routed.signingInput, routed.signature);
   }
 
-  private async resolveLocalAppSessionOwner(
-    session: AppClientSessionContext,
-  ): Promise<{
-    lifecycle: "active" | "legacy";
-    username: string;
-    uid: number;
-    generation: number;
-  } | null> {
-    if (this.instanceKind === "user") {
-      const marker = await this.loadUserKernelMarker();
-      const routed = parseRoutedAppSessionId(session.sessionId);
-      if (
-        !marker
-        || marker.lifecycle !== "active"
-        || this.appRuntimes.getLifecycleFence(marker.uid) !== null
-        || !routed
-        || routed.expiresAt <= Date.now()
-        || routed.username !== marker.username
-        || routed.uid !== marker.uid
-        || routed.generation !== marker.generation
-      ) {
-        return null;
-      }
-      return {
-        lifecycle: "active",
-        username: marker.username,
-        uid: marker.uid,
-        generation: marker.generation,
-      };
-    }
-
-    if (!isLegacyAppSessionId(session.sessionId)) {
-      return null;
-    }
-    const placement = this.userKernels.get(session.username);
-    if (
-      !placement
-      || placement.lifecycle !== "legacy"
-      || placement.uid !== session.uid
-      || this.transitioningUserKernels.has(placement.username)
-      || this.appRuntimes.getLifecycleFence(placement.uid) !== null
-    ) {
-      return null;
-    }
-    return {
-      lifecycle: "legacy",
-      username: placement.username,
-      uid: placement.uid,
-      generation: placement.generation,
-    };
-  }
-
-  private async isLocalAppFrameOwnerActive(appFrame: AppFrameContext): Promise<boolean> {
-    if (this.instanceKind === "user") {
-      const marker = await this.loadUserKernelMarker();
-      const installed = this.projectionState.installed();
-      const actor = this.auth.getPasswdByUid(appFrame.uid);
-      if (
-        !marker
-        || marker.lifecycle !== "active"
-        || this.appRuntimes.getLifecycleFence(marker.uid) !== null
-        || !installed
-        || installed.username !== marker.username
-        || installed.uid !== marker.uid
-        || installed.kernelGeneration !== marker.generation
-        || this.projectionState.packageFence()?.kernelGeneration === marker.generation
-        || appFrame.kernelOwnerUid !== marker.uid
-        || appFrame.kernelUsername !== marker.username
-        || appFrame.kernelGeneration !== marker.generation
-        || !actor
-        || actor.username !== appFrame.username
-        || !canOwnerRunAsAccount(this.auth, marker.uid, actor, marker.uid === 0)
-      ) {
-        return false;
-      }
-      if (!appFrame.sessionId) {
-        return true;
-      }
-      const routed = parseRoutedAppSessionId(appFrame.sessionId);
-      return Boolean(
-        routed
-        && routed.expiresAt > Date.now()
-        && routed.username === marker.username
-        && routed.uid === marker.uid
-        && routed.generation === marker.generation,
-      );
-    }
-
-    const ownerUsername = canonicalizeLoginUsername(
-      appFrame.kernelUsername ?? appFrame.username,
-    );
-    if (this.projectionState.packageFence() !== null) {
-      return false;
-    }
-    const placement = ownerUsername ? this.userKernels.get(ownerUsername) : null;
-    const actor = this.auth.getPasswdByUid(appFrame.uid);
-    return Boolean(
-      placement
-      && placement.lifecycle === "legacy"
-      && !this.transitioningUserKernels.has(placement.username)
-      && this.appRuntimes.getLifecycleFence(placement.uid) === null
-      && appFrame.kernelOwnerUid === placement.uid
-      && actor
-      && actor.username === appFrame.username
-      && canOwnerRunAsAccount(this.auth, placement.uid, actor, placement.uid === 0)
-      && (!appFrame.sessionId || isLegacyAppSessionId(appFrame.sessionId)),
-    );
-  }  private isActiveLocalAppClient(appFrame: AppFrameContext): boolean {
+  private isActiveLocalAppClient(appFrame: AppFrameContext): boolean {
     if (!appFrame.sessionId || !appFrame.clientId) {
       return false;
     }
@@ -4905,7 +4565,7 @@ export class Kernel extends Host<Env> {
         : null;
       const placementAdmitsGit = Boolean(
         placement
-        && (placement.lifecycle === "active" || placement.lifecycle === "legacy"),
+        && placement.lifecycle === "active",
       );
       const release = canonicalUsername && placementAdmitsGit
         ? this.beginMasterUserOperation(canonicalUsername)
@@ -4931,7 +4591,7 @@ export class Kernel extends Host<Env> {
           && canonicalUsername === auth.identity.username
           && placement.uid === auth.identity.uid
           && sameUserKernelPlacement(currentPlacement, placement)
-          && (placement.lifecycle === "active" || placement.lifecycle === "legacy")
+          && placement.lifecycle === "active"
         ) {
           const capabilities = this.caps.resolve(auth.identity.gids);
           const identity: ConnectionIdentity = {
@@ -5138,26 +4798,15 @@ export class Kernel extends Host<Env> {
   private enqueueProcessSignal(
     processId: string,
     frame: SignalFrame,
-    expectedGeneration?: number,
   ): Promise<void> {
     const previous = this.pendingProcessSignals.get(processId) ?? Promise.resolve();
     const delivery = previous.then(async () => {
-      const record = this.procs.get(processId);
-      const operation = this.beginUserKernelTargetOperation(expectedGeneration ?? 0, {
-        packageStamped: typeof record?.packageSecurityRevision === "string",
-      });
-      try {
-        const marker = await this.requireActiveUserKernel(expectedGeneration);
-        operation.assertCurrent();
-        const generationError = this.processKernelGenerationError(processId, marker);
-        if (generationError) {
-          throw new Error(generationError);
-        }
-        await this.handleProcessSignal(processId, frame);
-        operation.assertCurrent();
-      } finally {
-        operation.release();
+      await this.requireActiveUserKernel();
+      if (!this.procs.get(processId)) {
+        throw new Error("Unknown process");
       }
+      await this.handleProcessSignal(processId, frame);
+      await this.requireActiveUserKernel();
     });
     const queued = delivery
       .catch((error) => {
@@ -5364,24 +5013,7 @@ export class Kernel extends Host<Env> {
       return false;
     }
     if (this.instanceKind === "master") {
-      const link = this.adapters.identityLinks.get(
-        route.adapter,
-        route.accountId,
-        route.actorId,
-      );
-      const placement = this.userKernels.getByUid(route.uid);
-      return Boolean(
-        placement?.lifecycle === "legacy"
-        && link
-        && link.uid === route.uid
-        && link.generation === route.linkGeneration
-        && this.adapters.identityLinks.isCurrentGeneration(
-          route.adapter,
-          route.accountId,
-          route.actorId,
-          route.linkGeneration,
-        )
-      );
+      return false;
     }
 
     const marker = await this.requireActiveUserKernel();
@@ -5395,7 +5027,6 @@ export class Kernel extends Host<Env> {
     return master.authorizeAdapterRunRoute({
       sourceKernelName: this.name,
       ownerUid: marker.uid,
-      kernelGeneration: marker.generation,
       adapter: route.adapter,
       accountId: route.accountId,
       actorId: route.actorId,
@@ -5427,10 +5058,8 @@ export class Kernel extends Host<Env> {
   private async handleProcessReq(
     processId: string,
     frame: RequestFrame,
-    expectedGeneration?: number,
-    operation?: UserKernelTargetOperationLease,
   ): Promise<ResponseFrame | null> {
-    const ctx = await this.buildProcessContext(processId, frame.runId, operation);
+    const ctx = await this.buildProcessContext(processId, frame.runId);
     if (!ctx) {
       return errFrame(frame.id, 404, "Unknown process");
     }
@@ -5451,11 +5080,9 @@ export class Kernel extends Host<Env> {
     }
     let result;
     try {
-      const requestSignal = operation
-        ? AbortSignal.any([controller.signal, operation.signal])
-        : controller.signal;
+      const requestSignal = controller.signal;
       frame = this.bindRequestBodyCancellation(frame, requestSignal);
-      result = await this.dispatchWithMasterProjectionGate(
+      result = await this.dispatchKernelFrame(
         frame,
         origin,
         { ...ctx, requestSignal },
@@ -5465,11 +5092,8 @@ export class Kernel extends Host<Env> {
     }
 
     try {
-      const marker = await this.requireActiveUserKernel(expectedGeneration);
-      const generationError = this.processKernelGenerationError(processId, marker);
-      if (generationError) {
-        return errFrame(frame.id, 410, generationError);
-      }
+      await this.requireActiveUserKernel();
+      if (!this.procs.get(processId)) return errFrame(frame.id, 404, "Unknown process");
       if (!await this.authorizeRegisteredProcessRuntime(
         processId,
         isInternalOnlySyscall(frame.call) ? undefined : frame.call,
@@ -5486,56 +5110,39 @@ export class Kernel extends Host<Env> {
 
     if (result.handled) {
       this.applyDirectTokenRevocationEffects(frame, result.response);
-      this.applyPostDispatchEffects(frame, result.response);
       return result.response;
     }
 
     return null;
   }
 
-  /**
-   * Resolve an account record for an identity the Kernel itself is building
-   * (process frames, executors). Forwards with the claimed identity; the
-   * Master re-verifies it against the directory before answering.
-   */
-  private async accountGetForIdentity(
-    identity: ConnectionIdentity,
-    query: AccountGetArgs,
-  ): Promise<AccountDetail | null> {
-    if (this.instanceKind === "master") {
-      return handleAccountGet(query, this.buildKernelContext({ identity })).account;
-    }
+  /** Resolve internal user-Kernel identity without capability-gating it as a syscall. */
+  private async resolveUserKernelAccountIdentity(
+    actorUid: number,
+  ): Promise<AccountIdentityResolutionResult> {
     const marker = await this.loadUserKernelMarker();
     if (
-      !marker
+      this.instanceKind !== "user"
+      || !marker
       || (marker.lifecycle !== "active" && marker.lifecycle !== "provisioning")
     ) {
-      throw new Error("User Kernel is not active");
+      return { ok: false, error: "user Kernel is not active" };
     }
     const master = await getAgentByName(
       this.env.KERNEL,
       SHIP_KERNEL_NAME,
     ) as unknown as MasterKernelControlStub;
-    const result = await master.dispatchMasterSyscall({
+    return master.resolveAccountIdentity({
       sourceKernelName: this.name,
-      callerOwnerUid: marker.uid,
-      generation: marker.generation,
-      identity,
-      frame: {
-        type: "req",
-        id: crypto.randomUUID(),
-        call: "account.get",
-        args: query as unknown as MasterRpcValue,
-      },
+      uid: marker.uid,
+      ownerUid: marker.uid,
+      actorUid,
     });
-    if (!result.response.ok) throw new Error(result.response.error.message);
-    return (result.response.data as AccountGetResult).account;
   }
 
   private async buildProcessContext(
     processId: string,
     processRunId?: string,
-    targetOperation?: UserKernelTargetOperationLease,
   ): Promise<KernelContext | null> {
     const identity = this.procs.getIdentity(processId);
     if (!identity) {
@@ -5545,23 +5152,22 @@ export class Kernel extends Host<Env> {
     const connIdentity: ConnectionIdentity = {
       role: "user",
       process: identity,
-      capabilities: this.caps.resolve(identity.gids),
+      capabilities: this.instanceKind === "master"
+        ? this.caps.resolve(identity.gids)
+        : [],
     };
     if (this.instanceKind === "user") {
-      const marker = await this.loadUserKernelMarker();
-      if (marker?.lifecycle === "active") {
-        const account = await this.accountGetForIdentity(connIdentity, { uid: identity.uid });
-        if (account?.capabilities) {
-          connIdentity.capabilities = account.capabilities;
-        }
+      const account = await this.resolveUserKernelAccountIdentity(identity.uid);
+      if (!account.ok || !processIdentityEquals(account.identity, identity)) {
+        throw new Error("Process identity is no longer authorized");
       }
+      connIdentity.capabilities = account.capabilities;
     }
 
     return this.buildKernelContext({
       identity: connIdentity,
       processId,
       processRunId,
-      targetOperation,
     });
   }
 
@@ -5570,7 +5176,6 @@ export class Kernel extends Host<Env> {
     options: {
       routedAdapterOwnerUid?: number;
       routedAdapterLinkGeneration?: number;
-      targetOperation?: UserKernelTargetOperationLease;
     } = {},
   ): Promise<ResponseFrame> {
     if (frame.call === "sys.connect" || frame.call === "sys.setup" || frame.call === "sys.setup.assist") {
@@ -5581,7 +5186,10 @@ export class Kernel extends Host<Env> {
       return errFrame(frame.id, 403, `Permission denied: ${frame.call}`);
     }
 
-    const identity = this.buildServiceBindingIdentity(frame);
+    const identity = await this.buildServiceBindingIdentity(
+      frame,
+      options.routedAdapterOwnerUid,
+    );
     if (!identity) {
       return errFrame(frame.id, 503, "Service identity is not configured");
     }
@@ -5596,9 +5204,7 @@ export class Kernel extends Host<Env> {
     } catch (error) {
       return errFrame(frame.id, 409, error instanceof Error ? error.message : String(error));
     }
-    const requestSignal = options.targetOperation
-      ? AbortSignal.any([controller.signal, options.targetOperation.signal])
-      : controller.signal;
+    const requestSignal = controller.signal;
     frame = this.bindRequestBodyCancellation(frame, requestSignal);
     const ctx = this.buildKernelContext({
       identity,
@@ -5606,11 +5212,10 @@ export class Kernel extends Host<Env> {
       routedAdapterLinkGeneration: options.routedAdapterLinkGeneration,
       serviceBinding: true,
       requestSignal,
-      targetOperation: options.targetOperation,
     });
     let result;
     try {
-      result = await this.dispatchWithMasterProjectionGate(frame, origin, ctx);
+      result = await this.dispatchKernelFrame(frame, origin, ctx);
     } finally {
       this.finishActiveRequest(frame.id, controller);
     }
@@ -5620,34 +5225,32 @@ export class Kernel extends Host<Env> {
     }
 
     if (requestSignal.aborted) {
-      return errFrame(frame.id, 503, "User Kernel is not active");
+      return errFrame(frame.id, 503, "Kernel operation is no longer active");
     }
-    await this.requireActiveUserKernel();
-    options.targetOperation?.assertCurrent();
+    if (this.instanceKind === "user") {
+      await this.requireActiveUserKernel();
+    } else if (frame.call !== "adapter.state.update") {
+      return errFrame(frame.id, 403, "Master service operation is not allowed");
+    }
 
     this.applyDirectTokenRevocationEffects(frame, result.response);
-    this.applyPostDispatchEffects(frame, result.response);
     return result.response;
   }
 
   private buildContext(
     connection: Connection<ConnectionState>,
-    targetOperation?: UserKernelTargetOperationLease,
   ): KernelContext {
     const state = connection.state;
     if (!state) throw new Error("Connection state is missing");
     return this.buildKernelContext({
       connection,
       loginSourceScope: state.loginSourceScope ?? UNAVAILABLE_LOGIN_SOURCE_SCOPE,
-      expectedKernelGeneration: state.kernelGeneration,
       identity: state.identity as ConnectionIdentity | undefined,
-      targetOperation,
     });
   }
 
   private issueProcessRollbackAuthorization(
     processId: string,
-    generation: number | null,
   ): string {
     if (typeof processId !== "string" || processId.length === 0) {
       throw new Error("Invalid process rollback target");
@@ -5657,7 +5260,6 @@ export class Kernel extends Host<Env> {
     this.processRollbackAuthorizations.set(authorization, {
       expiresAt: Date.now() + PROCESS_ROLLBACK_AUTHORIZATION_TTL_MS,
       processId,
-      generation,
     });
     return authorization;
   }
@@ -5675,20 +5277,16 @@ export class Kernel extends Host<Env> {
     requestSignal?: AbortSignal;
     callerOwnerUid?: number;
     appFrame?: AppFrameContext;
-    expectedKernelGeneration?: number;
     routedAdapterOwnerUid?: number;
     routedAdapterLinkGeneration?: number;
     serviceBinding?: boolean;
     provisioningMarker?: UserKernelInstanceMarker;
-    targetOperation?: UserKernelTargetOperationLease;
-    packageProjectionOperation?: boolean;
   }): KernelContext {
     const boundKernelMarker = options.provisioningMarker
       ?? (this.userKernelMarker?.lifecycle === "active" ? this.userKernelMarker : null);
     const expectedKernelMarker = this.instanceKind === "master"
       ? null
       : boundKernelMarker;
-    let packageProjectionOperation = options.packageProjectionOperation === true;
     let kernelContext: KernelContext;
     const dispatchMasterRead = async <T>(call: SyscallName, args: unknown): Promise<T> => {
       const response = await this.requestDispatchedFrame({
@@ -5710,7 +5308,6 @@ export class Kernel extends Host<Env> {
       ...(this.instanceUsername ? { kernelUsername: this.instanceUsername } : {}),
       ...(boundKernelMarker
         ? {
-            kernelGeneration: boundKernelMarker.generation,
             kernelOwnerUid: boundKernelMarker.uid,
             ...(options.provisioningMarker ? { kernelProvisioning: true } : {}),
           }
@@ -5741,7 +5338,6 @@ export class Kernel extends Host<Env> {
       processRunId: options.processRunId,
       requestSignal: options.requestSignal,
       assertCurrentKernel: () => {
-        options.targetOperation?.assertCurrent();
         if (options.provisioningMarker) {
           if (
             this.userKernelMarker !== options.provisioningMarker
@@ -5758,14 +5354,6 @@ export class Kernel extends Host<Env> {
           throw new Error("User Kernel is not active");
         }
       },
-      isPackageProjectionOperation: () => (
-        packageProjectionOperation
-        || options.targetOperation?.isPackageStamped() === true
-      ),
-      markPackageProjectionOperation: () => {
-        packageProjectionOperation = true;
-        options.targetOperation?.markPackageStamped();
-      },
       callerOwnerUid: options.callerOwnerUid,
       routedAdapterOwnerUid: options.routedAdapterOwnerUid,
       routedAdapterLinkGeneration: options.routedAdapterLinkGeneration,
@@ -5774,10 +5362,7 @@ export class Kernel extends Host<Env> {
       serverVersion: SERVER_VERSION,
       transactionSync: this.ctx.storage.transactionSync.bind(this.ctx.storage),
       issueProcessRollbackAuthorization: (processId) => (
-        this.issueProcessRollbackAuthorization(
-          processId,
-          boundKernelMarker?.generation ?? null,
-        )
+        this.issueProcessRollbackAuthorization(processId)
       ),
       revokeProcessRollbackAuthorization: (authorization) => {
         this.revokeProcessRollbackAuthorization(authorization);
@@ -5787,7 +5372,6 @@ export class Kernel extends Host<Env> {
             authenticateConnection: (args: ConnectArgs) => this.authenticateConnectionViaMaster(
               args,
               options.loginSourceScope ?? UNAVAILABLE_LOGIN_SOURCE_SCOPE,
-              options.expectedKernelGeneration,
             ),
           }
         : {}),
@@ -5797,6 +5381,54 @@ export class Kernel extends Host<Env> {
         }
         const result = await dispatchMasterRead<AccountGetResult>("account.get", query);
         return result.account;
+      },
+      resolveRunAsAccount: async (input) => {
+        if (this.instanceKind === "master") {
+          return this.resolveAuthoritativeRunAsAccount(
+            input.ownerUid,
+            input.callerUid,
+            input.selector,
+          );
+        }
+        const marker = await this.loadUserKernelMarker();
+        if (
+          !marker
+          || (marker.lifecycle !== "active" && marker.lifecycle !== "provisioning")
+          || marker.uid !== input.ownerUid
+        ) {
+          return { ok: false, error: "User Kernel run-as authority is unavailable" };
+        }
+        const master = await getAgentByName(
+          this.env.KERNEL,
+          SHIP_KERNEL_NAME,
+        ) as unknown as MasterKernelControlStub;
+        return master.resolveRunAsAccount({
+          sourceKernelName: this.name,
+          uid: marker.uid,
+          ...input,
+        });
+      },
+      listRunnableAccounts: async (input) => {
+        if (this.instanceKind === "master") {
+          return this.listAuthoritativeRunnableAccounts(input.ownerUid, input.callerUid);
+        }
+        const marker = await this.loadUserKernelMarker();
+        if (
+          !marker
+          || marker.lifecycle !== "active"
+          || marker.uid !== input.ownerUid
+        ) {
+          throw new Error("User Kernel runnable-account authority is unavailable");
+        }
+        const master = await getAgentByName(
+          this.env.KERNEL,
+          SHIP_KERNEL_NAME,
+        ) as unknown as MasterKernelControlStub;
+        return master.listRunnableAccounts({
+          sourceKernelName: this.name,
+          uid: marker.uid,
+          ...input,
+        });
       },
       readAuthFile: async (kind) => {
         const requesterUid = kernelContext.identity?.process.uid;
@@ -5935,29 +5567,18 @@ export class Kernel extends Host<Env> {
         packageSecurityRevision,
         requiredCall,
         processId,
-      ) => {
-        const runtime = packageAgentRuntimeIdentity({ config: this.config }, runAs.uid);
-        if (packageSecurityRevision !== null || runtime.kind !== "ordinary") {
-          options.targetOperation?.markPackageStamped();
-        }
-        return this.authorizeCurrentPackageAgentRuntime(
+      ) => this.authorizeCurrentPackageAgentRuntime(
           ownerUid,
           runAs,
           packageSecurityRevision,
           requiredCall,
           processId,
-        );
-      },
-      authorizePackageRuntime: (appFrame, call) => {
-        options.targetOperation?.markPackageStamped();
-        return this.isAuthoritativeLocalAppFrame(appFrame, call);
-      },
-      broadcastToUserUid: this.broadcastToUserUid.bind(this),
-      getAppRunner: (actorUid, packageId) => this.getAppRunner(
-        boundKernelMarker?.uid ?? resolveCallerOwnerUid(kernelContext),
-        actorUid,
-        packageId,
+        ),
+      authorizePackageRuntime: async (appFrame, call) => (
+        (await this.authorizeLocalAppFrame(appFrame, call)) !== null
       ),
+      broadcastToUserUid: this.broadcastToUserUid.bind(this),
+      getAppRunner: (actorUid, packageId) => this.getAppRunner(actorUid, packageId),
       scheduleIpcCallTimeout: this.scheduleIpcCallTimeout.bind(this),
       failIpcCallsByTarget: this.failIpcCallsByTarget.bind(this),
       scheduleScheduleWake: this.scheduleScheduleWake.bind(this),
@@ -5982,12 +5603,11 @@ export class Kernel extends Host<Env> {
   }
 
   private getAppRunner(
-    kernelOwnerUid: number,
     actorUid: number,
     packageId: string,
   ): unknown {
     return this.ctx.exports.AppRunner.getByName(
-      buildAppRunnerName(kernelOwnerUid, actorUid, packageId),
+      buildAppRunnerName(actorUid, packageId),
     );
   }
 
@@ -6005,18 +5625,17 @@ export class Kernel extends Host<Env> {
     };
   }
 
-  private async dispatchWithMasterProjectionGate(
+  private async dispatchKernelFrame(
     frame: RequestFrame,
     origin: RouteOrigin,
     context: KernelContext,
   ): Promise<Awaited<ReturnType<typeof dispatch>>> {
-    if (frame.call.startsWith("app.")) {
-      context.markPackageProjectionOperation?.();
-    }
-    if (
-      masterMutationNeedsPackageProjectionFence(frame.call)
-      && context.isPackageProjectionOperation?.() === true
-    ) {
+    const process = context.processId ? this.procs.get(context.processId) : null;
+    const packageDerived = Boolean(
+      context.appFrame
+      || typeof process?.packageSecurityRevision === "string",
+    );
+    if (PACKAGE_AUTHORITY_MUTATIONS.has(frame.call) && packageDerived) {
       await cancelUnlockedBody(frame.body, "Package authority mutation denied");
       return {
         handled: true,
@@ -6027,38 +5646,16 @@ export class Kernel extends Host<Env> {
         ),
       };
     }
-    const execute = () => dispatch(
+    const result = await dispatch(
       frame,
       origin,
       context,
       this.buildDispatchDeps(),
     );
-    let result: Awaited<ReturnType<typeof dispatch>>;
-    if (this.instanceKind !== "master" || !masterMutationNeedsProjectionRefresh(frame.call)) {
-      result = await execute();
-    } else if (masterMutationNeedsPackageProjectionFence(frame.call)) {
-      try {
-        result = await this.runPackageProjectionMutation(frame.id, execute);
-      } catch (error) {
-        result = {
-          handled: true,
-          response: errFrame(frame.id, 503, errorMessage(error)),
-        };
-      }
-    } else {
-      try {
-        result = (await this.runMasterProjectionMutation(execute)).value;
-      } catch (error) {
-        result = {
-          handled: true,
-          response: errFrame(frame.id, 500, errorMessage(error)),
-        };
-      }
-    }
 
     if (frame.call === "account.create" && result.handled) {
       try {
-        await this.provisionCreatedHumanAfterProjectionCommit(result.response);
+        await this.provisionCreatedHuman(result.response);
       } catch (error) {
         return {
           handled: true,
@@ -6111,7 +5708,7 @@ export class Kernel extends Host<Env> {
         frame = this.bindRequestBodyCancellation(frame, requestSignal);
       }
       const result = await raceWithAbort(
-        this.dispatchWithMasterProjectionGate(
+        this.dispatchKernelFrame(
           frame,
           origin,
           { ...ctx, requestSignal },
@@ -6141,9 +5738,8 @@ export class Kernel extends Host<Env> {
                 }
               },
             },
-          );
+      );
       this.applyDirectTokenRevocationEffects(frame, response);
-      this.applyPostDispatchEffects(frame, response);
       return response;
     } finally {
       pending.cleanup();
@@ -6260,7 +5856,6 @@ export class Kernel extends Host<Env> {
     if (
       current.uid !== record.uid
       || current.ownerUid !== record.ownerUid
-      || current.kernelGeneration !== record.kernelGeneration
       || current.packageSecurityRevision !== record.packageSecurityRevision
     ) {
       throw new Error("Revoked process registry identity changed during teardown");
@@ -6630,7 +6225,6 @@ export class Kernel extends Host<Env> {
     if (
       !marker
       || marker.lifecycle !== "active"
-      || this.appRuntimes.getLifecycleFence(marker.uid) !== null
     ) {
       return;
     }
@@ -6655,6 +6249,9 @@ export class Kernel extends Host<Env> {
 
   async onUserKernelScheduleRearmRecoveryDue(): Promise<void> {
     this.userKernelScheduleRearmRecoveryQueued = false;
+    if (this.instanceKind !== "user") {
+      return;
+    }
     try {
       await this.rearmInterruptedScheduleRuns();
       this.userKernelScheduleRearmRecoveryAttempt = 0;
@@ -6662,20 +6259,19 @@ export class Kernel extends Host<Env> {
       this.userKernelScheduleRearmRecoveryAttempt += 1;
       this.queueUserKernelScheduleRearmRecovery(Math.min(
         2 ** Math.min(this.userKernelScheduleRearmRecoveryAttempt - 1, 6),
-        PACKAGE_PROJECTION_RECOVERY_MAX_DELAY_SECONDS,
+        60,
       ));
     }
   }
 
   private async rearmPendingSchedules(
     expectedMarker: UserKernelInstanceMarker,
-    options: { allowLifecycleFence?: boolean } = {},
   ): Promise<void> {
     for (const record of this.schedules.listWakeable()) {
-      if (!this.isCurrentUserKernelMarker(expectedMarker, options)) {
+      if (!this.isCurrentUserKernelMarker(expectedMarker)) {
         return;
       }
-      await this.replaceScheduleWake(record, expectedMarker, {}, options);
+      await this.replaceScheduleWake(record, expectedMarker);
     }
   }
 
@@ -6683,14 +6279,13 @@ export class Kernel extends Host<Env> {
     record: NonNullable<ReturnType<ScheduleStore["getStored"]>>,
     expectedMarker: UserKernelInstanceMarker | null,
     options: { allowRunning?: boolean } = {},
-    markerOptions: { allowLifecycleFence?: boolean } = {},
   ): Promise<boolean> {
     const dueAtMs = record.state.nextRunAtMs;
     if (
       !record.enabled
       || (!options.allowRunning && record.state.runningAtMs !== null)
       || dueAtMs === null
-      || !this.isCurrentUserKernelMarker(expectedMarker, markerOptions)
+      || !this.isCurrentUserKernelMarker(expectedMarker)
     ) {
       return false;
     }
@@ -6699,7 +6294,7 @@ export class Kernel extends Host<Env> {
     const wakeId = await this.scheduleScheduleWake(record.id, dueAtMs);
     const current = this.schedules.getStored(record.id);
     if (
-      this.isCurrentUserKernelMarker(expectedMarker, markerOptions)
+      this.isCurrentUserKernelMarker(expectedMarker)
       && current?.enabled
       && (options.allowRunning || current.state.runningAtMs === null)
       && current.state.nextRunAtMs === dueAtMs
@@ -6719,7 +6314,6 @@ export class Kernel extends Host<Env> {
   private async handleReq(
     connection: Connection<ConnectionState>,
     wireFrame: RequestFrame,
-    targetOperation?: UserKernelTargetOperationLease,
   ): Promise<void> {
     let frame: RequestFrame;
     try {
@@ -6776,6 +6370,17 @@ export class Kernel extends Host<Env> {
         return;
       }
 
+      if (this.instanceKind !== "user") {
+        this.sendError(connection, frame.id, 409, "Username-scoped connection required");
+        return;
+      }
+      try {
+        await this.requireActiveUserKernel();
+      } catch {
+        this.sendError(connection, frame.id, 401, "Authentication failed");
+        return;
+      }
+
       if (isInternalOnlySyscall(frame.call)) {
         this.sendError(connection, frame.id, 403, `Permission denied: ${frame.call}`);
         return;
@@ -6796,28 +6401,24 @@ export class Kernel extends Host<Env> {
       }
       let result;
       try {
-        const requestSignal = targetOperation
-          ? AbortSignal.any([controller.signal, targetOperation.signal])
-          : controller.signal;
+        const requestSignal = controller.signal;
         frame = this.bindRequestBodyCancellation(frame, requestSignal);
-        result = await this.dispatchWithMasterProjectionGate(
+        result = await this.dispatchKernelFrame(
           frame,
           origin,
-          { ...this.buildContext(connection, targetOperation), requestSignal },
+          { ...this.buildContext(connection), requestSignal },
         );
       } finally {
         this.finishActiveRequest(frame.id, controller);
       }
       try {
-        await this.requireActiveUserKernel(state.kernelGeneration);
-        targetOperation?.assertCurrent();
+        await this.requireActiveUserKernel();
       } catch {
         this.sendError(connection, frame.id, 401, "Authentication failed");
         return;
       }
       if (result.handled) {
         this.applyDirectTokenRevocationEffects(frame, result.response, connection.id);
-        this.applyPostDispatchEffects(frame, result.response);
         try {
           this.sendWebSocketFrame(connection, result.response);
         } finally {
@@ -6832,12 +6433,36 @@ export class Kernel extends Host<Env> {
     }
   }
 
-  private buildServiceBindingIdentity(frame: RequestFrame): ConnectionIdentity | null {
+  private async buildServiceBindingIdentity(
+    frame: RequestFrame,
+    routedOwnerUid?: number,
+  ): Promise<ConnectionIdentity | null> {
     const args = frame.args as Record<string, unknown>;
     const adapterHint =
       typeof args.adapter === "string" && args.adapter.trim().length > 0
         ? args.adapter.trim().toLowerCase()
         : "service-binding";
+
+    if (this.instanceKind === "user") {
+      const marker = await this.loadUserKernelMarker();
+      if (
+        !marker
+        || marker.lifecycle !== "active"
+        || marker.uid !== routedOwnerUid
+      ) {
+        return null;
+      }
+      const master = await getAgentByName(
+        this.env.KERNEL,
+        SHIP_KERNEL_NAME,
+      ) as unknown as MasterKernelControlStub;
+      return master.resolveAdapterServiceIdentity({
+        sourceKernelName: this.name,
+        uid: marker.uid,
+        ownerUid: marker.uid,
+        channel: adapterHint,
+      });
+    }
 
     const root = this.auth.getPasswdByUid(0);
     if (!root) {
@@ -6859,28 +6484,7 @@ export class Kernel extends Host<Env> {
     };
   }
 
-  private buildAppBindingIdentity(
-    appFrame: AppFrameContext,
-  ): ConnectionIdentity | null {
-    const user = this.auth.getPasswdByUid(appFrame.uid);
-    if (!user || user.username !== appFrame.username) {
-      return null;
-    }
-
-    const gids = this.auth.resolveGids(user.username, user.gid);
-    return {
-      role: "user",
-      process: {
-        uid: user.uid,
-        gid: user.gid,
-        gids,
-        username: user.username,
-        home: user.home,
-        cwd: user.home,
-      },
-      capabilities: this.caps.resolve(gids),
-    };
-  }  private async dispatchSignalWatches(
+  private async dispatchSignalWatches(
     uid: number,
     processId: string,
     frame: SignalFrame,
@@ -6935,12 +6539,31 @@ export class Kernel extends Host<Env> {
     if (!watch.packageId || !watch.packageName || !watch.entrypointName || !watch.routeBase) {
       throw new Error(`App signal watch ${watch.watchId} is missing package metadata`);
     }
-    const record = this.packages.resolve(
-      watch.packageId,
-      visiblePackageScopesForActor({ uid: watch.uid }),
-    );
+    const marker = await this.requireActiveUserKernel();
+    if (this.instanceKind !== "user" || !marker) {
+      throw new Error(`App route owner unavailable for watch ${watch.watchId}`);
+    }
+    const master = await getAgentByName(
+      this.env.KERNEL,
+      SHIP_KERNEL_NAME,
+    ) as unknown as MasterKernelControlStub;
+    const [account, packageList] = await Promise.all([
+      master.resolveAccountIdentity({
+        sourceKernelName: this.name,
+        uid: marker.uid,
+        ownerUid: marker.uid,
+        actorUid: watch.uid,
+      }),
+      master.masterPackagesList({
+        sourceKernelName: this.name,
+        requesterUid: watch.uid,
+        enabled: true,
+      }),
+    ]);
+    const record = packageList.packages.find((candidate) => candidate.packageId === watch.packageId);
     if (
-      !record
+      !account.ok
+      || !record
       || !record.enabled
       || (record.reviewRequired && !record.reviewedAt)
       || record.manifest.name !== watch.packageName
@@ -6957,31 +6580,10 @@ export class Kernel extends Host<Env> {
       throw new Error(`UI entrypoint not found for watch ${watch.watchId}`);
     }
 
-    const user = this.auth.getPasswdByUid(watch.uid);
-    if (!user) {
-      throw new Error(`User not found for watch ${watch.watchId}`);
-    }
-
-    const sessionOwner = appClientSession
-      ? await this.resolveLocalAppSessionOwner(appClientSession)
-      : null;
-    const marker = this.instanceKind === "user"
-      ? await this.loadUserKernelMarker()
-      : null;
-    const kernelUsername = sessionOwner?.username ?? marker?.username;
-    const kernelOwnerUid = sessionOwner?.uid ?? marker?.uid;
-    const kernelGeneration = sessionOwner?.generation ?? marker?.generation;
-    if (kernelOwnerUid === undefined || !kernelUsername || !kernelGeneration) {
-      throw new Error(`App route owner unavailable for watch ${watch.watchId}`);
-    }
-
     const now = Date.now();
     const appFrame: AppFrameContext = {
-      uid: user.uid,
-      username: user.username,
-      kernelOwnerUid,
-      kernelUsername,
-      ...(this.instanceKind === "user" ? { kernelGeneration } : {}),
+      uid: account.identity.uid,
+      username: account.identity.username,
       ...(appClientSession
         ? {
             sessionId: appClientSession.sessionId,
@@ -6997,24 +6599,23 @@ export class Kernel extends Host<Env> {
       issuedAt: now,
       expiresAt: now + DEFAULT_APP_FRAME_TTL_MS,
     };
-    if (!(await this.isAuthoritativeLocalAppFrame(appFrame))) {
+    if (!(await this.authorizeLocalAppFrame(appFrame))) {
       throw new Error(`Package runtime authorization expired for watch ${watch.watchId}`);
     }
     const runner = this.ctx.exports.AppRunner.getByName(
-      buildAppRunnerName(kernelOwnerUid, user.uid, record.packageId),
+      buildAppRunnerName(account.identity.uid, record.packageId),
     );
-    const runtime = {
-      artifact: {
-        hash: record.artifact.hash,
-        ...(record.artifact.runtimeAccess
-          ? { runtimeAccess: structuredClone(record.artifact.runtimeAccess) }
-          : {}),
-      },
+    await runner.ensureRuntime({
+      kernelName: this.name,
+      packageId: record.packageId,
+      packageName: record.manifest.name,
+      routeBase: watch.routeBase,
+      entrypointName: entrypoint.name,
+      artifact: record.artifact,
       appFrame,
-    };
+    });
 
     await runner.deliverSignal({
-      runtime,
       signal: frame.signal,
       payload: frame.payload,
       sourcePid: processId,
@@ -7073,7 +6674,6 @@ export class Kernel extends Host<Env> {
       if (
         !this.auth.isSetupMode()
         && !isSetupCommissioningPending(this.config)
-        && placement?.lifecycle !== "legacy"
       ) {
         this.sendError(
           connection,
@@ -7110,15 +6710,16 @@ export class Kernel extends Host<Env> {
           { idempotent: true },
         )).id
       : undefined;
-    if (
-      this.instanceKind === "user"
-      && !this.hasActiveUserKernelGeneration(transportState?.kernelGeneration)
-    ) {
-      if (credentialExpiryScheduleId) {
-        await this.cancelSchedule(credentialExpiryScheduleId).catch(() => {});
+    if (this.instanceKind === "user") {
+      try {
+        await this.requireActiveUserKernel();
+      } catch {
+        if (credentialExpiryScheduleId) {
+          await this.cancelSchedule(credentialExpiryScheduleId).catch(() => {});
+        }
+        this.sendError(connection, frame.id, 401, "Authentication failed");
+        return;
       }
-      this.sendError(connection, frame.id, 401, "Authentication failed");
-      return;
     }
     const newState = {
       step: "connected",
@@ -7126,9 +6727,6 @@ export class Kernel extends Host<Env> {
       credential: outcome.credential,
       ...(transportState?.loginSourceScope
         ? { loginSourceScope: transportState.loginSourceScope }
-        : {}),
-      ...(transportState?.kernelGeneration !== undefined
-        ? { kernelGeneration: transportState.kernelGeneration }
         : {}),
       ...(credentialExpiryScheduleId ? { credentialExpiryScheduleId } : {}),
       clientId: clientId || undefined,
@@ -7143,13 +6741,14 @@ export class Kernel extends Host<Env> {
     if (outcome.identity.role === "user") {
       const freshIdentity = outcome.identity.process;
       await ensureDefaultConversationExecutor(ctx, freshIdentity);
-      if (
-        this.instanceKind === "user"
-        && !this.hasActiveUserKernelGeneration(transportState?.kernelGeneration)
-      ) {
-        return;
+      if (this.instanceKind === "user") {
+        try {
+          await this.requireActiveUserKernel();
+        } catch {
+          return;
+        }
       }
-      this.reconcileOwnedIdentities(freshIdentity.uid);
+      await this.reconcileOwnedIdentities(freshIdentity.uid);
     }
 
     this.sendOk(connection, frame.id, outcome.result);
@@ -7506,44 +7105,17 @@ export class Kernel extends Host<Env> {
     record: StoredScheduleRecord,
     mode: "due" | "force",
   ): Promise<ScheduleRunResult> {
-    let releaseMasterOperation: (() => void) | null = null;
     if (this.instanceKind === "master") {
-      const placement = this.userKernels.getByUid(record.ownerUid);
-      releaseMasterOperation = placement?.lifecycle === "legacy"
-        && this.appRuntimes.getLifecycleFence(placement.uid) === null
-        ? this.beginMasterUserOperation(placement.username)
-        : null;
-      if (!releaseMasterOperation) {
-        return skippedScheduleResult(record.id, "schedule owner runtime is not active");
-      }
+      return skippedScheduleResult(record.id, "schedule owner runtime is not active");
     }
-    let operation: UserKernelTargetOperationLease;
-    try {
-      operation = this.beginUserKernelTargetOperation(
-        this.instanceKind === "user"
-          ? this.userKernelMarker?.generation ?? 0
-          : 0,
-        { packageStamped: typeof record.packageSecurityRevision === "string" },
-      );
-    } catch (error) {
-      releaseMasterOperation?.();
-      throw error;
-    }
-    try {
-      return await this.runAdmittedScheduleRecord(record, mode, operation);
-    } finally {
-      operation.release();
-      releaseMasterOperation?.();
-    }
+    return this.runAdmittedScheduleRecord(record, mode);
   }
 
   private async runAdmittedScheduleRecord(
     record: StoredScheduleRecord,
     mode: "due" | "force",
-    operation: UserKernelTargetOperationLease,
   ): Promise<ScheduleRunResult> {
     const kernelMarker = await this.requireActiveUserKernel();
-    operation.assertCurrent();
     const now = Date.now();
     const scheduledAtMs = record.state.nextRunAtMs;
 
@@ -7559,18 +7131,17 @@ export class Kernel extends Host<Env> {
       return skippedScheduleResult(record.id, "schedule is already running");
     }
 
-    const scheduleIdentity = this.resolveScheduleIdentity(record);
+    const scheduleIdentity = await this.resolveScheduleIdentity(record);
     const requiredCall = scheduleRequiredCall(record);
     if (!await this.authorizeCurrentPackageAgentRuntime(
       record.ownerUid,
-      scheduleIdentity,
+      scheduleIdentity.process,
       record.packageSecurityRevision,
       requiredCall,
     )) {
       await this.disableRevokedSchedule(record, "Schedule package-agent authority was revoked");
       return skippedScheduleResult(record.id, "schedule package-agent authority was revoked");
     }
-    operation.assertCurrent();
 
     const startedAtMs = Date.now();
     const running = this.schedules.markRunning(record.id, startedAtMs);
@@ -7579,7 +7150,7 @@ export class Kernel extends Host<Env> {
     }
 
     const controller = new AbortController();
-    const runSignal = AbortSignal.any([controller.signal, operation.signal]);
+    const runSignal = controller.signal;
     this.activeScheduleRuns.set(record.id, controller);
     try {
       let status: "ok" | "error" = "ok";
@@ -7592,7 +7163,7 @@ export class Kernel extends Host<Env> {
           scheduledAtMs,
           startedAtMs,
           runSignal,
-          operation,
+          scheduleIdentity,
         );
       } catch (err) {
         status = "error";
@@ -7602,28 +7173,10 @@ export class Kernel extends Host<Env> {
 
       const stillAuthorized = await this.authorizeCurrentPackageAgentRuntime(
         record.ownerUid,
-        scheduleIdentity,
+        scheduleIdentity.process,
         record.packageSecurityRevision,
         requiredCall,
       );
-      try {
-        operation.assertCurrent();
-      } catch {
-        const finishedAtMs = Date.now();
-        const staleError = !this.isCurrentUserKernelMarker(kernelMarker)
-          ? "User Kernel lifecycle changed during schedule run"
-          : operation.signal.reason instanceof Error
-            ? operation.signal.reason.message
-            : "Schedule authority changed during execution";
-        return {
-          scheduleId: record.id,
-          status: "error",
-          error: staleError,
-          summary: scheduleResultSummary(record, { error: staleError }),
-          durationMs: Math.max(0, finishedAtMs - startedAtMs),
-          nextRunAtMs: null,
-        };
-      }
       if (!stillAuthorized) {
         status = "error";
         error = "Schedule package-agent authority was revoked during execution";
@@ -7698,10 +7251,10 @@ export class Kernel extends Host<Env> {
     scheduledAtMs: number | null,
     firedAtMs: number,
     signal?: AbortSignal,
-    operation?: UserKernelTargetOperationLease,
+    identity?: ConnectionIdentity,
   ): Promise<unknown> {
     const target = record.target;
-    const ctx = this.buildScheduleContext(record, signal, operation);
+    const ctx = this.buildScheduleContext(record, identity, signal);
     if (target.kind === "command.exec") {
       if (!hasCapability(ctx.identity?.capabilities ?? [], "shell.exec")) {
         throw new Error("Permission denied: shell.exec");
@@ -7819,27 +7372,20 @@ export class Kernel extends Host<Env> {
 
   private buildScheduleContext(
     record: ScheduleRecord,
+    identity?: ConnectionIdentity,
     requestSignal?: AbortSignal,
-    targetOperation?: UserKernelTargetOperationLease,
   ): KernelContext {
-    const process = this.resolveScheduleIdentity(record);
-    const identity: ConnectionIdentity = {
-      role: "user",
-      process,
-      capabilities: this.caps.resolve(process.gids),
-    };
+    if (!identity) throw new Error("Schedule identity is unavailable");
 
     return this.buildKernelContext({
       identity,
       callerOwnerUid: record.ownerUid,
       requestSignal,
-      targetOperation,
     });
   }
 
   private isCurrentUserKernelMarker(
     expected: UserKernelInstanceMarker | null,
-    options: { allowLifecycleFence?: boolean } = {},
   ): boolean {
     if (expected === null) {
       return this.instanceKind === "master";
@@ -7850,31 +7396,31 @@ export class Kernel extends Host<Env> {
       && current.lifecycle === "active"
       && current.username === expected.username
       && current.uid === expected.uid
-      && current.generation === expected.generation
-      && (
-        options.allowLifecycleFence === true
-        || this.appRuntimes.getLifecycleFence(current.uid) === null
-      )
     );
   }
 
-  private resolveScheduleIdentity(record: ScheduleRecord): ProcessIdentity {
-    const uid = record.runAs.uid;
-    const account = this.auth.getPasswdByUid(uid);
-    if (!account) {
-      throw new Error(`Cannot resolve schedule run-as uid ${uid}`);
+  private async resolveScheduleIdentity(record: ScheduleRecord): Promise<ConnectionIdentity> {
+    const marker = await this.requireActiveUserKernel();
+    if (this.instanceKind !== "user" || !marker || marker.uid !== record.ownerUid) {
+      throw new Error("Schedule owner runtime is not active");
     }
-    if (account.username !== record.runAs.username) {
-      throw new Error(`Schedule run-as authority was revoked for uid ${uid}`);
+    const master = await getAgentByName(
+      this.env.KERNEL,
+      SHIP_KERNEL_NAME,
+    ) as unknown as MasterKernelControlStub;
+    const resolved = await master.resolveAccountIdentity({
+      sourceKernelName: this.name,
+      uid: marker.uid,
+      ownerUid: record.ownerUid,
+      actorUid: record.runAs.uid,
+    });
+    if (!resolved.ok || resolved.identity.username !== record.runAs.username) {
+      throw new Error(`Schedule run-as authority was revoked for uid ${record.runAs.uid}`);
     }
-
     return {
-      uid: account.uid,
-      gid: account.gid,
-      gids: this.auth.resolveGids(account.username, account.gid),
-      username: account.username,
-      home: account.home,
-      cwd: account.home,
+      role: "user",
+      process: resolved.identity,
+      capabilities: resolved.capabilities,
     };
   }
 
@@ -8001,23 +7547,32 @@ export class Kernel extends Host<Env> {
 
   /**
    * Reconcile the run-as identity of every process owned by `ownerUid` against
-   * the auth store. Each process keeps its run-as account (preserving the
-   * personal-agent split); only group/home/gid drift for that account is
-   * refreshed, and identity.changed is emitted when it changes.
+   * the Master account directory. Each process keeps its run-as account
+   * (preserving the personal-agent split); only group/home/gid drift for that
+   * account is refreshed, and identity.changed is emitted when it changes.
    */
-  private reconcileOwnedIdentities(ownerUid: number): void {
+  private async reconcileOwnedIdentities(ownerUid: number): Promise<void> {
     for (const proc of this.procs.list(ownerUid)) {
-      const entry = this.auth.getPasswdByUsername(proc.username);
-      if (!entry) continue;
-
-      const fresh: ProcessIdentity = {
-        uid: entry.uid,
-        gid: entry.gid,
-        gids: this.auth.resolveGids(entry.username, entry.gid),
-        username: entry.username,
-        home: entry.home,
-        cwd: proc.cwd,
-      };
+      let fresh: ProcessIdentity | null = null;
+      if (this.instanceKind === "user") {
+        const resolved = await this.resolveUserKernelAccountIdentity(proc.uid);
+        if (resolved.ok && resolved.identity.username === proc.username) {
+          fresh = { ...resolved.identity, cwd: proc.cwd };
+        }
+      } else {
+        const entry = this.auth.getPasswdByUsername(proc.username);
+        if (entry) {
+          fresh = {
+            uid: entry.uid,
+            gid: entry.gid,
+            gids: this.auth.resolveGids(entry.username, entry.gid),
+            username: entry.username,
+            home: entry.home,
+            cwd: proc.cwd,
+          };
+        }
+      }
+      if (!fresh) continue;
 
       if (
         proc.gid === fresh.gid &&
@@ -8060,7 +7615,6 @@ export class Kernel extends Host<Env> {
             targetKernelName: userKernelName(placement.username),
             username: placement.username,
             uid,
-            generation: placement.generation,
             signal,
             ...(payloadJson === undefined ? {} : { payloadJson }),
           };
@@ -8082,7 +7636,6 @@ export class Kernel extends Host<Env> {
               authorization,
               username: placement.username,
               uid,
-              generation: placement.generation,
               signal,
               ...(payloadJson === undefined ? {} : { payloadJson }),
             });
@@ -8097,7 +7650,7 @@ export class Kernel extends Host<Env> {
         }));
         return;
       }
-      if (placement && placement.lifecycle !== "legacy") {
+      if (placement) {
         return;
       }
     }
@@ -8120,59 +7673,50 @@ export class Kernel extends Host<Env> {
   }
 
   async receiveMasterUserSignal(input: MasterUserSignalTargetInput): Promise<boolean> {
-    let operation: UserKernelTargetOperationLease;
     try {
-      operation = this.beginUserKernelTargetOperation(input.generation);
-    } catch {
-      return false;
-    }
-    try {
-      const marker = await this.requireActiveUserKernel(input.generation);
-      operation.assertCurrent();
-    if (
-      !marker
-      || input.sourceKernelName !== SHIP_KERNEL_NAME
-      || typeof input.authorization !== "string"
-      || input.authorization.length === 0
-      || input.username !== marker.username
-      || marker.uid !== input.uid
-      || typeof input.signal !== "string"
-      || input.signal.length === 0
-      || input.signal.length > 128
-      || (input.payloadJson !== undefined && typeof input.payloadJson !== "string")
-    ) {
-      return false;
-    }
-
-    let payload: unknown;
-    if (input.payloadJson !== undefined) {
-      try {
-        payload = JSON.parse(input.payloadJson);
-      } catch {
+      const marker = await this.requireActiveUserKernel();
+      if (
+        !marker
+        || input.sourceKernelName !== SHIP_KERNEL_NAME
+        || typeof input.authorization !== "string"
+        || input.authorization.length === 0
+        || input.username !== marker.username
+        || marker.uid !== input.uid
+        || typeof input.signal !== "string"
+        || input.signal.length === 0
+        || input.signal.length > 128
+        || (input.payloadJson !== undefined && typeof input.payloadJson !== "string")
+      ) {
         return false;
       }
-    }
-    const master = await getAgentByName(
-      this.env.KERNEL,
-      SHIP_KERNEL_NAME,
-    ) as unknown as MasterKernelControlStub;
-    const authorized = await master.consumeMasterUserSignalAuthorization({
-      authorization: input.authorization,
-      targetKernelName: this.name,
-      username: marker.username,
-      uid: marker.uid,
-      generation: marker.generation,
-      signal: input.signal,
-      ...(input.payloadJson === undefined ? {} : { payloadJson: input.payloadJson }),
-    });
-    if (!authorized || !this.isCurrentUserKernelMarker(marker)) {
+
+      let payload: unknown;
+      if (input.payloadJson !== undefined) {
+        try {
+          payload = JSON.parse(input.payloadJson);
+        } catch {
+          return false;
+        }
+      }
+      const master = await getAgentByName(
+        this.env.KERNEL,
+        SHIP_KERNEL_NAME,
+      ) as unknown as MasterKernelControlStub;
+      const authorized = await master.consumeMasterUserSignalAuthorization({
+        authorization: input.authorization,
+        targetKernelName: this.name,
+        username: marker.username,
+        uid: marker.uid,
+        signal: input.signal,
+        ...(input.payloadJson === undefined ? {} : { payloadJson: input.payloadJson }),
+      });
+      if (!authorized || !this.isCurrentUserKernelMarker(marker)) {
+        return false;
+      }
+      this.broadcastToUserUid(marker.uid, input.signal, payload);
+      return true;
+    } catch {
       return false;
-    }
-    operation.assertCurrent();
-    this.broadcastToUserUid(marker.uid, input.signal, payload);
-    return true;
-    } finally {
-      operation.release();
     }
   }
 
@@ -8250,12 +7794,19 @@ export class Kernel extends Host<Env> {
    */
   private rehydrateConnections(): void {
     const live = this.getConnections<ConnectionState>();
+    const masterRuntimeClosed = this.instanceKind === "master"
+      && !this.auth.isSetupMode()
+      && !isSetupCommissioningPending(this.config);
 
     const onlineTargets = new Set<string>();
 
     for (const connection of live) {
       const state = connection.state;
       if (!state || state.step !== "connected" || !state.identity) continue;
+      if (masterRuntimeClosed) {
+        connection.close(1008, "Username-scoped connection required");
+        continue;
+      }
       if (!this.isConnectionCredentialActive(state)) {
         connection.close(1008, "Authentication expired");
         continue;
@@ -8325,38 +7876,13 @@ export class Kernel extends Host<Env> {
   }
 }
 
-function sameUserKernelLifecycleAuthorization(
-  expected: Omit<UserKernelLifecycleAuthorizationInput, "authorization">,
-  actual: UserKernelLifecycleAuthorizationInput,
-): boolean {
-  return expected.targetKernelName === actual.targetKernelName
-    && expected.username === actual.username
-    && expected.uid === actual.uid
-    && expected.expectedLifecycle === actual.expectedLifecycle
-    && expected.expectedGeneration === actual.expectedGeneration
-    && expected.lifecycle === actual.lifecycle
-    && expected.generation === actual.generation;
-}
-function sameAdapterInboundAuthorization(
-  expected: Omit<AdapterInboundAuthorizationInput, "authorization">,
-  actual: AdapterInboundAuthorizationInput,
-): boolean {
-  return expected.targetKernelName === actual.targetKernelName
-    && expected.username === actual.username
-    && expected.ownerUid === actual.ownerUid
-    && expected.generation === actual.generation
-    && expected.linkGeneration === actual.linkGeneration
-    && sameAdapterInboundRouteMetadata(expected, actual);
-}
-
 function sameMasterUserSignalAuthorization(
   expected: Omit<MasterUserSignalAuthorizationInput, "authorization">,
   actual: MasterUserSignalAuthorizationInput,
 ): boolean {
-  return expected.targetKernelName === actual.targetKernelName
+    return expected.targetKernelName === actual.targetKernelName
     && expected.username === actual.username
     && expected.uid === actual.uid
-    && expected.generation === actual.generation
     && expected.signal === actual.signal
     && expected.payloadJson === actual.payloadJson;
 }
@@ -8371,7 +7897,6 @@ function sameUserKernelInstanceMarker(
     && left.kind === right.kind
     && left.username === right.username
     && left.uid === right.uid
-    && left.generation === right.generation
     && left.lifecycle === right.lifecycle
     && left.updatedAt === right.updatedAt,
   );
@@ -8385,8 +7910,7 @@ function sameUserKernelPlacement(
     left
     && left.username === right.username
     && left.uid === right.uid
-    && left.lifecycle === right.lifecycle
-    && left.generation === right.generation,
+    && left.lifecycle === right.lifecycle,
   );
 }
 
@@ -8401,81 +7925,6 @@ function pruneExpiredAuthorizations<T extends { expiresAt: number }>(
   }
 }
 
-function describeUserKernelLifecycleTransition(
-  current: UserKernelRecord,
-  lifecycle: Extract<UserKernelLifecycle, "provisioning" | "suspended" | "retired">,
-): UserKernelLifecycleTargetRecord {
-  if (current.lifecycle === lifecycle) {
-    return { ...current, lifecycle };
-  }
-
-  if (lifecycle === "provisioning") {
-    if (current.lifecycle !== "legacy" && current.lifecycle !== "suspended") {
-      throw new Error(`User Kernel cannot provision from ${current.lifecycle}`);
-    }
-    return {
-      ...current,
-      lifecycle,
-      retiredAt: null,
-    };
-  }
-
-  if (lifecycle === "suspended") {
-    if (current.lifecycle !== "active") {
-      throw new Error(`User Kernel cannot suspend from ${current.lifecycle}`);
-    }
-    return {
-      ...current,
-      lifecycle,
-      generation: incrementUserKernelGeneration(current),
-      retiredAt: null,
-    };
-  }
-
-  if (current.lifecycle === "retired") {
-    return { ...current, lifecycle: "retired" };
-  }
-  return {
-    ...current,
-    lifecycle,
-    generation: incrementUserKernelGeneration(current),
-    retiredAt: Date.now(),
-  };
-}
-
-function isValidUserKernelLifecyclePredecessor(
-  existing: UserKernelInstanceMarker,
-  desired: UserKernelLifecycleTransition,
-): boolean {
-  if (
-    existing.username !== desired.username
-    || existing.uid !== desired.uid
-  ) {
-    return false;
-  }
-  if (desired.lifecycle === "provisioning") {
-    return existing.generation === desired.generation
-      && (existing.lifecycle === "active" || existing.lifecycle === "suspended");
-  }
-  if (desired.lifecycle === "suspended") {
-    return existing.lifecycle === "active"
-      && existing.generation + 1 === desired.generation;
-  }
-  return existing.lifecycle !== "retired"
-    && existing.generation + 1 === desired.generation;
-}
-
-function incrementUserKernelGeneration(current: UserKernelRecord): number {
-  if (
-    !Number.isSafeInteger(current.generation)
-    || current.generation <= 0
-    || current.generation >= Number.MAX_SAFE_INTEGER
-  ) {
-    throw new Error(`User Kernel generation mismatch for ${current.username}`);
-  }
-  return current.generation + 1;
-}
-
 function parseUserKernelInstanceMarker(value: unknown): UserKernelInstanceMarker | null {
   if (!value || typeof value !== "object") {
     return null;
@@ -8488,100 +7937,13 @@ function parseUserKernelInstanceMarker(value: unknown): UserKernelInstanceMarker
     || canonicalizeLoginUsername(marker.username) !== marker.username
     || !Number.isSafeInteger(marker.uid)
     || (marker.uid ?? -1) < 0
-    || !Number.isSafeInteger(marker.generation)
-    || (marker.generation ?? 0) <= 0
-    || !["provisioning", "active", "suspended", "retired"].includes(marker.lifecycle ?? "")
+    || !["provisioning", "active"].includes(marker.lifecycle ?? "")
     || typeof marker.updatedAt !== "number"
     || !Number.isFinite(marker.updatedAt)
   ) {
     throw new Error("User Kernel lifecycle marker is invalid");
   }
   return marker as UserKernelInstanceMarker;
-}function validateUserKernelProvisioningSnapshot(
-  snapshot: UserKernelProvisioningSnapshot,
-  expectedUsername: string,
-): void {
-  if (
-    snapshot.version !== 1
-    || snapshot.username !== expectedUsername
-    || canonicalizeLoginUsername(snapshot.username) !== snapshot.username
-    || !Number.isSafeInteger(snapshot.uid)
-    || snapshot.uid < 0
-    || !Number.isSafeInteger(snapshot.generation)
-    || snapshot.generation <= 0
-    || !Number.isSafeInteger(snapshot.projectionRevision)
-    || snapshot.projectionRevision <= 0
-    || !Array.isArray(snapshot.accounts)
-    || !Array.isArray(snapshot.groups)
-    || !Array.isArray(snapshot.capabilities)
-    || !Array.isArray(snapshot.config)
-    || !Array.isArray(snapshot.packages)
-  ) {
-    throw new Error("User Kernel provisioning snapshot is invalid");
-  }
-
-  const usernames = new Set<string>();
-  const uids = new Set<number>();
-  for (const account of snapshot.accounts) {
-    const entry = account?.entry;
-    if (
-      !entry
-      || canonicalizeLoginUsername(entry.username) !== entry.username
-      || !Number.isSafeInteger(entry.uid)
-      || entry.uid < 0
-      || !Number.isSafeInteger(entry.gid)
-      || entry.gid < 0
-      || typeof entry.gecos !== "string"
-      || typeof entry.home !== "string"
-      || typeof entry.shell !== "string"
-      || !["human", "agent", "system"].includes(account.kind)
-      || typeof account.locked !== "boolean"
-      || usernames.has(entry.username)
-      || uids.has(entry.uid)
-    ) {
-      throw new Error("User Kernel account projection is invalid");
-    }
-    usernames.add(entry.username);
-    uids.add(entry.uid);
-  }
-  const owner = snapshot.accounts.find((account) => account.entry.uid === snapshot.uid);
-  const isRootOwner = snapshot.uid === 0
-    && snapshot.username === "root"
-    && owner?.kind === "system";
-  if (
-    !owner
-    || owner.entry.username !== snapshot.username
-    || owner.locked
-    || (owner.kind !== "human" && !isRootOwner)
-    || snapshot.accounts.some((account) => account.kind === "agent" && !account.locked)
-  ) {
-    throw new Error("User Kernel owner projection is invalid");
-  }
-}
-
-async function userKernelProjectionDigest(
-  snapshot: UserKernelProvisioningSnapshot,
-): Promise<string> {
-  const canonical = JSON.stringify(canonicalizeProjectionDigestValue(snapshot));
-  const digest = await crypto.subtle.digest(
-    "SHA-256",
-    new TextEncoder().encode(canonical),
-  );
-  return `sha256:${Array.from(new Uint8Array(digest), (byte) => (
-    byte.toString(16).padStart(2, "0")
-  )).join("")}`;
-}
-
-function canonicalizeProjectionDigestValue(value: unknown): unknown {
-  if (Array.isArray(value)) {
-    return value.map(canonicalizeProjectionDigestValue);
-  }
-  if (!value || typeof value !== "object") return value;
-  return Object.fromEntries(
-    Object.entries(value as Record<string, unknown>)
-      .sort(([left], [right]) => left.localeCompare(right))
-      .map(([key, entry]) => [key, canonicalizeProjectionDigestValue(entry)]),
-  );
 }
 
 function scheduleRequiredCall(record: ScheduleRecord): string | undefined {
@@ -8593,54 +7955,6 @@ function scheduleRequiredCall(record: ScheduleRecord): string | undefined {
     case "process.event":
       return "proc.send";
   }
-}
-
-function sameAppRunnerRuntimeFenceIdentity(
-  left: AppRunnerRuntimeFenceIdentity,
-  right: AppRunnerRuntimeFenceIdentity,
-): boolean {
-  return left.fenceKind === right.fenceKind
-    && left.sourceKernelName === right.sourceKernelName
-    && left.runnerName === right.runnerName
-    && left.ownerUid === right.ownerUid
-    && left.ownerUsername === right.ownerUsername
-    && left.kernelOwnerUid === right.kernelOwnerUid
-    && left.kernelOwnerUsername === right.kernelOwnerUsername
-    && left.packageId === right.packageId
-    && left.generation === right.generation
-    && left.fenceId === right.fenceId;
-}
-
-function samePackageProjectionFenceAuthorization(
-  left: Omit<PackageProjectionFenceAuthorizationInput, "authorization">,
-  right: PackageProjectionFenceAuthorizationInput,
-): boolean {
-  return left.targetKernelName === right.targetKernelName
-    && left.username === right.username
-    && left.uid === right.uid
-    && left.generation === right.generation
-    && left.fenceId === right.fenceId;
-}
-
-async function mapWithConcurrency<T, R>(
-  values: readonly T[],
-  concurrency: number,
-  mapper: (value: T, index: number) => Promise<R>,
-): Promise<R[]> {
-  const results = new Array<R>(values.length);
-  let cursor = 0;
-  const worker = async (): Promise<void> => {
-    while (cursor < values.length) {
-      const index = cursor;
-      cursor += 1;
-      results[index] = await mapper(values[index], index);
-    }
-  };
-  await Promise.all(Array.from(
-    { length: Math.min(values.length, Math.max(1, Math.floor(concurrency))) },
-    () => worker(),
-  ));
-  return results;
 }
 
 function errorMessage(error: unknown): string {
@@ -8661,6 +7975,25 @@ export function findAppFrameEntrypoint(
     }
     return false;
   }) ?? null;
+}
+
+function isPreservedAppRuntimeDescriptor(
+  value: unknown,
+): value is PreservedAppRuntimeDescriptor {
+  if (!value || typeof value !== "object") return false;
+  const runtime = value as Record<string, unknown>;
+  return Number.isSafeInteger(runtime.uid)
+    && (runtime.uid as number) >= 0
+    && typeof runtime.username === "string"
+    && runtime.username.length > 0
+    && typeof runtime.packageId === "string"
+    && runtime.packageId.length > 0
+    && typeof runtime.packageName === "string"
+    && runtime.packageName.length > 0
+    && typeof runtime.entrypointName === "string"
+    && runtime.entrypointName.length > 0
+    && typeof runtime.routeBase === "string"
+    && runtime.routeBase.length > 0;
 }
 
 async function cancelUnlockedBody(body: FrameBody | undefined, reason: string): Promise<void> {

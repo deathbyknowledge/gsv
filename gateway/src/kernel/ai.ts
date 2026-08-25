@@ -206,9 +206,11 @@ function createAiConfigSnapshot(
   } as unknown as KernelContext["config"];
 }
 
-async function withAiConfigSnapshot(ctx: KernelContext): Promise<KernelContext> {
+async function withAiConfigSnapshot(
+  ctx: KernelContext,
+  owner: ProcessIdentity | null,
+): Promise<KernelContext> {
   const uid = ctx.identity?.process.uid ?? 0;
-  const owner = resolveOwnerIdentity(ctx);
   const accountUids = withRootAiProfileScope(resolveAiConfigAccountUids(uid, owner));
   const entries = new Map<string, string>();
   const lists = await Promise.all([
@@ -264,10 +266,10 @@ export async function handleAiConfig(
   args: AiConfigArgs,
   ctx: KernelContext,
 ): Promise<AiConfigResult> {
-  ctx = await withAiConfigSnapshot(ctx);
-  const config = ctx.config;
   const uid = ctx.identity?.process.uid ?? 0;
-  const owner = resolveOwnerIdentity(ctx);
+  const owner = await resolveOwnerIdentity(ctx);
+  ctx = await withAiConfigSnapshot(ctx, owner);
+  const config = ctx.config;
   const accountConfigUids = resolveAiConfigAccountUids(uid, owner);
   const input = args && typeof args === "object" ? args : ({} as AiConfigArgs);
   const processOverrides = resolveEffectiveAiProcessOverrides(
@@ -738,7 +740,8 @@ async function resolveAiTextGenerationConfig(
   input: AiTextGenerateConfig | undefined,
   ctx: KernelContext,
 ): Promise<AiConfigResult> {
-  ctx = await withAiConfigSnapshot(ctx);
+  const owner = await resolveOwnerIdentity(ctx);
+  ctx = await withAiConfigSnapshot(ctx, owner);
   const requested = input && typeof input === "object" ? input : undefined;
   const overrides = {
     ...normalizeAiProcessOverrideValues(requested?.processOverrides ?? {}),
@@ -767,7 +770,6 @@ async function resolveAiTextGenerationConfig(
   }
 
   const uid = ctx.identity?.process.uid ?? 0;
-  const owner = resolveOwnerIdentity(ctx);
   const ownerUid = resolveAiProfileOwnerUid(ctx, uid, owner);
   const profile = findProcessAiModelProfile(
     ctx.config.get(`users/${ownerUid}/ai/model_profiles`),
@@ -923,22 +925,22 @@ function normalizeTimestamp(value: unknown): number {
  * a distinct agent account (owner_uid differs from the run-as uid). Returns null
  * for processes that run as their own owner or for non-process callers.
  */
-function resolveOwnerIdentity(ctx: KernelContext): ProcessIdentity | null {
+async function resolveOwnerIdentity(ctx: KernelContext): Promise<ProcessIdentity | null> {
   if (!ctx.processId) return null;
   const ownerUid = ctx.procs.getOwnerUid(ctx.processId);
   if (ownerUid === null) return null;
   const runAsUid = ctx.identity?.process.uid;
   if (ownerUid === runAsUid) return null;
 
-  const entry = ctx.auth.getPasswdByUid(ownerUid);
-  if (!entry) return null;
+  const account = await ctx.accountGet({ uid: ownerUid });
+  if (!account || account.state !== "active") return null;
   return {
-    uid: entry.uid,
-    gid: entry.gid,
-    gids: ctx.auth.resolveGids(entry.username, entry.gid),
-    username: entry.username,
-    home: entry.home,
-    cwd: entry.home,
+    uid: account.uid,
+    gid: account.gid,
+    gids: account.gids,
+    username: account.username,
+    home: account.home,
+    cwd: account.home,
   };
 }
 
@@ -1197,15 +1199,16 @@ async function resolveAiTranscriptionStacksForContext(ctx: KernelContext): Promi
   fallback?: AiTranscriptionStack;
 }> {
   const resolution = await resolveAiMediaContext(ctx);
+  const configContext = resolution.context;
   const primary = resolveAiMediaConfig(
-    ctx.config,
+    configContext.config,
     resolution.accountUids,
     resolution.accountProfileOverrides,
     resolution.defaultApiKey,
     resolution.processOverrides,
   );
   const fallbackSelection = resolveAiFallbackSelection(
-    ctx,
+    configContext,
     resolution.accountUids,
     resolution.accountProfileOverrides,
     resolution.processOverrides,
@@ -1214,7 +1217,7 @@ async function resolveAiTranscriptionStacksForContext(ctx: KernelContext): Promi
     return { primary };
   }
   const profile = findAiAccountModelProfile(
-    ctx.config,
+    configContext.config,
     fallbackSelection.accountUids,
     fallbackSelection.accountUids[0],
     fallbackSelection.selector,
@@ -1232,7 +1235,7 @@ async function resolveAiTranscriptionStacksForContext(ctx: KernelContext): Promi
     return { primary };
   }
   const fallbackMedia = resolveAiMediaConfig(
-    ctx.config,
+    configContext.config,
     fallbackSelection.accountUids,
     new Map(),
     resolveAiProcessConfigValue(profile.values, "api_key") ?? resolution.defaultApiKey,
@@ -1262,7 +1265,7 @@ function isSameAiTranscriptionStack(
 async function resolveAiMediaConfigForContext(ctx: KernelContext): Promise<NonNullable<AiConfigResult["media"]>> {
   const resolution = await resolveAiMediaContext(ctx);
   return resolveAiMediaConfig(
-    ctx.config,
+    resolution.context.config,
     resolution.accountUids,
     resolution.accountProfileOverrides,
     resolution.defaultApiKey,
@@ -1271,14 +1274,15 @@ async function resolveAiMediaConfigForContext(ctx: KernelContext): Promise<NonNu
 }
 
 async function resolveAiMediaContext(ctx: KernelContext): Promise<{
+  context: KernelContext;
   accountUids: number[];
   accountProfileOverrides: AiAccountProfileOverrides;
   processOverrides: Record<string, string>;
   defaultApiKey: string;
 }> {
-  ctx = await withAiConfigSnapshot(ctx);
+  const owner = await resolveOwnerIdentity(ctx);
+  ctx = await withAiConfigSnapshot(ctx, owner);
   const uid = ctx.identity?.process.uid ?? 0;
-  const owner = resolveOwnerIdentity(ctx);
   const accountConfigUids = resolveAiConfigAccountUids(uid, owner);
   const processOverrides = await resolveAiProcessOverridesForContext(ctx, uid, owner);
   const accountProfileOverrides = resolveAiAccountProfileOverrides(ctx.config, accountConfigUids);
@@ -1288,6 +1292,7 @@ async function resolveAiMediaContext(ctx: KernelContext): Promise<{
     ctx.config.get("config/ai/api_key") ??
     "";
   return {
+    context: ctx,
     accountUids: accountConfigUids,
     accountProfileOverrides,
     processOverrides,

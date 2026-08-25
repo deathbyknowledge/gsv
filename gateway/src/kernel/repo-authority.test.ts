@@ -74,7 +74,7 @@ function makeRepoContext(input: {
 function makeMaster(
   context: KernelContext,
   options: {
-    authorize?: (proof: { generation: number; kernelCapability: string }) => boolean;
+    authorize?: (proof: { sourceKernelName: string; uid: number }) => boolean;
     identity?: () => ConnectionIdentity | null;
   } = {},
 ) {
@@ -82,13 +82,12 @@ function makeMaster(
     username: "alice",
     uid: 1000,
     lifecycle: "active",
-    generation: 4,
   };
   const kernel = Object.create(Kernel.prototype) as any;
   Object.defineProperty(kernel, "name", { value: "singleton" });
   kernel.authorizeUserKernelSource = vi.fn((proof) => (
     (options.authorize?.(proof)
-      ?? (proof.generation === 4))
+      ?? (proof.sourceKernelName === "user:alice" && proof.uid === 1000))
       ? placement
       : null
   ));
@@ -110,7 +109,6 @@ function repoAuthorizationInput(overrides: Record<string, unknown> = {}) {
   return {
     sourceKernelName: "user:alice",
     callerOwnerUid: 1000,
-    generation: 4,
     identity: ALICE_IDENTITY,
     call: "repo.read",
     repo: "bob/notes",
@@ -248,8 +246,8 @@ describe("authoritative user-Kernel repository operations", () => {
     expect(authorizeRepoOperation).toHaveBeenCalledTimes(2);
   });
 
-  it("rejects tampered and stale-generation capability replays without touching RIPGIT", async () => {
-    let activeGeneration = 4;
+  it("rejects forged and inactive user-Kernel placements without touching RIPGIT", async () => {
+    let placementActive = true;
     const masterRipgit = { fetch: vi.fn() } as unknown as Fetcher;
     const kernel = makeMaster(
       makeRepoContext({
@@ -257,14 +255,16 @@ describe("authoritative user-Kernel repository operations", () => {
         ripgit: masterRipgit,
       }),
       {
-        authorize: (proof) => proof.generation === activeGeneration,
+        authorize: (proof) => placementActive
+          && proof.sourceKernelName === "user:alice"
+          && proof.uid === 1000,
       },
     );
 
     await expect(kernel.authorizeUserRepoOperation(repoAuthorizationInput({
-      generation: 3,
+      sourceKernelName: "user:bob",
     }))).resolves.toMatchObject({ ok: false, error: { code: 401 } });
-    activeGeneration = 5;
+    placementActive = false;
     await expect(kernel.authorizeUserRepoOperation(repoAuthorizationInput()))
       .resolves.toMatchObject({ ok: false, error: { code: 401 } });
     expect(masterRipgit.fetch).not.toHaveBeenCalled();

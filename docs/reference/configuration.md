@@ -1,24 +1,16 @@
 # Configuration Reference
 
-GSV configuration is a logical SQLite-backed key/value namespace. During the
-current routing transition, both system-wide `config/` values and authoritative
-per-user `users/{uid}/` values live in the Master Control Program named
-`singleton`. Filtered values are copied into each active user Kernel as a
-runtime projection. Keys are slash-separated strings and explicit overrides are
-stored as strings.
+GSV configuration is a logical SQLite-backed key/value namespace. Both
+system-wide `config/` values and authoritative per-user `users/{uid}/` values
+live only in the Master Control Program named `singleton`. Active user Kernels
+perform filtered live reads and writes through typed Master RPCs; they do not
+persist a second configuration store. Keys are slash-separated strings and
+explicit overrides are stored as strings.
 
-After a successful authoritative write, `config/*` changes refresh every active
-user Kernel, while `users/{uid}/*` changes refresh only that uid's active
-placement. Targets pull the current filtered Master snapshot instead of applying
-the invalidation payload, so delayed invalidations cannot restore stale values.
-Connected user clients receive `config.changed` after their local projection is
-current.
-
-The v21 projection clock assigns the complete filtered snapshot a monotonic
-Master revision and SHA-256 digest. A user Kernel rejects revision rollback and
-different bytes under the same revision. Package-authority mutations use an
-additional durable package fence and do not reopen package runtime admission
-until active targets install the exact committed revision.
+Successful writes are immediately authoritative for subsequent reads. Runtime
+code that needs several related values takes one bounded snapshot through the
+same typed interface rather than reading user-Kernel SQLite. Callers must not
+treat a local cache or a `config.changed` notification as authority.
 
 The combined authorized view is exposed through:
 
@@ -161,7 +153,7 @@ not a writable configuration key.
 ## Package Config
 
 Package-related config uses the same logical namespace while retaining the same
-Master-versus-user ownership split:
+Master authority and per-user visibility rules:
 
 | Key Pattern | Description |
 |---|---|

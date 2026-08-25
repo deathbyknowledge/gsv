@@ -15,11 +15,11 @@ The Gateway includes accessible online devices in `ai.tools` context and in `sys
 
 On an active user Kernel, that catalog is shard-local. Cross-user device
 discovery and forwarding, including root access from `user:root`, are not
-implemented and fail closed. Adapter workers also expose shell-backed targets
-in the legacy Kernel, but active user Kernels do not yet receive the
-adapter-account/status/link projection needed to discover those targets. Both
-cross-shard device routing and adapter-shell target discovery are multiuser
-release gates.
+implemented and fail closed. Adapter-backed shell targets are a separate
+command surface from adapter messaging: they require an explicit target,
+capability decision, and route through the owning user Kernel. Adapter-shell
+target discovery remains a multiuser release gate; an external identity link
+alone never grants shell access.
 
 ## Agent-Visible Tools
 

@@ -199,7 +199,7 @@ function deviceRecordToTarget(ctx: KernelContext, record: DeviceRecord): TargetD
     targetId: record.device_id,
     providerId: "device",
     ownerUid: record.owner_uid,
-    ownerUsername: ctx.auth.getPasswdByUid(record.owner_uid)?.username ?? null,
+    ownerUsername: targetOwnerUsername(ctx, record.owner_uid),
     label: record.label,
     description: record.description,
     platform: record.platform,
@@ -225,7 +225,7 @@ function adapterTargetToDescriptor(ctx: KernelContext, target: AdapterTarget): T
     targetId: target.targetId,
     providerId: "adapter",
     ownerUid,
-    ownerUsername: ctx.auth.getPasswdByUid(ownerUid)?.username
+    ownerUsername: targetOwnerUsername(ctx, ownerUid)
       ?? (identity?.uid === ownerUid ? identity.username : null),
     label: target.label,
     description: target.description,
@@ -244,4 +244,11 @@ function adapterTargetToDescriptor(ctx: KernelContext, target: AdapterTarget): T
       accountId: target.accountId,
     },
   };
+}
+
+function targetOwnerUsername(ctx: KernelContext, ownerUid: number): string | null {
+  if (ctx.kernelKind === "user") {
+    return ctx.kernelOwnerUid === ownerUid ? ctx.kernelUsername ?? null : null;
+  }
+  return ctx.auth.getPasswdByUid(ownerUid)?.username ?? null;
 }

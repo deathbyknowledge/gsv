@@ -114,42 +114,25 @@ Every other public method is exposed as backend RPC.
 
 ### Runtime authority and routing
 
-An active browser session uses a generation-bound route handle. It binds the
-owner's canonical username and uid, user-Kernel generation, expiry, nonce, and a
-Master-issued P-256 placement certificate into a user-Kernel HMAC. The Gateway
-verifies the certificate before it selects `user:<username>`; that Kernel then
-verifies the HMAC, active marker, local session, package revision, artifact, and
-entrypoint. The user Kernel resolves session metadata; admitted request and
-response bodies flow between the Gateway and AppRunner rather than through
-`singleton`.
-
-A generation-less UUID is an explicit legacy compatibility form only. It is
-accepted through `singleton` only while the account placement is still
-`legacy`; current user-Kernel sessions never fall back to it.
+An active browser session uses a bounded route handle of the form
+`gsv1b~username~uid~expiresAt~nonce~signature`. The signature is a local
+user-Kernel HMAC over the locator fields. The Gateway parses the canonical
+username and bounds to select `user:<username>`; that Kernel then verifies its
+active marker, the HMAC, expiry, launch/client secret, and exact local session.
+The user Kernel resolves session metadata; admitted request and response bodies
+flow between the Gateway and AppRunner rather than through `singleton`.
 
 Every AppRunner-owned HTTP, socket, RPC, command, signal, SQL, outbound, and
-daemon path supplies its exact current control or data object name during
-Kernel authorization. Migration v22 records that object only after successful
-authorization, binding the package actor username/uid, controlling Kernel-owner
-username/uid, and package id. The Kernel owner, run-as actor, and package
-jointly determine the physical
-`app-control-v3:<kernelOwnerUid>:<actorUid>:<encodedPackageId>` or
-`app-data-v2:<kernelOwnerUid>:<actorUid>:<encodedPackageId>` name; the human
-Kernel owner determines which user Kernel may exercise package/lifecycle fence
-authority. A registry write failure denies the call, and the deterministic
-object name alone grants nothing.
+daemon path is scoped to one run-as actor uid and package. The deterministic
+object name is `app:<actorUid>:<packageId>`, but that name grants no
+authority. Before admission, the active user Kernel asks the Master to validate
+the current account, enabled/reviewed package, artifact hash, entrypoint, and
+requested call. Package-to-platform calls carry an exact app frame and are
+reauthorized through the same user Kernel.
 
-Package-authority and user-lifecycle transitions persist a gate in each observed
-AppRunner, close admission and sockets, abort tracked cancelable request,
-response, and outbound streams, delete alarms, and wait for tracked SQL,
-command, signal, and daemon wrappers to release before the Kernel fence clears.
-Preparing the fence first persists a monotonic, never-reused runtime epoch.
-Loader RPC promises without a cancellation handle are abandoned when their
-wrapper is aborted and remain observed; Loader keys, entrypoints, and every
-package-to-platform call carry the exact epoch, so late work from the revoked
-epoch cannot acquire current authority. Package code must not detach
-authority-bearing work past the tracked call/stream lifetime and must not rely
-on a late result being accepted after its authority revision changes.
+Package code must not detach authority-bearing work beyond the lifetime of the
+request, stream, socket, or scheduled callback that owns it. Cancellation and
+cleanup remain the responsibility of the component that accepts that work.
 
 ## Browser Client
 
@@ -293,22 +276,14 @@ Rules:
 
 Current behavior:
 
-- the storage boundary is the immutable controlling Kernel-owner uid/run-as
-  actor uid/package tuple, physically named
-  `app-data-v2:<kernelOwnerUid>:<actorUid>:<encodedPackageId>`
-- package SQL runs in a data-only Durable Object physically separate from app
-  sessions, daemon schedules, and schema migration control state
+- the storage boundary is the ship-global run-as actor uid/package tuple,
+  physically named `app:<actorUid>:<packageId>`
+- package SQL, runtime state, live sockets, and daemon schedules belong to that
+  one AppRunner; app-session authority remains in the owning user Kernel
 - the API is async from package code
 - bindings accept `string`, `number`, `boolean`, and `null`
 - booleans are stored as numeric SQLite values
-- the current data object is registered only after exact Kernel authority
-  succeeds and participates in package/lifecycle drains once observed
-
-For upgrades from the pre-isolation and pre-owner-qualified AppRunner layouts,
-the old `app:` and `app-data:` package SQL bytes remain preserved but
-unavailable. The fresh `app-data-v2:` store is not a successful data migration;
-continuity remains blocked on the documented explicit AppRunner package-data
-migration.
+- every SQL call is reachable only after current Kernel package authorization
 
 ## Ship source changes
 

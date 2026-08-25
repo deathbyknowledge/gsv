@@ -2,7 +2,6 @@ import { canonicalizeLoginUsername } from "../auth/login";
 
 export const SHIP_KERNEL_NAME = "singleton";
 export const USER_KERNEL_LOGIN_SOURCE_HEADER = "x-gsv-login-source-scope";
-export const USER_KERNEL_GENERATION_HEADER = "x-gsv-kernel-generation";
 export const USER_KERNEL_NAME_PREFIX = "user:";
 
 export function userKernelName(username: string): string {

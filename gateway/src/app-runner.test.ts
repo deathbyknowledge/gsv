@@ -1,4 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
+import { env } from "cloudflare:workers";
+import { runDurableObjectAlarm, runInDurableObject } from "cloudflare:test";
 import {
   BINARY_FRAME_DATA,
   BINARY_FRAME_END,
@@ -8,74 +10,98 @@ import {
   parseBinaryFrame,
 } from "@humansandmachines/gsv/protocol";
 import {
+  AppRunner,
   AppSocketBodyTransport,
   GsvApiBinding,
-  appRpcScheduleAuthorityForRunner,
-  appRunnerAuthorityForRuntime,
-  appRunnerAuthorityFromRpcSchedule,
-  appRunnerAuthorityKey,
-  appRunnerRuntimeMatchesAuthority,
   appRunnerWorkerCodeKey,
-  buildAppDataRunnerName,
-  bindAppRunnerGlobalOutbound,
-  captureAppRunnerRuntime,
-  forwardPackageSqlToDataRunner,
-  forwardAppRunnerFetchOperation,
-  isAppDataRunnerName,
   isAppSessionCurrent,
   requestAppKernelFrame,
-  trackAppRunnerResponseOperation,
+  type AppRunnerProps,
 } from "./app-runner";
-import { AppRunnerPackageRuntimeFenceGate } from "./app-runner/package-runtime-fence";
-import { isPackageOutboundAllowed } from "./kernel/packages";
-import { buildAppRunnerName } from "./protocol/app-session";
+import { Kernel } from "./kernel/do";
+import {
+  artifactMetadataFromArtifact,
+  computePackageArtifactHash,
+  storePackageArtifact,
+  type PackageArtifact,
+} from "./kernel/packages";
 
-function activeAppFrame() {
+type AppRunnerTestEnv = Env & {
+  APP_RUNNER: DurableObjectNamespace<AppRunner>;
+};
+
+function activeRunnerProps(kernelName: string): AppRunnerProps {
   const now = Date.now();
   return {
-    uid: 1000,
-    username: "alice",
-    kernelOwnerUid: 1000,
-    kernelUsername: "alice",
-    kernelGeneration: 3,
+    kernelName,
     packageId: "pkg-chat",
     packageName: "chat",
-    packageUpdatedAt: now - 1_000,
-    packageArtifactHash: "sha256:chat-v1",
-    entrypointName: "Chat",
     routeBase: "/apps/chat",
-    issuedAt: now,
-    expiresAt: now + 60_000,
-  };
-}
-
-function activeArtifact() {
-  return {
-    hash: "sha256:chat-v1",
-    mainModule: "index.js",
-    modulePaths: ["index.js"],
-    runtimeAccess: {
-      egress: { mode: "allowlist" as const, allow: ["api.example.com"] },
+    entrypointName: "main",
+    artifact: {
+      hash: "sha256:chat-v1",
+      mainModule: "index.js",
+      modulePaths: ["index.js"],
+      runtimeAccess: {
+        daemon: { rpcSchedules: true },
+      },
+    },
+    appFrame: {
+      uid: 1000,
+      username: "alice",
+      packageId: "pkg-chat",
+      packageName: "chat",
+      packageUpdatedAt: now - 1_000,
+      packageArtifactHash: "sha256:chat-v1",
+      entrypointName: "main",
+      routeBase: "/apps/chat",
+      issuedAt: now,
+      expiresAt: now + 5 * 60_000,
     },
   };
 }
 
-function activeRuntime(frame: ReturnType<typeof activeAppFrame> = activeAppFrame()) {
+function preSplitRunnerProps(props: AppRunnerProps) {
+  const artifact = { ...props.artifact };
+  delete artifact.runtimeAccess;
   return {
-    artifact: activeArtifact(),
-    appFrame: frame,
+    packageId: props.packageId,
+    packageName: props.packageName,
+    routeBase: props.routeBase,
+    entrypointName: props.entrypointName,
+    artifact,
+    appFrame: {
+      uid: props.appFrame.uid,
+      username: props.appFrame.username,
+      packageId: props.appFrame.packageId,
+      packageName: props.appFrame.packageName,
+      entrypointName: props.appFrame.entrypointName,
+      routeBase: props.appFrame.routeBase,
+      issuedAt: props.appFrame.issuedAt,
+      expiresAt: props.appFrame.expiresAt,
+    },
   };
 }
 
-function gsvApiBindingFor(frame: ReturnType<typeof activeAppFrame>): GsvApiBinding {
-  return new GsvApiBinding({
-    props: {
-      appRunnerName: "runner-1",
-      authority: appRunnerAuthorityForRuntime(activeRuntime(frame)),
-      runtimeEpoch: 7,
+function appRunner(name: string): DurableObjectStub<AppRunner> {
+  return (env as AppRunnerTestEnv).APP_RUNNER.getByName(name);
+}
+
+function baseProps(runtimeAccess?: Parameters<typeof appRunnerWorkerCodeKey>[0]["artifact"]["runtimeAccess"]) {
+  return {
+    appFrame: {
+      uid: 1000,
+      packageName: "chat",
+      packageUpdatedAt: 1234,
+      entrypointName: "main",
+      routeBase: "/chat",
     },
-    exports: {},
-  } as any, {} as any);
+    packageId: "pkg-chat",
+    artifact: {
+      hash: "sha256:abc123",
+      ...(runtimeAccess ? { runtimeAccess } : {}),
+    },
+  };
 }
 
 function cancellableBody() {
@@ -89,32 +115,12 @@ function cancellableBody() {
   };
 }
 
-function baseProps(runtimeAccess?: Parameters<typeof appRunnerWorkerCodeKey>[0]["artifact"]["runtimeAccess"]) {
-  return {
-    appFrame: {
-      uid: 1000,
-      username: "alice",
-      kernelOwnerUid: 1000,
-      kernelUsername: "alice",
-      kernelGeneration: 1,
-      packageId: "pkg-chat",
-      packageUpdatedAt: 1,
-      entrypointName: "main",
-      routeBase: "/apps/chat",
-    },
-    artifact: {
-      hash: "sha256:abc123",
-      ...(runtimeAccess ? { runtimeAccess } : {}),
-    },
-  };
-}
-
 describe("appRunnerWorkerCodeKey", () => {
   it("changes when package runtime access changes", () => {
-    const denied = appRunnerWorkerCodeKey(baseProps({ egress: { mode: "none" } }), 1);
+    const denied = appRunnerWorkerCodeKey(baseProps({ egress: { mode: "none" } }));
     const allowed = appRunnerWorkerCodeKey(baseProps({
       egress: { mode: "allowlist", allow: ["api.example.com"] },
-    }), 1);
+    }));
 
     expect(allowed).not.toBe(denied);
   });
@@ -124,478 +130,425 @@ describe("appRunnerWorkerCodeKey", () => {
       egress: { mode: "none" },
       daemon: { rpcSchedules: true },
       storage: { sql: true },
-    }), 1);
+    }));
     const second = appRunnerWorkerCodeKey(baseProps({
       storage: { sql: true },
       daemon: { rpcSchedules: true },
       egress: { mode: "none" },
-    }), 1);
+    }));
 
     expect(second).toBe(first);
   });
 
-  it("never reuses a Loader key across local runtime epochs", () => {
-    const props = baseProps({ egress: { mode: "none" } });
+  it("isolates code caches by actor, package, and artifact", () => {
+    const baseline = baseProps();
 
-    expect(appRunnerWorkerCodeKey(props, 2))
-      .not.toBe(appRunnerWorkerCodeKey(props, 1));
+    expect(appRunnerWorkerCodeKey({
+      ...baseline,
+      appFrame: { ...baseline.appFrame, uid: 1001 },
+    })).not.toBe(appRunnerWorkerCodeKey(baseline));
+    expect(appRunnerWorkerCodeKey({
+      ...baseline,
+      packageId: "pkg-other",
+    })).not.toBe(appRunnerWorkerCodeKey(baseline));
+    expect(appRunnerWorkerCodeKey({
+      ...baseline,
+      artifact: { hash: "sha256:def456" },
+    })).not.toBe(appRunnerWorkerCodeKey(baseline));
+    expect(appRunnerWorkerCodeKey({
+      ...baseline,
+      appFrame: { ...baseline.appFrame, entrypointName: "settings" },
+    })).not.toBe(appRunnerWorkerCodeKey(baseline));
   });
 });
 
-describe("AppRunner global outbound fencing", () => {
-  const outbound = { fetch: vi.fn() } as unknown as Fetcher;
-  const code = {
-    compatibilityDate: "2026-01-01",
-    mainModule: "index.js",
-    modules: { "index.js": { js: "export default {}" } },
-    globalOutbound: { fetch: vi.fn() } as unknown as Fetcher,
-  } satisfies WorkerLoaderWorkerCode;
-
-  it("replaces both allowlisted and inherited raw fetch with the AppRunner binding", () => {
-    expect(bindAppRunnerGlobalOutbound(code, {
-      egress: { mode: "allowlist", allow: ["api.example.com"] },
-    }, outbound).globalOutbound).toBe(outbound);
-    expect(bindAppRunnerGlobalOutbound(code, {
-      egress: { mode: "inherit" },
-    }, outbound).globalOutbound).toBe(outbound);
-    expect(bindAppRunnerGlobalOutbound(code, {
-      egress: { mode: "none" },
-    }, outbound).globalOutbound).toBeNull();
-    expect(bindAppRunnerGlobalOutbound(code, undefined, outbound).globalOutbound).toBeNull();
+describe("AppRunner app sessions", () => {
+  it("accepts only sessions whose expiry is still in the future", () => {
+    expect(isAppSessionCurrent({ expiresAt: 10_001 }, 10_000)).toBe(true);
+    expect(isAppSessionCurrent({ expiresAt: 10_000 }, 10_000)).toBe(false);
+    expect(isAppSessionCurrent({ expiresAt: Number.NaN }, 10_000)).toBe(false);
   });
 
-  it("preserves exact scheme, host, and port allowlist semantics", () => {
-    const access = {
-      egress: {
-        mode: "allowlist" as const,
-        allow: ["api.example.test", "http://legacy.example.test:8080"],
-      },
+  it("closes singleton-bound sockets before rebinding preserved state to a user Kernel", async () => {
+    const runner = appRunner("rebind-singleton-runtime");
+    const singletonProps = activeRunnerProps("singleton");
+    const userProps = {
+      ...singletonProps,
+      kernelName: "user:alice",
     };
-    expect(isPackageOutboundAllowed(access.egress, new URL("https://api.example.test/v1")))
-      .toBe(true);
-    expect(isPackageOutboundAllowed(access.egress, new URL("http://api.example.test/v1")))
-      .toBe(false);
-    expect(isPackageOutboundAllowed(access.egress, new URL("http://legacy.example.test:8080/v1")))
-      .toBe(true);
-    expect(isPackageOutboundAllowed(access.egress, new URL("https://legacy.example.test:8080/v1")))
-      .toBe(false);
-    expect(isPackageOutboundAllowed({ mode: "inherit" }, new URL("https://other.test")))
-      .toBe(true);
-    expect(isPackageOutboundAllowed({ mode: "inherit" }, new URL("file:///tmp/x")))
-      .toBe(false);
+    const legacyProps = preSplitRunnerProps(singletonProps);
+
+    await runInDurableObject(runner, async (instance: AppRunner, state) => {
+      const [, server] = Object.values(new WebSocketPair());
+      state.acceptWebSocket(server, ["app-client"]);
+      server.serializeAttachment({
+        kind: "app-client",
+        connected: true,
+        session: {
+          sessionId: "session-1",
+          clientId: "client-1",
+          rpcBase: "/apps/chat/rpc",
+          expiresAt: Date.now() + 60_000,
+        },
+        appFrame: legacyProps.appFrame,
+        connectedAt: Date.now(),
+      });
+
+      state.storage.kv.put("app-runner:props", legacyProps);
+      await instance.ensureRuntime(userProps);
+
+      expect(server.deserializeAttachment()).toEqual({
+        kind: "app-client",
+        connected: false,
+      });
+      expect(state.storage.kv.get<AppRunnerProps>("app-runner:props")?.kernelName)
+        .toBe("user:alice");
+    });
+  });
+
+  it("does not interpret a malformed current record as pre-split state", async () => {
+    const runner = appRunner("reject-malformed-current-runtime");
+    const current = activeRunnerProps("user:alice");
+    const malformed = structuredClone(current) as Omit<AppRunnerProps, "appFrame"> & {
+      appFrame: Partial<AppRunnerProps["appFrame"]>;
+    };
+    delete malformed.appFrame.packageUpdatedAt;
+
+    await runInDurableObject(runner, async (instance: AppRunner, state) => {
+      state.storage.kv.put("app-runner:props", malformed);
+      await expect(instance.ensureRuntime(current))
+        .rejects.toThrow("AppRunner props are incomplete or inconsistent");
+    });
+  });
+
+  it("rejects an explicit singleton binding as malformed current state", async () => {
+    const runner = appRunner("reject-explicit-singleton-runtime");
+
+    await runInDurableObject(runner, async (instance: AppRunner) => {
+      await expect(instance.ensureRuntime(activeRunnerProps("singleton")))
+        .rejects.toThrow("AppRunner props are incomplete or inconsistent");
+    });
   });
 });
 
-describe("AppRunner forwarded request body ownership", () => {
-  function runtimeFenceInput() {
-    return {
-      authorization: crypto.randomUUID(),
-      fenceKind: "user-lifecycle" as const,
-      sourceKernelName: "user:alice",
-      runnerName: buildAppRunnerName(1000, 1000, "pkg-chat"),
-      ownerUid: 1000,
-      ownerUsername: "alice",
-      kernelOwnerUid: 1000,
-      kernelOwnerUsername: "alice",
-      packageId: "pkg-chat",
-      generation: 3,
-      fenceId: crypto.randomUUID(),
+describe("AppRunner daemon authorization", () => {
+  it("refreshes and runs a genuine pre-split daemon on its first alarm", async () => {
+    const runner = appRunner("daemon-singleton-rebind");
+    const scheduleKey = "chat:preserved-refresh";
+    const candidate: PackageArtifact = {
+      hash: `sha256:${"0".repeat(64)}`,
+      mainModule: "index.js",
+      modules: [{
+        path: "index.js",
+        kind: "esm",
+        content: [
+          'import { WorkerEntrypoint } from "cloudflare:workers";',
+          "export class GsvAppRpcEntrypoint extends WorkerEntrypoint {",
+          "  async invoke(method) {",
+          '    if (method !== "refresh") throw new Error("unexpected method");',
+          "    return { ok: true };",
+          "  }",
+          "}",
+        ].join("\n"),
+      }],
     };
-  }
-
-  function runtimeFenceStorage() {
-    const values = new Map<string, unknown>();
-    return {
-      get<T = unknown>(key: string): T | undefined {
-        return values.get(key) as T | undefined;
-      },
-      put<T>(key: string, value: T): void {
-        values.set(key, structuredClone(value));
-      },
+    const artifact = {
+      ...candidate,
+      hash: await computePackageArtifactHash(candidate),
     };
-  }
-
-  async function within<T>(promise: Promise<T>, timeoutMs = 1_000): Promise<T> {
-    let timeout: ReturnType<typeof setTimeout> | undefined;
-    const deadline = new Promise<never>((_resolve, reject) => {
-      timeout = setTimeout(
-        () => reject(new Error("operation did not settle before the test deadline")),
-        timeoutMs,
+    await storePackageArtifact(env.STORAGE, artifact);
+    const props = activeRunnerProps("user:alice");
+    props.artifact = {
+      ...artifactMetadataFromArtifact(artifact),
+      runtimeAccess: { daemon: { rpcSchedules: true } },
+    };
+    props.appFrame.packageArtifactHash = artifact.hash;
+    const legacyProps = preSplitRunnerProps(props);
+    await runInDurableObject(runner, async (_instance: AppRunner, state) => {
+      state.storage.kv.put("app-runner:props", legacyProps);
+    });
+    await runner.upsertRpcSchedule({
+      key: scheduleKey,
+      rpcMethod: "refresh",
+      schedule: { kind: "every", everyMs: 60_000 },
+    });
+    await runInDurableObject(runner, async (instance: AppRunner, state) => {
+      Object.defineProperty((instance as any).ctx, "exports", {
+        configurable: true,
+        value: {
+          GsvApiBinding: () => ({}),
+        },
+      });
+      state.storage.sql.exec(
+        "UPDATE app_rpc_schedules SET next_run_at = ? WHERE schedule_key = ?",
+        1,
+        scheduleKey,
       );
+      await state.storage.setAlarm(Date.now() + 60_000);
     });
+
+    const route = vi.spyOn(Kernel.prototype as any, "resolvePreservedAppRuntimeRoute")
+      .mockResolvedValue({ ok: true, kernelName: "user:alice" });
+    const refresh = vi.spyOn(Kernel.prototype as any, "refreshPreservedAppRuntime")
+      .mockResolvedValue({ ok: true, props });
+    const authorize = vi.spyOn(Kernel.prototype as any, "authorizeAppDaemonFrame")
+      .mockResolvedValue(true);
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     try {
-      return await Promise.race([promise, deadline]);
+      expect(await runDurableObjectAlarm(runner)).toBe(true);
+      expect(route).toHaveBeenCalledWith({ uid: 1000, username: "alice" });
+      expect(refresh).toHaveBeenCalledWith({
+        uid: 1000,
+        username: "alice",
+        packageId: "pkg-chat",
+        packageName: "chat",
+        entrypointName: "main",
+        routeBase: "/apps/chat",
+      });
+      expect(authorize).toHaveBeenCalledOnce();
+      expect(authorize).toHaveBeenCalledWith(expect.objectContaining({
+        packageUpdatedAt: props.appFrame.packageUpdatedAt,
+        packageArtifactHash: artifact.hash,
+      }));
     } finally {
-      if (timeout !== undefined) clearTimeout(timeout);
+      warn.mockRestore();
+      authorize.mockRestore();
+      refresh.mockRestore();
+      route.mockRestore();
     }
-  }
 
-  it("preserves a streaming response while settling its forwarded request body", async () => {
-    const input = runtimeFenceInput();
-    const gate = new AppRunnerPackageRuntimeFenceGate(
-      runtimeFenceStorage(),
-      input.runnerName,
-    );
-    const operation = gate.acquireOperation();
-    const requestReadStarted = Promise.withResolvers<void>();
-    const requestCancel = vi.fn();
-    let detachedRead: Promise<unknown> | null = null;
-    const request = new Request("https://app.test/upload", {
-      method: "POST",
-      body: new ReadableStream<Uint8Array>({
-        pull() {
-          requestReadStarted.resolve();
-          return new Promise<void>(() => {});
-        },
-        cancel: requestCancel,
+    await runInDurableObject(runner, async (_instance: AppRunner, state) => {
+      expect(state.storage.kv.get<AppRunnerProps>("app-runner:props")?.kernelName)
+        .toBe("user:alice");
+    });
+    expect(await runner.listRpcSchedules()).toEqual([
+      expect.objectContaining({
+        key: scheduleKey,
+        enabled: true,
+        lastStatus: "ok",
+        nextRunAt: expect.any(Number),
       }),
+    ]);
+  });
+
+  it("routes a preserved personal-agent runtime through its controlling human Kernel", async () => {
+    const runner = appRunner("daemon-personal-agent-rebind");
+    const scheduleKey = "chat:agent-refresh";
+    const props = activeRunnerProps("user:alice");
+    props.appFrame.uid = 2000;
+    props.appFrame.username = "aria";
+    await runInDurableObject(runner, async (_instance: AppRunner, state) => {
+      state.storage.kv.put("app-runner:props", preSplitRunnerProps(props));
+    });
+    await runner.upsertRpcSchedule({
+      key: scheduleKey,
+      rpcMethod: "refresh",
+      schedule: { kind: "every", everyMs: 60_000 },
+    });
+    await runInDurableObject(runner, async (_instance: AppRunner, state) => {
+      state.storage.sql.exec(
+        "UPDATE app_rpc_schedules SET next_run_at = ? WHERE schedule_key = ?",
+        1,
+        scheduleKey,
+      );
+      await state.storage.setAlarm(Date.now() + 60_000);
     });
 
-    const response = await forwardAppRunnerFetchOperation(
-      request,
-      operation,
-      async (forwardedRequest) => {
-        const reader = forwardedRequest.body!.getReader();
-        detachedRead = reader.read().then(
-          (value) => value,
-          (error) => error,
-        );
-        await requestReadStarted.promise;
-        return new Response(new ReadableStream<Uint8Array>({
-          start(controller) {
-            controller.enqueue(new TextEncoder().encode("response bytes"));
-            controller.close();
-          },
-        }), {
-          status: 202,
-          headers: { "x-app-result": "accepted" },
+    const route = vi.spyOn(Kernel.prototype as any, "resolvePreservedAppRuntimeRoute")
+      .mockResolvedValue({ ok: true, kernelName: "user:alice" });
+    const refresh = vi.spyOn(Kernel.prototype as any, "refreshPreservedAppRuntime")
+      .mockResolvedValue({ ok: true, props });
+    const authorize = vi.spyOn(Kernel.prototype as any, "authorizeAppDaemonFrame")
+      .mockResolvedValue(false);
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      expect(await runDurableObjectAlarm(runner)).toBe(true);
+      expect(route).toHaveBeenCalledWith({ uid: 2000, username: "aria" });
+      expect(refresh).toHaveBeenCalledWith(expect.objectContaining({
+        uid: 2000,
+        username: "aria",
+      }));
+      expect(authorize).toHaveBeenCalledWith(expect.objectContaining({
+        uid: 2000,
+        username: "aria",
+      }));
+    } finally {
+      warn.mockRestore();
+      authorize.mockRestore();
+      refresh.mockRestore();
+      route.mockRestore();
+    }
+
+    await runInDurableObject(runner, async (_instance: AppRunner, state) => {
+      expect(state.storage.kv.get<AppRunnerProps>("app-runner:props"))
+        .toMatchObject({
+          kernelName: "user:alice",
+          appFrame: { uid: 2000, username: "aria" },
         });
-      },
-    );
-
-    expect(response.status).toBe(202);
-    expect(response.headers.get("x-app-result")).toBe("accepted");
-    expect(await response.text()).toBe("response bytes");
-    expect(requestCancel).toHaveBeenCalledOnce();
-    expect(await detachedRead).toBeInstanceOf(Error);
-    await expect(gate.prepare(input, async () => true))
-      .resolves.toMatchObject({ state: "fenced" });
+    });
   });
 
-  it("bounds fence acknowledgment when request-source cancellation never settles", async () => {
-    const input = runtimeFenceInput();
-    const gate = new AppRunnerPackageRuntimeFenceGate(
-      runtimeFenceStorage(),
-      input.runnerName,
-    );
-    const operation = gate.acquireOperation();
-    const requestReadStarted = Promise.withResolvers<void>();
-    const maliciousRequestCancel = Promise.withResolvers<void>();
-    const events: string[] = [];
-    const requestCancel = vi.fn(() => {
-      events.push("request-cancel-start");
-      return maliciousRequestCancel.promise;
+  it("retries a preserved daemon after transient placement provisioning fails", async () => {
+    const runner = appRunner("daemon-transient-placement");
+    const scheduleKey = "chat:placement-retry";
+    const current = activeRunnerProps("user:alice");
+    const { kernelName: _kernelName, ...unbound } = current;
+    await runInDurableObject(runner, async (_instance: AppRunner, state) => {
+      state.storage.kv.put("app-runner:props", unbound);
     });
-    const responseCancel = vi.fn(() => {
-      events.push("response-cancel");
+    await runner.upsertRpcSchedule({
+      key: scheduleKey,
+      rpcMethod: "refresh",
+      schedule: { kind: "every", everyMs: 60_000 },
     });
-    let detachedRead: Promise<unknown> | null = null;
-    const request = new Request("https://app.test/upload", {
-      method: "POST",
-      body: new ReadableStream<Uint8Array>({
-        pull() {
-          requestReadStarted.resolve();
-          return new Promise<void>(() => {});
-        },
-        cancel: requestCancel,
+    await runInDurableObject(runner, async (_instance: AppRunner, state) => {
+      state.storage.sql.exec(
+        "UPDATE app_rpc_schedules SET next_run_at = ? WHERE schedule_key = ?",
+        1,
+        scheduleKey,
+      );
+      await state.storage.setAlarm(Date.now() + 60_000);
+    });
+
+    const route = vi.spyOn(Kernel.prototype as any, "resolvePreservedAppRuntimeRoute")
+      .mockResolvedValue({ ok: false });
+    const authorize = vi.spyOn(Kernel.prototype as any, "authorizeAppDaemonFrame");
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      expect(await runDurableObjectAlarm(runner)).toBe(true);
+      expect(route).toHaveBeenCalledWith({ uid: 1000, username: "alice" });
+      expect(authorize).not.toHaveBeenCalled();
+    } finally {
+      warn.mockRestore();
+      authorize.mockRestore();
+      route.mockRestore();
+    }
+
+    expect(await runner.listRpcSchedules()).toEqual([
+      expect.objectContaining({
+        key: scheduleKey,
+        enabled: true,
+        lastStatus: "error",
+        lastError: "Package runtime placement is unavailable",
+        nextRunAt: expect.any(Number),
       }),
-    });
-
-    const response = await forwardAppRunnerFetchOperation(
-      request,
-      operation,
-      async (forwardedRequest) => {
-        const reader = forwardedRequest.body!.getReader();
-        detachedRead = reader.read().then(
-          (value) => value,
-          (error) => error,
-        );
-        await requestReadStarted.promise;
-        return new Response(new ReadableStream<Uint8Array>({
-          cancel: responseCancel,
-        }));
-      },
-    );
-
-    const acknowledgment = within(gate.prepare(input, async () => true).then((ack) => {
-      events.push("ack");
-      return ack;
-    }));
-    await vi.waitFor(() => {
-      expect(responseCancel).toHaveBeenCalledOnce();
-      expect(requestCancel).toHaveBeenCalledOnce();
-    });
-    expect(await detachedRead).toBeInstanceOf(Error);
-    await expect(acknowledgment).resolves.toMatchObject({ state: "fenced" });
-    expect(events.slice(0, 2).sort()).toEqual([
-      "request-cancel-start",
-      "response-cancel",
     ]);
-    expect(events.slice(2)).toEqual(["ack"]);
-
-    maliciousRequestCancel.reject(new Error("malicious late request cancel rejection"));
-    await Promise.resolve();
-    await response.body?.cancel().catch(() => {});
   });
 
-  it("bounds fence acknowledgment when response cancellation never settles", async () => {
-    const input = runtimeFenceInput();
-    const gate = new AppRunnerPackageRuntimeFenceGate(
-      runtimeFenceStorage(),
-      input.runnerName,
-    );
-    const operation = gate.acquireOperation();
-    const cancelStarted = Promise.withResolvers<void>();
-    const maliciousCancel = Promise.withResolvers<void>();
-    const responseCancel = vi.fn(() => {
-      cancelStarted.resolve();
-      return maliciousCancel.promise;
+  it("disables a due schedule before package code when current authorization fails", async () => {
+    const runner = appRunner("daemon-runtime-authorization");
+    const scheduleKey = "chat:refresh";
+    await runner.ensureRuntime(activeRunnerProps("user:alice"));
+    await runner.upsertRpcSchedule({
+      key: scheduleKey,
+      rpcMethod: "refresh",
+      schedule: { kind: "every", everyMs: 60_000 },
     });
-    const response = trackAppRunnerResponseOperation(
-      new Response(new ReadableStream<Uint8Array>({
-        pull() {
-          return new Promise<void>(() => {});
-        },
-        cancel: responseCancel,
-      })),
-      operation,
-    );
-    const outwardRead = response.body!.getReader().read();
-    const outwardExpectation = expect(outwardRead).rejects.toThrow(
-      "Package runtime authority is fenced",
-    );
-
-    const acknowledgment = within(gate.prepare(input, async () => true));
-    await cancelStarted.promise;
-    await expect(acknowledgment).resolves.toMatchObject({ state: "fenced" });
-    await outwardExpectation;
-    expect(responseCancel).toHaveBeenCalledOnce();
-
-    maliciousCancel.reject(new Error("malicious late cancel rejection"));
-    await Promise.resolve();
-  });
-});
-
-describe("AppRunner request-scoped runtime authority", () => {
-  it("captures an immutable runtime snapshot before asynchronous work", () => {
-    const input = activeRuntime();
-    const captured = captureAppRunnerRuntime(input);
-
-    input.appFrame.packageName = "admin";
-    input.appFrame.entrypointName = "Admin";
-    input.artifact.runtimeAccess.egress.allow.push("admin.example.com");
-
-    expect(captured.appFrame.packageName).toBe("chat");
-    expect(captured.appFrame.entrypointName).toBe("Chat");
-    expect(captured.artifact.runtimeAccess?.egress?.allow).toEqual(["api.example.com"]);
-  });
-
-  it("keeps reverse-completing requests bound to their initiating revision", async () => {
-    const firstGate = Promise.withResolvers<void>();
-    const secondGate = Promise.withResolvers<void>();
-    const captureAfter = async (
-      input: ReturnType<typeof activeRuntime>,
-      gate: Promise<void>,
-    ) => {
-      const captured = captureAppRunnerRuntime(input);
-      await gate;
-      return appRunnerAuthorityKey(appRunnerAuthorityForRuntime(captured));
-    };
-    const firstRuntime = activeRuntime();
-    const secondRuntime = activeRuntime({
-      ...activeAppFrame(),
-      packageUpdatedAt: firstRuntime.appFrame.packageUpdatedAt + 1,
-      packageArtifactHash: "sha256:chat-v2",
-      entrypointName: "Admin",
-    });
-    secondRuntime.artifact = {
-      ...activeArtifact(),
-      hash: "sha256:chat-v2",
-    };
-
-    const first = captureAfter(firstRuntime, firstGate.promise);
-    const second = captureAfter(secondRuntime, secondGate.promise);
-    secondGate.resolve();
-    const secondKey = await second;
-    firstGate.resolve();
-    const firstKey = await first;
-
-    expect(firstKey).not.toBe(secondKey);
-    expect(firstKey).toContain("sha256:chat-v1");
-    expect(secondKey).toContain("sha256:chat-v2");
-  });
-});
-
-describe("package SQL storage isolation", () => {
-  it("uses a deterministic namespace isolated by Kernel owner, actor, and package", () => {
-    expect(buildAppDataRunnerName(1000, 2000, "pkg-chat"))
-      .toBe("app-data-v2:1000:2000:pkg-chat");
-    expect(buildAppDataRunnerName(1000, 2000, "pkg-chat"))
-      .not.toBe(buildAppDataRunnerName(1001, 2000, "pkg-chat"));
-    expect(buildAppDataRunnerName(1000, 2000, "pkg-chat"))
-      .not.toBe(buildAppDataRunnerName(1000, 2001, "pkg-chat"));
-    expect(buildAppDataRunnerName(1000, 2000, "pkg-chat"))
-      .not.toBe(buildAppDataRunnerName(1000, 2000, "pkg-admin"));
-    expect(buildAppDataRunnerName(1000, 2000, "global:chat"))
-      .toBe("app-data-v2:1000:2000:global%3Achat");
-    expect(isAppDataRunnerName(buildAppDataRunnerName(1000, 2000, "pkg-chat"))).toBe(true);
-    expect(isAppDataRunnerName("app-data:2000:pkg-chat")).toBe(false);
-    expect(isAppDataRunnerName("app:1000:pkg-chat")).toBe(false);
-  });
-
-  it("routes hostile package SQL only to the isolated data object", async () => {
-    const controlTables = new Set(["app_rpc_schedules", "_gsv_schema_migrations"]);
-    const dataTables = new Map<string, Set<string>>();
-    const selected: string[] = [];
-    const authority = appRunnerAuthorityForRuntime(activeRuntime());
-    const getRunner = (name: string) => ({
-      async packageSqlExecIsolated(
-        expectedName: string,
-        _authority: unknown,
-        statement: string,
-      ) {
-        expect(expectedName).toBe(name);
-        selected.push(name);
-        const tables = dataTables.get(name) ?? new Set(["package_notes"]);
-        dataTables.set(name, tables);
-        if (statement.startsWith("SELECT")) {
-          return [...tables]
-            .filter((table) => statement.includes(table))
-            .map((table) => ({ table }));
-        }
-        for (const table of [...tables]) {
-          if (statement.includes(table)) {
-            tables.delete(table);
-          }
-        }
-        return [];
-      },
+    await runInDurableObject(runner, async (_instance: AppRunner, state) => {
+      state.storage.sql.exec(
+        "UPDATE app_rpc_schedules SET next_run_at = ? WHERE schedule_key = ?",
+        1,
+        scheduleKey,
+      );
+      await state.storage.setAlarm(Date.now() + 60_000);
     });
 
-    const leakedRows = await forwardPackageSqlToDataRunner(
-      getRunner,
-      authority,
-      "SELECT * FROM app_rpc_schedules",
-    );
-    await forwardPackageSqlToDataRunner(
-      getRunner,
-      authority,
-      "DROP TABLE app_rpc_schedules",
-    );
-    await forwardPackageSqlToDataRunner(
-      getRunner,
-      authority,
-      "DELETE FROM _gsv_schema_migrations",
-    );
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      expect(await runDurableObjectAlarm(runner)).toBe(true);
+    } finally {
+      warn.mockRestore();
+    }
 
-    expect(selected).toEqual([
-      "app-data-v2:1000:1000:pkg-chat",
-      "app-data-v2:1000:1000:pkg-chat",
-      "app-data-v2:1000:1000:pkg-chat",
+    expect(await runner.listRpcSchedules()).toEqual([
+      expect.objectContaining({
+        key: scheduleKey,
+        enabled: false,
+        nextRunAt: null,
+        lastStatus: "error",
+        lastError: "Package runtime authorization expired",
+      }),
     ]);
-    expect(leakedRows).toEqual([]);
-    expect(controlTables).toEqual(new Set([
-      "app_rpc_schedules",
-      "_gsv_schema_migrations",
-    ]));
-    expect(dataTables.get("app-data-v2:1000:1000:pkg-chat"))
-      .toEqual(new Set(["package_notes"]));
   });
 });
 
-describe("AppRunner daemon schedule authority", () => {
-  it("binds every execution-relevant authority field", () => {
-    const authority = appRunnerAuthorityForRuntime(activeRuntime());
-    const schedule = appRpcScheduleAuthorityForRunner(authority);
+describe("GSV API runtime authority", () => {
+  const authorized = {
+    uid: 1000,
+    username: "alice",
+    packageId: "pkg-chat",
+    packageName: "chat",
+    packageUpdatedAt: 1234,
+    packageArtifactHash: "sha256:abc123",
+    entrypointName: "main",
+    routeBase: "/chat",
+    issuedAt: 10_000,
+    expiresAt: 20_000,
+  };
 
-    expect(schedule).toMatchObject({
-      ownerUid: 1000,
-      ownerUsername: "alice",
-      kernelUsername: "alice",
-      kernelGeneration: 3,
-      packageId: "pkg-chat",
-      packageName: "chat",
-      packageUpdatedAt: authority.packageUpdatedAt,
-      artifactHash: "sha256:chat-v1",
-      entrypointName: "Chat",
-      routeBase: "/apps/chat",
-    });
-    expect(appRunnerAuthorityFromRpcSchedule(schedule)).toEqual(authority);
-  });
+  function binding(runtimeAccess?: AppRunnerProps["artifact"]["runtimeAccess"]) {
+    return new GsvApiBinding({
+      props: {
+        appRunnerName: "app:1000:pkg-chat",
+        kernelName: "user:alice",
+        appFrameAuthority: authorized,
+        ...(runtimeAccess ? { runtimeAccess } : {}),
+      },
+      exports: {},
+    } as any, env as any);
+  }
 
   it.each([
-    ["owner", { ownerUid: 0 }],
-    ["owner username", { ownerUsername: "root" }],
-    ["Kernel username", { kernelUsername: "bob" }],
-    ["Kernel generation", { kernelGeneration: 4 }],
+    ["uid", { uid: 0 }],
+    ["username", { username: "root" }],
     ["package id", { packageId: "pkg-admin" }],
     ["package name", { packageName: "admin" }],
-    ["package revision", { packageUpdatedAt: 1 }],
-    ["artifact", { artifactHash: "sha256:admin" }],
-    ["entrypoint", { entrypointName: "Admin" }],
-    ["route", { routeBase: "/apps/admin" }],
-  ] as const)("rejects a schedule with a forged %s binding", (_label, patch) => {
-    const authority = appRunnerAuthorityForRuntime(activeRuntime());
-    const schedule = appRpcScheduleAuthorityForRunner(authority);
-
-    expect(() => appRunnerAuthorityFromRpcSchedule({
-      ...schedule,
-      ...patch,
-    })).toThrow("Daemon schedule authority is inconsistent");
+    ["package revision", { packageUpdatedAt: 1235 }],
+    ["package artifact", { packageArtifactHash: "sha256:def456" }],
+    ["entrypoint", { entrypointName: "admin" }],
+    ["route", { routeBase: "/admin" }],
+  ])("rejects a forged %s", async (_label, patch) => {
+    await expect(binding().kernelRequestFrame(
+      { ...authorized, ...patch } as any,
+      "fs.read",
+      { path: "/secret" },
+    )).rejects.toThrow("does not match");
   });
 
-  it("rejects legacy schedules without a user-Kernel generation", () => {
-    const authority = {
-      ...appRunnerAuthorityForRuntime(activeRuntime()),
-      kernelUsername: undefined,
-      kernelGeneration: undefined,
-    };
+  it("cancels the body when forged authority is rejected", async () => {
+    const { body, cancel } = cancellableBody();
 
-    expect(() => appRpcScheduleAuthorityForRunner(authority))
-      .toThrow("Daemon schedules require provisioned user-Kernel authority");
-  });
-});
+    await expect(binding().kernelRequestFrame(
+      { ...authorized, uid: 0 } as any,
+      "proc.media.write",
+      { key: "media-key" },
+      { body },
+    )).rejects.toThrow("does not match");
 
-describe("app session socket lifetime", () => {
-  it("accepts only finite, unexpired session deadlines", () => {
-    expect(isAppSessionCurrent({ expiresAt: 1_001 }, 1_000)).toBe(true);
-    expect(isAppSessionCurrent({ expiresAt: 1_000 }, 1_000)).toBe(false);
-    expect(isAppSessionCurrent({ expiresAt: 999 }, 1_000)).toBe(false);
-    expect(isAppSessionCurrent({ expiresAt: Number.POSITIVE_INFINITY }, 1_000)).toBe(false);
-    expect(isAppSessionCurrent({ expiresAt: Number.NaN }, 1_000)).toBe(false);
+    expect(cancel).toHaveBeenCalledOnce();
   });
 
-  it("binds restored socket runtimes to exact Kernel and package authority", () => {
-    const runtime = activeRuntime();
-    const authority = appRunnerAuthorityForRuntime(runtime);
-
-    expect(appRunnerRuntimeMatchesAuthority(runtime, authority)).toBe(true);
-    expect(appRunnerRuntimeMatchesAuthority({
-      ...runtime,
-      appFrame: { ...runtime.appFrame, kernelGeneration: 4 },
-    }, authority)).toBe(false);
-    expect(appRunnerRuntimeMatchesAuthority({
-      artifact: { ...runtime.artifact, hash: "sha256:chat-v2" },
-      appFrame: {
-        ...runtime.appFrame,
-        packageUpdatedAt: runtime.appFrame.packageUpdatedAt + 1,
-        packageArtifactHash: "sha256:chat-v2",
-      },
-    }, authority)).toBe(false);
-    expect(appRunnerRuntimeMatchesAuthority({
-      ...runtime,
-      appFrame: { ...runtime.appFrame, entrypointName: "Admin" },
-    }, authority)).toBe(false);
+  it("uses daemon authorization for platform calls from daemon-approved packages", async () => {
+    const daemonRequest = vi.spyOn(Kernel.prototype as any, "appDaemonRequest")
+      .mockImplementation(async (_appFrame: unknown, frame: { id: string }) => ({
+        type: "res",
+        id: frame.id,
+        ok: true,
+        data: { ok: true },
+      }));
+    const appRequest = vi.spyOn(Kernel.prototype as any, "appRequest");
+    try {
+      await expect(binding({ daemon: { rpcSchedules: true } }).kernelRequest(
+        authorized,
+        "fs.read",
+        { path: "/tmp/status" },
+      )).resolves.toEqual({ ok: true });
+      expect(daemonRequest).toHaveBeenCalledOnce();
+      expect(appRequest).not.toHaveBeenCalled();
+    } finally {
+      appRequest.mockRestore();
+      daemonRequest.mockRestore();
+    }
   });
 });
 
@@ -632,7 +585,7 @@ describe("AppRunner body transport", () => {
   });
 
   it("forwards request bodies and preserves response bodies at the kernel boundary", async () => {
-    const appRequest = vi.fn(async (_appFrame: unknown, frame: any, _runnerName?: string) => {
+    const appRequest = vi.fn(async (_appFrame: unknown, frame: any) => {
       expect(await bodyToText(frame.body)).toBe("request bytes");
       return {
         type: "res" as const,
@@ -649,20 +602,14 @@ describe("AppRunner body transport", () => {
       "proc.media.read",
       { key: "media-key" },
       { body: bodyFromText("request bytes") },
-      "app-control-v3:1000:1000:pkg-chat",
     );
 
     expect(appRequest).toHaveBeenCalledOnce();
-    expect(appRequest).toHaveBeenCalledWith(
-      { uid: 1000 },
-      expect.objectContaining({ type: "req", call: "proc.media.read" }),
-      "app-control-v3:1000:1000:pkg-chat",
-    );
     expect(response.data).toEqual({ ok: true });
     expect(response.body && await bodyToText(response.body)).toBe("response bytes");
   });
 
-  it("cancels an accepted request body when the kernel throws", async () => {
+  it("cancels an accepted request body when the Kernel rejects it", async () => {
     const { body, cancel } = cancellableBody();
     const appRequest = vi.fn(async () => {
       throw new Error("kernel unavailable");
@@ -670,179 +617,12 @@ describe("AppRunner body transport", () => {
 
     await expect(requestAppKernelFrame(
       { appRequest },
-      activeAppFrame(),
+      { uid: 1000 } as any,
       "proc.media.write",
       { key: "media-key" },
       { body },
     )).rejects.toThrow("kernel unavailable");
 
     expect(cancel).toHaveBeenCalledOnce();
-  });
-});
-
-describe("GSV API app authority", () => {
-  const forgeries: Array<{
-    label: string;
-    patch: Partial<ReturnType<typeof activeAppFrame>>;
-  }> = [
-    { label: "uid", patch: { uid: 0 } },
-    { label: "username", patch: { username: "root" } },
-    { label: "Kernel owner uid", patch: { kernelOwnerUid: 1001 } },
-    { label: "Kernel username", patch: { kernelUsername: "bob" } },
-    { label: "Kernel generation", patch: { kernelGeneration: 4 } },
-    { label: "package id", patch: { packageId: "pkg-admin" } },
-    { label: "package name", patch: { packageName: "admin" } },
-    { label: "package revision", patch: { packageUpdatedAt: 1 } },
-    { label: "package artifact", patch: { packageArtifactHash: "sha256:admin" } },
-    { label: "entrypoint", patch: { entrypointName: "Admin" } },
-    { label: "package route", patch: { routeBase: "/apps/admin" } },
-  ];
-
-  it("binds Kernel authorization and requests to its exact control runner", async () => {
-    const runtime = activeRuntime();
-    const authority = appRunnerAuthorityForRuntime(runtime);
-    const runnerName = buildAppRunnerName(
-      authority.kernelOwnerUid,
-      authority.ownerUid,
-      authority.packageId,
-    );
-    const packageKernelRequestFrame = vi.fn(async () => ({ data: { ok: true } }));
-    const getByName = vi.fn(() => ({ packageKernelRequestFrame }));
-    const binding = new GsvApiBinding({
-      props: { appRunnerName: runnerName, authority, runtimeEpoch: 7 },
-      exports: { AppRunner: { getByName } },
-    } as any, {} as any);
-
-    await expect(binding.kernelRequestFrame(
-      runtime.appFrame,
-      "fs.read",
-      { path: "/home/alice/file.txt" },
-    )).resolves.toEqual({ data: { ok: true } });
-
-    expect(getByName).toHaveBeenCalledWith(runnerName);
-    expect(packageKernelRequestFrame).toHaveBeenCalledWith(
-      7,
-      authority,
-      runtime.appFrame,
-      "fs.read",
-      { path: "/home/alice/file.txt" },
-      {},
-    );
-  });
-
-  it("stamps every package capability entry with its immutable Loader epoch", async () => {
-    const runtime = activeRuntime();
-    const authority = appRunnerAuthorityForRuntime({
-      ...runtime,
-      artifact: {
-        ...runtime.artifact,
-        runtimeAccess: {
-          ...runtime.artifact.runtimeAccess,
-          daemon: { rpcSchedules: true },
-          storage: { sql: true },
-        },
-      },
-    });
-    const runnerName = buildAppRunnerName(
-      authority.kernelOwnerUid,
-      authority.ownerUid,
-      authority.packageId,
-    );
-    const runner = {
-      packageOutboundFetch: vi.fn(async () => new Response("ok")),
-      upsertRpcSchedule: vi.fn(async () => ({ key: "daily" })),
-      removeRpcSchedule: vi.fn(async () => ({ removed: true })),
-      listRpcSchedules: vi.fn(async () => []),
-      packageSqlExec: vi.fn(async () => []),
-      emitAppEvent: vi.fn(async () => ({ delivered: 1 })),
-    };
-    const binding = new GsvApiBinding({
-      props: { appRunnerName: runnerName, authority, runtimeEpoch: 23 },
-      exports: { AppRunner: { getByName: vi.fn(() => runner) } },
-    } as any, {} as any);
-
-    await expect(binding.fetch(new Request("https://api.example.com/v1")))
-      .resolves.toBeInstanceOf(Response);
-    await binding.upsertRpcSchedule({ key: "daily" });
-    await binding.removeRpcSchedule("daily");
-    await binding.listRpcSchedules();
-    await binding.packageSqlExec("SELECT 1");
-    await binding.emitAppEvent("refresh");
-
-    expect(runner.packageOutboundFetch).toHaveBeenCalledWith(
-      23,
-      authority,
-      expect.any(Request),
-    );
-    expect(runner.upsertRpcSchedule).toHaveBeenCalledWith(
-      23,
-      authority,
-      { key: "daily" },
-    );
-    expect(runner.removeRpcSchedule).toHaveBeenCalledWith(23, authority, "daily");
-    expect(runner.listRpcSchedules).toHaveBeenCalledWith(23, authority);
-    expect(runner.packageSqlExec).toHaveBeenCalledWith(
-      23,
-      authority,
-      "SELECT 1",
-      undefined,
-    );
-    expect(runner.emitAppEvent).toHaveBeenCalledWith(
-      23,
-      authority,
-      "refresh",
-      undefined,
-      undefined,
-      undefined,
-    );
-  });
-
-  it.each(forgeries)("rejects a forged $label", async ({ patch }) => {
-    const authorized = activeAppFrame();
-    const binding = gsvApiBindingFor(authorized);
-
-    await expect(binding.kernelRequestFrame(
-      { ...authorized, ...patch },
-      "fs.read",
-      { path: "/secret" },
-    )).rejects.toThrow("Authentication failed");
-  });
-
-  it("cancels the request body when app authority is rejected", async () => {
-    const authorized = activeAppFrame();
-    const binding = gsvApiBindingFor(authorized);
-    const { body, cancel } = cancellableBody();
-
-    await expect(binding.kernelRequestFrame(
-      { ...authorized, packageId: "pkg-admin" },
-      "proc.media.write",
-      { key: "media-key" },
-      { body },
-    )).rejects.toThrow("Authentication failed");
-
-    expect(cancel).toHaveBeenCalledOnce();
-  });
-
-  it("never selects a legacy app: object from a package binding", async () => {
-    const runtime = activeRuntime();
-    const authority = appRunnerAuthorityForRuntime(runtime);
-    const getByName = vi.fn();
-    const binding = new GsvApiBinding({
-      props: {
-        appRunnerName: `app:${authority.ownerUid}:${authority.packageId}`,
-        authority,
-        runtimeEpoch: 7,
-      },
-      exports: { AppRunner: { getByName } },
-    } as any, {} as any);
-
-    await expect(binding.emitAppEvent("refresh"))
-      .rejects.toThrow("Authentication failed");
-    expect(getByName).not.toHaveBeenCalled();
-    expect(buildAppRunnerName(
-      authority.kernelOwnerUid,
-      authority.ownerUid,
-      authority.packageId,
-    )).toBe("app-control-v3:1000:1000:pkg-chat");
   });
 });

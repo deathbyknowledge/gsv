@@ -56,6 +56,20 @@ function makeStorageBucket() {
   return createProvisioningR2BucketMock();
 }
 
+function resolveSelfRunAs() {
+  return vi.fn(async () => ({
+    ok: true as const,
+    ownerIdentity: IDENTITY,
+    account: {
+      identity: IDENTITY,
+      capabilities: ["proc.*"],
+      displayName: IDENTITY.username,
+      relation: "self" as const,
+      packageSecurityRevision: null,
+    },
+  }));
+}
+
 describe("proc handlers", () => {
   beforeEach(() => {
     vi.resetAllMocks();
@@ -143,7 +157,6 @@ describe("proc handlers", () => {
     const conversations = { setActivePid: vi.fn(() => true) };
     const ctx = {
       kernelName: "user:sam",
-      kernelGeneration: 4,
       procs,
       conversations,
     } as unknown as KernelContext;
@@ -188,7 +201,6 @@ describe("proc handlers", () => {
     const conversations = { setActivePid: vi.fn(() => true) };
     const ctx = {
       kernelName: "user:sam",
-      kernelGeneration: 4,
       procs,
       conversations,
       assertCurrentKernel: vi.fn(() => {
@@ -251,7 +263,6 @@ describe("proc handlers", () => {
     const revokeProcessRollbackAuthorization = vi.fn();
     const ctx = {
       kernelName: "user:sam",
-      kernelGeneration: 4,
       procs,
       conversations,
       requestSignal: controller.signal,
@@ -303,7 +314,6 @@ describe("proc handlers", () => {
     const conversations = { setActivePid: vi.fn(() => false) };
     const ctx = {
       kernelName: "user:sam",
-      kernelGeneration: 4,
       procs,
       conversations,
     } as unknown as KernelContext;
@@ -329,63 +339,15 @@ describe("proc handlers", () => {
     );
   });
 
-  it("replaces a default-conversation executor from an older user-Kernel generation", async () => {
-    const stalePid = "proc:stale-default";
-    const procs = {
-      get: vi.fn(() => ({ processId: stalePid, kernelGeneration: 3 })),
-      kill: vi.fn(() => true),
-      spawn: vi.fn(),
-    };
-    const conversations = { setActivePid: vi.fn(() => true) };
-    const ctx = {
-      kernelName: "user:sam",
-      kernelGeneration: 4,
-      procs,
-      conversations,
-    } as unknown as KernelContext;
-
-    const pid = await resolveConversationExecutor(ctx, {
-      conversationId: "default:1000:1000",
-      ownerUid: IDENTITY.uid,
-      agentUid: IDENTITY.uid,
-      title: null,
-      isDefault: true,
-      activePid: stalePid,
-      archiveBase: "/process-conversation-archives/1000/1000/default",
-      latestArchive: null,
-      createdAt: 1,
-      lastActiveAt: null,
-    }, IDENTITY);
-
-    expect(pid).not.toBe(stalePid);
-    expect(procs.kill).toHaveBeenCalledWith(stalePid);
-    expect(procs.spawn).toHaveBeenCalledWith(
-      pid,
-      IDENTITY,
-      expect.objectContaining({ kernelGeneration: 4 }),
-    );
-    expect(conversations.setActivePid).toHaveBeenCalledWith(
-      "default:1000:1000",
-      pid,
-    );
-    expect(sendFrameToProcessMock).toHaveBeenCalledWith(
-      pid,
-      expect.objectContaining({ call: "proc.setidentity" }),
-    );
-    expect(procs.spawn.mock.invocationCallOrder[0])
-      .toBeLessThan(procs.kill.mock.invocationCallOrder[0]);
-  });
-
-  it("reuses a default-conversation executor from the current user-Kernel generation", async () => {
+  it("reuses a registered default-conversation executor", async () => {
     const currentPid = "proc:current-default";
     const procs = {
-      get: vi.fn(() => ({ processId: currentPid, kernelGeneration: 4 })),
+      get: vi.fn(() => ({ processId: currentPid })),
       kill: vi.fn(),
       spawn: vi.fn(),
     };
     const ctx = {
       kernelName: "user:sam",
-      kernelGeneration: 4,
       procs,
     } as unknown as KernelContext;
 
@@ -403,40 +365,6 @@ describe("proc handlers", () => {
     }, IDENTITY);
 
     expect(pid).toBe(currentPid);
-    expect(procs.kill).not.toHaveBeenCalled();
-    expect(procs.spawn).not.toHaveBeenCalled();
-    expect(sendFrameToProcessMock).not.toHaveBeenCalled();
-  });
-
-  it("preserves the exact fenced predecessor executor during user-Kernel provisioning", async () => {
-    const fencedPid = "proc:fenced-default";
-    const procs = {
-      get: vi.fn(() => ({ processId: fencedPid, kernelGeneration: 4 })),
-      kill: vi.fn(),
-      spawn: vi.fn(),
-    };
-    const ctx = {
-      kernelName: "user:sam",
-      kernelKind: "user",
-      kernelGeneration: 5,
-      kernelProvisioning: true,
-      procs,
-    } as unknown as KernelContext;
-
-    const pid = await resolveConversationExecutor(ctx, {
-      conversationId: "default:1000:1000",
-      ownerUid: IDENTITY.uid,
-      agentUid: IDENTITY.uid,
-      title: null,
-      isDefault: true,
-      activePid: fencedPid,
-      archiveBase: "/process-conversation-archives/1000/1000/default",
-      latestArchive: null,
-      createdAt: 1,
-      lastActiveAt: null,
-    }, IDENTITY);
-
-    expect(pid).toBe(fencedPid);
     expect(procs.kill).not.toHaveBeenCalled();
     expect(procs.spawn).not.toHaveBeenCalled();
     expect(sendFrameToProcessMock).not.toHaveBeenCalled();
@@ -854,6 +782,21 @@ describe("proc handlers", () => {
           username === agent.username ? agent.gids : [primaryGid],
         ),
       },
+      accountGet: vi.fn(async (query: { uid?: number }) => query.uid === human.uid
+        ? {
+            uid: human.uid,
+            gid: human.gid,
+            gids: human.gids,
+            username: human.username,
+            home: human.home,
+            shell: "/bin/init",
+            kind: "human" as const,
+            state: "active" as const,
+            displayName: human.username,
+            capabilities: ["*"],
+            personalAgentUid: agent.uid,
+          }
+        : null),
       env: {
         STORAGE: makeStorageBucket(),
       },
@@ -865,6 +808,7 @@ describe("proc handlers", () => {
         ),
       },
       conversations: {
+        listByOwner: vi.fn(() => []),
         ensureDefault,
         getByActivePid: vi.fn(() => null),
       },
@@ -936,6 +880,7 @@ describe("proc handlers", () => {
       config: {
         get: vi.fn((key: string) => configEntries.get(key) ?? null),
       },
+      configGet: vi.fn(async (key: string) => configEntries.get(key) ?? null),
       conversations: { getByActivePid: vi.fn(() => null) },
     } as unknown as KernelContext;
 
@@ -1209,6 +1154,24 @@ describe("proc handlers", () => {
         getPasswdByUid: vi.fn((uid: number) => uid === personalAgent.uid ? personalAgent : null),
         resolveGids: vi.fn((_username: string, gid: number) => [gid]),
       },
+      resolveRunAsAccount: vi.fn(async () => ({
+        ok: true as const,
+        ownerIdentity: IDENTITY,
+        account: {
+          identity: {
+            uid: personalAgent.uid,
+            gid: personalAgent.gid,
+            gids: [personalAgent.gid],
+            username: personalAgent.username,
+            home: personalAgent.home,
+            cwd: personalAgent.home,
+          },
+          capabilities: ["proc.*"],
+          displayName: personalAgent.username,
+          relation: "personal-agent" as const,
+          packageSecurityRevision: null,
+        },
+      })),
       procs: {
         get: vi.fn(() => null),
         spawn: vi.fn(),
@@ -1272,6 +1235,24 @@ describe("proc handlers", () => {
         isPersonalAgentUid: vi.fn((uid: number) => uid === personalAgent.uid),
         resolveGids: vi.fn((_username: string, gid: number) => [gid]),
       },
+      resolveRunAsAccount: vi.fn(async () => ({
+        ok: true as const,
+        ownerIdentity: IDENTITY,
+        account: {
+          identity: {
+            uid: personalAgent.uid,
+            gid: personalAgent.gid,
+            gids: [personalAgent.gid],
+            username: personalAgent.username,
+            home: personalAgent.home,
+            cwd: personalAgent.home,
+          },
+          capabilities: ["proc.*"],
+          displayName: personalAgent.username,
+          relation: "personal-agent" as const,
+          packageSecurityRevision: null,
+        },
+      })),
       procs: {
         get: vi.fn(() => null),
         spawn: vi.fn(),
@@ -1311,6 +1292,67 @@ describe("proc handlers", () => {
     }));
   });
 
+  it("stamps the exact Master-resolved package security revision", async () => {
+    const packageIdentity: ProcessIdentity = {
+      uid: 3000,
+      gid: 3000,
+      gids: [3000],
+      username: "wiki-builder",
+      home: "/home/wiki-builder",
+      cwd: "/home/wiki-builder",
+    };
+    const packageSecurityRevision = `sha256:${"a".repeat(64)}`;
+    const resolveRunAsAccount = vi.fn(async () => ({
+      ok: true as const,
+      ownerIdentity: IDENTITY,
+      account: {
+        identity: packageIdentity,
+        capabilities: ["proc.*"],
+        displayName: "Wiki Builder",
+        relation: "agent" as const,
+        packageSecurityRevision,
+      },
+    }));
+    const authorizePackageAgentRuntime = vi.fn(async () => true);
+    const procs = {
+      get: vi.fn(() => null),
+      spawn: vi.fn(),
+    };
+    const ctx = {
+      kernelKind: "user",
+      identity: {
+        process: IDENTITY,
+        capabilities: ["proc.spawn"],
+      },
+      procs,
+      conversations: spawnConversationsMock(),
+      resolveRunAsAccount,
+      authorizePackageAgentRuntime,
+    } as unknown as KernelContext;
+
+    const result = await handleProcSpawn({
+      fresh: true,
+      runAs: "wiki#builder",
+    }, ctx);
+
+    expect(result).toMatchObject({ ok: true, cwd: packageIdentity.home });
+    expect(resolveRunAsAccount).toHaveBeenCalledWith({
+      ownerUid: IDENTITY.uid,
+      callerUid: IDENTITY.uid,
+      selector: "wiki#builder",
+    });
+    expect(authorizePackageAgentRuntime).toHaveBeenCalledWith(
+      IDENTITY.uid,
+      packageIdentity,
+      packageSecurityRevision,
+    );
+    expect(procs.spawn).toHaveBeenCalledWith(
+      expect.any(String),
+      packageIdentity,
+      expect.objectContaining({ packageSecurityRevision }),
+    );
+  });
+
   it.each(["null", "error", "throw"] as const)(
     "rolls back a fresh spawn when proc.setidentity returns %s",
     async (failure) => {
@@ -1340,6 +1382,7 @@ describe("proc handlers", () => {
           process: IDENTITY,
           capabilities: ["proc.spawn"],
         },
+        resolveRunAsAccount: resolveSelfRunAs(),
         config: { get: vi.fn(() => null) },
         procs,
         conversations,
@@ -1363,7 +1406,7 @@ describe("proc handlers", () => {
     },
   );
 
-  it("rolls back a fresh spawn when its user-Kernel generation is fenced", async () => {
+  it("rolls back a fresh spawn when its user Kernel becomes inactive", async () => {
     const controller = new AbortController();
     let identityFrame: RequestFrame | null = null;
     let resolveIdentity!: (response: ResponseFrame) => void;
@@ -1382,7 +1425,6 @@ describe("proc handlers", () => {
     };
     const ctx = {
       kernelName: "user:sam",
-      kernelGeneration: 4,
       processId: SPAWN_PARENT.processId,
       callerOwnerUid: IDENTITY.uid,
       requestSignal: controller.signal,
@@ -1390,6 +1432,7 @@ describe("proc handlers", () => {
         process: IDENTITY,
         capabilities: ["proc.spawn"],
       },
+      resolveRunAsAccount: resolveSelfRunAs(),
       config: { get: vi.fn(() => null) },
       procs,
       conversations,
@@ -1453,6 +1496,7 @@ describe("proc handlers", () => {
         process: IDENTITY,
         capabilities: ["proc.spawn"],
       },
+      resolveRunAsAccount: resolveSelfRunAs(),
       config: { get: vi.fn(() => null) },
       procs,
       conversations,
@@ -1476,6 +1520,7 @@ describe("proc handlers", () => {
         process: IDENTITY,
         capabilities: ["*"],
       },
+      resolveRunAsAccount: resolveSelfRunAs(),
       config: { get: vi.fn(() => null) },
       procs: {
         get: vi.fn(() => SPAWN_PARENT),
@@ -1689,70 +1734,96 @@ describe("resolveRunAsIdentity", () => {
   };
   const byName = Object.fromEntries(Object.values(passwd).map((p) => [p.username, p]));
 
-  function authMock() {
-    return {
-      getPasswdByUid: vi.fn((uid: number) => passwd[uid] ?? null),
-      getPasswdByUsername: vi.fn((name: string) => byName[name] ?? null),
-      getPersonalAgentUid: vi.fn((ownerUid: number) => (ownerUid === 1000 ? 2000 : null)),
-      // No one is listed in alice's primary group members here.
-      getGroupByGid: vi.fn((gid: number) => ({ name: `g${gid}`, gid, members: [] as string[] })),
-      getGroupByName: vi.fn(() => null),
-      resolveGids: vi.fn((_username: string, gid: number) => [gid]),
-    };
-  }
-
   function ctxFor(runAsUid: number, processId?: string) {
     return {
       processId,
       identity: { role: "user", process: { ...IDENTITY, uid: runAsUid }, capabilities: ["proc.spawn"] },
-      auth: authMock(),
+      resolveRunAsAccount: vi.fn(async (input: { selector?: string }) => {
+        const entry = /^\d+$/.test(input.selector ?? "")
+          ? passwd[Number(input.selector)]
+          : byName[input.selector ?? ""];
+        if (!entry) return { ok: false as const, error: `Unknown account: ${input.selector}` };
+        const isSelf = entry.uid === runAsUid;
+        const delegable = entry.uid === 2000;
+        if (runAsUid !== 0 && !isSelf && !delegable) {
+          return { ok: false as const, error: `Permission denied: cannot run as ${entry.username}` };
+        }
+        return {
+          ok: true as const,
+          ownerIdentity: {
+            uid: passwd[1000].uid,
+            gid: passwd[1000].gid,
+            gids: [passwd[1000].gid],
+            username: passwd[1000].username,
+            home: passwd[1000].home,
+            cwd: passwd[1000].home,
+          },
+          account: {
+            identity: {
+              uid: entry.uid,
+              gid: entry.gid,
+              gids: [entry.gid],
+              username: entry.username,
+              home: entry.home,
+              cwd: entry.home,
+            },
+            capabilities: ["proc.*"],
+            displayName: entry.username,
+            relation: entry.uid === 1000 ? "self" as const : "agent" as const,
+            packageSecurityRevision: null,
+          },
+        };
+      }),
     } as unknown as KernelContext;
   }
 
-  it("denies an agent-backed process from running as the owning human", () => {
+  it("denies an agent-backed process from running as the owning human", async () => {
     // Caller runs as the package agent (3000); owner is the human (1000).
-    const res = resolveRunAsIdentity(ctxFor(3000, "proc:abc"), "alice", 1000);
+    const res = await resolveRunAsIdentity(ctxFor(3000, "proc:abc"), "alice", 1000);
     expect(res.ok).toBe(false);
     if (!res.ok) expect(res.error).toMatch(/cannot run as alice/i);
   });
 
-  it("still lets a human run as themselves and their personal agent", () => {
-    const self = resolveRunAsIdentity(ctxFor(1000), "alice", 1000);
+  it("still lets a human run as themselves and their personal agent", async () => {
+    const self = await resolveRunAsIdentity(ctxFor(1000), "alice", 1000);
     expect(self.ok).toBe(true);
-    const agent = resolveRunAsIdentity(ctxFor(1000), "alice-agent", 1000);
+    const agent = await resolveRunAsIdentity(ctxFor(1000), "alice-agent", 1000);
     expect(agent.ok).toBe(true);
     if (agent.ok) expect(agent.identity.uid).toBe(2000);
   });
 
-  it("allows runAs by package agent username when the owner is in the access group", () => {
+  it("allows runAs by package agent username when the owner is in the access group", async () => {
     const wikiBuilder = { username: "wiki-builder", uid: 3000, gid: 3000, home: "/home/wiki-builder" };
-    const auth = {
-      getPasswdByUid: vi.fn((uid: number) => (uid === 3000 ? wikiBuilder : passwd[uid] ?? null)),
-      getPasswdByUsername: vi.fn((name: string) => (name === "wiki-builder" ? wikiBuilder : byName[name] ?? null)),
-      getPersonalAgentUid: vi.fn((ownerUid: number) => (ownerUid === 1000 ? 2000 : null)),
-      getGroupByGid: vi.fn((gid: number) => {
-        if (gid === 3000) return { name: "wiki-builder", gid: 3000, members: [] };
-        return { name: `g${gid}`, gid, members: [] as string[] };
-      }),
-      getGroupByName: vi.fn((name: string) => {
-        if (name === "wiki-builder-run") return { name, gid: 3001, members: ["alice"] };
-        return null;
-      }),
-      resolveGids: vi.fn((_username: string, gid: number) => [gid]),
-    };
     const ctx = {
       identity: { role: "user", process: { ...IDENTITY, uid: 1000 }, capabilities: ["proc.spawn"] },
-      auth,
+      resolveRunAsAccount: vi.fn(async () => ({
+        ok: true as const,
+        ownerIdentity: IDENTITY,
+        account: {
+          identity: {
+            uid: wikiBuilder.uid,
+            gid: wikiBuilder.gid,
+            gids: [wikiBuilder.gid],
+            username: wikiBuilder.username,
+            home: wikiBuilder.home,
+            cwd: wikiBuilder.home,
+          },
+          capabilities: ["proc.*"],
+          displayName: wikiBuilder.username,
+          relation: "agent" as const,
+          packageSecurityRevision: null,
+        },
+      })),
     } as unknown as KernelContext;
 
-    const res = resolveRunAsIdentity(ctx, "wiki-builder", 1000);
+    const res = await resolveRunAsIdentity(ctx, "wiki-builder", 1000);
     expect(res.ok).toBe(true);
     if (res.ok) expect(res.identity.uid).toBe(3000);
   });
 });
 
 describe("handleProcList", () => {
-  it("hides process rows from stale user-Kernel generations", () => {
+  it("lists every process row owned by the local human", () => {
     const base = {
       ...SPAWN_PARENT,
       state: "idle",
@@ -1764,12 +1835,11 @@ describe("handleProcList", () => {
       createdAt: 1,
     };
     const list = vi.fn(() => [
-      { ...base, processId: "proc:current", kernelGeneration: 4 },
-      { ...base, processId: "proc:stale", kernelGeneration: 3 },
+      { ...base, processId: "proc:first" },
+      { ...base, processId: "proc:second" },
     ]);
     const ctx = {
       kernelKind: "user",
-      kernelGeneration: 4,
       kernelOwnerUid: IDENTITY.uid,
       identity: { role: "user", process: IDENTITY, capabilities: ["proc.list"] },
       procs: { list },
@@ -1777,7 +1847,8 @@ describe("handleProcList", () => {
     } as unknown as KernelContext;
 
     expect(handleProcList({}, ctx).processes.map((record) => record.pid)).toEqual([
-      "proc:current",
+      "proc:first",
+      "proc:second",
     ]);
   });
 

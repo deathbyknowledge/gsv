@@ -10,13 +10,13 @@ import {
 import { AUTHENTICATION_FAILED_MESSAGE, AuthStore } from "./auth-store";
 import { Kernel } from "./do";
 import type { UserKernelLifecycle, UserKernelRecord } from "./user-kernels";
+import { UserKernelRegistry } from "./user-kernels";
 import { SHIP_KERNEL_NAME } from "../shared/kernel-names";
 
 type SeedGitUser = {
   username: string;
   uid: number;
   lifecycle: UserKernelLifecycle;
-  generation: number;
   password: string;
 };
 
@@ -51,25 +51,16 @@ async function seedGitUsers(
         kind: "user",
       })).token;
 
-      const now = Date.now();
-      state.storage.sql.exec(
-        `INSERT INTO user_kernels (
-           username, uid, lifecycle, generation, created_at, updated_at, retired_at
-         ) VALUES (?, ?, ?, ?, ?, ?, ?)
-         ON CONFLICT(username) DO UPDATE SET
-           uid = excluded.uid,
-           lifecycle = excluded.lifecycle,
-           generation = excluded.generation,
-           updated_at = excluded.updated_at,
-           retired_at = excluded.retired_at`,
-        user.username,
-        user.uid,
-        user.lifecycle,
-        user.generation,
-        now,
-        now,
-        user.lifecycle === "retired" ? now : null,
-      );
+      const placements = new UserKernelRegistry(state.storage.sql);
+      placements.reserve(user.username, user.uid);
+      if (user.lifecycle === "active") {
+        placements.markActive(user.username);
+      } else {
+        state.storage.sql.exec(
+          "UPDATE user_kernels SET lifecycle = 'provisioning' WHERE username = ?",
+          user.username,
+        );
+      }
     }
 
     return tokens;
@@ -78,17 +69,14 @@ async function seedGitUsers(
 
 function placement(
   lifecycle: UserKernelLifecycle = "active",
-  generation = 4,
   uid = 1000,
 ): UserKernelRecord {
   return {
     username: "alice",
     uid,
     lifecycle,
-    generation,
     createdAt: 1,
     updatedAt: 1,
-    retiredAt: lifecycle === "retired" ? 1 : null,
   };
 }
 
@@ -119,11 +107,6 @@ function makeGitAuthorizationHarness(input: {
   Object.defineProperty(kernel, "name", { value: SHIP_KERNEL_NAME });
   kernel.transitioningUserKernels = new Set<string>();
   kernel.activeMasterUserOperations = new Map();
-  kernel.userKernelLifecycleAuthorizations = new Map();
-  kernel.masterPackageProjectionTransitionPending = null;
-  kernel.projectionState = { packageFence: vi.fn(() => null) };
-  kernel.appRuntimes = { getLifecycleFence: vi.fn(() => null) };
-  kernel.queueAppRuntimeLifecycleFenceRecovery = vi.fn();
   kernel.userKernels = {
     get: vi.fn(input.getPlacement ?? (() => current)),
   };
@@ -150,21 +133,19 @@ function makeGitAuthorizationHarness(input: {
 }
 
 describe("Git HTTP authentication", () => {
-  it("admits valid active and explicit legacy account placements", async () => {
+  it("admits valid active account placements", async () => {
     const kernel = await getAgentByName(env.KERNEL, SHIP_KERNEL_NAME);
     const tokens = await seedGitUsers(kernel, [
       {
         username: "alice",
         uid: 1000,
         lifecycle: "active",
-        generation: 3,
         password: "alice-password",
       },
       {
         username: "bob",
         uid: 1001,
-        lifecycle: "legacy",
-        generation: 1,
+        lifecycle: "active",
         password: "bob-password",
       },
     ]);
@@ -190,8 +171,7 @@ describe("Git HTTP authentication", () => {
     const token = (await seedGitUsers(kernel, [{
       username: "root",
       uid: 0,
-      lifecycle: "legacy",
-      generation: 1,
+      lifecycle: "active",
       password: "correct-password",
     }])).root;
     const request = {
@@ -254,21 +234,19 @@ describe("Git HTTP authentication", () => {
     deriveBits.mockRestore();
   });
 
-  it("generically denies unchanged passwords and tokens for suspended and retired users", async () => {
+  it("generically denies valid passwords and tokens for provisioning users", async () => {
     const kernel = await getAgentByName(env.KERNEL, SHIP_KERNEL_NAME);
     const tokens = await seedGitUsers(kernel, [
       {
         username: "alice",
         uid: 1000,
-        lifecycle: "suspended",
-        generation: 4,
+        lifecycle: "provisioning",
         password: "alice-password",
       },
       {
         username: "bob",
         uid: 1001,
-        lifecycle: "retired",
-        generation: 7,
+        lifecycle: "provisioning",
         password: "bob-password",
       },
     ]);
@@ -298,8 +276,8 @@ describe("Git HTTP authentication", () => {
     deriveBits.mockRestore();
   });
 
-  it("rejects uid, generation, and lifecycle snapshot mismatches", async () => {
-    const initial = placement("active", 4, 1000);
+  it("rejects uid, lifecycle, and missing-placement snapshot mismatches", async () => {
+    const initial = placement("active", 1000);
     const cases = [
       {
         name: "credential uid",
@@ -307,14 +285,9 @@ describe("Git HTTP authentication", () => {
         current: initial,
       },
       {
-        name: "placement generation",
-        authenticate: async () => authenticatedIdentity(),
-        current: placement("active", 5, 1000),
-      },
-      {
         name: "placement lifecycle",
         authenticate: async () => authenticatedIdentity(),
-        current: placement("suspended", 4, 1000),
+        current: placement("provisioning", 1000),
       },
       {
         name: "missing current placement",
@@ -365,76 +338,8 @@ describe("Git HTTP authentication", () => {
     expect(kernel.caps.resolve).not.toHaveBeenCalled();
   });
 
-  it("drains an admitted delayed verifier before fencing its lifecycle", async () => {
-    const events: string[] = [];
-    const active = placement("active", 4, 1000);
-    const suspended = {
-      ...active,
-      lifecycle: "suspended" as const,
-      generation: 5,
-      updatedAt: 2,
-    };
-    let current: UserKernelRecord = active;
-    let resolveAuthentication!: (result: ReturnType<typeof authenticatedIdentity>) => void;
-    const authentication = new Promise<ReturnType<typeof authenticatedIdentity>>((resolve) => {
-      resolveAuthentication = resolve;
-    });
-    const { kernel, authenticatePasswordOrToken } = makeGitAuthorizationHarness({
-      authenticate: () => authentication,
-      getPlacement: () => current,
-    });
-    kernel.caps.resolve = vi.fn(() => {
-      events.push("admit");
-      return ["repo.read"];
-    });
-    kernel.userKernels.suspend = vi.fn(() => {
-      events.push("commit");
-      current = suspended;
-      return suspended;
-    });
-    kernel.applyUserKernelLifecycleTargetFence = vi.fn(async () => {
-      events.push("fence");
-      return {
-        version: 1,
-        kind: "user",
-        username: "alice",
-        uid: 1000,
-        lifecycle: "suspended",
-        generation: 5,
-        updatedAt: 2,
-      };
-    });
-
-    const authorization = kernel.authorizeGitHttp({
-      owner: "alice",
-      repo: "notes",
-      write: true,
-      username: "alice",
-      credential: "valid-credential",
-    });
-    await vi.waitFor(() => expect(authenticatePasswordOrToken).toHaveBeenCalledOnce());
-
-    const transition = kernel.transitionUserKernelLifecycle({
-      username: "alice",
-      expectedGeneration: 4,
-      lifecycle: "suspended",
-    });
-    await vi.waitFor(() => expect(kernel.transitioningUserKernels.has("alice")).toBe(true));
-    expect(kernel.applyUserKernelLifecycleTargetFence).not.toHaveBeenCalled();
-    expect(events).toEqual([]);
-
-    resolveAuthentication(authenticatedIdentity());
-    await expect(authorization).resolves.toMatchObject({
-      ok: true,
-      username: "alice",
-      uid: 1000,
-    });
-    await expect(transition).resolves.toEqual(suspended);
-    expect(events).toEqual(["admit", "fence", "commit"]);
-  });
-
   it("falls back to anonymous access for public reads after credential denial", async () => {
-    const suspended = placement("suspended", 5, 1000);
+    const suspended = placement("provisioning", 1000);
     const { kernel, authenticatePasswordOrToken } = makeGitAuthorizationHarness({
       publicRead: true,
       getPlacement: () => suspended,

@@ -432,6 +432,46 @@ describe("handleAccountCreate", () => {
       expect.objectContaining({ type: "put", path: "context.d/00-boot.md" }),
     );
   });
+
+  it("resolves a user Kernel's personal agent through the Master authority surface", async () => {
+    const human = userIdentity(1000, "alice", ["proc.spawn"]).process;
+    const personalAgent: ProcessIdentity = {
+      uid: 2000,
+      gid: 2000,
+      gids: [2000, 1000],
+      username: "friday",
+      home: "/home/friday",
+      cwd: "/home/friday",
+    };
+    const resolveRunAsAccount = vi.fn(async () => ({
+      ok: true as const,
+      account: {
+        identity: personalAgent,
+        displayName: "Friday",
+        relation: "personal-agent" as const,
+        packageSecurityRevision: null,
+      },
+    }));
+    const ctx = {
+      kernelKind: "user",
+      identity: { role: "user", process: human, capabilities: ["proc.spawn"] },
+      resolveRunAsAccount,
+      auth: {
+        getPersonalAgentUid: vi.fn(() => {
+          throw new Error("user Kernel auth replica must not be read");
+        }),
+      },
+    } as unknown as KernelContext;
+
+    await expect(ensurePersonalAgent(ctx, human)).resolves.toEqual({
+      identity: personalAgent,
+      created: false,
+    });
+    expect(resolveRunAsAccount).toHaveBeenCalledWith({
+      ownerUid: human.uid,
+      callerUid: human.uid,
+    });
+  });
 });
 
 describe("handleAccountList", () => {

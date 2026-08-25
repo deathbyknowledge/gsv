@@ -38,10 +38,8 @@ owns HTTP/WebSocket entrypoints. Kernel DOs provide serialized control-plane
 coordination behind them.
 
 One deployed Gateway and its bound storage stack is exactly one ship. Its Kernel
-named `singleton` is the Master Control Program. Freshly commissioned and newly
-created login-capable humans have a Kernel named
-`user:<canonical-username>`; accounts discovered during the v16 upgrade remain
-explicitly `legacy` until their state can be migrated safely. Independent
+named `singleton` is the Master Control Program. Every provisioned
+login-capable human has a Kernel named `user:<canonical-username>`. Independent
 ships use independent deployments; serving several ships from one deployment
 is not supported until every DO name, R2 key, AppRunner, and service route is
 explicitly ship-scoped.
@@ -52,13 +50,12 @@ The Master Control Program is responsible for:
   uids/gids.
 - Verifying passwords and tokens and owning ship-wide login abuse budgets.
 - Maintaining groups, capabilities, account lifecycle, cross-user grants, and
-  user-Kernel provisioning generations. Public admission policy remains a
+  user-Kernel commissioning and placement. Public admission policy remains a
   target design and is not exposed yet.
-- Owning package records and configuration mutations during the current
-  transition; user Kernels receive filtered runtime projections. The v21 state
-  machine binds each installation to an exact Master revision and SHA-256
-  digest and fences package mutations until active targets have drained and
-  installed the committed revision.
+- Owning account, capability, package, configuration, repository-metadata, and
+  adapter-link authority. User Kernels obtain current, filtered answers through
+  typed Master RPCs and master-owned syscalls; they do not persist copies of
+  that authority.
 
 A ship-wide security-audit ledger for root and global mutations is a
 multiuser release gate. No such ledger or audit-query surface is implemented
@@ -69,29 +66,27 @@ Each user Kernel is responsible for:
 - The human's browser, CLI, device, and scoped service connections.
 - Sessions, devices, process/conversation registry, routes, notifications, and
   schedules.
-- OAuth/MCP state and the projected package/configuration view needed by local
-  runtime handlers.
+- OAuth/MCP state and narrow live Master reads needed by local runtime handlers.
 - Dispatching syscalls such as `fs.read`, `shell.exec`, `proc.spawn`,
   `pkg.sync`, `sys.config.get`, `sys.oauth.start`, `sys.mcp.add`, and
   `adapter.inbound`.
 - Routing requests between browser clients, the CLI, package apps, Process DOs,
   adapter workers, and connected devices.
 
-Kernel migration v23 binds every newly created generic OAuth flow to the human
-Kernel owner that admitted it. Authorization-code callbacks acquire that exact
-owner's lifecycle admission before consuming state and retain it through the
-bounded exchange and commit. Pre-v23 callback states remain unbound and fail
-closed.
+Every generic OAuth flow binds the human Kernel owner that admitted it.
+Authorization-code callbacks route by canonical username, then atomically
+consume the full opaque state only at that active owner's user Kernel. A missing
+or mismatched owner fails closed.
 
 The Kernel remains the syscall and policy boundary, but steady-state runtime
 coordination is physically sharded by human. Process DOs run agents, AppRunner
 DOs run package code, and devices execute local hardware work. The owning user
 Kernel decides whether a normal caller is allowed to do something and where the
-request should go. Global identity operations, package/configuration operations,
-and adapter link resolution currently use narrow typed calls to `singleton`.
-Active app and adapter payloads do not use those calls as a data path: app
-placement is P-256-certified and verified at the edge before user-DO selection,
-while adapter payloads bypass the bounded Master link/placement lookup.
+request should go. Global identity, package/configuration, repository-metadata,
+and package-authorization operations use narrow typed calls to `singleton`.
+App bodies route by a bounded generationless username locator and are
+authorized by the target's local HMAC/session. Adapter frames deliberately
+traverse `singleton` in both directions so delivery uses the live identity link.
 
 ### Agent Processes
 
@@ -120,8 +115,9 @@ APIs.
 
 Different path families are backed by different stores:
 
-- Master and user Kernel SQLite back their respective control-plane paths such
-  as `/sys`, `/proc`, `/dev`, and auth/config overlays in `/etc`.
+- Master and user Kernel SQLite back the state each owns. `/proc` and devices
+  are user-Kernel runtime views; `/etc` account data and `/sys` configuration or
+  capability views resolve through authorized live Master reads.
 - Process SQLite backs active conversation and run state.
 - R2 stores ordinary bytes, process media, archives, and package artifacts.
 - ripgit stores versioned home knowledge, workspace trees, package source, and
@@ -167,7 +163,8 @@ as an immutable artifact in R2, and executed by AppRunner Durable Objects.
 AppRunner gives package code a scoped runtime with:
 
 - Kernel access through the package SDK.
-- Package-scoped SQLite in a data-only DO, separate from runtime control state.
+- Package-scoped SQLite in the deterministic AppRunner for that actor uid and
+  package.
 - Browser boot metadata and backend RPC sessions.
 - Optional public routes for webhooks.
 - CLI command handlers that behave like OS commands.
@@ -203,7 +200,7 @@ and explicit repository policy.
 A typical chat request follows this path:
 
 ```text
-CLI, browser, or adapter
+CLI or browser
   -> Gateway Worker
   -> owning user Kernel (`user:<username>`)
   -> Process DO
@@ -217,11 +214,16 @@ CLI, browser, or adapter
   -> original client or adapter surface
 ```
 
+Adapter ingress takes a short authority detour: adapter worker → Gateway →
+Master → owning user Kernel → Process. Outbound adapter replies return through
+the Master for the same live link check.
+
 The same dispatcher handles non-chat requests. A package app can issue
 `fs.read`; the user Kernel checks the package entrypoint grants and either runs
 the native filesystem handler or routes to a device if `target` names one. An
-adapter can call `adapter.inbound`; the authoritative link resolves the external
-actor and the owning user Kernel delivers the message to a process. A CLI call
+adapter can call `adapter.inbound`; the Master resolves the authoritative link
+and forwards the frame to the owning user Kernel, which delivers it to a
+process. A CLI call
 to `gsv proc kill` becomes a `proc.kill` syscall forwarded to the target Process
 DO after ownership checks.
 
@@ -244,25 +246,15 @@ The system uses multiple Durable Object roles instead of one monolith:
 - User Kernel DOs: per-human connections, syscall dispatch, devices, routes,
   schedules, OAuth/MCP state, and personal runtime coordination.
 - Process DOs: durable agent loops and process-local SQLite.
-- AppRunner control DOs
-  (`app-control-v3:<kernelOwnerUid>:<actorUid>:<encodedPackageId>`): exact-bound
-  package runtime state, RPC sessions, and daemon schedules.
-- Package data DOs
-  (`app-data-v2:<kernelOwnerUid>:<actorUid>:<encodedPackageId>`):
-  package-reachable SQL, physically separated from AppRunner control tables.
+- AppRunner DOs (`app:<actorUid>:<packageId>`): package runtime,
+  package-reachable SQLite, live sockets, and daemon schedules for one
+  ship-global actor uid and package.
 - ripgit objects/workers: repository storage and Git protocol handling.
 
-The v22 Kernel registry records only AppRunner control/data objects that have
-successfully passed current authorization, binding the run-as package actor and
-controlling human Kernel owner as distinct identities. The owner, actor, and
-package jointly select the physical runner. Package and lifecycle transitions
-advance a durable, never-reused local runtime epoch, close admission, abort
-cancelable work, and wait for tracked wrappers in that observed set before
-clearing Kernel admission. Opaque Loader RPC promises without a cancellation
-handle are abandoned on abort and remain observed; their revoked epoch cannot
-reacquire current platform authority. Pre-owner-qualified `app-control-v2:` and
-`app-data:` objects, plus older combined `app:` SQL objects, remain unreachable
-and are not automatically migrated.
+An AppRunner name is deterministic routing, not authority. Before admitting
+package work, the active user Kernel validates the run-as actor, enabled and
+reviewed package, artifact hash, entrypoint, and requested call against current
+Master state.
 
 The tradeoff is that the architecture must be explicit about routing, timeouts,
 and state boundaries. Long-running local work should happen on devices. Durable
@@ -294,10 +286,10 @@ require one physical object to carry all runtime traffic. The implementation ret
 `singleton` as the Master Control Program and provisions one
 `user:<canonical-username>` Kernel for each login-capable human. Heavy execution
 remains sharded into Process and AppRunner objects and target services. The
-[Multiuser Security Architecture](./multiuser-security.md) defines the threat
-model, migration contract, and release gates. Until that migration is complete,
-the current implementation continues to route legacy traffic through
-`singleton`, and public registration remains closed.
+  [Multiuser Security Architecture](./multiuser-security.md) defines the threat
+  model, in-place upgrade cutoff, and release gates. Existing login-capable
+  accounts must finish user-Kernel provisioning before normal traffic resumes.
+  Public registration remains closed.
 
 ## See also
 

@@ -63,36 +63,6 @@ export async function resolveProcessTeardownAuthority(
   return kernel.resolveProcessTeardownAuthority(processId, claimedIdentity);
 }
 
-export async function resolveProcessLifecycleFenceAuthority(
-  kernelName: string,
-  processId: string,
-  claimedIdentity: unknown,
-  fencedGeneration: number,
-): Promise<ProcessAuthorityResult> {
-  const kernel = await getKernelPtr(kernelName);
-  return kernel.resolveProcessLifecycleFenceAuthority(
-    processId,
-    claimedIdentity,
-    fencedGeneration,
-  );
-}
-
-export async function resolveProcessPackageProjectionFenceAuthority(
-  kernelName: string,
-  processId: string,
-  claimedIdentity: unknown,
-  fencedGeneration: number,
-  fenceId: string,
-): Promise<ProcessAuthorityResult> {
-  const kernel = await getKernelPtr(kernelName);
-  return kernel.resolveProcessPackageProjectionFenceAuthority(
-    processId,
-    claimedIdentity,
-    fencedGeneration,
-    fenceId,
-  );
-}
-
 export async function consumeProcessRollbackAuthorization(
   kernelName: string,
   processId: string,

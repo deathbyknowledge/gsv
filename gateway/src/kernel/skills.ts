@@ -9,7 +9,6 @@ import {
 } from "../fs";
 import type { KernelContext } from "./context";
 import {
-  visiblePackageScopesForActor,
   type InstalledPackageRecord,
 } from "./packages";
 
@@ -89,11 +88,12 @@ export async function collectKernelSkillDocuments(
   const ripgit = ctx.env.RIPGIT ? new RipgitClient(ctx.env.RIPGIT) : null;
   const runAsIdentity = ctx.identity?.process;
   if (ripgit && runAsIdentity) {
+    const homeLayers = await resolveSkillHomeLayers(ctx, runAsIdentity);
     files.push(...await collectRipgitRuntimeSkillFiles(
       ripgit,
       ctx,
       runAsIdentity,
-      resolveSkillHomeLayers(ctx, runAsIdentity),
+      homeLayers,
       options,
     ));
   }
@@ -107,7 +107,8 @@ export async function collectFilesystemSkillDocuments(
   identity: ProcessIdentity,
   options: SkillCollectionOptions = { includeNested: true },
 ): Promise<SkillDocument[]> {
-  const roots = filesystemSkillRoots(ctx, identity, resolveSkillHomeLayers(ctx, identity));
+  const homeLayers = await resolveSkillHomeLayers(ctx, identity);
+  const roots = await filesystemSkillRoots(ctx, identity, homeLayers);
   const files: ParsedSkillFile[] = [];
   for (const root of roots) {
     files.push(...await collectFsSkillFiles(fs, root.rootPath, root.source, root.idPrefix, options));
@@ -243,11 +244,7 @@ async function collectRipgitRuntimeSkillFiles(
     ));
   }
 
-  const packageScopeIdentity = homeLayers[0]?.identity ?? runAsIdentity;
-  const packageRecords = ctx.packages.list({
-    enabled: true,
-    scopes: visiblePackageScopesForActor(packageScopeIdentity),
-  });
+  const packageRecords = await ctx.packagesList({ enabled: true });
   const packagePathNames = packageSourcePathNameMap(packageRecords);
   for (const record of packageRecords) {
     const sourcePathName = packagePathNames.get(record) ?? packageSourcePathName(record);
@@ -265,11 +262,11 @@ async function collectRipgitRuntimeSkillFiles(
   return files;
 }
 
-function filesystemSkillRoots(
+async function filesystemSkillRoots(
   ctx: KernelContext,
   runAsIdentity: ProcessIdentity,
   homeLayers: SkillHomeLayer[],
-): SkillRoot[] {
+): Promise<SkillRoot[]> {
   const roots: SkillRoot[] = [];
 
   for (const layer of homeLayers) {
@@ -283,11 +280,7 @@ function filesystemSkillRoots(
     });
   }
 
-  const packageScopeIdentity = homeLayers[0]?.identity ?? runAsIdentity;
-  const packageRecords = ctx.packages.list({
-    enabled: true,
-    scopes: visiblePackageScopesForActor(packageScopeIdentity),
-  });
+  const packageRecords = await ctx.packagesList({ enabled: true });
   const packagePathNames = packageSourcePathNameMap(packageRecords);
   for (const record of packageRecords) {
     const sourcePathName = packagePathNames.get(record) ?? packageSourcePathName(record);
@@ -305,13 +298,16 @@ function filesystemSkillRoots(
   return roots;
 }
 
-function resolveSkillHomeLayers(ctx: KernelContext, runAsIdentity: ProcessIdentity): SkillHomeLayer[] {
+async function resolveSkillHomeLayers(
+  ctx: KernelContext,
+  runAsIdentity: ProcessIdentity,
+): Promise<SkillHomeLayer[]> {
   const ownerUid = resolveSkillOwnerUid(ctx, runAsIdentity);
   if (ownerUid === runAsIdentity.uid) {
     return [{ identity: runAsIdentity, label: "home" }];
   }
 
-  const entry = ctx.auth.getPasswdByUid(ownerUid);
+  const entry = await ctx.accountGet({ uid: ownerUid });
   if (!entry) {
     return [{ identity: runAsIdentity, label: "home" }];
   }
@@ -319,7 +315,7 @@ function resolveSkillHomeLayers(ctx: KernelContext, runAsIdentity: ProcessIdenti
   const ownerIdentity: ProcessIdentity = {
     uid: entry.uid,
     gid: entry.gid,
-    gids: ctx.auth.resolveGids(entry.username, entry.gid),
+    gids: entry.gids,
     username: entry.username,
     home: entry.home,
     cwd: entry.home,

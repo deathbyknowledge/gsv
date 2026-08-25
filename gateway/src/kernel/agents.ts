@@ -45,7 +45,6 @@ import { canOwnerDelegateRunAs, canOwnerRunAsAccount } from "./account-access";
 import { ensureAccountHomeLayout } from "./account-home";
 import { DEFAULT_PERSONA_CONTEXT_TEMPLATE } from "../prompts/persona";
 import { canonicalizeLoginUsername } from "../auth/login";
-import { processKernelGenerationMatches } from "./processes";
 
 /**
  * Curated, tasteful default names for the personal agent. The first available
@@ -168,14 +167,29 @@ function normalizeAccountContextFiles(value: unknown): AccountContextFile[] {
 }
 
 /**
- * Ensure the human's 1:1 personal agent account exists, returning its run-as
- * identity. Idempotent: returns the existing account when already provisioned.
+ * Return the human's 1:1 personal-agent run-as identity. The Master may create
+ * it during setup/account.create; a user Kernel only resolves the existing
+ * account through the Master authority surface.
  */
 export async function ensurePersonalAgent(
   ctx: KernelContext,
   human: ProcessIdentity,
   preferredName?: string,
 ): Promise<PersonalAgentProvision> {
+  if (ctx.kernelKind === "user") {
+    const resolved = await ctx.resolveRunAsAccount({
+      ownerUid: human.uid,
+      callerUid: ctx.identity?.process.uid ?? human.uid,
+    });
+    if (!resolved.ok) {
+      throw new Error(resolved.error);
+    }
+    return {
+      identity: resolved.account.identity,
+      created: false,
+    };
+  }
+
   const { auth } = ctx;
 
   // System accounts (root, services; uid < 1000) and agent accounts themselves
@@ -466,44 +480,42 @@ export async function resolveConversationExecutor(
   ctx: KernelContext,
   conversation: ConversationRecord,
   agentIdentity: ProcessIdentity,
-  opts?: { interactive?: boolean; label?: string },
+  opts?: { interactive?: boolean; label?: string; ownerIdentity?: ProcessIdentity },
 ): Promise<string> {
   ctx.requestSignal?.throwIfAborted();
   ctx.assertCurrentKernel?.();
 
-  let stalePid: string | null = null;
   if (conversation.activePid) {
     const active = ctx.procs.get(conversation.activePid);
-    if (active && processKernelGenerationMatches(active, ctx.kernelGeneration)) {
-      return conversation.activePid;
-    }
-    if (
-      active
-      && ctx.kernelKind === "user"
-      && ctx.kernelProvisioning === true
-      && typeof ctx.kernelGeneration === "number"
-      && active.kernelGeneration === ctx.kernelGeneration - 1
-    ) {
-      // Suspension exact-acks cancellation before advancing the generation.
-      // Keep that quiesced executor bound until activation atomically rebinds
-      // it; replacing it here would strand its live transcript and media.
-      return conversation.activePid;
-    }
     if (active) {
-      stalePid = conversation.activePid;
+      return conversation.activePid;
     }
   }
 
   const interactive = opts?.interactive ?? true;
-  const ownerEntry = conversation.ownerUid === agentIdentity.uid
+  if (opts?.ownerIdentity && opts.ownerIdentity.uid !== conversation.ownerUid) {
+    throw new Error("Conversation owner identity mismatch");
+  }
+  const ownerAccount = conversation.ownerUid === agentIdentity.uid || opts?.ownerIdentity
     ? null
-    : ctx.auth.getPasswdByUid(conversation.ownerUid);
-  if (conversation.ownerUid !== agentIdentity.uid && !ownerEntry) {
+    : await ctx.accountGet({ uid: conversation.ownerUid });
+  if (
+    conversation.ownerUid !== agentIdentity.uid
+    && !opts?.ownerIdentity
+    && (!ownerAccount || ownerAccount.state !== "active")
+  ) {
     throw new Error(`Cannot resolve conversation owner uid ${conversation.ownerUid}`);
   }
-  const ownerIdentity = ownerEntry
-    ? accountIdentity(ctx.auth, ownerEntry)
-    : agentIdentity;
+  const ownerIdentity = opts?.ownerIdentity ?? (ownerAccount
+    ? {
+        uid: ownerAccount.uid,
+        gid: ownerAccount.gid,
+        gids: ownerAccount.gids,
+        username: ownerAccount.username,
+        home: ownerAccount.home,
+        cwd: ownerAccount.home,
+      }
+    : agentIdentity);
   const pid = `proc:${crypto.randomUUID()}`;
   const rollbackAuthorization = ctx.issueProcessRollbackAuthorization?.(pid);
   const requestId = crypto.randomUUID();
@@ -550,9 +562,6 @@ export async function resolveConversationExecutor(
         ownerUid: conversation.ownerUid,
         interactive,
         label: opts?.label,
-        ...(ctx.kernelGeneration !== undefined
-          ? { kernelGeneration: ctx.kernelGeneration }
-          : {}),
       });
       if (!ctx.conversations.setActivePid(conversation.conversationId, pid)) {
         throw new Error(`Failed to bind conversation executor: ${conversation.conversationId}`);
@@ -587,11 +596,6 @@ export async function resolveConversationExecutor(
   if (rollbackAuthorization) {
     ctx.revokeProcessRollbackAuthorization?.(rollbackAuthorization);
   }
-
-  if (stalePid) {
-    ctx.procs.kill(stalePid);
-  }
-
   return pid;
 }
 
@@ -659,8 +663,33 @@ export async function ensureDefaultConversationExecutor(
   human: ProcessIdentity,
   personalAgent?: ProcessIdentity,
 ): Promise<string> {
-  // Provisioning passes the Master-resolved personal agent directly; steady
-  // state resolves (and if needed provisions) it locally.
+  if (!personalAgent) {
+    const existing = ctx.conversations.listByOwner(human.uid).find((record) => record.isDefault);
+    if (existing) {
+      let identity = existing.activePid
+        ? ctx.procs.getIdentity(existing.activePid)
+        : null;
+      if (!identity) {
+        const resolved = await ctx.resolveRunAsAccount({
+          ownerUid: human.uid,
+          callerUid: ctx.identity?.process.uid ?? human.uid,
+          selector: String(existing.agentUid),
+        });
+        if (!resolved.ok || resolved.account.identity.uid !== existing.agentUid) {
+          throw new Error(`Cannot resolve conversation agent uid ${existing.agentUid}`);
+        }
+        identity = resolved.account.identity;
+      }
+      return resolveConversationExecutor(ctx, existing, identity, {
+        interactive: true,
+        label: `${identity.username} (${human.username})`,
+        ownerIdentity: human,
+      });
+    }
+  }
+  // Provisioning may pass the already-created personal agent directly. A user
+  // Kernel resolves steady-state run-as authority through the Master; account
+  // creation remains a Master-only setup/account.create operation.
   const agent = personalAgent
     ? { identity: personalAgent, created: false }
     : await ensurePersonalAgent(ctx, human);
@@ -671,5 +700,6 @@ export async function ensureDefaultConversationExecutor(
   return resolveConversationExecutor(ctx, record, agent.identity, {
     interactive: true,
     label: `${agent.identity.username} (${human.username})`,
+    ownerIdentity: human,
   });
 }

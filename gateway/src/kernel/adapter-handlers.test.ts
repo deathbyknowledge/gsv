@@ -33,6 +33,9 @@ type MakeContextOptions = {
   surfaceRoute?: Record<string, unknown> | null;
   processId?: string;
   callerOwnerUid?: number;
+  resolveRunAsAccount?: KernelContext["resolveRunAsAccount"];
+  listRunnableAccounts?: KernelContext["listRunnableAccounts"];
+  authorizePackageAgentRuntime?: NonNullable<KernelContext["authorizePackageAgentRuntime"]>;
 };
 
 function makeStorageBucket() {
@@ -107,6 +110,58 @@ function makeContext(
   const resolveUid = typeof configuredResolveUid === "function"
     ? configuredResolveUid as (...args: unknown[]) => number | null
     : vi.fn(() => 1000);
+  const identityFor = (entry: typeof human): {
+    uid: number;
+    gid: number;
+    gids: number[];
+    username: string;
+    home: string;
+    cwd: string;
+  } => ({
+    uid: entry.uid,
+    gid: entry.gid,
+    gids: [1000],
+    username: entry.username,
+    home: entry.home,
+    cwd: entry.home,
+  });
+  const runnableAccounts = [
+    {
+      identity: identityFor(human),
+      capabilities: ["adapter.*"],
+      displayName: human.gecos,
+      relation: "self" as const,
+      packageSecurityRevision: null,
+    },
+    {
+      identity: identityFor(personalAgent),
+      capabilities: ["adapter.*"],
+      displayName: personalAgent.gecos,
+      relation: "personal-agent" as const,
+      packageSecurityRevision: null,
+    },
+    {
+      identity: identityFor(helperAgent),
+      capabilities: ["adapter.*"],
+      displayName: helperAgent.gecos,
+      relation: "agent" as const,
+      packageSecurityRevision: "helper-security-revision",
+    },
+  ];
+  const resolveRunAsAccount = options.resolveRunAsAccount ?? vi.fn(async (input) => {
+    const selector = input.selector?.trim();
+    const account = selector
+      ? runnableAccounts.find((candidate) => (
+          candidate.identity.username === selector
+          || String(candidate.identity.uid) === selector
+        ))
+      : runnableAccounts[1];
+    return account
+      ? { ok: true as const, account, ownerIdentity: identityFor(human) }
+      : { ok: false as const, error: `Unknown account: ${selector}` };
+  });
+  const listRunnableAccounts = options.listRunnableAccounts
+    ?? vi.fn(async () => runnableAccounts);
 
   return {
     kernelName: "kernel-adapter",
@@ -239,6 +294,10 @@ function makeContext(
     routedAdapterOwnerUid: options.routedAdapterOwnerUid,
     routedAdapterLinkGeneration: options.routedAdapterLinkGeneration ?? 1,
     serviceBinding: options.serviceBinding ?? true,
+    resolveRunAsAccount,
+    listRunnableAccounts,
+    authorizePackageAgentRuntime: options.authorizePackageAgentRuntime
+      ?? vi.fn(async () => true),
   } as unknown as KernelContext;
 }
 
@@ -1144,6 +1203,13 @@ describe("adapter lifecycle handlers", () => {
     });
     expect(resolveUid).not.toHaveBeenCalled();
     expect(ctx.adapters.linkChallenges.issue).not.toHaveBeenCalled();
+    expect(ctx.resolveRunAsAccount).toHaveBeenCalledWith({
+      ownerUid: 1000,
+      callerUid: 1000,
+      selector: "1000",
+    });
+    expect(ctx.auth.getPasswdByUid).not.toHaveBeenCalled();
+    expect(ctx.auth.resolveGids).not.toHaveBeenCalled();
     expect(ctx.adapters.surfaceRoutes.resolvePid).toHaveBeenCalledWith(
       "whatsapp",
       "primary",
@@ -1745,6 +1811,37 @@ describe("adapter lifecycle handlers", () => {
     expect(sendFrameToProcessMock).not.toHaveBeenCalled();
   });
 
+  it("adapter.inbound lists Master-authorized runnable agents without local auth reads", async () => {
+    const status = { upsert: vi.fn() };
+    const ctx = makeContext({}, status, { routePid: null });
+
+    const result = await handleAdapterInbound(
+      {
+        adapter: "whatsapp",
+        accountId: "primary",
+        message: {
+          messageId: "msg-list",
+          surface: { kind: "dm", id: "dm-1" },
+          actor: { id: "wa:+123" },
+          text: "/list",
+        },
+      },
+      ctx,
+    );
+
+    expect(result.reply?.text).toContain("sam-agent");
+    expect(result.reply?.text).toContain("helper (Helper)");
+    expect(result.reply?.text).not.toContain("- sam (Sam)");
+    expect(ctx.listRunnableAccounts).toHaveBeenCalledWith({
+      ownerUid: 1000,
+      callerUid: 1000,
+    });
+    expect(ctx.auth.getPasswdEntries).not.toHaveBeenCalled();
+    expect(ctx.auth.getShadowByUsername).not.toHaveBeenCalled();
+    expect(ctx.auth.resolveGids).not.toHaveBeenCalled();
+    expect(sendFrameToProcessMock).not.toHaveBeenCalled();
+  });
+
   it("adapter.inbound routes a dm to a listed process with /use", async () => {
     const status = { upsert: vi.fn() };
     const ctx = makeContext({}, status, { routePid: null });
@@ -1820,8 +1917,19 @@ describe("adapter lifecycle handlers", () => {
     expect(ctx.procs.spawn).toHaveBeenCalledWith(
       expect.stringMatching(/^proc:/),
       expect.objectContaining({ username: "helper" }),
-      expect.objectContaining({ ownerUid: 1000, interactive: true }),
+      expect.objectContaining({
+        ownerUid: 1000,
+        interactive: true,
+        packageSecurityRevision: "helper-security-revision",
+      }),
     );
+    expect(ctx.authorizePackageAgentRuntime).toHaveBeenCalledWith(
+      1000,
+      expect.objectContaining({ uid: 1002, username: "helper" }),
+      "helper-security-revision",
+    );
+    expect(ctx.auth.getPasswdByUid).not.toHaveBeenCalled();
+    expect(ctx.auth.resolveGids).not.toHaveBeenCalled();
     expect(sendFrameToProcessMock).toHaveBeenCalledWith(
       expect.stringMatching(/^proc:/),
       expect.objectContaining({

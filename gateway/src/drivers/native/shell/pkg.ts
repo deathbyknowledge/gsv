@@ -1,9 +1,6 @@
 import { defineCommand } from "just-bash";
 import type { ExecResult } from "just-bash";
-import {
-  captureAppRunnerRuntime,
-  type AppRunnerCommandInput,
-} from "../../../app-runner";
+import type { AppRunnerCommandInput, AppRunnerProps } from "../../../app-runner";
 import type { KernelContext } from "../../../kernel/context";
 import { resolveCallerOwnerUid } from "../../../kernel/context";
 import {
@@ -35,12 +32,14 @@ type PackageCommandResult = {
 };
 
 type PackageRunnerStub = {
+  ensureRuntime(props: AppRunnerProps): Promise<void>;
   runCommand(input: AppRunnerCommandInput): Promise<PackageCommandResult>;
 };
 
 export function buildPackageCommands(identity: ProcessIdentity, ctx: KernelContext) {
   const commands = [];
   const reserved = new Set([
+    "account",
     "pkg",
     "proc",
     "rgit",
@@ -765,16 +764,10 @@ async function runPackageCommand(
   const commandName = entrypoint.command?.trim() || entrypoint.name;
   const routeBase = packageRouteBase(record.manifest.name);
   const runner = ctx.getAppRunner(identity.uid, record.packageId) as PackageRunnerStub;
-  const kernelOwnerUid = ctx.kernelOwnerUid ?? resolveCallerOwnerUid(ctx);
   const now = Date.now();
   const appFrame = {
     uid: identity.uid,
     username: identity.username,
-    kernelOwnerUid,
-    ...(ctx.kernelUsername ? { kernelUsername: ctx.kernelUsername } : {}),
-    ...(ctx.kernelGeneration !== undefined
-      ? { kernelGeneration: ctx.kernelGeneration }
-      : {}),
     packageId: record.packageId,
     packageName: record.manifest.name,
     packageUpdatedAt: record.updatedAt,
@@ -784,17 +777,21 @@ async function runPackageCommand(
     issuedAt: now,
     expiresAt: now + 365 * 24 * 60 * 60 * 1000,
   };
-  if (!(await ctx.authorizePackageRuntime(appFrame))) {
-    throw new Error("Package runtime authorization expired");
-  }
+  await runner.ensureRuntime({
+    kernelName: ctx.kernelName,
+    packageId: record.packageId,
+    packageName: record.manifest.name,
+    routeBase,
+    entrypointName: commandName,
+    artifact: record.artifact,
+    appFrame,
+  });
   return runner.runCommand({
-    runtime: captureAppRunnerRuntime({
-      artifact: record.artifact,
-      appFrame,
-    }),
     commandName,
     args,
     cwd,
+    uid: identity.uid,
     gid: identity.gid,
+    username: identity.username,
   });
 }

@@ -181,8 +181,6 @@ import { assembleSystemPrompt } from "./context";
 import {
   cancelProcessRequests,
   consumeProcessRollbackAuthorization,
-  resolveProcessLifecycleFenceAuthority as requestProcessLifecycleFenceAuthority,
-  resolveProcessPackageProjectionFenceAuthority as requestProcessPackageProjectionFenceAuthority,
   resolveProcessAuthority as requestProcessAuthority,
   resolveProcessTeardownAuthority as requestProcessTeardownAuthority,
   SHIP_KERNEL_NAME,
@@ -291,14 +289,6 @@ type ProcessArchiveResult = {
 type PreparedToolArgs = {
   args: unknown;
   missingShellSessionTarget: boolean;
-};
-
-type ProcessAbortInput = ProcAbortArgs & {
-  /** Internal target-side lifecycle fence. Not part of the public syscall. */
-  lifecycleFenceGeneration?: number;
-  /** Internal package-projection fence. Not part of the public syscall. */
-  packageProjectionFenceGeneration?: number;
-  packageProjectionFenceId?: string;
 };
 
 type ArchivedMessageRecord = {
@@ -898,10 +888,13 @@ export class Process extends Host<Env> {
     super(ctx, env);
     runProcessSqlMigrations(ctx.storage);
     this.store = new ProcessStore(ctx.storage.sql);
-    this.store.ensureConversation(DEFAULT_CONVERSATION_ID);
     this.ripgit = env.RIPGIT
       ? new RipgitClient(env.RIPGIT)
       : null;
+    if (this.isDormantLegacyProcess) {
+      return;
+    }
+    this.store.ensureConversation(DEFAULT_CONVERSATION_ID);
     const recoveredRun = this.currentRun;
     if (
       recoveredRun?.pendingMediaMessageId !== undefined
@@ -962,6 +955,21 @@ export class Process extends Host<Env> {
     return this.store.getValue("kernelName") ?? SHIP_KERNEL_NAME;
   }
 
+  // Pre-cutoff Processes either persisted singleton or had no kernelName and
+  // therefore default to it. Their state remains stored but never resumes.
+  private get isDormantLegacyProcess(): boolean {
+    return this.store.getValue("pid") !== null
+      && this.kernelName === SHIP_KERNEL_NAME;
+  }
+
+  private async admitScheduledMutation(): Promise<boolean> {
+    if (this.isDormantLegacyProcess) {
+      return false;
+    }
+    await this.ensureProcessAuthority();
+    return true;
+  }
+
   get identity(): ProcessIdentity {
     const raw = this.store.getValue("identity");
     if (!raw) throw new Error("Process not initialized — identity missing");
@@ -1003,107 +1011,6 @@ export class Process extends Host<Env> {
 
   private async ensureProcessTeardownAuthority(): Promise<ProcessAuthority> {
     return await this.resolveProcessAuthority(true);
-  }
-
-  private async ensureProcessLifecycleFenceAuthority(
-    fencedGeneration: number,
-  ): Promise<ProcessAuthority> {
-    // The Kernel closes target admission before issuing this exact fence
-    // authority. Drain authority work that was already admitted so its local
-    // identity refresh and any legacy R2 relocation are part of the fence.
-    await this.authorityTransition;
-    const pid = this.store.getValue("pid");
-    const identityRaw = this.store.getValue("identity");
-    const ownerRaw = this.store.getValue("ownerIdentity");
-    const identity = parseProcessIdentity(identityRaw);
-    if (!pid || !identity) {
-      throw new Error("Process authority unavailable — process is not initialized");
-    }
-
-    const result = await requestProcessLifecycleFenceAuthority(
-      this.kernelName,
-      pid,
-      identity,
-      fencedGeneration,
-    );
-    if (!result.ok) {
-      throw new Error(`Process lifecycle fence unavailable — ${result.error}`);
-    }
-    const authority = result.authority;
-    if (
-      authority.processId !== pid
-      || !isProcessIdentity(authority.identity)
-      || !isProcessIdentity(authority.ownerIdentity)
-      || !processIdentityEquals(authority.identity, identity, { includeCwd: true })
-    ) {
-      throw new Error("Process lifecycle fence unavailable — invalid Kernel authority response");
-    }
-    if (
-      !this.isInitialized()
-      || this.store.getValue("pid") !== pid
-      || this.store.getValue("identity") !== identityRaw
-      || this.store.getValue("ownerIdentity") !== ownerRaw
-    ) {
-      throw new Error("Process lifecycle fence unavailable — process changed during validation");
-    }
-    const persistedOwner = parseProcessIdentity(ownerRaw);
-    if (!persistedOwner || !processIdentityEquals(persistedOwner, authority.ownerIdentity)) {
-      throw new Error("Process lifecycle fence unavailable — owner identity does not match Kernel");
-    }
-    return authority;
-  }
-
-  private async ensureProcessPackageProjectionFenceAuthority(
-    fencedGeneration: number,
-    fenceId: string,
-  ): Promise<ProcessAuthority> {
-    await this.authorityTransition;
-    const pid = this.store.getValue("pid");
-    const identityRaw = this.store.getValue("identity");
-    const ownerRaw = this.store.getValue("ownerIdentity");
-    const identity = parseProcessIdentity(identityRaw);
-    if (!pid || !identity) {
-      throw new Error("Process authority unavailable — process is not initialized");
-    }
-
-    const result = await requestProcessPackageProjectionFenceAuthority(
-      this.kernelName,
-      pid,
-      identity,
-      fencedGeneration,
-      fenceId,
-    );
-    if (!result.ok) {
-      throw new Error(`Process package projection fence unavailable — ${result.error}`);
-    }
-    const authority = result.authority;
-    if (
-      authority.processId !== pid
-      || !isProcessIdentity(authority.identity)
-      || !isProcessIdentity(authority.ownerIdentity)
-      || !processIdentityEquals(authority.identity, identity, { includeCwd: true })
-    ) {
-      throw new Error(
-        "Process package projection fence unavailable — invalid Kernel authority response",
-      );
-    }
-    if (
-      !this.isInitialized()
-      || this.store.getValue("pid") !== pid
-      || this.store.getValue("identity") !== identityRaw
-      || this.store.getValue("ownerIdentity") !== ownerRaw
-    ) {
-      throw new Error(
-        "Process package projection fence unavailable — process changed during validation",
-      );
-    }
-    const persistedOwner = parseProcessIdentity(ownerRaw);
-    if (!persistedOwner || !processIdentityEquals(persistedOwner, authority.ownerIdentity)) {
-      throw new Error(
-        "Process package projection fence unavailable — owner identity does not match Kernel",
-      );
-    }
-    return authority;
   }
 
   private async resolveProcessAuthority(teardown = false): Promise<ProcessAuthority> {
@@ -1532,29 +1439,6 @@ export class Process extends Host<Env> {
           if (!authorized) {
             throw new Error("Process rollback authorization denied");
           }
-        } else if (
-          frame.call === "proc.abort"
-          && Number.isSafeInteger(
-            (frame.args as ProcessAbortInput).lifecycleFenceGeneration,
-          )
-          && (frame.args as ProcessAbortInput).lifecycleFenceGeneration! > 0
-        ) {
-          await this.ensureProcessLifecycleFenceAuthority(
-            (frame.args as ProcessAbortInput).lifecycleFenceGeneration!,
-          );
-        } else if (
-          frame.call === "proc.abort"
-          && Number.isSafeInteger(
-            (frame.args as ProcessAbortInput).packageProjectionFenceGeneration,
-          )
-          && (frame.args as ProcessAbortInput).packageProjectionFenceGeneration! > 0
-          && typeof (frame.args as ProcessAbortInput).packageProjectionFenceId === "string"
-          && (frame.args as ProcessAbortInput).packageProjectionFenceId!.length > 0
-        ) {
-          await this.ensureProcessPackageProjectionFenceAuthority(
-            (frame.args as ProcessAbortInput).packageProjectionFenceGeneration!,
-            (frame.args as ProcessAbortInput).packageProjectionFenceId!,
-          );
         } else if (frame.call === "proc.kill") {
           await this.ensureProcessTeardownAuthority();
         } else {
@@ -1623,7 +1507,7 @@ export class Process extends Host<Env> {
           );
           break;
         case "proc.abort":
-          data = await this.handleProcAbort(frame.args as ProcessAbortInput);
+          data = await this.handleProcAbort(frame.args);
           break;
         case "proc.hil":
           data = await this.handleProcHil(
@@ -2404,20 +2288,8 @@ export class Process extends Host<Env> {
     }
   }
 
-  private async handleProcAbort(args: ProcessAbortInput = {}): Promise<ProcAbortResult> {
+  private async handleProcAbort(args: ProcAbortArgs = {}): Promise<ProcAbortResult> {
     const pid = this.pid;
-    const lifecycleFence = Number.isSafeInteger(args.lifecycleFenceGeneration)
-      && args.lifecycleFenceGeneration! > 0;
-    const packageProjectionFence = Number.isSafeInteger(args.packageProjectionFenceGeneration)
-      && args.packageProjectionFenceGeneration! > 0
-      && typeof args.packageProjectionFenceId === "string"
-      && args.packageProjectionFenceId.length > 0;
-    const internalFence = lifecycleFence || packageProjectionFence;
-    const interruptionReason = lifecycleFence
-      ? "User Kernel lifecycle was fenced"
-      : packageProjectionFence
-        ? "Package authority projection was fenced"
-      : USER_INTERRUPTED_TOOL_MESSAGE;
     const releaseLifecycle = await this.acquireLifecycleTransition();
     try {
       const run = this.currentRun;
@@ -2426,11 +2298,11 @@ export class Process extends Host<Env> {
       }
 
       const runId = run.runId;
-      this.cancelPendingRequests(runId, interruptionReason);
+      this.cancelPendingRequests(runId, USER_INTERRUPTED_TOOL_MESSAGE);
       this.rememberAbortedRun(runId);
       const pendingHil = this.store.getPendingHilForRun(runId);
       const interrupted = this.ingestToolResults(runId, this.store.getResults(runId), {
-        interruptPending: interruptionReason,
+        interruptPending: USER_INTERRUPTED_TOOL_MESSAGE,
       });
 
       if (pendingHil) {
@@ -2439,27 +2311,16 @@ export class Process extends Host<Env> {
       this.store.clearPendingHil();
       this.rejectCodeModeWaiters(
         runId,
-        lifecycleFence
-          ? "User Kernel lifecycle was fenced"
-          : packageProjectionFence
-            ? "Package authority projection was fenced"
-          : "User interrupted CodeMode execution",
+        "User interrupted CodeMode execution",
       );
 
       this.emitRunFinished(run, {
         text: null,
         status: "aborted",
-        reason: lifecycleFence
-          ? "kernel.lifecycle"
-          : packageProjectionFence
-            ? "kernel.package_projection"
-            : "user",
+        reason: "user",
       });
       this.currentRun = null;
-      // A lifecycle fence must not immediately restart queued work while the
-      // owning user Kernel is non-active. Normal user abort retains the public
-      // behavior of promoting the next queued turn.
-      const next = internalFence ? null : this.claimNextQueuedRun();
+      const next = this.claimNextQueuedRun();
 
       if (interrupted.appended > 0) {
         this.ctx.waitUntil(this.emitProcChanged(["messages"], {
@@ -2467,9 +2328,7 @@ export class Process extends Host<Env> {
           runId,
         }));
       }
-      if (!internalFence) {
-        this.promoteNextQueuedRun(next);
-      }
+      this.promoteNextQueuedRun(next);
 
       return {
         ok: true,
@@ -3998,7 +3857,7 @@ export class Process extends Host<Env> {
    */
   private async scheduleTick(runId: string): Promise<void> {
     const run = this.currentRun;
-    if (!run || run.runId !== runId) {
+    if (!run || run.runId !== runId || this.isDormantLegacyProcess) {
       return;
     }
     const next = new Date(Date.now() + 10);
@@ -4009,7 +3868,14 @@ export class Process extends Host<Env> {
   }
 
   async onMediaPreparationTimeout(runId: string): Promise<void> {
-    const run = this.currentRun;
+    let run = this.currentRun;
+    if (run?.runId !== runId || run.pendingMediaMessageId === undefined) {
+      return;
+    }
+    if (!(await this.admitScheduledMutation())) {
+      return;
+    }
+    run = this.currentRun;
     if (run?.runId !== runId || run.pendingMediaMessageId === undefined) {
       return;
     }
@@ -4023,6 +3889,12 @@ export class Process extends Host<Env> {
 
   async onToolDispatchTimeout(input: { runId: string; dispatchId: string }): Promise<void> {
     const { runId, dispatchId } = input;
+    if (this.currentRun?.runId !== runId) {
+      return;
+    }
+    if (!(await this.admitScheduledMutation())) {
+      return;
+    }
     if (this.currentRun?.runId !== runId) {
       return;
     }
@@ -4282,7 +4154,18 @@ export class Process extends Host<Env> {
 
   async tick(input: { runId: string; generation: number }): Promise<void> {
     const { runId, generation } = input;
-    const run = this.currentRun;
+    let run = this.currentRun;
+    if (
+      !run
+      || run.runId !== runId
+      || (run.tickGeneration ?? 0) !== generation
+    ) {
+      return;
+    }
+    if (!(await this.admitScheduledMutation())) {
+      return;
+    }
+    run = this.currentRun;
     if (
       !run
       || run.runId !== runId
@@ -4299,7 +4182,7 @@ export class Process extends Host<Env> {
     }
 
     this.activeTickRunIds.add(runId);
-    this.ctx.waitUntil(this.runTick(runId)
+    this.ctx.waitUntil(this.runTick(runId, true)
       .catch((error) => {
         if (this.currentRun?.runId !== runId) {
           return;
@@ -4327,9 +4210,11 @@ export class Process extends Host<Env> {
       }));
   }
 
-  private async runTick(runId: string): Promise<void> {
+  private async runTick(runId: string, authorityValidated = false): Promise<void> {
     await this.lifecycleTransition;
-    await this.ensureProcessAuthority();
+    if (!authorityValidated && !(await this.admitScheduledMutation())) {
+      return;
+    }
     let run = this.currentRun;
     if (!run || run.runId !== runId) {
       return;
@@ -5558,7 +5443,7 @@ export class Process extends Host<Env> {
       pending.push(payload);
       this.store.setValue(PENDING_RUN_FINISHES_KEY, JSON.stringify(pending));
     }
-    this.ctx.waitUntil(this.onRunFinishDelivery(run.runId));
+    this.ctx.waitUntil(this.deliverRunFinish(run.runId));
   }
 
   private runFinishedPayload(
@@ -5582,6 +5467,13 @@ export class Process extends Host<Env> {
   }
 
   async onRunFinishDelivery(runId: string): Promise<void> {
+    if (!(await this.admitScheduledMutation())) {
+      return;
+    }
+    await this.deliverRunFinish(runId);
+  }
+
+  private async deliverRunFinish(runId: string): Promise<void> {
     const pending = JSON.parse(
       this.store.getValue(PENDING_RUN_FINISHES_KEY) ?? "[]",
     ) as Array<Record<string, unknown> & { runId: string }>;

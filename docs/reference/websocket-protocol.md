@@ -4,13 +4,13 @@ Gateway control requests, responses, and signals use JSON text frames over
 WebSocket. Active user-Kernel connections use
 `GET /ws/<canonical-username>` and route to the provisioned Kernel named
 `user:<canonical-username>`. `GET /ws` reaches the Master Control Program named
-`singleton` for first-run commissioning and for accounts explicitly recorded as
-`legacy`. Requests and successful responses may attach a byte stream carried by
-binary frames.
+`singleton` only for first-run commissioning. Requests and successful responses
+may attach a byte stream carried by binary frames.
 
-> Clean commissioning and newly created human accounts use the split. Accounts
-> discovered by v16 remain `legacy`; public registration remains closed until
-> migration and the security release gates pass.
+> Every login-capable account must reach an active user Kernel before normal
+> traffic is admitted. The Master may idempotently activate a backfilled
+> `provisioning` placement on first demand. Public registration remains closed
+> until the security release gates pass.
 
 The current protocol is syscall-based:
 
@@ -131,29 +131,32 @@ Error:
 
 1. Canonicalize the account username and open a WebSocket to
    `GET /ws/<canonical-username>`.
-2. The Gateway asks `singleton` for the username's active placement and route
-   generation, then selects `user:<canonical-username>`. The path and placement
-   are locators only; neither grants authority.
+2. The Gateway asks `singleton` for the username's placement. If it is a known
+   `provisioning` placement, the Master idempotently completes provisioning;
+   only the resulting active placement selects `user:<canonical-username>`.
+   The path and placement are locators only; neither grants authority.
 3. Send `sys.connect` as the first request. `auth.username` must canonicalize to
    the same username as the path.
 4. The user Kernel verifies its provisioning state and asks `singleton` to
-   authenticate the credentials and return bounded identity authority.
+   authenticate the credentials. The Master applies durable login throttling,
+   reconstructs the current identity and capabilities, and returns only the
+   bounded authentication result.
 5. Wait for a normal success response or a structured error.
 6. After connect succeeds, exchange syscall requests, responses, and signals
    until the socket closes.
 
-The WebSocket and app routes bind the current user-Kernel generation. An
-explicit lifecycle transition fences the target and closes affected sockets.
-Credential-reset and destructive-group-change hooks are not wired to that
-transition yet.
+After connection, the user Kernel owns the socket and local runtime
+coordination. Master-owned account, capability, configuration, package,
+repository, token, and link state is not copied into that Kernel. Syscalls and
+runtime checks obtain current authority through closed, typed Master calls.
 
 Package app sockets use their `/apps/sessions/.../socket` route rather than the
-control-plane `/ws` route. For an active account, the session handle carries a
-Master-issued P-256 certificate for the exact username/uid/generation placement
-and a separate user-Kernel HMAC. The Gateway verifies the certificate before it
-selects the user DO; the target then verifies the HMAC and local session. A
-generation-less UUID session is accepted only for an explicitly `legacy`
-placement.
+control-plane `/ws` route. The bounded session handle is
+`gsv1b~username~uid~expiresAt~nonce~signature`, where `signature` is a local
+user-Kernel HMAC over the preceding fields. The Gateway parses the canonical
+username and bounds only to select the candidate user Kernel. The target then
+verifies its active marker, HMAC, expiry, and exact local session. No alternate
+compatibility session form is accepted.
 
 Canonicalization trims surrounding whitespace, rejects raw non-ASCII input,
 validates `[A-Za-z_][A-Za-z0-9_-]{0,31}`, and ASCII-lowercases. The URL segment
@@ -161,10 +164,12 @@ is decoded exactly once. Canonical usernames are immutable and never reused.
 
 An arbitrary Durable Object name could otherwise be addressed whether or not an
 account was provisioned. The Gateway therefore checks the Master placement
-before instantiating a candidate object. Unknown and non-active scoped routes
-return HTTP 404 before upgrade. Path/credential mismatch and invalid credentials
-fail inside an upgraded active socket. Canonical usernames are public identity,
-so the protocol does not promise username non-enumerability.
+before selecting a candidate object. Unknown placements and failed provisioning
+return HTTP 404 before upgrade. A `provisioning` target serves no normal work;
+only the Master ensure operation may transition it to `active` first.
+Path/credential mismatch and invalid credentials fail inside an upgraded active
+socket. Canonical usernames are public identity, so the protocol does not
+promise username non-enumerability.
 
 ### Commissioning connection
 
@@ -181,9 +186,8 @@ Commissioning persists a leased, checkpointed request. An exact retry can
 resume after a transient failure or expired lease and reconcile already-created
 state; concurrent or input-mismatched requests are rejected.
 
-After commissioning, `/ws` is not a fallback for an active user Kernel. Only an
-account explicitly marked `legacy` may continue logging in there; active users
-must use `/ws/<canonical-username>`.
+After commissioning, `/ws` is not a normal-login fallback. User, driver, and
+service connections must use their account's `/ws/<canonical-username>` route.
 
 The Gateway rejects a normal-route connection while commissioning is incomplete
 with error code `425` and details:
@@ -294,7 +298,8 @@ The websocket protocol is uniform: every operation is a `req` frame with a sysca
 | `fs.*` | Native on `gsv`, or routed to a driver when `args.target` names a device |
 | `shell.exec` | Native on `gsv`, routed to a driver when `args.target` names a device, or routed by `args.sessionId` for an existing shell session |
 | `proc.*` | Owning user Kernel and Process DO control plane |
-| `pkg.*`, `repo.*`, `sys.*`, `sched.*`, `notification.*`, `signal.*` | Owning user-Kernel handled; global operations use narrow typed Master Control Program calls |
+| `account.*`, selected `pkg.*`, `repo.*`, and `sys.*` | Master-owned operations forwarded through a closed allowlist; the Master reconstructs and authorizes the caller from the active source user Kernel |
+| Other `pkg.*`, `repo.*`, `sys.*`, `sched.*`, `notification.*`, `signal.*` | Owning user-Kernel handled; runtime code uses narrow typed Master reads when it needs current ship-wide authority |
 | `adapter.*` | Service-binding / adapter control path |
 | `ai.tools`, `ai.config` | Kernel-internal process bootstrap path |
 | Other `ai.*` | Capability-gated inference and media operations |

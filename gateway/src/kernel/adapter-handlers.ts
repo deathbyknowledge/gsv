@@ -28,15 +28,16 @@ import type {
   ProcessIdentity,
 } from "@humansandmachines/gsv/protocol";
 import { bodyFromBytes } from "@humansandmachines/gsv/protocol";
-import { resolveCallerOwnerUid, type KernelContext } from "./context";
+import {
+  resolveCallerOwnerUid,
+  type KernelContext,
+  type RunnableAccount,
+} from "./context";
 import type { Frame, RequestFrame, ResponseOkFrame } from "../protocol/frames";
 import { sendFrameToProcess } from "../shared/utils";
 import { decodeBase64Bytes, normalizeBase64Data } from "../shared/base64";
 import { isVisibleAdapterTarget } from "./adapter-targets";
 import { ensureDefaultConversationExecutor } from "./agents";
-import { canOwnerRunAsAccount } from "./account-access";
-import { isLocked } from "../auth/shadow";
-import { accountIdentity } from "./accounts";
 import type { AdapterStatusRecord } from "./adapter-status";
 import type { IdentityLinkRecord } from "./identity-links";
 
@@ -579,16 +580,26 @@ export async function handleAdapterInbound(
     return { ok: false, error: "Adapter identity link is stale" };
   }
 
-  const userIdentity = identityForUid(uid, ctx);
-  if (!userIdentity) {
-    return { ok: false, error: `Unknown local user uid=${uid}` };
+  const owner = await ctx.resolveRunAsAccount({
+    ownerUid: uid,
+    callerUid: uid,
+    selector: String(uid),
+  });
+  if (
+    !owner.ok
+    || owner.account.relation !== "self"
+    || owner.account.identity.uid !== uid
+  ) {
+    return { ok: false, error: `Unknown or unauthorized adapter owner uid=${uid}` };
   }
+  const ownerIdentity = owner.account.identity;
 
   const command = await handleAdapterCommand({
     adapter,
     accountId,
     message,
     uid,
+    ownerIdentity,
     ctx,
   });
   if (command.handled) {
@@ -598,7 +609,14 @@ export async function handleAdapterInbound(
     };
   }
 
-  const pid = await resolveAdapterRoute(adapter, accountId, message.surface, uid, userIdentity, ctx);
+  const pid = await resolveAdapterRoute(
+    adapter,
+    accountId,
+    message.surface,
+    uid,
+    ownerIdentity,
+    ctx,
+  );
 
   const pendingHil = await getPendingHil(pid);
   if (pendingHil) {
@@ -968,20 +986,6 @@ function failedShellResult(error: string): ShellExecResult {
   };
 }
 
-function identityForUid(uid: number, ctx: KernelContext): ProcessIdentity | null {
-  const user = ctx.auth.getPasswdByUid(uid);
-  if (!user) return null;
-
-  return {
-    uid: user.uid,
-    gid: user.gid,
-    gids: ctx.auth.resolveGids(user.username, user.gid),
-    username: user.username,
-    home: user.home,
-    cwd: user.home,
-  };
-}
-
 async function resolveAdapterRoute(
   adapter: string,
   accountId: string,
@@ -1013,9 +1017,10 @@ async function handleAdapterCommand(args: {
   accountId: string;
   message: AdapterInboundMessage;
   uid: number;
+  ownerIdentity: ProcessIdentity;
   ctx: KernelContext;
 }): Promise<AdapterCommandResult> {
-  const { adapter, accountId, message, uid, ctx } = args;
+  const { adapter, accountId, message, uid, ownerIdentity, ctx } = args;
   if (message.surface.kind !== "dm") {
     return { handled: false };
   }
@@ -1044,7 +1049,7 @@ async function handleAdapterCommand(args: {
   }
 
   if (command === "/list") {
-    return replyToAdapterCommand(message, renderAdapterRouteList(uid, ctx));
+    return replyToAdapterCommand(message, await renderAdapterRouteList(uid, ctx));
   }
 
   if (command === "/use") {
@@ -1080,12 +1085,17 @@ async function handleAdapterCommand(args: {
       return replyToAdapterCommand(message, `This chat now uses ${describeProcessRoute(processMatch.record)}.`);
     }
 
-    const agent = findRunnableAgent(selector, uid, ctx);
+    const agent = await findRunnableAgent(selector, uid, ctx);
     if (!agent) {
       return replyToAdapterCommand(message, `I could not find a process or agent named "${selector}". Use /list to see available targets.`);
     }
 
-    const pid = await spawnAdapterAgentProcess(agent, uid, message.surface, ctx);
+    const pid = await spawnAdapterAgentProcess(
+      agent,
+      ownerIdentity,
+      message.surface,
+      ctx,
+    );
     ctx.adapters.surfaceRoutes.setRoute(
       adapter,
       accountId,
@@ -1095,7 +1105,7 @@ async function handleAdapterCommand(args: {
       pid,
       uid,
     );
-    return replyToAdapterCommand(message, `This chat now uses ${agent.username}.`);
+    return replyToAdapterCommand(message, `This chat now uses ${agent.identity.username}.`);
   }
 
   return replyToAdapterCommand(message, `Unknown command: ${rawCommand}\n\n${renderAdapterCommandHelp()}`);
@@ -1149,8 +1159,8 @@ function renderAdapterCommandHelp(): string {
   ].join("\n");
 }
 
-function renderAdapterRouteList(uid: number, ctx: KernelContext): string {
-  const agents = listRunnableAgents(uid, ctx);
+async function renderAdapterRouteList(uid: number, ctx: KernelContext): Promise<string> {
+  const agents = await listRunnableAgents(uid, ctx);
   const processes = ctx.procs.list(uid).filter((record) => record.interactive);
   const lines = ["Available routes:"];
 
@@ -1159,7 +1169,8 @@ function renderAdapterRouteList(uid: number, ctx: KernelContext): string {
     lines.push("- none");
   } else {
     for (const agent of agents.slice(0, 8)) {
-      lines.push(`- ${agent.username}${agent.label ? ` (${agent.label})` : ""}`);
+      const username = agent.identity.username;
+      lines.push(`- ${username}${agent.displayName !== username ? ` (${agent.displayName})` : ""}`);
     }
   }
 
@@ -1212,89 +1223,102 @@ function findProcessForSelector(selector: string, uid: number, ctx: KernelContex
   return { kind: "missing" };
 }
 
-type RunnableAgent = {
-  uid: number;
-  username: string;
-  label: string;
-  identity: ProcessIdentity;
-};
-
-function findRunnableAgent(selector: string, ownerUid: number, ctx: KernelContext): RunnableAgent | null {
+async function findRunnableAgent(
+  selector: string,
+  ownerUid: number,
+  ctx: KernelContext,
+): Promise<RunnableAccount | null> {
   const normalized = selector.trim().toLowerCase();
-  return listRunnableAgents(ownerUid, ctx).find((agent) => (
-    agent.username.toLowerCase() === normalized
-    || agent.label.toLowerCase() === normalized
+  const resolved = await ctx.resolveRunAsAccount({
+    ownerUid,
+    callerUid: ownerUid,
+    selector,
+  });
+  if (
+    resolved.ok
+    && (resolved.account.relation === "personal-agent" || resolved.account.relation === "agent")
+  ) {
+    return resolved.account;
+  }
+  return (await listRunnableAgents(ownerUid, ctx)).find((agent) => (
+    agent.identity.username.toLowerCase() === normalized
+    || agent.displayName.toLowerCase() === normalized
   )) ?? null;
 }
 
-function listRunnableAgents(ownerUid: number, ctx: KernelContext): RunnableAgent[] {
-  const entries = ctx.auth.getPasswdEntries();
-  const personalAgentUid = ctx.auth.getPersonalAgentUid(ownerUid);
-  const agents: RunnableAgent[] = [];
-
-  for (const entry of entries) {
-    if (entry.uid !== personalAgentUid) {
-      const shadow = ctx.auth.getShadowByUsername(entry.username);
-      if (!shadow || !isLocked(shadow)) {
-        continue;
-      }
-    }
-    if (entry.uid < 1000 && entry.uid !== personalAgentUid) {
-      continue;
-    }
-    if (!canOwnerRunAsAccount(ctx.auth, ownerUid, entry, false)) {
-      continue;
-    }
-
-    agents.push({
-      uid: entry.uid,
-      username: entry.username,
-      label: entry.gecos?.trim() || entry.username,
-      identity: {
-        uid: entry.uid,
-        gid: entry.gid,
-        gids: ctx.auth.resolveGids(entry.username, entry.gid),
-        username: entry.username,
-        home: entry.home,
-        cwd: entry.home,
-      },
-    });
-  }
-
-  agents.sort((left, right) => {
-    if (left.uid === personalAgentUid) return -1;
-    if (right.uid === personalAgentUid) return 1;
-    return left.username.localeCompare(right.username);
+async function listRunnableAgents(
+  ownerUid: number,
+  ctx: KernelContext,
+): Promise<RunnableAccount[]> {
+  const accounts = await ctx.listRunnableAccounts({
+    ownerUid,
+    callerUid: ownerUid,
   });
-  return agents;
+  return accounts.filter((account) => (
+    account.relation === "personal-agent" || account.relation === "agent"
+  ));
 }
 
 async function spawnAdapterAgentProcess(
-  agent: RunnableAgent,
-  ownerUid: number,
+  selectedAgent: RunnableAccount,
+  selectedOwner: ProcessIdentity,
   surface: AdapterSurface,
   ctx: KernelContext,
 ): Promise<string> {
-  const ownerEntry = ctx.auth.getPasswdByUid(ownerUid);
-  if (!ownerEntry) {
+  const ownerUid = selectedOwner.uid;
+  const [owner, agent] = await Promise.all([
+    ctx.resolveRunAsAccount({
+      ownerUid,
+      callerUid: ownerUid,
+      selector: String(ownerUid),
+    }),
+    ctx.resolveRunAsAccount({
+      ownerUid,
+      callerUid: ownerUid,
+      selector: selectedAgent.identity.username,
+    }),
+  ]);
+  if (
+    !owner.ok
+    || owner.account.relation !== "self"
+    || owner.account.identity.uid !== ownerUid
+  ) {
     throw new Error(`Cannot resolve adapter process owner uid ${ownerUid}`);
   }
-  const ownerIdentity = accountIdentity(ctx.auth, ownerEntry);
+  if (
+    !agent.ok
+    || (agent.account.relation !== "personal-agent" && agent.account.relation !== "agent")
+    || agent.account.identity.uid !== selectedAgent.identity.uid
+  ) {
+    throw new Error(`Cannot resolve adapter run-as account ${selectedAgent.identity.username}`);
+  }
+  if (
+    ctx.authorizePackageAgentRuntime
+    && !await ctx.authorizePackageAgentRuntime(
+      ownerUid,
+      agent.account.identity,
+      agent.account.packageSecurityRevision,
+    )
+  ) {
+    throw new Error("Package agent runtime authorization was revoked");
+  }
+  const ownerIdentity = owner.account.identity;
+  const agentIdentity = agent.account.identity;
   const pid = `proc:${crypto.randomUUID()}`;
-  const label = `adapter ${describeAdapterSurface(surface)} (${agent.username})`;
-  ctx.procs.spawn(pid, agent.identity, {
+  const label = `adapter ${describeAdapterSurface(surface)} (${agentIdentity.username})`;
+  ctx.procs.spawn(pid, agentIdentity, {
     ownerUid,
     interactive: true,
     label,
-    cwd: agent.identity.cwd,
-    ...(ctx.kernelGeneration !== undefined
-      ? { kernelGeneration: ctx.kernelGeneration }
+    cwd: agentIdentity.cwd,
+    ...(agent.account.packageSecurityRevision
+      ? { packageSecurityRevision: agent.account.packageSecurityRevision }
       : {}),
   });
 
   const conversation = ctx.conversations.create({
     ownerUid,
-    agentUid: agent.identity.uid,
+    agentUid: agentIdentity.uid,
     title: label,
   });
   ctx.conversations.setActivePid(conversation.conversationId, pid);
@@ -1307,7 +1331,7 @@ async function spawnAdapterAgentProcess(
       pid,
       kernelName: ctx.kernelName,
       ownerIdentity,
-      identity: agent.identity,
+      identity: agentIdentity,
       interactive: true,
       conversationId: conversation.conversationId,
     },

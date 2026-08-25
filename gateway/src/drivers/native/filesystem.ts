@@ -10,10 +10,21 @@ import type { KernelRefs } from "../../fs/refs";
 import type { KernelContext } from "../../kernel/context";
 import { resolveCallerOwnerUid } from "../../kernel/context";
 import { createCronFileService } from "../../kernel/crontab";
+import { parsePasswd } from "../../auth/passwd";
 
 export function createNativeFileSystem(ctx: KernelContext): GsvFs {
   const identity = ctx.identity!.process;
   const ownerUid = resolveCallerOwnerUid(ctx);
+  let publicAccounts: Promise<{ username: string; home: string }[]> | undefined;
+  const listPublicAccounts = () => {
+    publicAccounts ??= ctx.readAuthFile("passwd").then((content) => (
+      parsePasswd(content).map((account) => ({
+        username: account.username,
+        home: account.home,
+      }))
+    ));
+    return publicAccounts;
+  };
   const sourceBackend = createProcessSourceBackend({
     identity,
     storage: ctx.env.STORAGE,
@@ -78,8 +89,27 @@ export function createNativeFileSystem(ctx: KernelContext): GsvFs {
     ctx.processId ?? undefined,
     sourceBackend,
     createAccountHomeBackend(ctx.env.STORAGE, ctx.env.RIPGIT, identity, {
-      getAccount: (username) => ctx.accountGet({ username }),
-      isRoot: identity.uid === 0,
+      listAccounts: async () => (await ctx.listRunnableAccounts({
+        ownerUid,
+        callerUid: identity.uid,
+      })).map((account) => account.identity),
+      listPublicAccounts,
+      resolveAccount: async (username) => {
+        const account = await ctx.accountGet({ username });
+        return account?.state === "active" && account.capabilities !== undefined
+          ? {
+              uid: account.uid,
+              gid: account.gid,
+              gids: account.gids,
+              username: account.username,
+              home: account.home,
+              cwd: account.home,
+            }
+          : null;
+      },
+      resolvePublicAccount: async (username) => (
+        (await listPublicAccounts()).find((account) => account.username === username) ?? null
+      ),
     }),
     createPackageBackend(identity, kernelRefs.packages),
   );

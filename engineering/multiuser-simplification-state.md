@@ -1,122 +1,118 @@
-# Multiuser simplification — working state (read this first after compaction)
+# Multiuser simplification — current state
 
-Strategy doc: `engineering/multiuser-simplification-plan.md`. This file is the
-living execution state. Update it at each checkpoint.
+> This is the current implementation and cutoff contract. The older
+> `multiuser-simplification-plan.md` is an execution artifact; this file
+> supersedes it where the implementation evolved.
 
-## Where we are
+## Final architecture
 
-- Branch: `multi-user-clean` (off `multi-user-dos` @ `3fb7d8a2`, merge-base with main `88a5aea1`).
-- `cc71046c` — "resolve master reads by rpc, drop kernel capability": **green checkpoint** (107 files, 1676 tests).
-- `2f08dbae` — WIP mid raw-delete. **`gateway/src/kernel/do.ts` does NOT compile** (~60 dangling-reference errors, all listed below with treatments).
-- Plan amendment approved by user: work mode is **raw delete + repair** (delete machinery, then fix every dependent via tsc/tests), not careful additive-then-delete.
-- Backup of do.ts before raw delete: `/tmp/opencode/do.ts.bak`.
-- AST method deleter (robust, use this — do NOT use regex/brace matching):
-  `node /tmp/opencode/delete_methods.cjs <file> <MethodName...>`
+- The existing Kernel Durable Object named `singleton` remains the ship's
+  Master Control Program. It retains its SQLite data and remains the only
+  authority for accounts, immutable canonical usernames, uid/gid allocation,
+  credentials, groups, capabilities, configuration, packages, repository
+  metadata, adapter accounts and links, placement, commissioning, and future
+  admission policy.
+- Each login-capable human has one runtime Kernel named
+  `user:<canonical-username>`. The canonical username is the public ship-local
+  identity and direct routing key; there is no second principal id or alias
+  lookup in front of it.
+- An active user Kernel owns fresh local connections, devices, process and
+  conversation registries, routes, schedules, app sessions, OAuth/MCP state,
+  and other runtime coordination. Process and AppRunner Durable Objects keep
+  execution and package-data ownership at their existing object names.
+- User Kernels contain no durable copy of Master authority. They resolve current
+  account, capability, configuration, package, repository, and link decisions
+  through narrow typed Master RPCs and master-owned syscalls.
+- `/ws` is commissioning-only. Normal humans, devices, and services use
+  `/ws/<canonical-username>`. Unknown accounts fail closed; a known
+  `provisioning` placement may be completed only by the Master-owned ensure
+  operation, and normal work starts only after it is `active`.
 
-## Locked decisions (user-confirmed, do not relitigate)
+## In-place v16 cutoff
 
-1. **No durable replicas/projections.** Master (`singleton`) is the only store for accounts/groups/caps/config/packages/links/tokens/placements. User Kernels resolve authority by RPC: public syscalls `account.get`, `sys.config.get` (+`explicit` mode), `sys.cap.list`, `pkg.list`, `repo.list`; internal RPCs `masterReadAuthFile`, `masterPackagesList`.
-2. **No kernel generations** until lifecycle ops ship (re-add an epoch with them).
-3. **No P-256 placement certificates.** DO wake+reject is acceptable; target validates HMAC+session.
-4. **No package/AppRunner fences/registry/epochs.** AppRunner reverts to pre-split shape (`app:<uid>:<packageId>`); package authority = dumb Master RPC until the user's package refactor.
-5. **Rate limiting stays in-DO** (CF rate-limit binding is per-colo/eventually-consistent/10-60s windows — wrong semantics; optional future edge complement).
-6. **Adapters route through the Master both directions**, documented honestly. Future scale path: ephemeral in-memory link cache in user kernels with Master push.
-7. **`account.get`** is the identity-resolution surface (public syscall; `capabilities`/`personalAgentUid` only when caller may run-as; `delegable` = canOwnerDelegateRunAs).
-8. **D1: per-generation kernel capability DELETED.** Master trusts user-kernel RPCs iff claimed `sourceKernelName` parses as `user:<canonical>` with an `active` or `provisioning` placement matching uid/generation. Rationale: only gateway code can obtain DO stubs; our code passes `this.name`.
-9. **HARD CUTOVER on legacy** (user confirmed): no `legacy` lifecycle mode. v016 rewritten to provision + migrate existing accounts at upgrade. ALL legacy branches deleted.
-10. **Clean from scratch**: migrations renumbered with zero residue, docs rewritten to final state, branch history restructured into 3 commits at the end (`harden multiuser security boundaries` / `split runtime by user kernel` / `document user kernel architecture`).
+The cutoff retains `singleton` and limits v16 to local schema backfill plus
+normal user-Kernel provisioning:
 
-## Done and verified
+1. Migration v16 runs against the retained `singleton` and backfills
+   `account_identities` from its existing account tables.
+2. It inserts each login-capable account into `user_kernels` with lifecycle
+   `provisioning`.
+3. Bounded login, callback, adapter, and AppRunner demand paths retry a
+   single-flight, idempotent ensure operation for
+   `user:<canonical-username>`. Master startup does not fan out over every
+   backfilled placement.
+4. The target persists and validates its username/uid provisioning marker, sets
+   up fresh local runtime coordination, and becomes `active` before serving
+   normal traffic.
+5. Normal routing has no singleton fallback. V16 does not coordinate
+   cross-object runtime copying or destructive cleanup.
 
-- Syscalls: `account.get` (+`delegable`, +`personalAgentUid`), `sys.cap.list` (own gids + gid<1000; root all), `sys.config.get` explicit mode. All master-owned.
-- Master RPCs in do.ts: `masterReadAuthFile` (passwd full; group member-filtered for non-root with gid-0 emptied; shadow root-only via root's own kernel), `masterPackagesList` (full records, visibility scopes). Guards: `assertActiveUserKernelSourcePlacement`, `assertUserKernelRequester` (uid 0 only from user:root; else owner or runnable-by-owner), `authorizeUserKernelSource`.
-- `KernelContext` Master-read methods (dual impl local/RPC): `accountGet`, `readAuthFile`, `configGet`, `configList`, `configListExplicit`, `capsList`, `packagesList`, `listRepos` (+`dispatchMasterRead` helper in buildKernelContext; `accountGetForIdentity` for kernel-built identities, gated to active markers).
-- FS layer fully async: `KernelRefs` (fs/refs.ts) async auth/config/caps/packages; `GsvFs.backendForPath` async; `MountBackend.handles` may be async; backends rewritten: kernel.ts, account-home.ts (delegation gate = `account.get` capabilities presence), packages.ts, process-sources.ts (lazy `listRepos`).
-- ai.ts: `withAiConfigSnapshot` shims `{...ctx, config: snapshot}` at handler entries (`handleAiConfig`, `resolveAiTextGenerationConfig`, `resolveAiMediaContext`); snapshot preserves get/getExplicit semantics via `configListExplicit` + local SYSTEM_CONFIG_DEFAULTS overlay.
-- Shell name cache via `readAuthFile`+parse (metadata.ts).
-- `repo.list` is master-owned; rgit/wiki/process-sources use `ctx.listRepos()`.
-- D1 capability suite fully deleted (types, storage keys, parsers, hash helpers, ~40 call sites, test suites rewritten).
-- `buildProcessContext` + provisioning executor resolve caps via `accountGetForIdentity` (skipped while marker not `active` — Master mid-transition refuses calls during provisioning, which is why provisioning inputs carry the payload).
-- Provisioning rewritten (NO handshake maps/snapshots): `provisionUserKernel` (input = {sourceKernelName, username, uid, generation, ownerIdentity, personalAgent?, capabilities[]}) → Master `markActive` → `completeUserKernelActivation` → `activateProvisionedUserKernel` (validate, flip marker active, `rearmPendingSchedules`). `ensureDefaultConversationExecutor(ctx, human, personalAgent?)` accepts a pre-resolved agent.
-- Deleted files: projection-state(+test), app-runtime-registry(+test), package-runtime-fence(+test), control-schema(+test), v002_bind_schedule_authority, app-runner schema security-migrations.test, app-placement-certificate(+test), app-placement-verifier(+test), process-generation-fence.test, kernel schema v019/v021/v022 (v020→v019, v023→v020 renumbered with contents updated).
-- Test helpers: `commissionUserKernel` in process/do.test.ts (Master: addUser+addGroup+caps.grant(sys.config.get,account.get)+reserve+markActive; target: marker). Scheduler tests currently use `newMasterScheduleKernel` (Master + seeded `legacy` placement) — **must be revisited after legacy cutover** (master-side legacy scheduling disappears; move those two tests to commissioned user kernels).
+Old singleton-local connections, sessions, routes, schedules, OAuth/MCP rows,
+device records, process/conversation registry rows, and callback state remain
+stored but dormant. The Master must not reconnect, rearm, recover, or serve that
+runtime state after the cutoff. Existing Process DO storage is neither copied
+nor destroyed and is not implicitly adopted by a new user Kernel.
 
-## CURRENT BROKEN STATE — do.ts error regions and treatments
+The cutoff preserves the existing data planes:
 
-All remaining tsc errors are dangling references; treatments:
+- The same R2 binding, bucket, keys, paths, and uid/gid/mode metadata remain in
+  use. Missing or malformed metadata fails closed until explicit root repair.
+- Existing AppRunner data remains in the deterministic
+  `app:<actorUid>:<packageId>` object. Current admission reauthorizes the
+  actor and package; no replacement namespace is created. A pre-split props
+  record with no `kernelName` is the old implicit `singleton` binding. Its
+  first admitted request or daemon alarm resolves the actor's controlling
+  human placement, closes stale sockets, reauthorizes the current package and
+  daemon grant, and rebinds that same object to
+  `user:<owner-canonical-username>`. Personal-agent actors remain subordinate
+  accounts and do not receive a user Kernel.
+- Existing ripgit repositories and paths remain in place.
+- Existing adapter workers, Master adapter-account rows, and identity links
+  remain in place. Adapter delivery resolves the live link and active placement
+  through the Master.
+- Existing ship-scoped uids and gids remain the filesystem ownership keys.
 
-- `456`, `890`: `PackageProjectionFenceAuthorizationInput` type references (my regex deletion missed) → delete the type + refs.
-- `911`: `MasterAppPlacementSigningKey` field → delete.
-- `1014-1036`: `beginMasterUserOperation`/`applyMasterUserKernelLifecycle` remnants with `appRuntimes`/`fenceUserKernelRuntime`/`closeUserKernelTargetAdmission` → strip those checks; delete `applyMasterUserKernelLifecycle` if still present.
-- `1131`: `requireActiveUserKernel` — strip `appRuntimes.getLifecycleFence` check (keep active-lifecycle check).
-- `1201-1276`: `isCurrentUserKernelMarker` — strip `projectionState.packageFence()` checks.
-- `1335`: `issueAppSessionId` — strip `appPlacementCertificate(...)`; routed id becomes `gsv1b~username~uid~expiresAt~nonce~signature` (no generation/cert — coordinate with protocol/app-session.ts rewrite below).
-- `1869-1983`: `authorizeCurrentPackageAgentRuntime` + `authorizeRegisteredProcessRuntime` + appFrame authority (`isMasterPackageRuntimeAuthorized`, `rememberAuthorizedAppRuntime`, `beginUserKernelTargetOperation` refs) → **rewrite**: delete runtime-authority stamps/fences; package validation = target calls Master by RPC (`validatePackageRuntime` semantics: package exists+enabled+reviewed, artifact hash matches, actor authorized). Package-agent principal reads (package-agents.ts `packageAgent*Key` config stamps) go through the same Master RPC — add internal RPC e.g. `masterPackageAgentPrincipal(uid)` if needed.
-- `2340-2422`: `dispatchWithMasterProjectionGate` → rewrite to plain `forwardMasterSyscall` + the `account.create`→`ensureUserKernelProvisioned` hook; delete `queueMasterPackageFenceRecovery`/`applyFailedMasterMutationProjectionEffects`/`applyPostDispatchEffects` call sites.
-- `2596-2633`: `runMasterProjectionMutation`/`broadcastRepoProjection` callers (repo metadata mutation) → perform mutation directly, no broadcast.
-- `2686+` provisioning remnants — verify matches rewritten flow above (already rewritten; leftover refs to deleted maps/fields deleted in this pass).
-- Any remaining `this.appRuntimes.*` / `this.projectionState.*` refs (oauth/mcp/app-session/adapter paths) → strip.
-- `UserKernelLifecycleAuthorizationInput`, `userKernelLifecycleAuthorizations`, `USER_KERNEL_LIFECYCLE_AUTHORIZATION_TTL_MS`, `transitioningUserKernels` usage in lifecycle paths → delete with lifecycle machinery (keep `transitioningUserKernels` ONLY for `beginMasterUserOperation` provisioning-window guard used by dispatchMasterSyscall).
-- `kernelProjectionOperation`/lease plumbing in `buildKernelContext` (`targetOperation`, `isPackageProjectionOperation`, `markPackageProjectionOperation`, `expectedKernelGeneration`) → strip; `assertCurrentKernel` keeps only marker-current check.
+## Other locked simplifications
 
-## Remaining file work (after do.ts compiles)
+- No Kernel generations or lifecycle epochs exist before suspension,
+  retirement, and reactivation are implemented. Introduce an epoch together
+  with those operations if their stale-work model requires one.
+- No P-256 placement certificate exists. A username locator selects a candidate
+  user Kernel; the target validates its active marker, HMAC, and local session.
+- AppRunners use `app:<actorUid>:<packageId>` with no control/data split,
+  runtime registry, projection fence, or package epoch. The active user Kernel
+  checks current Master package authority before admitting package traffic.
+- Adapters route through the Master in both directions. A future measured scale
+  optimization may add a bounded in-memory link cache with Master invalidation;
+  it must not become another durable authority.
+- Login and link-code throttling remains authoritative durable Master state.
+  Cloudflare's rate-limit binding may later shed obvious edge abuse, but it does
+  not replace identity-security limits.
+- Public self-registration and model-mediated admission remain closed until the
+  documented multiuser release gates pass.
 
-- `app-runner.ts`: full revert — strip `runtimeEpoch` everywhere (RPC sigs ~201-252, `GsvApiBinding` props, loader keys, daemon stubs, `captureAppRunnerRuntimeEpoch`, `#getRuntimeEpoch`, `#authorizePackageRuntimeFence`); DO naming back to `buildAppRunnerName(uid, packageId)` → `app:<uid>:<packageId>`; `GsvApiBinding.kernelRequest` targets kernel from new `AppRunnerProps.kernelName` instead of hardcoded `singleton`; delete v3/data-object split remnants and `runnerRole` gating tied to fence.
-- `app-runner/schema/migrations.ts`: remove v002 import+registration (v001 only).
-- `app-daemons.ts`: revert to pre-split (~315 lines; drop authority columns/logical_key).
-- `protocol/app-session.ts`: routed id `gsv1b~username~uid~expiresAt~nonce~sig`; drop `placementCertificate`+`generation` fields; `buildAppRunnerName` 2-arg; cap legacy-UUID session sliding renewal (D2: same route expiry as routed).
-- `protocol/app-frame.ts`: drop `kernelOwnerUid`, `kernelUsername`, `kernelGeneration` from `AppFrameContext`.
-- `index.ts`: delete cert edge verify (~849-859) + `app-placement-verifier` import; app routes: parse routed id → `resolveUserKernelRoute(username)` → forward; legacy bare UUID → Master `resolveAppSessionKernel` (simplify: Master looks up its local session store); `/ws/<username>` forward stops stamping `x-gsv-kernel-generation` (keep stripping `CF-Connecting-IP`, keep stamping `x-gsv-login-source-scope`); OAuth callback routes drop `/<generation>` segment (callback-routes.ts too).
-- `shared/kernel-names.ts`: drop `USER_KERNEL_GENERATION_HEADER`.
-- `process/do.ts`: delete `lifecycleFenceGeneration` (298, ~1538, ~2409) + generation/fence authority checks in recvFrame; keep everything else.
-- `kernel/processes.ts`, `context.ts`, `proc-handlers.ts`, `agents.ts`, `adapter-handlers.ts`, `sys/oauth.ts`, `drivers/native/shell/pkg.ts`, `kernel/packages.ts`: strip `kernelGeneration` refs.
-- `kernel/capabilities.ts:162`, `kernel/config.ts:185`, `kernel/packages.ts:1231`: delete `replaceRuntimeProjection`; `auth-store.ts` `replaceRuntimeDirectory` (+ its test block).
-- `kernel/master-syscalls.ts`: delete the four `*_REQUIRING_*` sets; keep `isMasterOwnedSyscall`.
-- `kernel/package-agents.ts`: delete `validatePackageAgentProjectionSecurity`; projection consumers → Master RPC.
-- `fs/backends/kernel-auth.test.ts` sentinel-shadow logic: user kernels hold NO auth material; `/etc/shadow` is root-only `readAuthFile("shadow")` RPC — already handled; adjust test expectations if stale.
+## Remaining validation and release work
 
-## Legacy cutover (confirmed — do it after compile)
+- Exercise v16 on a representative retained `singleton` with root and multiple
+  login-capable humans. Cover wake, first login, and linked-adapter demand;
+  interruption; retry; concurrent ensures; and activation failure.
+- Prove old singleton-local runtime cannot accept traffic, fire schedules,
+  resume callback flows, recover routes, or authorize old Process execution.
+- Prove existing R2 files and permissions, AppRunner SQLite, ripgit paths,
+  adapter accounts, and identity links remain usable without copying or
+  renaming.
+- Run clean commissioning and upgraded-instance end-to-end flows in addition to
+  the targeted schema, routing, authorization, filesystem, adapter, OAuth/MCP,
+  Process, and AppRunner tests.
+- Complete cross-shard root administration, audit and cost ledgers, lifecycle
+  operations, and the adversarial release matrix before public registration.
 
-- Rewrite `kernel/schema/v016_add_user_kernels.ts`: drop `generation` column; provision every existing login-capable human at migration (reserve + activate) instead of inserting `legacy` rows; cutover routine copies durable runtime state singleton→user kernels (schedules, oauth accounts, MCP servers, devices, conversation metadata) + `proc.kill` sweep (archives history, destroys Process DOs). Ephemeral state (run routes, app sessions, flows) dropped by design.
-- Delete ALL legacy branches: `resolveUserKernelRoute` legacy branch, `handleSysConnect` master legacy admission, `appRequest` `beginMasterLegacyOwnerOperation`, `serviceFrame` singleton relay, `isLegacyAppSessionId`/`resolveAppSessionKernel` legacy UUID acceptance, `runScheduleRecord` master branch, `user_kernels.lifecycle` `'legacy'` state, scheduler.test.ts's `newMasterScheduleKernel` legacy seed (replace with commissioned user kernels).
-- `/ws` becomes commissioning-only.
+## Validation commands
 
-## Adapter inbound simplification
-
-Delete grant machinery: `adapterInboundAuthorizations`, `issueAdapterInboundRoute` → `receiveAdapterInbound` (Master resolves link+placement, calls target `serviceAdapterFrame` directly — Master→kernel RPC is intrinsically trusted), `consumeAdapterInboundAuthorization`, `isMasterAdapterInboundAuthorized`. `shared/adapter-inbound-route.ts` reduced to envelope+validation (keep strict shape checks). `index.ts` scoped adapter entrypoints call Master only.
-
-## Test repair (after code compiles)
-
-- Delete describes in do.test.ts: "Kernel user lifecycle fencing", "Kernel adapter inbound admission", "Kernel package projection transition", "Kernel AppRunner runtime fence orchestration", "Kernel process runtime projection". Rewrite: "Kernel user provisioning admission" (handshake gone), "Kernel package app authorization".
-- Rewrite: app-runner.test.ts authority blocks; index.test.ts (3 describes); user-kernels.test.ts; app-session.test.ts; app-sessions.test.ts; mcp-oauth-fence.test.ts (v023 binding stays); sys/oauth.test.ts; callback-routes.test.ts; connect.test.ts; accounts.test.ts; packages/package-agents tests (projection validation gone); app-daemons.test.ts; schema/migrations.test.ts (kernel+app-runner); kernel/schema/security-migrations.test.ts (drop v019+ cases, keep v009-v015 hostile-data); rpc-surface.test.ts (allowlist shrank); auth-store.test.ts ("runtime directory projection" block); commissioning-e2e.test.ts; sys/setup.test.ts; proc-handlers/processes tests; adapter-handlers.test.ts; process/do.test.ts (lifecycle fence parts); run-routes.test.ts; git-auth.test.ts (transition barrier refs); do.test.ts "Kernel user lifecycle fencing" etc. as above.
-
-## Shell CLI feature (after refactor lands — user request)
-
-New native shell command in `gateway/src/drivers/native/shell/` exposing account creation + user capabilities to root and permitted users (syscalls exist: account.create/list/get, sys.cap.list). Follow existing command patterns (ls.ts, proc.ts, pkg.ts — `requireCommandCapability`). Suggested: `account` with subcommands create/list/get/caps. Note: account.create is callable by all users today (agent creation); root sees all.
-
-## Docs (final state, no history-of-deleted-things)
-
-- AGENTS.md: delete v21/v22 paragraphs, generation fencing, placement cert, adapter grant language. New invariants: Master owns namespace; user Kernels hold no replicas, resolve authority by RPC; adapters Master-routed; unprovisioned/non-active kernels fail closed; epochs arrive with lifecycle ops.
-- docs/architecture/multiuser-security.md: rewrite (major shrink).
-- adapter-model.md: Master-routed both directions; link cache as documented future.
-- security-model.md, index.md, process-ipc-and-scheduler.md, agent-loop.md (fix stale archive location: owner-scoped internal storage, not home dir), routing.md, websocket-protocol.md, syscalls.md (add account.get, sys.cap.list), configuration.md, cli-commands.md, package-sdk.md, r2-storage.md, hardware-tools.md.
-- gateway/TODO.md: split section → done; remaining = package refactor (authority TBD), admin lifecycle ops (+epochs), link cache (when measured), CF edge rate-limit complement, audit/abuse ledgers, cross-shard admin.
-
-## Final validation + history
-
-- `cd gateway && npx tsc --noEmit && npm run test:run`
-- `npm run gsv:check && npm test --workspace packages/gsv`
-- `cd web && npm run check && npm run test:run && npm run build`
-- `cd extension && npm run check && npm run test:run && npm run build`
-- `cd cli && cargo fmt --check && cargo test`
-- Clean-instance e2e: `npm run dev`, `gsv auth setup`, user WS connect, spawn, adapter test frame, app launch smoke.
-- Restructure history into 3 commits; PR description = plan sections 0–3.
-
-## Key facts
-
-- SDK rebuild required after protocol edits: `cd packages/gsv && npm run build`.
-- Master calls from a target are refused while its username is mid-provisioning (`beginMasterUserOperation`) — hence provisioning inputs carry ownerIdentity/personalAgent/capabilities.
-- `authorizeUserKernelSource` accepts `active` AND `provisioning` placements.
-- New RPC methods must be added to `KERNEL_RPC_METHOD_ALLOWLIST` (do.ts ~800); `masterReadAuthFile` + `masterPackagesList` already added.
-- User-kernel test commissioning = marker on target + account/placement/caps on Master (see `commissionUserKernel`).
-- Process caps resolve per-frame via `accountGetForIdentity` in `buildProcessContext`.
+```bash
+cd gateway && npx tsc --noEmit && npm run test:run
+npm run gsv:check && npm test --workspace packages/gsv
+cd web && npm run check && npm run test:run && npm run build
+cd extension && npm run check && npm run test:run && npm run build
+cd cli && cargo fmt --check && cargo test
+```

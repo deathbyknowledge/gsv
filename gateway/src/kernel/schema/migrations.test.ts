@@ -32,7 +32,7 @@ function createTableStatement(name: string): string {
 describe("kernel schema migrations", () => {
   it("starts the kernel component at a v1 baseline", () => {
     expect(KERNEL_SCHEMA_COMPONENT).toBe("kernel");
-    expect(KERNEL_MIGRATIONS).toHaveLength(23);
+    expect(KERNEL_MIGRATIONS).toHaveLength(20);
     expect(KERNEL_MIGRATIONS[0]).toMatchObject({
       id: 1,
       name: "initial_kernel_schema",
@@ -107,22 +107,10 @@ describe("kernel schema migrations", () => {
     });
     expect(KERNEL_MIGRATIONS[18]).toMatchObject({
       id: 19,
-      name: "bind_process_kernel_generation",
+      name: "bind_package_security_revisions",
     });
     expect(KERNEL_MIGRATIONS[19]).toMatchObject({
       id: 20,
-      name: "bind_package_security_revisions",
-    });
-    expect(KERNEL_MIGRATIONS[20]).toMatchObject({
-      id: 21,
-      name: "fence_user_kernel_projections",
-    });
-    expect(KERNEL_MIGRATIONS[21]).toMatchObject({
-      id: 22,
-      name: "register_app_runtimes",
-    });
-    expect(KERNEL_MIGRATIONS[22]).toMatchObject({
-      id: 23,
       name: "bind_oauth_flow_kernel_owner",
     });
   });
@@ -169,9 +157,6 @@ describe("kernel schema migrations", () => {
       "identity_link_generations",
       "auth_token_revocation_outbox",
       "auth_token_revocation_tombstones",
-      "kernel_projection_state",
-      "app_runtime_runners",
-      "app_runtime_lifecycle_fences",
     ]);
   });
 
@@ -185,30 +170,12 @@ describe("kernel schema migrations", () => {
     expect(processes).toContain("active_conversation_id TEXT");
   });
 
-  it("binds process executors to a nullable user-Kernel generation", () => {
-    expect(normalizedStatements()).toContain(
-      "ALTER TABLE processes ADD COLUMN kernel_generation INTEGER CHECK (kernel_generation IS NULL OR kernel_generation > 0)",
-    );
-  });
-
   it("binds package security revisions to processes and schedules", () => {
     expect(normalizedStatements()).toContain(
       "ALTER TABLE processes ADD COLUMN package_security_revision TEXT",
     );
     expect(normalizedStatements()).toContain(
       "ALTER TABLE schedules ADD COLUMN package_security_revision TEXT",
-    );
-  });
-
-  it("registers AppRunners by actor and owning Kernel identity", () => {
-    const runners = createTableStatement("app_runtime_runners");
-
-    expect(runners).toContain("owner_uid INTEGER");
-    expect(runners).toContain("owner_username TEXT");
-    expect(runners).toContain("kernel_owner_uid INTEGER");
-    expect(runners).toContain("kernel_owner_username TEXT");
-    expect(normalizedStatements()).toContain(
-      "CREATE INDEX app_runtime_runners_kernel_owner ON app_runtime_runners ( kernel_owner_uid, kernel_owner_username, owner_uid, runner_name )",
     );
   });
 

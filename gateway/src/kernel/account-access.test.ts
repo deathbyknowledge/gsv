@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vitest";
 import {
-  canOwnerAccessAccountHome,
   canOwnerDelegateRunAs,
   canOwnerRunAsAccount,
   homeUsernameFromPath,
@@ -37,17 +36,10 @@ describe("account-access", () => {
     expect(homeUsernameFromPath("/etc/passwd")).toBeNull();
   });
 
-  it("authorizes package agents via access group for run-as and home overlay", () => {
+  it("authorizes package agents via their access group", () => {
     const target = { uid: 3000, gid: 3000, username: "wiki-builder" };
     expect(canOwnerDelegateRunAs(auth as never, 1000, target)).toBe(true);
     expect(canOwnerRunAsAccount(auth as never, 1000, target, false)).toBe(true);
-    expect(canOwnerAccessAccountHome(auth as never, 1000, "alice", "wiki-builder", false)).toBe(true);
-    expect(canOwnerAccessAccountHome(auth as never, 1000, "alice", "bob", false)).toBe(false);
-  });
-
-  it("authorizes an owned agent viewer to access the owner's home overlay", () => {
-    expect(canOwnerAccessAccountHome(auth as never, 1000, "alice-agent", "alice", false)).toBe(true);
-    expect(canOwnerAccessAccountHome(auth as never, 1001, "alice-agent", "alice", false)).toBe(false);
   });
 
   it("does not authorize delegation through shared primary groups", () => {

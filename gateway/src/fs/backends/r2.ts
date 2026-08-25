@@ -93,6 +93,24 @@ export class R2MountBackend implements MountBackend {
     return true;
   }
 
+  /** Whether this identity may enumerate an explicitly provisioned directory. */
+  async canListDirectory(path: string): Promise<boolean> {
+    const p = normalizePath(path);
+    try {
+      await this.assertAncestorAccess(p);
+      const marker = await this.bucket.head(directoryMarkerKey(toKey(p)));
+      if (!marker || !isDirectoryMarker(marker)) return false;
+      this.assertMode(marker, READ_BIT, p);
+      this.assertMode(marker, EXEC_BIT, p);
+      return true;
+    } catch (error) {
+      if (error instanceof Error && error.message.startsWith("EACCES:")) {
+        return false;
+      }
+      throw error;
+    }
+  }
+
   async readFile(path: string): Promise<string> {
     const p = normalizePath(path);
     await this.assertAncestorAccess(p);
@@ -257,11 +275,24 @@ export class R2MountBackend implements MountBackend {
     await this.assertAncestorAccess(p);
     const key = toKey(p);
     const head = await this.bucket.head(key);
-    if (head) return true;
+    if (head) {
+      this.assertMetadata(head, p);
+      return true;
+    }
+
+    const marker = await this.bucket.head(directoryMarkerKey(key));
+    if (marker) {
+      this.assertMetadata(marker, p);
+      return true;
+    }
 
     const dirPrefix = key.endsWith("/") ? key : key + "/";
     const listed = await this.bucket.list({ prefix: dirPrefix, limit: 1 });
-    return listed.objects.length > 0 || listed.delimitedPrefixes.length > 0;
+    const exists = listed.objects.length > 0 || listed.delimitedPrefixes.length > 0;
+    if (exists && this.identity.uid !== 0 && !isImplicitReadableDirectory(key)) {
+      throw new Error(`EACCES: permission denied, '${p}'`);
+    }
+    return exists;
   }
 
   async stat(path: string): Promise<ExtendedMountStat> {
@@ -274,6 +305,7 @@ export class R2MountBackend implements MountBackend {
     const key = toKey(p);
     const head = await this.bucket.head(key);
     if (head) {
+      this.assertMetadata(head, p);
       const uid = parseInt(head.customMetadata?.uid ?? "0", 10);
       const gid = parseInt(head.customMetadata?.gid ?? "0", 10);
       if (isDirectoryMarker(head)) {
@@ -315,12 +347,16 @@ export class R2MountBackend implements MountBackend {
 
     const marker = await this.bucket.head(directoryMarkerKey(key));
     if (marker) {
+      this.assertMetadata(marker, p);
       return directoryStat(marker);
     }
 
     const dirPrefix = key.endsWith("/") ? key : key + "/";
     const listed = await this.bucket.list({ prefix: dirPrefix, limit: 1 });
     if (listed.objects.length > 0 || listed.delimitedPrefixes.length > 0) {
+      if (this.identity.uid !== 0 && !isImplicitReadableDirectory(key)) {
+        throw new Error(`EACCES: permission denied, '${p}'`);
+      }
       return {
         isFile: false,
         isDirectory: true,
@@ -382,6 +418,12 @@ export class R2MountBackend implements MountBackend {
     if (marker) {
       this.assertMode(marker, READ_BIT, p);
       this.assertMode(marker, EXEC_BIT, p);
+    } else if (
+      this.identity.uid !== 0
+      && key
+      && !isImplicitReadableDirectory(key)
+    ) {
+      throw new Error(`EACCES: permission denied, '${p}'`);
     }
     const prefix = key ? key + "/" : "";
     const listed = await this.bucket.list({ prefix, delimiter: "/" });
@@ -518,6 +560,11 @@ export class R2MountBackend implements MountBackend {
       if (marker) {
         this.assertMode(marker, READ_BIT, prefix);
         this.assertMode(marker, EXEC_BIT, prefix);
+      } else if (
+        this.identity.uid !== 0
+        && !isImplicitReadableDirectory(key)
+      ) {
+        throw new Error(`EACCES: permission denied, '${prefix}'`);
       }
     }
 
@@ -632,6 +679,7 @@ export class R2MountBackend implements MountBackend {
     const obj = await this.bucket.get(key);
     if (!obj) throw new Error(`ENOENT: no such file or directory, chmod '${p}'`);
 
+    this.assertMetadata(obj, p);
     const fileUid = parseInt(obj.customMetadata?.uid ?? "-1", 10);
     if (this.identity.uid !== 0 && this.identity.uid !== fileUid) {
       throw new Error(`EPERM: operation not permitted, chmod '${p}'`);
@@ -679,12 +727,13 @@ export class R2MountBackend implements MountBackend {
     );
   }
 
-  async utimes(path: string): Promise<void> {
+  async utimes(path: string, _atime: Date, _mtime: Date): Promise<void> {
     const p = normalizePath(path);
     await this.assertAncestorAccess(p);
     const key = await this.mutableObjectKey(p);
     const exists = await this.bucket.head(key);
     if (!exists) throw new Error(`ENOENT: no such file or directory, utimes '${p}'`);
+    this.assertMetadata(exists, p);
   }
 
   private async assertAncestorAccess(path: string): Promise<void> {
@@ -696,6 +745,8 @@ export class R2MountBackend implements MountBackend {
       const marker = await this.bucket.head(directoryMarkerKey(ancestorKey));
       if (marker) {
         this.assertMode(marker, EXEC_BIT, `/${ancestorKey}`);
+      } else if (!isImplicitReadableDirectory(ancestorKey)) {
+        throw new Error(`EACCES: permission denied, '/${ancestorKey}'`);
       }
     }
   }
@@ -831,10 +882,11 @@ export class R2MountBackend implements MountBackend {
   private assertMode(obj: R2Object | R2ObjectBody, bit: number, path: string): void {
     if (this.identity.uid === 0) return;
 
+    this.assertMetadata(obj, path);
     const meta = obj.customMetadata;
-    const mode = meta?.mode ?? "644";
-    const fileUid = parseInt(meta?.uid ?? "-1", 10);
-    const fileGid = parseInt(meta?.gid ?? "-1", 10);
+    const mode = meta!.mode;
+    const fileUid = parseInt(meta!.uid, 10);
+    const fileGid = parseInt(meta!.gid, 10);
 
     const digits = mode.padStart(3, "0").slice(-3);
     const owner = parseInt(digits[0], 10);
@@ -851,6 +903,13 @@ export class R2MountBackend implements MountBackend {
 
     throw new Error(`EACCES: permission denied, '${path}'`);
   }
+
+  private assertMetadata(obj: R2Object | R2ObjectBody, path: string): void {
+    if (this.identity.uid === 0) return;
+    if (!hasValidFilesystemMetadata(obj)) {
+      throw new Error(`EACCES: permission denied, '${path}'`);
+    }
+  }
 }
 
 function toKey(path: string): string {
@@ -860,6 +919,22 @@ function toKey(path: string): string {
 function directoryMarkerKey(key: string): string {
   const normalized = key.replace(/\/+$/, "");
   return normalized ? `${normalized}/.dir` : ".dir";
+}
+
+/**
+ * GsvFs synthesizes the root directory, so a single-segment R2 prefix is a
+ * root-owned namespace entry rather than an account-owned directory. `/public`
+ * is likewise a root-managed, read-only tree whose package paths are
+ * content-addressed and need no writable directory markers.
+ */
+function isImplicitReadableDirectory(key: string): boolean {
+  const normalized = key.replace(/^\/+|\/+$/g, "");
+  return normalized.length > 0
+    && (
+      !normalized.includes("/")
+      || normalized === "usr/bin"
+      || normalized.startsWith("public/")
+    );
 }
 
 function assertProvisionedDirectory(
@@ -917,6 +992,33 @@ function isSymlink(obj: R2Object | R2ObjectBody): boolean {
 
 function isDeletionMarker(obj: R2Object | R2ObjectBody): boolean {
   return obj.customMetadata?.deletionMarker === "1";
+}
+
+function hasValidFilesystemMetadata(obj: R2Object | R2ObjectBody): boolean {
+  const metadata = obj.customMetadata;
+  if (
+    !metadata
+    || !isValidUnixIdMetadata(metadata.uid)
+    || !isValidUnixIdMetadata(metadata.gid)
+    || !/^[0-7]{3,4}$/.test(metadata.mode ?? "")
+  ) {
+    return false;
+  }
+
+  const markerKey = obj.key === ".dir" || obj.key.endsWith("/.dir");
+  const markedDirectory = metadata.dirmarker === "1";
+  if (markerKey !== markedDirectory) return false;
+  if (metadata.dirmarker !== undefined && metadata.dirmarker !== "1") return false;
+  if (metadata.symlink !== undefined && metadata.symlink !== "1") return false;
+  if (metadata.deletionMarker !== undefined && metadata.deletionMarker !== "1") return false;
+  if (markedDirectory && metadata.symlink === "1") return false;
+  return true;
+}
+
+function isValidUnixIdMetadata(value: string | undefined): boolean {
+  if (!value || !/^(?:0|[1-9]\d*)$/.test(value)) return false;
+  const parsed = Number(value);
+  return Number.isSafeInteger(parsed) && parsed >= 0;
 }
 
 function isR2ObjectBody(obj: R2Object | R2ObjectBody): obj is R2ObjectBody {

@@ -1,7 +1,4 @@
-import { getAgentByName } from "agents";
-import { WorkerEntrypoint } from "cloudflare:workers";
 import type {
-  BinaryBody,
   PackageAssemblerInterface,
   PackageAssemblyAnalysis,
   PackageAssemblyResponse,
@@ -12,18 +9,7 @@ import {
   type RipgitPackageSnapshotResponse,
   type RipgitRepoRef,
 } from "../fs/ripgit/client";
-import type {
-  AppFrameContext,
-  KernelBindingProps,
-} from "../protocol/app-frame";
-import type { RequestFrame, ResponseFrame } from "../protocol/frames";
 import { decodeBase64Bytes } from "../shared/base64";
-import { canonicalizeLoginUsername } from "../auth/login";
-import {
-  SHIP_KERNEL_NAME,
-  userKernelName,
-} from "../shared/kernel-names";
-import type { ArgsOf, ResultOf, SyscallName } from "../syscalls";
 
 /**
  * Package model for GSV kernel-managed packages.
@@ -47,12 +33,6 @@ export type PackageRuntime = "dynamic-worker" | "node" | "web-ui";
 
 type PackageAssemblerBinding = Fetcher & Pick<PackageAssemblerInterface, "assemblePackage">;
 const PACKAGE_PUBLIC_FILE_WRITE_CONCURRENCY = 2;
-
-async function cancelUnlockedBody(body: BinaryBody | undefined, reason: string): Promise<void> {
-  if (body && !body.stream.locked) {
-    await body.stream.cancel(reason).catch(() => {});
-  }
-}
 
 export type PackageModuleKind =
   | "esm"
@@ -169,134 +149,6 @@ export interface PackageProfileManifest {
    * is surfaced at the package review gate.
    */
   capabilities?: string[];
-}
-
-type KernelAppStub = {
-  appRequest: (
-    context: AppFrameContext,
-    frame: RequestFrame,
-    runnerName?: string,
-  ) => Promise<ResponseFrame>;
-  authorizeAppFrame: (
-    context: AppFrameContext,
-    runnerName?: string,
-  ) => Promise<boolean>;
-};
-
-type MasterAppRouteStub = {
-  resolveAppFrameKernel: (
-    context: AppFrameContext,
-    call?: string,
-    runnerName?: string,
-  ) => Promise<
-    | { ok: true; kernelName: string }
-    | { ok: false }
-  >;
-};
-
-export async function resolveAppKernelForFrame(
-  env: Env,
-  appFrame: AppFrameContext,
-  call?: string,
-  runnerName?: string,
-): Promise<KernelAppStub | null> {
-  if (!appFrame || typeof appFrame !== "object") {
-    return null;
-  }
-
-  const { kernelUsername, kernelGeneration } = appFrame;
-  if (kernelGeneration !== undefined) {
-    const canonicalUsername = canonicalizeLoginUsername(kernelUsername);
-    if (
-      canonicalUsername === null
-      || canonicalUsername !== kernelUsername
-      || !Number.isSafeInteger(kernelGeneration)
-      || kernelGeneration <= 0
-    ) {
-      return null;
-    }
-
-    const kernel = await getAgentByName(
-      env.KERNEL,
-      userKernelName(canonicalUsername),
-    ) as unknown as KernelAppStub;
-    const authorized = runnerName === undefined
-      ? await kernel.authorizeAppFrame(appFrame)
-      : await kernel.authorizeAppFrame(appFrame, runnerName);
-    return authorized ? kernel : null;
-  }
-
-  // A canonical username without a generation is valid only for an explicit
-  // legacy account. Master remains the authority for that compatibility path.
-  if (
-    kernelUsername !== undefined
-    && canonicalizeLoginUsername(kernelUsername) !== kernelUsername
-  ) {
-    return null;
-  }
-  const master = await getAgentByName(
-    env.KERNEL,
-    SHIP_KERNEL_NAME,
-  ) as unknown as MasterAppRouteStub;
-  const route = runnerName === undefined
-    ? await master.resolveAppFrameKernel(appFrame, call)
-    : await master.resolveAppFrameKernel(appFrame, call, runnerName);
-  return route.ok && route.kernelName === SHIP_KERNEL_NAME
-    ? master as unknown as KernelAppStub
-    : null;
-}
-
-export class KernelBinding extends WorkerEntrypoint<Env, KernelBindingProps> {
-  private getAppFrame(): AppFrameContext {
-    const appFrame = this.ctx.props.appFrame;
-    if (!appFrame) {
-      throw new Error("KernelBinding requires request-scoped appFrame props");
-    }
-    return appFrame;
-  }
-
-  async request<S extends SyscallName>(call: S, args: ArgsOf<S>): Promise<ResultOf<S>> {
-    const response = await this.requestFrame(call, args);
-    if (response.body) {
-      await response.body.stream.cancel(`${call} returned a body`).catch(() => {});
-      throw new Error(`${call} returned a body; use requestFrame()`);
-    }
-    return response.data;
-  }
-
-  async requestFrame<S extends SyscallName>(
-    call: S,
-    args: ArgsOf<S>,
-    options: { body?: BinaryBody } = {},
-  ): Promise<{ data: ResultOf<S>; body?: BinaryBody }> {
-    const appFrame = this.getAppFrame();
-    try {
-      const kernel = await resolveAppKernelForFrame(this.env, appFrame, call);
-      if (!kernel) {
-        throw new Error("Authentication failed");
-      }
-      const frame: RequestFrame<S> = {
-        type: "req",
-        id: crypto.randomUUID(),
-        call,
-        args,
-        ...(options.body ? { body: options.body } : {}),
-      };
-
-      const response = await kernel.appRequest(appFrame, frame as RequestFrame);
-      if (!response.ok) {
-        throw new Error(response.error.message);
-      }
-
-      return {
-        data: response.data as ResultOf<S>,
-        ...(response.body ? { body: response.body } : {}),
-      };
-    } catch (error) {
-      await cancelUnlockedBody(options.body, "App request rejected");
-      throw error;
-    }
-  }
 }
 
 /**
@@ -1221,42 +1073,6 @@ export class PackageStore {
     );
 
     return record;
-  }
-
-  /**
-   * Replace the non-secret package metadata projected into a user Kernel.
-   * Artifacts remain content-addressed in shared R2; this never copies module
-   * bodies or makes the user Kernel authoritative for global installation.
-   */
-  replaceRuntimeProjection(records: InstalledPackageRecord[]): void {
-    for (const record of records) {
-      assertValidPackageRecord(record);
-    }
-
-    this.sql.exec("DELETE FROM packages");
-    for (const record of records) {
-      this.sql.exec(
-        `INSERT INTO packages
-          (package_id, scope_key, scope_kind, scope_uid, name, version, runtime, enabled, manifest_json, artifact_hash, artifact_meta_json, grants_json, installed_at, updated_at, review_required, reviewed_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        record.packageId,
-        packageScopeKey(record.scope),
-        record.scope.kind,
-        record.scope.kind === "user" ? record.scope.uid : null,
-        record.manifest.name,
-        record.manifest.version,
-        record.manifest.runtime,
-        record.enabled ? 1 : 0,
-        JSON.stringify(record.manifest),
-        record.artifact.hash,
-        JSON.stringify(record.artifact),
-        record.grants ? JSON.stringify(record.grants) : null,
-        record.installedAt,
-        record.updatedAt,
-        record.reviewRequired ? 1 : 0,
-        record.reviewedAt ?? null,
-      );
-    }
   }
 
   async getArtifact(hash: string): Promise<PackageArtifact> {

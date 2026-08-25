@@ -85,6 +85,34 @@ function parseOptionalUid(input: unknown): number | undefined {
   return input;
 }
 
+function resolveOAuthUid(
+  ctx: KernelContext,
+  callerUid: number,
+  requestedUid: number | undefined,
+  action: string,
+  rootDefault: number | undefined,
+): number | undefined {
+  let effectiveUid: number | undefined;
+  if (callerUid === 0) {
+    effectiveUid = requestedUid ?? rootDefault;
+    if (
+      effectiveUid === undefined
+      && ctx.kernelKind === "user"
+      && ctx.kernelOwnerUid === callerUid
+    ) {
+      effectiveUid = callerUid;
+    }
+  } else {
+    const ownerUid = resolveCallerOwnerUid(ctx);
+    if (requestedUid !== undefined && requestedUid !== ownerUid) {
+      throw new Error(`Permission denied: cannot ${action} OAuth for another user`);
+    }
+    effectiveUid = ownerUid;
+  }
+  assertLocalUserKernelUid(ctx, effectiveUid, "OAuth access");
+  return effectiveUid;
+}
+
 function parseKind(input: unknown): OAuthConnectionKind {
   if (typeof input !== "string" || !OAUTH_KINDS.has(input as OAuthConnectionKind)) {
     throw new Error("kind must be one of: ai-provider, mcp-server, generic");
@@ -179,13 +207,14 @@ export async function handleSysOAuthStart(
   ctx: KernelContext,
 ): Promise<SysOAuthStartResult> {
   const callerUid = requireUid(ctx);
-  const isRoot = callerUid === 0;
   const raw = args as Record<string, unknown>;
-  const targetUid = parseOptionalUid(raw.uid) ?? callerUid;
-  if (!isRoot && targetUid !== callerUid) {
-    throw new Error("Permission denied: cannot start OAuth for another user");
-  }
-  assertLocalUserKernelUid(ctx, targetUid, "OAuth access");
+  const targetUid = resolveOAuthUid(
+    ctx,
+    callerUid,
+    parseOptionalUid(raw.uid),
+    "start",
+    callerUid,
+  )!;
 
   const kind = parseKind(raw.kind);
   const provider = parseRequiredString(raw.provider, "provider", 200);
@@ -203,10 +232,9 @@ export async function handleSysOAuthStart(
   ctx.oauth.cleanupExpiredFlows(now);
 
   const flowId = crypto.randomUUID();
-  const state = ctx.kernelKind === "user" && ctx.kernelUsername && ctx.kernelGeneration
+  const state = ctx.kernelKind === "user" && ctx.kernelUsername
     ? buildRoutedOAuthState(
         ctx.kernelUsername,
-        ctx.kernelGeneration,
         flowId,
         createOpaqueToken(),
       )
@@ -259,13 +287,14 @@ export async function handleSysOAuthDeviceStart(
   fetcher: typeof fetch = fetch,
 ): Promise<SysOAuthDeviceStartResult> {
   const callerUid = requireUid(ctx);
-  const isRoot = callerUid === 0;
   const raw = args as Record<string, unknown>;
-  const targetUid = parseOptionalUid(raw.uid) ?? callerUid;
-  if (!isRoot && targetUid !== callerUid) {
-    throw new Error("Permission denied: cannot start OAuth for another user");
-  }
-  assertLocalUserKernelUid(ctx, targetUid, "OAuth access");
+  const targetUid = resolveOAuthUid(
+    ctx,
+    callerUid,
+    parseOptionalUid(raw.uid),
+    "start",
+    callerUid,
+  )!;
 
   const provider = parseRequiredString(raw.provider, "provider", 200);
   if (provider !== OPENAI_CODEX_PROVIDER) {
@@ -326,16 +355,17 @@ export async function handleSysOAuthDevicePoll(
   fetcher: typeof fetch = fetch,
 ): Promise<SysOAuthDevicePollResult> {
   const callerUid = requireUid(ctx);
-  const isRoot = callerUid === 0;
   const raw = args as Record<string, unknown>;
   const requestedUid = parseOptionalUid(raw.uid);
-  if (!isRoot && requestedUid !== undefined && requestedUid !== callerUid) {
-    throw new Error("Permission denied: cannot poll OAuth for another user");
-  }
 
   const flowId = parseRequiredString(raw.flowId, "flowId", 200);
-  const effectiveUid = isRoot ? requestedUid : callerUid;
-  assertLocalUserKernelUid(ctx, effectiveUid, "OAuth access");
+  const effectiveUid = resolveOAuthUid(
+    ctx,
+    callerUid,
+    requestedUid,
+    "poll",
+    undefined,
+  );
   const flow = ctx.oauth.getFlow(flowId, effectiveUid);
   if (!flow) {
     throw new Error("OAuth device flow not found or expired");
@@ -405,15 +435,15 @@ export function handleSysOAuthList(
   ctx: KernelContext,
 ): SysOAuthListResult {
   const callerUid = requireUid(ctx);
-  const isRoot = callerUid === 0;
   const raw = args as Record<string, unknown>;
   const requestedUid = parseOptionalUid(raw.uid);
-  if (!isRoot && requestedUid !== undefined && requestedUid !== callerUid) {
-    throw new Error("Permission denied: cannot list OAuth accounts for another user");
-  }
-
-  const effectiveUid = isRoot ? requestedUid : callerUid;
-  assertLocalUserKernelUid(ctx, effectiveUid, "OAuth access");
+  const effectiveUid = resolveOAuthUid(
+    ctx,
+    callerUid,
+    requestedUid,
+    "list",
+    undefined,
+  );
   const result: SysOAuthListResult = {
     accounts: ctx.oauth.listAccounts(effectiveUid).map(summarizeAccount),
   };
@@ -428,16 +458,16 @@ export function handleSysOAuthForget(
   ctx: KernelContext,
 ): SysOAuthForgetResult {
   const callerUid = requireUid(ctx);
-  const isRoot = callerUid === 0;
   const raw = args as Record<string, unknown>;
   const accountId = parseRequiredString(raw.accountId, "accountId", 200);
   const requestedUid = parseOptionalUid(raw.uid);
-  if (!isRoot && requestedUid !== undefined && requestedUid !== callerUid) {
-    throw new Error("Permission denied: cannot forget OAuth accounts for another user");
-  }
-
-  const effectiveUid = isRoot ? requestedUid : callerUid;
-  assertLocalUserKernelUid(ctx, effectiveUid, "OAuth access");
+  const effectiveUid = resolveOAuthUid(
+    ctx,
+    callerUid,
+    requestedUid,
+    "forget",
+    undefined,
+  );
   return { forgotten: ctx.oauth.deleteAccount(accountId, effectiveUid) };
 }
 
