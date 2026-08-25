@@ -409,19 +409,22 @@ jobs:
         working-directory: host
         run: >-
           cargo fmt --package gateway-client --package host-config
-          --package desktop-protocol --package gesture-protocol --check
+          --package daemon-protocol --package desktop-protocol
+          --package gesture-protocol --check
 
       - name: Test shared crates
         working-directory: host
         run: >-
           cargo test --locked --package gateway-client --package host-config
-          --package desktop-protocol --package gesture-protocol
+          --package daemon-protocol --package desktop-protocol
+          --package gesture-protocol
 
       - name: Lint shared crates
         working-directory: host
         run: >-
           cargo clippy --locked --package gateway-client --package host-config
-          --package desktop-protocol --package gesture-protocol --all-targets -- -D warnings
+          --package daemon-protocol --package desktop-protocol
+          --package gesture-protocol --all-targets -- -D warnings
 
   machine-build:
     name: Machine (${{ matrix.os }})
@@ -498,10 +501,12 @@ jobs:
             pkg-config
 
       - name: Check vision artifact scripts
-        run: >-
+        run: |
           bash -n host/scripts/package-macos.sh
-          scripts/vision-native/benchmark.sh scripts/vision-native/fixtures.sh
-          scripts/vision-native/parity.sh scripts/vision-native/prepare.sh
+          bash -n scripts/vision-native/benchmark.sh
+          bash -n scripts/vision-native/fixtures.sh
+          bash -n scripts/vision-native/parity.sh
+          bash -n scripts/vision-native/update-models.sh
 
       - name: Check formatting
         working-directory: host
