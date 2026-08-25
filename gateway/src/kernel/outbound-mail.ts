@@ -111,30 +111,20 @@ export async function handleMailSend(
       }
     } else {
       try {
-        await writeOutboundBody(input, normalized.text, owner.gid, ctx.env.STORAGE);
-        ctx.requestSignal?.throwIfAborted();
-        await ctx.scheduleManagedOutboundEnqueue(
-          outboundId,
-          Date.now() + outboundEnqueueRetryDelay(1),
-        );
         ensured = ctx.mailboxes.ensureOutbound(input);
       } catch (error) {
-        throw new MailSendError(`Failed to stage outbound mail: ${errorMessage(error)}`, true);
+        throw new MailSendError(`Failed to record outbound mail: ${errorMessage(error)}`, true);
       }
     }
 
     let outbound = ensured.outbound;
     if (outbound.state === "staging") {
       try {
-        if (!ensured.created) {
-          ctx.requestSignal?.throwIfAborted();
-          await writeOutboundBody(outbound, normalized.text, owner.gid, ctx.env.STORAGE);
-          ctx.requestSignal?.throwIfAborted();
-          await ctx.scheduleManagedOutboundEnqueue(
-            outbound.outboundId,
-            Date.now() + outboundEnqueueRetryDelay(outbound.enqueueAttempts + 1),
-          );
-        }
+        await writeOutboundBody(outbound, normalized.text, owner.gid, ctx.env.STORAGE);
+        await ctx.scheduleManagedOutboundEnqueue(
+          outbound.outboundId,
+          Date.now() + outboundEnqueueRetryDelay(outbound.enqueueAttempts + 1),
+        );
         outbound = ctx.mailboxes.markOutboundQueued(outbound.outboundId, outbound.fingerprint);
       } catch (error) {
         throw new MailSendError(`Failed to store outbound mail: ${errorMessage(error)}`, true);

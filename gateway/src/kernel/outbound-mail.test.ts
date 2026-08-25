@@ -101,6 +101,92 @@ describe("managed outbound mail", () => {
     });
   });
 
+  it("records body ownership before a scheduling failure and resumes on replay", async () => {
+    await runWithRealKernelSql(async (sql) => {
+      const storage = new MemoryR2Bucket();
+      const queue = { send: vi.fn(async () => undefined) };
+      const ctx = outboundContext(sql, storage, queue);
+      ctx.scheduleManagedOutboundEnqueue = vi.fn()
+        .mockRejectedValueOnce(new Error("schedule unavailable"))
+        .mockResolvedValueOnce(undefined);
+      const args = {
+        to: "mike@example.com",
+        subject: "Owned staging",
+        text: "Keep this body owned.",
+        deliveryId: "owned-staging-1",
+      };
+
+      await expect(handleMailSend(args, ctx)).resolves.toMatchObject({
+        ok: false,
+        retryable: true,
+        deliveryId: "owned-staging-1",
+      });
+      const staged = ctx.mailboxes.getOutboundForDelivery(1000, "owned-staging-1");
+      expect(staged).toMatchObject({ state: "staging" });
+      expect(await storage.text(staged!.bodyPath.slice(1))).toBe("Keep this body owned.");
+      expect(storage.keys()).toHaveLength(2);
+
+      await expect(handleMailSend(args, ctx)).resolves.toMatchObject({
+        ok: true,
+        outboundId: staged!.outboundId,
+        state: "queued",
+        replayed: true,
+      });
+      expect(storage.keys()).toHaveLength(2);
+      expect(queue.send).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  it("rejects a concurrent delivery conflict before writing its body", async () => {
+    await runWithRealKernelSql(async (sql) => {
+      const storage = new MemoryR2Bucket();
+      const queue = { send: vi.fn(async () => undefined) };
+      const ctx = outboundContext(sql, storage, queue);
+      const originalPut = storage.put.bind(storage);
+      let releaseFirstPut!: () => void;
+      let reportFirstPut!: () => void;
+      const firstPutStarted = new Promise<void>((resolve) => {
+        reportFirstPut = resolve;
+      });
+      const firstPutGate = new Promise<void>((resolve) => {
+        releaseFirstPut = resolve;
+      });
+      let shouldBlock = true;
+      const put = vi.spyOn(storage, "put").mockImplementation(async (...args) => {
+        if (shouldBlock) {
+          shouldBlock = false;
+          reportFirstPut();
+          await firstPutGate;
+        }
+        return await originalPut(...args);
+      });
+
+      const first = handleMailSend({
+        to: "mike@example.com",
+        subject: "Canonical",
+        text: "First body",
+        deliveryId: "concurrent-delivery-1",
+      }, ctx);
+      await firstPutStarted;
+      const conflict = await handleMailSend({
+        to: "mike@example.com",
+        subject: "Conflict",
+        text: "Second body",
+        deliveryId: "concurrent-delivery-1",
+      }, ctx);
+      releaseFirstPut();
+
+      await expect(first).resolves.toMatchObject({ ok: true, replayed: false });
+      expect(conflict).toMatchObject({
+        ok: false,
+        retryable: false,
+        error: expect.stringContaining("conflicts"),
+      });
+      expect(put).toHaveBeenCalledTimes(2);
+      expect(storage.keys()).toHaveLength(2);
+    });
+  });
+
   it.each(["missing", "corrupt"])(
     "durably fails a queued intent when its body is %s",
     async (failure) => {
@@ -605,5 +691,9 @@ class MemoryR2Bucket {
   async text(key: string): Promise<string | null> {
     const bytes = this.objects.get(key);
     return bytes ? new TextDecoder().decode(bytes) : null;
+  }
+
+  keys(): string[] {
+    return [...this.objects.keys()];
   }
 }
