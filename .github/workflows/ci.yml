@@ -350,8 +350,12 @@ jobs:
         working-directory: adapters/whatsapp
         run: npm exec -- tsc --noEmit
 
-      - name: Run shared and WhatsApp adapter tests
-        run: npm exec -- vitest run adapters/shared/test adapters/whatsapp
+      - name: Run shared adapter tests
+        run: npm exec -- vitest run adapters/shared/test
+
+      - name: Run WhatsApp adapter tests
+        working-directory: adapters/whatsapp
+        run: npm run test:run
 
       - name: Bundle WhatsApp worker
         working-directory: adapters/whatsapp
