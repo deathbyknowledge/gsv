@@ -8,6 +8,7 @@ import { AdapterStore } from "./adapter-store";
 import type { KernelContext } from "./context";
 import { MailboxStore } from "./mailbox-store";
 import { ResponsibilityStore } from "./responsibility-store";
+import { ResponsibilitySourcePolicyStore } from "./responsibility-source-policies";
 import {
   acceptManagedInboundMail,
   completeManagedInboundMail,
@@ -246,6 +247,34 @@ describe("managed Kernel mailbox", () => {
     });
   });
 
+  it("stores mail without waking the Ship when incoming-mail responsibilities are disabled", async () => {
+    await runWithRealKernelSql(async (sql, kernelStorage) => {
+      const ctx = mailboxContext(sql, kernelStorage, new MemoryR2Bucket());
+      ctx.responsibilitySources.set(1000, "mail.received", false);
+      ctx.reconcileResponsibilityWake = vi.fn(async () => {});
+      const accepted = await acceptManagedInboundMail(METADATA, bodyFromBytes(RAW), ctx);
+
+      await completeManagedInboundMail({
+        version: 1,
+        intakeId: METADATA.intakeId,
+        messageId: accepted.messageId,
+        summary: {
+          summary: "Mike approved the contract.",
+          category: "work",
+          requiresAttention: true,
+          confidence: 0.9,
+        },
+      }, ctx);
+
+      expect(ctx.mailboxes.getMessage(1000, accepted.messageId)).toMatchObject({
+        summary: "Mike approved the contract.",
+        eventDeliveredAt: expect.any(Number),
+      });
+      expect(ctx.responsibilities.list({ ownerUid: 1000 }).records).toEqual([]);
+      expect(ctx.reconcileResponsibilityWake).not.toHaveBeenCalled();
+    });
+  });
+
   it("derives the production and staging mailbox domains from canonical routing", async () => {
     await runWithRealKernelSql((sql, kernelStorage) => {
       const production = mailboxContext(sql, kernelStorage, new MemoryR2Bucket());
@@ -296,6 +325,7 @@ function mailboxContext(
     adapters: new AdapterStore(sql),
     mailboxes: new MailboxStore(sql),
     responsibilities: new ResponsibilityStore(kernelStorage),
+    responsibilitySources: new ResponsibilitySourcePolicyStore(sql),
     procs: { list: () => [], get: () => null },
     reconcileResponsibilityWake: async () => {},
     defer: (promise) => {

@@ -57,6 +57,9 @@ import { KERNEL_V029_ADD_RESPONSIBILITIES } from "./v029_add_responsibilities";
 import {
   KERNEL_V030_LINK_IPC_RESPONSIBILITIES,
 } from "./v030_link_ipc_responsibilities";
+import {
+  KERNEL_V031_ADD_RESPONSIBILITY_SOURCE_POLICIES,
+} from "./v031_add_responsibility_source_policies";
 
 // Used by Kernel DO startup before the individual stores initialize.
 export const KERNEL_SCHEMA_COMPONENT = "kernel";
@@ -92,6 +95,7 @@ export const KERNEL_MIGRATIONS: readonly SqlMigration[] = [
   KERNEL_V028_RENAME_HOME_CONVERSATION_TO_SHIP,
   KERNEL_V029_ADD_RESPONSIBILITIES,
   KERNEL_V030_LINK_IPC_RESPONSIBILITIES,
+  KERNEL_V031_ADD_RESPONSIBILITY_SOURCE_POLICIES,
 ];
 
 export function runKernelSqlMigrations(storage: DurableObjectStorage): void {

@@ -9,6 +9,32 @@ export type ResponsibilityState =
 
 export type ResponsibilityPriority = "low" | "normal" | "high" | "critical";
 
+export type ResponsibilitySourcePolicyId = "mail.received";
+
+export type ResponsibilitySourcePolicy = {
+  id: ResponsibilitySourcePolicyId;
+  name: string;
+  description: string;
+  enabled: boolean;
+  defaultEnabled: boolean;
+  updatedAtMs?: number;
+};
+
+export type ResponsibilitySourceListArgs = Record<string, never>;
+
+export type ResponsibilitySourceListResult = {
+  sources: ResponsibilitySourcePolicy[];
+};
+
+export type ResponsibilitySourceUpdateArgs = {
+  id: ResponsibilitySourcePolicyId;
+  enabled: boolean;
+};
+
+export type ResponsibilitySourceUpdateResult = {
+  source: ResponsibilitySourcePolicy;
+};
+
 export type ResponsibilityAssignee =
   | { kind: "ship" }
   | { kind: "process"; processId: string };

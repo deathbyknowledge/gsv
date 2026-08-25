@@ -406,6 +406,8 @@ const SYSCALL_NAMES = [
   "r12y.create",
   "r12y.update",
   "r12y.changes",
+  "r12y.source.list",
+  "r12y.source.update",
   "ai.tools",
   "ai.config",
   "ai.text.generate",

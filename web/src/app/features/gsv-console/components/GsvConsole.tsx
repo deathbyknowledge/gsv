@@ -23,6 +23,7 @@ import { Dialog } from "../../../components/ui/Dialog";
 import { ConsoleCrewPage } from "../pages/ConsoleCrewPage";
 import { ConsoleOverviewPage, type ConsoleOverviewTarget } from "../pages/ConsoleOverviewPage";
 import { RuntimePage } from "../runtime/RuntimePage";
+import { ResponsibilitiesPage } from "../responsibilities/ResponsibilitiesPage";
 import { ListTemplateMockPage } from "../list-template/ListTemplateMockPage";
 import { CardListTemplateMockPage } from "../card-template/CardListTemplateMockPage";
 import { ConnectFlowsMockPage } from "../connect-flows/ConnectFlowsMockPage";
@@ -63,6 +64,9 @@ function surfaceTail(surface: ShellSurfaceId): string {
   }
   if (surface === "runtime") {
     return "GSV · WORK";
+  }
+  if (surface === "responsibilities") {
+    return "GSV · RESPONSIBILITIES";
   }
   if (surface === "messengers") {
     return "GSV · MESSENGERS";
@@ -489,6 +493,8 @@ export function GsvConsole({
           )
         ) : activeSurface === "runtime" ? (
           <RuntimePage key={surfaceDetailSeq} onNewTask={onNewTask} onSelectionChange={setSurfaceDetail} />
+        ) : activeSurface === "responsibilities" ? (
+          <ResponsibilitiesPage />
         ) : activeSurface === "crew" ? (
           <ConsoleCrewPage onManageAgent={openAgent} onCreateAgent={openNewAgent} />
         ) : activeSurface === "agent" ? (

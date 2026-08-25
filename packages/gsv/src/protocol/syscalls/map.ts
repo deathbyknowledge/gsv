@@ -183,6 +183,10 @@ import type {
   ResponsibilityGetResult,
   ResponsibilityListArgs,
   ResponsibilityListResult,
+  ResponsibilitySourceListArgs,
+  ResponsibilitySourceListResult,
+  ResponsibilitySourceUpdateArgs,
+  ResponsibilitySourceUpdateResult,
   ResponsibilityUpdateArgs,
   ResponsibilityUpdateResult,
 } from "./responsibility";
@@ -361,6 +365,8 @@ export type SyscallDomains = {
   "r12y.create": { args: ResponsibilityCreateArgs; result: ResponsibilityCreateResult };
   "r12y.update": { args: ResponsibilityUpdateArgs; result: ResponsibilityUpdateResult };
   "r12y.changes": { args: ResponsibilityChangesArgs; result: ResponsibilityChangesResult };
+  "r12y.source.list": { args: ResponsibilitySourceListArgs; result: ResponsibilitySourceListResult };
+  "r12y.source.update": { args: ResponsibilitySourceUpdateArgs; result: ResponsibilitySourceUpdateResult };
 
   "ai.tools": { args: AiToolsArgs; result: AiToolsResult };
   "ai.config": { args: AiConfigArgs; result: AiConfigResult };

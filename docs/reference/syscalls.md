@@ -817,12 +817,23 @@ and their ancestor records, and may update only its own assignment.
 | `r12y.create` | Creates an open responsibility, or returns the existing record for the same stable dedupe key. |
 | `r12y.update` | Applies an optimistic revision-checked state or metadata transition and appends it to the ordered journal. |
 | `r12y.changes` | Pages ordered transitions after a known revision for context recovery. |
+| `r12y.source.list` | Lists Kernel-defined responsibility sources and the caller owner's effective enablement policy. |
+| `r12y.source.update` | Enables or disables one Kernel-defined source for the caller owner. Source payload storage remains owned by its subsystem. |
 
 ```ts
 type ResponsibilityState = "open" | "active" | "waiting" | "resolved" | "cancelled";
 type ResponsibilityAssignee =
   | { kind: "ship" }
   | { kind: "process"; processId: string };
+
+type ResponsibilitySourcePolicy = {
+  id: "mail.received";
+  name: string;
+  description: string;
+  enabled: boolean;
+  defaultEnabled: boolean;
+  updatedAtMs?: number;
+};
 
 type ResponsibilityRecord = {
   id: string;
@@ -872,6 +883,14 @@ type ResponsibilitySyscalls = {
   "r12y.changes": {
     args: { afterRevision: number; limit?: number };
     result: { transitions: Array<{ revision: number; responsibilityId: string; record: ResponsibilityRecord }>; revision: number; hasMore: boolean };
+  };
+  "r12y.source.list": {
+    args: Record<string, never>;
+    result: { sources: ResponsibilitySourcePolicy[] };
+  };
+  "r12y.source.update": {
+    args: { id: ResponsibilitySourcePolicy["id"]; enabled: boolean };
+    result: { source: ResponsibilitySourcePolicy };
   };
 };
 ```
@@ -1464,21 +1483,27 @@ Scheduler syscalls are Kernel-owned. Schedule records live in Kernel SQLite,
 GSV computes timezone-aware next fire times, and Cloudflare Agent schedules are
 used only as concrete wake-ups.
 
-The user-facing interface depends on the delivery contract. From a
-process-backed shell, use the following form when each firing should enter the
-current process:
+The user-facing interface depends on the delivery contract. Use the following
+form when every occurrence should become durable Ship work:
+
+```bash
+sched add --ship --name NAME (--every DURATION | --cron EXPR [--timezone ZONE] | --after DURATION | --at ISO_TIMESTAMP) --message MESSAGE
+```
+
+From a process-backed shell, use the following form when each firing should
+enter the resolved current process:
 
 ```bash
 sched add --here --name NAME (--every DURATION | --cron EXPR [--timezone ZONE] | --after DURATION | --at ISO_TIMESTAMP) --message MESSAGE
 ```
 
-The shell resolves `--here` against its current Process and any exact adapter
-reply route. A route-less Ship becomes a `responsibility` target, so each
-occurrence creates one deduplicated `schedule.due` record and survives Ship
-Process replacement. A non-Ship Process remains a `process.event` target. When
-the shell belongs to an active adapter run, `--here` captures that run's
-authorized `AdapterMessageDestination` in `process.event.replyTo`, so the future
-terminal Message returns to that adapter surface.
+The shell resolves `--here` against its current Process, or the calling Process
+inside a pending IPC call. A non-Ship Process remains a `process.event` target.
+Ship always becomes a `responsibility` target, so each occurrence creates one
+deduplicated `schedule.due` record and survives Ship Process replacement. Its
+future work is not bound to the adapter or client route active when the schedule
+was created. Low-level `sched.add` and `sched.update` calls receive the same
+normalization at the Kernel boundary.
 
 For direct scheduled text that must not run the agent, use:
 

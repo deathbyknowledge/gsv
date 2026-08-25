@@ -31,7 +31,7 @@ function createTableStatement(name: string): string {
 describe("kernel schema migrations", () => {
   it("starts the kernel component at a v1 baseline", () => {
     expect(KERNEL_SCHEMA_COMPONENT).toBe("kernel");
-    expect(KERNEL_MIGRATIONS).toHaveLength(30);
+    expect(KERNEL_MIGRATIONS).toHaveLength(31);
     expect(KERNEL_MIGRATIONS[0]).toMatchObject({
       id: 1,
       name: "initial_kernel_schema",
@@ -151,6 +151,10 @@ describe("kernel schema migrations", () => {
     expect(KERNEL_MIGRATIONS[29]).toMatchObject({
       id: 30,
       name: "link_ipc_responsibilities",
+    });
+    expect(KERNEL_MIGRATIONS[30]).toMatchObject({
+      id: 31,
+      name: "add_responsibility_source_policies",
     });
   });
 
@@ -297,6 +301,15 @@ describe("kernel schema migrations", () => {
     expect(statements).toContain(
       "ALTER TABLE ipc_calls ADD COLUMN responsibility_id TEXT",
     );
+  });
+
+  it("stores per-owner responsibility source policy overrides", () => {
+    const statements = normalizedStatements();
+    expect(statements.some((statement) => (
+      statement.startsWith("CREATE TABLE responsibility_source_policies ")
+      && statement.includes("PRIMARY KEY (owner_uid, source_id)")
+      && statement.includes("enabled INTEGER NOT NULL CHECK (enabled IN (0, 1))")
+    ))).toBe(true);
   });
 
   it("removes the parallel conversation registry", () => {

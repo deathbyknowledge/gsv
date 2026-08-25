@@ -880,6 +880,59 @@ describe("scheduler", () => {
     }, ctx)).rejects.toThrow("Permission denied: proc.send");
   });
 
+  it("stores personal-process event schedules as Ship responsibilities", async () => {
+    const create = vi.fn((input) => makeScheduleRecord({
+      ownerUid: input.ownerUid,
+      creator: input.creator,
+      runAs: input.runAs,
+      name: input.name,
+      enabled: input.enabled,
+      expression: input.expression,
+      target: input.target,
+      createdAtMs: input.now,
+      updatedAtMs: input.now,
+    }));
+    const ctx = makeSchedulerContext({
+      identity: {
+        role: "user",
+        process: USER_IDENTITY,
+        capabilities: ["sched.add", "r12y.create"],
+      },
+      // SAFETY: this focused process-registry double implements the only lookup the handler uses.
+      procs: {
+        get: vi.fn(() => ({
+          processId: "proc:ship",
+          ownerUid: USER_IDENTITY.uid,
+          isPersonalController: true,
+        })),
+      } as KernelContext["procs"],
+      // SAFETY: this focused schedule-store double implements the methods exercised by add.
+      schedules: {
+        create,
+        setWakeScheduleId: vi.fn(),
+      } as ScheduleStore,
+      scheduleScheduleWake: vi.fn(async () => "wake-ship"),
+    });
+
+    await handleSchedulerAdd({
+      name: "review",
+      expression: { kind: "every", everyMs: 60_000 },
+      target: {
+        kind: "process.event",
+        pid: "proc:ship",
+        message: "Review system health.",
+        replyTo: TELEGRAM_DESTINATION,
+      },
+    }, ctx);
+
+    expect(create).toHaveBeenCalledWith(expect.objectContaining({
+      target: {
+        kind: "responsibility",
+        message: "Review system health.",
+      },
+    }));
+  });
+
   it("requires r12y.create access for responsibility schedules", async () => {
     // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     const ctx = makeSchedulerContext({

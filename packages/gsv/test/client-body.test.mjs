@@ -249,6 +249,8 @@ test("exposes the responsibility namespace", () => {
   assert.equal(client.r12y.create instanceof Function, true);
   assert.equal(client.r12y.update instanceof Function, true);
   assert.equal(client.r12y.changes instanceof Function, true);
+  assert.equal(client.r12y.source.list instanceof Function, true);
+  assert.equal(client.r12y.source.update instanceof Function, true);
 });
 
 test("bodyFromBytes preserves its input buffer", async () => {

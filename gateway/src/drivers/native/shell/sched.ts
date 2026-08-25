@@ -148,6 +148,7 @@ async function parseSchedAddCommand(args: string[], ctx: KernelContext): Promise
   }
 
   let here = false;
+  let ship = false;
   let to: string | undefined;
   let name: string | undefined;
   let message: string | undefined;
@@ -161,6 +162,13 @@ async function parseSchedAddCommand(args: string[], ctx: KernelContext): Promise
         throw new Error("--here may only be specified once");
       }
       here = true;
+      continue;
+    }
+    if (current === "--ship") {
+      if (ship) {
+        throw new Error("--ship may only be specified once");
+      }
+      ship = true;
       continue;
     }
     if (current === "--to") {
@@ -236,8 +244,8 @@ async function parseSchedAddCommand(args: string[], ctx: KernelContext): Promise
     throw new Error(`unexpected argument: ${current}`);
   }
 
-  if (here === (to !== undefined)) {
-    throw new Error("sched add requires exactly one of --here or --to DESTINATION");
+  if (Number(here) + Number(ship) + Number(to !== undefined) !== 1) {
+    throw new Error("sched add requires exactly one of --here, --ship, or --to DESTINATION");
   }
   if (here && !ctx.processId) {
     throw new Error("sched add --here requires a process caller");
@@ -257,6 +265,14 @@ async function parseSchedAddCommand(args: string[], ctx: KernelContext): Promise
   }
   if (message === undefined) {
     throw new Error("sched add requires --message");
+  }
+
+  if (ship) {
+    return {
+      name,
+      expression,
+      target: { kind: "responsibility", message },
+    };
   }
 
   if (to !== undefined) {
@@ -297,7 +313,7 @@ async function parseSchedAddCommand(args: string[], ctx: KernelContext): Promise
   if (!targetProcess) {
     throw new Error(`target process not found: ${processId}`);
   }
-  const target: ScheduleTarget = targetProcess.isPersonalController && !replyTo
+  const target: ScheduleTarget = targetProcess.isPersonalController
     ? { kind: "responsibility", message }
     : replyTo
       ? { kind: "process.event", pid: processId, message, replyTo }
@@ -351,6 +367,7 @@ function schedUsage(): string {
   return [
     "Usage:",
     "  sched list [--all]",
+    "  sched add --ship --name NAME (--every DURATION | --cron EXPR [--timezone ZONE] | --after DURATION | --at ISO_TIMESTAMP) --message MESSAGE",
     "  sched add --here --name NAME (--every DURATION | --cron EXPR [--timezone ZONE] | --after DURATION | --at ISO_TIMESTAMP) --message MESSAGE",
     "  sched add --to DESTINATION --name NAME (--every DURATION | --cron EXPR [--timezone ZONE] | --after DURATION | --at ISO_TIMESTAMP) --message MESSAGE",
     "  sched add --json JSON",
@@ -359,7 +376,8 @@ function schedUsage(): string {
     "  sched remove <id>",
     "  sched run <id> [--force]",
     "",
-    "Use --here to wake this process, or its caller during delegated work, and reply on the current surface.",
+    "Use --ship to create a responsibility for your personal intelligence on every firing.",
+    "Use --here to wake this non-Ship process, or its caller during delegated work.",
     "Use --to for a direct scheduled message to an authorized adapter destination.",
     "--at requires a future ISO timestamp with Z or an explicit numeric UTC offset.",
     "Use crontab -l, crontab FILE, crontab -r, or /var/spool/cron/<user>",

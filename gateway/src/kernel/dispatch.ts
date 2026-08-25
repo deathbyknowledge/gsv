@@ -122,6 +122,8 @@ import {
   handleResponsibilityCreate,
   handleResponsibilityGet,
   handleResponsibilityList,
+  handleResponsibilitySourceList,
+  handleResponsibilitySourceUpdate,
   handleResponsibilityUpdate,
 } from "./responsibilities";
 import {
@@ -600,6 +602,12 @@ async function dispatchNative(
         break;
       case "r12y.changes":
         data = handleResponsibilityChanges(frame.args, ctx);
+        break;
+      case "r12y.source.list":
+        data = handleResponsibilitySourceList(frame.args, ctx);
+        break;
+      case "r12y.source.update":
+        data = handleResponsibilitySourceUpdate(frame.args, ctx);
         break;
 
       // --- adapter.* ---

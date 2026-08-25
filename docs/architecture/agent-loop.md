@@ -106,7 +106,9 @@ responsibility details with `contentTrust: "untrusted"`; exact mail remains in t
 mailbox. The Ship first sees only the responsibility title in its frozen baseline or
 an ordered ledger transition and must deliberately inspect the record and mailbox
 before acting. Mail therefore uses the same ordinary Ship loop, tool surface, yield
-rules, and responsibility lifecycle as other unresolved work.
+rules, and responsibility lifecycle as other unresolved work. If the owner has
+disabled the `mail.received` responsibility source, mail remains durably stored and
+classified but does not create ledger work or wake Ship.
 
 Endpoint routing does not alter that standing system prompt. The first
 model-visible message that owns a run, and the next such message whenever its

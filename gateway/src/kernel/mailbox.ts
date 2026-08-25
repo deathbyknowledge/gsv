@@ -160,6 +160,10 @@ export async function completeManagedInboundMail(
 
   const mailbox = ctx.mailboxes.getMailbox(summarized.mailboxId);
   if (!mailbox) throw new Error("Mail message belongs to an unknown mailbox");
+  if (!ctx.responsibilitySources.isEnabled(mailbox.ownerUid, "mail.received")) {
+    ctx.mailboxes.markEventDelivered(summarized.messageId);
+    return;
+  }
   const details: JsonObject = {
     eventType: "mail.received",
     messageId: summarized.messageId,

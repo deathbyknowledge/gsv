@@ -12,6 +12,8 @@ import {
   handleResponsibilityCreate,
   handleResponsibilityGet,
   handleResponsibilityList,
+  handleResponsibilitySourceList,
+  handleResponsibilitySourceUpdate,
   handleResponsibilityUpdate,
 } from "../../../kernel/responsibilities";
 import { requireCommandCapability, requireShellOptionValue } from "./common";
@@ -77,6 +79,32 @@ async function runR12yCommand(args: string[], ctx: KernelContext): Promise<ExecR
       requireArgumentCount(rest, 1, "show requires: r12y show ID");
       const shown = handleResponsibilityGet({ id: requireId(rest[0]) }, ctx);
       return result(`${JSON.stringify(shown)}\n`);
+    }
+    case "sources": {
+      requireCommandCapability(ctx, "r12y.source.list");
+      requireArgumentCount(rest, 0, "sources accepts no arguments");
+      const { sources } = handleResponsibilitySourceList({}, ctx);
+      return result(`${["ID\tENABLED\tNAME\tDESCRIPTION", ...sources.map((source) => [
+        source.id,
+        source.enabled ? "yes" : "no",
+        source.name,
+        source.description,
+      ].join("\t"))].join("\n")}\n`);
+    }
+    case "source": {
+      requireCommandCapability(ctx, "r12y.source.update");
+      requireArgumentCount(rest, 2, "source requires: r12y source enable|disable ID");
+      const enabled = rest[0] === "enable"
+        ? true
+        : rest[0] === "disable"
+          ? false
+          : null;
+      if (enabled === null) throw new Error("source action must be enable or disable");
+      const updated = handleResponsibilitySourceUpdate({
+        id: requireSourceId(rest[1]),
+        enabled,
+      }, ctx);
+      return result(`${JSON.stringify(updated)}\n`);
     }
     case "create": {
       requireCommandCapability(ctx, "r12y.create");
@@ -256,6 +284,11 @@ function requireProcessId(value: string | undefined): string {
   return value;
 }
 
+function requireSourceId(value: string | undefined): "mail.received" {
+  if (value !== "mail.received") throw new Error(`unknown responsibility source: ${value ?? ""}`);
+  return value;
+}
+
 function requireArgumentCount(args: string[], count: number, message: string): void {
   if (args.length !== count) throw new Error(message);
 }
@@ -269,6 +302,8 @@ function r12yUsage(): string {
     "Usage:",
     "  r12y list [--all] [--json]",
     "  r12y show ID",
+    "  r12y sources",
+    "  r12y source enable|disable SOURCE_ID",
     "  r12y create --title TITLE [--details JSON] [--parent ID] [--process PID] [--priority PRIORITY] [--due ISO] [--check ISO] [--blocker TEXT] [--dedupe KEY]",
     "  r12y update ID --json PATCH",
     "  r12y start ID",

@@ -21,6 +21,7 @@ const TOP_LEVEL_SURFACES = new Map<string, Exclude<ShellSurfaceId, "desktop" | "
   ["repositories", "repositories"],
   ["repos", "repositories"],
   ["tasks", "runtime"],
+  ["responsibilities", "responsibilities"],
   ["terminal", "terminal"],
 ]);
 

@@ -577,7 +577,7 @@ export async function handleSchedulerAdd(
   const now = Date.now();
   const expression = normalizeScheduleExpression(args.expression, ctx);
   assertSchedulableAtExpression(expression, args.enabled !== false, now);
-  const target = normalizeScheduleTarget(args.target);
+  const target = normalizeShipScheduleTarget(normalizeScheduleTarget(args.target), ctx);
   validateScheduleTargetAccess(target, ctx);
 
   const principal = principalFromContext(ctx);
@@ -611,7 +611,7 @@ export async function handleSchedulerUpdate(
 
   const nextTarget = args.patch.target === undefined
     ? existing.target
-    : normalizeScheduleTarget(args.patch.target);
+    : normalizeShipScheduleTarget(normalizeScheduleTarget(args.patch.target), ctx);
   const now = Date.now();
   const nextExpression = args.patch.expression === undefined
     ? existing.expression
@@ -904,6 +904,25 @@ function validateScheduleTargetAccess(target: ScheduleTarget, ctx: KernelContext
       throw new Error(`Permission denied: cannot schedule child under ${target.parentPid}`);
     }
   }
+}
+
+function normalizeShipScheduleTarget(
+  target: ScheduleTarget,
+  ctx: KernelContext,
+): ScheduleTarget {
+  if (target.kind !== "process.event") return target;
+  const process = ctx.procs.get(target.pid);
+  if (!process?.isPersonalController) return target;
+  const ownerUid = resolveCallerOwnerUid(ctx);
+  if (ownerUid !== 0 && process.ownerUid !== ownerUid) {
+    throw new Error(`Permission denied: cannot schedule process ${target.pid}`);
+  }
+  const responsibility: Extract<ScheduleTarget, { kind: "responsibility" }> = {
+    kind: "responsibility",
+    message: target.message,
+  };
+  if (target.data !== undefined) responsibility.data = target.data;
+  return responsibility;
 }
 
 function computeEveryNextRunAt(

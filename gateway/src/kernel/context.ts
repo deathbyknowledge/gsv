@@ -28,6 +28,7 @@ import type { IpcCallStore } from "./ipc-calls";
 import type { ScheduleStore } from "./scheduler";
 import type { MailboxStore } from "./mailbox-store";
 import type { ResponsibilityStore } from "./responsibility-store";
+import type { ResponsibilitySourcePolicyStore } from "./responsibility-source-policies";
 import type { McpAddConnectionInput, McpAddConnectionResult } from "./sys/mcp";
 import type { InstallationIdentity } from "../installation/identity";
 import type { KernelConnection, KernelConnectionState } from "./connection";
@@ -56,6 +57,7 @@ export type KernelContext = {
   schedules: ScheduleStore;
   mailboxes: MailboxStore;
   responsibilities: ResponsibilityStore;
+  responsibilitySources: ResponsibilitySourcePolicyStore;
   connection: KernelConnection<KernelConnectionState> | null;
   peer?: PeerContext;
   identity?: ConnectionIdentity;

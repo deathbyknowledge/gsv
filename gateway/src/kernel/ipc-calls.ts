@@ -72,7 +72,8 @@ export class IpcCallStore {
       `DELETE FROM ipc_calls
         WHERE uid = ?
           AND source_pid = ?
-          AND source_run_id = ?`,
+          AND source_run_id = ?
+          AND responsibility_id IS NULL`,
       input.uid,
       input.sourcePid,
       input.sourceRunId,
@@ -81,7 +82,10 @@ export class IpcCallStore {
 
   cancelBySourcePid(input: { uid: number; sourcePid: string }): void {
     this.sql.exec(
-      "DELETE FROM ipc_calls WHERE uid = ? AND source_pid = ?",
+      `DELETE FROM ipc_calls
+        WHERE uid = ?
+          AND source_pid = ?
+          AND responsibility_id IS NULL`,
       input.uid,
       input.sourcePid,
     );

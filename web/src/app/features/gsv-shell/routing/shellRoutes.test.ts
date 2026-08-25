@@ -22,6 +22,12 @@ describe("shellRoutes", () => {
     expect(shellRouteFromLocation(location("/tasks"))).toEqual(route);
   });
 
+  it("round-trips the responsibilities page", () => {
+    const route: ShellRoute = { surface: "responsibilities" };
+    expect(shellRouteToPath(route)).toBe("/responsibilities");
+    expect(shellRouteFromLocation(location("/responsibilities"))).toEqual(route);
+  });
+
   it("keeps settings task paths compatible with the Work presentation", () => {
     const listRoute: ShellRoute = {
       surface: "settings",

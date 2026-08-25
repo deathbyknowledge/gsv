@@ -9,6 +9,10 @@ import type {
   ResponsibilityGetResult,
   ResponsibilityListArgs,
   ResponsibilityListResult,
+  ResponsibilitySourceListArgs,
+  ResponsibilitySourceListResult,
+  ResponsibilitySourceUpdateArgs,
+  ResponsibilitySourceUpdateResult,
   ResponsibilityPatch,
   ResponsibilityPriority,
   ResponsibilitySource,
@@ -232,6 +236,28 @@ export function handleResponsibilityChanges(
     args.limit,
     restrictedCallerProcessId(ctx),
   );
+}
+
+export function handleResponsibilitySourceList(
+  _args: ResponsibilitySourceListArgs,
+  ctx: KernelContext,
+): ResponsibilitySourceListResult {
+  return {
+    sources: ctx.responsibilitySources.list(resolveCallerOwnerUid(ctx)),
+  };
+}
+
+export function handleResponsibilitySourceUpdate(
+  args: ResponsibilitySourceUpdateArgs,
+  ctx: KernelContext,
+): ResponsibilitySourceUpdateResult {
+  return {
+    source: ctx.responsibilitySources.set(
+      resolveCallerOwnerUid(ctx),
+      args.id,
+      args.enabled,
+    ),
+  };
 }
 
 function normalizePatch(

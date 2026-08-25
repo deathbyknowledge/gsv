@@ -55,6 +55,8 @@ const NATIVE_COMMAND_DESCRIPTORS = defineNativeCommandDescriptors({
   r12y: command("Inspect and maintain durable unresolved responsibilities.", "Record work that must survive the current run, delegate it, defer it to a known wake condition, or close it with a durable outcome.", ["responsibility", "promise", "work", "task", "delegate", "waiting", "deadline", "outcome"], [], [
     "r12y list [--all] [--json]",
     "r12y show ID",
+    "r12y sources",
+    "r12y source enable|disable SOURCE_ID",
     "r12y create --title TITLE [OPTIONS]",
     "r12y update ID --json PATCH",
     "r12y wait ID [--until ISO] [--blocker TEXT]",
@@ -81,6 +83,7 @@ const NATIVE_COMMAND_DESCRIPTORS = defineNativeCommandDescriptors({
   ripgit: command("Alias for the rgit repository command.", "Work with GSV repo-backed source, diffs, history, branches, or commits.", ["git", "repository", "source", "diff", "commit"], ["rgit"]),
   sched: command("Create and inspect Kernel schedules and delayed prompts.", "Send a prompt later, wake the current process, or inspect scheduled work.", ["schedule", "reminder", "recurring", "automation", "later", "timer"], ["crontab"], [
     "sched list [--all]",
+    "sched add --ship --name NAME (--every DURATION | --cron EXPR [--timezone ZONE] | --after DURATION | --at ISO_TIMESTAMP) --message MESSAGE",
     "sched add --here --name NAME (--every DURATION | --cron EXPR [--timezone ZONE] | --after DURATION | --at ISO_TIMESTAMP) --message MESSAGE",
     "sched add --to DESTINATION --name NAME (--every DURATION | --cron EXPR [--timezone ZONE] | --after DURATION | --at ISO_TIMESTAMP) --message MESSAGE",
     "sched add --json JSON",

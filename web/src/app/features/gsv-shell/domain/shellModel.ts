@@ -7,6 +7,7 @@ export type ShellSurfaceId =
   | "messengers"
   | "integrations"
   | "runtime"
+  | "responsibilities"
   | "files"
   | "repositories"
   | "library"
@@ -155,6 +156,8 @@ export function shellSurfaceLabel(surface: ShellSurfaceId): string {
       return "INTEGRATIONS";
     case "runtime":
       return "WORK";
+    case "responsibilities":
+      return "RESPONSIBILITIES";
     case "files":
       return "FILES";
     case "repositories":

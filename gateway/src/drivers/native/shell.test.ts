@@ -173,11 +173,13 @@ function makeContext(options?: {
   schedules?: Partial<KernelContext["schedules"]>;
   ipcCalls?: Partial<KernelContext["ipcCalls"]>;
   responsibilities?: Partial<KernelContext["responsibilities"]>;
+  responsibilitySources?: Partial<KernelContext["responsibilitySources"]>;
   oauth?: Partial<KernelContext["oauth"]>;
   scheduleIpcCallTimeout?: KernelContext["scheduleIpcCallTimeout"];
   scheduleScheduleWake?: KernelContext["scheduleScheduleWake"];
   reconcileResponsibilityWake?: KernelContext["reconcileResponsibilityWake"];
   processRunId?: string;
+  processId?: string | null;
   identity?: ProcessIdentity;
   aiRun?: (model: string, input: ShellAiInput) => Promise<ShellAiResult>;
   ripgit?: Fetcher;
@@ -294,13 +296,16 @@ function makeContext(options?: {
     responsibilities: focusedFixture<KernelContext["responsibilities"]>(
       options?.responsibilities ?? {},
     ),
+    responsibilitySources: focusedFixture<KernelContext["responsibilitySources"]>(
+      options?.responsibilitySources ?? {},
+    ),
     connection: null,
     identity: {
       role: "user",
       process: identity,
       capabilities: options?.capabilities ?? ["repo.refs", "repo.log"],
     },
-    processId: "task:shell",
+    processId: options?.processId === null ? undefined : options?.processId ?? "task:shell",
     processRunId: options?.processRunId,
     serverVersion: "0.4.1",
     scheduleIpcCallTimeout: options?.scheduleIpcCallTimeout,
@@ -2998,6 +3003,40 @@ describe("native administration shell commands", () => {
     expect(result.stderr).toBe("");
   });
 
+  it("lists and toggles built-in responsibility sources", async () => {
+    let enabled = true;
+    const responsibilitySources = {
+      list: vi.fn(() => [{
+        id: "mail.received",
+        name: "Incoming mail",
+        description: "Ask the Ship to review each newly received email.",
+        defaultEnabled: true,
+        enabled,
+      }]),
+      set: vi.fn((_uid: number, id: string, next: boolean) => {
+        enabled = next;
+        return {
+          id,
+          name: "Incoming mail",
+          description: "Ask the Ship to review each newly received email.",
+          defaultEnabled: true,
+          enabled,
+        };
+      }),
+    };
+    const ctx = makeContext({
+      capabilities: ["r12y.source.list", "r12y.source.update"],
+      responsibilitySources,
+    });
+
+    const listed = await handleShellExec({ input: "r12y sources" }, ctx);
+    const disabled = await handleShellExec({ input: "r12y source disable mail.received" }, ctx);
+
+    expect(listed.stdout).toContain("mail.received\tyes\tIncoming mail");
+    expect(disabled.stdout).toContain('"enabled":false');
+    expect(responsibilitySources.set).toHaveBeenCalledWith(IDENTITY.uid, "mail.received", false);
+  });
+
   it("installs and lists a user crontab", async () => {
     const wake = vi.fn(async () => "wake-1");
     const setWakeScheduleId = vi.fn();
@@ -3988,6 +4027,7 @@ describe("native administration shell commands", () => {
       input: 'sched add --here --name reminder --after 10m --message "Check the oven."',
     }, ctx);
 
+    expect(result.stderr).toBe("");
     expect(result).toMatchObject({ status: "completed", exitCode: 0 });
     expect(create).toHaveBeenCalledWith(expect.objectContaining({
       target: {
@@ -4137,6 +4177,44 @@ describe("native administration shell commands", () => {
       },
     }));
     expect(setWakeScheduleId).toHaveBeenCalledWith("sched-here", "wake-here");
+  });
+
+  it("creates an explicit Ship responsibility schedule from a top-level shell", async () => {
+    const create = vi.fn((input) => ({
+      id: "sched-ship",
+      ownerUid: input.ownerUid,
+      creator: input.creator,
+      runAs: input.runAs,
+      name: input.name,
+      enabled: input.enabled,
+      expression: input.expression,
+      target: input.target,
+      overlapPolicy: "skip",
+      createdAtMs: input.now,
+      updatedAtMs: input.now,
+      state: {
+        nextRunAtMs: input.now + input.expression.everyMs,
+        runningAtMs: null,
+        lastRunAtMs: null,
+        lastStatus: null,
+        lastError: null,
+        lastDurationMs: null,
+        runCount: 0,
+      },
+    }));
+    const result = await handleShellExec({
+      input: 'sched add --ship --name upkeep --every 24h --message "Review system health."',
+    }, makeContext({
+      capabilities: ["sched.add", "r12y.create"],
+      schedules: { create, setWakeScheduleId: vi.fn() },
+      scheduleScheduleWake: vi.fn(async () => "wake-ship"),
+      processId: null,
+    }));
+
+    expect(result).toMatchObject({ status: "completed", exitCode: 0 });
+    expect(create).toHaveBeenCalledWith(expect.objectContaining({
+      target: { kind: "responsibility", message: "Review system health." },
+    }));
   });
 
   it.each([

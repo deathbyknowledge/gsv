@@ -2472,6 +2472,43 @@ describe("Kernel scheduled process reply routes", () => {
     expect(waitUntil).toHaveBeenCalledOnce();
   });
 
+  it("converts legacy route-bound Ship events into responsibility-only delivery", async () => {
+    const create = vi.fn(() => ({
+      record: { id: "r12y:legacy-schedule" },
+      created: true,
+      revision: 1,
+    }));
+    // SAFETY: this focused Kernel fixture supplies every field used by schedule dispatch.
+    const kernel = Object.create(Kernel.prototype) as any;
+    kernel.ctx = { waitUntil: vi.fn() };
+    kernel.buildScheduleContext = vi.fn(() => ({
+      identity: { capabilities: ["adapter.send", "proc.send", "r12y.create"] },
+    }));
+    kernel.procs = { get: vi.fn(() => ({ ownerUid: 1000, isPersonalController: true })) };
+    kernel.responsibilities = { create };
+    kernel.reconcileResponsibilityWake = vi.fn(async () => {});
+    kernel.runRoutes = { setAdapterRoute: vi.fn() };
+
+    const result = await kernel.dispatchScheduleTarget({
+      id: "schedule-legacy-ship-event",
+      name: "Daily review",
+      ownerUid: 1000,
+      target: {
+        kind: "process.event",
+        pid: "proc:ship",
+        message: "Review the day.",
+        replyTo: destination,
+      },
+    }, 100, 101, "occurrence-1");
+
+    expect(result).toEqual({
+      kind: "responsibility",
+      responsibilityId: "r12y:legacy-schedule",
+    });
+    expect(kernel.runRoutes.setAdapterRoute).not.toHaveBeenCalled();
+    expect(sendFrameToProcessMock).not.toHaveBeenCalled();
+  });
+
   it("preserves a preallocated reply route when Process transport admission is ambiguous", async () => {
     const { kernel, record, setAdapterRoute, deleteRoute } = makeScheduledProcessKernel();
     sendFrameToProcessMock.mockRejectedValueOnce(new Error("Process response was lost"));
@@ -3444,6 +3481,38 @@ describe("Kernel IPC completion", () => {
         retry: { maxAttempts: 10, baseDelayMs: 1_000, maxDelayMs: 30_000 },
       },
     );
+  });
+
+  it("returns delegated work without signaling a replaced Ship process", async () => {
+    const call = {
+      callId: "call-orphaned-source",
+      ownerUid: 1000,
+      sourcePid: "proc:old-ship",
+      sourceRunId: "run:old-ship",
+      targetPid: "proc:worker",
+      targetRunId: "run:worker",
+      status: "completed",
+      deadlineAt: 1234,
+      createdAt: 1000,
+      response: { text: "done" },
+      error: null,
+      responsibilityId: "r12y:11111111-1111-4111-8111-111111111111",
+    };
+    const remove = vi.fn();
+    // SAFETY: this focused Kernel fixture supplies every field used by IPC delivery.
+    const kernel = Object.create(Kernel.prototype) as any;
+    kernel.ipcCalls = {
+      claimDelivery: vi.fn(() => call),
+      remove,
+    };
+    kernel.procs = { get: vi.fn(() => null) };
+    kernel.returnDelegatedResponsibility = vi.fn();
+
+    await kernel.deliverIpcCall(call.callId);
+
+    expect(kernel.returnDelegatedResponsibility).toHaveBeenCalledWith(call);
+    expect(remove).toHaveBeenCalledWith(call.callId);
+    expect(sendFrameToProcessMock).not.toHaveBeenCalled();
   });
 
   // SAFETY: test fixture is constructed with the asserted kernel domain shape.

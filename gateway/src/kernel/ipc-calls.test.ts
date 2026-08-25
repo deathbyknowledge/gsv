@@ -143,6 +143,16 @@ describe("IpcCallStore", () => {
         status: "completed",
         response: { text: "done" },
       });
+      calls.cancelBySourceRun({
+        uid: 1000,
+        sourcePid: "proc:ship",
+        sourceRunId: "run:ship",
+      });
+      calls.cancelBySourcePid({ uid: 1000, sourcePid: "proc:ship" });
+      expect(calls.get("ipc:linked-call")).toMatchObject({
+        responsibilityId,
+        status: "completed",
+      });
     });
   });
 });

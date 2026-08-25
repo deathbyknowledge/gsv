@@ -167,6 +167,7 @@ import {
   ResponsibilityStore,
   type ResponsibilityWakeBatch,
 } from "./responsibility-store";
+import { ResponsibilitySourcePolicyStore } from "./responsibility-source-policies";
 import {
   acceptManagedInboundMail as acceptKernelManagedInboundMail,
   completeManagedInboundMail as completeKernelManagedInboundMail,
@@ -583,6 +584,7 @@ export class Kernel extends DurableObject<Env> {
   private readonly schedules: ScheduleStore;
   private readonly mailboxes: MailboxStore;
   private readonly responsibilities: ResponsibilityStore;
+  private readonly responsibilitySources: ResponsibilitySourcePolicyStore;
   private readonly oauth: OAuthStore;
   private readonly mcpServers: McpServerStore;
   private readonly connections = new Map<string, KernelConnection<ConnectionState>>();
@@ -661,6 +663,7 @@ export class Kernel extends DurableObject<Env> {
     this.mailboxes = new MailboxStore(sql);
 
     this.responsibilities = new ResponsibilityStore(ctx.storage);
+    this.responsibilitySources = new ResponsibilitySourcePolicyStore(sql);
 
     this.oauth = new OAuthStore(sql);
 
@@ -2034,6 +2037,10 @@ export class Kernel extends DurableObject<Env> {
     }
     try {
       this.returnDelegatedResponsibility(call);
+      if (call.responsibilityId && !this.procs.get(call.sourcePid)) {
+        this.ipcCalls.remove(callId);
+        return;
+      }
       await this.deliverIpcCallSignal(call);
       this.ipcCalls.remove(callId);
     } catch (error) {
@@ -2479,6 +2486,7 @@ export class Kernel extends DurableObject<Env> {
       schedules: this.schedules,
       mailboxes: this.mailboxes,
       responsibilities: this.responsibilities,
+      responsibilitySources: this.responsibilitySources,
       connection: options.connection ?? null,
       peer: options.peer,
       identity: options.identity,
@@ -4314,11 +4322,11 @@ export class Kernel extends DurableObject<Env> {
       if (!hasCapability(ctx.identity?.capabilities ?? [], "proc.send")) {
         throw new Error("Permission denied: proc.send");
       }
-      if (target.replyTo) {
-        if (!hasCapability(ctx.identity?.capabilities ?? [], "adapter.send")) {
-          throw new Error("Permission denied: adapter.send");
-        }
-        assertAdapterMessageDestinationAccess(target.replyTo, record.ownerUid, ctx);
+      if (
+        target.replyTo
+        && !hasCapability(ctx.identity?.capabilities ?? [], "adapter.send")
+      ) {
+        throw new Error("Permission denied: adapter.send");
       }
       const proc = this.procs.get(target.pid);
       if (!proc) {
@@ -4327,21 +4335,23 @@ export class Kernel extends DurableObject<Env> {
       if (proc.ownerUid !== record.ownerUid && record.ownerUid !== 0) {
         throw new Error(`Permission denied: schedule ${record.id} cannot access process ${target.pid}`);
       }
-
-      const responsibilityId = proc.isPersonalController
-        ? this.createScheduleResponsibility(
+      if (proc.isPersonalController) {
+        if (!hasCapability(ctx.identity?.capabilities ?? [], "r12y.create")) {
+          throw new Error("Permission denied: r12y.create");
+        }
+        return {
+          kind: "responsibility",
+          responsibilityId: this.createScheduleResponsibility(
             record,
             target,
             scheduledAtMs,
             firedAtMs,
             occurrenceKey,
-          )
-        : null;
-      if (responsibilityId && !target.replyTo) {
-        return {
-          kind: "responsibility",
-          responsibilityId,
+          ),
         };
+      }
+      if (target.replyTo) {
+        assertAdapterMessageDestinationAccess(target.replyTo, record.ownerUid, ctx);
       }
 
       const runId = await stableOpaqueId("schedule-run", [record.id, occurrenceKey]);
@@ -4404,7 +4414,6 @@ export class Kernel extends DurableObject<Env> {
         pid: target.pid,
         runId: admittedRunId,
       };
-      if (responsibilityId) result.responsibilityId = responsibilityId;
       return result;
     }
 

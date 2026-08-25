@@ -109,7 +109,10 @@ inherited child in worker mode. With `--responsibility ID`, the Kernel assigns
 that record to the child and persists the id on the IPC call. Completion, failure,
 timeout, or kill returns a still-active assignment to Ship once, with the IPC call
 and child run ids recorded as evidence. The result itself still re-enters the
-caller as a Process event; it is not copied into the responsibility record.
+caller as a Process event while that caller still exists; it is not copied into
+the responsibility record. If the personal Process is replaced before delivery,
+the Kernel returns the assignment to Ship and discards the obsolete Process
+signal. The durable responsibility remains the recovery path.
 
 During an adapter turn, `message current --json` exposes the current surface as
 an opaque GSV destination id. The personal intelligence can store that id with
@@ -216,25 +219,43 @@ the child history unless another mechanism consumes them.
 
 ### Chat delivery contracts
 
-The native shell exposes two distinct schedule forms:
+The native shell exposes three distinct schedule forms:
 
 ```bash
+sched add --ship --name NAME --after 10m --message "Give Ship this responsibility"
 sched add --here --name NAME --after 10m --message "Run the agent"
 sched add --to DESTINATION --name NAME --after 10m --message "Send this text"
 ```
 
-`--here` requires a process-backed shell. When its resolved target is Ship and
-there is no exact adapter reply route, it creates a `responsibility` target: every
-occurrence becomes one deduplicated `schedule.due` responsibility and survives
-replacement of the current Ship pid. Inside a pending IPC call, it resolves to the
-calling process. Non-Ship targets remain `process.event` targets. During an adapter
-run it captures the authorized adapter destination in `replyTo`; that transport
-event is retained so the eventual Message follows the exact destination.
+`--ship` is explicit and works from top-level or process-backed shells. It creates
+a `responsibility` target: every occurrence becomes one deduplicated
+`schedule.due` responsibility and survives replacement of the current Ship pid.
+
+`--here` requires a process-backed shell. It resolves to the calling process while
+inside a pending IPC call. A non-Ship target remains a `process.event` target. If
+the resolved target is Ship, it has the same responsibility semantics as `--ship`,
+regardless of which client or adapter started the current run. It never binds
+future Ship work to the current conversation route.
 
 `--to` creates an `adapter.send` action and sends the stored text directly
 without running an agent. The scheduler validates destination ownership when a
 schedule is created or updated, and delivery rechecks actor and surface
 authority.
+
+## Standing responsibilities
+
+Standing responsibility definitions determine which durable sources can create
+work for Ship. Built-in sources have Kernel-owned definitions and per-owner
+enablement policies. `mail.received` is the first built-in source and is enabled
+by default. Disabling it does not discard mail: mailbox ingestion and
+classification still complete, but no responsibility is created and Ship is not
+woken for that message.
+
+Recurring custom responsibilities are ordinary `every` or `cron` schedules whose
+target is `responsibility`. The Web responsibilities workspace presents three
+projections of the same Kernel state: Open ledger records, Standing source and
+recurring-schedule definitions, and terminal History. It does not create a second
+automation store.
 
 ## Linux-like views
 

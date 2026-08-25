@@ -44,9 +44,10 @@ Commands run inside the gateway OS context, not directly on your local machine.
 Use `:quit`, `:exit`, or `:q` to leave.
 
 Inside the gateway shell, `proc` is the process IPC userland command.
-`message` inspects and uses external chat reply routes. `sched add --here`
-creates Ship responsibilities or admits transport-bound scheduled events,
-depending on the resolved Process and reply route.
+`message` inspects and uses external chat reply routes. `sched add --ship`
+creates recurring or one-shot Ship responsibilities; `sched add --here`
+targets the resolved current Process and uses the same responsibility semantics
+when that Process is Ship.
 `crontab` schedules background shell commands, while the remaining `sched`
 commands inspect and control the Kernel schedule records:
 
@@ -78,6 +79,8 @@ r12y wait ID [--until ISO] [--blocker TEXT]
 r12y delegate ID PID --until ISO
 r12y resolve ID [--json RESOLUTION]
 r12y cancel ID [--json RESOLUTION]
+r12y sources
+r12y source enable|disable mail.received
 img2txt [caption] [--length short|normal|long] [--stream] IMAGE
 img2txt query --prompt TEXT [--reasoning] [--response-format FORMAT] [--schema JSON] [--stream] IMAGE
 img2txt ocr [--prompt TEXT] [--response-format FORMAT] [--schema JSON] [--stream] IMAGE
@@ -87,6 +90,7 @@ crontab -l
 crontab FILE
 crontab -r
 sched list [--all]
+sched add --ship --name NAME (--every DURATION | --cron EXPR [--timezone ZONE] | --after DURATION | --at ISO_TIMESTAMP) --message MESSAGE
 sched add --here --name NAME (--every DURATION | --cron EXPR [--timezone ZONE] | --after DURATION | --at ISO_TIMESTAMP) --message MESSAGE
 sched add --to DESTINATION --name NAME (--every DURATION | --cron EXPR [--timezone ZONE] | --after DURATION | --at ISO_TIMESTAMP) --message MESSAGE
 sched add --json JSON
@@ -123,6 +127,9 @@ terminal records unless `--all` is supplied. Waiting work must name a future
 check time or a blocker. Prefer `proc delegate --responsibility ID ...` for a
 new bounded worker; the lower-level `r12y delegate ID PID --until ISO` command
 assigns an already-existing owned process with an explicit recovery deadline.
+`r12y sources` lists built-in sources and their effective state. Use
+`r12y source disable mail.received` to keep accepting mail without creating a
+Ship responsibility for each message; enabling it affects future completions.
 
 `message current` reports the current run's directed endpoint. For an adapter
 run, both text and JSON output include an opaque
@@ -206,13 +213,13 @@ also report that id, including a failure while reopening the file for the
 automatic retry. An outcome that may have reached the provider is reported as
 `sent=false`, `delivery_confirmed=false`, and `delivery_state=ambiguous`.
 
-Use `sched add --here` from a process-backed shell when each firing should give
-the current intelligence work. For Ship without an adapter reply route, it creates
-a `responsibility` schedule; each occurrence becomes one deduplicated
-`schedule.due` record and is not bound to the current Ship pid. A non-Ship target
-uses `process.event`. When invoked during an adapter run, `--here` retains a
-`process.event` with the exact authorized destination so the future final Message
-returns there. A Process-bound target must be recreated after that Process is killed.
+Use `sched add --ship` when every firing should become one durable Ship
+responsibility. It works from top-level and process-backed shells. Use
+`sched add --here` when the schedule should follow the resolved current Process.
+For Ship, `--here` has exactly the same responsibility semantics as `--ship`,
+even during an adapter run: future work is not bound to that run's destination.
+A non-Ship target uses `process.event` and must be recreated after that Process
+is killed.
 
 Use `sched add --to DESTINATION` for direct scheduled text delivery. It creates
 an `adapter.send` scheduled action and does not run the agent. Destination
@@ -226,8 +233,8 @@ not completion of a model turn or reply. Choose exactly one time expression. `--
 requires a future ISO timestamp with `Z` or an explicit numeric UTC offset.
 
 ```bash
-sched add --here --name animal-facts --every 2m --message "Send one obscure animal fact."
-sched add --here --name daily-brief --cron "0 9 * * *" --timezone Europe/Amsterdam --message "Prepare the daily brief."
+sched add --ship --name animal-facts --every 2m --message "Send one obscure animal fact."
+sched add --ship --name daily-brief --cron "0 9 * * *" --timezone Europe/Amsterdam --message "Prepare the daily brief."
 sched add --to MESSAGE_DESTINATION_ID --name standup --cron "0 9 * * 1-5" --message "Standup starts now."
 ```
 
