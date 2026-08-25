@@ -136,7 +136,7 @@ once to every connected user client for the owning uid. `run_routes` separately
 owns exact adapter replies and terminal cleanup; `proc.changed` invalidates
 persisted process state.
 
-For CLI/browser-originated runs, `run_routes` maps `runId` to the originating WebSocket connection. For adapter-originated runs, it also binds the route to the process, owner, linked actor, adapter account, surface, optional thread, triggering message id, and managed peer-route generation. Delayed output is accepted only while that exact generation remains linked, so relinking the same external identity to the same user still fences work admitted before the relink. Terminal cleanup normally removes routes; the 30-day TTL is only a leak guard.
+For CLI/browser-originated runs, `run_routes` maps `runId` to the originating WebSocket connection. For adapter-originated runs, it also binds the route to the process, owner, linked actor, adapter account, surface, optional thread, triggering message id, and managed peer-route generation. Delayed output and activity such as typing indicators are accepted only while that exact generation remains linked, so relinking the same external identity to the same user still fences work admitted before the relink. Terminal cleanup normally removes routes; the 30-day TTL is only a leak guard.
 
 An authenticated linked private DM records one owner-scoped, last-active
 adapter destination using the provider message timestamp, so an out-of-order

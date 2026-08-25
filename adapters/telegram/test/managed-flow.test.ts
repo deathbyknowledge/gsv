@@ -58,6 +58,13 @@ type ManagedPeerStub = {
     },
     body?: ReturnType<typeof binaryBodyFromOwnedBytes>,
   ): Promise<{ ok: boolean; messageId?: string; error?: string }>;
+  setTyping(
+    installationId: string,
+    surface: { kind: "dm"; id: string },
+    actorId: string,
+    routeGeneration: string,
+    active: boolean,
+  ): Promise<{ accepted: boolean }>;
 };
 
 function update(updateId: number, messageId: number, text: string): Request {
@@ -243,6 +250,20 @@ describe("managed Telegram clean-instance flow", () => {
     const peer = typedStub<ManagedPeerStub>(peers.get(
       peers.idFromName("managed:12345"),
     ));
+    await expect(peer.setTyping(
+      "installation_test",
+      { kind: "dm", id: "12345" },
+      "12345",
+      firstGeneration,
+      true,
+    )).resolves.toEqual({ accepted: false });
+    await expect(peer.setTyping(
+      "installation_test",
+      { kind: "dm", id: "12345" },
+      "12345",
+      relinked.route.generation,
+      true,
+    )).resolves.toEqual({ accepted: true });
     await expect(peer.sendMessage("installation_test", {
       deliveryId: "stale-after-relink",
       surface: { kind: "dm", id: "12345" },

@@ -32,6 +32,7 @@ import { consumeProcessRunStream } from "../protocol/process-run-stream";
 import type {
   AdapterMedia,
   AdapterMediaPart,
+  AdapterActivity,
   BinaryBody,
   ConnectedPeer,
   InstallationOnboardingAuthorization,
@@ -221,6 +222,16 @@ type AdapterSignalDeliveryOutcome =
   | { state: "delivered" }
   | { state: "skipped" }
   | { state: "retryable" | "permanent" | "ambiguous"; error: string };
+
+function adapterTypingActivity(route: AdapterRunRoute, active: boolean): AdapterActivity {
+  return {
+    kind: "typing",
+    active,
+    ...(route.routeGeneration === undefined
+      ? undefined
+      : { routeGeneration: route.routeGeneration }),
+  };
+}
 
 type AdapterSignalDeliveryRetry = {
   runId: string;
@@ -1283,7 +1294,7 @@ export class Kernel extends DurableObject<Env> {
           route.destination.adapter,
           route.destination.accountId,
           route.destination.surface,
-          { kind: "typing", active: false },
+          adapterTypingActivity(route, false),
         ).catch(() => undefined);
       }
       return;
@@ -1627,7 +1638,7 @@ export class Kernel extends DurableObject<Env> {
           route.destination.adapter,
           route.destination.accountId,
           route.destination.surface,
-          { kind: "typing", active: false },
+          adapterTypingActivity(route, false),
         ).catch(() => undefined);
       }
       return;
@@ -2097,7 +2108,7 @@ export class Kernel extends DurableObject<Env> {
         adapter,
         accountId,
         surface,
-        { kind: "typing", active: true },
+        adapterTypingActivity(route, true),
       );
       return { state: "delivered" };
     }
@@ -2111,7 +2122,7 @@ export class Kernel extends DurableObject<Env> {
           adapter,
           accountId,
           surface,
-          { kind: "typing", active: false },
+          adapterTypingActivity(route, false),
         ).catch(() => undefined);
         return { state: "skipped" };
       }
@@ -2128,7 +2139,7 @@ export class Kernel extends DurableObject<Env> {
           adapter,
           accountId,
           surface,
-          { kind: "typing", active: false },
+          adapterTypingActivity(route, false),
         ).catch((error) => {
           console.warn(`[Kernel] Failed to stop adapter typing for ${route.runId}:`, error);
         });
@@ -2164,7 +2175,7 @@ export class Kernel extends DurableObject<Env> {
           adapter,
           accountId,
           surface,
-          { kind: "typing", active: false },
+          adapterTypingActivity(route, false),
         ).catch(() => undefined);
       }
     }

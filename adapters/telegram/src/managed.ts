@@ -58,8 +58,9 @@ type ManagedTelegramPeerStub = {
     installationId: string,
     surface: AdapterSurface,
     actorId: string,
+    routeGeneration: string,
     active: boolean,
-  ): Promise<void>;
+  ): Promise<{ accepted: boolean }>;
   disconnect(input: AdapterPairingDisconnectInput): Promise<AdapterPairingDisconnectResult>;
 };
 
@@ -151,12 +152,20 @@ export class ManagedTelegramChannel extends WorkerEntrypoint<Env> implements Ada
       }
       if (surface.kind !== "dm") throw new Error("Managed Telegram supports direct messages only");
       if (activity.kind !== "typing" || !activity.active) return { ok: true };
-      await this.peer(surface.id).setTyping(
+      const routeGeneration = activity.routeGeneration?.trim();
+      if (!routeGeneration) {
+        throw new Error("Managed Telegram route generation is required");
+      }
+      const result = await this.peer(surface.id).setTyping(
         parsed.installationId,
         surface,
         surface.id,
+        routeGeneration,
         true,
       );
+      if (!result.accepted) {
+        throw new Error("Telegram route changed before activity delivery");
+      }
       return { ok: true };
     } catch (error) {
       return { ok: false, error: safeError(error instanceof Error ? error : String(error)) };

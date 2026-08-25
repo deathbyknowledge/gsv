@@ -21,7 +21,11 @@ import type {
 
 const INSTALLATION = { installationId: "inst_rpc_compat" } as const;
 const SURFACE: AdapterSurface = { kind: "dm", id: "dm-1" };
-const ACTIVITY: AdapterActivity = { kind: "typing", active: true };
+const ACTIVITY: AdapterActivity = {
+  kind: "typing",
+  active: true,
+  routeGeneration: "generation-1",
+};
 const MESSAGE: AdapterOutboundMessage = {
   deliveryId: "delivery-1",
   surface: SURFACE,

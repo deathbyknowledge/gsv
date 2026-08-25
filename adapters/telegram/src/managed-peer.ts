@@ -172,13 +172,17 @@ export class ManagedTelegramPeer extends DurableObject<ManagedTelegramPeerEnv> {
     installationId: string,
     surface: AdapterSurface,
     actorId: string,
+    routeGeneration: string,
     active: boolean,
-  ): Promise<void> {
-    if (!active) return;
+  ): Promise<{ accepted: boolean }> {
+    if (!active) return { accepted: true };
     const state = await this.requireState();
     this.assertPeerDestination(state, surface, actorId);
-    if (state.activeRoute?.installationId !== installationId) {
-      throw new Error("Telegram identity is not linked to this GSV");
+    if (
+      state.activeRoute?.installationId !== installationId
+      || state.activeRoute.generation !== routeGeneration
+    ) {
+      return { accepted: false };
     }
     try {
       await setManagedTelegramTyping(this.botToken(), state.surfaceId, this.telegramFetch());
@@ -188,6 +192,7 @@ export class ManagedTelegramPeer extends DurableObject<ManagedTelegramPeerEnv> {
         event: "typing_delivery_failed",
       }));
     }
+    return { accepted: true };
   }
 
   async inspectPairing(claimId: string, expiresAt: number): Promise<AdapterPairingCandidate> {

@@ -2094,7 +2094,11 @@ describe("Kernel adapter route replies", () => {
     expect(adapterSetActivity).toHaveBeenCalledWith(
       route.destination.accountId,
       route.destination.surface,
-      { kind: "typing", active: true },
+      {
+        kind: "typing",
+        active: true,
+        routeGeneration: "generation-42",
+      },
     );
   });
 

@@ -143,14 +143,26 @@ export const adapterOutboundMessageSchema = z.strictObject({
 });
 
 export type AdapterActivity =
-  | { kind: "typing"; active: boolean }
-  | { kind: "recording"; active: boolean }
-  | { kind: "uploading"; active: boolean };
+  | { kind: "typing"; active: boolean; routeGeneration?: string }
+  | { kind: "recording"; active: boolean; routeGeneration?: string }
+  | { kind: "uploading"; active: boolean; routeGeneration?: string };
 
 export const adapterActivitySchema = z.discriminatedUnion("kind", [
-  z.strictObject({ kind: z.literal("typing"), active: z.boolean() }),
-  z.strictObject({ kind: z.literal("recording"), active: z.boolean() }),
-  z.strictObject({ kind: z.literal("uploading"), active: z.boolean() }),
+  z.strictObject({
+    kind: z.literal("typing"),
+    active: z.boolean(),
+    routeGeneration: z.optional(z.string()),
+  }),
+  z.strictObject({
+    kind: z.literal("recording"),
+    active: z.boolean(),
+    routeGeneration: z.optional(z.string()),
+  }),
+  z.strictObject({
+    kind: z.literal("uploading"),
+    active: z.boolean(),
+    routeGeneration: z.optional(z.string()),
+  }),
 ]);
 
 export const adapterAccountStatusSchema = z.strictObject({
