@@ -155,7 +155,8 @@ button:disabled {
   overflow: hidden;
   color: var(--text-main);
   font-family: var(--font-ui);
-  background-image: url("https://cdn.midjourney.com/a8b72c34-49ad-4df8-afca-891013f78c7f/0_0.png");
+  /* src: https://images.nasa.gov/details/hubble-view-wolf-rayet-stars-intense-and-short-lived_18731205164_o */
+  background-image: url("https://images-assets.nasa.gov/image/hubble-view-wolf-rayet-stars-intense-and-short-lived_18731205164_o/hubble-view-wolf-rayet-stars-intense-and-short-lived_18731205164_o~orig.jpg");
   background-size: cover;
   background-position: center;
 }
