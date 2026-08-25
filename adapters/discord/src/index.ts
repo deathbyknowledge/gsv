@@ -236,7 +236,7 @@ function toErrorMessage(error: unknown): string {
 
 // Default export: HTTP handler for direct requests
 export default {
-  async fetch(request: Request, env: Env): Promise<Response> {
+  async fetch(request: Request, _env: Env): Promise<Response> {
     const url = new URL(request.url);
 
     if (url.pathname === "/" || url.pathname === "/health") {

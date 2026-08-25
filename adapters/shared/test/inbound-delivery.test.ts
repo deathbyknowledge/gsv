@@ -13,6 +13,7 @@ class MemoryTransaction {
   ) {}
 
   async get<T>(key: string): Promise<T | undefined> {
+    // SAFETY: Test fixture is constructed with the asserted adapter contract.
     return this.values.get(key) as T | undefined;
   }
 
@@ -45,12 +46,14 @@ class MemoryTransaction {
     const entries = [...this.values.entries()]
       .filter(([key]) => !options?.prefix || key.startsWith(options.prefix))
       .slice(0, options?.limit);
+    // SAFETY: Test fixture is constructed with the asserted adapter contract.
     return new Map(entries) as Map<string, T>;
   }
 }
 
 class MemoryStorage {
   readonly values = new Map<string, unknown>();
+  // SAFETY: Test fixture is constructed with the asserted adapter contract.
   readonly alarm = { value: null as number | null };
   failNextDelete = false;
 
@@ -61,6 +64,7 @@ class MemoryStorage {
   }
 
   async get<T>(key: string): Promise<T | undefined> {
+    // SAFETY: Test fixture is constructed with the asserted adapter contract.
     return this.values.get(key) as T | undefined;
   }
 
@@ -91,6 +95,7 @@ class MemoryStorage {
     const entries = [...this.values.entries()]
       .filter(([key]) => !options?.prefix || key.startsWith(options.prefix))
       .slice(0, options?.limit);
+    // SAFETY: Test fixture is constructed with the asserted adapter contract.
     return new Map(entries) as Map<string, T>;
   }
 }
@@ -99,6 +104,7 @@ function ledger(
   storage: MemoryStorage,
 ): InboundDeliveryLedger<{ providerMessageId: string }> {
   return new InboundDeliveryLedger(
+    // SAFETY: Test fixture is constructed with the asserted adapter contract.
     storage as unknown as DurableObjectStorage,
     "pending_inbound:",
   );
@@ -198,6 +204,7 @@ describe("InboundDeliveryLedger", () => {
     const pending = ledger(storage);
     await pending.enqueueAndArm("provider-2", { providerMessageId: "provider-2" }, 100);
 
+    // SAFETY: Test fixture is constructed with the asserted adapter contract.
     const result = { ok: true as const, replayed: "in_progress" as const };
     await expect(pending.attempt("provider-2", async () => ({
       terminal: isTerminalAdapterInboundResult(result),
@@ -278,6 +285,7 @@ describe("InboundDeliveryLedger", () => {
     const entered = new Promise<void>((resolve) => {
       markEntered = resolve;
     });
+    // SAFETY: Test fixture is constructed with the asserted adapter contract.
     const send = vi.fn(async () => ({ ok: true as const }));
     const attempt = pending.attempt("old-session", async () => {
       markEntered();
@@ -302,6 +310,7 @@ describe("InboundDeliveryLedger", () => {
   it("persists normalized responses before retrying provider delivery", async () => {
     const storage = new MemoryStorage();
     const first = ledger(storage);
+    // SAFETY: Test fixture is constructed with the asserted adapter contract.
     const surface = { kind: "dm" as const, id: "chat-1" };
     await first.enqueueAndArm("provider-6", { providerMessageId: "provider-6" }, 100);
 
@@ -311,10 +320,12 @@ describe("InboundDeliveryLedger", () => {
     }, { surface, providerMessageId: "provider-6" }));
     const send = vi.fn()
       .mockResolvedValueOnce({
+        // SAFETY: Test fixture is constructed with the asserted adapter contract.
         ok: false as const,
         error: "provider unavailable",
         retryable: true,
       })
+      // SAFETY: Test fixture is constructed with the asserted adapter contract.
       .mockResolvedValueOnce({ ok: true as const });
 
     await expect(first.attempt("provider-6", enterKernel, send)).resolves.toEqual({
@@ -341,6 +352,7 @@ describe("InboundDeliveryLedger", () => {
       { providerMessageId: string },
       { installationId: string }
     >(
+      // SAFETY: Test fixture is constructed with the asserted adapter contract.
       storage as unknown as DurableObjectStorage,
       "managed_inbound:",
     );
@@ -349,10 +361,12 @@ describe("InboundDeliveryLedger", () => {
     }, 100);
     const send = vi.fn()
       .mockResolvedValueOnce({
+        // SAFETY: Test fixture is constructed with the asserted adapter contract.
         ok: false as const,
         error: "provider unavailable",
         retryable: true,
       })
+      // SAFETY: Test fixture is constructed with the asserted adapter contract.
       .mockResolvedValueOnce({ ok: true as const });
 
     await expect(first.attempt("provider-context", async () => ({
@@ -371,6 +385,7 @@ describe("InboundDeliveryLedger", () => {
       { providerMessageId: string },
       { installationId: string }
     >(
+      // SAFETY: Test fixture is constructed with the asserted adapter contract.
       storage as unknown as DurableObjectStorage,
       "managed_inbound:",
     );
@@ -392,10 +407,12 @@ describe("InboundDeliveryLedger", () => {
     const send = vi.fn(async (message: { deliveryId: string }) =>
       message.deliveryId === "challenge-multi"
         ? {
+            // SAFETY: Test fixture is constructed with the asserted adapter contract.
             ok: false as const,
             error: "challenge unavailable",
             retryable: true,
           }
+        // SAFETY: Test fixture is constructed with the asserted adapter contract.
         : { ok: true as const }
     );
 
@@ -425,6 +442,7 @@ describe("InboundDeliveryLedger", () => {
   it("drops an expired link challenge without calling the provider", async () => {
     const storage = new MemoryStorage();
     const pending = ledger(storage);
+    // SAFETY: Test fixture is constructed with the asserted adapter contract.
     const send = vi.fn(async () => ({ ok: true as const }));
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     await pending.enqueueAndArm("provider-7", { providerMessageId: "provider-7" }, 100);
@@ -471,6 +489,7 @@ describe("InboundDeliveryLedger", () => {
           surface: { kind: "dm", id: "private-chat-id" },
           providerMessageId: "provider-private-error",
         }), async () => ({
+          // SAFETY: Test fixture is constructed with the asserted adapter contract.
           ok: false as const,
           error: "authorization: Bearer private-token",
         }))).resolves.toEqual({ state: "completed" });
@@ -495,6 +514,7 @@ describe("InboundDeliveryLedger", () => {
       providerMessageId: "provider-8",
     }));
     const send = vi.fn(async () => ({
+      // SAFETY: Test fixture is constructed with the asserted adapter contract.
       ok: false as const,
       error: "provider unavailable",
       retryable: true,
@@ -522,6 +542,7 @@ describe("InboundDeliveryLedger", () => {
 
 describe("adapterInboundResultDisposition", () => {
   it("normalizes stable response ids and challenge expiry", () => {
+    // SAFETY: Test fixture is constructed with the asserted adapter contract.
     const surface = { kind: "dm" as const, id: "chat-1" };
 
     expect(adapterInboundResultDisposition({

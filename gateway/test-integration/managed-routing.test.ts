@@ -95,7 +95,7 @@ describe("managed installation routing integration", () => {
     }
   });
 
-  it("rejects public setup for an uninitialized managed Kernel", async () => {
+  it("rejects setup without an installation onboarding capability", async () => {
     const response = await harness.getWorker("gsv-managed").fetch(
       "https://first.gsv.space/ws",
       { headers: { Upgrade: "websocket" } },
@@ -114,8 +114,8 @@ describe("managed installation routing integration", () => {
     expect(setup).toMatchObject({
       ok: false,
       error: {
-        code: 403,
-        message: "Public setup is disabled for managed installations",
+        code: 401,
+        message: "Installation setup link is invalid or expired",
       },
     });
     socket.close(1000, "test complete");

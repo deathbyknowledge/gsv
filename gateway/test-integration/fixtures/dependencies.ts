@@ -188,6 +188,14 @@ export default class TestDependencies
     } : { ok: false };
   }
 
+  async authorizeInstallationOnboarding(): Promise<{ ok: false }> {
+    return { ok: false };
+  }
+
+  async completeInstallationOnboarding(): Promise<never> {
+    throw new Error("Installation onboarding is unavailable in this fixture");
+  }
+
   async fetch(request: Request): Promise<Response> {
     const url = new URL(request.url);
 

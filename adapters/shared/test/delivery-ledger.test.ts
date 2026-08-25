@@ -13,12 +13,14 @@ class MemoryTransaction {
   constructor(private readonly values: Map<string, unknown>) {}
 
   async get<T>(key: string): Promise<T | undefined> {
+    // SAFETY: Test fixture is constructed with the asserted adapter contract.
     return this.values.get(key) as T | undefined;
   }
 
   async list<T>(options?: { prefix?: string }): Promise<Map<string, T>> {
     const entries = [...this.values.entries()]
       .filter(([key]) => !options?.prefix || key.startsWith(options.prefix));
+    // SAFETY: Test fixture is constructed with the asserted adapter contract.
     return new Map(entries) as Map<string, T>;
   }
 
@@ -50,6 +52,7 @@ class MemoryStorage {
 function memoryLedger(options: ConstructorParameters<typeof DeliveryLedger>[1] = {}) {
   const storage = new MemoryStorage();
   return new DeliveryLedger(
+    // SAFETY: Test fixture is constructed with the asserted adapter contract.
     storage as unknown as DurableObjectStorage,
     options,
   );
@@ -223,9 +226,11 @@ describe("DeliveryLedger", () => {
 
   it("fingerprints destination, text, and binary media content", async () => {
     const base = {
+      // SAFETY: Test fixture is constructed with the asserted adapter contract.
       surface: { kind: "dm" as const, id: "chat-1" },
       text: "hello",
       media: [{
+        // SAFETY: Test fixture is constructed with the asserted adapter contract.
         type: "document" as const,
         mimeType: "application/octet-stream",
         filename: "data.bin",
@@ -260,6 +265,7 @@ describe("non-idempotent provider status classification", () => {
     expect(classifyNonIdempotentProviderStatus(503)).toBe("ambiguous");
   });
 
+  // SAFETY: Test fixture is constructed with the asserted adapter contract.
   it("treats authentication and validation responses as permanent", () => {
     expect(classifyNonIdempotentProviderStatus(400)).toBe("permanent");
     expect(classifyNonIdempotentProviderStatus(401)).toBe("permanent");

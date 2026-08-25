@@ -32,6 +32,11 @@ type AccountExport = {
     effectiveAt: number;
     version: number;
   }): Promise<unknown>;
+  createInstallationOnboarding(installationId: string): Promise<{
+    installationId: string;
+    onboardingUrl: string;
+    expiresAt: number;
+  }>;
 };
 
 describe("managed account to Kernel integration", () => {
@@ -46,6 +51,179 @@ describe("managed account to Kernel integration", () => {
 
   afterAll(async () => {
     await harness.close();
+  });
+
+  it("lets a capability holder create the installation-owned login", async () => {
+    const account = harness.getWorker<AccountEnv>("gsv-accounts-integration");
+    const gateway = harness.getWorker("gsv-managed-account");
+    const accountEnv = await account.getEnv();
+    const suffix = randomUUID().slice(0, 8);
+    const principalId = `principal_onboarding_e2e_${suffix}`;
+    const accountToken = `gsvsession_${randomUUID()}${randomUUID()}`;
+    const handle = `claim-${suffix}`;
+    const now = Date.now();
+    await accountEnv.ACCOUNT_DB.batch([
+      accountEnv.ACCOUNT_DB.prepare(
+        `INSERT INTO principals (
+           id, primary_email, primary_email_normalized, display_name,
+           email_verified_at, state, created_at, updated_at
+         ) VALUES (?, ?, ?, 'Onboarding Owner', ?, 'active', ?, ?)`,
+      ).bind(
+        principalId,
+        `onboarding-${suffix}@example.com`,
+        `onboarding-${suffix}@example.com`,
+        now,
+        now,
+        now,
+      ),
+      accountEnv.ACCOUNT_DB.prepare(
+        `INSERT INTO sessions (
+           id_hash, principal_id, created_at, expires_at, recent_auth_at,
+           revoked_at, ip_hash, user_agent, auth_method
+         ) VALUES (?, ?, ?, ?, ?, NULL, NULL, 'integration', 'passkey')`,
+      ).bind(
+        sha256Hex(accountToken),
+        principalId,
+        now,
+        now + 30 * 24 * 60 * 60_000,
+        now,
+      ),
+    ]);
+    const accountCookie = `__Host-gsv-account-session=${encodeURIComponent(accountToken)}`;
+    const reservation = await account.fetch(
+      "https://accounts.gsv.space/api/installations",
+      {
+        method: "POST",
+        headers: accountHeaders(accountCookie),
+        body: JSON.stringify({
+          idempotencyKey: randomUUID(),
+          handle,
+          ownerUsername: "platform-placeholder",
+        }),
+      },
+    );
+    expect(reservation.status, await reservation.clone().text()).toBe(201);
+    const installationId = ((await reservation.json()) as {
+      installation: { installationId: string };
+    }).installation.installationId;
+    const accountApi = await account.getExport() as unknown as AccountExport;
+    await accountApi.projectEntitlement({
+      installationId,
+      state: "trialing",
+      planKey: "integration-onboarding",
+      inferenceBudgetMicrounits: 5_000_000,
+      inferencePeriodStartsAt: now,
+      inferencePeriodEndsAt: now + 30 * 24 * 60 * 60_000,
+      storageLimitBytes: 10_000_000_000,
+      effectiveAt: now,
+      version: 1,
+    });
+    const onboarding = await accountApi.createInstallationOnboarding(installationId);
+    expect(onboarding.onboardingUrl).toMatch(
+      new RegExp(`^https://${handle}\\.gsv\\.space/onboarding#onboard_`),
+    );
+    const onboardingToken = new URL(onboarding.onboardingUrl).hash.slice(1);
+
+    const shell = await gateway.fetch(`https://${handle}.gsv.space/onboarding`);
+    expect(shell.status).toBe(200);
+    const hiddenStorage = await gateway.fetch(
+      `https://${handle}.gsv.space/public/not-for-onboarding.txt`,
+    );
+    expect(hiddenStorage.status).toBe(404);
+
+    const setupSocketResponse = await gateway.fetch(
+      `https://${handle}.gsv.space/ws`,
+      { headers: { Upgrade: "websocket" } },
+    );
+    expect(setupSocketResponse.status).toBe(101);
+    const setupSocket = setupSocketResponse.webSocket;
+    if (!setupSocket) throw new Error("Managed setup WebSocket was not created");
+    setupSocket.accept();
+
+    const unauthorized = await expectManagedRpc(
+      setupSocket,
+      "managed-setup-without-capability",
+      "sys.setup",
+      { username: "alice", password: "correct-horse-battery-staple" },
+    );
+    expect(unauthorized).toMatchObject({
+      ok: false,
+      error: {
+        code: 401,
+        message: "Installation setup link is invalid or expired",
+      },
+    });
+    const setup = await expectManagedRpcOk(
+      setupSocket,
+      "managed-setup-with-capability",
+      "sys.setup",
+      {
+        username: "alice",
+        password: "correct-horse-battery-staple",
+        onboardingToken,
+        timezone: "Europe/Amsterdam",
+      },
+    );
+    expect(setup.data).toMatchObject({
+      user: { uid: 1000, username: "alice" },
+    });
+    setupSocket.close(1000, "setup complete");
+
+    const installation = await accountEnv.ACCOUNT_DB.prepare(
+      `SELECT i.state, m.local_uid, m.state AS membership_state
+       FROM installations i
+       JOIN memberships m ON m.installation_id = i.id
+       WHERE i.id = ?`,
+    ).bind(installationId).first<{
+      state: string;
+      local_uid: number | null;
+      membership_state: string;
+    }>();
+    expect(installation).toEqual({
+      state: "trialing",
+      local_uid: null,
+      membership_state: "pending",
+    });
+    const platformHandoff = await account.fetch(
+      "https://accounts.gsv.space/api/installations/handoff",
+      {
+        method: "POST",
+        headers: accountHeaders(accountCookie),
+        body: JSON.stringify({ installationId }),
+      },
+    );
+    expect(platformHandoff.status).toBe(400);
+
+    const loginSocketResponse = await gateway.fetch(
+      `https://${handle}.gsv.space/ws`,
+      { headers: { Upgrade: "websocket" } },
+    );
+    expect(loginSocketResponse.status).toBe(101);
+    const loginSocket = loginSocketResponse.webSocket;
+    if (!loginSocket) throw new Error("Managed login WebSocket was not created");
+    loginSocket.accept();
+    const connected = await expectManagedRpcOk(
+      loginSocket,
+      "managed-local-login",
+      "sys.connect",
+      {
+        protocol: 2,
+        client: {
+          id: "managed-local-login",
+          version: "1.0.0",
+          platform: "integration",
+          role: "user",
+        },
+        auth: {
+          username: "alice",
+          password: "correct-horse-battery-staple",
+        },
+      },
+    );
+    expect(connected.data).toMatchObject({
+      identity: { process: { username: "alice" } },
+    });
+    loginSocket.close(1000, "test complete");
   });
 
   it("reserves, grants, provisions, leaves, and re-enters one real Kernel", async () => {
@@ -85,6 +263,7 @@ describe("managed account to Kernel integration", () => {
     ]);
     const accountCookie = `__Host-gsv-account-session=${encodeURIComponent(accountToken)}`;
     const handle = `e2e-${suffix}`;
+    const kernelIdsBeforeReservation = await gateway.listDurableObjectIds("KERNEL");
 
     const reservation = await account.fetch("https://accounts.gsv.space/api/installations", {
       method: "POST",
@@ -102,12 +281,16 @@ describe("managed account to Kernel integration", () => {
       installation: { installationId: string; state: string };
     };
     expect(reservationBody.installation.state).toBe("reserved");
-    expect(await gateway.listDurableObjectIds("KERNEL")).toEqual([]);
+    expect(await gateway.listDurableObjectIds("KERNEL")).toEqual(
+      kernelIdsBeforeReservation,
+    );
     const beforeGrant = await gateway.fetch(
       `https://${handle}.gsv.space/.well-known/oauth-client/gsv.json`,
     );
     expect(beforeGrant.status).toBe(404);
-    expect(await gateway.listDurableObjectIds("KERNEL")).toEqual([]);
+    expect(await gateway.listDurableObjectIds("KERNEL")).toEqual(
+      kernelIdsBeforeReservation,
+    );
 
     const accountApi = await account.getExport() as unknown as AccountExport;
     await accountApi.projectEntitlement({
@@ -138,7 +321,9 @@ describe("managed account to Kernel integration", () => {
         operationState: "complete",
       },
     });
-    expect(await gateway.listDurableObjectIds("KERNEL")).toHaveLength(1);
+    expect(await gateway.listDurableObjectIds("KERNEL")).toHaveLength(
+      kernelIdsBeforeReservation.length + 1,
+    );
 
     const inference = await harness
       .getWorker("gsv-inference-integration")

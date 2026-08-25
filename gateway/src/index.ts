@@ -99,7 +99,9 @@ export default {
     }
 
     if (url.pathname === "/ws" && isWebSocketRequest(request)) {
-      const resolved = await resolveGatewayKernel(request, env);
+      const resolved = await resolveGatewayKernel(request, env, {
+        allowProvisioning: true,
+      });
       if (!resolved.ok) return resolved.response;
       return resolved.kernel.fetch(request);
     }
@@ -154,7 +156,9 @@ export default {
     }
 
     if (request.method === "GET" || request.method === "HEAD") {
-      const resolved = await resolveGatewayInstallation(request, env);
+      const resolved = await resolveGatewayInstallation(request, env, {
+        allowProvisioning: true,
+      });
       if (!resolved.ok) return resolved.response;
       return await env.ASSETS.fetch(request);
     }
@@ -175,14 +179,20 @@ type KernelResolution =
     }
   | { ok: false; response: Response };
 
+type GatewayInstallationResolutionOptions = {
+  allowProvisioning?: boolean;
+};
+
 async function resolveGatewayInstallation(
   request: Request,
   env: Env,
+  options: GatewayInstallationResolutionOptions = {},
 ): Promise<InstallationResolution> {
   try {
     const route = await resolveInstallationRoute(
       request,
       getGatewayInstallationRoutingSource(request, env),
+      options,
     );
     if (!route) {
       return { ok: false, response: new Response("Not Found", { status: 404 }) };
@@ -200,8 +210,9 @@ async function resolveGatewayInstallation(
 async function resolveGatewayKernel(
   request: Request,
   env: Env,
+  options: GatewayInstallationResolutionOptions = {},
 ): Promise<KernelResolution> {
-  const resolved = await resolveGatewayInstallation(request, env);
+  const resolved = await resolveGatewayInstallation(request, env, options);
   if (!resolved.ok) return resolved;
 
   try {

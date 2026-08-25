@@ -13,6 +13,7 @@ import {
   type InstallationIdentity,
   type InstallationIdentityInput,
 } from "./identity";
+import { getGatewayDeployment } from "./deployment";
 
 export function processDurableObjectName(
   installationId: InstallationId | string,
@@ -52,41 +53,33 @@ export type TrustedInstallationRoute = {
   identity: InstallationIdentity;
 };
 
-type GatewayInstallationBindings = {
-  INSTALLATION_DIRECTORY?: InstallationDirectoryService;
-  GSV_INSTALLATION_ID?: string;
-  GSV_INSTALLATION_HANDLE?: string;
-  GSV_CANONICAL_ORIGIN?: string;
+export type InstallationRouteOptions = {
+  allowProvisioning?: boolean;
 };
 
 export function getStandaloneServiceInstallationId(env: Env): InstallationId | null {
-  const bindings = env as Env & GatewayInstallationBindings;
-  if (bindings.INSTALLATION_DIRECTORY) {
-    return null;
-  }
-  return parseInstallationId(
-    bindings.GSV_INSTALLATION_ID ?? LEGACY_STANDALONE_INSTALLATION_ID,
-  );
+  const deployment = getGatewayDeployment(env);
+  return deployment.kind === "standalone" ? deployment.installationId : null;
 }
 
 export function getGatewayInstallationRoutingSource(
   request: Request,
   env: Env,
 ): InstallationRoutingSource {
-  const bindings = env as Env & GatewayInstallationBindings;
-  if (bindings.INSTALLATION_DIRECTORY) {
+  const deployment = getGatewayDeployment(env);
+  if (deployment.kind === "managed") {
     return {
       kind: "managed",
-      directory: bindings.INSTALLATION_DIRECTORY,
+      directory: deployment.directory,
     };
   }
 
   return {
     kind: "standalone",
     identity: parseInstallationIdentity({
-      installationId: bindings.GSV_INSTALLATION_ID ?? LEGACY_STANDALONE_INSTALLATION_ID,
-      handle: bindings.GSV_INSTALLATION_HANDLE ?? "gsv",
-      canonicalOrigin: bindings.GSV_CANONICAL_ORIGIN ?? new URL(request.url).origin,
+      installationId: deployment.installationId,
+      handle: deployment.handle,
+      canonicalOrigin: deployment.canonicalOrigin ?? new URL(request.url).origin,
     }),
   };
 }
@@ -94,6 +87,7 @@ export function getGatewayInstallationRoutingSource(
 export async function resolveInstallationRoute(
   request: Request,
   source: InstallationRoutingSource,
+  options: InstallationRouteOptions = {},
 ): Promise<TrustedInstallationRoute | null> {
   const requestedHostname = normalizeHostname(new URL(request.url).hostname);
   if (source.kind === "standalone") {
@@ -105,7 +99,13 @@ export async function resolveInstallationRoute(
   }
 
   const result = await source.directory.resolveHostname(requestedHostname);
-  if (!result.found || !ROUTABLE_MANAGED_INSTALLATION_STATES.has(result.state)) {
+  if (
+    !result.found
+    || (
+      !ROUTABLE_MANAGED_INSTALLATION_STATES.has(result.state)
+      && !(options.allowProvisioning && result.state === "provisioning")
+    )
+  ) {
     return null;
   }
 

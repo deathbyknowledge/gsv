@@ -18,7 +18,11 @@ vi.mock("./skills-seed", () => ({
   seedBuiltinSkillsToHome: seedBuiltinSkillsToHomeMock,
 }));
 
-import { handleManagedInstallationSetup, handleSysSetup } from "./setup";
+import {
+  handleManagedInstallationSetup,
+  handleSysSetup,
+  resumeSysSetup,
+} from "./setup";
 
 function createCtx(overrides?: { setupMode?: boolean; ripgit?: Fetcher }) {
   type PasswdRow = { username: string; uid: number; gid: number; gecos: string; home: string; shell: string };
@@ -82,6 +86,23 @@ function createCtx(overrides?: { setupMode?: boolean; ripgit?: Fetcher }) {
     }),
     isPersonalAgentUid: vi.fn((uid: number) => [...personalAgents.values()].includes(uid)),
     setPassword: vi.fn(async () => true),
+    authenticate: vi.fn(async (username: string, password: string) => {
+      const user = passwd.find((entry) => entry.username === username);
+      return user && password === "password-123"
+        ? {
+            ok: true as const,
+            identity: {
+              uid: user.uid,
+              gid: user.gid,
+              gids: [user.gid],
+              username: user.username,
+              home: user.home,
+            },
+          }
+        : { ok: false as const, error: "Authentication failed" };
+    }),
+    listTokens: vi.fn(() => []),
+    revokeToken: vi.fn(() => true),
     issueToken: vi.fn(async () => ({
       tokenId: "tok-1",
       token: "gsv_node_abc",
@@ -341,5 +362,37 @@ describe("handleSysSetup", () => {
     );
 
     expect(auth.setPassword).toHaveBeenCalledWith("root", expect.any(String));
+  });
+
+  it("resumes an authenticated partial setup before managed activation", async () => {
+    const { ctx, auth, config } = createCtx();
+    await handleSysSetup({
+      username: "alice",
+      password: "password-123",
+    }, ctx);
+    vi.clearAllMocks();
+
+    const result = await resumeSysSetup({
+      username: "alice",
+      password: "password-123",
+      timezone: "Europe/Amsterdam",
+      ai: {
+        provider: "openrouter",
+        model: "test/model",
+      },
+      node: { deviceId: "macbook" },
+    }, ctx);
+
+    expect(result.user).toMatchObject({ uid: 1000, username: "alice" });
+    expect(config.set).toHaveBeenCalledWith(
+      "config/server/timezone",
+      "Europe/Amsterdam",
+    );
+    expect(config.set).toHaveBeenCalledWith("config/ai/provider", "openrouter");
+    expect(auth.issueToken).toHaveBeenCalledWith(expect.objectContaining({
+      uid: 1000,
+      kind: "node",
+      allowedDeviceId: "macbook",
+    }));
   });
 });

@@ -18,10 +18,16 @@ does not need Workers for Platforms merely to host multiple GSV installations.
 
 The managed service adds two things around the existing runtime:
 
-- a platform control plane for global accounts, installation provisioning,
-  hostname registration, membership, recovery, and billing; and
+- an operator control plane for installation provisioning, hostname
+  registration, and entitlement state; and
 - an immutable installation identity propagated through every shared storage,
   Durable Object, repository, adapter, and background-work address.
+
+The operator control plane is not an identity provider for people inside a
+GSV. Each installation continues to own its users, passwords, tokens, groups,
+and capabilities. Open registration, subscriptions, payments, and
+provider-assisted credential recovery are deferred until the installation and
+consumer experience are validated.
 
 One GSV installation is the outer security, ownership, data, and billing
 boundary. Users, groups, agents, UIDs, capabilities, homes, processes, devices,
@@ -48,7 +54,7 @@ The managed product creates **your GSV**: one durable personal intelligence at
 The user does not deploy Workers, create storage, configure a model provider,
 create a Telegram bot, or understand Durable Objects during onboarding.
 
-The initial paid plan includes:
+A deferred commercial hypothesis includes:
 
 - one managed GSV installation;
 - the web desktop at its canonical `gsv.space` hostname;
@@ -59,7 +65,7 @@ The initial paid plan includes:
 - an advanced bring-your-own-model-provider path that does not reduce the base
   subscription price.
 
-The launch price is USD 20 per month for founding customers. The intended list
+The earlier pricing hypothesis is USD 20 per month for founding customers. The intended list
 price is USD 29 per month after the founding cohort. Price selection is billing
 configuration, but the subscription unit and included-service semantics are
 part of this contract. There is no permanent free hosted tier. Invite-only,
@@ -103,25 +109,23 @@ Worker code are also deferred.
    do not leak into `/home`, `/var`, `/public`, repository slugs, or PIDs.
 8. Billing state can limit new cost-generating work, but it does not silently
    delete data or prevent authentication, export, billing repair, or teardown.
-9. Managed and standalone GSV share the same installation-local runtime. Only
-   global account authentication, hostname resolution, provisioning, and
-   billing differ.
+9. Managed and standalone GSV share installation-local authentication and the
+   same runtime. Hostname resolution, first-boot authorization, provisioning,
+   and operator-managed entitlements differ.
 
 ## Vocabulary and identity layers
 
-Managed GSV has three distinct identity layers:
+Managed GSV has two runtime identity layers:
 
 | Concept | Scope | Example | Owner |
 |---|---|---|---|
-| Platform principal | Global managed service | verified email, passkey, `principalId` | Managed control plane |
 | GSV installation | One GSV security and billing boundary | `installationId`, `hank.gsv.space` | Installation Kernel plus platform directory |
 | Local GSV account | Unix-like identity inside an installation | `alice`, UID `1000` | Installation Kernel |
 
-A platform principal can own multiple installations and can be invited into
-other installations. An installation can have multiple human members. A
-membership maps a platform principal to one local human UID in one
-installation. Local agent and service accounts remain Kernel-owned identities
-and do not require global platform principals.
+Operator records may refer to an installation while it is provisioned, but
+they are not login identities and do not authenticate through `sys.connect`.
+Any future customer-account or membership system must remain separate from
+Kernel users unless a later product contract deliberately introduces a bridge.
 
 The first owner's installation handle and local username may default to the
 same text for a simple onboarding experience, but they are independent fields:
@@ -143,13 +147,11 @@ model.
 ```text
 accounts.gsv.space
   Managed control-plane Worker
-    - global authentication and sessions
     - installation and hostname directory
-    - memberships and ownership
     - provisioning state
-    - billing-provider customer and subscription state
-    - transactional email and recovery
-    - private provisioning authority
+    - hashed first-boot capabilities
+    - private operator administration
+    - entitlement state
 
 *.gsv.space
   GSV Gateway Worker
@@ -176,16 +178,15 @@ activation, and rollback procedure live in
 `engineering/managed-gsv-deployment.md`.
 
 These are ordinary Workers. Keeping the managed control plane separate prevents
-billing-provider secrets, global account records, recovery authority, and
-provisioning credentials from entering the agent runtime environment. The
-Gateway should receive only narrow operations such as hostname resolution,
-entitlement lookup, and login-ticket verification.
+operator and provisioning authority from entering the agent runtime
+environment. The Gateway receives narrow operations for hostname resolution,
+entitlements, onboarding authorization, and onboarding completion.
 
 The complete initial service graph is:
 
 ```text
 Browser
-  -> accounts.gsv.space control plane
+  -> private onboarding URL
   -> <handle>.gsv.space Gateway
 
 Telegram
@@ -513,120 +514,58 @@ installations. The safest initial rule is exclusive attachment with an explicit
 unlink/relink flow. Supporting shared attachment later requires routing each
 conversation or actor to an installation without ambiguity.
 
-## Managed accounts and Kernel users
+## Installation-owned users and login
 
-The managed platform authenticates global humans; the Kernel authorizes local
-identities. A membership record bridges the two:
+The Kernel is the sole authority for people inside a GSV. Managed and
+standalone installations both authenticate local usernames, passwords, and
+tokens through `sys.connect`; the account service never receives those
+credentials and never creates a user session for an installation.
 
-```ts
-type InstallationMembership = {
-  installationId: string;
-  principalId: string;
-  localUid: number;
-  role: "owner" | "admin" | "member";
-};
-```
+The initial managed operator flow is:
 
-The platform role governs managed-service operations such as billing ownership,
-hostname changes, recovery, invitations, and deletion. The Kernel's local UID,
-groups, and capabilities govern GSV operations. Do not infer one authority from
-the other without an explicit mapping.
+1. Atomically reserve an installation handle and immutable installation ID.
+2. Put the directory and provisioning operation in `provisioning` state.
+3. Generate a high-entropy, installation-bound onboarding capability. Store
+   only its prefix and SHA-256 hash in the account service.
+4. Give the intended owner a URL of the form
+   `https://<handle>.gsv.space/onboarding#<capability>`.
+5. Move the fragment into tab-scoped storage and remove it from browser history.
+6. Permit the provisioning hostname to serve only the desktop shell and `/ws`.
+   Public storage, Git, OAuth, adapters, and ordinary runtime routes remain
+   unavailable until activation.
+7. Include the capability only in `sys.setup` and `sys.setup.assist`. The Kernel
+   verifies it through the private directory binding, then performs normal
+   installation-local setup. The chosen username and password travel directly
+   to the Kernel.
+8. Atomically activate the hostname and invalidate the capability after setup
+   succeeds, without creating a platform-to-Kernel login mapping.
+9. Continue through ordinary password login; the capability has no post-setup
+   authority.
 
-Hosted browser authentication should not require a second unrelated local
-password. The platform issues a short-lived, installation-bound, single-use
-login handoff that the target hostname exchanges for a host-scoped GSV session
-or connection credential. The Kernel resolves that verified principal through
-membership to the local UID.
+Anyone without the capability may fetch shared static shell assets from a known
+provisioning hostname, but cannot claim its Kernel or access installation data.
+The capability is a bearer secret, not security through an obscure pathname.
+Reissuing it invalidates the previous link, and it expires if onboarding is not
+completed.
 
-Do not set a general session cookie for `Domain=.gsv.space`. Keep the platform
-session host-only on the account/auth origin and the installation session
-host-only on its GSV origin. A one-use handoff avoids sharing a bearer credential
-with every customer subdomain.
+## Registration, billing, and credential recovery
 
-Standalone GSV keeps local password and token authentication. Managed and
-standalone authentication both resolve to the same `ConnectionIdentity` before
-Kernel authorization.
+Open customer registration, subscriptions, payments, invitations, and
+provider-assisted recovery are not part of the current managed-service scope.
+The account worker is initially a private installation registry and operator
+surface. Commercial entitlements may be assigned manually while the product is
+validated.
 
-## Signup and provisioning
+Losing a local GSV password currently follows the installation-owned recovery
+model. A future managed recovery design must explicitly state what authority an
+operator or external account has over Kernel credentials; it must not silently
+turn the installation registry into an authentication provider.
 
-The initial managed signup flow is:
+## Deferred billing and entitlements
 
-1. Create or authenticate a global platform principal.
-2. Verify a recovery-capable email address and register a primary credential.
-3. Choose and atomically reserve an installation handle.
-4. Create a trial entitlement or hosted checkout session associated with the
-   proposed installation ID.
-5. Treat the verified billing webhook, not a browser success redirect, as the
-   authority to continue paid provisioning.
-6. Create the Kernel by immutable installation ID through an internal
-   provisioning operation.
-7. Initialize installation identity, the first local human account, membership,
-   filesystem layout, personal agent, and default configuration.
-8. Activate the hostname in the directory only after Kernel provisioning
-   succeeds.
-9. Issue a one-time login handoff and enter the new GSV.
-
-Abandoned handle reservations expire. Failed provisioning remains resumable and
-idempotent by installation ID. Replaying a successful payment or provisioning
-request must not create a second Kernel, membership, or subscription.
-
-The current open `sys.setup` contract remains appropriate for a user-owned
-standalone deployment but not for wildcard managed hosting. Managed mode must
-reject public first-boot ownership claims. The platform should provision through
-a service-binding-only operation or require a signed, one-use provisioning
-credential, and it must not publish the hostname before ownership exists.
-
-Signup, login, handle reservation, verification resend, and recovery endpoints
-need server-validated bot protection and rate limits. Validation responses
-should not disclose whether an email or credential is registered.
-
-## Credential recovery
-
-Managed credential recovery belongs to the global platform account. Recovering
-a platform principal restores its mapped installation memberships; it does not
-rename local users or recreate their homes.
-
-The initial recovery contract should include:
-
-- verified email;
-- passkeys or another phishing-resistant primary credential;
-- at least one independent backup credential or one-time recovery codes;
-- hashed, expiring, single-use verification and recovery tokens;
-- session revocation after sensitive recovery;
-- notifications on credential, email, ownership, and recovery changes; and
-- recent-authentication requirements for billing, export, deletion, hostname,
-  membership, and ownership changes.
-
-Account recovery and data encryption have an unavoidable product tradeoff.
-Current GSV storage is access-controlled but is not encrypted with a key known
-only to the user, so the managed service can restore authentication without
-losing data. If GSV later introduces user-only encryption, it must deliberately
-choose a user-held recovery key, explicit key escrow, or irrecoverability. It
-cannot promise both provider-impossible access and provider-assisted recovery.
-
-Authentication implementation should use a mature audited library or provider
-rather than extend Kernel `AuthStore` into a global Internet identity system.
-An open-source Workers-compatible stack with D1, passkeys, verification,
-sessions, and recovery is a strong fit, but it remains a replaceable platform
-component behind the principal and login-ticket contracts.
-
-Transactional email is part of the authentication availability path. Delivery,
-bounces, suppression, retry behavior, and provider maturity need monitoring and
-a documented fallback plan.
-
-Production signup remains closed until `gsv.space` is activated as an Email
-Sending domain for `noreply@gsv.space` and the account Worker has a
-`TURNSTILE_SECRET` Worker secret for a hostname-restricted production widget.
-The matching public site key is exposed to the account UI through the narrow
-`/api/public/config` response and is configured as
-`GSV_TURNSTILE_SITE_KEY`; the secret stays only in the account Worker. The
-production site key and secret must belong to the same widget, whose hostname
-allowlist contains only the intended account host. Deterministic Worker tests
-use the documented Cloudflare test site key and an in-process verifier, and no
-billing-provider credential is needed before the concrete billing adapter in
-Phase 7.
-
-## Billing and entitlements
+The billing design below is retained as future product work. It is not part of
+the current private managed-service launch scope and must be revisited with the
+business model before activation.
 
 Billing belongs to the managed control plane, not the Kernel. External customer,
 checkout, subscription, invoice, webhook, and tax data never becomes agent
@@ -1084,7 +1023,7 @@ The managed and standalone paths should differ only outside the installation:
 | Installation ID | provisioned by platform | generated or configured locally |
 | Canonical origin | managed hostname/custom domain | deployment configuration |
 | Host resolution | platform directory | fixed installation binding |
-| Human login | platform principal mapped to local UID | local password/token |
+| Human login | local password/token | local password/token |
 | Billing | platform entitlement | none |
 | Runtime state | Kernel/Process/R2/ripgit | same logical model |
 
@@ -1100,24 +1039,21 @@ add interfaces or test doubles early, but it must not depend on an unproven
 isolation boundary. Protected prompt and seeded context content are not changed
 by this program.
 
-Current implementation status as of 2026-08-05: phases 0 through 4 are complete
-for the existing runtime on the managed-service branch. Kernel, Process, R2,
-ripgit, and user-owned adapter state now share one installation boundary with
-explicit standalone compatibility. The account-service
-D1 schema, atomic handle reservation, active-host directory, resumable private
-Kernel provisioning, managed public-setup rejection, and one-time host-session
-handoff boundary are implemented. The account service now also implements
-short bootstrap sessions, host-only platform sessions, discoverable passkeys,
-hashed one-time recovery codes, complete session and credential revocation
-during recovery, recent-auth checks, transactional verification and security
-notification email, atomic handoff auditing, exact-origin mutation checks, D1
-rate limits, and fail-closed Turnstile verification. Authenticated public handle
-reservation is idempotent, expired reservations are reclaimed, and private
-Kernel provisioning now requires an effective provider-neutral entitlement.
-The clean account-to-Kernel integration flow covers reservation, entitlement,
-provisioning, hostname activation, entry, logout, and re-entry against a real
-Kernel. Production activation of email and Turnstile remains an external release
-gate. Phase 5 is in progress: the provider-neutral entitlement period contract,
+Current implementation status as of 2026-08-08: Kernel, Process, R2, ripgit,
+and adapter state share one installation boundary with explicit standalone
+compatibility. The account-service directory can reserve a handle, place it in
+provisioning state, issue a hashed first-boot capability, authorize only the
+matching Kernel, and atomically activate the hostname after that Kernel creates
+its local owner. A clean account-to-Kernel integration flow proves that setup
+without the capability fails, setup credentials remain Kernel-local, the
+legacy platform handoff cannot enter the installation, and subsequent browser
+login uses the normal local password contract.
+
+The branch also contains earlier platform-account, recovery, handoff, billing,
+and public-signup work. Those paths are no longer the current product contract
+and should be removed in separate reviewable cleanup batches after callers and
+retained operator needs are audited. Separate inference work already present
+includes the provider-neutral entitlement period contract,
 separate inference Worker, DeepSeek V4 Flash 0731 price book and adapter,
 SQLite-backed per-installation budget coordinator, conservative admission,
 attempt settlement, opaque upstream user isolation, synthetic provider, and
@@ -1146,7 +1082,7 @@ registration, account Turnstile widget, and overall Phases 5 through 9 launch
 gates remain external or incomplete, so managed production hosting remains
 disabled.
 
-Phase 7 is in progress. Its provider-neutral subscription schema, event lease
+Previously implemented Phase 7 work is deferred. Its provider-neutral subscription schema, event lease
 and deduplication store, current-snapshot reconciler, lifecycle deadline
 advancer, entitlement projection, plan catalog, and signed deterministic fake
 provider are implemented. Tests cover exact replay, out-of-order notification,
@@ -1178,7 +1114,7 @@ record. The distinct managed Worker identities, public and internal routes,
 least-authority service graph, secret ownership, clean-account binding
 bootstrap, state provisioning order, dry-run bundle validation, activation
 order, and rollback procedure are now executable in the production topology.
-Phase 8 implementation is now complete behind the external launch gates. The
+Previously implemented Phase 8 work is also deferred. The
 account Worker serves one credential-safe browser shell for signup, email
 verification, passkey enrollment and recovery, handle choice, Stripe Checkout,
 signed-entitlement polling, provisioning progress, and one-use host entry. The
@@ -1262,19 +1198,20 @@ global managed adapter must additionally pass the peer-ownership gate in Phase
 ### Phase 4: managed control plane and provisioning
 
 - Add the account-service Worker and relational schema with migrations.
-- Implement email verification, passkeys or an equivalently phishing-resistant
-  primary credential, sessions, recovery codes, session revocation, and recent
-  authentication.
 - Implement atomic handle reservation and the hostname directory.
-- Implement membership and host-only single-use login handoffs.
-- Add private idempotent Kernel provisioning; reject public setup in managed
-  mode.
-- Add bot protection, rate limits, transactional email, audit events, and
-  resumable provisioning operations.
+- Issue hashed, expiring, installation-bound first-boot capabilities through a
+  private operator path.
+- Route only the desktop shell and WebSocket while an installation is
+  provisioning.
+- Let the capability holder run normal Kernel-owned setup, then atomically
+  activate the hostname and invalidate the claim.
+- Keep ordinary managed login on the same local password/token contract as
+  standalone GSV.
 
-Exit: a clean principal can provision, enter, leave, recover, and re-enter one
-GSV without a second local password, while a random wildcard hostname and an
-unauthorized principal cannot create or claim a Kernel.
+Exit: a clean operator-created installation can be claimed exactly through its
+private onboarding capability and then re-entered through local Kernel
+credentials, while a random wildcard hostname and an unauthorized caller
+cannot create or claim a Kernel.
 
 ### Phase 5: managed inference
 

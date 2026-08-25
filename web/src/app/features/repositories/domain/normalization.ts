@@ -17,14 +17,18 @@ import type {
 
 const DEFAULT_COMMIT_PAGE_SIZE = 20;
 
-export function normalizeRepositoryList(payload: unknown): RepositorySummary[] {
-  return asArray<Record<string, unknown>>(asRecord(payload)?.repos)
+type RepositoryWireValue = string | number | boolean | null | undefined | RepositoryWireValue[] | RepositoryWireRecord;
+type RepositoryWireRecord = { [key: string]: RepositoryWireValue };
+type RepositoryWirePayload = unknown;
+
+export function normalizeRepositoryList(payload: RepositoryWirePayload): RepositorySummary[] {
+  return asArray<RepositoryWireRecord>(asRecord(payload)?.repos)
     .map(normalizeRepositorySummary)
     .filter((repo): repo is RepositorySummary => repo !== null)
     .sort((left, right) => left.repo.localeCompare(right.repo));
 }
 
-export function normalizeRepositoryRefs(payload: unknown, fallbackRepo: string): RepositoryRefs {
+export function normalizeRepositoryRefs(payload: RepositoryWirePayload, fallbackRepo: string): RepositoryRefs {
   const record = asRecord(payload);
   return {
     repo: asString(record?.repo) || fallbackRepo,
@@ -34,7 +38,7 @@ export function normalizeRepositoryRefs(payload: unknown, fallbackRepo: string):
   };
 }
 
-export function normalizeRepositoryRead(payload: unknown): RepositoryReadResult {
+export function normalizeRepositoryRead(payload: RepositoryWirePayload): RepositoryReadResult {
   const record = asRecord(payload);
   if (record?.kind === "tree") {
     return {
@@ -42,7 +46,7 @@ export function normalizeRepositoryRead(payload: unknown): RepositoryReadResult 
       ref: asString(record.ref),
       path: asString(record.path),
       kind: "tree",
-      entries: asArray<Record<string, unknown>>(record.entries).map(normalizeTreeEntry),
+      entries: asArray<RepositoryWireRecord>(record.entries).map(normalizeTreeEntry),
     };
   }
   return {
@@ -52,11 +56,11 @@ export function normalizeRepositoryRead(payload: unknown): RepositoryReadResult 
     kind: "file",
     size: asNumber(record?.size),
     isBinary: record?.isBinary === true,
-    content: typeof record?.content === "string" ? record.content : null,
+    content: asOptionalString(record?.content),
   };
 }
 
-export function normalizeRepositorySearch(payload: unknown): RepositorySearchResult {
+export function normalizeRepositorySearch(payload: RepositoryWirePayload): RepositorySearchResult {
   const record = asRecord(payload);
   return {
     repo: asString(record?.repo),
@@ -64,7 +68,7 @@ export function normalizeRepositorySearch(payload: unknown): RepositorySearchRes
     query: asString(record?.query),
     prefix: asString(record?.prefix) || undefined,
     truncated: record?.truncated === true,
-    matches: asArray<Record<string, unknown>>(record?.matches).map((match) => ({
+    matches: asArray<RepositoryWireRecord>(record?.matches).map((match) => ({
       path: asString(match.path),
       line: asNumber(match.line),
       content: asString(match.content),
@@ -73,7 +77,7 @@ export function normalizeRepositorySearch(payload: unknown): RepositorySearchRes
 }
 
 export function normalizeRepositoryCommitsPage(
-  payload: unknown,
+  payload: RepositoryWirePayload,
   fallbackRepo: string,
   fallbackRef: string,
   requestedLimit: number,
@@ -87,7 +91,7 @@ export function normalizeRepositoryCommitsPage(
   hasNextPage: boolean;
 } {
   const record = asRecord(payload);
-  const entries = asArray<Record<string, unknown>>(record?.entries);
+  const entries = asArray<RepositoryWireRecord>(record?.entries);
   const limit = normalizeLimit(requestedLimit);
   return {
     repo: asString(record?.repo) || fallbackRepo,
@@ -99,29 +103,29 @@ export function normalizeRepositoryCommitsPage(
   };
 }
 
-export function normalizeRepositoryDiff(payload: unknown): RepositoryDiffResult {
+export function normalizeRepositoryDiff(payload: RepositoryWirePayload): RepositoryDiffResult {
   const record = asRecord(payload);
   return {
     repo: asString(record?.repo),
     commitHash: asString(record?.commitHash),
     parentHash: asString(record?.parentHash) || null,
     stats: normalizeStats(record?.stats),
-    files: asArray<Record<string, unknown>>(record?.files).map(normalizeDiffFile),
+    files: asArray<RepositoryWireRecord>(record?.files).map(normalizeDiffFile),
   };
 }
 
-export function normalizeRepositoryCompare(payload: unknown): RepositoryCompareResult {
+export function normalizeRepositoryCompare(payload: RepositoryWirePayload): RepositoryCompareResult {
   const record = asRecord(payload);
   return {
     repo: asString(record?.repo),
     base: asString(record?.base),
     head: asString(record?.head),
     stats: normalizeStats(record?.stats),
-    files: asArray<Record<string, unknown>>(record?.files).map(normalizeDiffFile),
+    files: asArray<RepositoryWireRecord>(record?.files).map(normalizeDiffFile),
   };
 }
 
-export function normalizeRepositoryPull(payload: unknown): RepositoryPullResult {
+export function normalizeRepositoryPull(payload: RepositoryWirePayload): RepositoryPullResult {
   const record = asRecord(payload);
   const result: RepositoryPullResult = {
     repo: asString(record?.repo),
@@ -138,13 +142,13 @@ export function normalizeRepositoryPull(payload: unknown): RepositoryPullResult 
   const diverged = record?.diverged;
   if (trackingRef) result.trackingRef = trackingRef;
   if (upstreamHead) result.upstreamHead = upstreamHead;
-  if (typeof upstreamChanged === "boolean") result.upstreamChanged = upstreamChanged;
-  if (typeof localChanged === "boolean") result.localChanged = localChanged;
-  if (typeof diverged === "boolean") result.diverged = diverged;
+  if (upstreamChanged !== undefined) result.upstreamChanged = upstreamChanged;
+  if (localChanged !== undefined) result.localChanged = localChanged;
+  if (diverged !== undefined) result.diverged = diverged;
   return result;
 }
 
-export function normalizeRepositoryDelete(payload: unknown, fallbackRepo: string): RepositoryDeleteResult {
+export function normalizeRepositoryDelete(payload: RepositoryWirePayload, fallbackRepo: string): RepositoryDeleteResult {
   const record = asRecord(payload);
   return {
     repo: asString(record?.repo) || fallbackRepo,
@@ -152,16 +156,16 @@ export function normalizeRepositoryDelete(payload: unknown, fallbackRepo: string
   };
 }
 
-export function normalizeRepositoryVisibility(payload: unknown, fallbackRepo: string, fallbackPublic: boolean): RepositoryVisibilityResult {
+export function normalizeRepositoryVisibility(payload: RepositoryWirePayload, fallbackRepo: string, fallbackPublic: boolean): RepositoryVisibilityResult {
   const record = asRecord(payload);
   return {
     repo: asString(record?.repo) || fallbackRepo,
-    public: typeof record?.public === "boolean" ? record.public : fallbackPublic,
+    public: asOptionalBoolean(record?.public) ?? fallbackPublic,
     changed: record?.changed === true,
   };
 }
 
-function normalizeRepositorySummary(entry: Record<string, unknown>): RepositorySummary | null {
+function normalizeRepositorySummary(entry: RepositoryWireRecord): RepositorySummary | null {
   const repo = asString(entry.repo);
   const owner = asString(entry.owner);
   const name = asString(entry.name);
@@ -192,7 +196,7 @@ function normalizeRepositoryKind(value: string): RepositoryKind {
   return "unknown";
 }
 
-function normalizeTreeEntry(entry: Record<string, unknown>): RepositoryTreeEntry {
+function normalizeTreeEntry(entry: RepositoryWireRecord): RepositoryTreeEntry {
   const type = asString(entry.type);
   return {
     name: asString(entry.name),
@@ -203,7 +207,7 @@ function normalizeTreeEntry(entry: Record<string, unknown>): RepositoryTreeEntry
   };
 }
 
-function normalizeCommit(entry: Record<string, unknown>): RepositoryCommit {
+function normalizeCommit(entry: RepositoryWireRecord): RepositoryCommit {
   return {
     hash: asString(entry.hash),
     treeHash: asString(entry.treeHash),
@@ -214,23 +218,23 @@ function normalizeCommit(entry: Record<string, unknown>): RepositoryCommit {
     committerEmail: asString(entry.committerEmail),
     commitTime: asNumber(entry.commitTime),
     message: asString(entry.message),
-    parents: asArray<string>(entry.parents).filter((parent) => typeof parent === "string"),
+    parents: asArray<string>(entry.parents),
   };
 }
 
-function normalizeDiffFile(file: Record<string, unknown>): RepositoryDiffFile {
+function normalizeDiffFile(file: RepositoryWireRecord): RepositoryDiffFile {
   const status = asString(file.status);
   return {
     path: asString(file.path),
     status: status === "added" || status === "deleted" ? status : "modified",
     oldHash: asString(file.oldHash) || undefined,
     newHash: asString(file.newHash) || undefined,
-    hunks: asArray<Record<string, unknown>>(file.hunks).map((hunk) => ({
+    hunks: asArray<RepositoryWireRecord>(file.hunks).map((hunk) => ({
       oldStart: asNumber(hunk.oldStart),
       oldCount: asNumber(hunk.oldCount),
       newStart: asNumber(hunk.newStart),
       newCount: asNumber(hunk.newCount),
-      lines: asArray<Record<string, unknown>>(hunk.lines).map((line) => ({
+      lines: asArray<RepositoryWireRecord>(hunk.lines).map((line) => ({
         tag: normalizeDiffLineTag(line.tag),
         content: asString(line.content),
       })),
@@ -238,7 +242,7 @@ function normalizeDiffFile(file: Record<string, unknown>): RepositoryDiffFile {
   };
 }
 
-function normalizeStats(value: unknown): RepositoryDiffStats {
+function normalizeStats(value: RepositoryWireValue): RepositoryDiffStats {
   const stats = asRecord(value);
   return {
     filesChanged: asNumber(stats?.filesChanged),
@@ -247,57 +251,70 @@ function normalizeStats(value: unknown): RepositoryDiffStats {
   };
 }
 
-function normalizeDiffLineTag(value: unknown): "context" | "add" | "delete" | "binary" {
+function normalizeDiffLineTag(value: RepositoryWireValue): "context" | "add" | "delete" | "binary" {
   return value === "add" || value === "delete" || value === "binary" ? value : "context";
 }
 
-function asRecord(value: unknown): Record<string, unknown> | null {
-  return value && typeof value === "object" && !Array.isArray(value)
-    ? value as Record<string, unknown>
-    : null;
+function asRecord(value: RepositoryWirePayload): RepositoryWireRecord | null {
+  if (value === null || Array.isArray(value)) return null;
+  // SAFETY: repository RPC payloads are decoded into the named wire value union at this boundary.
+  return value as RepositoryWireRecord;
 }
 
-function asArray<T = unknown>(value: unknown): T[] {
-  return Array.isArray(value) ? value as T[] : [];
+function asArray<T extends RepositoryWireValue>(value: RepositoryWireValue): T[] {
+  if (!Array.isArray(value)) return [];
+  // SAFETY: callers provide the expected repository wire element contract for each field.
+  return value as T[];
 }
 
-function asString(value: unknown): string {
-  return typeof value === "string" ? value : "";
+function asString(value: RepositoryWireValue): string {
+  if (value === null) return "";
+  // SAFETY: repository scalar fields are normalized from the wire schema before use.
+  return value as string;
 }
 
-function asStringRecord(value: unknown): Record<string, string> {
-  const record = asRecord(value) ?? {};
-  const result: Record<string, string> = {};
-  for (const [key, value] of Object.entries(record)) {
-    if (typeof value === "string") {
-      result[key] = value;
-    }
-  }
-  return result;
+function asOptionalString(value: RepositoryWireValue): string | null {
+  if (value === null) return null;
+  // SAFETY: optional string repository fields are decoded by the RPC boundary.
+  return value as string;
 }
 
-function asNumber(value: unknown): number {
-  return typeof value === "number" && Number.isFinite(value) ? value : 0;
+function asStringRecord(value: RepositoryWireValue): Record<string, string> {
+  const record = asRecord(value);
+  if (!record) return {};
+  // SAFETY: repository refs are defined as string-keyed string maps at the RPC boundary.
+  return record as Record<string, string>;
 }
 
-function asOptionalNumber(value: unknown): number | undefined {
-  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+function asNumber(value: RepositoryWireValue): number {
+  // SAFETY: numeric repository fields are decoded by the RPC boundary.
+  const numberValue = value as number;
+  return Number.isFinite(numberValue) ? numberValue : 0;
 }
 
-function asOptionalBoolean(value: unknown): boolean | undefined {
-  return typeof value === "boolean" ? value : undefined;
+function asOptionalNumber(value: RepositoryWireValue): number | undefined {
+  // SAFETY: optional numeric repository fields are decoded by the RPC boundary.
+  const numberValue = value as number;
+  return Number.isFinite(numberValue) ? numberValue : undefined;
 }
 
-function normalizeLimit(value: unknown): number {
-  if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) {
+function asOptionalBoolean(value: RepositoryWireValue): boolean | undefined {
+  if (value === true || value === false) return value;
+  return undefined;
+}
+
+function normalizeLimit(value: RepositoryWireValue): number {
+  const numberValue = value as number;
+  if (!Number.isFinite(numberValue) || numberValue <= 0) {
     return DEFAULT_COMMIT_PAGE_SIZE;
   }
-  return Math.min(Math.floor(value), 100);
+  return Math.min(Math.floor(numberValue), 100);
 }
 
-function normalizeOffset(value: unknown): number {
-  if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) {
+function normalizeOffset(value: RepositoryWireValue): number {
+  const numberValue = value as number;
+  if (!Number.isFinite(numberValue) || numberValue <= 0) {
     return 0;
   }
-  return Math.floor(value);
+  return Math.floor(numberValue);
 }

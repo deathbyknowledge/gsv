@@ -20,6 +20,7 @@ import type { AuthTokenRole } from "./auth-store";
 import type { CapabilityStore } from "./capabilities";
 import { isValidCapability } from "./capabilities";
 import type { KernelContext } from "./context";
+import { isManagedGatewayDeployment } from "../installation/deployment";
 import { SERVER_RELEASE } from "../version";
 import { ensureAccountHomeLayout } from "./account-home";
 import { ensurePublicAssetStorageLayout } from "../public-assets";
@@ -103,7 +104,7 @@ export async function handleConnect(
   await ensureKernelBootstrapped(ctx);
 
   if (auth.isSetupMode()) {
-    if ((ctx.env as Env & { INSTALLATION_DIRECTORY?: unknown }).INSTALLATION_DIRECTORY) {
+    if (isManagedGatewayDeployment(ctx.env)) {
       return {
         ok: false,
         code: 503,

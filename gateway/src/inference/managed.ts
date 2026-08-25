@@ -13,6 +13,7 @@ import {
   type ManagedInferenceRequest,
   type ManagedInferenceService,
 } from "@humansandmachines/gsv/protocol";
+import { isManagedGatewayDeployment } from "../installation/deployment";
 import { stableOpaqueId } from "../shared/stable-id";
 
 const MAX_EVENT_BUFFER_CHARS = 8 * 1024 * 1024;
@@ -24,7 +25,6 @@ export type ManagedGenerationIdentity = {
 };
 
 type ManagedInferenceBindings = {
-  INSTALLATION_DIRECTORY?: unknown;
   MANAGED_INFERENCE?: ManagedInferenceService;
 };
 
@@ -42,10 +42,9 @@ export function isManagedGeneration(config: {
  * a user-owned installation into a consumer of platform credentials.
  */
 export function managedInferenceFromEnv(env: Env): ManagedInferenceService | undefined {
+  if (!isManagedGatewayDeployment(env)) return undefined;
   const bindings = env as Env & ManagedInferenceBindings;
-  return bindings.INSTALLATION_DIRECTORY
-    ? bindings.MANAGED_INFERENCE
-    : undefined;
+  return bindings.MANAGED_INFERENCE;
 }
 
 export async function managedLogicalRequestId(

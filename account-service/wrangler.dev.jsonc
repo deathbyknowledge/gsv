@@ -1,7 +1,7 @@
 {
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "gsv-accounts-dev",
-  "main": "src/development.ts",
+  "main": "src/index.ts",
   "compatibility_date": "2026-07-29",
   "compatibility_flags": ["nodejs_compat"],
   "workers_dev": false,
@@ -19,8 +19,11 @@
     "GSV_BILLING_STORAGE_LIMIT_BYTES": "10737418240",
     "GSV_BILLING_PAST_DUE_GRACE_MS": "604800000",
     "GSV_BILLING_RETENTION_MS": "2592000000",
+    "GSV_OPERATOR_PLAN_KEY": "managed-preview",
+    "GSV_OPERATOR_INFERENCE_BUDGET_MICROUNITS": "5000000",
+    "GSV_OPERATOR_STORAGE_LIMIT_BYTES": "10737418240",
     "GSV_TURNSTILE_SITE_KEY": "1x00000000000000000000AA",
-    "ENVIRONMENT": "test"
+    "ENVIRONMENT": "development"
   },
   "send_email": [
     {

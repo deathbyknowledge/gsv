@@ -58,7 +58,7 @@ const expectedMains = {
 
 const expectedDevelopmentMains = {
   gateway: "src/managed-development.ts",
-  account: "src/development.ts",
+  account: "src/index.ts",
   inference: "src/index.ts",
   telegram: "src/managed.ts",
   ripgit: "build/index.js",
@@ -113,6 +113,8 @@ const expectedServices = {
 
 const expectedSecrets = {
   account: [
+    "GSV_ADMIN_ACCESS_AUD",
+    "GSV_ADMIN_ACCESS_TEAM_DOMAIN",
     "GSV_STRIPE_FOUNDING_PRICE_ID",
     "GSV_STRIPE_MERCHANT_MODE",
     "GSV_TURNSTILE_SITE_KEY",
@@ -247,7 +249,7 @@ for (const [key, config] of Object.entries(developmentConfigs)) {
 }
 
 invariant(
-  developmentConfigs.account.vars?.ENVIRONMENT === "test"
+  developmentConfigs.account.vars?.ENVIRONMENT === "development"
     && developmentConfigs.account.vars?.GSV_ACCOUNT_ORIGIN === "http://localhost:8976"
     && developmentConfigs.account.vars?.GSV_BASE_DOMAIN === "localhost"
     && developmentConfigs.account.vars?.GSV_INSTALLATION_ORIGIN_TEMPLATE
@@ -272,11 +274,11 @@ invariant(
 invariant(
   developmentConfigs.gateway.assets?.directory === "../.wrangler/managed-dev-assets/"
     && JSON.stringify(developmentConfigs.gateway.assets?.run_worker_first) === '["/*"]',
-  "gateway development: the primary host router must own all local assets",
+  "gateway development: the primary host router must own installation assets",
 );
 invariant(
   !("assets" in developmentConfigs.account),
-  "account development: auxiliary assets must be staged behind the primary host router",
+  "account development: the operator surface must not require a separate asset build",
 );
 const developmentAccountOrigin = developmentConfigs.account.vars?.GSV_ACCOUNT_ORIGIN;
 invariant(

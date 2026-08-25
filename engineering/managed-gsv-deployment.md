@@ -80,12 +80,11 @@ Use a separate local graph when reviewing the managed product:
 npm run dev:managed
 ```
 
-The command builds both web surfaces, applies the account migrations to local
-D1, and starts local versions of all five managed Workers. Visit
-`http://localhost:8976/__gsv/development`; the development-only account ingress
-creates or resumes one trial through the real entitlement and provisioning
-boundaries, then uses the normal one-time Gateway handoff. The installation is
-served at `http://local.localhost:8976` and text inference uses the synthetic
+The command builds the desktop, applies the account migrations to local D1,
+and starts local versions of all five managed Workers. Visit
+`http://localhost:8976/admin`, create an installation in the canonical operator
+surface, and follow the one-time onboarding URL it issues. The installation is
+served at `http://<handle>.localhost:8976` and text inference uses the synthetic
 provider.
 
 The local Workers have distinct `*-dev` names, no public routes, no production
@@ -95,17 +94,19 @@ host-only browser session cookies needed for plain-HTTP localhost; production
 cookie behavior is unchanged. Set `GSV_MANAGED_DEV_STATE_DIR` to an empty
 directory for a disposable clean-instance run.
 
-Worker sources reload while the stack is running. The desktop and account UI
-are staged together under `.wrangler/managed-dev-assets` at startup, isolated
-from ordinary `web/dist` rebuilds. Restart the command after changing `web/`
-source. Local HTTP cookies assume the developer machine is trusted; the ingress
-requires the exact installation origin for cookie-authenticated WebSockets.
-These loopback configs are not a staging topology; local TLS is required when a
-test needs production-equivalent cookie transport semantics.
+Worker sources reload while the stack is running. Desktop assets are staged
+under `.wrangler/managed-dev-assets` at startup, isolated from ordinary
+`web/dist` rebuilds. Restart the command after changing `web/` source. Local
+HTTP cookies assume the developer machine is trusted; the ingress requires the
+exact installation origin for cookie-authenticated WebSockets. These loopback
+configs are not a staging topology; local TLS is required when a test needs
+production-equivalent cookie transport semantics.
 
-This bootstrap validates the managed runtime, not the production acquisition
-funnel. Stripe Checkout/webhooks, verification-email delivery, passkeys, and
-real Telegram delivery still require their credentialed staging checks.
+The accounts Worker admits `/admin` on exact loopback origins only when
+`ENVIRONMENT=development`. Production requires a valid Cloudflare Access JWT
+for the configured team domain and application audience. Stripe, customer
+registration, platform passkeys, and provider-assisted account recovery remain
+outside the current operator-managed launch flow.
 
 ## DNS
 
@@ -187,9 +188,17 @@ final Worker config. Do not edit or renumber a shipped migration.
 
 ## Configure service-owned launch inputs
 
+Create a Cloudflare Access self-hosted application for
+`accounts.gsv.space/*` before enabling operator traffic. The Worker verifies
+the signed Access assertion itself and denies the operator surface when its
+Access configuration is absent.
+
 Use `wrangler secret put` so values are read interactively and do not enter shell
 history. The account Worker owns:
 
+- `GSV_ADMIN_ACCESS_TEAM_DOMAIN`, the exact
+  `https://<team>.cloudflareaccess.com` origin
+- `GSV_ADMIN_ACCESS_AUD`, the Access application's audience tag
 - `TURNSTILE_SECRET`
 - `GSV_TURNSTILE_SITE_KEY`
 - `STRIPE_SECRET_KEY`

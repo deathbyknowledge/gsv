@@ -1,7 +1,12 @@
 import { WorkerEntrypoint } from "cloudflare:workers";
 import type {
+  AuthorizeInstallationOnboardingInput,
+  CompleteInstallationOnboardingInput,
+  CompleteInstallationOnboardingResult,
   InstallationDirectoryResult,
   InstallationDirectoryService,
+  InstallationOnboardingAuthorization,
+  InstallationOnboardingService,
   LoginHandoffVerificationResult,
   ManagedEntitlementReader,
   ManagedEntitlementService,
@@ -18,6 +23,13 @@ import type {
 } from "@humansandmachines/gsv/protocol";
 import { provisionReservedInstallation, type ProvisionReservedInstallationInput } from "./provisioning";
 import { AccountStore, type InstallationReservation } from "./store";
+import { EnvironmentAccountsAdminAccess } from "./admin/access";
+import { AccountsAdminHttp } from "./admin/http";
+import {
+  InstallationAdminService,
+  operatorEntitlementConfig,
+  type OperatorEntitlementEnvironment,
+} from "./admin/service";
 import { AccountAuthHttp } from "./auth/http";
 import {
   AuthAbuseProtection,
@@ -36,6 +48,8 @@ import { GatewayEntitlementProjector } from "./entitlements/projector";
 import { json } from "./http";
 import { ManagedInstallationHttp } from "./installations/http";
 import { ManagedInstallationService } from "./installations/service";
+import { InstallationOnboardingStore } from "./installations/onboarding";
+import type { IssuedInstallationOnboarding } from "./installations/onboarding";
 import { InstallationLifecycleHttp } from "./lifecycle/http";
 import { InstallationLifecycleService } from "./lifecycle/service";
 import { InstallationLifecycleStore } from "./lifecycle/store";
@@ -70,8 +84,13 @@ import { BillingWebhookProcessor } from "./billing/webhooks";
 import { InstallationExportHttp } from "./installation-export/http";
 import { InstallationExportService } from "./installation-export/service";
 
-export type AccountServiceEnv = Omit<Env, "ENVIRONMENT"> & BillingProductEnvironment
-& StripeBillingEnvironment & {
+export type AccountServiceEnv = Omit<
+  Env,
+  | "ENVIRONMENT"
+  | "GSV_ADMIN_ACCESS_TEAM_DOMAIN"
+  | "GSV_ADMIN_ACCESS_AUD"
+> & BillingProductEnvironment
+& StripeBillingEnvironment & OperatorEntitlementEnvironment & {
   ENVIRONMENT: string;
   GATEWAY: ManagedGatewayProvisioningInterface
     & ManagedGatewayTelegramInterface
@@ -87,17 +106,24 @@ export type AccountServiceEnv = Omit<Env, "ENVIRONMENT"> & BillingProductEnviron
   TURNSTILE_SECRET?: string;
   GSV_TURNSTILE_SITE_KEY?: string;
   GSV_INSTALLATION_ORIGIN_TEMPLATE?: string;
+  GSV_ADMIN_ACCESS_TEAM_DOMAIN?: string;
+  GSV_ADMIN_ACCESS_AUD?: string;
 };
 
 export default class AccountService
   extends WorkerEntrypoint<AccountServiceEnv>
-  implements InstallationDirectoryService, ManagedEntitlementService
+  implements
+    InstallationDirectoryService,
+    InstallationOnboardingService,
+    ManagedEntitlementService
 {
   async fetch(request: Request): Promise<Response> {
     const url = new URL(request.url);
     if (url.pathname === "/health" && request.method === "GET") {
       return Response.json({ status: "healthy" });
     }
+    const adminResponse = await this.adminHttp().handle(request);
+    if (adminResponse) return adminResponse;
     if (url.pathname === "/api/public/config" && request.method === "GET") {
       let telegramBotUsername: string | null = null;
       try {
@@ -204,6 +230,18 @@ export default class AccountService
     return await this.authStore().consumeLoginHandoff(token, hostname);
   }
 
+  async authorizeInstallationOnboarding(
+    input: AuthorizeInstallationOnboardingInput,
+  ): Promise<InstallationOnboardingAuthorization> {
+    return await this.onboardingStore().authorize(input);
+  }
+
+  async completeInstallationOnboarding(
+    input: CompleteInstallationOnboardingInput,
+  ): Promise<CompleteInstallationOnboardingResult> {
+    return await this.onboardingStore().complete(input);
+  }
+
   async reserveInstallation(input: {
     principalId: string;
     operationId: string;
@@ -217,6 +255,12 @@ export default class AccountService
     input: ProvisionReservedInstallationInput,
   ): Promise<InstallationReservation> {
     return await provisionReservedInstallation(this.store(), this.env.GATEWAY, input);
+  }
+
+  async createInstallationOnboarding(
+    installationId: string,
+  ): Promise<IssuedInstallationOnboarding> {
+    return await this.onboardingStore().begin(installationId);
   }
 
   async projectEntitlement(
@@ -233,8 +277,29 @@ export default class AccountService
     );
   }
 
+  private adminHttp(): AccountsAdminHttp {
+    const accounts = this.store();
+    const entitlements = new EntitlementStore(this.env.ACCOUNT_DB);
+    return new AccountsAdminHttp(
+      new InstallationAdminService(
+        this.env.ACCOUNT_DB,
+        accounts,
+        entitlements,
+        new GatewayEntitlementProjector(entitlements, this.env.GATEWAY),
+        new InstallationOnboardingStore(this.env.ACCOUNT_DB, accounts),
+        operatorEntitlementConfig(this.env),
+      ),
+      new EnvironmentAccountsAdminAccess(this.env),
+      parseAccountOrigin(this.env.GSV_ACCOUNT_ORIGIN),
+    );
+  }
+
   private authStore(): PlatformAuthStore {
     return new PlatformAuthStore(this.env.ACCOUNT_DB);
+  }
+
+  private onboardingStore(): InstallationOnboardingStore {
+    return new InstallationOnboardingStore(this.env.ACCOUNT_DB, this.store());
   }
 
   private authHttp(): AccountAuthHttp {
@@ -465,7 +530,7 @@ export class EntitlementReaderEntrypoint
 
 export class GatewayDirectoryEntrypoint
   extends WorkerEntrypoint<AccountServiceEnv>
-  implements InstallationDirectoryService
+  implements InstallationDirectoryService, InstallationOnboardingService
 {
   async resolveHostname(hostname: string): Promise<InstallationDirectoryResult> {
     return await new AccountStore(
@@ -480,6 +545,27 @@ export class GatewayDirectoryEntrypoint
   ): Promise<LoginHandoffVerificationResult> {
     return await new PlatformAuthStore(this.env.ACCOUNT_DB)
       .consumeLoginHandoff(token, hostname);
+  }
+
+  async authorizeInstallationOnboarding(
+    input: AuthorizeInstallationOnboardingInput,
+  ): Promise<InstallationOnboardingAuthorization> {
+    return await this.onboardingStore().authorize(input);
+  }
+
+  async completeInstallationOnboarding(
+    input: CompleteInstallationOnboardingInput,
+  ): Promise<CompleteInstallationOnboardingResult> {
+    return await this.onboardingStore().complete(input);
+  }
+
+  private onboardingStore(): InstallationOnboardingStore {
+    const accounts = new AccountStore(
+      this.env.ACCOUNT_DB,
+      this.env.GSV_BASE_DOMAIN,
+      this.env.GSV_INSTALLATION_ORIGIN_TEMPLATE,
+    );
+    return new InstallationOnboardingStore(this.env.ACCOUNT_DB, accounts);
   }
 }
 

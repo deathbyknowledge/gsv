@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
   hasValidDevelopmentWebSocketOrigin,
-  withDevelopmentAccountHeaders,
   withDevelopmentCookie,
   withDevelopmentSetCookie,
 } from "./managed-development";
@@ -59,18 +58,5 @@ describe("managed development host router", () => {
       "http://local.localhost:8976/ws",
       { headers: { upgrade: "websocket" } },
     ))).toBe(true);
-  });
-
-  it("preserves a stricter CSP supplied by the local bootstrap", () => {
-    const csp = "default-src 'none'; form-action http://local.localhost:8976; script-src 'unsafe-inline'";
-    const response = withDevelopmentAccountHeaders(new Response("page", {
-      headers: {
-        "content-type": "text/html; charset=utf-8",
-        "content-security-policy": csp,
-      },
-    }), "http://localhost:8976");
-
-    expect(response.headers.get("content-security-policy")).toBe(csp);
-    expect(response.headers.get("cache-control")).toBe("no-store");
   });
 });

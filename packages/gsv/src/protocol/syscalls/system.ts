@@ -127,6 +127,7 @@ export type AccountListResult = {
 export type SysSetupArgs = {
   username: string;
   password: string;
+  onboardingToken?: string;
   rootPassword?: string;
   /** Optional name for the user's 1:1 personal agent account (defaults to a curated name). */
   agentName?: string;
@@ -207,6 +208,7 @@ export type SysSetupAssistArgs = {
   lane: OnboardingLane;
   draft: OnboardingDraft;
   messages: OnboardingAssistMessage[];
+  onboardingToken?: string;
 };
 
 export type SysSetupAssistResult = {

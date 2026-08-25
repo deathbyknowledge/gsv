@@ -40,6 +40,15 @@ PBKDF2-SHA-512 hashes. Issued tokens are stored hashed with high-entropy token
 prefix metadata, optional expiry, revocation state, allowed role, and optional
 device binding. Raw tokens are returned only at creation time.
 
+On managed wildcard hosting, setup additionally requires a short-lived
+capability bound to the installation ID. The account service stores only its
+prefix and SHA-256 hash. The browser receives it in a URL fragment, moves it to
+tab-scoped storage, removes the fragment, and sends it only with `sys.setup` or
+`sys.setup.assist`. The account service never receives the chosen local
+username or password. Successful setup activates the hostname and invalidates
+the capability without creating a platform-to-Kernel identity mapping; later
+browser sessions use normal installation-local `sys.connect` authentication.
+
 The CLI stores local credentials in `~/.config/gsv/config.toml`. On Unix it
 writes the file as `0600` and ignores cached session tokens if the file is
 group/world-readable.

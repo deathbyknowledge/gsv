@@ -74,6 +74,25 @@ describe("installation routing", () => {
     },
   );
 
+  it("routes a provisioning installation only when onboarding is explicitly allowed", async () => {
+    const directory: InstallationDirectoryService = {
+      resolveHostname: async () => ({
+        found: true,
+        installationId: "inst_hank",
+        handle: "hank",
+        canonicalOrigin: "https://hank.gsv.space",
+        state: "provisioning",
+      }),
+    };
+    await expect(resolveInstallationRoute(
+      new Request("https://hank.gsv.space/onboarding"),
+      { kind: "managed", directory },
+      { allowProvisioning: true },
+    )).resolves.toMatchObject({
+      identity: { installationId: "inst_hank" },
+    });
+  });
+
   it.each(["trialing", "active", "past_due", "restricted", "cancelled", "retained"] as const)(
     "keeps a managed installation routable in %s state",
     async (state) => {

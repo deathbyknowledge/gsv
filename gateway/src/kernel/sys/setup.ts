@@ -374,6 +374,130 @@ export async function handleSysSetup(
   }
 }
 
+export async function resumeSysSetup(
+  args: SysSetupArgs,
+  ctx: KernelContext,
+): Promise<SysSetupResult> {
+  const { username, password } = parseSetupIdentity(args);
+  const humans = ctx.auth.getPasswdEntries().filter(
+    (entry) => entry.uid >= 1000 && !ctx.auth.isPersonalAgentUid(entry.uid),
+  );
+  const user = ctx.auth.getPasswdByUsername(username);
+  if (humans.length !== 1 || !user || humans[0]?.uid !== user.uid) {
+    throw new Error("System already initialized");
+  }
+  const authenticated = await ctx.auth.authenticate(username, password);
+  if (!authenticated.ok || authenticated.identity.uid !== user.uid) {
+    throw new Error("Installation setup credentials do not match");
+  }
+
+  const raw = args as Record<string, unknown>;
+  const agentName = parseManagedAgentName(ctx.auth, raw.agentName, username);
+  const timezone = parseTimezone(args);
+  const ai = parseAiConfig(args);
+  const node = parseNodeConfig(args);
+  const rootPassword = readOptionalString(raw.rootPassword);
+  if (rootPassword && rootPassword.length < 8) {
+    throw new Error("rootPassword must be at least 8 characters");
+  }
+
+  if (timezone !== undefined) {
+    ctx.config.set("config/server/timezone", timezone);
+  }
+  if (ai.provider !== undefined) {
+    ctx.config.set("config/ai/provider", ai.provider);
+  }
+  if (ai.model !== undefined) {
+    ctx.config.set("config/ai/model", ai.model);
+  }
+  if (ai.apiKey !== undefined) {
+    ctx.config.set("config/ai/api_key", ai.apiKey);
+  }
+
+  const rootShadowBeforeResume = ctx.auth.getShadowByUsername("root");
+  if (!rootShadowBeforeResume || isLocked(rootShadowBeforeResume)) {
+    await ctx.auth.setPassword(
+      "root",
+      await hashPassword(rootPassword ?? password),
+    );
+  }
+
+  let bootstrap: SysSetupResult["bootstrap"];
+  if (ctx.env.RIPGIT) {
+    bootstrap = await handleSysBootstrap(undefined, {
+      ...ctx,
+      identity: {
+        role: "user",
+        process: {
+          ...authenticated.identity,
+          cwd: authenticated.identity.home,
+        },
+        capabilities: ["*"],
+      },
+    });
+  }
+
+  await resumeManagedAccountSetup(ctx, user, agentName);
+  if (ctx.env.RIPGIT) {
+    await seedBuiltinSkillsToHome(new RipgitClient(ctx.env.RIPGIT), {
+      uid: 0,
+      gid: 0,
+      gids: [0],
+      username: "root",
+      home: "/root",
+      cwd: "/root",
+    });
+  }
+
+  let nodeToken: SysSetupResult["nodeToken"];
+  if (node) {
+    for (const token of ctx.auth.listTokens(user.uid)) {
+      if (
+        token.kind === "node"
+        && token.allowedDeviceId === node.deviceId
+        && token.revokedAt === null
+      ) {
+        ctx.auth.revokeToken(token.tokenId, "setup retry", user.uid);
+      }
+    }
+    const issued = await ctx.auth.issueToken({
+      uid: user.uid,
+      kind: "node",
+      label: node.label ?? `node:${node.deviceId}`,
+      allowedRole: "driver",
+      allowedDeviceId: node.deviceId,
+      expiresAt: node.expiresAt,
+    });
+    nodeToken = {
+      tokenId: issued.tokenId,
+      token: issued.token,
+      tokenPrefix: issued.tokenPrefix,
+      uid: issued.uid,
+      kind: "node",
+      label: issued.label,
+      allowedRole: "driver",
+      allowedDeviceId: issued.allowedDeviceId,
+      createdAt: issued.createdAt,
+      expiresAt: issued.expiresAt,
+    };
+  }
+
+  const rootShadow = ctx.auth.getShadowByUsername("root");
+  return {
+    server: {
+      version: ctx.serverVersion,
+      release: SERVER_RELEASE,
+    },
+    user: {
+      ...authenticated.identity,
+      cwd: authenticated.identity.home,
+    },
+    rootLocked: rootShadow ? isLocked(rootShadow) : true,
+    bootstrap,
+    nodeToken,
+  };
+}
+
 /**
  * Provision the first managed human without creating a second user-facing
  * password. The generated bootstrap password exists only for the duration of

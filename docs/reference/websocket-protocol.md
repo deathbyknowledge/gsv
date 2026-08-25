@@ -135,6 +135,14 @@ The gateway rejects setup-mode connections with error code `425` and details:
 }
 ```
 
+Managed provisioning hostnames deliberately do not return the public setup
+signal. Their desktop enters setup only after receiving a private onboarding
+URL. Requests to `sys.setup` and `sys.setup.assist` then include an optional
+`onboardingToken` field, which is required and verified against that
+installation in managed mode. Standalone setup omits it. The token is a
+first-boot capability only; after activation, clients authenticate normally
+through `sys.connect`.
+
 ---
 
 ## `sys.connect`

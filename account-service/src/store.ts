@@ -401,6 +401,83 @@ export class AccountStore {
     return await this.requireOwnedReservation(operationId, principalId);
   }
 
+  async completeInstallationOnboarding(
+    operationIdValue: string,
+    principalIdValue: string,
+    onboardingClaimIdValue: string,
+  ): Promise<InstallationReservation> {
+    const operationId = parseOpaqueId(operationIdValue, "operationId");
+    const principalId = parseOpaqueId(principalIdValue, "principalId");
+    const onboardingClaimId = parseOpaqueId(
+      onboardingClaimIdValue,
+      "onboardingClaimId",
+    );
+    const reservation = await this.requireOwnedReservation(operationId, principalId);
+    const now = nowMs();
+    const results = await this.db.batch([
+      this.db.prepare(
+        `UPDATE installations
+         SET state = (
+               SELECT e.state FROM entitlements e
+               WHERE e.installation_id = installations.id AND e.effective_at <= ?
+             ),
+             reservation_expires_at = NULL,
+             activated_at = COALESCE(activated_at, ?)
+         WHERE id = ? AND owner_principal_id = ?
+           AND EXISTS (
+             SELECT 1 FROM entitlements e
+             WHERE e.installation_id = installations.id AND e.effective_at <= ?
+           )`,
+      ).bind(now, now, reservation.installationId, principalId, now),
+      this.db.prepare(
+        `UPDATE hostnames
+         SET state = 'active'
+         WHERE installation_id = ? AND kind = 'canonical'
+           AND EXISTS (
+             SELECT 1 FROM entitlements e
+             WHERE e.installation_id = hostnames.installation_id
+               AND e.effective_at <= ?
+           )`,
+      ).bind(reservation.installationId, now),
+      this.db.prepare(
+        `UPDATE provisioning_operations
+         SET state = 'complete', last_error = NULL, updated_at = ?
+         WHERE operation_id = ? AND principal_id = ?
+           AND EXISTS (
+             SELECT 1 FROM entitlements e
+             WHERE e.installation_id = provisioning_operations.installation_id
+               AND e.effective_at <= ?
+           )`,
+      ).bind(now, operationId, principalId, now),
+      this.db.prepare(
+        `UPDATE installation_onboarding_claims
+         SET completed_at = ?
+         WHERE id = ? AND installation_id = ?
+           AND completed_at IS NULL AND revoked_at IS NULL`,
+      ).bind(now, onboardingClaimId, reservation.installationId),
+      this.db.prepare(
+        `INSERT INTO audit_events (
+           id, principal_id, installation_id, action, outcome, created_at, metadata_json
+         )
+         SELECT ?, principal_id, installation_id,
+                'installation.onboarding_completed', 'succeeded', ?, '{}'
+         FROM provisioning_operations
+         WHERE operation_id = ? AND principal_id = ?
+           AND state = 'complete' AND updated_at = ?`,
+      ).bind(
+        `audit_${crypto.randomUUID()}`,
+        now,
+        operationId,
+        principalId,
+        now,
+      ),
+    ]);
+    if (results.slice(0, 4).some((statement) => (statement.meta.changes ?? 0) !== 1)) {
+      throw new Error("installation onboarding could not be activated");
+    }
+    return await this.requireOwnedReservation(operationId, principalId);
+  }
+
   async failProvisioning(operationIdValue: string, category: string): Promise<void> {
     const operationId = parseOpaqueId(operationIdValue, "operationId");
     const now = nowMs();

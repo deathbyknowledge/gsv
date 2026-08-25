@@ -13,11 +13,9 @@ cd "$ROOT_DIR"
 node ./scripts/check-local-port.mjs 8976
 npm run gsv:build
 npm run build --workspace web
-npm run build:account --workspace web -- --base /__gsv/account/
 rm -rf "$ASSET_DIR"
-mkdir -p "$ASSET_DIR/__gsv/account"
+mkdir -p "$ASSET_DIR"
 cp -R "$ROOT_DIR/web/dist/." "$ASSET_DIR/"
-cp -R "$ROOT_DIR/web/dist-account/." "$ASSET_DIR/__gsv/account/"
 
 cd "$ROOT_DIR/account-service"
 CI=1 npm exec --workspaces=false -- wrangler d1 migrations apply ACCOUNT_DB \
@@ -26,8 +24,8 @@ CI=1 npm exec --workspaces=false -- wrangler d1 migrations apply ACCOUNT_DB \
   --persist-to "$STATE_DIR"
 
 printf '\nManaged GSV is starting on http://localhost:8976\n'
-printf 'Open http://localhost:8976/__gsv/development to enter the local installation.\n'
-printf 'Installation host: http://local.localhost:8976\n'
+printf 'Open http://localhost:8976/admin to create an installation.\n'
+printf 'Then open the one-time onboarding link issued by the registry.\n'
 printf 'State: %s\n\n' "$STATE_DIR"
 
 exec env \

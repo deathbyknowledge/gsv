@@ -10,6 +10,7 @@ import type {
   GatewayFrame,
 } from "../src/types";
 
+// SAFETY: Test fixture is constructed with the asserted adapter contract.
 const INSTALLATION = { installationId: "inst_test" } as const;
 
 function trackedBody(): {
@@ -54,6 +55,7 @@ describe("callAdapterGateway", () => {
       });
       expect(frame.type === "req" && frame.id).toMatch(/^[0-9a-f-]{36}$/);
       return {
+        // SAFETY: Test fixture is constructed with the asserted adapter contract.
         type: "res" as const,
         id: frame.type === "req" ? frame.id : "unexpected",
         ok: true,

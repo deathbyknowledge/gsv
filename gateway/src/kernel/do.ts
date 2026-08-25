@@ -22,6 +22,7 @@ import type {
   AdapterMedia,
   AdapterMediaPart,
   AdapterSurface,
+  InstallationOnboardingAuthorization,
   BinaryBody,
   ConnectionIdentity,
   NetFetchArgs,
@@ -39,6 +40,7 @@ import type {
   ExportManagedInstallationInput,
   ProvisionInstallationInput,
   ProvisionInstallationResult,
+  SysSetupResult,
   ScheduleRecord,
   ScheduleRunResult,
   SchedulerRunArgs,
@@ -102,7 +104,10 @@ import {
   processMediaPath,
   processMediaPrefix,
 } from "../shared/process-media-path";
-import { handleSysSetup as handleKernelSetup } from "./sys/setup";
+import {
+  handleSysSetup as handleKernelSetup,
+  resumeSysSetup,
+} from "./sys/setup";
 import { handleSysSetupAssist } from "./sys/setup-assist";
 import { completeOAuthCallback as completeOAuthCallbackFlow } from "./sys/oauth";
 import type { McpAddConnectionInput, McpAddConnectionResult } from "./sys/mcp";
@@ -135,6 +140,10 @@ import {
   type InstallationIdentity,
   type InstallationIdentityInput,
 } from "../installation/identity";
+import {
+  getGatewayDeployment,
+  isManagedGatewayDeployment as isManagedKernelEnv,
+} from "../installation/deployment";
 import { createInstallationStorage } from "../installation/storage";
 import { createInstallationRipgit } from "../installation/ripgit";
 import {
@@ -282,6 +291,7 @@ export class Kernel extends Host<Env> {
     operationId: string;
     recoverableUntil: number;
   } | null = null;
+  private managedOnboardingInProgress = false;
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
@@ -2665,19 +2675,11 @@ export class Kernel extends Host<Env> {
       }
 
       if (frame.call === "sys.setup.assist") {
-        if (isManagedKernelEnv(this.env)) {
-          this.sendError(connection, frame.id, 403, "Public setup is disabled for managed installations");
-          return;
-        }
         await this.handleSysSetupAssist(connection, frame as RequestFrame<"sys.setup.assist">);
         return;
       }
 
       if (frame.call === "sys.setup") {
-        if (isManagedKernelEnv(this.env)) {
-          this.sendError(connection, frame.id, 403, "Public setup is disabled for managed installations");
-          return;
-        }
         await this.handleSysSetup(connection, frame as RequestFrame<"sys.setup">);
         return;
       }
@@ -2919,6 +2921,11 @@ export class Kernel extends Host<Env> {
     const ctx = this.buildContext(connection);
     await ensureKernelBootstrapped(ctx);
 
+    if (isManagedKernelEnv(this.env)) {
+      await this.handleManagedSysSetup(connection, frame, ctx);
+      return;
+    }
+
     if (!this.auth.isSetupMode()) {
       this.sendError(connection, frame.id, 409, "System already initialized");
       return;
@@ -2951,18 +2958,123 @@ export class Kernel extends Host<Env> {
     const ctx = this.buildContext(connection);
     await ensureKernelBootstrapped(ctx);
 
+    let args = frame.args;
+    if (isManagedKernelEnv(this.env)) {
+      let authorization: InstallationOnboardingAuthorization;
+      try {
+        authorization = await this.authorizeManagedInstallationOnboarding(
+          frame.args.onboardingToken,
+        );
+      } catch {
+        this.sendError(connection, frame.id, 503, "Installation setup is unavailable");
+        return;
+      }
+      if (!authorization.ok) {
+        this.sendError(connection, frame.id, 401, "Installation setup link is invalid or expired");
+        return;
+      }
+      const { onboardingToken: _onboardingToken, ...assistArgs } = frame.args;
+      args = assistArgs;
+    }
+
     if (!this.auth.isSetupMode()) {
       this.sendError(connection, frame.id, 409, "System already initialized");
       return;
     }
 
     try {
-      const data = await handleSysSetupAssist(frame.args, ctx);
+      const data = await handleSysSetupAssist(args, ctx);
       this.sendOk(connection, frame.id, data);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       this.sendError(connection, frame.id, 400, message);
     }
+  }
+
+  private async handleManagedSysSetup(
+    connection: Connection<ConnectionState>,
+    frame: RequestFrame<"sys.setup">,
+    ctx: KernelContext,
+  ): Promise<void> {
+    if (this.managedOnboardingInProgress) {
+      this.sendError(connection, frame.id, 409, "Installation setup is already in progress");
+      return;
+    }
+    this.managedOnboardingInProgress = true;
+
+    try {
+      let authorization: InstallationOnboardingAuthorization;
+      try {
+        authorization = await this.authorizeManagedInstallationOnboarding(
+          frame.args.onboardingToken,
+        );
+      } catch {
+        this.sendError(connection, frame.id, 503, "Installation setup is unavailable");
+        return;
+      }
+      if (!authorization.ok) {
+        this.sendError(connection, frame.id, 401, "Installation setup link is invalid or expired");
+        return;
+      }
+
+      let data: SysSetupResult;
+      try {
+        const { onboardingToken: _onboardingToken, ...setupArgs } = frame.args;
+        data = this.auth.isSetupMode()
+          ? await handleKernelSetup(setupArgs, ctx)
+          : await resumeSysSetup(setupArgs, ctx);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        this.sendError(connection, frame.id, 400, message);
+        return;
+      }
+
+      try {
+        const deployment = getGatewayDeployment(this.env);
+        if (deployment.kind !== "managed") {
+          throw new Error("Managed installation onboarding is not enabled");
+        }
+        const completion = await deployment.directory.completeInstallationOnboarding({
+          claimId: authorization.claimId,
+          installationId: authorization.installation.installationId,
+        });
+        if (
+          completion.state !== "complete"
+          || completion.installationId !== authorization.installation.installationId
+        ) {
+          throw new Error("Installation onboarding completion mismatch");
+        }
+        this.sendOk(connection, frame.id, data);
+      } catch {
+        this.sendError(connection, frame.id, 503, "Installation setup could not be activated");
+      }
+    } finally {
+      this.managedOnboardingInProgress = false;
+    }
+  }
+
+  private async authorizeManagedInstallationOnboarding(
+    token: unknown,
+  ): Promise<InstallationOnboardingAuthorization> {
+    if (typeof token !== "string") return { ok: false };
+    const deployment = getGatewayDeployment(this.env);
+    const installation = this.installationIdentity.get();
+    if (deployment.kind !== "managed" || !installation) {
+      return { ok: false };
+    }
+    const authorization = await deployment.directory.authorizeInstallationOnboarding({
+      installationId: installation.installationId,
+      token,
+    });
+    if (
+      !authorization.ok
+      || authorization.installation.installationId !== installation.installationId
+      || authorization.installation.handle !== installation.handle
+      || authorization.installation.canonicalOrigin !== installation.canonicalOrigin
+    ) {
+      return { ok: false };
+    }
+    return authorization;
   }
 
   private handleRes(connection: Connection<ConnectionState>, wireFrame: ResponseFrame): void {
@@ -3804,13 +3916,6 @@ function requestAbortError(reason: unknown): Error {
 
 function sameRouteOrigin(left: RouteOrigin, right: RouteOrigin): boolean {
   return left.type === right.type && left.id === right.id;
-}
-
-function isManagedKernelEnv(env: Env | undefined): boolean {
-  return Boolean(
-    (env as (Env & { INSTALLATION_DIRECTORY?: unknown }) | undefined)
-      ?.INSTALLATION_DIRECTORY,
-  );
 }
 
 function managedResourceBatchLimit(value: number | undefined): number {

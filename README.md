@@ -90,20 +90,21 @@ npm run dev                    # start the local multi-worker stack
 npm run dev:managed            # start the credential-free managed stack
 ```
 
-The managed stack builds both browser surfaces, applies local D1 migrations,
-and starts the account, Gateway, inference, Telegram, and ripgit Workers on
-`http://localhost:8976`. Open `http://localhost:8976/__gsv/development` to
-create or resume a local trial and enter it through the normal one-time login
-handoff. Text inference uses the synthetic provider; Stripe, production email,
-Telegram credentials, and Cloudflare credentials are not required. Its state is
-kept under `.wrangler/managed-dev-state` by default.
+The managed stack builds the desktop, applies local D1 migrations, and starts
+the accounts, Gateway, inference, Telegram, and ripgit Workers on
+`http://localhost:8976`. Open `http://localhost:8976/admin`, create an
+installation in the same operator surface used by the deployed accounts
+Worker, then follow its one-time onboarding link. Text inference uses the
+synthetic provider; Stripe, production email, Telegram credentials, and
+Cloudflare credentials are not required. Its state is kept under
+`.wrangler/managed-dev-state` by default.
 Worker files reload while the stack runs. Browser assets are a startup snapshot,
 so restart `npm run dev:managed` after changing `web/` source.
 
-The local bootstrap is for reviewing the managed product/runtime; it does not
-emulate the production Stripe, email-verification, or passkey ceremonies. The
-managed Telegram Worker is present in the graph, but external Telegram delivery
-remains unavailable until platform bot credentials are configured outside this
+Local development changes only the operator access boundary: the admin surface
+is admitted on loopback instead of through Cloudflare Access. The managed
+Telegram Worker is present in the graph, but external Telegram delivery remains
+unavailable until platform bot credentials are configured outside this
 credential-free loop.
 
 Requires [Rust](https://rustup.rs) and Node.js 22 or newer with
