@@ -4,6 +4,7 @@ export const FS_WRITE = "fs.write";
 export const FS_EDIT = "fs.edit";
 export const FS_DELETE = "fs.delete";
 export const FS_SEARCH = "fs.search";
+export const FS_HISTORY = "fs.history";
 
 // Shell (device commands)
 export const SHELL_EXEC = "shell.exec";
@@ -60,6 +61,7 @@ export const SYSCALL_TOOL_NAMES: Record<string, string> = {
   [FS_EDIT]: "Edit",
   [FS_DELETE]: "Delete",
   [FS_SEARCH]: "Search",
+  [FS_HISTORY]: "History",
   [SHELL_EXEC]: "Shell",
 };
 

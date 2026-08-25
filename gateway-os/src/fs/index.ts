@@ -9,12 +9,15 @@ export type {
   MountBackend,
   ExtendedMountStat,
   FsSearchBackendResult,
+  FsHistoryBackendResult,
 } from "./mount";
 export { KernelMountBackend } from "./backends/kernel";
 export { R2MountBackend } from "./backends/r2";
 export { RipgitClient } from "./ripgit/client";
 export type {
   RipgitApplyOp,
+  RipgitHistoryChange,
+  RipgitHistoryEntry,
   RipgitPathResult,
   RipgitRepoRef,
   RipgitTreeEntry,

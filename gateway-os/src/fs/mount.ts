@@ -5,12 +5,18 @@ import type {
   MkdirOptions,
   RmOptions,
 } from "just-bash";
+import type { FsHistoryEntry } from "../syscalls/history";
 import type { FsSearchMatch } from "../syscalls/search";
 
 export type ExtendedMountStat = FsStat & { uid: number; gid: number };
 
 export type FsSearchBackendResult = {
   matches: FsSearchMatch[];
+  truncated?: boolean;
+};
+
+export type FsHistoryBackendResult = {
+  entries: FsHistoryEntry[];
   truncated?: boolean;
 };
 
@@ -26,6 +32,7 @@ export interface MountBackend {
   readdir(path: string): Promise<string[]>;
   rm(path: string, options?: RmOptions): Promise<void>;
   search?(path: string, query: string, include?: string): Promise<FsSearchBackendResult>;
+  history?(path: string, limit?: number): Promise<FsHistoryBackendResult>;
   chmod?(path: string, mode: number): Promise<void>;
   chown?(path: string, uid?: number, gid?: number): Promise<void>;
   utimes?(path: string, atime: Date, mtime: Date): Promise<void>;

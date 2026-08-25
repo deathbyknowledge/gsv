@@ -52,6 +52,26 @@ type FsSearchResult =
   | { ok: true; matches: FsSearchMatch[]; count: number; truncated?: boolean }
   | { ok: false; error: string };
 
+type FsHistoryChangeKind = "added" | "modified" | "deleted" | "renamed";
+
+type FsHistoryChange = {
+  path: string;
+  previousPath?: string | null;
+  kind: FsHistoryChangeKind;
+};
+
+type FsHistoryEntry = {
+  commit: string;
+  author: string;
+  timestamp: number;
+  message: string;
+  changes: FsHistoryChange[];
+};
+
+type FsHistoryResult =
+  | { ok: true; entries: FsHistoryEntry[]; count: number; truncated?: boolean }
+  | { ok: false; error: string };
+
 type FileEntry = {
   name: string;
   path: string;
@@ -61,6 +81,7 @@ type FileEntry = {
 type FilesViewState = "ready" | "working" | "error" | "offline";
 type DetailKind = "empty" | "file" | "image";
 type PathStyle = "absolute" | "relative";
+
 function defineElement(tagName: string, constructor: CustomElementConstructor): void {
   if (!customElements.get(tagName)) {
     customElements.define(tagName, constructor);
@@ -250,6 +271,67 @@ function formatBytes(bytes: number): string {
   return `${mb.toFixed(1)} MB`;
 }
 
+function formatRelativeTime(ms: number): string {
+  const deltaMs = ms - Date.now();
+  const absDeltaMs = Math.abs(deltaMs);
+
+  if (absDeltaMs < 60_000) {
+    return "just now";
+  }
+
+  const units: Array<[Intl.RelativeTimeFormatUnit, number]> = [
+    ["day", 24 * 60 * 60_000],
+    ["hour", 60 * 60_000],
+    ["minute", 60_000],
+  ];
+
+  for (const [unit, unitMs] of units) {
+    if (absDeltaMs >= unitMs) {
+      const value = Math.round(deltaMs / unitMs);
+      return new Intl.RelativeTimeFormat(undefined, { numeric: "auto" }).format(value, unit);
+    }
+  }
+
+  return "just now";
+}
+
+function shortCommit(hash: string): string {
+  return hash.trim().slice(0, 7);
+}
+
+function relativeHistoryPath(scopePath: string, path: string): string {
+  const normalizedScope = normalizePath(scopePath, "absolute");
+  const normalizedPath = normalizePath(path, "absolute");
+  if (normalizedScope !== "/" && normalizedPath.startsWith(`${normalizedScope}/`)) {
+    return normalizedPath.slice(normalizedScope.length + 1) || baseName(normalizedPath);
+  }
+
+  const workspaceMatch = normalizedScope.match(/^\/workspaces\/[^/]+/);
+  if (workspaceMatch && normalizedPath.startsWith(`${workspaceMatch[0]}/`)) {
+    return normalizedPath.slice(workspaceMatch[0].length + 1) || baseName(normalizedPath);
+  }
+
+  return normalizedPath;
+}
+
+function formatHistoryChangeLabel(change: FsHistoryChange, scopePath: string): string {
+  const current = relativeHistoryPath(scopePath, change.path);
+  switch (change.kind) {
+    case "added":
+      return `A ${current}`;
+    case "deleted":
+      return `D ${current}`;
+    case "renamed": {
+      const previous = change.previousPath
+        ? relativeHistoryPath(scopePath, change.previousPath)
+        : current;
+      return `R ${previous} -> ${current}`;
+    }
+    default:
+      return `M ${current}`;
+  }
+}
+
 function fileIconVariant(name: string, isDirectory: boolean): FileIconKind {
   if (isDirectory) {
     return "folder";
@@ -288,16 +370,19 @@ class GsvFilesAppElement extends HTMLElement implements GsvAppElement {
   private imageData: { mimeType: string; base64: string } | null = null;
   private isDirty = false;
   private currentView: "explorer" | "editor" = "explorer";
-  private explorerPane: "entries" | "search" = "entries";
+  private explorerPane: "entries" | "search" | "history" = "entries";
   private searchPattern = "";
   private searchMatches: FsSearchMatch[] = [];
   private searchTruncated = false;
+  private historyEntries: FsHistoryEntry[] = [];
+  private historyTruncated = false;
 
   private isLoadingDir = false;
   private isLoadingFile = false;
   private isSaving = false;
   private isDeleting = false;
   private isSearching = false;
+  private isLoadingHistory = false;
   private isRefreshingDevices = false;
 
   private unsubscribeStatus: (() => void) | null = null;
@@ -400,6 +485,28 @@ class GsvFilesAppElement extends HTMLElement implements GsvAppElement {
       this.render();
       return;
     }
+    if (action === "show-entries") {
+      this.currentView = "explorer";
+      this.explorerPane = "entries";
+      this.render();
+      return;
+    }
+    if (action === "show-search") {
+      if (this.searchMatches.length === 0) {
+        return;
+      }
+      this.currentView = "explorer";
+      this.explorerPane = "search";
+      this.render();
+      return;
+    }
+    if (action === "show-history") {
+      this.currentView = "explorer";
+      this.explorerPane = "history";
+      this.render();
+      void this.loadHistory(this.currentPath);
+      return;
+    }
   };
 
   private readonly onInput = (event: Event): void => {
@@ -427,6 +534,8 @@ class GsvFilesAppElement extends HTMLElement implements GsvAppElement {
           this.target = targetNode.value;
           this.searchMatches = [];
           this.searchTruncated = false;
+          this.historyEntries = [];
+          this.historyTruncated = false;
           this.pathStyle = this.target === "gsv" ? "absolute" : "relative";
           this.currentPath = this.pathStyle === "absolute"
             ? this.preferredGsvPath(this.activeThreadContext)
@@ -580,6 +689,8 @@ class GsvFilesAppElement extends HTMLElement implements GsvAppElement {
     this.entries = [];
     this.searchMatches = [];
     this.searchTruncated = false;
+    this.historyEntries = [];
+    this.historyTruncated = false;
     this.selectedPath = null;
     this.selectedKind = "empty";
     this.selectedSize = null;
@@ -594,6 +705,7 @@ class GsvFilesAppElement extends HTMLElement implements GsvAppElement {
     this.isSaving = false;
     this.isDeleting = false;
     this.isSearching = false;
+    this.isLoadingHistory = false;
     this.isRefreshingDevices = false;
     this.statusKind = "idle";
     this.statusText = "";
@@ -643,6 +755,8 @@ class GsvFilesAppElement extends HTMLElement implements GsvAppElement {
     this.isDirty = false;
     this.searchMatches = [];
     this.searchTruncated = false;
+    this.historyEntries = [];
+    this.historyTruncated = false;
     this.setStatus("idle", "");
 
     if (options?.reload && this.context && this.kernelState === "connected" && !this.suspended) {
@@ -671,6 +785,7 @@ class GsvFilesAppElement extends HTMLElement implements GsvAppElement {
       this.isSaving ||
       this.isDeleting ||
       this.isSearching ||
+      this.isLoadingHistory ||
       this.isRefreshingDevices
     ) {
       return { kind: "working", label: "working", detail: "File operations in progress." };
@@ -729,6 +844,7 @@ class GsvFilesAppElement extends HTMLElement implements GsvAppElement {
     this.render();
 
     try {
+      const keepHistoryPane = this.explorerPane === "history";
       let result = await context.kernel.request<FsReadResult>(
         "fs.read",
         this.withTarget({ path: resolvedPath }),
@@ -774,9 +890,11 @@ class GsvFilesAppElement extends HTMLElement implements GsvAppElement {
       this.currentPath = normalizePath(result.path, style);
       this.pathInput = this.currentPath;
       this.currentView = "explorer";
-      this.explorerPane = "entries";
+      this.explorerPane = keepHistoryPane ? "history" : "entries";
       this.searchMatches = [];
       this.searchTruncated = false;
+      this.historyEntries = [];
+      this.historyTruncated = false;
 
       if (this.selectedPath && !nextEntries.some((entry) => entry.path === this.selectedPath)) {
         this.selectedPath = null;
@@ -785,6 +903,10 @@ class GsvFilesAppElement extends HTMLElement implements GsvAppElement {
         this.editorContent = "";
         this.imageData = null;
         this.isDirty = false;
+      }
+
+      if (keepHistoryPane && this.supportsWorkspaceHistory(this.currentPath)) {
+        void this.loadHistory(this.currentPath);
       }
     } catch (error) {
       this.setStatus("error", error instanceof Error ? error.message : String(error));
@@ -1072,6 +1194,60 @@ class GsvFilesAppElement extends HTMLElement implements GsvAppElement {
     }
   }
 
+  private supportsWorkspaceHistory(path: string): boolean {
+    return normalizeTarget(this.target) === "gsv"
+      && detectPathStyle(path) === "absolute"
+      && isWorkspacePath(path);
+  }
+
+  private async loadHistory(path: string): Promise<void> {
+    const context = this.context;
+    if (!context || this.kernelState !== "connected" || this.suspended || this.isLoadingHistory) {
+      return;
+    }
+
+    const resolvedPath = normalizePath(path, detectPathStyle(path));
+    if (!this.supportsWorkspaceHistory(resolvedPath)) {
+      this.historyEntries = [];
+      this.historyTruncated = false;
+      this.render();
+      return;
+    }
+
+    this.isLoadingHistory = true;
+    this.setStatus("idle", "");
+    this.render();
+
+    try {
+      const result = await context.kernel.request<FsHistoryResult>(
+        "fs.history",
+        this.withTarget({
+          path: resolvedPath,
+          limit: 12,
+        }),
+      );
+      if (!result.ok) {
+        this.setStatus("error", result.error);
+        this.historyEntries = [];
+        this.historyTruncated = false;
+        return;
+      }
+      this.historyEntries = result.entries;
+      this.historyTruncated = result.truncated === true;
+      this.explorerPane = "history";
+    } catch (error) {
+      this.setStatus("error", error instanceof Error ? error.message : String(error));
+      this.historyEntries = [];
+      this.historyTruncated = false;
+    } finally {
+      if (!this.context) {
+        return;
+      }
+      this.isLoadingHistory = false;
+      this.render();
+    }
+  }
+
   private renderBreadcrumbs(): string {
     const normalized = normalizePath(this.currentPath, this.pathStyle);
 
@@ -1247,6 +1423,10 @@ class GsvFilesAppElement extends HTMLElement implements GsvAppElement {
       `;
     }
 
+    if (this.explorerPane === "history") {
+      return this.renderHistoryView();
+    }
+
     return `
       <section class="files-grid-view">
         ${this.isLoadingDir ? `<p class="config-empty muted">Loading directory…</p>` : this.renderEntryRows()}
@@ -1282,6 +1462,79 @@ class GsvFilesAppElement extends HTMLElement implements GsvAppElement {
     `;
   }
 
+  private renderHistoryView(): string {
+    return `
+      <section class="files-history-view">
+        <header class="files-history-header">
+          <h3>Recent Changes</h3>
+          <p class="muted">${escapeHtml(this.currentPath)}</p>
+        </header>
+        <div class="files-history-results">
+          ${this.renderHistoryRows()}
+        </div>
+      </section>
+    `;
+  }
+
+  private renderHistoryRows(): string {
+    if (!this.supportsWorkspaceHistory(this.currentPath)) {
+      return `<p class="config-empty muted">Recent changes are available for workspace paths on Kernel (gsv).</p>`;
+    }
+
+    if (this.isLoadingHistory) {
+      return `<p class="config-empty muted">Loading recent changes…</p>`;
+    }
+
+    if (this.historyEntries.length === 0) {
+      return `<p class="config-empty muted">No checkpoint history yet.</p>`;
+    }
+
+    const rows = this.historyEntries
+      .map((entry) => {
+        const visibleChanges = entry.changes.slice(0, 4);
+        const remainingChanges = Math.max(0, entry.changes.length - visibleChanges.length);
+        const changeRows = visibleChanges
+          .map((change) => `
+            <span class="files-history-chip is-${escapeHtml(change.kind)}">
+              ${escapeHtml(formatHistoryChangeLabel(change, this.currentPath))}
+            </span>
+          `)
+          .join("");
+        const extraChip = remainingChanges > 0
+          ? `<span class="files-history-chip is-more">+${remainingChanges} more</span>`
+          : "";
+        const changeSummary = entry.changes.length > 0
+          ? `${entry.changes.length} file${entry.changes.length === 1 ? "" : "s"}`
+          : "workspace checkpoint";
+
+        return `
+          <article
+            class="files-history-row"
+            title="${escapeHtml(new Date(entry.timestamp).toLocaleString())}"
+          >
+            <div class="files-history-row-head">
+              <div class="files-history-copy">
+                <h4>${escapeHtml(entry.message)}</h4>
+                <p class="files-history-meta-text">
+                  ${escapeHtml(`${entry.author} · ${formatRelativeTime(entry.timestamp)} · ${shortCommit(entry.commit)}`)}
+                </p>
+              </div>
+              <span class="files-history-count">${escapeHtml(changeSummary)}</span>
+            </div>
+            ${entry.changes.length > 0
+              ? `<div class="files-history-changes">${changeRows}${extraChip}</div>`
+              : `<p class="muted">No file list captured for this checkpoint.</p>`}
+          </article>
+        `;
+      })
+      .join("");
+
+    return `
+      ${rows}
+      ${this.historyTruncated ? `<p class="muted">History truncated.</p>` : ""}
+    `;
+  }
+
   private render(): void {
     const context = this.context;
     if (!context) {
@@ -1300,15 +1553,20 @@ class GsvFilesAppElement extends HTMLElement implements GsvAppElement {
       !this.suspended &&
       !this.isLoadingDir &&
       !this.isLoadingFile &&
-      !this.isSearching;
+      !this.isSearching &&
+      !this.isLoadingHistory;
     const explorerCountLabel =
       this.explorerPane === "search"
         ? `${this.searchMatches.length} result${this.searchMatches.length === 1 ? "" : "s"}`
-        : `${this.entries.length} item${this.entries.length === 1 ? "" : "s"}`;
+        : this.explorerPane === "history"
+          ? `${this.historyEntries.length} commit${this.historyEntries.length === 1 ? "" : "s"}`
+          : `${this.entries.length} item${this.entries.length === 1 ? "" : "s"}`;
     const atRoot =
       this.pathStyle === "absolute"
         ? this.currentPath === "/"
         : this.currentPath === ".";
+    const canShowSearchPane = this.searchMatches.length > 0 || this.explorerPane === "search";
+    const canShowHistoryPane = this.supportsWorkspaceHistory(this.currentPath);
 
     const targetOptions = [
       `<option value="gsv"${targetSelectValue === "gsv" ? " selected" : ""}>Kernel (gsv)</option>`,
@@ -1405,6 +1663,35 @@ class GsvFilesAppElement extends HTMLElement implements GsvAppElement {
         <section class="files-main">
           <div class="files-main-meta">
             <p class="muted">${explorerCountLabel}</p>
+            <div class="files-main-actions">
+              <button
+                type="button"
+                class="runtime-btn files-pane-toggle${this.explorerPane === "entries" ? " is-active" : ""}"
+                data-action="show-entries"
+              >
+                Files
+              </button>
+              <button
+                type="button"
+                class="runtime-btn files-pane-toggle${this.explorerPane === "search" ? " is-active" : ""}"
+                data-action="show-search"
+                ${canShowSearchPane ? "" : "disabled"}
+              >
+                Search
+              </button>
+              ${canShowHistoryPane
+                ? `
+                  <button
+                    type="button"
+                    class="runtime-btn files-pane-toggle${this.explorerPane === "history" ? " is-active" : ""}"
+                    data-action="show-history"
+                    ${this.isLoadingHistory || this.suspended ? "disabled" : ""}
+                  >
+                    Recent changes
+                  </button>
+                `
+                : ""}
+            </div>
           </div>
           ${this.currentView === "editor"
             ? `<section class="files-editor-view">${this.renderEditorView()}</section>`

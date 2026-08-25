@@ -26,6 +26,7 @@ import { FS_WRITE_DEFINITION } from "../syscalls/write";
 import { FS_EDIT_DEFINITION } from "../syscalls/edit";
 import { FS_WRITE_DEFINITION as FS_DELETE_DEFINITION } from "../syscalls/delete";
 import { FS_SEARCH_DEFINITION } from "../syscalls/search";
+import { FS_HISTORY_DEFINITION } from "../syscalls/history";
 import { SHELL_EXEC_DEFINITION } from "../syscalls/shell";
 
 const SYSCALL_TOOLS: Record<string, ToolDefinition> = {
@@ -34,6 +35,7 @@ const SYSCALL_TOOLS: Record<string, ToolDefinition> = {
   "fs.edit": FS_EDIT_DEFINITION,
   "fs.delete": FS_DELETE_DEFINITION,
   "fs.search": FS_SEARCH_DEFINITION,
+  "fs.history": FS_HISTORY_DEFINITION,
   "shell.exec": SHELL_EXEC_DEFINITION,
 };
 

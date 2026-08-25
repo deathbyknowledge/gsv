@@ -360,6 +360,10 @@ function renderToolCallInput(toolName: string, args: unknown): HTMLElement {
       addMetaRow(wrapper, "path", record.path);
       addMetaRow(wrapper, "include", record.include);
       break;
+    case "History":
+      addMetaRow(wrapper, "path", record.path);
+      addMetaRow(wrapper, "limit", record.limit);
+      break;
     case "Shell":
       addMetaRow(wrapper, "command", record.command);
       addMetaRow(wrapper, "target", record.target);
@@ -520,6 +524,54 @@ function renderSearchOutput(output: unknown): HTMLElement {
       const line = safeText(match.line);
       const content = safeText(match.content);
       return `${path}:${line}: ${content}`;
+    })
+    .join("\n");
+  wrap.appendChild(pre);
+  return wrap;
+}
+
+function renderHistoryOutput(output: unknown): HTMLElement {
+  const wrap = document.createElement("div");
+  wrap.className = "tool-result-view";
+
+  const normalized = normalizeToolOutput(output);
+  const record = asRecord(normalized);
+  if (!record) {
+    const pre = document.createElement("pre");
+    pre.className = "tool-result-pre";
+    pre.textContent = safeText(normalized);
+    wrap.appendChild(pre);
+    return wrap;
+  }
+
+  if (record.ok === false) {
+    const error = asString(record.error) ?? "history failed";
+    const errorNode = document.createElement("p");
+    errorNode.className = "tool-error";
+    errorNode.textContent = error;
+    wrap.appendChild(errorNode);
+    return wrap;
+  }
+
+  addMetaRow(wrap, "count", record.count);
+  addMetaRow(wrap, "truncated", record.truncated);
+
+  const entries = Array.isArray(record.entries) ? record.entries : [];
+  const pre = document.createElement("pre");
+  pre.className = "tool-result-pre";
+  pre.textContent = entries
+    .slice(0, 80)
+    .map((item) => {
+      const entry = asRecord(item);
+      if (!entry) return safeText(item);
+      const message = safeText(entry.message);
+      const commit = safeText(entry.commit).slice(0, 7);
+      const changes = Array.isArray(entry.changes) ? entry.changes : [];
+      const firstChange = changes[0];
+      const firstChangeRecord = asRecord(firstChange);
+      const firstPath = firstChangeRecord ? safeText(firstChangeRecord.path) : "";
+      const suffix = firstPath ? ` · ${firstPath}` : "";
+      return `${commit}: ${message}${suffix}`;
     })
     .join("\n");
   wrap.appendChild(pre);
@@ -708,6 +760,8 @@ function inferToolSyscall(toolName: string, syscall: string | null | undefined):
       return "fs.read";
     case "Search":
       return "fs.search";
+    case "History":
+      return "fs.history";
     case "Shell":
       return "shell.exec";
     case "Write":
@@ -811,6 +865,16 @@ function describeToolCard(toolName: string, args: unknown, syscall?: string | nu
     return {
       iconKind: "search",
       title: query ? `Search ${truncateInline(query, 42)}` : "Search workspace",
+      context: path ? truncateInline(path, 48) : undefined,
+      targetKind: target.kind,
+      targetLabel: target.label,
+    };
+  }
+
+  if (isToolKind(toolName, syscall, "History", "fs.history")) {
+    return {
+      iconKind: "search",
+      title: path ? `History ${basenamePath(path)}` : "Recent changes",
       context: path ? truncateInline(path, 48) : undefined,
       targetKind: target.kind,
       targetLabel: target.label,
@@ -962,6 +1026,25 @@ function renderToolResultPreview(
     return wrapper;
   }
 
+  if (isToolKind(toolName, syscall, "History", "fs.history")) {
+    const entries = Array.isArray(record?.entries) ? record.entries : [];
+    const count = asNumber(record?.count) ?? entries.length;
+    wrapper.appendChild(createToolPreviewLine(`${count} commits.`));
+    if (entries.length > 0) {
+      const lines = entries
+        .slice(0, 6)
+        .map((item) => {
+          const entry = asRecord(item);
+          if (!entry) return safeText(item);
+          const commit = safeText(entry.commit).slice(0, 7);
+          const message = safeText(entry.message);
+          return `${commit}: ${message}`;
+        });
+      wrapper.appendChild(createToolPreviewPre(lines.join("\n")));
+    }
+    return wrapper;
+  }
+
   if (isToolKind(toolName, syscall, "Write", "fs.write")) {
     const bytes = asNumber(record?.size);
     wrapper.appendChild(createToolPreviewLine(bytes === null ? "Write completed." : `Wrote ${bytes} bytes.`));
@@ -1000,6 +1083,9 @@ function renderToolResultOutput(
   }
   if (isToolKind(toolName, syscall, "Search", "fs.search")) {
     return renderSearchOutput(output);
+  }
+  if (isToolKind(toolName, syscall, "History", "fs.history")) {
+    return renderHistoryOutput(output);
   }
   if (isToolKind(toolName, syscall, "Shell", "shell.exec")) {
     return renderShellOutput(output);

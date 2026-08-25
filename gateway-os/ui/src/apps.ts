@@ -71,7 +71,7 @@ export const APP_REGISTRY: readonly AppManifest[] = [
     iconId: "files",
     entrypoint: { kind: "component", route: "/apps/files", tagName: "gsv-files-app" },
     permissions: ["fs.*", "device.inspect"],
-    syscalls: ["fs.read", "fs.search", "fs.write", "fs.edit", "fs.delete", "sys.device.list"],
+    syscalls: ["fs.read", "fs.search", "fs.history", "fs.write", "fs.edit", "fs.delete", "sys.device.list"],
     windowDefaults: {
       width: 980,
       height: 650,

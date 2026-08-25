@@ -14,6 +14,7 @@ import {
   formatSize,
   isTextContentType,
   inferContentType,
+  workspaceRootPath,
 } from "../../fs";
 import type { KernelContext } from "../../kernel/context";
 import type { FsReadArgs, FsReadResult } from "../../syscalls/read";
@@ -21,6 +22,7 @@ import type { FsWriteArgs, FsWriteResult } from "../../syscalls/write";
 import type { FsEditArgs, FsEditResult } from "../../syscalls/edit";
 import type { FsDeleteArgs, FsDeleteResult } from "../../syscalls/delete";
 import type { FsSearchArgs, FsSearchResult } from "../../syscalls/search";
+import type { FsHistoryArgs, FsHistoryResult } from "../../syscalls/history";
 
 const MAX_IMAGE_BYTES = 25 * 1024 * 1024;
 
@@ -235,6 +237,32 @@ export async function handleFsSearch(args: FsSearchArgs, ctx: KernelContext): Pr
       ok: true,
       matches: result.matches,
       count: result.matches.length,
+      truncated: result.truncated,
+    };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) };
+  }
+}
+
+export async function handleFsHistory(args: FsHistoryArgs, ctx: KernelContext): Promise<FsHistoryResult> {
+  const identity = ctx.identity!.process;
+  const defaultPath = identity.workspaceId
+    ? workspaceRootPath(identity.workspaceId)
+    : identity.cwd;
+  const path = args.path
+    ? resolveUserPath(args.path, identity.home, identity.cwd)
+    : defaultPath;
+  const limit = typeof args.limit === "number" && Number.isFinite(args.limit) && args.limit > 0
+    ? Math.min(Math.floor(args.limit), 50)
+    : 12;
+  const fs = makeFs(ctx);
+
+  try {
+    const result = await fs.history(path, limit);
+    return {
+      ok: true,
+      entries: result.entries,
+      count: result.entries.length,
       truncated: result.truncated,
     };
   } catch (err) {

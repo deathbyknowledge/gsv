@@ -21,6 +21,7 @@ import {
   handleFsEdit,
   handleFsDelete,
   handleFsSearch,
+  handleFsHistory,
 } from "../drivers/native/fs";
 import { handleShellExec } from "../drivers/native/shell";
 import { handleAiTools, handleAiConfig } from "./ai";
@@ -125,6 +126,9 @@ async function dispatchNative(
         break;
       case "fs.search":
         data = await handleFsSearch(frame.args, ctx);
+        break;
+      case "fs.history":
+        data = await handleFsHistory(frame.args, ctx);
         break;
 
       case "shell.exec":

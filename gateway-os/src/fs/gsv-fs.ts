@@ -22,7 +22,12 @@ import type {
 } from "just-bash";
 import type { ProcessIdentity } from "../syscalls/system";
 import type { KernelRefs } from "./refs";
-import type { MountBackend, ExtendedMountStat, FsSearchBackendResult } from "./mount";
+import type {
+  MountBackend,
+  ExtendedMountStat,
+  FsSearchBackendResult,
+  FsHistoryBackendResult,
+} from "./mount";
 import { R2MountBackend } from "./backends/r2";
 import { KernelMountBackend } from "./backends/kernel";
 import { isWorkspaceMountPath } from "./backends/workspace";
@@ -243,6 +248,15 @@ export class GsvFs implements IFileSystem {
       throw new Error(`ENOSYS: search is not supported for '${p}'`);
     }
     return backend.search(p, query, include);
+  }
+
+  async history(path: string, limit?: number): Promise<FsHistoryBackendResult> {
+    const p = normalizePath(path);
+    const backend = this.backendForPath(p);
+    if (!backend.history) {
+      throw new Error(`ENOSYS: history is not supported for '${p}'`);
+    }
+    return backend.history(p, limit);
   }
 
   private backendForPath(path: string): MountBackend {

@@ -40,6 +40,25 @@ export type RipgitSearchMatch = {
   content: string;
 };
 
+export type RipgitHistoryChangeKind = "added" | "modified" | "deleted" | "renamed";
+
+export type RipgitHistoryChange = {
+  path: string;
+  previousPath?: string | null;
+  kind?: RipgitHistoryChangeKind;
+  status?: RipgitHistoryChangeKind;
+};
+
+export type RipgitHistoryEntry = {
+  commit: string;
+  author?: string;
+  authorName?: string;
+  authorEmail?: string | null;
+  timestamp: number;
+  message: string;
+  changes?: RipgitHistoryChange[];
+};
+
 type RipgitApplyResponse = {
   ok: boolean;
   head?: string | null;
@@ -50,6 +69,13 @@ type RipgitApplyResponse = {
 type RipgitSearchResponse = {
   ok: boolean;
   matches?: RipgitSearchMatch[];
+  truncated?: boolean;
+  error?: string;
+};
+
+type RipgitHistoryResponse = {
+  ok: boolean;
+  entries?: RipgitHistoryEntry[];
   truncated?: boolean;
   error?: string;
 };
@@ -143,6 +169,31 @@ export class RipgitClient {
     };
   }
 
+  async history(
+    repo: RipgitRepoRef,
+    options?: { path?: string; limit?: number },
+  ): Promise<{ entries: RipgitHistoryEntry[]; truncated?: boolean }> {
+    const response = await this.binding.fetch(
+      this.makeHistoryUrl(repo, options?.path, options?.limit),
+      {
+        headers: this.makeInternalHeaders(),
+      },
+    );
+    if (!response.ok) {
+      throw new Error(await this.readError(response, `history '${repo.owner}/${repo.repo}'`));
+    }
+
+    const payload = await response.json<RipgitHistoryResponse>();
+    if (!payload.ok) {
+      throw new Error(payload.error ?? `Failed to load history for ${repo.owner}/${repo.repo}`);
+    }
+
+    return {
+      entries: Array.isArray(payload.entries) ? payload.entries : [],
+      truncated: payload.truncated,
+    };
+  }
+
   private makeReadUrl(repo: RipgitRepoRef, path: string): URL {
     return this.makeUrl(
       `/hyperspace/repos/${encodeURIComponent(repo.owner)}/${encodeURIComponent(repo.repo)}/read?ref=${encodeURIComponent(repo.branch ?? DEFAULT_BRANCH)}&path=${encodeURIComponent(path)}`,
@@ -163,6 +214,20 @@ export class RipgitClient {
       url.searchParams.set("prefix", prefix);
     }
     url.searchParams.set("limit", "500");
+    return url;
+  }
+
+  private makeHistoryUrl(repo: RipgitRepoRef, path?: string, limit?: number): URL {
+    const url = this.makeUrl(
+      `/hyperspace/repos/${encodeURIComponent(repo.owner)}/${encodeURIComponent(repo.repo)}/history?ref=${encodeURIComponent(repo.branch ?? DEFAULT_BRANCH)}`,
+    );
+    if (path && path.length > 0) {
+      url.searchParams.set("path", path);
+    }
+    const normalizedLimit = typeof limit === "number" && Number.isFinite(limit) && limit > 0
+      ? Math.floor(limit)
+      : 20;
+    url.searchParams.set("limit", String(normalizedLimit));
     return url;
   }
 

@@ -56,6 +56,10 @@ describe("normalizeCheckpointCommitMessage", () => {
     expect(normalizeCheckpointCommitMessage(' "Add Shell Support." ')).toBe("add shell support");
   });
 
+  it("strips generic checkpoint prefixes", () => {
+    expect(normalizeCheckpointCommitMessage("checkpoint: sync workspace summary")).toBe("sync workspace summary");
+  });
+
   it("falls back when the model returns blank output", () => {
     expect(normalizeCheckpointCommitMessage("   ")).toBe("checkpoint thread state");
   });

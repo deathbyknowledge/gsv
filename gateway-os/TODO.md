@@ -45,9 +45,10 @@ Threads spawn processes. Processes attach to workspaces. Workspaces outlive proc
 - [x] Shell UI: open in the current thread's workspace (`cwd = /workspaces/{workspaceId}`)
 - [x] Add a minimal `.gsv/` workspace layout: `workspace.json`, `summary.md`, per-process `chat.jsonl`
 - [x] Add a basic "Recent Threads" / workspace list in the UI
-- [ ] Surface workspace history/search later
-  - add `/hyperspace/.../history`
-  - add diff/recent-changes UX in Files or Chat
+- [x] Surface workspace history/search later
+  - [x] add `/hyperspace/.../history`
+  - [x] add recent-changes UX in Files
+  - [ ] add richer diff UX in Files or Chat
 
 ## MCP operator / deployment awareness
 

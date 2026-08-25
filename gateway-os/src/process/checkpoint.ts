@@ -61,6 +61,7 @@ export function buildCheckpointCommitMessageContext(
       "Return one line only.",
       "Use imperative lowercase.",
       "Keep it under 72 characters.",
+      "Prefer concrete work over generic 'checkpoint' phrasing.",
       "Do not add quotes, prefixes, or trailing punctuation.",
     ].join(" "),
     messages: [
@@ -91,6 +92,7 @@ export function normalizeCheckpointCommitMessage(message: string): string {
     .split(/\r?\n/, 1)[0]
     ?.trim()
     .replace(/^["'`]+|["'`]+$/g, "")
+    .replace(/^(?:checkpoint|commit|subject|git commit subject|workspace)(?:\s*[:\-]\s*|\s+)/i, "")
     .replace(/[.]+$/g, "")
     .replace(/\s+/g, " ")
     .toLowerCase() ?? "";

@@ -5,7 +5,12 @@ import type {
 } from "just-bash";
 import type { WorkspaceStore } from "../../kernel/workspaces";
 import type { ProcessIdentity } from "../../syscalls/system";
-import type { ExtendedMountStat, MountBackend, FsSearchBackendResult } from "../mount";
+import type {
+  ExtendedMountStat,
+  MountBackend,
+  FsSearchBackendResult,
+  FsHistoryBackendResult,
+} from "../mount";
 import {
   RipgitClient,
   type RipgitApplyOp,
@@ -312,6 +317,59 @@ class WorkspaceMountBackend implements MountBackend {
     return { matches, truncated: result.truncated };
   }
 
+  async history(path: string, limit?: number): Promise<FsHistoryBackendResult> {
+    if (normalizePath(path) === "/workspaces") {
+      return { entries: [] };
+    }
+    const root = this.resolveRepo(path);
+    const targetStat = await this.stat(path).catch(() => null);
+    const filterPath = targetStat?.isFile
+      ? root.relativePath
+      : root.relativePath.length > 0
+        ? root.relativePath
+        : null;
+    const result = await this.client.history(root.repo, {
+      path: filterPath ?? undefined,
+      limit,
+    });
+
+    const entries = result.entries
+      .map((entry) => {
+        const changes = Array.isArray(entry.changes)
+          ? entry.changes
+            .filter((change) => {
+              if (!filterPath) {
+                return true;
+              }
+              return matchesHistoryPath(change.path, filterPath)
+                || matchesHistoryPath(change.previousPath ?? null, filterPath);
+            })
+            .map((change) => ({
+              path: toWorkspaceAbsolutePath(root.workspaceId, change.path),
+              previousPath: change.previousPath
+                ? toWorkspaceAbsolutePath(root.workspaceId, change.previousPath)
+                : null,
+              kind: change.kind ?? change.status ?? "modified",
+            }))
+          : [];
+
+        if (filterPath && Array.isArray(entry.changes) && entry.changes.length > 0 && changes.length === 0) {
+          return null;
+        }
+
+        return {
+          commit: entry.commit,
+          author: entry.author ?? entry.authorName ?? "unknown",
+          timestamp: normalizeTimestamp(entry.timestamp),
+          message: entry.message.trim() || "workspace checkpoint",
+          changes,
+        };
+      })
+      .filter((entry): entry is NonNullable<typeof entry> => entry !== null);
+
+    return { entries, truncated: result.truncated };
+  }
+
   private async apply(
     repo: WorkspaceRepoRef,
     ops: RipgitApplyOp[],
@@ -398,6 +456,27 @@ function dirname(path: string): string {
 
 function joinRelative(prefix: string, name: string): string {
   return prefix ? `${prefix.replace(/\/+$/, "")}/${name}` : name;
+}
+
+function toWorkspaceAbsolutePath(workspaceId: string, path: string): string {
+  return `${workspaceRootPath(workspaceId)}/${path}`.replace(/\/+/g, "/");
+}
+
+function matchesHistoryPath(path: string | null | undefined, targetPath: string): boolean {
+  if (!path || !targetPath) {
+    return false;
+  }
+  return path === targetPath || path.startsWith(`${targetPath.replace(/\/+$/, "")}/`);
+}
+
+function normalizeTimestamp(timestamp: number): number {
+  if (!Number.isFinite(timestamp)) {
+    return Date.now();
+  }
+  if (timestamp > 0 && timestamp < 1_000_000_000_000) {
+    return Math.floor(timestamp * 1_000);
+  }
+  return Math.floor(timestamp);
 }
 
 function compileGlob(pattern: string): RegExp {
