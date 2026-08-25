@@ -1,9 +1,4 @@
-import type { AppElementContext, GsvAppElement } from "../app-sdk";
-import {
-  getActiveThreadContext,
-  subscribeActiveThreadContext,
-  type ThreadContext,
-} from "../thread-context";
+import { defineGsvAppElement, type AppElementContext, type AppThreadSnapshot, type GsvAppElement } from "../app-sdk";
 
 type DeviceSummary = {
   deviceId: string;
@@ -30,12 +25,6 @@ type ShellTranscriptEntry = {
 type LooseRecord = Record<string, unknown>;
 
 const TRANSCRIPT_LIMIT = 120;
-
-function defineElement(tagName: string, constructor: CustomElementConstructor): void {
-  if (!customElements.get(tagName)) {
-    customElements.define(tagName, constructor);
-  }
-}
 
 function escapeHtml(value: string): string {
   return value
@@ -160,7 +149,7 @@ class GsvShellAppElement extends HTMLElement implements GsvAppElement {
 
   private unsubscribeStatus: (() => void) | null = null;
   private unsubscribeThreadContext: (() => void) | null = null;
-  private activeThreadContext: ThreadContext | null = getActiveThreadContext();
+  private activeThreadContext: AppThreadSnapshot | null = null;
 
   private readonly onClick = (event: MouseEvent): void => {
     const target = event.target;
@@ -293,7 +282,7 @@ class GsvShellAppElement extends HTMLElement implements GsvAppElement {
     this.context = context;
     this.kernelState = context.kernel.getStatus().state;
     this.suspended = false;
-    this.applyThreadContext(this.activeThreadContext);
+    this.applyThreadContext(context.thread.current());
 
     this.unsubscribeStatus?.();
     this.unsubscribeStatus = context.kernel.onStatus((status) => {
@@ -309,7 +298,7 @@ class GsvShellAppElement extends HTMLElement implements GsvAppElement {
     this.addEventListener("input", this.onInput);
     this.addEventListener("keydown", this.onKeyDown);
     this.unsubscribeThreadContext?.();
-    this.unsubscribeThreadContext = subscribeActiveThreadContext((threadContext) => {
+    this.unsubscribeThreadContext = context.thread.subscribe((threadContext) => {
       this.applyThreadContext(threadContext);
     });
 
@@ -379,11 +368,11 @@ class GsvShellAppElement extends HTMLElement implements GsvAppElement {
     this.historyDraft = "";
   }
 
-  private preferredGsvWorkdir(threadContext: ThreadContext | null): string {
+  private preferredGsvWorkdir(threadContext: AppThreadSnapshot | null): string {
     return threadContext?.cwd ?? "";
   }
 
-  private applyThreadContext(threadContext: ThreadContext | null): void {
+  private applyThreadContext(threadContext: AppThreadSnapshot | null): void {
     this.activeThreadContext = threadContext;
     if (normalizeTarget(this.target) !== "gsv") {
       return;
@@ -815,5 +804,5 @@ class GsvShellAppElement extends HTMLElement implements GsvAppElement {
 }
 
 export function ensureShellAppRegistered(): void {
-  defineElement("gsv-shell-app", GsvShellAppElement);
+  defineGsvAppElement("gsv-shell-app", GsvShellAppElement);
 }

@@ -1,4 +1,4 @@
-import type { AppElementContext, GsvAppElement } from "../app-sdk";
+import { defineGsvAppElement, type AppElementContext, type GsvAppElement } from "../app-sdk";
 import {
   OPEN_CHAT_PROCESS_EVENT,
   normalizeProcessId,
@@ -399,7 +399,5 @@ class GsvProcessesAppElement extends HTMLElement implements GsvAppElement {
 }
 
 export function ensureProcessManagerAppRegistered(): void {
-  if (!customElements.get("gsv-processes-app")) {
-    customElements.define("gsv-processes-app", GsvProcessesAppElement);
-  }
+  defineGsvAppElement("gsv-processes-app", GsvProcessesAppElement);
 }

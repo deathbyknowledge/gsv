@@ -2,14 +2,18 @@ import DOMPurify from "dompurify";
 import { marked } from "marked";
 
 import type { AppInstance, AppRuntimeContext } from "../app-runtime";
-import { OPEN_APP_EVENT, type OpenAppEventDetail } from "../app-link";
 import {
   TARGET_CHAT_PROCESS_EVENT,
   consumePendingChatProcess,
   type TargetChatProcessEventDetail,
 } from "../chat-process-link";
 import type { ProcHistoryResult } from "../gateway-client";
-import type { AppElementContext, AppKernelClient, GsvAppElement } from "../app-sdk";
+import {
+  defineGsvAppElement,
+  type AppElementContext,
+  type AppKernelClient,
+  type GsvAppElement,
+} from "../app-sdk";
 import {
   getActiveThreadContext,
   normalizeThreadContext,
@@ -1354,6 +1358,7 @@ function createChatAppController(client: AppKernelClient): AppInstance {
   let activeThreadContext: ThreadContext | null = getActiveThreadContext();
   let activePid: string | null = activeThreadContext?.pid ?? null;
   let appWindowId: string | null = null;
+  let appWindow: AppElementContext["window"] | null = null;
   let recentThreads: RecentThreadEntry[] = [];
   let threadsLoading = false;
   let threadsError = "";
@@ -1516,18 +1521,11 @@ function createChatAppController(client: AppKernelClient): AppInstance {
   };
 
   const openCompanionApp = (appId: "files" | "shell"): void => {
-    if (!activeThreadContext) {
+    if (!appWindow || !activeThreadContext) {
       return;
     }
 
-    window.dispatchEvent(
-      new CustomEvent<OpenAppEventDetail>(OPEN_APP_EVENT, {
-        detail: {
-          appId,
-          threadContext: activeThreadContext,
-        },
-      }),
-    );
+    appWindow.openApp(appId, { thread: activeThreadContext });
   };
 
   const updateComposerState = (status: ChatStatus): void => {
@@ -2214,6 +2212,7 @@ function createChatAppController(client: AppKernelClient): AppInstance {
       loadedPid = null;
       activePid = null;
       appWindowId = context.windowId;
+      appWindow = context.window;
 
       const chatLog = container.querySelector<HTMLElement>("[data-chat-log]");
       const chatCompose = container.querySelector<HTMLFormElement>("[data-chat-compose]");
@@ -2552,6 +2551,7 @@ function createChatAppController(client: AppKernelClient): AppInstance {
       loadedPid = null;
       activePid = null;
       appWindowId = null;
+      appWindow = null;
     },
   };
 }
@@ -2588,7 +2588,5 @@ class GsvChatAppElement extends HTMLElement implements GsvAppElement {
 }
 
 export function ensureChatAppRegistered(): void {
-  if (!customElements.get("gsv-chat-app")) {
-    customElements.define("gsv-chat-app", GsvChatAppElement);
-  }
+  defineGsvAppElement("gsv-chat-app", GsvChatAppElement);
 }

@@ -1,11 +1,6 @@
-import type { AppElementContext, GsvAppElement } from "../app-sdk";
+import { defineGsvAppElement, type AppElementContext, type AppThreadSnapshot, type GsvAppElement } from "../app-sdk";
 import { renderActionIcon, renderFileIcon } from "../icons";
 import type { FileIconKind } from "../icons";
-import {
-  getActiveThreadContext,
-  subscribeActiveThreadContext,
-  type ThreadContext,
-} from "../thread-context";
 
 type DeviceSummary = {
   deviceId: string;
@@ -61,11 +56,6 @@ type FileEntry = {
 type FilesViewState = "ready" | "working" | "error" | "offline";
 type DetailKind = "empty" | "file" | "image";
 type PathStyle = "absolute" | "relative";
-function defineElement(tagName: string, constructor: CustomElementConstructor): void {
-  if (!customElements.get(tagName)) {
-    customElements.define(tagName, constructor);
-  }
-}
 
 function escapeHtml(value: string): string {
   return value
@@ -302,7 +292,7 @@ class GsvFilesAppElement extends HTMLElement implements GsvAppElement {
 
   private unsubscribeStatus: (() => void) | null = null;
   private unsubscribeThreadContext: (() => void) | null = null;
-  private activeThreadContext: ThreadContext | null = getActiveThreadContext();
+  private activeThreadContext: AppThreadSnapshot | null = null;
 
   private confirmDiscardChanges(): boolean {
     if (!this.isDirty || this.selectedKind !== "file") {
@@ -510,7 +500,7 @@ class GsvFilesAppElement extends HTMLElement implements GsvAppElement {
     this.context = context;
     this.kernelState = context.kernel.getStatus().state;
     this.suspended = false;
-    this.applyThreadContext(this.activeThreadContext, { reload: false, confirm: false });
+    this.applyThreadContext(context.thread.current(), { reload: false, confirm: false });
 
     this.unsubscribeStatus?.();
     this.unsubscribeStatus = context.kernel.onStatus((status) => {
@@ -527,7 +517,7 @@ class GsvFilesAppElement extends HTMLElement implements GsvAppElement {
     this.addEventListener("input", this.onInput);
     this.addEventListener("keydown", this.onKeyDown);
     this.unsubscribeThreadContext?.();
-    this.unsubscribeThreadContext = subscribeActiveThreadContext((threadContext) => {
+    this.unsubscribeThreadContext = context.thread.subscribe((threadContext) => {
       this.applyThreadContext(threadContext, { reload: true, confirm: true });
     });
 
@@ -599,7 +589,7 @@ class GsvFilesAppElement extends HTMLElement implements GsvAppElement {
     this.statusText = "";
   }
 
-  private preferredGsvPath(threadContext: ThreadContext | null): string {
+  private preferredGsvPath(threadContext: AppThreadSnapshot | null): string {
     if (threadContext?.workspaceId) {
       return `/workspaces/${threadContext.workspaceId}`;
     }
@@ -610,7 +600,7 @@ class GsvFilesAppElement extends HTMLElement implements GsvAppElement {
   }
 
   private applyThreadContext(
-    threadContext: ThreadContext | null,
+    threadContext: AppThreadSnapshot | null,
     options?: { reload: boolean; confirm: boolean },
   ): void {
     this.activeThreadContext = threadContext;
@@ -1420,5 +1410,5 @@ class GsvFilesAppElement extends HTMLElement implements GsvAppElement {
 }
 
 export function ensureFilesAppRegistered(): void {
-  defineElement("gsv-files-app", GsvFilesAppElement);
+  defineGsvAppElement("gsv-files-app", GsvFilesAppElement);
 }

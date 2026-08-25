@@ -348,6 +348,30 @@ thread work. At minimum it should include:
 
 That is the v1 "wow" path.
 
+## App and window contract
+
+The first app SDK layer should follow the thread/workspace model directly:
+
+- a desktop app is a **window surface**
+- a window reads from the **active thread context**
+- a thread carries `pid`, `workspaceId`, and `cwd`
+- a workspace path is derived from the thread, not guessed by the app
+
+For UI app authoring this means:
+
+- apps should treat `context.thread.current()` as the source of thread binding
+- apps should treat `/workspaces/{workspaceId}` as the canonical workspace root when `workspaceId` exists
+- apps opening companion windows should preserve the same thread binding
+- apps should not assume they own a separate backend runtime yet
+
+That last point matters. We may later spawn `app:{id}` processes or Dynamic Worker
+backends for some apps, but the first SDK contract is intentionally narrower:
+
+- window-first
+- thread-aware
+- workspace-aware
+- no special runtime ownership assumptions
+
 ## Non-goals for v1
 
 Keep the first vertical slice strict. Do not expand scope to:

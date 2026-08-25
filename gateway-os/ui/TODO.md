@@ -28,6 +28,8 @@
 - [x] Add app crash boundary and restart UX.
 - [x] Introduce UI App SDK contract (`src/app-sdk`) with manifest validator, scoped kernel client, and theme client.
 - [x] Add component-app runtime adapter (`entrypoint.kind = component`) for Web Component apps.
+- [x] Add first agent-first app/window primitives (`context.window`, `context.thread`, `defineGsvAppElement`).
+- [x] Add retrieval-friendly SDK examples under `src/app-sdk/examples/`.
 
 ## Auth + Session UX
 - [x] Build desktop-style login screen (username/password) that exchanges for short-lived session token.

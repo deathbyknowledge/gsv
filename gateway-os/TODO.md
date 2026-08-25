@@ -49,6 +49,19 @@ Threads spawn processes. Processes attach to workspaces. Workspaces outlive proc
   - add `/hyperspace/.../history`
   - add diff/recent-changes UX in Files or Chat
 
+## Agent-first app/window SDK
+
+- [x] Define first UI app/window primitives for authoring GSV apps intentionally
+  - `context.window` for open/focus/close/restart flows
+  - `context.thread` for active thread/workspace binding
+  - `defineGsvAppElement(...)` for component registration
+- [x] Add retrieval-friendly docs/examples next to `gateway-os/ui/src/app-sdk`
+- [x] Align the app authoring contract with the thread/workspace model in docs
+- [ ] Add manifest-level thread binding/trust metadata when the runtime is ready to enforce it
+- [ ] Add app-owned process/runtime bridging later for apps that truly need `profile: app`
+- [ ] Build the first real app on top of this contract
+  - first target: cognitive firewall
+
 ## MCP operator / deployment awareness
 
 `mcp` should be a trusted operator process, not just a task process with a

@@ -2,11 +2,13 @@ import type { AppInstance, AppRuntimeContext } from "../app-runtime";
 import type { GatewayClient } from "../gateway-client";
 import type { AppManifest } from "./manifest";
 import { createScopedKernelClient } from "./kernel-client";
+import { createThreadClient } from "./thread-client";
 import { createThemeClient } from "./theme";
 
 export type AppElementContext = AppRuntimeContext & {
   kernel: ReturnType<typeof createScopedKernelClient>;
   theme: ReturnType<typeof createThemeClient>;
+  thread: ReturnType<typeof createThreadClient>;
 };
 
 export type GsvAppElement = HTMLElement & {
@@ -64,6 +66,7 @@ export function createComponentAppInstance(
         ...runtimeContext,
         kernel: createScopedKernelClient(gatewayClient, manifest),
         theme: createThemeClient(),
+        thread: createThreadClient(),
       };
 
       unsubscribeSignals = context.kernel.onSignal((signal, payload) => {

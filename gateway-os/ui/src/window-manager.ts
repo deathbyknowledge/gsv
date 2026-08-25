@@ -1,3 +1,5 @@
+import { APP_WINDOW_ACTION_EVENT, type AppWindowActionEventDetail } from "./app-link";
+import { createWindowClient } from "./app-sdk/window-client";
 import type { AppManifest } from "./apps";
 import type { AppInstance, AppRuntimeContext, AppRuntimeRegistry } from "./app-runtime";
 
@@ -545,6 +547,7 @@ export function createWindowManager({ layerNode, appRegistry, appRuntime }: Wind
     const context: AppRuntimeContext = {
       windowId: record.windowId,
       manifest: record.app,
+      window: createWindowClient(record.app, record.windowId),
     };
 
     invokeLifecycle(
@@ -1142,11 +1145,40 @@ export function createWindowManager({ layerNode, appRegistry, appRuntime }: Wind
     emit();
   };
 
+  const onAppWindowAction = (event: Event): void => {
+    if (!(event instanceof CustomEvent)) {
+      return;
+    }
+
+    const detail = event.detail as AppWindowActionEventDetail | null;
+    const windowId = typeof detail?.windowId === "string" ? detail.windowId.trim() : "";
+    if (!windowId) {
+      return;
+    }
+
+    switch (detail?.action) {
+      case "focus":
+        focusWindow(windowId);
+        return;
+      case "close":
+      case "minimize":
+      case "maximize":
+        onWindowAction(windowId, detail.action);
+        return;
+      case "restart":
+        onRuntimeAction(windowId, detail.action);
+        return;
+      default:
+        return;
+    }
+  };
+
   window.addEventListener("pointermove", onPointerMove);
   window.addEventListener("pointerup", onPointerUp);
   window.addEventListener("pointercancel", onPointerCancel);
   window.addEventListener("blur", onWindowBlur);
   window.addEventListener("resize", onWindowResize);
+  window.addEventListener(APP_WINDOW_ACTION_EVENT, onAppWindowAction as EventListener);
 
   restorePersistedLayout();
 
@@ -1171,6 +1203,7 @@ export function createWindowManager({ layerNode, appRegistry, appRuntime }: Wind
       window.removeEventListener("pointercancel", onPointerCancel);
       window.removeEventListener("blur", onWindowBlur);
       window.removeEventListener("resize", onWindowResize);
+      window.removeEventListener(APP_WINDOW_ACTION_EVENT, onAppWindowAction as EventListener);
 
       for (const record of windows.values()) {
         detachRuntime(record);

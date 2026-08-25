@@ -1,8 +1,10 @@
-import type { AppManifest } from "./apps";
+import type { AppManifest } from "./app-sdk/manifest";
+import type { AppWindowClient } from "./app-sdk/window-client";
 
 export type AppRuntimeContext = {
   windowId: string;
   manifest: AppManifest;
+  window: AppWindowClient;
 };
 
 export type AppInstance = {

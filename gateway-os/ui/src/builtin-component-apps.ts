@@ -1,4 +1,4 @@
-import type { AppElementContext, GsvAppElement } from "./app-sdk";
+import { defineGsvAppElement, type AppElementContext, type GsvAppElement } from "./app-sdk";
 import { DESKTOP_THEMES, isThemeId, type ThemeId } from "./themes";
 
 type AppCopy = {
@@ -94,12 +94,6 @@ function resolveCopy(appId: string, fallbackDescription: string): AppCopy {
       ],
     }
   );
-}
-
-function defineElement(tagName: string, constructor: CustomElementConstructor): void {
-  if (!customElements.get(tagName)) {
-    customElements.define(tagName, constructor);
-  }
 }
 
 function compactPreview(value: string, maxLength = 120): string {
@@ -2247,6 +2241,6 @@ class GsvSdkExampleAppElement extends GsvSurfaceElement {
 }
 
 export function ensureBuiltinComponentAppsRegistered(): void {
-  defineElement("gsv-control-app", GsvControlAppElement);
-  defineElement("gsv-sdk-example-app", GsvSdkExampleAppElement);
+  defineGsvAppElement("gsv-control-app", GsvControlAppElement);
+  defineGsvAppElement("gsv-sdk-example-app", GsvSdkExampleAppElement);
 }

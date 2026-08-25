@@ -1,4 +1,4 @@
-import type { AppElementContext, GsvAppElement } from "../app-sdk";
+import { defineGsvAppElement, type AppElementContext, type GsvAppElement } from "../app-sdk";
 
 type DeviceSummary = {
   deviceId: string;
@@ -508,7 +508,5 @@ class GsvDevicesAppElement extends HTMLElement implements GsvAppElement {
 }
 
 export function ensureDevicesAppRegistered(): void {
-  if (!customElements.get("gsv-devices-app")) {
-    customElements.define("gsv-devices-app", GsvDevicesAppElement);
-  }
+  defineGsvAppElement("gsv-devices-app", GsvDevicesAppElement);
 }
