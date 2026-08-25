@@ -540,7 +540,7 @@ fn model_profile_report(profile: ModelProfileSamples) -> ModelProfileReport {
             }
         })
         .collect();
-    hottest_nodes.sort_by(|left, right| right.latency.mean_us.cmp(&left.latency.mean_us));
+    hottest_nodes.sort_by_key(|node| std::cmp::Reverse(node.latency.mean_us));
     hottest_nodes.truncate(20);
     let unattributed: Vec<_> = profile
         .total

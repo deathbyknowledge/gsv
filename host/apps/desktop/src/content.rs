@@ -23,8 +23,13 @@ impl RichDocument {
     }
 
     pub fn with_attachments(mut self, attachments: &[MediaAttachment]) -> Self {
-        self.blocks
-            .extend(attachments.iter().cloned().map(RichBlock::Attachment));
+        self.blocks.extend(
+            attachments
+                .iter()
+                .cloned()
+                .map(Box::new)
+                .map(RichBlock::Attachment),
+        );
         self
     }
 }
@@ -49,7 +54,7 @@ pub enum RichBlock {
     BlockQuote(Vec<RichBlock>),
     Rule,
     Image(MarkdownImage),
-    Attachment(MediaAttachment),
+    Attachment(Box<MediaAttachment>),
 }
 
 #[derive(Clone, Debug, PartialEq)]
