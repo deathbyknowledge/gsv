@@ -4,3 +4,4 @@ export * from "./cli";
 export * from "./context";
 export * from "./host";
 export * from "./browser";
+export * from "./identity-disc";

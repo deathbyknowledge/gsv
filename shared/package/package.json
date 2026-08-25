@@ -13,6 +13,7 @@
     "./browser": "./src/browser.ts",
     "./cli": "./src/cli.ts",
     "./context": "./src/context.ts",
+    "./identity-disc": "./src/identity-disc.ts",
     "./host": "./src/host.ts"
   }
 }

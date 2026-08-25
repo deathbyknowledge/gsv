@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { assembleSystemPrompt } from "./assembly";
 import { createHomeContextProvider } from "./providers/home";
+import { createIdentityDiscProvider } from "./providers/identity-disc";
 import { createProfileInstructionsProvider } from "./providers/profile";
 import { createWorkspaceContextProvider } from "./providers/workspace";
 import { resolvePromptProviders } from "./selection";
@@ -140,9 +141,60 @@ describe("selection", () => {
       "profile.context",
       "home.context",
       "workspace.context",
+      "identity.disc",
       "available.skills",
       "process.context",
     ]);
+  });
+});
+
+describe("createIdentityDiscProvider", () => {
+  it("advertises compact .idz summaries and indexes without entry bodies", async () => {
+    const provider = createIdentityDiscProvider();
+    const homeRepo = homeKnowledgeRepoRef(IDENTITY.username);
+    const workspaceRepo = workspaceRepoRef("ws_test", IDENTITY.username);
+    const sections = await provider.collect(
+      makeInput({
+        ripgit: {
+          async readPath(repo, path) {
+            if (repo.owner === homeRepo.owner && repo.repo === homeRepo.repo && path === "identity.idz") {
+              return {
+                kind: "file",
+                bytes: new TextEncoder().encode([
+                  "# idz/v1",
+                  '@summary "Package authoring memory belongs in a searchable disc index."',
+                  '@entry id="pkg-sdk" kind="decision" scope="home" summary="Prefer @gsv/package helpers for reusable package memory." tags="packages,sdk" confidence="high" updated="2026-05-24T10:00:00.000Z"',
+                  "This long body should not be prompt-visible.",
+                ].join("\n")),
+                size: 260,
+              };
+            }
+            if (repo.owner === workspaceRepo.owner && repo.repo === workspaceRepo.repo && path === ".gsv/identity.idz") {
+              return {
+                kind: "file",
+                bytes: new TextEncoder().encode([
+                  "# idz/v1",
+                  '@entry id="runtime-memory" kind="fact" scope="workspace" summary="The process runtime should advertise .idz indexes compactly." tags="runtime" updated="2026-05-24T11:00:00.000Z"',
+                ].join("\n")),
+                size: 200,
+              };
+            }
+            return { kind: "missing" };
+          },
+        },
+      }),
+    );
+
+    expect(sections.map((section) => section.name)).toEqual([
+      "identity.disc:home",
+      "identity.disc:workspace",
+    ]);
+    expect(sections[0]?.text).toContain("Home Identity Disc: ~/identity.idz");
+    expect(sections[0]?.text).toContain("Package authoring memory belongs");
+    expect(sections[0]?.text).toContain("[pkg-sdk] decision/home high #packages #sdk");
+    expect(sections[0]?.text).not.toContain("long body");
+    expect(sections[1]?.text).toContain("/workspaces/ws_test/.gsv/identity.idz");
+    expect(sections[1]?.text).toContain("[runtime-memory] fact/workspace #runtime");
   });
 });
 

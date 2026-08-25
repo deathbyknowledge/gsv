@@ -10,6 +10,7 @@ knowledge-specific behavior lives in the Wiki package app and CLI.
 |---|---|---|
 | Home context | `~/context.d/` | Always-relevant user and system context loaded into agent prompts. |
 | Workspace context | `/workspaces/{id}/.gsv/context.d/`, `/workspaces/{id}/.gsv/summary.md` | Project-local continuity, task state, and handoff notes. |
+| Identity Disc | `~/identity.idz`, `/workspaces/{id}/.gsv/identity.idz` | Compact durable memory index for facts, decisions, preferences, procedures, open loops, and source refs. |
 | Durable knowledge | `~/knowledge/` | User-controlled markdown databases, pages, inbox notes, and source references. |
 | Repository substrate | `repo.*` | Versioned reads, writes, diffs, imports, and history over ripgit repositories. |
 | Filesystem substrate | `fs.*` | Linux-like file access across native GSV storage and routed devices. |
@@ -43,6 +44,24 @@ Typical files:
 
 Use workspace context for active decisions, current project assumptions,
 handoff state, and compacted task continuity.
+
+## Identity Disc
+
+Identity Disc files are lightweight `.idz` indexes for process memory:
+
+```text
+~/identity.idz
+/workspaces/{workspaceId}/.gsv/identity.idz
+```
+
+The runtime advertises only each disc's summary and compact entry index in the
+process prompt. Full entry bodies remain in the file and are retrieved
+deliberately through normal filesystem tools.
+
+Use `.idz` entries for durable facts, decisions, preferences, procedures, open
+loops, and source references that future processes should discover quickly. Do
+not use `.idz` as a raw transcript or a replacement for knowledge pages,
+workspace files, or reusable skills.
 
 ## Durable Knowledge
 
@@ -113,6 +132,9 @@ This keeps the prompt small and makes retrieval visible:
 - durable knowledge remains human-editable
 - reads and writes are auditable through normal repository history
 - agents use Linux-like file and CLI patterns instead of hidden memory channels
+
+Identity Disc files follow the same rule. Their prompt-visible portion is a
+small advertisement and index; the full memory remains an inspectable file.
 
 ## Design Rule
 

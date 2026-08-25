@@ -1,5 +1,6 @@
 import type { AiContextProfile } from "../../syscalls/ai";
 import { createHomeContextProvider } from "./providers/home";
+import { createIdentityDiscProvider } from "./providers/identity-disc";
 import { createProcessContextProvider } from "./providers/process";
 import {
   createProfileInstructionsProvider,
@@ -15,6 +16,7 @@ const SYSTEM_PROVIDER = createSystemContextProvider();
 const PROFILE_PROVIDER = createProfileInstructionsProvider();
 const HOME_PROVIDER = createHomeContextProvider();
 const WORKSPACE_PROVIDER = createWorkspaceContextProvider();
+const IDENTITY_DISC_PROVIDER = createIdentityDiscProvider();
 const SKILLS_PROVIDER = createSkillIndexProvider();
 const PROCESS_PROVIDER = createProcessContextProvider();
 
@@ -29,6 +31,7 @@ export function resolvePromptProviders(
     PROFILE_PROVIDER,
     HOME_PROVIDER,
     WORKSPACE_PROVIDER,
+    IDENTITY_DISC_PROVIDER,
     SKILLS_PROVIDER,
     PROCESS_PROVIDER,
   ];

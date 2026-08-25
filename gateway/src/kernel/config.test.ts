@@ -139,6 +139,11 @@ describe("ConfigStore", () => {
     expect(targets).toContain("target-aware copy");
     expect(targets).toContain("cp source-target:/path destination-target:/path");
     expect(targets).toContain("skills show browser-shell");
+    const identityDisc = SYSTEM_CONFIG_DEFAULTS["config/ai/context.d/15-identity-disc.md"];
+    expect(identityDisc).toContain("Attention, program");
+    expect(identityDisc).toContain("~/identity.idz");
+    expect(identityDisc).toContain(".gsv/identity.idz");
+    expect(identityDisc).toContain("de-resolution");
     const orchestration = SYSTEM_CONFIG_DEFAULTS["config/ai/context.d/30-process-orchestration.md"];
     expect(orchestration).toContain("target: \"gsv\"");
     expect(orchestration).toContain("proc profiles");

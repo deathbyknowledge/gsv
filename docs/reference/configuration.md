@@ -82,10 +82,16 @@ Use numeric prefixes to make ordering explicit:
 ```text
 config/ai/context.d/00-gsv.md
 config/ai/context.d/10-runtime.md
+config/ai/context.d/15-identity-disc.md
 config/ai/profile/task/context.d/00-role.md
 ```
 
 System and profile context support runtime template variables such as `profile`, `identity.uid`, `identity.username`, `identity.home`, `identity.cwd`, `identity.workspaceId`, `workspace`, `devices`, and, `mcpServers`.
+
+After home and workspace context, the runtime also advertises compact Identity
+Disc previews from `~/identity.idz` and workspace `.gsv/identity.idz`. These
+previews are assembled by the process context providers, not by the config
+store, and include only summaries plus entry indexes.
 
 User-defined worker profiles live under the user's home filesystem:
 

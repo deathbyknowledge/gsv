@@ -91,7 +91,7 @@ ripgit stores versioned content. It is used anywhere history, diffs, search, or 
 
 | Repository | Ref Helper | Mounted At | Purpose |
 |---|---|---|---|
-| `{username}/home` | `homeKnowledgeRepoRef(username)` | `~/context.d`, `~/skills.d`, `~/knowledge` | Home context, skills, and knowledge databases. |
+| `{username}/home` | `homeKnowledgeRepoRef(username)` | `~/context.d`, `~/skills.d`, `~/identity.idz`, `~/knowledge` | Home context, skills, Identity Disc index, and knowledge databases. |
 | `{username}/{workspaceId}` | `workspaceRepoRef(workspaceId, username)` | `/workspaces/{workspaceId}` | Task workspace files and checkpoints. |
 | Package source repos, for example `root/gsv` or `{owner}/{repo}` | package manifest `source.repo` | `/src/packages/{packageName}`, `repo.*` | Installed package source, review context, and generic repo operations. |
 
@@ -104,6 +104,7 @@ Workspace repos contain platform metadata under `.gsv/`:
 .gsv/workspace.json
 .gsv/summary.md
 .gsv/context.d/*.md
+.gsv/identity.idz
 .gsv/skills.d/*
 .gsv/processes/{pid}/chat.jsonl
 ```

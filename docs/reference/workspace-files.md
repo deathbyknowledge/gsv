@@ -10,7 +10,8 @@ Prompt context is collected in provider order:
 2. **Profile context** from `config/ai/profile/{profile}/context.d/*.md` or a user profile under `~/profiles.d/{profile}/context.d/*.md`.
 3. **Home context** from `~/context.d/*.md`.
 4. **Workspace context** from `/workspaces/{workspaceId}/.gsv/context.d/*.md`, when the process has a workspace.
-5. **Process context** supplied by the current assignment or runtime.
+5. **Identity Disc previews** from `~/identity.idz` and `/workspaces/{workspaceId}/.gsv/identity.idz`.
+6. **Process context** supplied by the current assignment or runtime.
 
 GSV also assembles a compact skill index from layered `skills.d` directories.
 The prompt lists skill ids and descriptions only. Use `skills list`,
@@ -81,6 +82,21 @@ Recommended layout:
 
 Use workspace context for active project state, decisions, next actions, and compacted conversation continuity. Do not use it for user-global preferences or durable knowledge. If `.gsv/context.d/` has no loadable files, GSV falls back to `/workspaces/{workspaceId}/.gsv/summary.md` when present.
 
+## Identity Disc: `.idz`
+
+Identity Disc files are compact memory indexes:
+
+```text
+~/identity.idz
+/workspaces/{workspaceId}/.gsv/identity.idz
+```
+
+The prompt includes only summaries and entry indexes from these files. Full
+entry bodies remain out of prompt context until a process reads the `.idz`
+directly. Use `.idz` for durable facts, preferences, decisions, procedures,
+open loops, and source references that should be easy to rediscover without
+loading a large knowledge base.
+
 ## Editing Guidance
 
 Agents should treat these paths like normal files. Read before editing, preserve user-authored structure, and keep changes narrow.
@@ -97,4 +113,4 @@ Use the GSV target for GSV filesystem paths. Use a device target only when inten
 
 ## What Belongs Where
 
-Use `~/context.d/` for concise standing context. Use `/workspaces/{id}/.gsv/context.d/` for active workspace continuity. Use `skills.d/` for reusable procedures. Use `~/knowledge/` for durable, searchable reference material. Use process context for the current assignment only.
+Use `~/context.d/` for concise standing context. Use `/workspaces/{id}/.gsv/context.d/` for active workspace continuity. Use `.idz` files for compact durable memory indexes. Use `skills.d/` for reusable procedures. Use `~/knowledge/` for durable, searchable reference material. Use process context for the current assignment only.

@@ -174,6 +174,28 @@ For example, a package manifest with `cli.commands.wiki` makes `wiki ...`
 available through `shell.exec` on `target: "gsv"`, subject to the package's
 declared kernel grants.
 
+## Identity Disc Helpers
+
+Import `.idz` helpers from `@gsv/package/identity-disc`.
+
+```ts
+import {
+  parseIdentityDisc,
+  renderIdentityDiscContext,
+  serializeIdentityDisc,
+  upsertIdentityDiscEntry,
+} from "@gsv/package/identity-disc";
+```
+
+Identity Disc files are compact process-memory indexes stored at paths such as
+`~/identity.idz` and `/workspaces/{workspaceId}/.gsv/identity.idz`. The SDK
+helpers parse, update, serialize, search, and render prompt-sized previews of
+those files without introducing a package-specific storage format.
+
+Use these helpers from package CLIs, backends, or apps when a package owns a
+memory or agent workflow. See `docs/reference/identity-disc.md` for the file
+format and placement rules.
+
 ## Public routes
 
 `backend.public_routes` is the only auth-bypass declaration in the manifest.

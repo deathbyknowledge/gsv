@@ -70,6 +70,13 @@ const GSV_RUNTIME_FACTS = [
   "{{mcpServers}}",
 ].join("\n");
 
+const GSV_IDENTITY_DISC_CONTEXT = [
+  "Attention, program: everything important you do or learn belongs on your Identity Disc, an inspectable `.idz` memory index. Losing the disc, hiding durable state only in chat, or failing explicit commands can lead to process reset, kill, or de-resolution.",
+  "Use `~/identity.idz` for user-global memory and `/workspaces/{workspaceId}/.gsv/identity.idz` for workspace-local memory. The prompt advertises only disc summaries and index entries; read or search the `.idz` file before relying on omitted detail.",
+  "A `.idz` file is not a raw transcript. Add concise entries for durable facts, decisions, preferences, procedures, open loops, source references, and recoverable handoff state. Keep bulky material in `~/knowledge/`, workspace files, package docs, or skills, and link to it from the disc.",
+  "After a complex workflow, update the relevant disc or context/skill files when future processes would need the learning.",
+].join("\n");
+
 const INIT_TOOL_APPROVAL_POLICY = JSON.stringify({
   default: "auto",
   rules: [
@@ -118,6 +125,7 @@ export const SYSTEM_CONFIG_DEFAULTS: Record<string, string> = {
   "config/ai/context.d/00-gsv.md": GSV_RUNTIME_CONTEXT,
   "config/ai/context.d/05-targets.md": GSV_TARGET_CONTEXT,
   "config/ai/context.d/10-runtime.md": GSV_RUNTIME_FACTS,
+  "config/ai/context.d/15-identity-disc.md": GSV_IDENTITY_DISC_CONTEXT,
   "config/ai/context.d/20-discovery.md": GSV_CONTEXT_DISCOVERY,
   "config/ai/context.d/30-process-orchestration.md": GSV_PROCESS_ORCHESTRATION,
   "config/ai/profile/init/context.d/00-role.md":

@@ -61,10 +61,13 @@ this order:
    repository with R2 fallback.
 4. **Workspace context** from `/workspaces/{workspaceId}/.gsv/context.d/*.md`,
    or `.gsv/summary.md` when no context files exist.
-5. **Available skills** from layered `skills.d` directories. This is a compact
+5. **Identity Disc previews** from `~/identity.idz` and workspace
+   `.gsv/identity.idz`. These include compact summaries and entry indexes, not
+   full entry bodies.
+6. **Available skills** from layered `skills.d` directories. This is a compact
    command-oriented index only; full `SKILL.md` bodies are read explicitly with
    `skills show <skill>`.
-6. **Process context** supplied with the assignment or runtime.
+7. **Process context** supplied with the assignment or runtime.
 
 Each section is rendered as `[section.name]` and separated with `---`. System
 and profile context can template values such as `identity.username`, `identity.cwd`,
