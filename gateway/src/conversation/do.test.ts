@@ -59,29 +59,24 @@ describe("Conversation Durable Object", () => {
     });
   }, 30_000);
 
-  it("copies process media into conversation ownership before recording it", async () => {
-    const stub = conversation("media");
+  it("keeps legacy conversation-owned media readable", async () => {
+    const stub = conversation("legacy-media");
     await stub.initialize({ ownerUid: 1000, kind: "ship" });
-    const sourceKey = "var/media/1001/proc:test/image";
-    await env.STORAGE.put(sourceKey, new Uint8Array([1, 2, 3]), {
+    const appended = await stub.append(message(1));
+    const key = `conversations/${encodeURIComponent(appended.message.conversationId)}/media/legacy/0`;
+    await env.STORAGE.put(key, new Uint8Array([1, 2, 3]), {
       httpMetadata: { contentType: "image/png" },
+      customMetadata: {
+        purpose: "conversation-media",
+        conversationId: appended.message.conversationId,
+      },
     });
 
-    const appended = await stub.append({
-      ...message(1),
-      media: [{ type: "image", mimeType: "image/png", key: sourceKey, path: `/${sourceKey}` }],
-      mediaOwner: { pid: "proc:test", uid: 1001, gid: 1001, home: "/home/agent" },
-    });
-    const media = appended.message.media?.[0];
-    expect(media?.conversationId).toBe(appended.message.conversationId);
-    expect(media?.key).toMatch(/^conversations\/.*\/media\//);
-    expect(media?.path).toBeUndefined();
-
-    await env.STORAGE.delete(sourceKey);
-    const stored = await stub.readMedia({ key: media!.key! });
+    const stored = await stub.readMedia({ key });
     expect(stored.mimeType).toBe("image/png");
     expect(stored.size).toBe(3);
     expect([...new Uint8Array(await new Response(stored.stream).arrayBuffer())]).toEqual([1, 2, 3]);
+    await env.STORAGE.delete(key);
   });
 
   it("stores one immutable resource reference without copying its bytes", async () => {

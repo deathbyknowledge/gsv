@@ -44,7 +44,6 @@ import type {
   AdapterWorkerDisconnectResult,
   AdapterWorkerSendResult,
   BinaryBody,
-  ProcMediaInput,
   ProcListResult,
   ResourceBlock,
   ProcessIdentity,
@@ -167,7 +166,7 @@ type AdapterIngressProcessRecovery = {
   uid: number;
   pid: string;
   runId: string;
-  media: Array<ResourceBlock | ProcMediaInput>;
+  media: ResourceBlock[];
   origin: Extract<InteractionOrigin, { kind: "adapter" }>;
   conversationId?: string;
   inputMessageId?: string;
@@ -236,18 +235,6 @@ const managedIdentityLinkMetadataSchema = z.looseObject({
   surfaceId: z.string().check(z.minLength(1)),
   routeGeneration: z.string().check(z.minLength(1)),
 });
-const procMediaInputSchema = z.object({
-  type: z.enum(["image", "audio", "video", "document"]),
-  mimeType: z.string(),
-  key: z.optional(z.string()),
-  conversationId: z.optional(z.string()),
-  path: z.optional(z.string()),
-  url: z.optional(z.string()),
-  filename: z.optional(z.string()),
-  size: z.optional(z.number()),
-  duration: z.optional(z.number()),
-  transcription: z.optional(z.string()),
-});
 const resourceBlockRecoverySchema = z.object({
   type: z.literal("resource"),
   ref: z.object({
@@ -286,7 +273,7 @@ const adapterIngressRecoverySchema = z.discriminatedUnion("kind", [
     uid: z.number().check(z.int(), z.nonnegative()),
     pid: z.string(),
     runId: z.string(),
-    media: z.array(z.union([resourceBlockRecoverySchema, procMediaInputSchema])),
+    media: z.array(resourceBlockRecoverySchema),
     origin: adapterInteractionOriginSchema,
     conversationId: z.optional(z.string()),
     inputMessageId: z.optional(z.string()),

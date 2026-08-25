@@ -2,8 +2,6 @@ import { DurableObject } from "cloudflare:workers";
 import type {
   ConversationKind,
   ConversationMessage,
-  MessageAttachment,
-  ProcMediaInput,
   ResourceBlock,
 } from "@humansandmachines/gsv/protocol";
 import { resourceBlockSchema } from "@humansandmachines/gsv/protocol";
@@ -12,7 +10,6 @@ import { parseConversationDurableObjectName } from "../installation/routing";
 import {
   agentArchiveMediaPath,
   isValidAgentArchiveMediaObject,
-  parseProcessMediaPath,
 } from "../shared/process-media-path";
 import { runConversationSqlMigrations } from "./schema/migrations";
 import {
@@ -44,7 +41,7 @@ export type ConversationMediaOwner = {
 };
 
 export type ConversationAppendRequest = Omit<ConversationAppendInput, "payloadHash" | "media"> & {
-  media?: MessageAttachment[];
+  media?: ResourceBlock[];
   mediaOwner?: ConversationMediaOwner;
 };
 
@@ -83,7 +80,7 @@ export class Conversation extends DurableObject<Env> {
   async append(input: ConversationAppendRequest): Promise<ConversationAppendResult> {
     requireAppendInput(input);
     return this.withAppendLock(async () => {
-      const media = await this.persistMessageMedia(input);
+      const media = await this.validateMessageMedia(input);
       const { mediaOwner: _mediaOwner, ...messageInput } = input;
       const canonical = {
         ...messageInput,
@@ -224,79 +221,17 @@ export class Conversation extends DurableObject<Env> {
     }
   }
 
-  private async persistMessageMedia(input: ConversationAppendRequest): Promise<MessageAttachment[]> {
+  private async validateMessageMedia(input: ConversationAppendRequest): Promise<ResourceBlock[]> {
     const items = input.media ?? [];
     if (items.length === 0) return [];
     const owner = input.mediaOwner;
     if (!owner) throw new Error("Conversation media owner is required");
     requireMediaOwner(owner, input.processId);
-    const persisted: MessageAttachment[] = [];
-    for (let index = 0; index < items.length; index += 1) {
-      persisted.push(await this.persistMessageMediaItem(items[index], input.messageId, index, owner));
+    const persisted: ResourceBlock[] = [];
+    for (const item of items) {
+      persisted.push(await this.validateMessageResource(item, owner));
     }
     return persisted;
-  }
-
-  private async persistMessageMediaItem(
-    item: MessageAttachment,
-    messageId: string,
-    index: number,
-    owner: ConversationMediaOwner,
-  ): Promise<MessageAttachment> {
-    if (item.type === "resource") {
-      return this.validateMessageResource(item, owner);
-    }
-    const mimeType = item.mimeType.trim();
-    if (!mimeType) throw new Error("Conversation media mimeType is required");
-    const sourceKey = item.key?.trim() ?? "";
-    if (!sourceKey) {
-      if (!item.url?.trim()) {
-        throw new Error("Conversation media requires a stored key or URL");
-      }
-      return { ...item, mimeType };
-    }
-
-    const key = conversationMediaKey(this.conversationId, messageId, index);
-    const existing = await this.storage.get(key);
-    if (existing) {
-      const matches = isConversationMediaObject(existing, this.conversationId)
-        && existing.customMetadata?.sourceKey === sourceKey
-        && existing.httpMetadata?.contentType === mimeType;
-      await existing.body.cancel("Conversation media already persisted").catch(() => undefined);
-      if (!matches) throw new Error("Conversation media idempotency payload changed");
-      return canonicalConversationMedia(item, this.conversationId, key, existing.size, mimeType);
-    }
-
-    const source = await this.storage.get(sourceKey);
-    if (!source) throw new Error(`Conversation media source not found: ${sourceKey}`);
-    const active = parseProcessMediaPath(`/${sourceKey}`);
-    const activeOwned = active?.kind === "file"
-      && active.pid === owner.pid
-      && active.uid === owner.uid;
-    const archiveOwned = agentArchiveMediaPath(owner.home, sourceKey) !== null
-      && isValidAgentArchiveMediaObject({
-        home: owner.home,
-        key: sourceKey,
-        uid: owner.uid,
-        gid: owner.gid,
-        object: source,
-        expectedContentType: mimeType,
-      });
-    if ((!activeOwned && !archiveOwned) || source.httpMetadata?.contentType !== mimeType) {
-      await source.body.cancel("Conversation media source ownership mismatch").catch(() => undefined);
-      throw new Error("Conversation media source is outside the handling process");
-    }
-    const stored = await this.storage.put(key, source.body, {
-      httpMetadata: { contentType: mimeType },
-      customMetadata: {
-        purpose: "conversation-media",
-        conversationId: this.conversationId,
-        messageId,
-        sourceKey,
-        sourceEtag: source.etag,
-      },
-    });
-    return canonicalConversationMedia(item, this.conversationId, key, stored.size, mimeType);
   }
 
   private async validateMessageResource(
@@ -387,10 +322,6 @@ function conversationMediaPrefix(conversationId: string): string {
   return `conversations/${encodeURIComponent(conversationId)}/media/`;
 }
 
-function conversationMediaKey(conversationId: string, messageId: string, index: number): string {
-  return `${conversationMediaPrefix(conversationId)}${encodeURIComponent(messageId)}/${index}`;
-}
-
 function normalizeConversationMediaKey(value: string, conversationId: string): string {
   if (!value.startsWith(conversationMediaPrefix(conversationId))) {
     throw new Error("Conversation media key is invalid");
@@ -404,17 +335,6 @@ function isConversationMediaObject(
 ): boolean {
   return object.customMetadata?.purpose === "conversation-media"
     && object.customMetadata.conversationId === conversationId;
-}
-
-function canonicalConversationMedia(
-  item: ProcMediaInput,
-  conversationId: string,
-  key: string,
-  size: number,
-  mimeType: string,
-): ProcMediaInput {
-  const { path: _path, url: _url, ...metadata } = item;
-  return { ...metadata, mimeType, key, conversationId, size };
 }
 
 function requireNonempty(value: string, label: string): void {

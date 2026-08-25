@@ -4,6 +4,7 @@ import type {
   ConversationMessageAuthor,
   ConversationMessageOrigin,
   MessageAttachment,
+  ResourceBlock,
 } from "@humansandmachines/gsv/protocol";
 
 type MetaRow = {
@@ -31,7 +32,7 @@ export type ConversationAppendInput = {
   idempotencyKey: string;
   author: ConversationMessageAuthor;
   text: string;
-  media?: MessageAttachment[];
+  media?: ResourceBlock[];
   origin: ConversationMessageOrigin;
   processId?: string;
   runId?: string;
