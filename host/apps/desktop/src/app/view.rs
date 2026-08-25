@@ -3046,39 +3046,34 @@ mod tests {
             assert_eq!(app.audio.request_count(crate::audio::KeySound::Navigate), 0);
         });
 
-        cx.simulate_event(ScrollWheelEvent {
+        let edge_scroll = ScrollWheelEvent {
             position,
             delta: ScrollDelta::Lines(point(0.0, -3.0)),
             ..Default::default()
-        });
-        cx.cx.update(|cx| {
-            let app = app.read(cx);
-            assert_eq!(app.conversation.selected, 1);
-            assert_eq!(app.audio.request_count(crate::audio::KeySound::Navigate), 0);
-            assert_eq!(
-                app.history_edge_intent.map(|intent| intent.direction),
-                Some(1)
-            );
-            assert_eq!(
-                app.history_edge_intent.map(|intent| intent.progress),
-                Some(1.0 / 3.0)
-            );
-        });
-        cx.simulate_event(ScrollWheelEvent {
-            position,
-            delta: ScrollDelta::Lines(point(0.0, -3.0)),
-            ..Default::default()
-        });
-        cx.simulate_event(ScrollWheelEvent {
-            position,
-            delta: ScrollDelta::Lines(point(0.0, -3.0)),
-            ..Default::default()
-        });
-        cx.cx.update(|cx| {
-            let app = app.read(cx);
-            assert_eq!(app.conversation.selected, 2);
-            assert_eq!(app.audio.request_count(crate::audio::KeySound::Navigate), 1);
-            assert!(app.history_edge_intent.is_none());
+        };
+        cx.update(|window, cx| {
+            app.update(cx, |app, cx| {
+                // Keep the synthetic wheel burst in one foreground turn. The resistance
+                // indicator intentionally expires after 180 ms, so wall-clock CI scheduling
+                // must not decide whether this assertion observes it.
+                app.scroll_moments(&edge_scroll, window, cx);
+                assert_eq!(app.conversation.selected, 1);
+                assert_eq!(app.audio.request_count(crate::audio::KeySound::Navigate), 0);
+                assert_eq!(
+                    app.history_edge_intent.map(|intent| intent.direction),
+                    Some(1)
+                );
+                assert_eq!(
+                    app.history_edge_intent.map(|intent| intent.progress),
+                    Some(1.0 / 3.0)
+                );
+
+                app.scroll_moments(&edge_scroll, window, cx);
+                app.scroll_moments(&edge_scroll, window, cx);
+                assert_eq!(app.conversation.selected, 2);
+                assert_eq!(app.audio.request_count(crate::audio::KeySound::Navigate), 1);
+                assert!(app.history_edge_intent.is_none());
+            });
         });
     }
 
