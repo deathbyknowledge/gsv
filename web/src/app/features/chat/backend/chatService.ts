@@ -68,6 +68,9 @@ import {
 
 type ChatGsvClient = Pick<GSVClient, "proc" | "conversation" | "request">;
 type ChatMediaGsvClient = Pick<GSVClient, "request">;
+export type ChatConversationGsvClient = {
+  conversation: Pick<GSVClient["conversation"], "forProcess" | "history">;
+};
 type FailureResult = { ok: false; error: string };
 
 export type ChatProcessMedia = (
@@ -153,14 +156,14 @@ export async function sendChatMessage(
 }
 
 export async function getChatConversation(
-  client: ChatGsvClient,
+  client: ChatConversationGsvClient,
   pid: string,
 ): Promise<ConversationForProcessResult> {
   return client.conversation.forProcess({ pid });
 }
 
 export async function getChatConversationHistory(
-  client: ChatGsvClient,
+  client: ChatConversationGsvClient,
   conversationId: string,
   options: { beforeSequence?: number; limit?: number } = {},
 ): Promise<ConversationHistoryResult> {

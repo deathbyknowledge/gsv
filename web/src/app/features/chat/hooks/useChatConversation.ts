@@ -3,11 +3,13 @@ import { useQuery, useQueryClient } from "@tanstack/preact-query";
 import type {
   ConversationMessageOrigin,
 } from "@humansandmachines/gsv/protocol";
+import type { GSVClient } from "@humansandmachines/gsv/client";
 import { z } from "zod";
 import { useGateway } from "../../../services/gateway/GatewayProvider";
 import {
   getChatConversation,
   getChatConversationHistory,
+  type ChatConversationGsvClient,
 } from "../backend/chatService";
 import {
   conversationDraftRow,
@@ -115,8 +117,20 @@ function upsertRow(rows: readonly ChatTranscriptRow[], next: ChatTranscriptRow):
   ));
 }
 
+export type ChatConversationRuntimeGateway = {
+  client: ChatConversationGsvClient & Pick<GSVClient, "onSignal">;
+  connected: boolean;
+};
+
 export function useChatConversation(input: { enabled?: boolean; processId: string }) {
-  const { client, connected } = useGateway();
+  return useChatConversationRuntime(input, useGateway());
+}
+
+export function useChatConversationRuntime(
+  input: { enabled?: boolean; processId: string },
+  gateway: ChatConversationRuntimeGateway,
+) {
+  const { client, connected } = gateway;
   const queryClient = useQueryClient();
   const enabled = input.enabled !== false && connected && Boolean(input.processId.trim());
   const processId = input.processId.trim();
@@ -133,10 +147,7 @@ export function useChatConversation(input: { enabled?: boolean; processId: strin
   });
   const [runtime, setRuntime] = useState<ConversationRuntime>(EMPTY_RUNTIME);
   const runtimeRef = useRef(runtime);
-
-  useEffect(() => {
-    runtimeRef.current = runtime;
-  }, [runtime]);
+  runtimeRef.current = runtime;
 
   useEffect(() => {
     if (!enabled) {
@@ -228,28 +239,38 @@ export function useChatConversation(input: { enabled?: boolean; processId: strin
       const parsed = z.number().safeParse(sequence);
       return parsed.success ? Math.min(oldest ?? parsed.data, parsed.data) : oldest;
     }, null);
-    if (!conversationId || !current.hasMore || current.loadingOlder || oldestSequence === null) return;
+    if (
+      !conversationId
+      || current.conversation?.id !== conversationId
+      || !current.hasMore
+      || current.loadingOlder
+      || oldestSequence === null
+    ) return;
     setRuntime({ ...current, loadingOlder: true, error: "" });
     try {
       const history = await getChatConversationHistory(client, conversationId, {
         beforeSequence: oldestSequence,
         limit: PAGE_SIZE,
       });
-      setRuntime((latest) => ({
-        ...latest,
-        rows: history.messages.reduce(
-          (rows, message) => upsertRow(rows, conversationMessageRow(message)),
-          latest.rows,
-        ),
-        hasMore: history.hasMore,
-        loadingOlder: false,
-      }));
+      setRuntime((latest) => latest.conversation?.id === conversationId
+        ? {
+            ...latest,
+            rows: history.messages.reduce(
+              (rows, message) => upsertRow(rows, conversationMessageRow(message)),
+              latest.rows,
+            ),
+            hasMore: history.hasMore,
+            loadingOlder: false,
+          }
+        : latest);
     } catch (error) {
-      setRuntime((latest) => ({
-        ...latest,
-        loadingOlder: false,
-        error: error instanceof Error ? error.message : String(error),
-      }));
+      setRuntime((latest) => latest.conversation?.id === conversationId
+        ? {
+            ...latest,
+            loadingOlder: false,
+            error: error instanceof Error ? error.message : String(error),
+          }
+        : latest);
     }
   }, [client, conversationId]);
 
