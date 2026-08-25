@@ -9,7 +9,7 @@ type TelegramApiMessage = {
 };
 
 type TelegramUpdateContent = { text?: string; voice?: { file_id: string; file_size: number; duration: number; mime_type: string } };
-type GatewayCall = { installation?: { installationId?: string }; call?: string; args?: { message?: { text?: string; media?: Array<{ type: string }> } }; bodyBytes?: number[] };
+type GatewayCall = { installation?: { installationId?: string }; call?: string; args?: { routeGeneration?: string; message?: { text?: string; media?: Array<{ type: string }> } }; bodyBytes?: number[] };
 type ManagedOperationResult = { ok?: boolean };
 
 type ManagedPairingStub = {
@@ -46,8 +46,9 @@ type ManagedPeerStub = {
       deliveryId: string;
       surface: { kind: "dm"; id: string };
       actorId: string;
+      routeGeneration: string;
       text: string;
-      media: Array<{
+      media?: Array<{
         type: "audio";
         mimeType: string;
         filename: string;
@@ -55,7 +56,7 @@ type ManagedPeerStub = {
         body: { offset: number; length: number };
       }>;
     },
-    body: ReturnType<typeof binaryBodyFromOwnedBytes>,
+    body?: ReturnType<typeof binaryBodyFromOwnedBytes>,
   ): Promise<{ ok: boolean; messageId?: string; error?: string }>;
 };
 
@@ -138,6 +139,7 @@ describe("managed Telegram clean-instance flow", () => {
       canonicalOrigin: "https://test.gsv.space",
     };
     const prepared = await pairing.prepare(operation);
+    const firstGeneration = prepared.route.generation;
     await pairing.activate({
       code: normalizedCode,
       operationId: operation.operationId,
@@ -156,6 +158,7 @@ describe("managed Telegram clean-instance flow", () => {
       expect(await gatewayCalls()).toContainEqual(expect.objectContaining({
         installation: { installationId: "installation_test" },
         call: "adapter.inbound",
+        args: expect.objectContaining({ routeGeneration: firstGeneration }),
       }));
       expect(await telegramMessages()).toContainEqual(expect.objectContaining({
         body: expect.objectContaining({ text: expect.stringContaining("Personal received") }),
@@ -206,6 +209,34 @@ describe("managed Telegram clean-instance flow", () => {
       expect(messages.length).toBeGreaterThan(messagesBeforePairCommand);
       expect(messages.at(-1)?.body.text).toContain("Pairing code:");
     });
+    const relinkText = (await telegramMessages()).at(-1)?.body.text ?? "";
+    const relinkCode = relinkText.match(/[A-HJ-NP-Z2-9]{4}(?:-[A-HJ-NP-Z2-9]{4}){2}/)?.[0];
+    expect(relinkCode).toBeTruthy();
+    const normalizedRelinkCode = relinkCode!.replaceAll("-", "");
+    const relinking = typedStub<ManagedPairingStub>(namespace.get(
+      namespace.idFromName(`pair:${normalizedRelinkCode}`),
+    ));
+    const relinkOperation = {
+      code: normalizedRelinkCode,
+      installationId: "installation_test",
+      localUid: 1000,
+      operationId: "operation_relink",
+      canonicalOrigin: "https://test.gsv.space",
+    };
+    const relinked = await relinking.prepare(relinkOperation);
+    await relinking.activate({
+      code: normalizedRelinkCode,
+      operationId: relinkOperation.operationId,
+      route: relinked.route,
+      canonicalOrigin: relinkOperation.canonicalOrigin,
+    });
+    await relinking.finalize({
+      code: normalizedRelinkCode,
+      operationId: relinkOperation.operationId,
+      route: relinked.route,
+      canonicalOrigin: relinkOperation.canonicalOrigin,
+    });
+    expect(relinked.route.generation).not.toBe(firstGeneration);
 
     // SAFETY: The test environment exposes the declared Durable Object namespace binding.
     const peers = env.MANAGED_TELEGRAM_PEER as DurableObjectNamespace;
@@ -213,9 +244,24 @@ describe("managed Telegram clean-instance flow", () => {
       peers.idFromName("managed:12345"),
     ));
     await expect(peer.sendMessage("installation_test", {
+      deliveryId: "stale-after-relink",
+      surface: { kind: "dm", id: "12345" },
+      actorId: "12345",
+      routeGeneration: firstGeneration,
+      text: "stale output",
+    })).resolves.toMatchObject({
+      ok: false,
+      error: expect.stringContaining("route changed"),
+    });
+    expect((await telegramMessages()).some(
+      (message) => message.body.text === "stale output",
+    )).toBe(false);
+
+    await expect(peer.sendMessage("installation_test", {
       deliveryId: "outbound-audio-1",
       surface: { kind: "dm", id: "12345" },
       actorId: "12345",
+      routeGeneration: relinked.route.generation,
       text: "audio reply",
       media: [{
         type: "audio",
@@ -241,6 +287,7 @@ describe("managed Telegram clean-instance flow", () => {
       deliveryId: "outbound-audio-1",
       surface: { kind: "dm", id: "12345" },
       actorId: "12345",
+      routeGeneration: relinked.route.generation,
       text: "audio reply",
       media: [{
         type: "audio",

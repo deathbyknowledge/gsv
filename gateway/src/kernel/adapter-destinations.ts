@@ -348,6 +348,16 @@ export function identityLinkAllowsSurface(
   return false;
 }
 
+export function identityLinkRouteGeneration(
+  link: IdentityLinkRecord,
+  surface: AdapterSurface,
+): string | undefined {
+  if (link.metadata?.managed !== true || !identityLinkAllowsSurface(link, surface)) {
+    return undefined;
+  }
+  return metadataString(link.metadata, "routeGeneration") || undefined;
+}
+
 function requiredText(value: string | undefined, label: string): string {
   const normalized = value?.trim() ?? "";
   if (!normalized) {

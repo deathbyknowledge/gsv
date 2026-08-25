@@ -125,6 +125,8 @@ export type AdapterOutboundMessage = {
   surface: AdapterSurface;
   /** Stable adapter actor identity for provider-specific reply addressing. */
   actorId?: string;
+  /** Expected generation of a platform-owned peer route, when one admitted this delivery. */
+  routeGeneration?: string;
   text: string;
   media?: AdapterMedia[];
   replyToId?: string;
@@ -134,6 +136,7 @@ export const adapterOutboundMessageSchema = z.strictObject({
   deliveryId: z.string(),
   surface: adapterSurfaceSchema,
   actorId: z.optional(z.string()),
+  routeGeneration: z.optional(z.string()),
   text: z.string(),
   media: z.optional(z.array(adapterMediaSchema)),
   replyToId: z.optional(z.string()),

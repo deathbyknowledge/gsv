@@ -143,6 +143,8 @@ export type AdapterInboundArgs = {
   accountId: string;
   /** Stable account-scoped identity for the complete provider event. */
   deliveryId: string;
+  /** Adapter-owned peer-route generation for relink-fenced ingress. */
+  routeGeneration?: string;
   message: AdapterInboundMessage;
 };
 

@@ -251,6 +251,10 @@ describe("DeliveryLedger", () => {
       [new Uint8Array([1, 2, 3])],
     )).resolves.not.toBe(fingerprint);
     await expect(fingerprintOutboundDelivery(
+      { ...base, routeGeneration: "generation-2" },
+      [new Uint8Array([1, 2, 3])],
+    )).resolves.not.toBe(fingerprint);
+    await expect(fingerprintOutboundDelivery(
       base,
       [new Uint8Array([1, 2, 4])],
     )).resolves.not.toBe(fingerprint);

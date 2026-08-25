@@ -60,6 +60,9 @@ import {
 import {
   KERNEL_V031_ADD_RESPONSIBILITY_SOURCE_POLICIES,
 } from "./v031_add_responsibility_source_policies";
+import {
+  KERNEL_V032_FENCE_ADAPTER_RUN_ROUTES,
+} from "./v032_fence_adapter_run_routes";
 
 // Used by Kernel DO startup before the individual stores initialize.
 export const KERNEL_SCHEMA_COMPONENT = "kernel";
@@ -96,6 +99,7 @@ export const KERNEL_MIGRATIONS: readonly SqlMigration[] = [
   KERNEL_V029_ADD_RESPONSIBILITIES,
   KERNEL_V030_LINK_IPC_RESPONSIBILITIES,
   KERNEL_V031_ADD_RESPONSIBILITY_SOURCE_POLICIES,
+  KERNEL_V032_FENCE_ADAPTER_RUN_ROUTES,
 ];
 
 export function runKernelSqlMigrations(storage: DurableObjectStorage): void {

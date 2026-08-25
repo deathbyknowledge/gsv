@@ -3790,6 +3790,76 @@ describe("adapter lifecycle handlers", () => {
     ))).toHaveLength(2);
   });
 
+  it("binds managed ingress to its exact peer-route generation", async () => {
+    const link = {
+      adapter: "telegram",
+      accountId: "managed",
+      actorId: "12345",
+      uid: 1000,
+      createdAt: 1,
+      linkedByUid: 1000,
+      metadata: {
+        managed: true,
+        surfaceKind: "dm",
+        surfaceId: "12345",
+        routeGeneration: "generation-current",
+      },
+    };
+    const ctx = makeContext({}, { upsert: vi.fn() }, {
+      routePid: null,
+      identityLinks: { get: vi.fn(() => link) },
+    });
+    sendFrameToProcessMock.mockImplementation(async (
+      _installationId: string,
+      _pid: string,
+      frame: any,
+    ) => {
+      if (frame.call === "proc.history") {
+        return { type: "res", id: frame.id, ok: true, data: { pendingHil: null } };
+      }
+      if (frame.call === "proc.adapter.deliver") {
+        return {
+          type: "res",
+          id: frame.id,
+          ok: true,
+          data: { ok: true, runId: frame.args.runId, queued: false },
+        };
+      }
+      throw new Error(`Unexpected call: ${frame.call}`);
+    });
+
+    await expect(handleAdapterInbound({
+      adapter: "telegram",
+      accountId: "managed",
+      routeGeneration: "generation-current",
+      message: {
+        messageId: "managed-current",
+        surface: { kind: "dm", id: "12345" },
+        actor: { id: "12345" },
+        text: "Hello",
+      },
+    }, ctx)).resolves.toMatchObject({ ok: true, delivered: { pid: "pid-1" } });
+    expect(ctx.runRoutes.setAdapterRoute).toHaveBeenCalledWith(expect.objectContaining({
+      routeGeneration: "generation-current",
+    }));
+
+    sendFrameToProcessMock.mockClear();
+    vi.mocked(ctx.runRoutes.setAdapterRoute).mockClear();
+    await expect(handleAdapterInbound({
+      adapter: "telegram",
+      accountId: "managed",
+      routeGeneration: "generation-stale",
+      message: {
+        messageId: "managed-stale",
+        surface: { kind: "dm", id: "12345" },
+        actor: { id: "12345" },
+        text: "Old delivery",
+      },
+    }, ctx)).resolves.toEqual({ ok: true, droppedReason: "stale_route_generation" });
+    expect(ctx.runRoutes.setAdapterRoute).not.toHaveBeenCalled();
+    expect(sendFrameToProcessMock).not.toHaveBeenCalled();
+  });
+
   it("forwards the original outbound body without reading it and cancels after delivery", async () => {
     const getReader = vi.fn();
     const cancel = vi.fn(async () => undefined);

@@ -65,7 +65,7 @@ export type DeliveryFailureKind = "retryable" | "permanent" | "ambiguous";
 
 type OutboundDeliveryFingerprintInput = Pick<
   AdapterOutboundMessage,
-  "surface" | "actorId" | "text" | "media" | "replyToId"
+  "surface" | "actorId" | "routeGeneration" | "text" | "media" | "replyToId"
 >;
 
 /**
@@ -101,6 +101,9 @@ export async function fingerprintOutboundDelivery(
       threadId: message.surface.threadId ?? null,
     },
     actorId: message.actorId ?? null,
+    ...(message.routeGeneration === undefined
+      ? undefined
+      : { routeGeneration: message.routeGeneration }),
     text: message.text,
     replyToId: message.replyToId ?? null,
     media,

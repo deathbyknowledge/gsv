@@ -20,6 +20,7 @@ export type AdapterRunRoute = {
   uid: number;
   destination: AdapterMessageDestination;
   replyToId?: string;
+  routeGeneration?: string;
   createdAt: number;
   expiresAt: number;
 };
@@ -66,6 +67,7 @@ export class RunRouteStore {
       uid: number;
       destination: AdapterMessageDestination;
       replyToId?: string;
+      routeGeneration?: string;
     },
     ttlMs = DEFAULT_TTL_MS,
   ): AdapterRunRoute {
@@ -84,6 +86,7 @@ export class RunRouteStore {
       surfaceId: destination.surface.id,
       threadId: destination.surface.threadId ?? null,
       replyToId: input.replyToId ?? null,
+      routeGeneration: input.routeGeneration ?? null,
       createdAt: now,
       expiresAt,
     });
@@ -98,6 +101,7 @@ export class RunRouteStore {
       expiresAt,
     };
     if (input.replyToId !== undefined) route.replyToId = input.replyToId;
+    if (input.routeGeneration !== undefined) route.routeGeneration = input.routeGeneration;
     return route;
   }
 
@@ -106,7 +110,8 @@ export class RunRouteStore {
 
     const rows = this.sql.exec<RunRouteRow>(
       `SELECT run_id, route_kind, process_id, uid, connection_id, adapter, account_id,
-              actor_id, surface_kind, surface_id, thread_id, reply_to_id, created_at, expires_at
+              actor_id, surface_kind, surface_id, thread_id, reply_to_id, route_generation,
+              created_at, expires_at
        FROM run_routes
        WHERE run_id = ?
        LIMIT 1`,
@@ -158,13 +163,14 @@ export class RunRouteStore {
     surfaceId?: string;
     threadId?: string | null;
     replyToId?: string | null;
+    routeGeneration?: string | null;
     createdAt: number;
     expiresAt: number;
   }): void {
     this.sql.exec(
       `INSERT OR REPLACE INTO run_routes
-       (run_id, route_kind, process_id, uid, connection_id, adapter, account_id, actor_id, surface_kind, surface_id, thread_id, reply_to_id, created_at, expires_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       (run_id, route_kind, process_id, uid, connection_id, adapter, account_id, actor_id, surface_kind, surface_id, thread_id, reply_to_id, route_generation, created_at, expires_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       input.runId,
       input.routeKind,
       input.processId,
@@ -177,6 +183,7 @@ export class RunRouteStore {
       input.surfaceId ?? null,
       input.threadId ?? null,
       input.replyToId ?? null,
+      input.routeGeneration ?? null,
       input.createdAt,
       input.expiresAt,
     );
@@ -196,6 +203,7 @@ type RunRouteRow = {
   surface_id: string | null;
   thread_id: string | null;
   reply_to_id: string | null;
+  route_generation: string | null;
   created_at: number;
   expires_at: number;
 };
@@ -217,6 +225,7 @@ function toRoute(row: RunRouteRow): RunRoute {
         threadId: row.thread_id ?? undefined,
       }),
       replyToId: row.reply_to_id ?? undefined,
+      routeGeneration: row.route_generation ?? undefined,
       createdAt: row.created_at,
       expiresAt: row.expires_at,
     };

@@ -136,7 +136,7 @@ once to every connected user client for the owning uid. `run_routes` separately
 owns exact adapter replies and terminal cleanup; `proc.changed` invalidates
 persisted process state.
 
-For CLI/browser-originated runs, `run_routes` maps `runId` to the originating WebSocket connection. For adapter-originated runs, it also binds the route to the process, owner, linked actor, adapter account, surface, optional thread, and triggering message id. Terminal cleanup normally removes routes; the 30-day TTL is only a leak guard.
+For CLI/browser-originated runs, `run_routes` maps `runId` to the originating WebSocket connection. For adapter-originated runs, it also binds the route to the process, owner, linked actor, adapter account, surface, optional thread, triggering message id, and managed peer-route generation. Delayed output is accepted only while that exact generation remains linked, so relinking the same external identity to the same user still fences work admitted before the relink. Terminal cleanup normally removes routes; the 30-day TTL is only a leak guard.
 
 An authenticated linked private DM records one owner-scoped, last-active
 adapter destination using the provider message timestamp, so an out-of-order
@@ -208,6 +208,8 @@ recorded PID and never rewrites a private-DM selection.
 Migration v025 stores the owner's latest linked private destination together
 with its winning provider message id for the personal-output fallback pointer.
 Independent Kernel ingress-receipt order completes the stale-handoff fence.
+Migration v032 adds the managed peer-route generation to exact adapter run
+routes so committed output cannot cross a later relink.
 
 Human-in-the-loop replies are routed specially. Each adapter DM prompt includes
 `hil[requestId]`. A tokened decision is correlated first against the owning

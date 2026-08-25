@@ -2027,6 +2027,7 @@ describe("Kernel adapter route replies", () => {
       surface: { kind: "dm" as const, id: "chat-42" },
     },
     replyToId: "incoming-42",
+    routeGeneration: "generation-42",
     createdAt: 1,
     expiresAt: 2,
   };
@@ -2034,6 +2035,7 @@ describe("Kernel adapter route replies", () => {
   function replyContext(options: {
     authorized: boolean;
     adapterSend: ReturnType<typeof vi.fn>;
+    linkGeneration?: string;
     personal?: boolean;
     currentMode?: "work" | null;
   }) {
@@ -2043,7 +2045,12 @@ describe("Kernel adapter route replies", () => {
           accountId: "bot",
           actorId: "telegram:user:42",
           uid: 1000,
-          metadata: { surfaceKind: "dm", surfaceId: "chat-42" },
+          metadata: {
+            managed: true,
+            surfaceKind: "dm",
+            surfaceId: "chat-42",
+            routeGeneration: options.linkGeneration ?? "generation-42",
+          },
         }
       : null;
     return {
@@ -2117,6 +2124,30 @@ describe("Kernel adapter route replies", () => {
     warn.mockRestore();
   });
 
+  it("does not deliver an old run route after the same Telegram identity is relinked", async () => {
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+    const adapterSend = vi.fn(async () => ({ ok: true as const }));
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+    const kernel = Object.create(Kernel.prototype) as any;
+    kernel.buildProcessContext = vi.fn(() => replyContext({
+      authorized: true,
+      adapterSend,
+      linkGeneration: "generation-new",
+    }));
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    await expect(kernel.deliverAdapterRouteReply(route, {
+      deliveryId: "run-adapter-reply:stale",
+      text: "old output",
+    })).resolves.toEqual({
+      state: "permanent",
+      error: "Adapter reply failed (telegram): Adapter route changed before delivery",
+    });
+
+    expect(adapterSend).not.toHaveBeenCalled();
+    warn.mockRestore();
+  });
+
   it("propagates transient directed message delivery failures for retry handling", async () => {
     const adapterSend = vi.fn(async () => ({
       // SAFETY: test fixture is constructed with the asserted kernel domain shape.
@@ -2150,6 +2181,7 @@ describe("Kernel adapter route replies", () => {
         text: "retry this",
         media: undefined,
         replyToId: "incoming-42",
+        routeGeneration: "generation-42",
       },
       undefined,
     );

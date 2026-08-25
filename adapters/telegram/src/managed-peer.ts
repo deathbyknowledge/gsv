@@ -152,14 +152,19 @@ export class ManagedTelegramPeer extends DurableObject<ManagedTelegramPeerEnv> {
       throw error;
     }
     const route = state.activeRoute;
-    if (!route || route.installationId !== installationId) {
-      await cancelBinaryBody(body, "Telegram identity is not linked to this GSV");
-      return { ok: false, error: "Telegram identity is not linked to this GSV" };
+    if (
+      !route
+      || route.installationId !== installationId
+      || !message.routeGeneration
+      || route.generation !== message.routeGeneration
+    ) {
+      await cancelBinaryBody(body, "Telegram route changed before delivery");
+      return { ok: false, error: "Telegram route changed before delivery" };
     }
     return await this.deliverMessage(message, {
       kind: "installation",
       installationId,
-      generation: route.generation,
+      generation: message.routeGeneration,
     }, body);
   }
 
@@ -394,6 +399,7 @@ export class ManagedTelegramPeer extends DurableObject<ManagedTelegramPeerEnv> {
         adapter: "telegram",
         accountId: MANAGED_TELEGRAM_ACCOUNT_ID,
         deliveryId: inbound.deliveryId,
+        routeGeneration: route.generation,
         message: {
           messageId: inbound.messageId,
           surface: {

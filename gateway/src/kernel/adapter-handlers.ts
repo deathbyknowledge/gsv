@@ -85,6 +85,7 @@ import type { IdentityLinkRecord } from "./identity-links";
 import {
   assertAdapterMessageDestinationAccess,
   identityLinkAllowsSurface,
+  identityLinkRouteGeneration,
   normalizeAdapterMessageDestination,
   normalizeAdapterSurface,
 } from "./adapter-destinations";
@@ -168,6 +169,7 @@ type AdapterIngressProcessRecovery = {
   runId: string;
   media: ResourceBlock[];
   origin: Extract<InteractionOrigin, { kind: "adapter" }>;
+  routeGeneration?: string;
   conversationId?: string;
   inputMessageId?: string;
   messageCreatedAt?: number;
@@ -275,6 +277,7 @@ const adapterIngressRecoverySchema = z.discriminatedUnion("kind", [
     runId: z.string(),
     media: z.array(resourceBlockRecoverySchema),
     origin: adapterInteractionOriginSchema,
+    routeGeneration: z.optional(z.string()),
     conversationId: z.optional(z.string()),
     inputMessageId: z.optional(z.string()),
     messageCreatedAt: z.optional(z.number().check(z.int(), z.positive())),
@@ -790,7 +793,9 @@ export async function handleAdapterSend(
 export async function deliverAdapterReply(
   destination: AdapterMessageDestination,
   ownerUid: number,
-  message: Pick<AdapterSendArgs, "deliveryId" | "text" | "media" | "replyToId">,
+  message: Pick<AdapterSendArgs, "deliveryId" | "text" | "media" | "replyToId"> & {
+    routeGeneration?: string;
+  },
   ctx: KernelContext,
   body?: BinaryBody,
 ): Promise<AdapterSendResult> {
@@ -818,12 +823,30 @@ export async function deliverAdapterReply(
 async function deliverAdapterMessage(
   args: Pick<AdapterSendArgs, "adapter" | "accountId" | "deliveryId" | "surface" | "text" | "media" | "replyToId"> & {
     actorId?: string;
+    routeGeneration?: string;
   },
   ctx: KernelContext,
   body?: BinaryBody,
 ): Promise<AdapterSendResult> {
   const adapter = args.adapter.trim().toLowerCase();
   const accountId = args.accountId.trim();
+
+  let routeGeneration = args.routeGeneration;
+  if (args.actorId) {
+    const link = ctx.adapters.identityLinks.get(adapter, accountId, args.actorId);
+    const currentGeneration = link
+      ? identityLinkRouteGeneration(link, args.surface)
+      : undefined;
+    if (routeGeneration !== undefined && routeGeneration !== currentGeneration) {
+      await cancelBinaryBody(body, "Adapter route changed before delivery");
+      return {
+        ok: false,
+        error: "Adapter route changed before delivery",
+        retryable: false,
+      };
+    }
+    routeGeneration ??= currentGeneration;
+  }
 
   const deliveryId = args.deliveryId?.trim() || crypto.randomUUID();
   if (deliveryId.length > 200 || !/^[a-zA-Z0-9._:-]+$/.test(deliveryId)) {
@@ -867,6 +890,7 @@ async function deliverAdapterMessage(
     replyToId: args.replyToId,
   };
   if (args.actorId) outbound.actorId = args.actorId;
+  if (routeGeneration !== undefined) outbound.routeGeneration = routeGeneration;
 
   let result: AdapterWorkerSendResult;
   try {
@@ -1209,11 +1233,15 @@ async function handleAdapterInboundOwned(
   const adapter = args.adapter.trim().toLowerCase();
   const accountId = args.accountId.trim();
   const providerDeliveryId = args.deliveryId.trim();
+  const routeGeneration = args.routeGeneration?.trim() || undefined;
   const inbound = args.message;
 
   if (!adapter) return { ok: false, error: "adapter is required" };
   if (!accountId) return { ok: false, error: "accountId is required" };
   if (!providerDeliveryId) return { ok: false, error: "deliveryId is required" };
+  if (args.routeGeneration !== undefined && routeGeneration === undefined) {
+    return { ok: false, error: "routeGeneration is required when provided" };
+  }
   if (!inbound.messageId.trim()) {
     return { ok: false, error: "message.messageId is required" };
   }
@@ -1286,6 +1314,7 @@ async function handleAdapterInboundOwned(
       adapter,
       accountId,
       actorId,
+      routeGeneration,
       message,
       body,
       ctx,
@@ -1318,6 +1347,7 @@ async function resolveClaimedAdapterInbound(input: {
   adapter: string;
   accountId: string;
   actorId: string;
+  routeGeneration?: string;
   message: AdapterInboundMessage;
   body?: BinaryBody;
   ctx: KernelContext;
@@ -1328,12 +1358,24 @@ async function resolveClaimedAdapterInbound(input: {
     adapter,
     accountId,
     actorId,
+    routeGeneration,
     message,
     body,
     ctx,
   } = input;
   const recovery = normalizeAdapterIngressRecovery(input.recovery);
+  const link = ctx.adapters.identityLinks.get(adapter, accountId, actorId);
   const uid = ctx.adapters.identityLinks.resolveUid(adapter, accountId, actorId);
+  const linkedRouteGeneration = link
+    ? identityLinkRouteGeneration(link, message.surface)
+    : undefined;
+  if (
+    (link?.metadata?.managed === true
+      && (!linkedRouteGeneration || routeGeneration !== linkedRouteGeneration))
+    || (link?.metadata?.managed !== true && routeGeneration !== undefined)
+  ) {
+    return { ok: true, droppedReason: "stale_route_generation" };
+  }
   if (uid === null) {
     if (message.surface.kind !== "dm") {
       return { ok: true, droppedReason: "unlinked_actor" };
@@ -1391,11 +1433,15 @@ async function resolveClaimedAdapterInbound(input: {
     if (recovery.uid !== uid) {
       return { ok: false, error: "Adapter ingress owner changed during recovery" };
     }
+    if (recovery.routeGeneration !== routeGeneration) {
+      return { ok: true, droppedReason: "stale_route_generation" };
+    }
     return deliverAdapterInboundToProcess({
       adapter,
       accountId,
       actorId,
       message,
+      routeGeneration,
       ctx,
       recovery,
       checkpoint: { receiptId, claimToken },
@@ -1537,6 +1583,7 @@ async function resolveClaimedAdapterInbound(input: {
     actorId,
     message,
     body,
+    routeGeneration,
     uid,
     pid,
     ctx,
@@ -1655,6 +1702,7 @@ async function deliverAdapterInboundToProcess(input: {
   message: AdapterInboundMessage;
   ctx: KernelContext;
   body?: BinaryBody;
+  routeGeneration?: string;
   uid?: number;
   pid?: string;
   recovery?: AdapterIngressProcessRecovery;
@@ -1702,6 +1750,9 @@ async function deliverAdapterInboundToProcess(input: {
       runId,
       media: media ?? [],
       origin: adapterInteractionOrigin(adapter, accountId, message, actorId),
+      ...(input.routeGeneration === undefined
+        ? undefined
+        : { routeGeneration: input.routeGeneration }),
       conversationId: conversation.id,
       inputMessageId,
       messageCreatedAt: normalizeAdapterMessageCreatedAt(message.timestamp),
@@ -1819,6 +1870,9 @@ async function deliverAdapterInboundToProcess(input: {
       surface: message.surface,
     },
     replyToId: message.messageId,
+    ...(recovery.routeGeneration === undefined
+      ? undefined
+      : { routeGeneration: recovery.routeGeneration }),
   });
   // Adapter ingress is itself an RPC from the adapter. Calling activity back
   // into a stateful adapter here would re-enter its Durable Object before this

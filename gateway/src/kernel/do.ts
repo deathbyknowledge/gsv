@@ -149,7 +149,10 @@ import {
   renderAdapterHilPrompt,
   setAdapterActivityForKernel,
 } from "./adapter-handlers";
-import { assertAdapterMessageDestinationAccess } from "./adapter-destinations";
+import {
+  assertAdapterMessageDestinationAccess,
+  identityLinkRouteGeneration,
+} from "./adapter-destinations";
 import type {
   ProcessMessageCommitArgs,
   ProcessMessageCommitResponseFrame,
@@ -1655,11 +1658,20 @@ export class Kernel extends DurableObject<Env> {
       this.adapters.privateDestinations.clearIfMatches(ownerUid, preferred.destination);
       return null;
     }
+    const link = ctx.adapters.identityLinks.get(
+      preferred.destination.adapter,
+      preferred.destination.accountId,
+      preferred.destination.actorId,
+    );
+    const routeGeneration = link
+      ? identityLinkRouteGeneration(link, preferred.destination.surface)
+      : undefined;
     return this.runRoutes.setAdapterRoute({
       runId,
       processId,
       uid: ownerUid,
       destination: preferred.destination,
+      ...(routeGeneration === undefined ? undefined : { routeGeneration }),
     });
   }
 
@@ -2205,6 +2217,9 @@ export class Kernel extends DurableObject<Env> {
         ctx,
       ),
       replyToId: message.replyToId ?? route.replyToId,
+      ...(route.routeGeneration === undefined
+        ? undefined
+        : { routeGeneration: route.routeGeneration }),
     }, ctx, body);
     if (!result.ok) {
       const detail = `Adapter reply failed (${route.destination.adapter}): ${result.error}`;
@@ -4357,11 +4372,20 @@ export class Kernel extends DurableObject<Env> {
       const runId = await stableOpaqueId("schedule-run", [record.id, occurrenceKey]);
       const delivery = target.replyTo;
       if (delivery) {
+        const link = ctx.adapters.identityLinks.get(
+          delivery.adapter,
+          delivery.accountId,
+          delivery.actorId,
+        );
+        const routeGeneration = link
+          ? identityLinkRouteGeneration(link, delivery.surface)
+          : undefined;
         this.runRoutes.setAdapterRoute({
           runId,
           processId: target.pid,
           uid: record.ownerUid,
           destination: delivery,
+          ...(routeGeneration === undefined ? undefined : { routeGeneration }),
         });
       }
       const request: ProcessScheduleDeliverRequestFrame = {
