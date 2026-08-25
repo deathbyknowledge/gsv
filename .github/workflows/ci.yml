@@ -22,6 +22,7 @@ jobs:
       web: ${{ steps.filter.outputs.web }}
       extension: ${{ steps.filter.outputs.extension }}
       gateway: ${{ steps.filter.outputs.gateway }}
+      adapters: ${{ steps.filter.outputs.adapters }}
       whatsapp: ${{ steps.filter.outputs.whatsapp }}
       ripgit: ${{ steps.filter.outputs.ripgit }}
       cli: ${{ steps.filter.outputs.cli }}
@@ -95,6 +96,12 @@ jobs:
               - 'package-lock.json'
               - 'packages/gsv/**'
               - 'gateway/**'
+            adapters:
+              - '.github/workflows/ci.yml'
+              - 'package.json'
+              - 'package-lock.json'
+              - 'packages/gsv/**'
+              - 'adapters/**'
             whatsapp:
               - '.github/workflows/ci.yml'
               - 'package.json'
@@ -321,6 +328,63 @@ jobs:
       - name: Bundle worker
         working-directory: ripgit
         run: npm exec -- wrangler deploy --minify --dry-run --outdir dist/worker
+
+  adapter-packages:
+    name: Adapter Package Checks
+    runs-on: ubuntu-latest
+    needs: [changes]
+    if: needs.changes.outputs.adapters == 'true'
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: 'npm'
+          cache-dependency-path: |
+            package-lock.json
+            adapters/*/package-lock.json
+
+      - name: Install workspace dependencies
+        run: npm ci
+
+      - name: Install adapter dependencies
+        run: |
+          set -euo pipefail
+          for manifest in adapters/*/package.json; do
+            directory="${manifest%/package.json}"
+            npm ci --prefix "$directory" --workspaces=false
+          done
+
+      - name: Type check adapter packages
+        run: |
+          set -euo pipefail
+          for manifest in adapters/*/package.json; do
+            directory="${manifest%/package.json}"
+            npm --prefix "$directory" run typecheck
+          done
+
+      - name: Run shared adapter tests
+        run: npm exec -- vitest run adapters/shared/test
+
+      - name: Run adapter package tests
+        run: |
+          set -euo pipefail
+          for manifest in adapters/*/package.json; do
+            directory="${manifest%/package.json}"
+            test_script="$(node -e '
+              const scripts = require("./" + process.argv[1]).scripts ?? {};
+              console.log(
+                scripts["test:run"] ? "test:run"
+                  : scripts["test:managed"] ? "test:managed"
+                    : scripts.test ? "test" : "",
+              );
+            ' "$manifest")"
+            if [ -n "$test_script" ]; then
+              npm --prefix "$directory" run "$test_script"
+            fi
+          done
 
   whatsapp-test:
     name: WhatsApp Adapter Tests
