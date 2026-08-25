@@ -244,12 +244,16 @@ authority.
 
 ## Standing responsibilities
 
-Standing responsibility definitions determine which durable sources can create
-work for Ship. Built-in sources have Kernel-owned definitions and per-owner
-enablement policies. `mail.received` is the first built-in source and is enabled
-by default. Disabling it does not discard mail: mailbox ingestion and
-classification still complete, but no responsibility is created and Ship is not
-woken for that message.
+Standing responsibility definitions describe the work GSV must continue to own.
+Required contracts are always active: direct interactions must end with a Message
+or explicit silence, delegated work must return to Ship on every terminal outcome,
+and each enabled Ship schedule must produce its due responsibility. These rows are
+Kernel-defined runtime guarantees rather than user-configurable automation.
+
+Configurable sources are Kernel-defined producers with per-owner enablement
+policies. `mail.received` is enabled by default. Disabling it does not discard
+mail: mailbox ingestion and classification still complete, but no responsibility
+is created and Ship is not woken for that message.
 
 Recurring custom responsibilities are ordinary `every` or `cron` schedules whose
 target is `responsibility`. The Web responsibilities workspace presents three

@@ -138,7 +138,7 @@ function StandingPanel({
     <div class="gsv-r12y-standing">
       <section>
         <div class="gsv-r12y-section-heading">
-          <div><span class="gsv-sublabel">BUILT IN</span><h2>Event sources</h2></div>
+          <div><span class="gsv-sublabel">BUILT IN</span><h2>System responsibilities</h2></div>
         </div>
         <div class="gsv-r12y-list">
           {sources.map((source) => (
@@ -148,12 +148,16 @@ function StandingPanel({
                 <p>{source.description}</p>
                 <code>{source.id}</code>
               </div>
-              <Toggle
-                label={source.enabled ? "ENABLED" : "DISABLED"}
-                on={source.enabled}
-                disabled={busy}
-                onChange={(enabled) => onMutation({ kind: "source", id: source.id, enabled })}
-              />
+              {source.control === "required" ? (
+                <span class="gsv-r12y-required">ALWAYS ON</span>
+              ) : (
+                <Toggle
+                  label={source.enabled ? "ENABLED" : "DISABLED"}
+                  on={source.enabled}
+                  disabled={busy}
+                  onChange={(enabled) => onMutation({ kind: "source", id: source.id, enabled })}
+                />
+              )}
             </article>
           ))}
         </div>

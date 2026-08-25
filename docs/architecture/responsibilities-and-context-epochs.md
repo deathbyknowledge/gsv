@@ -152,7 +152,20 @@ removing earlier prompt tokens requires an epoch rotation.
 
 ## Deterministic producers
 
-The first system-owned producers use the same ledger contract:
+The Standing projection also names three required runtime contracts:
+
+- `interaction.response` keeps a direct interaction running until Ship sends a
+  Message or explicitly chooses silence. A response completed within that run does
+  not need a durable ledger record.
+- `process.delegation` guarantees that a linked, still-active assignment returns to
+  Ship on every terminal child outcome.
+- `schedule.due` guarantees that each occurrence of an enabled Ship responsibility
+  schedule becomes durable work.
+
+They are always on. Configurable producers, beginning with `mail.received`, may be
+enabled or disabled per owner without changing the subsystem's underlying data.
+
+System-owned producers use the same ledger contract:
 
 - Managed mail completion creates one `mail.received` responsibility keyed by the
   immutable message id. The title contains no sender-controlled text. Bounded summary

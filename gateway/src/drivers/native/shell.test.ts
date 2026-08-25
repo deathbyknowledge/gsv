@@ -3010,6 +3010,7 @@ describe("native administration shell commands", () => {
         id: "mail.received",
         name: "Incoming mail",
         description: "Ask the Ship to review each newly received email.",
+        control: "configurable",
         defaultEnabled: true,
         enabled,
       }]),
@@ -3019,6 +3020,7 @@ describe("native administration shell commands", () => {
           id,
           name: "Incoming mail",
           description: "Ask the Ship to review each newly received email.",
+          control: "configurable",
           defaultEnabled: true,
           enabled,
         };
@@ -3032,7 +3034,7 @@ describe("native administration shell commands", () => {
     const listed = await handleShellExec({ input: "r12y sources" }, ctx);
     const disabled = await handleShellExec({ input: "r12y source disable mail.received" }, ctx);
 
-    expect(listed.stdout).toContain("mail.received\tyes\tIncoming mail");
+    expect(listed.stdout).toContain("mail.received\tenabled\tconfigurable\tIncoming mail");
     expect(disabled.stdout).toContain('"enabled":false');
     expect(responsibilitySources.set).toHaveBeenCalledWith(IDENTITY.uid, "mail.received", false);
   });

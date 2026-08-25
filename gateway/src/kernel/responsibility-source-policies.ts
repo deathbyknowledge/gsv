@@ -1,18 +1,52 @@
 import type {
+  ResponsibilityConfigurableSourcePolicyId,
   ResponsibilitySourcePolicy,
   ResponsibilitySourcePolicyId,
 } from "@humansandmachines/gsv/protocol";
 
-type PolicyDefinition = Omit<
-  ResponsibilitySourcePolicy,
-  "enabled" | "updatedAtMs"
->;
+type PolicyDefinition =
+  | {
+      id: Exclude<ResponsibilitySourcePolicyId, ResponsibilityConfigurableSourcePolicyId>;
+      name: string;
+      description: string;
+      control: "required";
+      defaultEnabled: true;
+    }
+  | {
+      id: ResponsibilityConfigurableSourcePolicyId;
+      name: string;
+      description: string;
+      control: "configurable";
+      defaultEnabled: boolean;
+    };
 
 const POLICY_DEFINITIONS = [
+  {
+    id: "interaction.response",
+    name: "Conversation replies",
+    description: "Keep a direct interaction active until Ship sends a Message or explicitly chooses silence.",
+    control: "required",
+    defaultEnabled: true,
+  },
+  {
+    id: "process.delegation",
+    name: "Delegated work",
+    description: "Return assigned work to Ship when its Process completes, fails, times out, or is terminated.",
+    control: "required",
+    defaultEnabled: true,
+  },
+  {
+    id: "schedule.due",
+    name: "Scheduled responsibilities",
+    description: "Create one responsibility for every occurrence of an enabled Ship schedule.",
+    control: "required",
+    defaultEnabled: true,
+  },
   {
     id: "mail.received",
     name: "Incoming mail",
     description: "Ask the Ship to review each newly received email.",
+    control: "configurable",
     defaultEnabled: true,
   },
 ] as const satisfies readonly PolicyDefinition[];
@@ -37,6 +71,12 @@ export class ResponsibilitySourcePolicyStore {
     );
     return POLICY_DEFINITIONS.map((definition) => {
       const override = overrides.get(definition.id);
+      if (definition.control === "required") {
+        return {
+          ...definition,
+          enabled: true,
+        };
+      }
       return {
         ...definition,
         enabled: override ? override.enabled === 1 : definition.defaultEnabled,
@@ -55,6 +95,12 @@ export class ResponsibilitySourcePolicyStore {
       ownerUid,
       sourceId,
     ).toArray()[0];
+    if (definition.control === "required") {
+      return {
+        ...definition,
+        enabled: true,
+      };
+    }
     return {
       ...definition,
       enabled: override ? override.enabled === 1 : definition.defaultEnabled,
@@ -64,11 +110,14 @@ export class ResponsibilitySourcePolicyStore {
 
   set(
     ownerUid: number,
-    sourceId: ResponsibilitySourcePolicyId,
+    sourceId: ResponsibilityConfigurableSourcePolicyId,
     enabled: boolean,
     now = Date.now(),
   ): ResponsibilitySourcePolicy {
-    policyDefinition(sourceId);
+    const definition = policyDefinition(sourceId);
+    if (definition.control !== "configurable") {
+      throw new Error(`Responsibility source is always on: ${sourceId}`);
+    }
     this.sql.exec(
       `INSERT INTO responsibility_source_policies (owner_uid, source_id, enabled, updated_at)
        VALUES (?, ?, ?, ?)
@@ -83,7 +132,7 @@ export class ResponsibilitySourcePolicyStore {
     return this.get(ownerUid, sourceId);
   }
 
-  isEnabled(ownerUid: number, sourceId: ResponsibilitySourcePolicyId): boolean {
+  isEnabled(ownerUid: number, sourceId: ResponsibilityConfigurableSourcePolicyId): boolean {
     return this.get(ownerUid, sourceId).enabled;
   }
 }

@@ -8,15 +8,21 @@ describe("ResponsibilitySourcePolicyStore", () => {
     await runWithRealKernelSql((sql) => {
       const policies = new ResponsibilitySourcePolicyStore(sql);
 
-      expect(policies.list(1000)).toEqual([expect.objectContaining({
-        id: "mail.received",
-        enabled: true,
-        defaultEnabled: true,
-      })]);
+      expect(policies.list(1000).map(({ id, control, enabled }) => ({
+        id,
+        control,
+        enabled,
+      }))).toEqual([
+        { id: "interaction.response", control: "required", enabled: true },
+        { id: "process.delegation", control: "required", enabled: true },
+        { id: "schedule.due", control: "required", enabled: true },
+        { id: "mail.received", control: "configurable", enabled: true },
+      ]);
 
       expect(policies.set(1000, "mail.received", false, 1234)).toEqual(
         expect.objectContaining({
           id: "mail.received",
+          control: "configurable",
           enabled: false,
           updatedAtMs: 1234,
         }),

@@ -9,16 +9,35 @@ export type ResponsibilityState =
 
 export type ResponsibilityPriority = "low" | "normal" | "high" | "critical";
 
-export type ResponsibilitySourcePolicyId = "mail.received";
+export type ResponsibilityRequiredSourcePolicyId =
+  | "interaction.response"
+  | "process.delegation"
+  | "schedule.due";
 
-export type ResponsibilitySourcePolicy = {
-  id: ResponsibilitySourcePolicyId;
-  name: string;
-  description: string;
-  enabled: boolean;
-  defaultEnabled: boolean;
-  updatedAtMs?: number;
-};
+export type ResponsibilityConfigurableSourcePolicyId = "mail.received";
+
+export type ResponsibilitySourcePolicyId =
+  | ResponsibilityRequiredSourcePolicyId
+  | ResponsibilityConfigurableSourcePolicyId;
+
+export type ResponsibilitySourcePolicy =
+  | {
+      id: ResponsibilityRequiredSourcePolicyId;
+      name: string;
+      description: string;
+      control: "required";
+      enabled: true;
+      defaultEnabled: true;
+    }
+  | {
+      id: ResponsibilityConfigurableSourcePolicyId;
+      name: string;
+      description: string;
+      control: "configurable";
+      enabled: boolean;
+      defaultEnabled: boolean;
+      updatedAtMs?: number;
+    };
 
 export type ResponsibilitySourceListArgs = Record<string, never>;
 
@@ -27,7 +46,7 @@ export type ResponsibilitySourceListResult = {
 };
 
 export type ResponsibilitySourceUpdateArgs = {
-  id: ResponsibilitySourcePolicyId;
+  id: ResponsibilityConfigurableSourcePolicyId;
   enabled: boolean;
 };
 

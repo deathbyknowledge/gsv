@@ -14,13 +14,24 @@ describe("responsibilitiesService", () => {
       revision: 1,
     }));
     const listSources = vi.fn<GSVClient["r12y"]["source"]["list"]>(async () => ({
-      sources: [{
-        id: "mail.received",
-        name: "Incoming mail",
-        description: "Create a responsibility when mail arrives.",
-        enabled: true,
-        defaultEnabled: true,
-      }],
+      sources: [
+        {
+          id: "interaction.response",
+          name: "Conversation replies",
+          description: "Keep direct interactions active until they are answered or silenced.",
+          control: "required",
+          enabled: true,
+          defaultEnabled: true,
+        },
+        {
+          id: "mail.received",
+          name: "Incoming mail",
+          description: "Create a responsibility when mail arrives.",
+          control: "configurable",
+          enabled: true,
+          defaultEnabled: true,
+        },
+      ],
     }));
     const listSchedules = vi.fn<GSVClient["sched"]["list"]>(async () => ({
         schedules: [
@@ -45,7 +56,10 @@ describe("responsibilitiesService", () => {
 
     const workspace = await loadResponsibilitiesWorkspace(client);
 
-    expect(workspace.sources).toEqual([expect.objectContaining({ id: "mail.received", enabled: true })]);
+    expect(workspace.sources.map((source) => source.id)).toEqual([
+      "interaction.response",
+      "mail.received",
+    ]);
     expect(workspace.schedules.map((schedule) => schedule.id)).toEqual(["recurring"]);
     expect(listResponsibilities).toHaveBeenCalledWith(expect.objectContaining({ states: ["open", "active", "waiting"] }));
     expect(listResponsibilities).toHaveBeenCalledWith(expect.objectContaining({ states: ["resolved", "cancelled"] }));

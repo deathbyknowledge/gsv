@@ -127,7 +127,8 @@ terminal records unless `--all` is supplied. Waiting work must name a future
 check time or a blocker. Prefer `proc delegate --responsibility ID ...` for a
 new bounded worker; the lower-level `r12y delegate ID PID --until ISO` command
 assigns an already-existing owned process with an explicit recovery deadline.
-`r12y sources` lists built-in sources and their effective state. Use
+`r12y sources` lists required runtime contracts as `always-on` and configurable
+producers as `configurable`. Only configurable producers can be changed. Use
 `r12y source disable mail.received` to keep accepting mail without creating a
 Ship responsibility for each message; enabling it affects future completions.
 

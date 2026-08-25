@@ -817,8 +817,8 @@ and their ancestor records, and may update only its own assignment.
 | `r12y.create` | Creates an open responsibility, or returns the existing record for the same stable dedupe key. |
 | `r12y.update` | Applies an optimistic revision-checked state or metadata transition and appends it to the ordered journal. |
 | `r12y.changes` | Pages ordered transitions after a known revision for context recovery. |
-| `r12y.source.list` | Lists Kernel-defined responsibility sources and the caller owner's effective enablement policy. |
-| `r12y.source.update` | Enables or disables one Kernel-defined source for the caller owner. Source payload storage remains owned by its subsystem. |
+| `r12y.source.list` | Lists Kernel-defined required contracts and configurable responsibility sources for the caller owner. |
+| `r12y.source.update` | Enables or disables one configurable source for the caller owner. Required contracts are immutable, and source payload storage remains owned by its subsystem. |
 
 ```ts
 type ResponsibilityState = "open" | "active" | "waiting" | "resolved" | "cancelled";
@@ -826,14 +826,24 @@ type ResponsibilityAssignee =
   | { kind: "ship" }
   | { kind: "process"; processId: string };
 
-type ResponsibilitySourcePolicy = {
-  id: "mail.received";
-  name: string;
-  description: string;
-  enabled: boolean;
-  defaultEnabled: boolean;
-  updatedAtMs?: number;
-};
+type ResponsibilitySourcePolicy =
+  | {
+      id: "interaction.response" | "process.delegation" | "schedule.due";
+      name: string;
+      description: string;
+      control: "required";
+      enabled: true;
+      defaultEnabled: true;
+    }
+  | {
+      id: "mail.received";
+      name: string;
+      description: string;
+      control: "configurable";
+      enabled: boolean;
+      defaultEnabled: boolean;
+      updatedAtMs?: number;
+    };
 
 type ResponsibilityRecord = {
   id: string;
@@ -889,7 +899,7 @@ type ResponsibilitySyscalls = {
     result: { sources: ResponsibilitySourcePolicy[] };
   };
   "r12y.source.update": {
-    args: { id: ResponsibilitySourcePolicy["id"]; enabled: boolean };
+    args: { id: "mail.received"; enabled: boolean };
     result: { source: ResponsibilitySourcePolicy };
   };
 };

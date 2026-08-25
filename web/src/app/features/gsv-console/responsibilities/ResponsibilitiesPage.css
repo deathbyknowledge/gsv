@@ -86,6 +86,16 @@
   color: var(--text-dim);
 }
 
+.gsv-r12y-required {
+  flex: none;
+  padding: 7px 10px;
+  border: 1px solid var(--border-raised);
+  color: var(--accent-bright);
+  font-family: var(--gsv-font-mono);
+  font-size: 10px;
+  letter-spacing: 0.12em;
+}
+
 .gsv-r12y-actions,
 .gsv-r12y-editor-actions {
   display: flex;

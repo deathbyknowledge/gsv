@@ -84,9 +84,10 @@ async function runR12yCommand(args: string[], ctx: KernelContext): Promise<ExecR
       requireCommandCapability(ctx, "r12y.source.list");
       requireArgumentCount(rest, 0, "sources accepts no arguments");
       const { sources } = handleResponsibilitySourceList({}, ctx);
-      return result(`${["ID\tENABLED\tNAME\tDESCRIPTION", ...sources.map((source) => [
+      return result(`${["ID\tSTATUS\tCONTROL\tNAME\tDESCRIPTION", ...sources.map((source) => [
         source.id,
-        source.enabled ? "yes" : "no",
+        source.enabled ? "enabled" : "disabled",
+        source.control === "required" ? "always-on" : "configurable",
         source.name,
         source.description,
       ].join("\t"))].join("\n")}\n`);

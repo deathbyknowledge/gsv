@@ -1,6 +1,7 @@
 import type { GSVClient } from "@humansandmachines/gsv/client";
 import type {
   ResponsibilityRecord,
+  ResponsibilitySourceUpdateArgs,
   ResponsibilitySourcePolicy,
   ScheduleExpression,
   ScheduleRecord,
@@ -29,7 +30,7 @@ export type ResponsibilityScheduleInput = {
 };
 
 export type ResponsibilityWorkspaceMutation =
-  | { kind: "source"; id: ResponsibilitySourcePolicy["id"]; enabled: boolean }
+  | { kind: "source"; id: ResponsibilitySourceUpdateArgs["id"]; enabled: boolean }
   | { kind: "schedule.save"; input: ResponsibilityScheduleInput }
   | { kind: "schedule.toggle"; id: string; enabled: boolean }
   | { kind: "schedule.remove"; id: string };
