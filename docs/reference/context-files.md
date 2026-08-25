@@ -44,7 +44,8 @@ facts and preferences that should affect nearly every interaction. Detailed or
 occasionally relevant personal information belongs in the human-owned
 `personal` wiki, where agents retrieve it deliberately. Unresolved work belongs
 in the Kernel `r12y` responsibility ledger rather than either context or memory
-layer.
+layer. Initial onboarding is likewise an `r12y` responsibility, not a generated
+context file.
 
 ## Skills: `skills.d/`
 

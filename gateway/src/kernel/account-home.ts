@@ -2,9 +2,9 @@ import { RipgitClient, type RipgitApplyOp } from "../fs/ripgit/client";
 import { accountHomeRepoRef } from "../fs/ripgit/repos";
 import type { ProcessIdentity } from "@humansandmachines/gsv/protocol";
 import {
-  DEFAULT_BOOT_CONTEXT_TEMPLATE,
   DEFAULT_MEMORY_CONTEXT_TEMPLATE,
   DEFAULT_STYLE_CONTEXT,
+  RETIRED_BOOT_CONTEXT_TEMPLATE,
 } from "../prompts/agent-home";
 import {
   PERSONAL_INTELLIGENCE_CONTEXT,
@@ -21,8 +21,8 @@ export async function ensureAccountHomeLayout(
   options: {
     seedPromptContext?: boolean;
     personalAgent?: boolean;
-    seedBootContext?: boolean;
     cleanupGeneratedPromptContext?: boolean;
+    beforeRetiringGeneratedBootContext?: () => void;
   } = {},
 ): Promise<void> {
   await ensureHomeDir(env.STORAGE, identity.home, identity.uid, identity.gid);
@@ -62,15 +62,16 @@ export async function ensureAccountHomeLayout(
     });
   }
   if (options.seedPromptContext === true) {
-    if (options.seedBootContext === true) {
-      maybePutTextFile(
+    if (options.personalAgent === true) {
+      const retiringGeneratedBootContext = maybeDeleteGeneratedTextFile(
         ops,
         "context.d/00-boot.md",
         bootContext,
-        DEFAULT_BOOT_CONTEXT_TEMPLATE,
+        RETIRED_BOOT_CONTEXT_TEMPLATE,
       );
-    }
-    if (options.personalAgent === true) {
+      if (retiringGeneratedBootContext) {
+        options.beforeRetiringGeneratedBootContext?.();
+      }
       maybePutTextFile(
         ops,
         "context.d/00-role.md",
@@ -120,7 +121,7 @@ export async function ensureAccountHomeLayout(
       ops,
       "context.d/00-boot.md",
       bootContext,
-      DEFAULT_BOOT_CONTEXT_TEMPLATE,
+      RETIRED_BOOT_CONTEXT_TEMPLATE,
     );
     maybeDeleteGeneratedTextFile(
       ops,
@@ -182,18 +183,19 @@ function maybeDeleteGeneratedTextFile(
   path: string,
   existing: Awaited<ReturnType<RipgitClient["readPath"]>>,
   generatedContent: string,
-): void {
+): boolean {
   if (existing.kind !== "file") {
-    return;
+    return false;
   }
   const text = TEXT_DECODER.decode(existing.bytes);
   if (text !== generatedContent) {
-    return;
+    return false;
   }
   ops.push({
     type: "delete",
     path,
   });
+  return true;
 }
 
 async function ensureHomeDir(

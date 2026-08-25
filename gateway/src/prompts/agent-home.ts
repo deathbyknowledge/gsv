@@ -1,5 +1,5 @@
-// Used by ensureAccountHomeLayout to seed context.d/00-boot.md for new personal agents.
-export const DEFAULT_BOOT_CONTEXT_TEMPLATE =
+// Used only to remove the exact generated context.d/00-boot.md during responsibility-ledger migration.
+export const RETIRED_BOOT_CONTEXT_TEMPLATE =
   "This GSV was just created. Treat this as a one-time onboarding assignment.\n" +
   "\n" +
   "- Get to know the user enough to be useful.\n" +

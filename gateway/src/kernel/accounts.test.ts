@@ -13,6 +13,7 @@ import {
   RETIRED_PERSONAL_INTELLIGENCE_COMMITMENTS_CONTEXT,
 } from "../prompts/personal-intelligence";
 import {
+  RETIRED_BOOT_CONTEXT_TEMPLATE,
   PERSONAL_STANDING_CONTEXT,
 } from "../prompts/agent-home";
 
@@ -31,6 +32,11 @@ function createCtx() {
   const shadow = new Map<string, string>([["root", "x"], ["alice", "x"]]);
   const personalAgents = new Map<number, number>();
   const ripgitFiles = new Map<string, string>();
+  const createResponsibility = vi.fn(() => ({
+    record: { id: "r12y:onboarding" },
+    created: true,
+    revision: 1,
+  }));
   const ripgitApplyBodies: Array<{
     owner: string;
     repo: string;
@@ -151,6 +157,9 @@ function createCtx() {
         set: vi.fn(),
       // SAFETY: test fixture is constructed with the asserted kernel domain shape.
       } as KernelContext["config"],
+      responsibilities: {
+        create: createResponsibility,
+      } as KernelContext["responsibilities"],
       identity,
     // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     } as KernelContext;
@@ -165,6 +174,7 @@ function createCtx() {
     personalAgents,
     ripgitApplyBodies,
     ripgitFiles,
+    createResponsibility,
   };
 }
 
@@ -256,7 +266,7 @@ describe("handleAccountCreate", () => {
   });
 
   it("provisions human-owned shared memory while seeding the personal agent context", async () => {
-    const { ctxFor, passwd, ripgitApplyBodies } = createCtx();
+    const { ctxFor, passwd, ripgitApplyBodies, createResponsibility } = createCtx();
     const ctx = ctxFor(userIdentity(0, "root", ["*"]), { ripgit: true });
 
     const result = await handleAccountCreate(
@@ -287,15 +297,14 @@ describe("handleAccountCreate", () => {
     const agentOps = ripgitApplyBodies
       .filter((body) => body.owner === personalAgentUsername)
       .flatMap((body) => body.ops);
-    const bootContextOp = agentOps.find((op) => op.path === "context.d/00-boot.md");
-    expect(bootContextOp).toEqual(expect.objectContaining({ type: "put" }));
-    expect(new TextDecoder().decode(new Uint8Array(bootContextOp?.contentBytes ?? [])))
-      .toContain("delete `~/context.d/00-boot.md`");
-    expect(new TextDecoder().decode(new Uint8Array(bootContextOp?.contentBytes ?? [])))
-      // SAFETY: test fixture is constructed with the asserted kernel domain shape.
-      .toContain("keep it as an active assignment even if the conversation changes topic");
-    expect(new TextDecoder().decode(new Uint8Array(bootContextOp?.contentBytes ?? [])))
-      .not.toContain("Your program home");
+    expect(agentOps).not.toContainEqual(
+      expect.objectContaining({ type: "put", path: "context.d/00-boot.md" }),
+    );
+    expect(createResponsibility).toHaveBeenCalledWith(expect.objectContaining({
+      ownerUid: result.account.uid,
+      title: "Get to know the user and finish initial GSV setup",
+      dedupeKey: "onboarding.initial",
+    }));
     const roleContextOp = agentOps.find((op) => op.path === "context.d/00-role.md");
     const voiceContextOp = agentOps.find((op) => op.path === "context.d/05-voice.md");
     expect(new TextDecoder().decode(new Uint8Array(roleContextOp?.contentBytes ?? [])))
@@ -477,6 +486,49 @@ describe("handleAccountCreate", () => {
     for (const path of existingPaths) {
       expect(ops).not.toContainEqual(expect.objectContaining({ path }));
     }
+  });
+
+  it("migrates the exact generated boot context into an onboarding responsibility", async () => {
+    const state = createCtx();
+    provisionExistingPersonalAgent(state);
+    state.ripgitFiles.set(
+      "friday:context.d/00-boot.md",
+      RETIRED_BOOT_CONTEXT_TEMPLATE,
+    );
+    const ctx = state.ctxFor(userIdentity(1000, "alice", ["account.create"]), { ripgit: true });
+
+    const result = await ensurePersonalAgent(ctx, ctx.identity!.process);
+
+    expect(result.created).toBe(false);
+    expect(state.ripgitApplyBodies.flatMap((body) => body.ops)).toContainEqual({
+      type: "delete",
+      path: "context.d/00-boot.md",
+    });
+    expect(state.createResponsibility).toHaveBeenCalledWith(expect.objectContaining({
+      ownerUid: 1000,
+      dedupeKey: "onboarding.initial",
+    }));
+  });
+
+  it("keeps the generated boot context when its replacement cannot be recorded", async () => {
+    const state = createCtx();
+    provisionExistingPersonalAgent(state);
+    state.ripgitFiles.set(
+      "friday:context.d/00-boot.md",
+      RETIRED_BOOT_CONTEXT_TEMPLATE,
+    );
+    state.createResponsibility.mockImplementationOnce(() => {
+      throw new Error("responsibility write failed");
+    });
+    const ctx = state.ctxFor(userIdentity(1000, "alice", ["account.create"]), { ripgit: true });
+
+    await expect(ensurePersonalAgent(ctx, ctx.identity!.process))
+      .rejects.toThrow("responsibility write failed");
+
+    expect(state.ripgitApplyBodies.flatMap((body) => body.ops)).not.toContainEqual({
+      type: "delete",
+      path: "context.d/00-boot.md",
+    });
   });
 });
 

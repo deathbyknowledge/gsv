@@ -198,7 +198,6 @@ export async function createAccount(
   await ensureAccountHomeLayout(env, identity, {
     seedPromptContext: input.kind === "agent",
     personalAgent: input.personalAgentOf != null,
-    seedBootContext: input.personalAgentOf != null,
     cleanupGeneratedPromptContext: input.kind !== "agent",
   });
   if (input.persona) {

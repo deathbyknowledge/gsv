@@ -54,7 +54,6 @@ const PROMPT_GROUPS = [
     label: "FRESH PERSONAL INTELLIGENCE CONTEXT",
     tone: "personal",
     entries: [
-      ["agent-home.ts", "DEFAULT_BOOT_CONTEXT_TEMPLATE"],
       ["personal-intelligence.ts", "PERSONAL_INTELLIGENCE_CONTEXT"],
       ["personal-intelligence.ts", "PERSONAL_INTELLIGENCE_VOICE_CONTEXT"],
       ["agent-home.ts", "PERSONAL_STANDING_CONTEXT"],

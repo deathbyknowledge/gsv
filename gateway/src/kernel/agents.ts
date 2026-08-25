@@ -36,6 +36,7 @@ import {
 } from "./accounts";
 import { canOwnerRunAsAccount } from "./account-access";
 import { ensureAccountHomeLayout } from "./account-home";
+import { ensureInitialOnboardingResponsibility } from "./onboarding-responsibility";
 import { ensurePersonalMemory } from "./personal-memory";
 
 /**
@@ -181,6 +182,9 @@ export async function ensurePersonalAgent(
       await ensureAccountHomeLayout(ctx.env, identity, {
         seedPromptContext: true,
         personalAgent: true,
+        beforeRetiringGeneratedBootContext: () => {
+          ensureInitialOnboardingResponsibility(human.uid, ctx.responsibilities);
+        },
       });
       return { identity, created: false };
     }
@@ -188,6 +192,7 @@ export async function ensurePersonalAgent(
   }
 
   const agentName = pickAgentName(auth, preferredName);
+  ensureInitialOnboardingResponsibility(human.uid, ctx.responsibilities);
   return createAccount(ctx, {
     kind: "agent",
     username: agentName,
