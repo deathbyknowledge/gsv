@@ -6544,61 +6544,66 @@ export class Process extends DurableObject<ProcessEnv> {
     const text = parsed.command.text;
     try {
       await this.completeMessageStream(runId, actionId, text);
-      const run = this.currentRun;
-      if (!run || run.runId !== runId) {
-        return {
-          ok: false,
-          action: "message",
+      const releaseLifecycle = await this.acquireLifecycleTransition();
+      try {
+        const run = this.currentRun;
+        if (this.killed || !run || run.runId !== runId) {
+          return {
+            ok: false,
+            action: "message",
+            text,
+            delivery: { kind: "none" },
+            failureKind: "delivery",
+            error: "Message run is no longer active",
+          };
+        }
+        if (run.returnToCaller) {
+          return {
+            ok: true,
+            action: "message",
+            finish: parsed.command.finish,
+            text,
+            delivery: { kind: "none" },
+          };
+        }
+        const commitArgs: ProcessMessageCommitRequestFrame["args"] = {
+          runId,
+          actionId,
           text,
-          delivery: { kind: "none" },
-          failureKind: "delivery",
-          error: "Message run is no longer active",
         };
-      }
-      if (run.returnToCaller) {
+        if (run.conversationId) {
+          commitArgs.conversationId = run.conversationId;
+        }
+        if (media.length > 0) {
+          commitArgs.media = media.map((item) => this.runOutputMediaResource(item));
+        }
+        const request: ProcessMessageCommitRequestFrame = {
+          type: "req",
+          id: crypto.randomUUID(),
+          call: "proc.message.commit",
+          args: commitArgs,
+        };
+        const response = await sendFrameToKernel(this.installationId, this.pid, request);
+        if (!response || response.type !== "res" || response.id !== request.id) {
+          throw new Error("Kernel returned no valid message response");
+        }
+        if (!response.ok) throw new Error(response.error.message);
+        this.consumeRunOutputMedia(runId, media);
+        this.messageStreamProjections.delete(this.messageStreamProjectionKey(runId, actionId));
         return {
           ok: true,
           action: "message",
           finish: parsed.command.finish,
           text,
-          delivery: { kind: "none" },
+          delivery: {
+            kind: "message",
+            conversationId: response.data.message.conversationId,
+            messageId: response.data.message.id,
+          },
         };
+      } finally {
+        releaseLifecycle();
       }
-      const commitArgs: ProcessMessageCommitRequestFrame["args"] = {
-        runId,
-        actionId,
-        text,
-      };
-      if (run.conversationId) {
-        commitArgs.conversationId = run.conversationId;
-      }
-      if (media.length > 0) {
-        commitArgs.media = media.map((item) => this.runOutputMediaResource(item));
-      }
-      const request: ProcessMessageCommitRequestFrame = {
-        type: "req",
-        id: crypto.randomUUID(),
-        call: "proc.message.commit",
-        args: commitArgs,
-      };
-      const response = await sendFrameToKernel(this.installationId, this.pid, request);
-      if (!response || response.type !== "res" || response.id !== request.id) {
-        throw new Error("Kernel returned no valid message response");
-      }
-      if (!response.ok) throw new Error(response.error.message);
-      this.consumeRunOutputMedia(runId, media);
-      this.messageStreamProjections.delete(this.messageStreamProjectionKey(runId, actionId));
-      return {
-        ok: true,
-        action: "message",
-        finish: parsed.command.finish,
-        text,
-        delivery: {
-          kind: "message",
-          conversationId: response.data.message.conversationId,
-          messageId: response.data.message.id,
-        },
-      };
     } catch (error) {
       const projection = this.messageStreamProjections.get(
         this.messageStreamProjectionKey(runId, actionId),

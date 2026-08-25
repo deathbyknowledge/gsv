@@ -15,6 +15,7 @@ import {
   bodyFromText,
   bodyToText,
   REQUEST_CANCEL_SIGNAL,
+  type ProcAbortResult,
   type ProcessIdentity,
 } from "@humansandmachines/gsv/protocol";
 import type { RequestFrame, ResponseFrame, ResponseOkFrame } from "../protocol/frames";
@@ -2233,6 +2234,98 @@ describe("Process DO — mechanical", () => {
             delivery: { kind: "message" },
           });
       });
+    });
+
+    it("linearizes a canonical message commit before concurrent abort", async () => {
+      const pid = "mech-message-commit-abort";
+      const runId = "run-message-commit-abort";
+      const actionId = "message-before-abort";
+      const stub = await initProcess(pid, ROOT_IDENTITY);
+      const kernel = await getKernelPtr();
+      let originalCommitProcessMessage: any;
+      let releaseCommit!: () => void;
+      let markCommitStarted!: () => void;
+      const commitBlocked = new Promise<void>((resolve) => {
+        releaseCommit = resolve;
+      });
+      const commitStarted = new Promise<void>((resolve) => {
+        markCommitStarted = resolve;
+      });
+
+      await runInDurableObject(kernel, (instance: Kernel) => {
+        // SAFETY: test fixture delays the internal canonical commit boundary.
+        const k = instance as any;
+        originalCommitProcessMessage = k.commitProcessMessage;
+        k.commitProcessMessage = vi.fn(async (processId: string, args: any) => {
+          expect(processId).toBe(pid);
+          expect(args).toMatchObject({ runId, actionId, text: "Committed first." });
+          markCommitStarted();
+          await commitBlocked;
+          return {
+            id: "message-before-abort",
+            conversationId: "conversation-before-abort",
+            sequence: 1,
+            author: { kind: "process", pid, uid: ROOT_IDENTITY.uid },
+            text: "Committed first.",
+            origin: { kind: "process", pid, runId },
+            processId: pid,
+            runId,
+            createdAt: Date.now(),
+          };
+        });
+      });
+
+      try {
+        await runInDurableObject(stub, async (instance: Process) => {
+          // SAFETY: test exercises the Process-owned lifecycle boundary.
+          const process = instance as any;
+          process.currentRun = { runId };
+          process.completeMessageStream = vi.fn(async () => {});
+          process.emitRunFinished = vi.fn();
+
+          const committing = process.executeRunControlAction(
+            runId,
+            actionId,
+            {
+              ok: true,
+              command: { action: "message", text: "Committed first.", finish: false },
+            },
+            [],
+          );
+          await commitStarted;
+
+          let abortFinished = false;
+          const aborting = process.handleProcAbort({ runId }).then((result: ProcAbortResult) => {
+            abortFinished = true;
+            return result;
+          });
+          await new Promise((resolve) => setTimeout(resolve, 10));
+
+          expect(abortFinished).toBe(false);
+          expect(process.currentRun).toMatchObject({ runId });
+
+          releaseCommit();
+          await expect(committing).resolves.toMatchObject({
+            ok: true,
+            delivery: {
+              kind: "message",
+              conversationId: "conversation-before-abort",
+              messageId: "message-before-abort",
+            },
+          });
+          await expect(aborting).resolves.toMatchObject({
+            ok: true,
+            aborted: true,
+            runId,
+          });
+          expect(process.currentRun).toBeNull();
+        });
+      } finally {
+        await runInDurableObject(kernel, (instance: Kernel) => {
+          // SAFETY: restore the test-only internal Kernel override.
+          (instance as any).commitProcessMessage = originalCommitProcessMessage;
+        });
+      }
     });
 
     it("requires an explicit yield and bounds the correction", async () => {
