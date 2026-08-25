@@ -33,11 +33,20 @@
 
 .gsv-r12y-revision,
 .gsv-r12y-cadence,
-.gsv-r12y-card code {
+.gsv-r12y-card code,
+.gsv-r12y-schedule-meta {
   color: var(--accent);
   font-family: var(--gsv-font-mono);
   font-size: 11px;
   letter-spacing: 0.08em;
+}
+
+.gsv-r12y-schedule-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 18px;
+  margin-top: 8px;
+  color: var(--text-dim);
 }
 
 .gsv-r12y-standing,

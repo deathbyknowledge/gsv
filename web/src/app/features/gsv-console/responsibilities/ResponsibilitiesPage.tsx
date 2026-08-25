@@ -146,7 +146,6 @@ function StandingPanel({
               <div>
                 <h2>{source.name}</h2>
                 <p>{source.description}</p>
-                <code>{source.id}</code>
               </div>
               {source.control === "required" ? (
                 <span class="gsv-r12y-required">ALWAYS ON</span>
@@ -192,7 +191,10 @@ function StandingPanel({
               <div>
                 <h2>{schedule.name}</h2>
                 <p>{schedule.target.kind === "responsibility" ? schedule.target.message : ""}</p>
-                <span class="gsv-r12y-cadence">{formatExpression(schedule.expression)}</span>
+                <div class="gsv-r12y-schedule-meta">
+                  <span class="gsv-r12y-cadence">{formatExpression(schedule.expression)}</span>
+                  <span>{formatNextOccurrence(schedule)}</span>
+                </div>
               </div>
               <div class="gsv-r12y-actions">
                 <Toggle
@@ -263,6 +265,12 @@ function formatExpression(expression: ScheduleExpression): string {
   if (expression.kind === "every") return `EVERY ${formatDuration(expression.everyMs)}`;
   if (expression.kind === "after") return `AFTER ${formatDuration(expression.afterMs)}`;
   return new Date(expression.atMs).toLocaleString();
+}
+
+function formatNextOccurrence(schedule: ScheduleRecord): string {
+  if (!schedule.enabled) return "NO NEXT OCCURRENCE · DISABLED";
+  if (schedule.state.nextRunAtMs === null) return "NEXT OCCURRENCE PENDING";
+  return `NEXT ${formatTimestamp(schedule.state.nextRunAtMs)}`;
 }
 
 function formatDuration(milliseconds: number): string {
