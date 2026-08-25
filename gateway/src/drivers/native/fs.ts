@@ -745,14 +745,19 @@ async function resolveDeviceDestinationDirectory(
   destination: Required<FsCopyEndpoint>,
   transport: FsCopyDeviceTransport,
 ): Promise<Required<FsCopyEndpoint>> {
-  const stat = await requestDeviceResult<FsTransferStatResult>(
-    transport,
-    destination.target,
-    "fs.transfer.stat",
-    {
-      path: destination.path,
-    },
-  );
+  let stat: FsTransferStatResult;
+  try {
+    stat = await requestDeviceResult<FsTransferStatResult>(
+      transport,
+      destination.target,
+      "fs.transfer.stat",
+      {
+        path: destination.path,
+      },
+    );
+  } catch {
+    return destination;
+  }
   if (stat.ok && stat.isDirectory) {
     return {
       ...destination,

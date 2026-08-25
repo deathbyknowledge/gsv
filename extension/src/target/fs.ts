@@ -578,15 +578,22 @@ export class BrowserFsDriver {
   private async transferStat(raw: unknown): Promise<unknown> {
     const args = asRecord(raw) as TransferArgs;
     const path = parsePath(args.path, "fs.transfer.stat");
-    const stat = await this.fs.stat(path);
-    return {
-      ok: true,
-      path,
-      size: stat.size,
-      isFile: stat.isFile,
-      isDirectory: stat.isDirectory,
-      contentType: stat.contentType ?? inferContentType(path),
-    };
+    try {
+      const stat = await this.fs.stat(path);
+      return {
+        ok: true,
+        path,
+        size: stat.size,
+        isFile: stat.isFile,
+        isDirectory: stat.isDirectory,
+        contentType: stat.contentType ?? inferContentType(path),
+      };
+    } catch (error) {
+      return {
+        ok: false,
+        error: error instanceof Error ? error.message : String(error),
+      };
+    }
   }
 
   private async transferSend(raw: unknown, binary: GsvBinaryTransport): Promise<unknown> {
