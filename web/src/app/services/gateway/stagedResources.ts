@@ -25,13 +25,14 @@ export async function withStagedResources<T>(
   client: ResourceUploadClient,
   uploads: readonly StagedResourceUpload[],
   operation: (resources: ResourceBlock[]) => Promise<T>,
+  stagingNamespace: string = crypto.randomUUID(),
 ): Promise<T> {
   if (uploads.some(({ body }) => body.size > MAX_STAGED_RESOURCE_BYTES)) {
     throw new Error("Attachments cannot exceed 25 MiB");
   }
   const paths: string[] = [];
-  const settled = await Promise.allSettled(uploads.map(async (upload) => {
-    const path = uploadPath(upload.filename);
+  const settled = await Promise.allSettled(uploads.map(async (upload, index) => {
+    const path = uploadPath(stagingNamespace, index, upload.filename);
     paths.push(path);
     return uploadResource(client, path, upload);
   }));
@@ -94,9 +95,11 @@ async function uploadResource(
   };
 }
 
-function uploadPath(filename: string | undefined): string {
+function uploadPath(namespace: string, index: number, filename: string | undefined): string {
+  const safeNamespace = namespace.replaceAll(/[^A-Za-z0-9_-]/g, "_").slice(0, 128);
+  if (!safeNamespace) throw new Error("Staged resource namespace is invalid");
   const safe = filename?.trim().replaceAll(/[/\\\0]/g, "_") || "attachment";
-  return `~/.gsv/uploads/${crypto.randomUUID()}/${safe}`;
+  return `~/.gsv/uploads/${safeNamespace}/${index}-${safe}`;
 }
 
 async function deleteUploads(client: ResourceUploadClient, paths: string[]): Promise<void> {

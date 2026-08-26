@@ -200,7 +200,6 @@ export function isCurrentFederationResource(
   if (!isCurrentFederationContact(contactId, contactGeneration, ctx)) return false;
   const grant = ctx.federation.grant(resourceId);
   return grant !== null
-    && grant.revokedAtMs === undefined
     && grant.contactId === contactId
     && grant.contactGeneration === contactGeneration;
 }

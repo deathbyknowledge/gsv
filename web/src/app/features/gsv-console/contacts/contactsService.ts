@@ -27,6 +27,12 @@ export type ContactsWorkspace = {
   requests: ContactRequestRecord[];
 };
 
+export type ContactSendIntent = {
+  idempotencyKey: string;
+  text: string;
+  media: readonly StagedResourceUpload[];
+};
+
 export type ContactsWorkspaceMutation =
   | { kind: "invite.create" }
   | { kind: "invite.accept"; code: string }
@@ -96,13 +102,12 @@ export function loadContactConversation(
 export function sendContactMessage(
   client: ContactsClient,
   contactId: string,
-  text: string,
-  uploads: readonly StagedResourceUpload[] = [],
+  intent: ContactSendIntent,
 ): Promise<ContactSendResult> {
-  return withStagedResources(client, uploads, (media) => client.contact.send({
+  return withStagedResources(client, intent.media, (media) => client.contact.send({
     contactId,
-    text,
+    text: intent.text,
     ...(media.length > 0 ? { media } : undefined),
-    idempotencyKey: crypto.randomUUID(),
-  }));
+    idempotencyKey: intent.idempotencyKey,
+  }), intent.idempotencyKey);
 }

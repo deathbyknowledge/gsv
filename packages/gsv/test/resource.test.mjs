@@ -53,7 +53,6 @@ test("federation messages are complete and byte-bounded before delivery admissio
     messageId: "message:remote",
     threadId: "thread:shared",
     text: "Hello",
-    createdAtMs: 1,
   };
   const resource = {
     id: "resource:remote",
@@ -76,10 +75,6 @@ test("federation messages are complete and byte-bounded before delivery admissio
     ...message,
     text: "🛸".repeat(8_193),
   }).success, false);
-  assert.equal(federationDeliveryPayloadSchema.safeParse({
-    ...message,
-    createdAtMs: 0,
-  }).success, false);
 });
 
 test("federation request details are bounded before delivery admission", () => {
@@ -92,8 +87,6 @@ test("federation request details are bounded before delivery admission", () => {
       details: { text: "x".repeat(33 * 1024) },
       state: "offered",
       revision: 1,
-      createdAtMs: 1,
-      updatedAtMs: 1,
     },
   };
   assert.equal(federationDeliveryPayloadSchema.safeParse(request).success, false);
@@ -108,8 +101,6 @@ test("federation request metadata is valid before delivery admission", () => {
       title: "A bounded request",
       state: "offered",
       revision: 1,
-      createdAtMs: 1,
-      updatedAtMs: 1,
     },
   };
   assert.equal(federationDeliveryPayloadSchema.safeParse(request).success, true);
@@ -124,20 +115,5 @@ test("federation request metadata is valid before delivery admission", () => {
   assert.equal(federationDeliveryPayloadSchema.safeParse({
     ...request,
     request: { ...request.request, title: "🛸".repeat(300) },
-  }).success, false);
-  assert.equal(federationDeliveryPayloadSchema.safeParse({
-    ...request,
-    request: { ...request.request, createdAtMs: 0 },
-  }).success, false);
-  assert.equal(federationDeliveryPayloadSchema.safeParse({
-    ...request,
-    request: { ...request.request, updatedAtMs: 0 },
-  }).success, false);
-  assert.equal(federationDeliveryPayloadSchema.safeParse({
-    kind: "request.update",
-    requestId: request.request.id,
-    expectedRevision: 1,
-    state: "accepted",
-    updatedAtMs: 0,
   }).success, false);
 });

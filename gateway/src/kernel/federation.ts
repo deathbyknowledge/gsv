@@ -518,7 +518,6 @@ export async function handleContactRevoke(
         payload: {
           kind: "contact.revoked",
           generation: current.generation,
-          revokedAtMs,
         },
         now: revokedAtMs,
       });
@@ -627,7 +626,6 @@ export async function handleContactSend(
         threadId: admittedContact.threadId,
         text,
         ...(resources?.length ? { resources } : undefined),
-        createdAtMs: now,
       },
       localMessage,
       now,
@@ -839,7 +837,6 @@ export async function handleContactRequestUpdate(
         expectedRevision,
         state: args.state,
         ...(details ? { details } : undefined),
-        updatedAtMs: now,
       },
       now,
     });
@@ -1420,10 +1417,10 @@ async function projectInboundDelivery(
 ): Promise<FederationDeliveryReceipt> {
   try {
     await commitInboundDelivery(inbox, contact, ctx);
+    const committedAtMs = Date.now();
     const receiptUnsigned = {
       version: 1,
       deliveryId: inbox.deliveryId,
-      committedAtMs: Date.now(),
     } as const;
     const receipt: FederationDeliveryReceipt = {
       ...receiptUnsigned,
@@ -1437,14 +1434,14 @@ async function projectInboundDelivery(
       inbox.contactGeneration,
       inbox.deliveryId,
       jsonObject(receipt),
-      receipt.committedAtMs,
+      committedAtMs,
     )) {
       throw new PublicFederationError(409, "Federation delivery is no longer admissible");
     }
     ctx.federation.markContactReceived(
       contact.id,
       inbox.contactGeneration,
-      receipt.committedAtMs,
+      committedAtMs,
     );
     return receipt;
   } catch (error) {
@@ -1546,7 +1543,7 @@ async function commitInboundMessage(
       ? { mediaAuthority: { kind: "federation", target: contact.id } as const }
       : undefined),
     origin: { kind: "federation", contactId: contact.id, deliveryId: inbox.deliveryId },
-    createdAt: payload.createdAtMs,
+    createdAt: inbox.receivedAtMs,
   });
   ctx.conversations.recordSequence(conversation.id, appended.message.sequence);
   if (appended.created) broadcastCommittedMessage(contact.ownerUid, appended.message, ctx);
@@ -1607,8 +1604,8 @@ async function commitInboundRequest(
         ),
         ...(wire.details ? { details: boundedDetails(wire.details) } : undefined),
         state: "offered",
-        createdAtMs: wire.createdAtMs,
-        updatedAtMs: wire.updatedAtMs,
+        createdAtMs: inbox.receivedAtMs,
+        updatedAtMs: inbox.receivedAtMs,
       });
       syncFederationRequestResponsibility({
         request: created,
@@ -1767,7 +1764,6 @@ async function serveRemoteResource(request: Request, ctx: KernelContext): Promis
   const grant = ctx.federation.grant(resourceId);
   if (
     !grant
-    || grant.revokedAtMs !== undefined
     || grant.contactId !== contact.id
     || grant.contactGeneration !== contact.generation
   ) {

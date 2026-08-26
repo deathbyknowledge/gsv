@@ -251,7 +251,6 @@ export type FederationMessageDelivery = {
   threadId: string;
   text: string;
   resources?: FederationResourceDescriptor[];
-  createdAtMs: number;
 };
 
 export type FederationRequestDelivery = {
@@ -263,8 +262,6 @@ export type FederationRequestDelivery = {
     details?: JsonObject;
     state: "offered";
     revision: 1;
-    createdAtMs: number;
-    updatedAtMs: number;
   };
 };
 
@@ -274,13 +271,11 @@ export type FederationRequestUpdateDelivery = {
   expectedRevision: number;
   state: Exclude<ContactRequestState, "offered">;
   details?: JsonObject;
-  updatedAtMs: number;
 };
 
 export type FederationContactRevokedDelivery = {
   kind: "contact.revoked";
   generation: string;
-  revokedAtMs: number;
 };
 
 export type FederationDeliveryPayload =
@@ -305,7 +300,6 @@ export type FederationDeliveryEnvelope = {
 export type FederationDeliveryReceipt = {
   version: 1;
   deliveryId: string;
-  committedAtMs: number;
   signature: string;
 };
 
@@ -353,7 +347,6 @@ const federationMessageDeliverySchema = z.strictObject({
   resources: z.optional(
     z.array(federationResourceDescriptorSchema).max(MAX_FEDERATION_MESSAGE_RESOURCES),
   ),
-  createdAtMs: z.number().int().positive(),
 }).check(z.refine((value: FederationMessageDelivery) => (
   value.text.trim().length > 0 || (value.resources?.length ?? 0) > 0
 ))) satisfies z.ZodType<FederationMessageDelivery>;
@@ -367,8 +360,6 @@ const federationRequestDeliverySchema = z.strictObject({
     details: z.optional(federationRequestDetailsSchema),
     state: z.literal("offered"),
     revision: z.literal(1),
-    createdAtMs: z.number().int().positive(),
-    updatedAtMs: z.number().int().positive(),
   }),
 }) satisfies z.ZodType<FederationRequestDelivery>;
 
@@ -386,13 +377,11 @@ const federationRequestUpdateDeliverySchema = z.strictObject({
   expectedRevision: z.number().int().positive(),
   state: contactRequestStateSchema,
   details: z.optional(federationRequestDetailsSchema),
-  updatedAtMs: z.number().int().positive(),
 }) satisfies z.ZodType<FederationRequestUpdateDelivery>;
 
 const federationContactRevokedDeliverySchema = z.strictObject({
   kind: z.literal("contact.revoked"),
   generation: z.string().min(1).max(128),
-  revokedAtMs: z.number().int().nonnegative(),
 }) satisfies z.ZodType<FederationContactRevokedDelivery>;
 
 export const federationDeliveryPayloadSchema = z.discriminatedUnion("kind", [
@@ -418,6 +407,5 @@ export const federationDeliveryEnvelopeSchema = z.strictObject({
 export const federationDeliveryReceiptSchema = z.strictObject({
   version: z.literal(1),
   deliveryId: z.string().min(1).max(256),
-  committedAtMs: z.number().int().nonnegative(),
   signature: z.string().min(1).max(512),
 }) satisfies z.ZodType<FederationDeliveryReceipt>;

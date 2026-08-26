@@ -125,7 +125,6 @@ export type FederationResourceGrant = {
   source: ResourceBlock;
   sourceUid: number;
   createdAtMs: number;
-  revokedAtMs?: number;
 };
 
 export type FederationEnqueueResult = {
@@ -741,9 +740,8 @@ export class FederationStore {
         input.generation,
       );
       this.sql.exec(
-        `UPDATE federation_resource_grants SET revoked_at = ?
-         WHERE contact_id = ? AND contact_generation <> ? AND revoked_at IS NULL`,
-        now,
+        `DELETE FROM federation_resource_grants
+         WHERE contact_id = ? AND contact_generation <> ?`,
         existing.id,
         input.generation,
       );
@@ -895,11 +893,7 @@ export class FederationStore {
       contact.remoteShipId,
       contact.remoteSubject.id,
     );
-    this.sql.exec(
-      "UPDATE federation_resource_grants SET revoked_at = ? WHERE contact_id = ? AND revoked_at IS NULL",
-      now,
-      contactId,
-    );
+    this.sql.exec("DELETE FROM federation_resource_grants WHERE contact_id = ?", contactId);
     this.sql.exec(
       `UPDATE federation_requests SET
          state = 'cancelled', revision = revision + 1, updated_at = ?
@@ -1316,7 +1310,6 @@ export class FederationStore {
       source_ref_json: string;
       source_uid: number;
       created_at: number;
-      revoked_at: number | null;
     }>(
       "SELECT * FROM federation_resource_grants WHERE resource_id = ? LIMIT 1",
       resourceId,
@@ -1329,19 +1322,18 @@ export class FederationStore {
       source: resourceBlockSchema.parse(JSON.parse(row.source_ref_json)),
       sourceUid: row.source_uid,
       createdAtMs: row.created_at,
-      ...(row.revoked_at !== null ? { revokedAtMs: row.revoked_at } : undefined),
     };
   }
 
   activeGrantCount(contactId?: string): number {
     if (contactId === undefined) {
       return this.sql.exec<{ count: number }>(
-        "SELECT COUNT(*) AS count FROM federation_resource_grants WHERE revoked_at IS NULL",
+        "SELECT COUNT(*) AS count FROM federation_resource_grants",
       ).one().count;
     }
     return this.sql.exec<{ count: number }>(
       `SELECT COUNT(*) AS count FROM federation_resource_grants
-       WHERE contact_id = ? AND revoked_at IS NULL`,
+       WHERE contact_id = ?`,
       contactId,
     ).one().count;
   }

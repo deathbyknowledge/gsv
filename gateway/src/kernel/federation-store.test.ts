@@ -232,7 +232,7 @@ describe("FederationStore", () => {
       });
       const revoked = store.revoke(contact.id, 1000, 2_000);
       expect(revoked).toMatchObject({ state: "revoked", revokedAtMs: 2_000 });
-      expect(store.grant(descriptor.id)).toMatchObject({ revokedAtMs: 2_000 });
+      expect(store.grant(descriptor.id)).toBeNull();
       expect(store.request("request:revoked")).toMatchObject({
         state: "cancelled",
         revision: 2,
@@ -254,7 +254,6 @@ describe("FederationStore", () => {
           messageId: "message:pending-before-revoke",
           threadId: contact.threadId,
           text: "Pending before revocation",
-          createdAtMs: 1_100,
         },
         now: 1_100,
       }).record;
@@ -266,7 +265,6 @@ describe("FederationStore", () => {
         payload: {
           kind: "contact.revoked",
           generation: contact.generation,
-          revokedAtMs: 1_200,
         },
         now: 1_200,
       }).record;
@@ -326,7 +324,6 @@ describe("FederationStore", () => {
           messageId: "message:old-generation",
           threadId: contact.threadId,
           text: "Pending before re-pairing",
-          createdAtMs: 1_100,
         },
         now: 1_100,
       }).record;
@@ -352,7 +349,6 @@ describe("FederationStore", () => {
           messageId: "message:received-old-generation",
           threadId: contact.threadId,
           text: "Admitted before re-pairing",
-          createdAtMs: 1_100,
         },
         now: 1_100,
       }).record;
@@ -373,7 +369,7 @@ describe("FederationStore", () => {
         id: contact.id,
         generation: "generation:second",
       });
-      expect(store.grant(descriptor.id)).toMatchObject({ revokedAtMs: 2_000 });
+      expect(store.grant(descriptor.id)).toBeNull();
       expect(store.activeGrantCount(contact.id)).toBe(0);
       expect(store.outbox(pending.deliveryId)?.state).toBe("terminal");
       expect(store.inbox(contact.id, contact.generation, received.deliveryId)).toMatchObject({
@@ -422,7 +418,6 @@ describe("FederationStore", () => {
           messageId: "message:first",
           threadId: contact.threadId,
           text: "Hello",
-          createdAtMs: 2_000,
         },
         now: 2_000,
       };
@@ -494,7 +489,6 @@ describe("FederationStore", () => {
           messageId: "message:first-generation",
           threadId: first.threadId,
           text: "First generation",
-          createdAtMs: 1_100,
         },
         now: 1_100,
       });
@@ -519,7 +513,6 @@ describe("FederationStore", () => {
           messageId: "message:second-generation",
           threadId: second.threadId,
           text: "Second generation",
-          createdAtMs: 2_100,
         },
         now: 2_100,
       });
@@ -640,7 +633,6 @@ describe("FederationStore", () => {
           messageId: "message:pending",
           threadId: contact.threadId,
           text: "Pending",
-          createdAtMs: 1_000,
         },
         now: 1_000,
       }).record;
@@ -664,7 +656,6 @@ describe("FederationStore", () => {
           messageId: "message:settled",
           threadId: contact.threadId,
           text: "Settled",
-          createdAtMs: 1_000,
         },
         now: 1_000,
       }).record;

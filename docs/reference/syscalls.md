@@ -591,6 +591,14 @@ and `delivered` only after the receiving Kernel has durably committed it. A
 replay of a retained terminal delivery reports `failed`; inspect
 `contact.delivery.get` for its attempt count and last error. A receipt does not
 mean that the remote human or intelligence has completed any resulting work.
+One send intent owns one `idempotencyKey`; retry an uncertain result with that
+same key and unchanged input. The remote Ship deduplicates the resulting
+delivery id and does not receive this local key.
+
+Federation delivery payloads do not synchronize Message, request, update, or
+revocation timestamps. Each Ship timestamps its own durable records, and the
+receiving Ship uses its inbox receipt time. The authenticated envelope time is
+only a freshness check for the current HTTP attempt.
 
 Message resources are immutable references. The sender grants the exact
 contact generation access to the exact retained revision; the receiver stores

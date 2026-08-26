@@ -5,7 +5,7 @@ import type {
   ContactInviteSummary,
   ContactSummary,
 } from "@humansandmachines/gsv/protocol";
-import { useEffect, useState } from "preact/hooks";
+import { useEffect, useRef, useState } from "preact/hooks";
 
 import {
   MessageInput,
@@ -19,7 +19,7 @@ import {
 } from "../../../services/gateway/stagedResources";
 import { ChatMediaAttachment } from "../../chat/components/ChatMediaAttachment";
 import { ConsolePage, ConsolePageState } from "../components/ConsolePageTemplate";
-import type { ContactsWorkspaceMutation } from "./contactsService";
+import type { ContactSendIntent, ContactsWorkspaceMutation } from "./contactsService";
 import { useContactConversation, useContactsWorkspace } from "./useContactsWorkspace";
 import "./ContactsPage.css";
 
@@ -250,17 +250,28 @@ function ContactConversationPanel({ contact, onClose }: {
   const { query, mutation } = useContactConversation(contact);
   const [draft, setDraft] = useState("");
   const [attachments, setAttachments] = useState<ContactDraftAttachment[]>([]);
+  const retryIntent = useRef<ContactDraftSendIntent | null>(null);
   const [attachmentError, setAttachmentError] = useState("");
   const messages = query.data?.messages ?? [];
   const send = (text: string): void => {
     const sentAttachments = attachments;
+    const intent = selectContactSendIntent(
+      retryIntent.current,
+      contact.id,
+      text,
+      sentAttachments,
+    );
+    retryIntent.current = intent;
     setAttachments([]);
-    mutation.mutate({ text, media: sentAttachments }, {
+    mutation.mutate(intent, {
       onError: () => {
         setDraft(text);
         setAttachments((current) => sentAttachments.concat(current));
       },
-      onSuccess: () => setDraft(""),
+      onSuccess: () => {
+        setDraft("");
+        retryIntent.current = null;
+      },
     });
   };
   const attach = (files: FileList | readonly File[] | null): void => {
@@ -353,6 +364,32 @@ function contactMessageAuthor(message: ConversationMessage): string {
 }
 
 type ContactDraftAttachment = StagedResourceUpload & MessageInputAttachment;
+type ContactDraftSendIntent = Omit<ContactSendIntent, "media"> & {
+  contactId: string;
+  media: readonly ContactDraftAttachment[];
+};
+
+export function selectContactSendIntent(
+  previous: ContactDraftSendIntent | null,
+  contactId: string,
+  text: string,
+  media: readonly ContactDraftAttachment[],
+): ContactDraftSendIntent {
+  if (
+    previous?.contactId === contactId
+    && previous.text === text
+    && previous.media.length === media.length
+    && previous.media.every((attachment, index) => attachment.id === media[index]?.id)
+  ) {
+    return previous;
+  }
+  return {
+    contactId,
+    idempotencyKey: crypto.randomUUID(),
+    text,
+    media,
+  };
+}
 
 function contactDraftAttachment(file: File): ContactDraftAttachment {
   const mimeType = file.type || "application/octet-stream";

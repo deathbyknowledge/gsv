@@ -75,16 +75,91 @@ describe("contactsService", () => {
       state: "queued",
     }));
     const client = contactClient({ history, send });
+    const intent = {
+      idempotencyKey: "send:one",
+      text: "Hello",
+      media: [],
+    };
 
     await loadContactConversation(client, "conv:contact");
-    await sendContactMessage(client, "contact:flynn", "Hello");
+    await sendContactMessage(client, "contact:flynn", intent);
 
     expect(history).toHaveBeenCalledWith({ conversationId: "conv:contact", limit: 100 });
     expect(send).toHaveBeenCalledWith(expect.objectContaining({
       contactId: "contact:flynn",
       text: "Hello",
-      idempotencyKey: expect.any(String),
+      idempotencyKey: "send:one",
     }));
+  });
+
+  it("reuses one send identity and staging path across attachment retries", async () => {
+    const request = vi.fn(async (
+      call: string,
+      args: { path?: string; contentType?: string },
+    ) => {
+      if (call === "fs.transfer.receive") {
+        return { data: { ok: true as const, path: args.path!, bytesWritten: 3 } };
+      }
+      if (call === "fs.transfer.stat") {
+        return {
+          data: {
+            ok: true as const,
+            path: args.path!,
+            size: 3,
+            isFile: true,
+            isDirectory: false,
+            contentType: "image/png",
+            revision: "revision:image",
+          },
+        };
+      }
+      return { data: { ok: true as const, path: args.path! } };
+    });
+    const send = vi.fn<GSVClient["contact"]["send"]>(async () => ({
+      deliveryId: "delivery:one",
+      conversationId: "conv:contact",
+      state: "queued",
+    }));
+    const intent = {
+      idempotencyKey: "send-stable",
+      text: "See this",
+      media: [{
+        type: "image" as const,
+        mimeType: "image/png",
+        filename: "image.png",
+        body: new Blob(["abc"]),
+      }],
+    };
+    const client = contactClient({
+      // SAFETY: The request fixture implements the three filesystem calls used by staged uploads.
+      request: request as never,
+      send,
+    });
+
+    await sendContactMessage(client, "contact:flynn", intent);
+    await sendContactMessage(client, "contact:flynn", intent);
+
+    const uploadPaths = request.mock.calls
+      .filter(([call]) => call === "fs.transfer.receive")
+      .map(([, args]) => args.path);
+    expect(uploadPaths).toEqual([
+      "~/.gsv/uploads/send-stable/0-image.png",
+      "~/.gsv/uploads/send-stable/0-image.png",
+    ]);
+    expect(send.mock.calls.map(([args]) => args)).toEqual([
+      expect.objectContaining({
+        idempotencyKey: "send-stable",
+        media: [expect.objectContaining({
+          ref: expect.objectContaining({ path: uploadPaths[0], revision: "revision:image" }),
+        })],
+      }),
+      expect.objectContaining({
+        idempotencyKey: "send-stable",
+        media: [expect.objectContaining({
+          ref: expect.objectContaining({ path: uploadPaths[0], revision: "revision:image" }),
+        })],
+      }),
+    ]);
   });
 });
 
@@ -98,9 +173,10 @@ function contactClient(overrides: {
   update?: GSVClient["contact"]["request"]["update"];
   history?: GSVClient["conversation"]["history"];
   send?: GSVClient["contact"]["send"];
+  request?: GSVClient["request"];
 }) {
   return {
-    request: vi.fn<GSVClient["request"]>(),
+    request: overrides.request ?? vi.fn<GSVClient["request"]>(),
     contact: {
       list: overrides.listContacts ?? vi.fn(),
       revoke: overrides.revoke ?? vi.fn(),

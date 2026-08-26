@@ -81,67 +81,63 @@ describe("federation outbound boundary", () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
-  it.each([0, 9_999_999_999_999])(
-    "uses local receipt time when the remote reports %s",
-    async (remoteCommittedAtMs) => {
-      const now = 50_000;
-      vi.spyOn(Date, "now").mockReturnValue(now);
-      const contact = activeContact();
-      const record = pendingDelivery(contact);
-      const markDeliverySucceeded = vi.fn(() => true);
-      const markContactDelivered = vi.fn(() => true);
-      vi.spyOn(globalThis, "fetch").mockImplementation(async (_input, init) => {
-        const body = federationDeliveryEnvelopeSchema.parse(JSON.parse(String(init?.body)));
-        const unsigned = {
-          version: 1 as const,
-          deliveryId: body.deliveryId,
-          committedAtMs: remoteCommittedAtMs,
-        };
-        const receipt: FederationDeliveryReceipt = {
-          ...unsigned,
-          signature: await signContactEnvelope(
-            contact.sharedSecret,
-            jsonValueSchema.parse(unsigned),
-          ),
-        };
-        return Response.json(receipt);
-      });
-      const ctx = focusedContext({
-        federation: focusedFixture({
-          outbox: vi.fn(() => record),
-          get: vi.fn(() => contact),
-          ensureSubject: vi.fn(() => ({ id: "subject:local", displayName: OWNER.username })),
-          transaction: runTransaction,
-          markDeliverySucceeded,
-          markContactDelivered,
-        }),
-        federationIdentity: focusedFixture({
-          ensure: vi.fn(async () => ({
-            version: 1,
-            shipId: "ship:local",
-            origin: "https://local.example",
-            publicKey: { kty: "EC", crv: "P-256", x: "local-x", y: "local-y" },
-            protocols: ["gsv-federation/1"],
-            issuedAtMs: now,
-            signature: "local-signature",
-          })),
-        }),
-      });
+  it("uses local delivery completion time", async () => {
+    const now = 50_000;
+    vi.spyOn(Date, "now").mockReturnValue(now);
+    const contact = activeContact();
+    const record = pendingDelivery(contact);
+    const markDeliverySucceeded = vi.fn(() => true);
+    const markContactDelivered = vi.fn(() => true);
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (_input, init) => {
+      const body = federationDeliveryEnvelopeSchema.parse(JSON.parse(String(init?.body)));
+      const unsigned = {
+        version: 1 as const,
+        deliveryId: body.deliveryId,
+      };
+      const receipt: FederationDeliveryReceipt = {
+        ...unsigned,
+        signature: await signContactEnvelope(
+          contact.sharedSecret,
+          jsonValueSchema.parse(unsigned),
+        ),
+      };
+      return Response.json(receipt);
+    });
+    const ctx = focusedContext({
+      federation: focusedFixture({
+        outbox: vi.fn(() => record),
+        get: vi.fn(() => contact),
+        ensureSubject: vi.fn(() => ({ id: "subject:local", displayName: OWNER.username })),
+        transaction: runTransaction,
+        markDeliverySucceeded,
+        markContactDelivered,
+      }),
+      federationIdentity: focusedFixture({
+        ensure: vi.fn(async () => ({
+          version: 1,
+          shipId: "ship:local",
+          origin: "https://local.example",
+          publicKey: { kty: "EC", crv: "P-256", x: "local-x", y: "local-y" },
+          protocols: ["gsv-federation/1"],
+          issuedAtMs: now,
+          signature: "local-signature",
+        })),
+      }),
+    });
 
-      await processFederationDelivery(record.deliveryId, ctx);
+    await processFederationDelivery(record.deliveryId, ctx);
 
-      expect(markDeliverySucceeded).toHaveBeenCalledWith(
-        record.deliveryId,
-        record.contactGeneration,
-        now,
-      );
-      expect(markContactDelivered).toHaveBeenCalledWith(
-        contact.id,
-        record.contactGeneration,
-        now,
-      );
-    },
-  );
+    expect(markDeliverySucceeded).toHaveBeenCalledWith(
+      record.deliveryId,
+      record.contactGeneration,
+      now,
+    );
+    expect(markContactDelivered).toHaveBeenCalledWith(
+      contact.id,
+      record.contactGeneration,
+      now,
+    );
+  });
 
   it("reports a terminal idempotent delivery as failed", async () => {
     const contact = activeContact();
@@ -480,7 +476,6 @@ function pendingDelivery(contact: FederationContactRecord): FederationOutboxReco
       messageId: "message:remote",
       threadId: contact.threadId,
       text: "Hello",
-      createdAtMs: 1_000,
     },
     state: "pending",
     attemptCount: 0,

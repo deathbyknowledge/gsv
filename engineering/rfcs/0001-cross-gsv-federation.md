@@ -244,12 +244,13 @@ Revocation is immediate and local:
 The remote notification is advisory. Local safety never depends on receiving
 it. Pairing the same subjects again derives a fresh secret and generation. An
 implementation may reactivate the stable local contact and Conversation ids,
-but old-generation deliveries and grants remain terminal.
+but old-generation deliveries remain terminal while their grants and read
+leases are deleted.
 
-Replacing or revoking a contact generation atomically terminalizes every
-generation-owned pending delivery, request, responsibility, grant, and read
-lease. An old generation is a normal security state within federation v1, not
-an upgrade-compatibility mode.
+Replacing or revoking a contact generation atomically terminalizes its pending
+deliveries, requests, and responsibilities and deletes its grants and read
+leases. An old generation is a normal security state within federation v1,
+not an upgrade-compatibility mode.
 
 ## Carrier and authenticated envelope
 
@@ -286,6 +287,9 @@ JSON delivery signatures are HMAC-SHA-256 over every unsigned envelope field,
 including the canonical payload. Resource-read signatures cover the HTTP
 method, canonical path, both Ship subjects, contact generation, timestamp, and
 nonce without a JSON body.
+
+The envelope timestamp authenticates the freshness of that HTTP attempt. It is
+not a Message or request timestamp and never becomes local Conversation state.
 
 The receiving Kernel:
 
@@ -363,6 +367,11 @@ An inbound message appends a Message whose author records:
 The remote sender cannot choose the local Conversation id, handler PID, uid,
 or sequence. The Kernel resolves all of them from the contact.
 
+Delivery payloads carry no wall-clock timestamps. The sender timestamps its
+own local Message when it accepts the send intent, and the receiver timestamps
+its local Message with the durable inbox receipt time. Local sequence numbers,
+not either Ship's clock, order each Conversation.
+
 V1 uses one direct Conversation per local subject/contact relationship. A
 later generation may continue that local Conversation while cryptographic
 traffic and resource grants remain strictly fenced by generation. Future
@@ -425,6 +434,10 @@ type ContactRequest = {
   updatedAt: number;
 };
 ```
+
+Those timestamps belong to each Ship's local request record. The wire offer
+and transitions carry bounded content, identity, revision, and state; the
+receiving Ship assigns its own creation and update times when it commits them.
 
 Only valid state transitions are accepted. Every transition is idempotent and
 creates or updates the corresponding responsibility. Local policy or the Ship
@@ -523,7 +536,8 @@ values or use federation to spend managed inference or email budget directly.
 - Every state transition preceding network I/O is durable.
 - Pairing responses are authorized by a current local attempt, never by a
   peer-provided timestamp.
-- Every external operation has a stable idempotency key.
+- One logical caller intent owns one stable idempotency key, and an ambiguous
+  retry reuses it.
 - Duplicate input returns the original outcome.
 - Ambiguous output remains pending and is retried with the same identity.
 - Revocation fences queued, in-flight, replayed, and resource traffic by

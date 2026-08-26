@@ -242,8 +242,7 @@ export const KERNEL_V033_ADD_FEDERATION: SqlMigration = {
         contact_generation TEXT NOT NULL,
         source_ref_json TEXT NOT NULL,
         source_uid INTEGER NOT NULL,
-        created_at INTEGER NOT NULL,
-        revoked_at INTEGER
+        created_at INTEGER NOT NULL
       )
     `,
     `

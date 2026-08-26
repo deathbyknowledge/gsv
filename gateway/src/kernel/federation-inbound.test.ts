@@ -118,12 +118,13 @@ describe("federation inbound boundary", () => {
   });
 
   it("coordinates concurrent duplicates and replays their signed receipt", async () => {
+    const receivedAtMs = 50_000;
+    vi.spyOn(Date, "now").mockReturnValue(receivedAtMs);
     const envelope = await signedEnvelope({
       kind: "message",
       messageId: "remote-message:1",
       threadId: contact.threadId,
       text: "Hello from another Ship",
-      createdAtMs: Date.now(),
     }, "delivery:message");
 
     const [first, concurrent] = await Promise.all([
@@ -141,6 +142,7 @@ describe("federation inbound boundary", () => {
       text: "Hello from another Ship",
       author: { kind: "contact", contactId: contact.id, displayName: "Remote" },
       origin: { kind: "federation", contactId: contact.id, deliveryId: "delivery:message" },
+      createdAt: receivedAtMs,
     });
   });
 
@@ -150,7 +152,6 @@ describe("federation inbound boundary", () => {
       messageId: "remote-message:1",
       threadId: contact.threadId,
       text: "Original",
-      createdAtMs: Date.now(),
     }, "delivery:message");
     expect((await deliver(envelope)).status).toBe(200);
 
@@ -161,7 +162,6 @@ describe("federation inbound boundary", () => {
       messageId: "remote-message:2",
       threadId: contact.threadId,
       text: "Changed with a valid signature",
-      createdAtMs: Date.now(),
     }, "delivery:message");
     expect((await deliver(reused)).status).toBe(409);
     expect(messages).toHaveLength(1);
@@ -179,7 +179,6 @@ describe("federation inbound boundary", () => {
         contentType: "image/png",
         size: 10,
       }],
-      createdAtMs: Date.now(),
     }, "delivery:invalid-resource");
 
     expect((await deliver(envelope)).status).toBe(400);
@@ -195,18 +194,9 @@ describe("federation inbound boundary", () => {
       messageId: "remote-message:empty",
       threadId: contact.threadId,
       text: " \t ",
-      createdAtMs: Date.now(),
     }, "delivery:empty-message");
-    const zeroTimestamp = await signedEnvelope({
-      kind: "message",
-      messageId: "remote-message:zero-time",
-      threadId: contact.threadId,
-      text: "This must not consume inbox capacity",
-      createdAtMs: 0,
-    }, "delivery:zero-time");
 
     expect((await deliver(empty)).status).toBe(400);
-    expect((await deliver(zeroTimestamp)).status).toBe(400);
     expect(await runInDurableObject(kernel, (instance: Kernel) => (
       kernelInternals(instance).federation.pendingInboxCount(contact.id)
     ))).toBe(0);
@@ -223,8 +213,6 @@ describe("federation inbound boundary", () => {
         details: { text: "x".repeat(33 * 1024) },
         state: "offered",
         revision: 1,
-        createdAtMs: Date.now(),
-        updatedAtMs: Date.now(),
       },
     }, "delivery:oversized-request");
 
@@ -240,7 +228,6 @@ describe("federation inbound boundary", () => {
       messageId: "remote-message:old-generation",
       threadId: contact.threadId,
       text: "This must not cross the generation boundary",
-      createdAtMs: Date.now(),
     }, "delivery:old-generation");
     const result = await runInDurableObject(kernel, async (instance: Kernel) => {
       const internal = kernelInternals(instance);
@@ -400,7 +387,6 @@ describe("federation inbound boundary", () => {
       expectedRevision: 1,
       state: "accepted",
       details: { acceptedBy: "remote" },
-      updatedAtMs: 9_999_999_999_999,
     }, "delivery:request-update");
 
     const failedDelivery = await deliver(envelope);
@@ -490,7 +476,6 @@ describe("federation inbound boundary", () => {
       requestId: "request:invalid-transition",
       expectedRevision: 1,
       state: "completed",
-      updatedAtMs: 2_000,
     }, "delivery:invalid-transition");
 
     expect((await deliver(envelope)).status).toBe(409);
@@ -521,8 +506,6 @@ describe("federation inbound boundary", () => {
         title: "Original request",
         state: "offered",
         revision: 1,
-        createdAtMs: 1_000,
-        updatedAtMs: 1_000,
       },
     }, "delivery:request-original");
     const changed = await signedEnvelope({
@@ -533,8 +516,6 @@ describe("federation inbound boundary", () => {
         title: "Changed request",
         state: "offered",
         revision: 1,
-        createdAtMs: 2_000,
-        updatedAtMs: 2_000,
       },
     }, "delivery:request-reused");
 
@@ -575,8 +556,6 @@ describe("federation inbound boundary", () => {
         title: "Keep one responsibility",
         state: "offered",
         revision: 1,
-        createdAtMs: 1_000,
-        updatedAtMs: 1_000,
       },
     }, "delivery:request-lifecycle-offered");
     expect((await deliver(offered)).status).toBe(200);
@@ -588,7 +567,6 @@ describe("federation inbound boundary", () => {
         requestId,
         expectedRevision: index + 1,
         state,
-        updatedAtMs: 2_000 + index,
       }, `delivery:request-lifecycle-${state}`);
       expect((await deliver(update)).status).toBe(200);
     }
@@ -643,7 +621,6 @@ describe("federation inbound boundary", () => {
       messageId: "remote-message:private",
       threadId: contact.threadId,
       text,
-      createdAtMs: Date.now(),
     }, "delivery:private");
 
     expect((await deliver(envelope)).status).toBe(200);
@@ -683,8 +660,6 @@ describe("federation inbound boundary", () => {
         title: "Work that becomes impossible after revocation",
         state: "offered",
         revision: 1,
-        createdAtMs: 1_000,
-        updatedAtMs: 1_000,
       },
     }, "delivery:request-before-revoke");
     expect((await deliver(requestDelivery)).status).toBe(200);
@@ -692,7 +667,6 @@ describe("federation inbound boundary", () => {
     const revocation = await signedEnvelope({
       kind: "contact.revoked",
       generation: contact.generation,
-      revokedAtMs: Date.now(),
     }, "delivery:revoke-request-responsibility");
     expect((await deliver(revocation)).status).toBe(200);
 
@@ -732,7 +706,6 @@ describe("federation inbound boundary", () => {
     const revocation = await signedEnvelope({
       kind: "contact.revoked",
       generation: contact.generation,
-      revokedAtMs: Date.now(),
     }, "delivery:revoke");
     const first = await deliver(revocation);
     const replay = await deliver(revocation);
@@ -747,7 +720,6 @@ describe("federation inbound boundary", () => {
     const duplicate = await signedEnvelope({
       kind: "contact.revoked",
       generation: contact.generation,
-      revokedAtMs: Date.now(),
     }, "delivery:revoke-duplicate");
     expect((await deliver(duplicate)).status).toBe(404);
     expect(await runInDurableObject(kernel, (instance: Kernel) => (
@@ -763,7 +735,6 @@ describe("federation inbound boundary", () => {
       messageId: "remote-message:late",
       threadId: contact.threadId,
       text: "Too late",
-      createdAtMs: Date.now(),
     }, "delivery:late");
     expect((await deliver(lateMessage)).status).toBe(404);
   });
@@ -772,7 +743,6 @@ describe("federation inbound boundary", () => {
     const revocation = await signedEnvelope({
       kind: "contact.revoked",
       generation: "generation:wrong",
-      revokedAtMs: Date.now(),
     }, "delivery:revoke-wrong-generation");
 
     expect((await deliver(revocation)).status).toBe(409);
@@ -785,53 +755,48 @@ describe("federation inbound boundary", () => {
     ))).toBeNull();
   });
 
-  it.each([0, 9_999_999_999_999])(
-    "uses local receipt time when a revocation reports %s",
-    async (remoteRevokedAtMs) => {
-      const localNow = 50_000;
-      vi.spyOn(Date, "now").mockReturnValue(localNow);
-      await runInDurableObject(kernel, (instance: Kernel) => {
-        kernelInternals(instance).federation.enqueue({
-          deliveryId: "delivery:pending",
-          ownerUid: OWNER.uid,
-          contactId: contact.id,
-          contactGeneration: contact.generation,
-          idempotencyKey: "pending-before-revocation",
-          fingerprint: "pending-fingerprint",
-          payload: {
-            kind: "message",
-            messageId: "local-message:pending",
-            threadId: contact.threadId,
-            text: "Pending",
-            createdAtMs: 1_000,
-          },
-          now: 1_000,
-        });
+  it("uses local receipt time when a contact is revoked", async () => {
+    const localNow = 50_000;
+    vi.spyOn(Date, "now").mockReturnValue(localNow);
+    await runInDurableObject(kernel, (instance: Kernel) => {
+      kernelInternals(instance).federation.enqueue({
+        deliveryId: "delivery:pending",
+        ownerUid: OWNER.uid,
+        contactId: contact.id,
+        contactGeneration: contact.generation,
+        idempotencyKey: "pending-before-revocation",
+        fingerprint: "pending-fingerprint",
+        payload: {
+          kind: "message",
+          messageId: "local-message:pending",
+          threadId: contact.threadId,
+          text: "Pending",
+        },
+        now: 1_000,
       });
-      const revocation = await signedEnvelope({
-        kind: "contact.revoked",
-        generation: contact.generation,
-        revokedAtMs: remoteRevokedAtMs,
-      }, "delivery:revoke-local-time");
+    });
+    const revocation = await signedEnvelope({
+      kind: "contact.revoked",
+      generation: contact.generation,
+    }, "delivery:revoke-local-time");
 
-      expect((await deliver(revocation)).status).toBe(200);
-      const state = await runInDurableObject(kernel, (instance: Kernel) => {
-        const store = kernelInternals(instance).federation;
-        return {
-          contact: store.get(contact.id),
-          pending: store.outbox("delivery:pending"),
-        };
-      });
-      expect(state.contact).toMatchObject({
-        state: "revoked",
-        revokedAtMs: localNow,
-      });
-      expect(state.pending).toMatchObject({
-        state: "terminal",
-        updatedAtMs: localNow,
-      });
-    },
-  );
+    expect((await deliver(revocation)).status).toBe(200);
+    const state = await runInDurableObject(kernel, (instance: Kernel) => {
+      const store = kernelInternals(instance).federation;
+      return {
+        contact: store.get(contact.id),
+        pending: store.outbox("delivery:pending"),
+      };
+    });
+    expect(state.contact).toMatchObject({
+      state: "revoked",
+      revokedAtMs: localNow,
+    });
+    expect(state.pending).toMatchObject({
+      state: "terminal",
+      updatedAtMs: localNow,
+    });
+  });
 
   async function signedEnvelope(
     payload: FederationDeliveryPayload,

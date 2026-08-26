@@ -133,8 +133,6 @@ export function requestWireRecord(
     ...(request.details ? { details: request.details } : undefined),
     state: "offered",
     revision: 1,
-    createdAtMs: request.createdAtMs,
-    updatedAtMs: request.updatedAtMs,
   };
 }
 

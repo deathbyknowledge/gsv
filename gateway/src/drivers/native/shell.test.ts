@@ -3694,7 +3694,6 @@ describe("native administration shell commands", () => {
         messageId: "msg:one",
         threadId: contact.threadId,
         text: "hello",
-        createdAtMs: 1,
       },
       state: "pending" as const,
       attemptCount: 1,

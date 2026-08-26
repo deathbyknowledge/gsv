@@ -3,12 +3,12 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/preact-query";
 import { useEffect } from "preact/hooks";
 
 import { useGateway } from "../../../services/gateway/GatewayProvider";
-import type { StagedResourceUpload } from "../../../services/gateway/stagedResources";
 import {
   loadContactsWorkspace,
   loadContactConversation,
   mutateContactsWorkspace,
   sendContactMessage,
+  type ContactSendIntent,
   type ContactsMutationResult,
   type ContactsWorkspaceMutation,
 } from "./contactsService";
@@ -45,9 +45,9 @@ export function useContactConversation(contact: ContactSummary | null) {
     refetchInterval: 10_000,
   });
   const mutation = useMutation({
-    mutationFn: (input: { text: string; media: readonly StagedResourceUpload[] }) => {
+    mutationFn: (input: ContactSendIntent) => {
       if (!contact) throw new Error("Select a contact before sending a message");
-      return sendContactMessage(client, contact.id, input.text, input.media);
+      return sendContactMessage(client, contact.id, input);
     },
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey });
