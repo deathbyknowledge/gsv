@@ -2388,12 +2388,12 @@ function requirePairingService(
     throw new Error(`Adapter does not support managed pairing: ${adapter}`);
   }
   return {
-    adapterPairingInfo: service.adapterPairingInfo.bind(service),
-    adapterPairingInspect: service.adapterPairingInspect.bind(service),
-    adapterPairingPrepare: service.adapterPairingPrepare.bind(service),
-    adapterPairingActivate: service.adapterPairingActivate.bind(service),
-    adapterPairingFinalize: service.adapterPairingFinalize.bind(service),
-    adapterPairingDisconnect: service.adapterPairingDisconnect.bind(service),
+    adapterPairingInfo: (...args) => service.adapterPairingInfo!(...args),
+    adapterPairingInspect: (...args) => service.adapterPairingInspect!(...args),
+    adapterPairingPrepare: (...args) => service.adapterPairingPrepare!(...args),
+    adapterPairingActivate: (...args) => service.adapterPairingActivate!(...args),
+    adapterPairingFinalize: (...args) => service.adapterPairingFinalize!(...args),
+    adapterPairingDisconnect: (...args) => service.adapterPairingDisconnect!(...args),
   };
 }
 
