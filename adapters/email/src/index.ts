@@ -2,7 +2,6 @@ import { WorkerEntrypoint } from "cloudflare:workers";
 import {
   isAdapterInstallationContext,
   type AdapterInstallationContext,
-  type BinaryBody,
   type ListManagedMailIntakesInput,
   type ManagedMailIntakeDiagnostic,
   type ManagedMailIntakePage,
@@ -129,22 +128,34 @@ export async function handleIncomingMail(
     return;
   }
 
-  const body: BinaryBody = {
-    stream: message.raw,
-    length: message.rawSize,
-  };
   const installation = env.MAIL_INSTALLATIONS.getByName(
     recipient.installation.installationId,
   );
-  const result = await installation.intake(
+  const transport = new FixedLengthStream(message.rawSize);
+  const relayController = new AbortController();
+  const relay = message.raw.pipeTo(transport.writable, {
+    signal: relayController.signal,
+  });
+  const intake = installation.intake(
     recipient.installation,
     {
       from: message.from,
       to: message.to,
       rawSize: message.rawSize,
     },
-    body,
+    {
+      stream: transport.readable,
+      length: message.rawSize,
+    },
   );
+  let result: Awaited<typeof intake>;
+  try {
+    [result] = await Promise.all([intake, relay]);
+  } catch (error) {
+    relayController.abort(error);
+    await Promise.allSettled([intake, relay]);
+    throw error;
+  }
   if (result.status === "rejected") {
     message.setReject(result.reason === "quota"
       ? "Mailbox quota exceeded"
