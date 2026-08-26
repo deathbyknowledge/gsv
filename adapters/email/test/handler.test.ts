@@ -147,6 +147,8 @@ describe("managed mail email handler", () => {
       body: Parameters<typeof bodyToBytes>[0],
     ) => {
       expect(installation).toEqual({ installationId: "installation_hank" });
+      const byob = body.stream.getReader({ mode: "byob" });
+      byob.releaseLock();
       expect(await bodyToBytes(body)).toEqual(raw);
       return { status: "accepted" as const, intakeId: "mail_test" };
     });
