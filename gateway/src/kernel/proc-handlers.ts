@@ -201,6 +201,20 @@ export async function handleProcSpawn(
     if (initialized?.ok !== true) {
       throw new Error("proc.setidentity rejected initialization");
     }
+    if (ctx.processId || ctx.connection) {
+      ctx.runRoutes.inheritProcessApprovalRoute({
+        processId: pid,
+        uid: ownerUid,
+        ...(ctx.processId ? { sourceProcessId: ctx.processId } : undefined),
+        ...(ctx.processRunId ? { sourceRunId: ctx.processRunId } : undefined),
+        ...(!ctx.processId
+          && ctx.connection
+          && ctx.identity?.role === "user"
+          && callerOwnerUid === ownerUid
+          ? { connectionId: ctx.connection.id }
+          : undefined),
+      });
+    }
   } catch (error) {
     if (!registered) {
       return {

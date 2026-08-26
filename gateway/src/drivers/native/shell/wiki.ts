@@ -14,6 +14,7 @@ import {
   handleRepoRead,
   handleRepoSearch,
 } from "../../../kernel/repo";
+import { handleSysBootstrap } from "../../../kernel/sys/bootstrap";
 import { requireCommandCapability, requireShellOptionValue } from "./common";
 
 const WIKI_MANIFEST_PATH = "wiki.json";
@@ -96,6 +97,24 @@ async function runWikiCommand(args: string[], ctx: KernelContext): Promise<ExecR
       const ref = await resolveWikiPath(ctx, path);
       const text = await readWikiText(ctx, ref.collection, ref.localPath);
       return { stdout: text.endsWith("\n") ? text : `${text}\n`, stderr: "", exitCode: 0 };
+    }
+    case "refresh": {
+      requireCommandCapability(ctx, "sys.bootstrap");
+      if (rest.length !== 1 || rest[0] !== "gsv-manual") {
+        throw new Error("Usage: wiki refresh gsv-manual");
+      }
+      const result = await handleSysBootstrap({}, ctx);
+      return {
+        stdout: [
+          `wiki=${result.repo}`,
+          `ref=${result.ref}`,
+          `head=${result.head ?? "unknown"}`,
+          `changed=${result.changed ? "true" : "false"}`,
+          "",
+        ].join("\n"),
+        stderr: "",
+        exitCode: 0,
+      };
     }
     case "search":
     case "brief": {
@@ -778,6 +797,7 @@ function wikiUsage(): string {
     "Collections:",
     "  wiki list",
     "  wiki info <wiki-id>",
+    "  wiki refresh gsv-manual",
     "  wiki db init <wiki-id> [--title TITLE]",
     "",
     "Pages:",

@@ -53,6 +53,8 @@ import type {
   ProcHilResult,
   ProcHistoryArgs,
   ProcHistoryResult,
+  ProcTraceArgs,
+  ProcTraceResult,
   ProcIpcCallArgs,
   ProcIpcCallResult,
   ProcIpcDeliverArgs,
@@ -256,6 +258,34 @@ import type {
   ConversationSendArgs,
   ConversationSendResult,
 } from "./conversation";
+import type {
+  ContactAliasSetArgs,
+  ContactAliasSetResult,
+  ContactIdentityArgs,
+  ContactIdentityResult,
+  ContactInviteAcceptArgs,
+  ContactInviteAcceptResult,
+  ContactInviteCancelArgs,
+  ContactInviteCancelResult,
+  ContactInviteCreateArgs,
+  ContactInviteCreateResult,
+  ContactInviteListArgs,
+  ContactInviteListResult,
+  ContactDeliveryGetArgs,
+  ContactDeliveryGetResult,
+  ContactListArgs,
+  ContactListResult,
+  ContactRequestCreateArgs,
+  ContactRequestCreateResult,
+  ContactRequestListArgs,
+  ContactRequestListResult,
+  ContactRequestUpdateArgs,
+  ContactRequestUpdateResult,
+  ContactRevokeArgs,
+  ContactRevokeResult,
+  ContactSendArgs,
+  ContactSendResult,
+} from "./contact";
 
 export type SyscallDomains = {
   "fs.read": { args: FsReadArgs; result: FsReadResult };
@@ -285,6 +315,20 @@ export type SyscallDomains = {
   "conversation.send": { args: ConversationSendArgs; result: ConversationSendResult };
   "conversation.media.read": { args: ConversationMediaReadArgs; result: ConversationMediaReadResult };
 
+  "contact.identity": { args: ContactIdentityArgs; result: ContactIdentityResult };
+  "contact.invite.create": { args: ContactInviteCreateArgs; result: ContactInviteCreateResult };
+  "contact.invite.accept": { args: ContactInviteAcceptArgs; result: ContactInviteAcceptResult };
+  "contact.invite.list": { args: ContactInviteListArgs; result: ContactInviteListResult };
+  "contact.invite.cancel": { args: ContactInviteCancelArgs; result: ContactInviteCancelResult };
+  "contact.list": { args: ContactListArgs; result: ContactListResult };
+  "contact.alias.set": { args: ContactAliasSetArgs; result: ContactAliasSetResult };
+  "contact.revoke": { args: ContactRevokeArgs; result: ContactRevokeResult };
+  "contact.send": { args: ContactSendArgs; result: ContactSendResult };
+  "contact.delivery.get": { args: ContactDeliveryGetArgs; result: ContactDeliveryGetResult };
+  "contact.request.list": { args: ContactRequestListArgs; result: ContactRequestListResult };
+  "contact.request.create": { args: ContactRequestCreateArgs; result: ContactRequestCreateResult };
+  "contact.request.update": { args: ContactRequestUpdateArgs; result: ContactRequestUpdateResult };
+
   "proc.spawn": { args: ProcSpawnArgs; result: ProcSpawnResult };
   "proc.kill": { args: ProcKillArgs; result: ProcKillResult };
   "proc.list": { args: ProcListArgs; result: ProcListResult };
@@ -297,6 +341,7 @@ export type SyscallDomains = {
   "proc.abort": { args: ProcAbortArgs; result: ProcAbortResult };
   "proc.hil": { args: ProcHilArgs; result: ProcHilResult };
   "proc.history": { args: ProcHistoryArgs; result: ProcHistoryResult };
+  "proc.trace": { args: ProcTraceArgs; result: ProcTraceResult };
   "proc.history.policy.get": { args: ProcHistoryPolicyGetArgs; result: ProcHistoryPolicyGetResult };
   "proc.history.policy.set": { args: ProcHistoryPolicySetArgs; result: ProcHistoryPolicySetResult };
   "proc.history.compact": { args: ProcHistoryCompactArgs; result: ProcHistoryCompactResult };

@@ -43,6 +43,7 @@ export type ConversationMediaOwner = {
 export type ConversationAppendRequest = Omit<ConversationAppendInput, "payloadHash" | "media"> & {
   media?: ResourceBlock[];
   mediaOwner?: ConversationMediaOwner;
+  mediaAuthority?: { kind: "federation"; target: string };
 };
 
 export type ConversationMediaRead = {
@@ -81,7 +82,11 @@ export class Conversation extends DurableObject<Env> {
     requireAppendInput(input);
     return this.withAppendLock(async () => {
       const media = await this.validateMessageMedia(input);
-      const { mediaOwner: _mediaOwner, ...messageInput } = input;
+      const {
+        mediaOwner: _mediaOwner,
+        mediaAuthority: _mediaAuthority,
+        ...messageInput
+      } = input;
       const canonical = {
         ...messageInput,
         ...(media.length > 0 ? { media } : { media: undefined }),
@@ -224,6 +229,12 @@ export class Conversation extends DurableObject<Env> {
   private async validateMessageMedia(input: ConversationAppendRequest): Promise<ResourceBlock[]> {
     const items = input.media ?? [];
     if (items.length === 0) return [];
+    if (input.mediaAuthority?.kind === "federation") {
+      return items.map((item) => validateFederationResource(
+        item,
+        input.mediaAuthority!.target,
+      ));
+    }
     const owner = input.mediaOwner;
     if (!owner) throw new Error("Conversation media owner is required");
     requireMediaOwner(owner, input.processId);
@@ -283,6 +294,17 @@ export class Conversation extends DurableObject<Env> {
     // SAFETY: archive rows are written from ConversationMessage values and the count was verified above.
     return parsed as ConversationMessage[];
   }
+}
+
+function validateFederationResource(input: ResourceBlock, target: string): ResourceBlock {
+  const resource = resourceBlockSchema.parse(input);
+  if (
+    resource.ref.target !== target
+    || !resource.ref.path.startsWith("/resources/resource%3A")
+  ) {
+    throw new Error("Federation resource is outside the delivering contact");
+  }
+  return resource;
 }
 
 function requireAppendInput(input: ConversationAppendRequest): void {
@@ -346,7 +368,7 @@ function requireOwnerUid(value: number): void {
 }
 
 function requireConversationKind(value: ConversationKind): void {
-  if (value !== "ship" && value !== "work" && value !== "group") {
+  if (value !== "ship" && value !== "work" && value !== "group" && value !== "contact") {
     throw new Error("Conversation kind is invalid");
   }
 }

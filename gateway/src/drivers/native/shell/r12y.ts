@@ -285,8 +285,12 @@ function requireProcessId(value: string | undefined): string {
   return value;
 }
 
-function requireSourceId(value: string | undefined): "mail.received" {
-  if (value !== "mail.received") throw new Error(`unknown responsibility source: ${value ?? ""}`);
+function requireSourceId(
+  value: string | undefined,
+): "mail.received" | "federation.received" {
+  if (value !== "mail.received" && value !== "federation.received") {
+    throw new Error(`unknown responsibility source: ${value ?? ""}`);
+  }
   return value;
 }
 

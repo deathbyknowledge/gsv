@@ -1151,6 +1151,9 @@ describe("proc handlers", () => {
     // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     const ctx = {
       installationId: TEST_INSTALLATION_ID,
+      processId: SPAWN_PARENT.processId,
+      processRunId: "run-parent",
+      callerOwnerUid: IDENTITY.uid,
       env: {},
       identity: {
         process: IDENTITY,
@@ -1159,6 +1162,9 @@ describe("proc handlers", () => {
       procs: {
         get: vi.fn(() => SPAWN_PARENT),
         spawn: vi.fn(),
+      },
+      runRoutes: {
+        inheritProcessApprovalRoute: vi.fn(() => null),
       },
     // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     } as KernelContext;
@@ -1171,6 +1177,12 @@ describe("proc handlers", () => {
       expect.any(Object),
       expect.objectContaining({ interactive: true }),
     );
+    expect(ctx.runRoutes.inheritProcessApprovalRoute).toHaveBeenCalledWith({
+      processId: expect.any(String),
+      uid: IDENTITY.uid,
+      sourceProcessId: SPAWN_PARENT.processId,
+      sourceRunId: "run-parent",
+    });
   });
 
   it("forks history through kernel-only process syscalls", async () => {
@@ -1215,6 +1227,9 @@ describe("proc handlers", () => {
         resolveGids: vi.fn(() => IDENTITY.gids),
       },
       procs,
+      runRoutes: {
+        inheritProcessApprovalRoute: vi.fn(() => null),
+      },
     // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     } as KernelContext;
 

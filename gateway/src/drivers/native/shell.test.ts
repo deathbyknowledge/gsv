@@ -15,6 +15,7 @@ import * as sharedUtils from "../../shared/utils";
 import type { KernelContext } from "../../kernel/context";
 import type { DeviceRecord } from "../../kernel/devices";
 import type { ProcessRecord } from "../../kernel/processes";
+import type { FederationContactRecord } from "../../kernel/federation-store";
 import type { SurfaceRouteRecord } from "../../kernel/surface-routes";
 import {
   bodyFromText,
@@ -34,6 +35,7 @@ import * as z from "zod/mini";
 const generateMock = vi.fn();
 const createGenerationServiceMock = vi.spyOn(inferenceService, "createGenerationService");
 const sendFrameToProcessMock = vi.spyOn(sharedUtils, "sendFrameToProcess");
+const getConversationByIdMock = vi.spyOn(sharedUtils, "getConversationById");
 const TEST_INSTALLATION_ID: KernelContext["installationId"] = "inst_shell_test";
 const TEST_INSTALLATION_CONTEXT = { installationId: TEST_INSTALLATION_ID };
 
@@ -44,6 +46,7 @@ beforeEach(() => {
     generateText: vi.fn(),
   });
   sendFrameToProcessMock.mockReset();
+  getConversationByIdMock.mockReset();
   sendFrameToProcessMock.mockImplementation(async (_installationId, _pid, frame) => (
     frame.type === "req" && frame.call === "proc.setidentity"
       ? { type: "res", id: frame.id, ok: true, data: { ok: true } }
@@ -141,6 +144,24 @@ function makeProcess(
   };
 }
 
+function makeContact(): FederationContactRecord {
+  return {
+    id: "contact:friend",
+    ownerUid: IDENTITY.uid,
+    state: "active",
+    generation: "generation:friend",
+    remoteShipId: "ship:friend",
+    remoteSubject: { id: "subject:friend", displayName: "Flynn" },
+    remoteOrigin: "https://flynn.example",
+    remotePublicKey: { kty: "EC", crv: "P-256", x: "x", y: "y" },
+    sharedSecret: "secret",
+    conversationId: "conversation:friend",
+    threadId: "thread:friend",
+    createdAtMs: 1,
+    updatedAtMs: 1,
+  };
+}
+
 function applyResponsibilityTestUpdate(
   current: ResponsibilityRecord,
   input: ResponsibilityUpdateInput,
@@ -174,6 +195,8 @@ function makeContext(options?: {
   ipcCalls?: Partial<KernelContext["ipcCalls"]>;
   responsibilities?: Partial<KernelContext["responsibilities"]>;
   responsibilitySources?: Partial<KernelContext["responsibilitySources"]>;
+  federation?: Partial<KernelContext["federation"]>;
+  conversations?: Partial<KernelContext["conversations"]>;
   oauth?: Partial<KernelContext["oauth"]>;
   scheduleIpcCallTimeout?: KernelContext["scheduleIpcCallTimeout"];
   scheduleScheduleWake?: KernelContext["scheduleScheduleWake"];
@@ -285,7 +308,9 @@ function makeContext(options?: {
         listByOwner: vi.fn(() => []),
       },
     }),
-    runRoutes: focusedFixture<KernelContext["runRoutes"]>({}),
+    runRoutes: focusedFixture<KernelContext["runRoutes"]>({
+      inheritProcessApprovalRoute: vi.fn(),
+    }),
     schedules: options?.schedules
       ? focusedFixture<KernelContext["schedules"]>(options.schedules)
       : undefined,
@@ -298,6 +323,13 @@ function makeContext(options?: {
     ),
     responsibilitySources: focusedFixture<KernelContext["responsibilitySources"]>(
       options?.responsibilitySources ?? {},
+    ),
+    federation: focusedFixture<KernelContext["federation"]>({
+      list: vi.fn(() => []),
+      ...options?.federation,
+    }),
+    conversations: focusedFixture<KernelContext["conversations"]>(
+      options?.conversations ?? {},
     ),
     connection: null,
     identity: {
@@ -728,7 +760,8 @@ describe("native shell capability discovery", () => {
 
     expect(result.ok).toBe(true);
     expect(result.stdout).toContain("GSV live capability manual");
-    expect(result.stdout).toContain("message      Send messages, attach files, and route adapter chats");
+    expect(result.stdout).toContain("contact      Manage trusted contacts with other GSV Ships");
+    expect(result.stdout).toContain("message      Send messages, attach files, and route conversations");
     expect(result.stdout).toContain("yield        Finish the active agent run");
     expect(result.stdout).toContain("skills       Inspect and maintain reusable agent workflows");
     expect(result.stdout).not.toContain("GSV manual pages");
@@ -1351,7 +1384,10 @@ describe("proc native command", () => {
     });
     Object.assign(ctx, {
       failIpcCallsByTarget,
-      runRoutes: { clearForProcess: clearProcessRoutes },
+      runRoutes: {
+        clearForProcess: clearProcessRoutes,
+        inheritProcessApprovalRoute: vi.fn(),
+      },
       defer: vi.fn(),
     });
     return {
@@ -1903,7 +1939,10 @@ describe("proc native command", () => {
     });
     Object.assign(ctx, {
       failIpcCallsByTarget: vi.fn(),
-      runRoutes: { clearForProcess: vi.fn() },
+      runRoutes: {
+        clearForProcess: vi.fn(),
+        inheritProcessApprovalRoute: vi.fn(),
+      },
       defer: vi.fn(),
     });
     sendFrameToProcessMock.mockImplementation(async (_installationId, _pid, frame) => {
@@ -2043,7 +2082,10 @@ describe("proc native command", () => {
     });
     Object.assign(ctx, {
       failIpcCallsByTarget: vi.fn(),
-      runRoutes: { clearForProcess: vi.fn() },
+      runRoutes: {
+        clearForProcess: vi.fn(),
+        inheritProcessApprovalRoute: vi.fn(),
+      },
       defer: vi.fn(),
     });
     sendFrameToProcessMock.mockImplementation(async (_installationId, _pid, frame) => {
@@ -2314,6 +2356,45 @@ describe("fs copy", () => {
     expect(result.exitCode).toBe(0);
     expect(result.stderr).toBe("");
     expect(await (await env.STORAGE.get(destinationKey))?.text()).toBe("shell copied");
+  });
+
+  it("copies a Contact resource through its authorized source stream", async () => {
+    const contact = makeContact();
+    const destinationKey = "home/sam/copy-test/contact-source.txt";
+    await env.STORAGE.delete(destinationKey);
+    const openContactSource = vi.fn(async () => ({
+      size: 12,
+      contentType: "text/plain",
+      body: {
+        length: 12,
+        stream: new ReadableStream<Uint8Array>({
+          start(controller) {
+            controller.enqueue(new TextEncoder().encode("from contact"));
+            controller.close();
+          },
+        }),
+      },
+    }));
+    const ctx = makeContext({
+      capabilities: ["shell.exec", "fs.copy"],
+      federation: { list: vi.fn(() => [contact]) },
+    });
+
+    const result = await handleShellExec({
+      input: `cp ${contact.id}:/resources/resource:shared /home/sam/copy-test/contact-source.txt`,
+    }, ctx, {
+      fsTransport: {
+        requestDevice: vi.fn(),
+        openContactSource,
+      },
+    });
+
+    expect(result).toMatchObject({ status: "completed", exitCode: 0 });
+    expect(openContactSource).toHaveBeenCalledWith({
+      target: contact.id,
+      path: "/resources/resource:shared",
+    }, undefined);
+    expect(await (await env.STORAGE.get(destinationKey))?.text()).toBe("from contact");
   });
 
   it("streams gsv files to a device target", async () => {
@@ -3518,6 +3599,211 @@ describe("native administration shell commands", () => {
       expect.objectContaining({ text: "opaque route" }),
       undefined,
     );
+  });
+
+  it("lists trusted GSV contacts as first-class message destinations", async () => {
+    const contact = { ...makeContact(), localAlias: "Alice" };
+    const list = vi.fn(() => [contact]);
+    const ctx = makeContext({
+      capabilities: ["shell.exec", "contact.list"],
+      federation: { list },
+    });
+
+    const destinations = await handleShellExec({ input: "message destinations --json" }, ctx);
+    const contacts = await handleShellExec({ input: "contact list" }, ctx);
+    const help = await handleShellExec({ input: "contact help" }, ctx);
+
+    expect(destinations).toMatchObject({ status: "completed", exitCode: 0 });
+    expect(JSON.parse(destinations.stdout)).toMatchObject({
+      destinations: [{
+        id: contact.id,
+        kind: "contact",
+        label: "Alice",
+        state: "active",
+      }],
+    });
+    expect(contacts).toMatchObject({ status: "completed", exitCode: 0 });
+    expect(contacts.stdout).toContain("contact:friend\tactive\tAlice\tship:friend");
+    expect(help).toMatchObject({ status: "completed", exitCode: 0 });
+    expect(help.stdout).toContain("contact invite create");
+    expect(list).toHaveBeenCalledWith(IDENTITY.uid, false);
+  });
+
+  it("lets the canonical Ship set a local Contact alias", async () => {
+    const contact = makeContact();
+    const setAlias = vi.fn((_contactId: string, _ownerUid: number, alias: string | null) => {
+      const updated: FederationContactRecord = { ...contact };
+      if (alias !== null) updated.localAlias = alias;
+      return updated;
+    });
+    const setTitle = vi.fn();
+    const ctx = makeContext({
+      capabilities: ["shell.exec", "contact.alias.set"],
+      procs: {
+        get: vi.fn(() => makeProcess({
+          processId: "proc:ship",
+          isPersonalController: true,
+        })),
+      },
+      auth: {
+        isPersonalAgentUid: vi.fn(() => false),
+        getShadowByUsername: vi.fn(() => ({ username: IDENTITY.username, hash: "unlocked" })),
+      },
+      federation: { get: vi.fn(() => contact), setAlias },
+      conversations: { setTitle },
+      processId: "proc:ship",
+    });
+
+    const result = await handleShellExec({
+      input: `contact alias ${contact.id} Alice Cooper`,
+    }, ctx);
+
+    expect(result).toMatchObject({ status: "completed", exitCode: 0 });
+    expect(JSON.parse(result.stdout).contact.localAlias).toBe("Alice Cooper");
+    expect(setAlias).toHaveBeenCalledWith(contact.id, IDENTITY.uid, "Alice Cooper");
+    expect(setTitle).toHaveBeenCalledWith(contact.conversationId, "Alice Cooper");
+  });
+
+  it("lets only the canonical Ship perform human contact pairing", async () => {
+    const result = await handleShellExec(
+      { input: "contact invite cancel invite:one" },
+      makeContext({ capabilities: ["shell.exec", "contact.invite.cancel"] }),
+    );
+
+    expect(result).toMatchObject({ status: "failed", exitCode: 1 });
+    expect(result.stderr).toContain("requires a signed-in human or their Ship");
+
+    const cancelledAtMs = Date.now();
+    const cancelInvite = vi.fn(() => ({
+      inviteId: "invite:one",
+      ownerUid: IDENTITY.uid,
+      tokenHash: "secret-hash",
+      issuingShipId: "ship:local",
+      issuingOrigin: "https://local.example",
+      state: "cancelled" as const,
+      expiresAtMs: cancelledAtMs + 60_000,
+      cancelledAtMs,
+      createdAtMs: cancelledAtMs - 1_000,
+    }));
+    const ship = makeContext({
+      capabilities: ["shell.exec", "contact.invite.cancel"],
+      procs: {
+        get: vi.fn(() => makeProcess({
+          processId: "proc:ship",
+          isPersonalController: true,
+        })),
+      },
+      auth: {
+        isPersonalAgentUid: vi.fn(() => false),
+        getShadowByUsername: vi.fn(() => ({ username: IDENTITY.username, hash: "unlocked" })),
+      },
+      federation: { cancelInvite },
+      processId: "proc:ship",
+    });
+    const shipResult = await handleShellExec(
+      { input: "contact invite cancel invite:one" },
+      ship,
+    );
+    expect(shipResult).toMatchObject({ status: "completed", exitCode: 0 });
+    expect(JSON.parse(shipResult.stdout)).toMatchObject({
+      invite: { inviteId: "invite:one", state: "cancelled" },
+    });
+    expect(cancelInvite).toHaveBeenCalledWith("invite:one", IDENTITY.uid, expect.any(Number));
+  });
+
+  it("reads Contact history from the canonical Ship", async () => {
+    const contact = makeContact();
+    const conversation = {
+      id: contact.conversationId,
+      ownerUid: IDENTITY.uid,
+      kind: "contact" as const,
+      title: "Flynn",
+      handlerPid: "proc:ship",
+      latestSequence: 1,
+      createdAt: 1,
+      updatedAt: 2,
+    };
+    getConversationByIdMock.mockReturnValue({
+      history: vi.fn(async () => ({
+        messages: [{
+          id: "msg:one",
+          conversationId: conversation.id,
+          sequence: 1,
+          author: {
+            kind: "contact",
+            contactId: contact.id,
+            shipId: contact.remoteShipId,
+            subjectId: contact.remoteSubject.id,
+            displayName: contact.remoteSubject.displayName,
+          },
+          text: "hello from Flynn",
+          origin: { kind: "federation", contactId: contact.id, deliveryId: "delivery:one" },
+          createdAt: 1,
+        }],
+        hasMore: false,
+        latestSequence: 1,
+      })),
+    });
+    const ctx = makeContext({
+      capabilities: ["shell.exec", "contact.list", "conversation.history"],
+      federation: { list: vi.fn(() => [contact]) },
+      procs: {
+        get: vi.fn(() => makeProcess({
+          processId: "proc:ship",
+          isPersonalController: true,
+        })),
+      },
+      processId: "proc:ship",
+    });
+    ctx.conversations = focusedFixture<KernelContext["conversations"]>({
+      get: vi.fn(() => conversation),
+      recordSequence: vi.fn(),
+    });
+
+    const history = await handleShellExec({
+      input: `message history --with ${contact.id}`,
+    }, ctx);
+    expect(history).toMatchObject({ status: "completed", exitCode: 0 });
+    expect(history.stdout).toContain(`conversation=${conversation.id}`);
+    expect(history.stdout).toContain("Flynn (contact:friend)");
+    expect(history.stdout).toContain("hello from Flynn");
+  });
+
+  it("reports Contact delivery acceptance and later state separately", async () => {
+    const contact = makeContact();
+    const outbox = vi.fn(() => ({
+      deliveryId: "delivery:one",
+      ownerUid: IDENTITY.uid,
+      contactId: contact.id,
+      contactGeneration: contact.generation,
+      idempotencyKey: "logical:one",
+      fingerprint: "fingerprint",
+      payload: {
+        kind: "message" as const,
+        messageId: "msg:one",
+        threadId: contact.threadId,
+        text: "hello",
+      },
+      state: "pending" as const,
+      attemptCount: 1,
+      createdAtMs: 1,
+      updatedAtMs: 2,
+    }));
+    const ctx = makeContext({
+      capabilities: ["shell.exec", "contact.delivery.get"],
+      federation: {
+        outbox,
+        get: vi.fn(() => contact),
+      },
+    });
+
+    const status = await handleShellExec({
+      input: "message delivery show delivery:one",
+    }, ctx);
+    expect(status).toMatchObject({ status: "completed", exitCode: 0 });
+    expect(status.stdout).toContain("accepted=true");
+    expect(status.stdout).toContain("delivery_confirmed=false");
+    expect(status.stdout).toContain("delivery_state=queued");
   });
 
   it("shows and changes the process route for an adapter group", async () => {

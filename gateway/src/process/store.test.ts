@@ -458,6 +458,77 @@ describe("ProcessStore", () => {
     });
   });
 
+  describe("trace", () => {
+    it("records one timed run tree and clears it with history", async () => {
+      const stub = await getProcessByPid("process-trace-store");
+      await runInDurableObject(stub, (instance: Process) => {
+        // SAFETY: test fixture exercises the internal ProcessStore contract.
+        const store = (instance as any).store;
+        store.startTraceSpan({
+          id: "run:trace-run",
+          runId: "trace-run",
+          kind: "run",
+          name: "Run",
+          startedAt: 100,
+          reference: { kind: "run" },
+        });
+        store.startTraceSpan({
+          id: "context:trace-run",
+          runId: "trace-run",
+          parentId: "run:trace-run",
+          kind: "context",
+          name: "Build context",
+          startedAt: 110,
+        });
+        store.finishTraceSpan("context:trace-run", "ok", 140, {
+          attributes: { messages: 3 },
+        });
+        store.register("dispatch-1", "call-1", "trace-run", "fs.read", {
+          path: "/work/readme.md",
+        });
+        store.markDispatched("dispatch-1");
+        store.resolve("dispatch-1", { ok: true });
+        store.finishRunTrace("trace-run", "ok", 200);
+
+        const trace = store.listTraceSpans({ runId: "trace-run", limit: 20 });
+        expect(trace.count).toBe(4);
+        expect(trace.spans).toEqual(expect.arrayContaining([
+          expect.objectContaining({
+            id: "run:trace-run",
+            kind: "run",
+            status: "ok",
+            startedAt: 100,
+            endedAt: 200,
+          }),
+          expect.objectContaining({
+            id: "context:trace-run",
+            parentId: "run:trace-run",
+            status: "ok",
+            attributes: { messages: 3 },
+          }),
+          expect.objectContaining({
+            id: "tool:dispatch-1",
+            parentId: "run:trace-run",
+            status: "ok",
+            reference: {
+              kind: "tool",
+              callId: "call-1",
+              executionId: "dispatch-1",
+            },
+          }),
+          expect.objectContaining({
+            id: "execution:dispatch-1",
+            parentId: "tool:dispatch-1",
+            status: "ok",
+          }),
+        ]));
+
+        store.resetHistory();
+        expect(store.listTraceSpans({ limit: 20 })).toEqual({ count: 0, spans: [] });
+      });
+    });
+  });
+
   // ---------- toolResult role ----------
 
   describe("appendToolResult", () => {

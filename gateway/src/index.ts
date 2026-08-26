@@ -46,6 +46,7 @@ import { createInstallationRipgit } from "./installation/ripgit";
 import { buildGitProxyRequest, getBasicAuth, matchGitPath } from "./git";
 import * as z from "zod/mini";
 import type { ServicePeerProfile } from "./kernel/peer";
+import { isFederationPublicPath } from "./kernel/federation";
 
 export { Kernel } from "./kernel/do";
 export { Process } from "./process/do";
@@ -62,6 +63,7 @@ export default {
     const publicAssetMatch = matchPublicAssetPath(url.pathname);
     const gitMatch = matchGitPath(url);
     const websocketRequest = url.pathname === "/ws" && isWebSocketRequest(request);
+    const federationPath = isFederationPublicPath(url.pathname);
     const browserAssetRequest = (
       request.method === "GET" || request.method === "HEAD"
     )
@@ -69,7 +71,8 @@ export default {
       && !gitMatch
       && url.pathname !== "/ws"
       && url.pathname !== "/oauth/callback"
-      && url.pathname !== "/.well-known/oauth-client/gsv.json";
+      && url.pathname !== "/.well-known/oauth-client/gsv.json"
+      && !federationPath;
 
     // two possibilities:
     // 1. self-hosted GSV, has no multiple tenants so there's a singleton Kernel DO
@@ -106,6 +109,10 @@ export default {
     } catch {
       console.error("[Gateway] Kernel installation identity check failed");
       return new Response("Installation unavailable", { status: 503 });
+    }
+
+    if (federationPath) {
+      return kernelDO.fetch(request);
     }
 
     if (url.pathname === "/oauth/callback" && request.method === "GET") {

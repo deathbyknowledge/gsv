@@ -1,5 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { ConversationMessage, ConversationSummary } from "@humansandmachines/gsv/protocol";
+import {
+  REQUEST_CANCEL_SIGNAL,
+  type ConversationMessage,
+  type ConversationSummary,
+  type ResourceBlock,
+} from "@humansandmachines/gsv/protocol";
 import type { KernelContext } from "./context";
 
 import * as utils from "../shared/utils";
@@ -13,6 +18,7 @@ import {
   handleConversationShip,
   handleConversationMediaRead,
   handleConversationSend,
+  retainConversationResources,
 } from "./conversation-handlers";
 
 const SHIP: ConversationSummary = {
@@ -59,6 +65,7 @@ function context(ownerUid = 1000): KernelContext {
     },
     procs: {
       get: vi.fn((pid: string) => pid === PROCESS.processId ? PROCESS : null),
+      getOwnerUid: vi.fn((pid: string) => pid === PROCESS.processId ? PROCESS.ownerUid : null),
     },
     conversations: {
       ensureShip: vi.fn(() => SHIP),
@@ -141,15 +148,25 @@ describe("conversation handlers", () => {
     expect(ctx.runRoutes.delete).toHaveBeenCalledWith(expect.stringMatching(/^run:msg:/));
   });
 
-  it("rejects conversation operations from a Process caller", async () => {
+  it("lets the canonical Ship read history but keeps client mutations direct", async () => {
     const ctx = context();
     ctx.processId = PROCESS.processId;
+    getConversationByIdMock.mockReturnValue({
+      history: vi.fn(async () => ({ messages: [], hasMore: false, latestSequence: 0 })),
+    });
 
     await expect(handleConversationShip(ctx)).rejects.toThrow(
       "Conversation operations require a direct user client",
     );
+    await expect(handleConversationHistory({ conversationId: SHIP.id }, ctx)).resolves.toEqual({
+      conversation: SHIP,
+      messages: [],
+      hasMore: false,
+    });
+
+    ctx.procs.get = vi.fn(() => ({ ...PROCESS, isPersonalController: false }));
     await expect(handleConversationHistory({ conversationId: SHIP.id }, ctx)).rejects.toThrow(
-      "Conversation operations require a direct user client",
+      "Conversation history requires a signed-in human or their Ship",
     );
   });
 
@@ -195,6 +212,53 @@ describe("conversation handlers", () => {
     });
     expect(vi.mocked(ctx.runRoutes.setConnectionRoute).mock.invocationCallOrder[0])
       .toBeLessThan(sendFrameToProcessMock.mock.invocationCallOrder[0]);
+  });
+
+  it("forwards client cancellation to in-flight resource retention", async () => {
+    const controller = new AbortController();
+    const ctx = context();
+    ctx.requestSignal = controller.signal;
+    const resource: ResourceBlock = {
+      type: "resource",
+      ref: {
+        type: "file",
+        target: "gsv",
+        path: "/home/hank/archive/image.png",
+        revision: "revision:image",
+        contentType: "image/png",
+        size: 3,
+      },
+    };
+    sendFrameToProcessMock.mockImplementation(async (_installationId, _pid, frame) => {
+      if (frame.type === "sig") return null;
+      return await new Promise<never>(() => {});
+    });
+
+    const retaining = retainConversationResources([resource], PROCESS.processId, ctx);
+    await vi.waitFor(() => expect(sendFrameToProcessMock).toHaveBeenCalledWith(
+      "singleton",
+      PROCESS.processId,
+      expect.objectContaining({ call: "proc.resources.retain" }),
+    ));
+    const retainFrame = sendFrameToProcessMock.mock.calls.find(
+      ([, , frame]) => frame.type === "req" && frame.call === "proc.resources.retain",
+    )?.[2];
+    if (!retainFrame || retainFrame.type !== "req") {
+      throw new Error("Resource retain request was not captured");
+    }
+
+    controller.abort(new Error("Upload cancelled"));
+
+    await expect(retaining).rejects.toThrow("Upload cancelled");
+    expect(sendFrameToProcessMock).toHaveBeenCalledWith(
+      "singleton",
+      PROCESS.processId,
+      {
+        type: "sig",
+        signal: REQUEST_CANCEL_SIGNAL,
+        payload: { id: retainFrame.id, reason: "Upload cancelled" },
+      },
+    );
   });
 
   it("reads canonical history and media only through an owned conversation", async () => {

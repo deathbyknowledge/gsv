@@ -213,10 +213,11 @@ routes so committed output cannot cross a later relink.
 
 Human-in-the-loop replies are routed specially. Each adapter DM prompt includes
 `hil[requestId]`. A tokened decision is correlated first against the owning
-human's interactive processes whose runtime state is `waiting_hil`, so `/ship`
-does not strand an approval from an earlier work run. Only one exact current
-token match resumes `proc.hil`; bare, stale, missing, and ambiguous matches fail
-closed. Provider reply threading does not authorize a decision.
+human's processes whose runtime state is `waiting_hil`, including background
+children that inherited the spawning run's approval route, so `/ship` does not
+strand an approval from earlier work. Only one exact current token match resumes
+`proc.hil`; bare, stale, missing, and ambiguous matches fail closed. Provider
+reply threading does not authorize a decision.
 
 
 ## Device Routing

@@ -156,13 +156,25 @@ export type ProcessRunAttachResponseFrame =
     }
   | ResponseErrFrame;
 
-export type ProcessResourceRetainRequestFrame = {
+export type ProcessResourcesRetainRequestFrame = {
   type: "req";
   id: string;
-  call: "proc.resource.retain";
-  args: { resource: ResourceBlock };
+  call: "proc.resources.retain";
+  args: {
+    batchId: string;
+    resources: ResourceBlock[];
+  };
   body?: undefined;
 };
+
+export type ProcessResourcesRetainResponseFrame =
+  | {
+      type: "res";
+      id: string;
+      ok: true;
+      data: { resources: ResourceBlock[] };
+    }
+  | ResponseErrFrame;
 
 export type ProcessResourceWriteRequestFrame = {
   type: "req";
@@ -230,7 +242,7 @@ export type ProcessRequestFrame =
   | ProcessScheduleDeliverRequestFrame
   | ProcessAdapterDeliverRequestFrame
   | ProcessRunAttachRequestFrame
-  | ProcessResourceRetainRequestFrame
+  | ProcessResourcesRetainRequestFrame
   | ProcessResourceWriteRequestFrame;
 export type ProcessInboundFrame =
   | Frame
@@ -238,7 +250,7 @@ export type ProcessInboundFrame =
   | ProcessScheduleDeliverRequestFrame
   | ProcessAdapterDeliverRequestFrame
   | ProcessRunAttachRequestFrame
-  | ProcessResourceRetainRequestFrame
+  | ProcessResourcesRetainRequestFrame
   | ProcessResourceWriteRequestFrame;
 
 export type ProcessOutboundFrame =

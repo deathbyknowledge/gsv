@@ -25,9 +25,11 @@ export function GatewaySignalInvalidator() {
         signal === "proc.run.started" ||
         signal === "proc.run.retrying" ||
         signal === "proc.run.tool.started" ||
+        signal === "proc.run.tool.finished" ||
         signal === "proc.run.hil.requested"
       ) {
         void queryClient.invalidateQueries({ queryKey: ["processes"] });
+        void queryClient.invalidateQueries({ queryKey: ["process", "trace"] });
         return;
       }
 

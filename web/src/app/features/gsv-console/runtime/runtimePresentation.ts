@@ -17,10 +17,14 @@ function isQueuedProcess(process: ConsoleProcess): boolean {
  *  spell out the `activeRunId` check too so this matches the other runtime
  *  "active/abortable" predicates and stays correct for any un-normalized input. */
 export function isActiveProcess(process: ConsoleProcess): boolean {
-  return process.state === "running" || process.activeRunId !== null || isQueuedProcess(process);
+  return process.state === "running"
+    || process.state === "waiting_hil"
+    || process.activeRunId !== null
+    || isQueuedProcess(process);
 }
 
 export function toneForProcess(process: ConsoleProcess): StatusTone {
+  if (process.state === "waiting_hil") return "warn";
   if (process.state === "running") return "live";
   if (isQueuedProcess(process)) return "update";
   if (process.state === "unknown") return "warn";
@@ -28,6 +32,7 @@ export function toneForProcess(process: ConsoleProcess): StatusTone {
 }
 
 export function statusForProcess(process: ConsoleProcess): string {
+  if (process.state === "waiting_hil") return "APPROVAL";
   if (process.state === "running") return "RUNNING";
   if (isQueuedProcess(process)) return "QUEUED";
   if (process.state === "unknown") return "UNKNOWN";
@@ -47,6 +52,12 @@ export function processSub(process: ConsoleProcess): string {
 
 export function processBlurb(process: ConsoleProcess): string {
   const owner = process.username || uidLabel(process.uid) || "unknown owner";
+  if (process.personal) {
+    return compactText(
+      [`${statusForProcess(process).toLowerCase()} Ship process`, owner, process.profile, process.cwd],
+      "The personal intelligence process and its inspectable durable activity.",
+    );
+  }
   return compactText(
     [`${statusForProcess(process).toLowerCase()} work`, owner, process.profile, process.cwd],
     "Process-backed work with durable history and runtime controls.",
@@ -76,7 +87,7 @@ export function processDetailSections(process: ConsoleProcess): ConsoleDetailSec
       rows: liveRows([
         detailRow("owner", "RUN AS", process.username || uidLabel(process.uid)),
         detailRow("profile", "PROFILE", process.profile),
-        detailRow("interactive", "HIL APPROVALS", process.interactive),
+        detailRow("interactive", "DIRECT CONVERSATION", process.interactive),
         detailRow("parent", "PARENT WORK", process.parentPid),
       ]),
     },

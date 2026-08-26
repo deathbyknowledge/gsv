@@ -12,6 +12,7 @@ import {
   statusForProcess,
   toneForProcess,
 } from "./runtimePresentation";
+import { RuntimeActivity } from "./RuntimeActivity";
 
 type RuntimeDetailPageProps = {
   onBack: () => void;
@@ -48,16 +49,18 @@ export function RuntimeDetailPage({ onBack, process }: RuntimeDetailPageProps) {
               disabled={pending || !canAbort}
               onClick={() => setConfirmAction("abort")}
             />
-            <Button
-              variant="secondary"
-              label={pending && action.variables?.action === "reset" ? "RESETTING" : "RESET WORK"}
-              disabled={pending}
-              onClick={() => setConfirmAction("reset")}
-            />
+            {!process.personal ? (
+              <Button
+                variant="secondary"
+                label={pending && action.variables?.action === "reset" ? "RESETTING" : "RESET WORK"}
+                disabled={pending}
+                onClick={() => setConfirmAction("reset")}
+              />
+            ) : null}
             {action.isError ? <span class="gsv-runtime-task-action-error">{action.error.message}</span> : null}
           </div>
         )}
-        dangerAction={(
+        dangerAction={process.personal ? undefined : (
           <Button
             variant="dangerGhost"
             label={pending && action.variables?.action === "kill" ? "KILLING" : "KILL WORK"}
@@ -67,16 +70,18 @@ export function RuntimeDetailPage({ onBack, process }: RuntimeDetailPageProps) {
         )}
         icon={iconForProcess(process)}
         title={process.label}
-        typeLabel="GSV · WORK"
+        typeLabel={process.personal ? "GSV · SHIP" : "GSV · WORK"}
         statusLabel={statusForProcess(process)}
         tone={toneForProcess(process)}
         blurb={processBlurb(process)}
-        parentLabel="WORK"
-        primaryLabel="OPEN WORK SESSION"
-        onPrimary={openChat}
+        parentLabel="ACTIVITY"
+        primaryLabel={process.personal ? undefined : "OPEN WORK SESSION"}
+        onPrimary={process.personal ? undefined : openChat}
         sections={processDetailSections(process)}
         onBack={onBack}
-      />
+      >
+        <RuntimeActivity process={process} />
+      </ConsoleDetailPage>
       {confirm ? (
         <div class="gsv-console-confirm-layer" onClick={() => setConfirmAction(null)}>
           <div class="gsv-console-confirm-wrap" onClick={(event) => event.stopPropagation()}>

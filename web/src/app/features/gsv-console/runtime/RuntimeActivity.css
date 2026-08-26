@@ -1,0 +1,368 @@
+.gsv-runtime-activity {
+  min-width: 0;
+  border: 1px solid var(--border);
+  background: var(--panel);
+}
+
+.gsv-runtime-activity-body {
+  position: relative;
+  min-height: 500px;
+  height: min(68vh, 780px);
+  overflow: hidden;
+}
+
+.gsv-runtime-activity > .gsv-chat-hil {
+  border-top: 1px solid var(--rule-section);
+}
+
+.gsv-runtime-activity-error {
+  margin: 0;
+  padding: 12px 18px;
+  border-top: 1px solid var(--rule-section);
+  color: var(--error);
+}
+
+.gsv-runtime-trace {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+
+.gsv-runtime-trace-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--rule-section);
+  background: color-mix(in srgb, var(--panel) 90%, var(--accent) 10%);
+}
+
+.gsv-runtime-trace-toolbar label {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.gsv-runtime-trace-toolbar label > span,
+.gsv-runtime-trace-state,
+.gsv-runtime-trace-inspector header span,
+.gsv-runtime-trace-inspector header b,
+.gsv-runtime-trace-metrics dt,
+.gsv-runtime-trace-values h4,
+.gsv-runtime-trace-truncated {
+  font: var(--font-label);
+  letter-spacing: 0.14em;
+}
+
+.gsv-runtime-trace-toolbar select {
+  width: min(360px, 52vw);
+  padding: 7px 30px 7px 10px;
+  border: 1px solid var(--border);
+  border-radius: 0;
+  color: var(--text);
+  background: var(--panel-strong);
+  font: var(--font-mono-sm);
+}
+
+.gsv-runtime-trace-state {
+  color: var(--text-dim);
+}
+
+.gsv-runtime-trace-state.is-running {
+  color: var(--online);
+  text-shadow: 0 0 10px color-mix(in srgb, var(--online) 65%, transparent);
+}
+
+.gsv-runtime-trace-workspace {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(280px, 34%);
+  flex: 1;
+  min-height: 0;
+}
+
+.gsv-runtime-chart-scroll {
+  min-width: 0;
+  overflow: auto;
+  padding: 0 14px 18px;
+  background:
+    linear-gradient(90deg, color-mix(in srgb, var(--accent) 5%, transparent) 1px, transparent 1px),
+    var(--bg);
+  background-size: 25% 100%;
+}
+
+.gsv-runtime-chart-axis,
+.gsv-runtime-chart {
+  min-width: 680px;
+}
+
+.gsv-runtime-chart-axis {
+  position: sticky;
+  top: 0;
+  z-index: 3;
+  height: 38px;
+  border-bottom: 1px solid var(--rule-section);
+  background: color-mix(in srgb, var(--bg) 94%, transparent);
+}
+
+.gsv-runtime-chart-axis span {
+  position: absolute;
+  bottom: 8px;
+  color: var(--text-faint);
+  font: var(--font-mono-xs);
+  transform: translateX(-50%);
+  white-space: nowrap;
+}
+
+.gsv-runtime-chart-axis span:first-child {
+  transform: none;
+}
+
+.gsv-runtime-chart-axis span:last-child {
+  transform: translateX(-100%);
+}
+
+.gsv-runtime-chart {
+  position: relative;
+  margin-top: 8px;
+}
+
+.gsv-runtime-chart-gridline {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background: var(--rule-section);
+  pointer-events: none;
+}
+
+.gsv-runtime-flame {
+  position: absolute;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 28px;
+  min-width: 3px;
+  padding: 0 8px;
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--accent) 58%, var(--border));
+  border-radius: 2px;
+  color: var(--text);
+  background: color-mix(in srgb, var(--accent) 21%, var(--panel-strong));
+  cursor: pointer;
+  text-align: left;
+  transition: filter 100ms ease, outline-color 100ms ease;
+}
+
+.gsv-runtime-flame:hover {
+  z-index: 2;
+  filter: brightness(1.18);
+}
+
+.gsv-runtime-flame.is-selected {
+  z-index: 2;
+  outline: 2px solid var(--accent-bright);
+  outline-offset: 1px;
+}
+
+.gsv-runtime-flame > span {
+  overflow: hidden;
+  font: var(--font-mono-xs);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.gsv-runtime-flame > small {
+  margin-left: auto;
+  color: color-mix(in srgb, currentColor 72%, transparent);
+  font: var(--font-mono-xs);
+  white-space: nowrap;
+}
+
+.gsv-runtime-flame.is-run {
+  border-color: color-mix(in srgb, var(--accent-bright) 76%, var(--border));
+  background: color-mix(in srgb, var(--accent) 42%, var(--panel-strong));
+}
+
+.gsv-runtime-flame.is-context {
+  border-color: color-mix(in srgb, #6f9fcb 70%, var(--border));
+  background: color-mix(in srgb, #315d87 42%, var(--panel-strong));
+}
+
+.gsv-runtime-flame.is-inference,
+.gsv-runtime-flame.is-reasoning,
+.gsv-runtime-flame.is-output {
+  border-color: color-mix(in srgb, #b9a5ff 70%, var(--border));
+  background: color-mix(in srgb, #6b55a5 42%, var(--panel-strong));
+}
+
+.gsv-runtime-flame.is-tool {
+  border-color: color-mix(in srgb, #62d6a2 72%, var(--border));
+  background: color-mix(in srgb, #28735a 42%, var(--panel-strong));
+}
+
+.gsv-runtime-flame.is-approval {
+  border-color: color-mix(in srgb, #efbf65 80%, var(--border));
+  background: color-mix(in srgb, #8c6425 45%, var(--panel-strong));
+}
+
+.gsv-runtime-flame.is-delivery {
+  border-color: color-mix(in srgb, #e28ba7 72%, var(--border));
+  background: color-mix(in srgb, #864059 42%, var(--panel-strong));
+}
+
+.gsv-runtime-flame.is-error,
+.gsv-runtime-flame.is-aborted,
+.gsv-runtime-flame.is-denied {
+  border-style: dashed;
+  filter: saturate(0.7);
+}
+
+.gsv-runtime-trace-inspector {
+  min-width: 0;
+  overflow: auto;
+  border-left: 1px solid var(--rule-section);
+  background: var(--panel);
+}
+
+.gsv-runtime-trace-inspector header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 15px 16px;
+  border-bottom: 1px solid var(--rule-section);
+}
+
+.gsv-runtime-trace-inspector header div {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+}
+
+.gsv-runtime-trace-inspector header span {
+  color: var(--text-faint);
+}
+
+.gsv-runtime-trace-inspector header strong {
+  overflow-wrap: anywhere;
+  color: var(--text);
+  font: var(--font-mono-md);
+}
+
+.gsv-runtime-trace-inspector header b {
+  color: var(--text-dim);
+}
+
+.gsv-runtime-trace-inspector header b.is-running,
+.gsv-runtime-trace-inspector header b.is-ok {
+  color: var(--online);
+}
+
+.gsv-runtime-trace-inspector header b.is-error,
+.gsv-runtime-trace-inspector header b.is-denied {
+  color: var(--error);
+}
+
+.gsv-runtime-trace-metrics {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  margin: 0;
+  border-bottom: 1px solid var(--rule-section);
+}
+
+.gsv-runtime-trace-metrics div {
+  display: grid;
+  gap: 4px;
+  padding: 11px 16px;
+}
+
+.gsv-runtime-trace-metrics div + div {
+  border-left: 1px solid var(--rule-section);
+}
+
+.gsv-runtime-trace-metrics dt {
+  color: var(--text-faint);
+}
+
+.gsv-runtime-trace-metrics dd {
+  margin: 0;
+  color: var(--text);
+  font: var(--font-mono-sm);
+}
+
+.gsv-runtime-trace-values {
+  display: grid;
+  gap: 0;
+}
+
+.gsv-runtime-trace-values section {
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--rule-section);
+}
+
+.gsv-runtime-trace-values h4 {
+  margin: 0 0 8px;
+  color: var(--accent-bright);
+}
+
+.gsv-runtime-trace-values pre {
+  margin: 0;
+  color: var(--text-dim);
+  font: var(--font-mono-sm);
+  line-height: 1.55;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+.gsv-runtime-trace-values > p,
+.gsv-runtime-trace-empty span {
+  color: var(--text-dim);
+  font: var(--font-body-sm);
+}
+
+.gsv-runtime-trace-values > p {
+  margin: 0;
+  padding: 16px;
+}
+
+.gsv-runtime-trace-empty {
+  display: grid;
+  place-content: center;
+  gap: 8px;
+  height: 100%;
+  padding: 24px;
+  color: var(--text-faint);
+  text-align: center;
+}
+
+.gsv-runtime-trace-empty.is-error strong {
+  color: var(--error);
+}
+
+.gsv-runtime-trace-truncated {
+  margin: 0;
+  padding: 8px 14px;
+  border-top: 1px solid var(--rule-section);
+  color: var(--text-faint);
+}
+
+@container panel (max-width: 760px) {
+  .gsv-runtime-activity-body {
+    min-height: 620px;
+    height: 72vh;
+  }
+
+  .gsv-runtime-trace-workspace {
+    grid-template-columns: 1fr;
+    grid-template-rows: minmax(280px, 1fr) minmax(220px, 42%);
+  }
+
+  .gsv-runtime-trace-inspector {
+    border-top: 1px solid var(--rule-section);
+    border-left: 0;
+  }
+}

@@ -7,6 +7,7 @@ import type { RequestFrame, ResponseFrame } from "../../../protocol/frames";
 import type { ProcessIdentity } from "@humansandmachines/gsv/protocol";
 import type { FsDeviceTransport } from "../fs";
 import { buildCodeModeCommand } from "./codemode";
+import { buildContactCommand } from "./contact";
 import { buildCoreCommands } from "./core";
 import { buildCpCommand } from "./cp";
 import { buildCrontabCommand } from "./crontab";
@@ -52,6 +53,7 @@ export function buildCustomCommands(
   const cp = buildCpCommand(ctx, options?.fsTransport);
   const crontab = buildCrontabCommand(fs, ctx);
   const codemode = buildCodeModeCommand(fs, identity, ctx, options?.request);
+  const contact = buildContactCommand(ctx);
   const mcp = buildMcpCommand(ctx);
   const skills = buildSkillsCommand(fs, ctx, identity);
   const wiki = buildWikiCommand(ctx);
@@ -82,6 +84,7 @@ export function buildCustomCommands(
     cp,
     crontab,
     codemode,
+    contact,
     mcp,
     proc,
     ...rgitCommands,

@@ -172,6 +172,11 @@ export class ResponsibilityStore {
     return row ? recordFromRow(row) : null;
   }
 
+  getByDedupeKey(ownerUid: number, dedupeKey: string): ResponsibilityRecord | null {
+    const row = this.getDedupeRow(ownerUid, dedupeKey);
+    return row ? recordFromRow(row) : null;
+  }
+
   list(input: {
     ownerUid: number;
     ids?: string[];
@@ -389,7 +394,7 @@ export class ResponsibilityStore {
     this.storage.transactionSync(() => {
       this.ensureLedger(input.ownerUid, input.now);
       if (input.dedupeKey) {
-        const existing = this.getByDedupeKey(input.ownerUid, input.dedupeKey);
+        const existing = this.getDedupeRow(input.ownerUid, input.dedupeKey);
         if (existing) {
           outcome = {
             record: recordFromRow(existing),
@@ -839,7 +844,7 @@ export class ResponsibilityStore {
     return row;
   }
 
-  private getByDedupeKey(ownerUid: number, dedupeKey: string): ResponsibilityRow | null {
+  private getDedupeRow(ownerUid: number, dedupeKey: string): ResponsibilityRow | null {
     return this.storage.sql.exec<ResponsibilityRow>(
       "SELECT * FROM responsibilities WHERE owner_uid = ? AND dedupe_key = ? LIMIT 1",
       ownerUid,

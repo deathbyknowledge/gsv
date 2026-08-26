@@ -31,7 +31,7 @@ function createTableStatement(name: string): string {
 describe("kernel schema migrations", () => {
   it("starts the kernel component at a v1 baseline", () => {
     expect(KERNEL_SCHEMA_COMPONENT).toBe("kernel");
-    expect(KERNEL_MIGRATIONS).toHaveLength(32);
+    expect(KERNEL_MIGRATIONS).toHaveLength(34);
     expect(KERNEL_MIGRATIONS[0]).toMatchObject({
       id: 1,
       name: "initial_kernel_schema",
@@ -160,6 +160,10 @@ describe("kernel schema migrations", () => {
       id: 32,
       name: "fence_adapter_run_routes",
     });
+    expect(KERNEL_MIGRATIONS[32]).toMatchObject({
+      id: 33,
+      name: "add_federation",
+    });
   });
 
   it("creates the current kernel table set", () => {
@@ -253,6 +257,20 @@ describe("kernel schema migrations", () => {
     );
   });
 
+  it("records locally ordered pairing attempts from the first federation schema", () => {
+    const statements = normalizedStatements();
+    expect(statements.some((statement) => (
+      statement.startsWith("CREATE TABLE federation_pairing_attempts")
+      && statement.includes("token_hash TEXT PRIMARY KEY")
+      && statement.includes("state TEXT NOT NULL CHECK (state IN ('pending', 'committed', 'terminal'))")
+      && statement.includes("remote_public_key_json TEXT NOT NULL")
+    ))).toBe(true);
+    expect(statements.some((statement) => (
+      statement.startsWith("CREATE UNIQUE INDEX federation_pairing_attempts_pending_remote_idx")
+      && statement.includes("WHERE state = 'pending'")
+    ))).toBe(true);
+  });
+
   it("adds canonical conversations independently of process history", () => {
     const statements = normalizedStatements();
     expect(statements.some((statement) => (
@@ -319,6 +337,19 @@ describe("kernel schema migrations", () => {
   it("binds adapter run routes to a managed peer generation", () => {
     expect(normalizedStatements()).toContain(
       "ALTER TABLE run_routes ADD COLUMN route_generation TEXT",
+    );
+  });
+
+  it("stores one inherited human approval route per process", () => {
+    const statements = normalizedStatements();
+    expect(statements.some((statement) => (
+      statement.startsWith("CREATE TABLE process_approval_routes")
+      && statement.includes("process_id TEXT PRIMARY KEY")
+      && statement.includes("route_kind TEXT NOT NULL CHECK (route_kind IN ('connection', 'adapter'))")
+      && statement.includes("route_generation TEXT")
+    ))).toBe(true);
+    expect(statements).toContain(
+      "CREATE INDEX process_approval_routes_expiry_idx ON process_approval_routes (expires_at)",
     );
   });
 
@@ -498,6 +529,48 @@ describe("kernel schema migrations", () => {
     expect(normalizedStatements()).toContain(
       "ALTER TABLE adapter_ingress_receipts ADD COLUMN provider_delivery_id TEXT",
     );
+  });
+
+  it("adds sovereign contact federation state", () => {
+    const statements = normalizedStatements();
+    expect(statements.some((statement) => (
+      statement.startsWith("CREATE TABLE conversations_v033")
+      && statement.includes("'ship', 'work', 'group', 'contact'")
+    ))).toBe(true);
+    expect(statements.some((statement) => (
+      statement.startsWith("CREATE TABLE federation_contacts")
+      && statement.includes("shared_secret TEXT NOT NULL")
+      && statement.includes("generation TEXT NOT NULL")
+    ))).toBe(true);
+    expect(statements.some((statement) => (
+      statement.startsWith("CREATE TABLE federation_outbox")
+      && statement.includes("fingerprint TEXT NOT NULL")
+      && statement.includes("UNIQUE (owner_uid, idempotency_key)")
+    ))).toBe(true);
+    expect(statements.some((statement) => (
+      statement.startsWith("CREATE TABLE federation_inbox")
+      && statement.includes("contact_generation TEXT NOT NULL")
+      && statement.includes("PRIMARY KEY (contact_id, contact_generation, delivery_id)")
+    ))).toBe(true);
+    expect(statements.some((statement) => (
+      statement.startsWith("CREATE TABLE federation_resource_grants")
+      && statement.includes("contact_generation TEXT NOT NULL")
+    ))).toBe(true);
+    expect(statements.some((statement) => (
+      statement.startsWith("CREATE TABLE federation_requests")
+      && statement.includes("remote_request_id TEXT")
+      && statement.includes("contact_generation TEXT NOT NULL")
+      && statement.includes("revision INTEGER NOT NULL")
+    ))).toBe(true);
+    expect(statements.some((statement) => (
+      statement.startsWith("CREATE TABLE federation_invites")
+      && statement.includes("issuing_ship_id TEXT NOT NULL")
+      && statement.includes("issuing_origin TEXT NOT NULL")
+      && statement.includes("state TEXT NOT NULL CHECK (state IN ('issued', 'accepted', 'cancelled'))")
+      && statement.includes("accepted_generation TEXT")
+      && statement.includes("accepted_thread_id TEXT")
+      && statement.includes("accepted_response_json TEXT")
+    ))).toBe(true);
   });
 
   it("removes package runtime state and keeps process signal watches", () => {

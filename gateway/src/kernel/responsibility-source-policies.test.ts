@@ -17,6 +17,7 @@ describe("ResponsibilitySourcePolicyStore", () => {
         { id: "process.delegation", control: "required", enabled: true },
         { id: "schedule.due", control: "required", enabled: true },
         { id: "mail.received", control: "configurable", enabled: true },
+        { id: "federation.received", control: "configurable", enabled: true },
       ]);
 
       expect(policies.set(1000, "mail.received", false, 1234)).toEqual(

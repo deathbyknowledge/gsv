@@ -49,6 +49,13 @@ const POLICY_DEFINITIONS = [
     control: "configurable",
     defaultEnabled: true,
   },
+  {
+    id: "federation.received",
+    name: "Contact messages and requests",
+    description: "Triggers when another paired Ship sends a message or changes a shared request.",
+    control: "configurable",
+    defaultEnabled: true,
+  },
 ] as const satisfies readonly PolicyDefinition[];
 
 type PolicyRow = {

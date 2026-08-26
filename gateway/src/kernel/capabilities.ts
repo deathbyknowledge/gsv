@@ -24,6 +24,7 @@ const DEFAULT_CAPABILITIES: [number, string[]][] = [
     "mail.send",
     "mail.status",
     "conversation.*",
+    "contact.*",
     "proc.*",
     "signal.*",
     "repo.apply",

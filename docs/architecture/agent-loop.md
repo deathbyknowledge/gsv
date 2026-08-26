@@ -242,8 +242,10 @@ identity as `hil[requestId]`; its approval or denial must include the exact
 current token, for example `approve hil[...]` or `deny hil[...]`. A bare decision
 or stale token does not call `proc.hil` and receives a reminder for the current
 request. The provider `replyToId` remains threading metadata, not authorization.
-Non-interactive profiles such as `cron` cannot ask; an `ask` decision becomes a
-tool error.
+Interactive and background processes both pause durably when a policy asks.
+Background children inherit the spawning run's human approval route, while the
+pending request remains inspectable and actionable from Process activity even
+when that endpoint disconnects.
 
 The Kernel broadcasts an admitted HIL request to native clients before handling
 its adapter notification. Adapter notification retries are Kernel-owned durable

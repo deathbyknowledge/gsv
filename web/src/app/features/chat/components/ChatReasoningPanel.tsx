@@ -25,6 +25,7 @@ export type ChatReasoningTarget =
   | { kind: "group"; messageId: string };
 
 type ChatReasoningPanelProps = {
+  backLabel?: string;
   messages: readonly ChatDockMessage[];
   target: ChatReasoningTarget;
   onClose: () => void;
@@ -113,7 +114,12 @@ function PanelEntry({ entry }: { entry: TranscriptActivityEntry }) {
 /** ChatReasoningPanel — full-body reasoning view (HAM-360). Replaces the
  *  transcript + composer under the persistent chat header; plain text, no
  *  boxes. Clicking anywhere non-interactive returns to the chat. */
-export function ChatReasoningPanel({ messages, target, onClose }: ChatReasoningPanelProps) {
+export function ChatReasoningPanel({
+  backLabel = "BACK TO CHAT",
+  messages,
+  target,
+  onClose,
+}: ChatReasoningPanelProps) {
   const backRef = useRef<HTMLButtonElement>(null);
 
   // Opening the panel unmounts whatever had focus — move it to the Back
@@ -174,7 +180,7 @@ export function ChatReasoningPanel({ messages, target, onClose }: ChatReasoningP
           }}
         >
           <i aria-hidden="true">‹</i>
-          BACK TO CHAT
+          {backLabel}
         </button>
         <span class="gsv-chat-rp-meta gsv-sublabel">
           {label}

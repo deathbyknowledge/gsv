@@ -67,9 +67,22 @@ message route list [--json]
 message route set --process PID_OR_LABEL [--to here|DESTINATION] [--json]
 message route clear [--to here|DESTINATION] [--json]
 message attach PATH... [--mime TYPE]
+message history --with CONTACT_OR_CONVERSATION [--before SEQUENCE] [--limit N] [--json]
+message delivery show DELIVERY_ID [--json]
 message send [--message TEXT]
 yield
 message send --to DESTINATION [--message TEXT] [--attach PATH [--mime TYPE]] [--delivery-id ID] [--also]
+contact identity
+contact list [--all] [--json]
+contact alias CONTACT_ID NAME|--clear
+contact invite create [--expires DURATION]
+contact invite accept CODE
+contact invite list [--all] [--json]
+contact invite cancel INVITE_ID
+contact revoke CONTACT_ID
+contact request list [--contact CONTACT_ID] [--all] [--json]
+contact request create --contact CONTACT_ID --kind KIND --title TITLE [--details JSON] [--delivery-id ID]
+contact request update REQUEST_ID --state STATE [--revision N] [--details JSON] [--delivery-id ID]
 r12y list [--all] [--json]
 r12y show ID
 r12y create --title TITLE [--details JSON] [--parent ID] [--priority PRIORITY] [--due ISO] [--check ISO] [--blocker TEXT] [--dedupe KEY]
@@ -213,6 +226,25 @@ reconcile without creating a second logical message. Attachment-open failures
 also report that id, including a failure while reopening the file for the
 automatic retry. An outcome that may have reached the provider is reported as
 `sent=false`, `delivery_confirmed=false`, and `delivery_state=ambiguous`.
+
+`contact` manages relationships with people on other GSV installations.
+`contact invite create` produces a short-lived one-use code; the other person
+accepts that code while signed in to their own GSV. Pairing and revocation may
+be performed by the signed-in human or their canonical Ship. `contact list` prints the opaque contact id accepted
+by `message send --to`; `message destinations` exposes the same active contacts
+alongside messaging endpoints. `contact alias` changes only the local display
+name; the remote Ship's authenticated identity remains visible and unchanged.
+
+`contact invite list --all` exposes retained invitation lifecycle metadata but
+never a recoverable code. `message history --with contact:...` reads the Contact
+conversation. A Contact send reports durable local acceptance separately from
+remote confirmation; use `message delivery show` with its delivery id.
+
+Use `contact request create` and `contact request update` when the exchange has
+a durable lifecycle rather than being only a message. Request revisions prevent
+a stale client from overwriting a newer decision. Resources attached with
+`message send --to contact:...` remain immutable references and are streamed by
+the receiving GSV only when opened.
 
 Use `sched add --ship` when every firing should become one durable Ship
 responsibility. It works from top-level and process-backed shells. Use

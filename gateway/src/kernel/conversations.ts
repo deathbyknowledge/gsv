@@ -91,6 +91,34 @@ export class ConversationRegistry {
     return conversation;
   }
 
+  ensureContact(
+    ownerUid: number,
+    handlerPid: string,
+    title: string,
+    conversationId: string,
+  ): ConversationSummary {
+    const existing = this.get(conversationId);
+    if (existing) {
+      if (existing.ownerUid !== ownerUid || existing.kind !== "contact") {
+        throw new Error("Contact conversation identity does not match its contact");
+      }
+      if (existing.handlerPid !== handlerPid) {
+        this.setHandler(existing.id, handlerPid);
+      }
+      if (existing.title !== title) {
+        this.setTitle(existing.id, title);
+      }
+      return this.get(existing.id)!;
+    }
+    return this.create({
+      id: conversationId,
+      ownerUid,
+      kind: "contact",
+      title,
+      handlerPid,
+    });
+  }
+
   create(input: {
     id: string;
     ownerUid: number;
@@ -189,6 +217,17 @@ export class ConversationRegistry {
       Date.now(),
       id,
     );
+  }
+
+  setTitle(id: string, title: string | null): void {
+    const updated = this.sql.exec(
+      `UPDATE conversations SET title = ?, updated_at = ?
+       WHERE conversation_id = ?`,
+      title,
+      Date.now(),
+      id,
+    );
+    if (updated.rowsWritten === 0) throw new Error("Conversation does not exist");
   }
 
   recordSequence(id: string, sequence: number): void {

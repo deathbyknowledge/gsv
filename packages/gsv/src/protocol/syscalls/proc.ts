@@ -37,7 +37,7 @@ export type ProcSpawnArgs = {
    * private group (root may run as anyone).
    */
   runAs?: string;
-  /** Whether the process can request human-in-the-loop approval. Background spawns set false. */
+  /** Whether the process owns a direct human conversation. */
   interactive?: boolean;
   label?: string;
   prompt?: string;
@@ -411,6 +411,65 @@ export type ProcHistoryResult =
     }
   | { ok: false; error: string };
 
+export type ProcTraceSpanKind =
+  | "run"
+  | "context"
+  | "inference"
+  | "reasoning"
+  | "output"
+  | "tool"
+  | "approval"
+  | "delivery";
+
+export type ProcTraceSpanStatus =
+  | "running"
+  | "ok"
+  | "error"
+  | "aborted"
+  | "denied";
+
+export type ProcTraceSpanReference =
+  | { kind: "run" }
+  | { kind: "message"; messageId: number }
+  | { kind: "tool"; callId: string; executionId: string }
+  | { kind: "approval"; requestId: string; callId: string }
+  | {
+      kind: "delivery";
+      callId?: string;
+      conversationId?: string;
+      messageId?: string;
+    };
+
+export type ProcTraceSpan = {
+  id: string;
+  runId: string;
+  parentId?: string;
+  kind: ProcTraceSpanKind;
+  name: string;
+  status: ProcTraceSpanStatus;
+  startedAt: number;
+  endedAt?: number;
+  reference?: ProcTraceSpanReference;
+  attributes?: JsonObject;
+};
+
+export type ProcTraceArgs = {
+  pid?: string;
+  runId?: string;
+  limit?: number;
+};
+
+export type ProcTraceResult =
+  | {
+      ok: true;
+      pid: string;
+      spans: ProcTraceSpan[];
+      spanCount: number;
+      truncated: boolean;
+      activeRunId: string | null;
+    }
+  | { ok: false; error: string };
+
 export type ProcHistoryOverflowPolicy = "auto-compact" | "fail";
 
 export type ProcHistoryContextPolicy = {
@@ -598,7 +657,7 @@ export type ProcListEntry = {
   uid: number;
   /** Username of the account the process runs as (its run-as identity). */
   username: string;
-  /** Whether the process can hold an interactive (human-in-the-loop) conversation. */
+  /** Whether the process owns a direct human conversation. */
   interactive: boolean;
   personal: boolean;
   parentPid: string | null;

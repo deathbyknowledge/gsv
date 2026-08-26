@@ -188,4 +188,55 @@ describe("RunRouteStore", () => {
       expect(store.get("run-c")).not.toBeNull();
     });
   });
+
+  it("inherits one exact human route through a process lineage", async () => {
+    await runWithRealKernelSql((sql) => {
+      vi.spyOn(Date, "now").mockReturnValue(70_000);
+      const store = new RunRouteStore(sql);
+      const source = store.setAdapterRoute({
+        runId: "run-parent",
+        processId: "proc-parent",
+        uid: 1000,
+        destination: {
+          kind: "adapter",
+          adapter: "telegram",
+          accountId: "bot",
+          actorId: "actor",
+          surface: { kind: "dm", id: "chat" },
+        },
+        replyToId: "message-parent",
+        routeGeneration: "generation-parent",
+      });
+
+      expect(store.inheritProcessApprovalRoute({
+        processId: "proc-child",
+        uid: 1000,
+        sourceProcessId: "proc-parent",
+        sourceRunId: source.runId,
+      })).toMatchObject({
+        kind: "adapter",
+        processId: "proc-child",
+        routeGeneration: "generation-parent",
+      });
+      expect(store.inheritProcessApprovalRoute({
+        processId: "proc-grandchild",
+        uid: 1000,
+        sourceProcessId: "proc-child",
+      })).toMatchObject({
+        processId: "proc-grandchild",
+      });
+
+      expect(store.materializeProcessApprovalRoute({
+        processId: "proc-grandchild",
+        runId: "run-grandchild-approval",
+        uid: 1000,
+      })).toMatchObject({
+        kind: "adapter",
+        runId: "run-grandchild-approval",
+        processId: "proc-grandchild",
+        replyToId: "message-parent",
+        routeGeneration: "generation-parent",
+      });
+    });
+  });
 });

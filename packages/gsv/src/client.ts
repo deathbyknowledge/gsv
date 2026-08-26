@@ -279,6 +279,7 @@ export type GsvAdapterNamespace = GsvClientNamespaces["adapter"];
 export type GsvAiNamespace = GsvClientNamespaces["ai"];
 export type GsvCodeModeNamespace = GsvClientNamespaces["codemode"];
 export type GsvConversationNamespace = GsvClientNamespaces["conversation"];
+export type GsvContactNamespace = GsvClientNamespaces["contact"];
 export type GsvFsNamespace = GsvClientNamespaces["fs"];
 export type GsvMailNamespace = GsvClientNamespaces["mail"];
 export type GsvNetNamespace = never;
@@ -339,6 +340,19 @@ const SYSCALL_NAMES = [
   "conversation.list",
   "conversation.history",
   "conversation.send",
+  "contact.identity",
+  "contact.invite.create",
+  "contact.invite.accept",
+  "contact.invite.list",
+  "contact.invite.cancel",
+  "contact.list",
+  "contact.alias.set",
+  "contact.revoke",
+  "contact.send",
+  "contact.delivery.get",
+  "contact.request.list",
+  "contact.request.create",
+  "contact.request.update",
   "proc.spawn",
   "proc.kill",
   "proc.list",
@@ -351,6 +365,7 @@ const SYSCALL_NAMES = [
   "proc.abort",
   "proc.hil",
   "proc.history",
+  "proc.trace",
   "proc.history.policy.get",
   "proc.history.policy.set",
   "proc.history.compact",
@@ -470,6 +485,7 @@ export class GSVClient {
   declare readonly ai: GsvAiNamespace;
   declare readonly codemode: GsvCodeModeNamespace;
   declare readonly conversation: GsvConversationNamespace;
+  declare readonly contact: GsvContactNamespace;
   declare readonly fs: GsvFsNamespace;
   declare readonly mail: GsvMailNamespace;
   declare readonly proc: GsvProcNamespace;

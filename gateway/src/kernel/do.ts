@@ -58,6 +58,7 @@ import type {
   SysSetupResult,
   ConversationMessage,
   ConversationMessageOrigin,
+  FederationDeliveryReceipt,
 } from "@humansandmachines/gsv/protocol";
 import type { InstallationDirectoryService } from "@humansandmachines/gsv/services/directory";
 import type { InstallationOnboardingService } from "@humansandmachines/gsv/services/onboarding";
@@ -172,6 +173,17 @@ import {
   type ResponsibilityWakeBatch,
 } from "./responsibility-store";
 import { ResponsibilitySourcePolicyStore } from "./responsibility-source-policies";
+import { FederationStore } from "./federation-store";
+import { FederationIdentity } from "./federation-crypto";
+import {
+  FEDERATION_INBOX_RECOVERY_RETRY_MS,
+  handleFederationHttpRequest,
+  isFederationPublicPath,
+  MAX_FEDERATION_RECOVERABLE_INBOX,
+  MAX_FEDERATION_RECOVERABLE_OUTBOX,
+  processFederationDelivery,
+  recoverFederationInbox,
+} from "./federation";
 import {
   acceptManagedInboundMail as acceptKernelManagedInboundMail,
   completeManagedInboundMail as completeKernelManagedInboundMail,
@@ -410,6 +422,11 @@ type KernelTask =
   | { callback: "onIpcCallDelivery"; payload: string }
   | { callback: "onIpcCallTimeout"; payload: IpcCallTimeout }
   | { callback: "onManagedOutboundEnqueue"; payload: string }
+  | { callback: "onFederationDelivery"; payload: string }
+  | {
+      callback: "onFederationInbox";
+      payload: { contactId: string; contactGeneration: string; deliveryId: string };
+    }
   | { callback: "onProcessDeliveryNotice"; payload: ProcessDeliveryNoticeRetry }
   | { callback: "onRouteExpired"; payload: string }
   | { callback: "onScheduleDue"; payload: string }
@@ -451,6 +468,15 @@ const KERNEL_TASK_SCHEMA = z.discriminatedUnion("callback", [
     payload: ipcCallTimeoutPayloadSchema,
   }),
   z.object({ callback: z.literal("onManagedOutboundEnqueue"), payload: z.string() }),
+  z.object({ callback: z.literal("onFederationDelivery"), payload: z.string() }),
+  z.object({
+    callback: z.literal("onFederationInbox"),
+    payload: z.object({
+      contactId: z.string(),
+      contactGeneration: z.string(),
+      deliveryId: z.string(),
+    }),
+  }),
   z.object({
     callback: z.literal("onProcessDeliveryNotice"),
     payload: z.object({
@@ -599,6 +625,8 @@ export class Kernel extends DurableObject<Env> {
   private readonly mailboxes: MailboxStore;
   private readonly responsibilities: ResponsibilityStore;
   private readonly responsibilitySources: ResponsibilitySourcePolicyStore;
+  private readonly federation: FederationStore;
+  private readonly federationIdentity: FederationIdentity;
   private readonly oauth: OAuthStore;
   private readonly mcpServers: McpServerStore;
   private readonly connections = new Map<string, KernelConnection<ConnectionState>>();
@@ -608,6 +636,11 @@ export class Kernel extends DurableObject<Env> {
   private pendingManagedOnboarding?: PendingManagedOnboardingCompletion;
   private readonly pendingKernelResponses = new Map<string, (frame: ResponseFrame) => void>();
   private readonly pendingProcessSignals = new Map<string, Promise<void>>();
+  private readonly pendingFederationInbound = new Map<
+    string,
+    Promise<FederationDeliveryReceipt>
+  >();
+  private readonly pendingFederationContacts = new Map<string, Promise<void>>();
   private readonly frameBodyChannels = new Map<string, BinaryBodyChannel>();
   private readonly routedBodies = new Map<
     string,
@@ -678,6 +711,8 @@ export class Kernel extends DurableObject<Env> {
 
     this.responsibilities = new ResponsibilityStore(ctx.storage);
     this.responsibilitySources = new ResponsibilitySourcePolicyStore(sql);
+    this.federation = new FederationStore(ctx.storage);
+    this.federationIdentity = new FederationIdentity(ctx.storage);
 
     this.oauth = new OAuthStore(sql);
 
@@ -725,6 +760,28 @@ export class Kernel extends DurableObject<Env> {
         error instanceof Error ? error.message : String(error),
       );
     }));
+    ctx.blockConcurrencyWhile(async () => {
+      for (const delivery of this.federation.recoverableOutbox(
+        MAX_FEDERATION_RECOVERABLE_OUTBOX,
+      )) {
+        await this.scheduleFederationDelivery(
+          delivery.deliveryId,
+          delivery.nextAttemptAtMs ?? Date.now(),
+          true,
+        );
+      }
+      for (const inbox of this.federation.recoverableInbox(
+        MAX_FEDERATION_RECOVERABLE_INBOX,
+      )) {
+        await this.scheduleFederationInbox(
+          inbox.contactId,
+          inbox.contactGeneration,
+          inbox.deliveryId,
+          Date.now(),
+          true,
+        );
+      }
+    });
   }
 
   createMcpOAuthProvider(callbackUrl: string): AgentMcpOAuthProvider {
@@ -775,6 +832,9 @@ export class Kernel extends DurableObject<Env> {
 
   async onRequest(request: Request): Promise<Response> {
     const url = new URL(request.url);
+    if (isFederationPublicPath(url.pathname)) {
+      return await handleFederationHttpRequest(request, this.buildKernelContext({}));
+    }
     if (url.pathname !== "/oauth/callback" || request.method !== "GET") {
       return new Response("Not Found", { status: 404 });
     }
@@ -880,6 +940,12 @@ export class Kernel extends DurableObject<Env> {
         return;
       case "onManagedOutboundEnqueue":
         await this.onManagedOutboundEnqueue(task.payload);
+        return;
+      case "onFederationDelivery":
+        await this.onFederationDelivery(task.payload);
+        return;
+      case "onFederationInbox":
+        await this.onFederationInbox(task.payload);
         return;
       case "onProcessDeliveryNotice":
         await this.onProcessDeliveryNotice(task.payload);
@@ -1582,6 +1648,16 @@ export class Kernel extends DurableObject<Env> {
     if (!userFrame) return;
 
     let route = runId ? this.runRoutes.get(runId) : null;
+    if (!route && runId && frame.signal === "proc.run.hil.requested") {
+      route = this.runRoutes.materializeProcessApprovalRoute({
+        processId,
+        runId,
+        uid: ownerUid,
+      });
+      if (!route && !userFrame.payload?.conversationId) {
+        route = this.materializePersonalAdapterFallback(processId, runId, ownerUid);
+      }
+    }
 
     this.broadcastProcessSignal(ownerUid, processId, route, userFrame);
 
@@ -1594,16 +1670,6 @@ export class Kernel extends DurableObject<Env> {
       ) {
         this.adapters.surfaceRoutes.clearLegacyForProcess(processId);
       }
-    }
-    if (
-      !route
-      && runId
-      && frame.signal === "proc.run.hil.requested"
-      && !(
-        userFrame.payload?.conversationId
-      )
-    ) {
-      route = this.materializePersonalAdapterFallback(processId, runId, ownerUid);
     }
     if (!runId || !route) {
       return;
@@ -2513,6 +2579,8 @@ export class Kernel extends DurableObject<Env> {
       mailboxes: this.mailboxes,
       responsibilities: this.responsibilities,
       responsibilitySources: this.responsibilitySources,
+      federation: this.federation,
+      federationIdentity: this.federationIdentity,
       connection: options.connection ?? null,
       peer: options.peer,
       identity: options.identity,
@@ -2533,6 +2601,10 @@ export class Kernel extends DurableObject<Env> {
       scheduleManagedOutboundEnqueue: async (outboundId, dueAtMs) => {
         await this.scheduleManagedOutboundEnqueue(outboundId, dueAtMs);
       },
+      scheduleFederationDelivery: this.scheduleFederationDelivery.bind(this),
+      scheduleFederationInbox: this.scheduleFederationInbox.bind(this),
+      coordinateFederationInbound: this.coordinateFederationInbound.bind(this),
+      coordinateFederationContact: this.coordinateFederationContact.bind(this),
       runSchedules: this.runSchedules.bind(this),
       addMcpServerConnection: (input) => this.addMcpServerConnection({
         ...input,
@@ -3246,6 +3318,73 @@ export class Kernel extends DurableObject<Env> {
         retry: { maxAttempts: 10, baseDelayMs: 1_000, maxDelayMs: 30_000 },
       },
     );
+  }
+
+  private async scheduleFederationDelivery(
+    deliveryId: string,
+    dueAtMs: number,
+    idempotent = false,
+  ): Promise<void> {
+    await this.schedule(
+      new Date(Math.max(Date.now() + 10, dueAtMs)),
+      "onFederationDelivery",
+      deliveryId,
+      { idempotent },
+    );
+  }
+
+  private async scheduleFederationInbox(
+    contactId: string,
+    contactGeneration: string,
+    deliveryId: string,
+    dueAtMs: number,
+    idempotent = false,
+  ): Promise<void> {
+    await this.schedule(
+      new Date(Math.max(Date.now() + 10, dueAtMs)),
+      "onFederationInbox",
+      { contactId, contactGeneration, deliveryId },
+      { idempotent },
+    );
+  }
+
+  private async coordinateFederationInbound(
+    key: string,
+    operation: () => Promise<FederationDeliveryReceipt>,
+  ): Promise<FederationDeliveryReceipt> {
+    const pending = this.pendingFederationInbound.get(key);
+    if (pending) return await pending;
+    const started = operation();
+    this.pendingFederationInbound.set(key, started);
+    try {
+      return await started;
+    } finally {
+      if (this.pendingFederationInbound.get(key) === started) {
+        this.pendingFederationInbound.delete(key);
+      }
+    }
+  }
+
+  private async coordinateFederationContact<Value>(
+    contactId: string,
+    operation: () => Value | Promise<Value>,
+  ): Promise<Value> {
+    const preceding = this.pendingFederationContacts.get(contactId) ?? Promise.resolve();
+    let release!: () => void;
+    const current = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const tail = preceding.catch(() => {}).then(() => current);
+    this.pendingFederationContacts.set(contactId, tail);
+    await preceding.catch(() => {});
+    try {
+      return await operation();
+    } finally {
+      release();
+      if (this.pendingFederationContacts.get(contactId) === tail) {
+        this.pendingFederationContacts.delete(contactId);
+      }
+    }
   }
 
   private async handleReq(
@@ -4000,6 +4139,58 @@ export class Kernel extends DurableObject<Env> {
       this.buildKernelContext({}),
       true,
     );
+  }
+
+  async onFederationDelivery(deliveryId: string): Promise<void> {
+    const gate = await this.managedWorkGate();
+    if (!gate.allowed) {
+      await this.scheduleFederationDelivery(
+        deliveryId,
+        Date.now() + MANAGED_LIFECYCLE_RECHECK_MS,
+      );
+      return;
+    }
+    await processFederationDelivery(deliveryId, this.buildKernelContext({}));
+  }
+
+  async onFederationInbox(
+    payload: { contactId: string; contactGeneration: string; deliveryId: string },
+  ): Promise<void> {
+    const gate = await this.managedWorkGate();
+    if (!gate.allowed) {
+      await this.scheduleFederationInbox(
+        payload.contactId,
+        payload.contactGeneration,
+        payload.deliveryId,
+        Date.now() + MANAGED_LIFECYCLE_RECHECK_MS,
+      );
+      return;
+    }
+    try {
+      await recoverFederationInbox(
+        payload.contactId,
+        payload.contactGeneration,
+        payload.deliveryId,
+        this.buildKernelContext({}),
+      );
+    } catch (error) {
+      const inbox = this.federation.inbox(
+        payload.contactId,
+        payload.contactGeneration,
+        payload.deliveryId,
+      );
+      if (inbox?.state !== "received") return;
+      console.warn(
+        `[Kernel] Federation inbox ${payload.deliveryId} recovery failed:`,
+        error instanceof Error ? error.message : String(error),
+      );
+      await this.scheduleFederationInbox(
+        payload.contactId,
+        payload.contactGeneration,
+        payload.deliveryId,
+        Date.now() + FEDERATION_INBOX_RECOVERY_RETRY_MS,
+      );
+    }
   }
 
   async onResponsibilityWake(

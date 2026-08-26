@@ -2991,7 +2991,7 @@ async function findPendingHilDecisionTarget(
   | { kind: "ambiguous" }
 > {
   const candidates = ctx.procs.list(ownerUid).filter((process) => (
-    process.interactive && process.state === "waiting_hil"
+    process.state === "waiting_hil"
   ));
   const inspected = await Promise.all(candidates.map(async (process) => ({
     process,

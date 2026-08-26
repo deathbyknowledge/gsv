@@ -86,8 +86,8 @@ afterEach(async () => {
   vi.unstubAllGlobals();
 });
 
-describe("Runtime Work list", () => {
-  it("omits the canonical personal process from rows and active counts", async () => {
+describe("Runtime activity list", () => {
+  it("shows the canonical personal process before other activity", async () => {
     mocks.processes = [
       process("personal", true, "running"),
       process("work", false),
@@ -97,8 +97,8 @@ describe("Runtime Work list", () => {
 
     expect(mocks.listRenders.at(-1)).toEqual({
       connectDisabled: true,
-      ids: ["work"],
-      meta: "0/1 ACTIVE",
+      ids: ["personal", "work"],
+      meta: "1/2 ACTIVE",
     });
   });
 
@@ -108,7 +108,7 @@ describe("Runtime Work list", () => {
     expect(mocks.listRenders.at(-1)?.connectDisabled).toBe(false);
   });
 
-  it("clears a directly addressed canonical detail without rendering Work actions", async () => {
+  it("opens the canonical personal process for activity inspection", async () => {
     const onSelectionChange = vi.fn();
     mocks.processes = [process("personal", true, "running")];
 
@@ -116,9 +116,8 @@ describe("Runtime Work list", () => {
       <RuntimePage initialDetailId="personal" onSelectionChange={onSelectionChange} dependencies={dependencies} />,
     );
 
-    expect(mocks.detailPids).toEqual([]);
-    expect(mocks.listRenders.at(-1)?.ids).toEqual([]);
-    expect(onSelectionChange).toHaveBeenCalledWith(null);
+    expect(mocks.detailPids).toEqual(["personal"]);
+    expect(onSelectionChange).not.toHaveBeenCalled();
   });
 
   it("still opens an explicitly addressed Work detail", async () => {

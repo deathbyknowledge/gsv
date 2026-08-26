@@ -1283,7 +1283,11 @@ describe("Kernel process signal routing", () => {
       privateDestinations: { get: vi.fn(() => null), clearIfMatches: vi.fn() },
     };
     kernel.dispatchSignalWatches = vi.fn(async () => {});
-    kernel.runRoutes = { get: vi.fn(() => route), delete: vi.fn() };
+    kernel.runRoutes = {
+      get: vi.fn(() => route),
+      delete: vi.fn(),
+      materializeProcessApprovalRoute: vi.fn(() => null),
+    };
     kernel.broadcastToUserUid = vi.fn();
     kernel.broadcastProcessSignal = vi.fn((_uid, _processId, _route, frame) => {
       kernel.broadcastToUserUid(1000, frame.signal, frame.payload);
@@ -1477,6 +1481,43 @@ describe("Kernel process signal routing", () => {
         signal: frame.signal,
         attempt: 1,
       }),
+      expect.objectContaining({ idempotent: true }),
+    );
+  });
+
+  it("materializes a background child's inherited approval route", async () => {
+    const inherited = {
+      kind: "adapter",
+      runId: "run-child",
+      processId: "proc-1",
+      uid: 1000,
+      destination: {
+        kind: "adapter",
+        adapter: "telegram",
+        accountId: "bot",
+        actorId: "actor-1",
+        surface: { kind: "dm", id: "chat-1" },
+      },
+    };
+    const kernel = buildKernel(null);
+    kernel.runRoutes.materializeProcessApprovalRoute.mockReturnValue(inherited);
+    const frame = {
+      type: "sig",
+      signal: "proc.run.hil.requested",
+      payload: { pid: "proc-1", runId: inherited.runId, requestId: "hil-child" },
+    };
+
+    await kernel.handleProcessSignal("proc-1", frame, frame);
+
+    expect(kernel.runRoutes.materializeProcessApprovalRoute).toHaveBeenCalledWith({
+      processId: "proc-1",
+      runId: inherited.runId,
+      uid: 1000,
+    });
+    expect(kernel.schedule).toHaveBeenCalledWith(
+      expect.any(Date),
+      "onAdapterSignalDelivery",
+      expect.objectContaining({ runId: inherited.runId, signal: frame.signal }),
       expect.objectContaining({ idempotent: true }),
     );
   });

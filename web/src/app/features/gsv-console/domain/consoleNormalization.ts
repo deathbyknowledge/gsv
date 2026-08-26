@@ -372,6 +372,7 @@ function normalizeConfigEntry(value: ConsoleWireValue): ConsoleConfigEntry | nul
 
 function normalizeProcessState(rawState: string, activeRunId: string | null, queuedCount: number): ConsoleProcessState {
   const state = rawState.toLowerCase();
+  if (state === "waiting_hil") return "waiting_hil";
   if (state === "running" || state === "active" || activeRunId) return "running";
   if (state === "queued" || queuedCount > 0) return "queued";
   if (state === "idle" || state === "ready" || state === "") return "idle";

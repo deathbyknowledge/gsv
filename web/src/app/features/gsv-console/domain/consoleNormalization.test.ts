@@ -52,6 +52,12 @@ describe("console normalization", () => {
     expect(normalizeProcessesPayload({ processes: [{ pid: "legacy-work" }] })[0]?.personal).toBe(false);
   });
 
+  it("keeps a waiting approval visible instead of flattening it into running", () => {
+    expect(normalizeProcessesPayload({
+      processes: [{ pid: "proc:approval", state: "waiting_hil", activeRunId: "run:approval" }],
+    })[0]?.state).toBe("waiting_hil");
+  });
+
   it("redacts secrets nested inside model profile config values", () => {
     const [entry] = normalizeConfigPayload({
       entries: [{
