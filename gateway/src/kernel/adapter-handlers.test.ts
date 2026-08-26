@@ -3497,6 +3497,7 @@ describe("adapter lifecycle handlers", () => {
       // SAFETY: test fixture is constructed with the asserted kernel domain shape.
       state: "waiting_hil" as const,
       activeRunId: "run-work",
+      interactive: false,
     };
     vi.mocked(ctx.procs.get).mockImplementation((pid: string) => (
       pid === personal.processId ? personal : pid === work.processId ? work : null

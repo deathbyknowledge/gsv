@@ -149,9 +149,9 @@ Run device daemons as an unprivileged account and point their workspace at the
 smallest useful directory.
 
 Tool approval is a policy layer, not an isolation layer. Profiles can auto,
-deny, or ask for matching syscalls. The default interactive policy asks for
-`shell.exec`, `fs.delete`, `sys.mcp.call`, and `mail.send`; non-interactive
-profiles cannot pause for human approval.
+deny, or ask for matching syscalls. The default policy asks for `shell.exec`,
+`fs.delete`, `sys.mcp.call`, and `mail.send`. A background process can pause
+durably for the owner's decision without gaining a direct human conversation.
 
 ## Devices
 

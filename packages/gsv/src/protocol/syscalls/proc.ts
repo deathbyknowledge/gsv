@@ -37,7 +37,7 @@ export type ProcSpawnArgs = {
    * private group (root may run as anyone).
    */
   runAs?: string;
-  /** Whether the process can request human-in-the-loop approval. Background spawns set false. */
+  /** Whether the process owns a direct human conversation. */
   interactive?: boolean;
   label?: string;
   prompt?: string;
@@ -598,7 +598,7 @@ export type ProcListEntry = {
   uid: number;
   /** Username of the account the process runs as (its run-as identity). */
   username: string;
-  /** Whether the process can hold an interactive (human-in-the-loop) conversation. */
+  /** Whether the process owns a direct human conversation. */
   interactive: boolean;
   personal: boolean;
   parentPid: string | null;

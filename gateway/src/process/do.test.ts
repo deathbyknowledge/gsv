@@ -11176,6 +11176,40 @@ describe("Process DO — mechanical", () => {
       });
     });
 
+    it("pauses a background process instead of converting approval into a tool error", async () => {
+      const pid = "mech-hil-background";
+      const stub = await initProcess(pid, ROOT_IDENTITY);
+
+      await runInDurableObject(stub, async (instance: Process) => {
+        // SAFETY: test fixture is constructed with the asserted domain shape.
+        const process = instance as any;
+        process.store.setValue("interactive", "0");
+        process.currentRun = {
+          runId: "run-hil-background",
+          approvalPolicy: {
+            default: "auto",
+            rules: [{ match: "shell.exec", action: "ask" }],
+          },
+        };
+        registerToolBlock(process, "run-hil-background", [{
+          type: "toolCall",
+          id: "call-hil-background",
+          name: "Shell",
+          arguments: { input: "date" },
+        }]);
+
+        await expect(process.processToolCalls("run-hil-background")).resolves.toMatchObject({
+          runId: "run-hil-background",
+          toolCallId: "call-hil-background",
+        });
+        expect(process.store.getResults("run-hil-background")).toMatchObject([{
+          id: "call-hil-background",
+          status: "registered",
+        }]);
+        expect(process.store.getPendingHilForRun("run-hil-background")).not.toBeNull();
+      });
+    });
+
     it("exposes the normalized approval target rather than a legacy alias", async () => {
       const pid = "mech-hil-normalized-target";
       const stub = await initProcess(pid, ROOT_IDENTITY);

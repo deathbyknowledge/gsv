@@ -9181,13 +9181,6 @@ export class Process extends DurableObject<ProcessEnv> {
       }
 
       if (approval.action === "ask") {
-        if (!this.interactive) {
-          this.store.fail(
-            tc.dispatchId,
-            "Tool execution requires interactive approval, which is unavailable for this process",
-          );
-          continue;
-        }
         const pendingHil: PendingHilRecord = {
           requestId: crypto.randomUUID(),
           runId,
@@ -9510,11 +9503,6 @@ export class Process extends DurableObject<ProcessEnv> {
       if (approval.action === "ask") {
         if (!hasCapability(context.capabilities, call)) {
           throw new Error(`Permission denied: ${call}`);
-        }
-        if (!this.interactive) {
-          throw new Error(
-            `Tool execution requires interactive approval, which is unavailable for this process: ${call}`,
-          );
         }
         const approved = await this.waitForCodeModeApproval(
           context.runId,

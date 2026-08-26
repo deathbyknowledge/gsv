@@ -1648,6 +1648,16 @@ export class Kernel extends DurableObject<Env> {
     if (!userFrame) return;
 
     let route = runId ? this.runRoutes.get(runId) : null;
+    if (!route && runId && frame.signal === "proc.run.hil.requested") {
+      route = this.runRoutes.materializeProcessApprovalRoute({
+        processId,
+        runId,
+        uid: ownerUid,
+      });
+      if (!route && !userFrame.payload?.conversationId) {
+        route = this.materializePersonalAdapterFallback(processId, runId, ownerUid);
+      }
+    }
 
     this.broadcastProcessSignal(ownerUid, processId, route, userFrame);
 
@@ -1660,16 +1670,6 @@ export class Kernel extends DurableObject<Env> {
       ) {
         this.adapters.surfaceRoutes.clearLegacyForProcess(processId);
       }
-    }
-    if (
-      !route
-      && runId
-      && frame.signal === "proc.run.hil.requested"
-      && !(
-        userFrame.payload?.conversationId
-      )
-    ) {
-      route = this.materializePersonalAdapterFallback(processId, runId, ownerUid);
     }
     if (!runId || !route) {
       return;

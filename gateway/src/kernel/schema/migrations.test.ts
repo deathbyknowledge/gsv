@@ -31,7 +31,7 @@ function createTableStatement(name: string): string {
 describe("kernel schema migrations", () => {
   it("starts the kernel component at a v1 baseline", () => {
     expect(KERNEL_SCHEMA_COMPONENT).toBe("kernel");
-    expect(KERNEL_MIGRATIONS).toHaveLength(33);
+    expect(KERNEL_MIGRATIONS).toHaveLength(34);
     expect(KERNEL_MIGRATIONS[0]).toMatchObject({
       id: 1,
       name: "initial_kernel_schema",
@@ -337,6 +337,19 @@ describe("kernel schema migrations", () => {
   it("binds adapter run routes to a managed peer generation", () => {
     expect(normalizedStatements()).toContain(
       "ALTER TABLE run_routes ADD COLUMN route_generation TEXT",
+    );
+  });
+
+  it("stores one inherited human approval route per process", () => {
+    const statements = normalizedStatements();
+    expect(statements.some((statement) => (
+      statement.startsWith("CREATE TABLE process_approval_routes")
+      && statement.includes("process_id TEXT PRIMARY KEY")
+      && statement.includes("route_kind TEXT NOT NULL CHECK (route_kind IN ('connection', 'adapter'))")
+      && statement.includes("route_generation TEXT")
+    ))).toBe(true);
+    expect(statements).toContain(
+      "CREATE INDEX process_approval_routes_expiry_idx ON process_approval_routes (expires_at)",
     );
   });
 

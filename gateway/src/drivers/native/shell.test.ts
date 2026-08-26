@@ -308,7 +308,9 @@ function makeContext(options?: {
         listByOwner: vi.fn(() => []),
       },
     }),
-    runRoutes: focusedFixture<KernelContext["runRoutes"]>({}),
+    runRoutes: focusedFixture<KernelContext["runRoutes"]>({
+      inheritProcessApprovalRoute: vi.fn(),
+    }),
     schedules: options?.schedules
       ? focusedFixture<KernelContext["schedules"]>(options.schedules)
       : undefined,
@@ -1382,7 +1384,10 @@ describe("proc native command", () => {
     });
     Object.assign(ctx, {
       failIpcCallsByTarget,
-      runRoutes: { clearForProcess: clearProcessRoutes },
+      runRoutes: {
+        clearForProcess: clearProcessRoutes,
+        inheritProcessApprovalRoute: vi.fn(),
+      },
       defer: vi.fn(),
     });
     return {
@@ -1934,7 +1939,10 @@ describe("proc native command", () => {
     });
     Object.assign(ctx, {
       failIpcCallsByTarget: vi.fn(),
-      runRoutes: { clearForProcess: vi.fn() },
+      runRoutes: {
+        clearForProcess: vi.fn(),
+        inheritProcessApprovalRoute: vi.fn(),
+      },
       defer: vi.fn(),
     });
     sendFrameToProcessMock.mockImplementation(async (_installationId, _pid, frame) => {
@@ -2074,7 +2082,10 @@ describe("proc native command", () => {
     });
     Object.assign(ctx, {
       failIpcCallsByTarget: vi.fn(),
-      runRoutes: { clearForProcess: vi.fn() },
+      runRoutes: {
+        clearForProcess: vi.fn(),
+        inheritProcessApprovalRoute: vi.fn(),
+      },
       defer: vi.fn(),
     });
     sendFrameToProcessMock.mockImplementation(async (_installationId, _pid, frame) => {

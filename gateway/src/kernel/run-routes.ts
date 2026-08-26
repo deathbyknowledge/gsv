@@ -27,6 +27,10 @@ export type AdapterRunRoute = {
 
 export type RunRoute = ConnectionRunRoute | AdapterRunRoute;
 
+export type ProcessApprovalRoute =
+  | Omit<ConnectionRunRoute, "runId">
+  | Omit<AdapterRunRoute, "runId">;
+
 // Reply routes are removed with their terminal run signal. The TTL is only a
 // leak guard for processes that disappear without completing cleanup.
 const DEFAULT_TTL_MS = 30 * 24 * 60 * 60 * 1000;
@@ -123,6 +127,90 @@ export class RunRouteStore {
     return toRoute(row);
   }
 
+  inheritProcessApprovalRoute(input: {
+    processId: string;
+    uid: number;
+    sourceProcessId?: string;
+    sourceRunId?: string;
+    connectionId?: string;
+  }): ProcessApprovalRoute | null {
+    this.pruneExpired();
+    let source: ProcessApprovalRoute | RunRoute | null = null;
+
+    if (input.sourceRunId) {
+      const runRoute = this.get(input.sourceRunId);
+      if (
+        runRoute
+        && runRoute.uid === input.uid
+        && (!input.sourceProcessId || runRoute.processId === input.sourceProcessId)
+      ) {
+        source = runRoute;
+      }
+    }
+    if (!source && input.sourceProcessId) {
+      const inherited = this.getProcessApprovalRoute(input.sourceProcessId);
+      if (inherited?.uid === input.uid) source = inherited;
+    }
+    if (!source && input.connectionId) {
+      const now = Date.now();
+      source = {
+        kind: "connection",
+        processId: input.processId,
+        uid: input.uid,
+        connectionId: input.connectionId,
+        createdAt: now,
+        expiresAt: now + DEFAULT_TTL_MS,
+      };
+    }
+    if (!source) return null;
+
+    return this.setProcessApprovalRoute(input.processId, source);
+  }
+
+  getProcessApprovalRoute(processId: string): ProcessApprovalRoute | null {
+    this.pruneExpired();
+    const rows = this.sql.exec<ProcessApprovalRouteRow>(
+      `SELECT process_id, uid, route_kind, connection_id, adapter, account_id,
+              actor_id, surface_kind, surface_id, thread_id, reply_to_id,
+              route_generation, created_at, expires_at
+       FROM process_approval_routes
+       WHERE process_id = ?
+       LIMIT 1`,
+      processId,
+    ).toArray();
+    return rows.length === 0 ? null : toProcessApprovalRoute(rows[0]);
+  }
+
+  materializeProcessApprovalRoute(input: {
+    processId: string;
+    runId: string;
+    uid: number;
+  }): RunRoute | null {
+    const source = this.getProcessApprovalRoute(input.processId);
+    if (!source || source.uid !== input.uid) return null;
+    const ttlMs = source.expiresAt - Date.now();
+    if (ttlMs <= 0) return null;
+
+    if (source.kind === "connection") {
+      return this.setConnectionRoute({
+        runId: input.runId,
+        processId: input.processId,
+        uid: input.uid,
+        connectionId: source.connectionId,
+      }, ttlMs);
+    }
+    return this.setAdapterRoute({
+      runId: input.runId,
+      processId: input.processId,
+      uid: input.uid,
+      destination: source.destination,
+      ...(source.replyToId === undefined ? undefined : { replyToId: source.replyToId }),
+      ...(source.routeGeneration === undefined
+        ? undefined
+        : { routeGeneration: source.routeGeneration }),
+    }, ttlMs);
+  }
+
   delete(runId: string): void {
     this.sql.exec("DELETE FROM run_routes WHERE run_id = ?", runId);
   }
@@ -132,10 +220,15 @@ export class RunRouteStore {
       `DELETE FROM run_routes WHERE route_kind = 'connection' AND connection_id = ?`,
       connectionId,
     );
+    this.sql.exec(
+      `DELETE FROM process_approval_routes WHERE route_kind = 'connection' AND connection_id = ?`,
+      connectionId,
+    );
   }
 
   clearForProcess(processId: string): void {
     this.sql.exec("DELETE FROM run_routes WHERE process_id = ?", processId);
+    this.sql.exec("DELETE FROM process_approval_routes WHERE process_id = ?", processId);
   }
 
   pruneExpired(now = Date.now()): number {
@@ -147,7 +240,68 @@ export class RunRouteStore {
     if (count > 0) {
       this.sql.exec("DELETE FROM run_routes WHERE expires_at <= ?", now);
     }
-    return count;
+    const approvalRows = this.sql.exec<{ cnt: number }>(
+      "SELECT COUNT(*) as cnt FROM process_approval_routes WHERE expires_at <= ?",
+      now,
+    ).toArray();
+    const approvalCount = approvalRows[0]?.cnt ?? 0;
+    if (approvalCount > 0) {
+      this.sql.exec("DELETE FROM process_approval_routes WHERE expires_at <= ?", now);
+    }
+    return count + approvalCount;
+  }
+
+  private setProcessApprovalRoute(
+    processId: string,
+    source: ProcessApprovalRoute | RunRoute,
+  ): ProcessApprovalRoute {
+    const now = Date.now();
+    const expiresAt = source.expiresAt;
+    if (source.kind === "connection") {
+      this.upsertProcessApproval({
+        processId,
+        uid: source.uid,
+        routeKind: "connection",
+        connectionId: source.connectionId,
+        createdAt: now,
+        expiresAt,
+      });
+      return {
+        kind: "connection",
+        processId,
+        uid: source.uid,
+        connectionId: source.connectionId,
+        createdAt: now,
+        expiresAt,
+      };
+    }
+
+    const destination = source.destination;
+    this.upsertProcessApproval({
+      processId,
+      uid: source.uid,
+      routeKind: "adapter",
+      adapter: destination.adapter,
+      accountId: destination.accountId,
+      actorId: destination.actorId,
+      surfaceKind: destination.surface.kind,
+      surfaceId: destination.surface.id,
+      threadId: destination.surface.threadId ?? null,
+      replyToId: source.replyToId ?? null,
+      routeGeneration: source.routeGeneration ?? null,
+      createdAt: now,
+      expiresAt,
+    });
+    return {
+      kind: "adapter",
+      processId,
+      uid: source.uid,
+      destination,
+      replyToId: source.replyToId,
+      routeGeneration: source.routeGeneration,
+      createdAt: now,
+      expiresAt,
+    };
   }
 
   private upsert(input: {
@@ -188,6 +342,45 @@ export class RunRouteStore {
       input.expiresAt,
     );
   }
+
+  private upsertProcessApproval(input: {
+    processId: string;
+    uid: number;
+    routeKind: "connection" | "adapter";
+    connectionId?: string;
+    adapter?: string;
+    accountId?: string;
+    actorId?: string;
+    surfaceKind?: string;
+    surfaceId?: string;
+    threadId?: string | null;
+    replyToId?: string | null;
+    routeGeneration?: string | null;
+    createdAt: number;
+    expiresAt: number;
+  }): void {
+    this.sql.exec(
+      `INSERT OR REPLACE INTO process_approval_routes
+       (process_id, uid, route_kind, connection_id, adapter, account_id, actor_id,
+        surface_kind, surface_id, thread_id, reply_to_id, route_generation,
+        created_at, expires_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      input.processId,
+      input.uid,
+      input.routeKind,
+      input.connectionId ?? null,
+      input.adapter ?? null,
+      input.accountId ?? null,
+      input.actorId ?? null,
+      input.surfaceKind ?? null,
+      input.surfaceId ?? null,
+      input.threadId ?? null,
+      input.replyToId ?? null,
+      input.routeGeneration ?? null,
+      input.createdAt,
+      input.expiresAt,
+    );
+  }
 }
 
 type RunRouteRow = {
@@ -206,6 +399,10 @@ type RunRouteRow = {
   route_generation: string | null;
   created_at: number;
   expires_at: number;
+};
+
+type ProcessApprovalRouteRow = Omit<RunRouteRow, "run_id" | "process_id"> & {
+  process_id: string;
 };
 
 function toRoute(row: RunRouteRow): RunRoute {
@@ -235,6 +432,37 @@ function toRoute(row: RunRouteRow): RunRoute {
     kind: "connection",
     runId: row.run_id,
     processId: row.process_id ?? "",
+    uid: row.uid,
+    connectionId: row.connection_id ?? "",
+    createdAt: row.created_at,
+    expiresAt: row.expires_at,
+  };
+}
+
+function toProcessApprovalRoute(row: ProcessApprovalRouteRow): ProcessApprovalRoute {
+  if (row.route_kind === "adapter") {
+    return {
+      kind: "adapter",
+      processId: row.process_id,
+      uid: row.uid,
+      destination: adapterDestinationFromColumns({
+        adapter: row.adapter ?? "",
+        accountId: row.account_id ?? "",
+        actorId: row.actor_id ?? "",
+        // SAFETY: surface kinds are constrained by the persisted approval-route schema.
+        surfaceKind: (row.surface_kind ?? "dm") as AdapterSurfaceKind,
+        surfaceId: row.surface_id ?? "",
+        threadId: row.thread_id ?? undefined,
+      }),
+      replyToId: row.reply_to_id ?? undefined,
+      routeGeneration: row.route_generation ?? undefined,
+      createdAt: row.created_at,
+      expiresAt: row.expires_at,
+    };
+  }
+  return {
+    kind: "connection",
+    processId: row.process_id,
     uid: row.uid,
     connectionId: row.connection_id ?? "",
     createdAt: row.created_at,
