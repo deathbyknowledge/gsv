@@ -3,6 +3,22 @@
 // Integration tests for the concrete machine capabilities owned by gsvd.
 
 use std::path::Path;
+#[cfg(windows)]
+use std::sync::OnceLock;
+
+#[cfg(windows)]
+static SHELL_TEST_LOCK: OnceLock<tokio::sync::Mutex<()>> = OnceLock::new();
+
+#[cfg(windows)]
+async fn serialize_shell_test() -> tokio::sync::MutexGuard<'static, ()> {
+    SHELL_TEST_LOCK
+        .get_or_init(|| tokio::sync::Mutex::new(()))
+        .lock()
+        .await
+}
+
+#[cfg(not(windows))]
+async fn serialize_shell_test() {}
 
 fn shell_echo_command() -> &'static str {
     #[cfg(windows)]
@@ -79,6 +95,7 @@ fn output_matches_cwd(output: &str, expected: &Path) -> bool {
 async fn test_shell_tool_execution() {
     use machine::tools::{ShellTool, Tool};
     use serde_json::json;
+    let _shell_test_guard = serialize_shell_test().await;
 
     let workspace = std::env::temp_dir();
     let tool = ShellTool::new(workspace.clone());
@@ -106,6 +123,7 @@ async fn test_shell_tool_cwd() {
     use machine::tools::{ShellTool, Tool};
     use serde_json::json;
     use std::fs;
+    let _shell_test_guard = serialize_shell_test().await;
 
     let workspace = std::env::temp_dir().join("gsv_test_shell_tool_cwd_workspace");
     let custom_cwd = workspace.join("nested");
@@ -138,6 +156,7 @@ async fn test_shell_tool_cwd() {
 async fn test_shell_background_returns_session_id() {
     use machine::tools::{ShellTool, Tool};
     use serde_json::json;
+    let _shell_test_guard = serialize_shell_test().await;
 
     let workspace = std::env::temp_dir();
     let shell = ShellTool::new(workspace.clone());
@@ -153,12 +172,22 @@ async fn test_shell_background_returns_session_id() {
     assert_eq!(start.data["status"], "running");
     let session_id = start.data["sessionId"].as_str().unwrap().to_string();
     assert!(!session_id.is_empty());
+    let completed = shell
+        .execute(json!({
+            "sessionId": session_id,
+            "input": "",
+            "yieldMs": 30_000
+        }))
+        .await
+        .unwrap();
+    assert_eq!(completed.data["status"], "completed");
 }
 
 #[tokio::test]
 async fn test_shell_session_poll_returns_new_output() {
     use machine::tools::{ShellTool, Tool};
     use serde_json::json;
+    let _shell_test_guard = serialize_shell_test().await;
 
     let workspace = std::env::temp_dir();
     let shell = ShellTool::new(workspace.clone());
@@ -194,6 +223,7 @@ async fn test_shell_session_poll_returns_new_output() {
 async fn test_shell_session_is_removed_after_final_poll() {
     use machine::tools::{ShellTool, Tool};
     use serde_json::json;
+    let _shell_test_guard = serialize_shell_test().await;
 
     let workspace = std::env::temp_dir();
     let shell = ShellTool::new(workspace.clone());
