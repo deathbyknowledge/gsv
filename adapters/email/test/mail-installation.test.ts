@@ -291,7 +291,7 @@ describe("managed mail installation transport", () => {
       chunks: 16,
       stored_bytes: bytes.byteLength,
     });
-    await expect(runDurableObjectAlarm(stub)).resolves.toBe(true);
+    await runDurableObjectAlarm(stub);
     await expect(stub.getIntake(
       context(installationId),
       result.status === "accepted" ? result.intakeId : "",

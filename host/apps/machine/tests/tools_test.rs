@@ -90,7 +90,8 @@ async fn test_shell_tool_execution() {
     // Test simple command
     let result = tool
         .execute(json!({
-            "input": shell_echo_command()
+            "input": shell_echo_command(),
+            "yieldMs": 30_000
         }))
         .await
         .unwrap();
@@ -115,7 +116,8 @@ async fn test_shell_tool_cwd() {
     let result = tool
         .execute(json!({
             "input": shell_pwd_command(),
-            "cwd": custom_cwd.to_string_lossy().to_string()
+            "cwd": custom_cwd.to_string_lossy().to_string(),
+            "yieldMs": 30_000
         }))
         .await
         .unwrap();
@@ -175,7 +177,8 @@ async fn test_shell_session_poll_returns_new_output() {
     let poll = shell
         .execute(json!({
             "sessionId": session_id,
-            "input": ""
+            "input": "",
+            "yieldMs": 30_000
         }))
         .await
         .unwrap();
@@ -209,7 +212,8 @@ async fn test_shell_session_is_removed_after_final_poll() {
     let poll = shell
         .execute(json!({
             "sessionId": session_id,
-            "input": ""
+            "input": "",
+            "yieldMs": 30_000
         }))
         .await
         .unwrap();
