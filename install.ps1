@@ -120,7 +120,7 @@ function Restore-ScheduledTask([bool]$Existed, [string]$Xml, [bool]$WasRunning) 
 function Wait-GsvdHealthy {
   for ($attempt = 0; $attempt -lt 10; $attempt++) {
     $task = Get-ScheduledTask -TaskName "gsvd" -ErrorAction SilentlyContinue
-    & (Join-Path $InstallDir "gsv.exe") device doctor *> $null
+    & (Join-Path $InstallDir "gsv.exe") daemon doctor *> $null
     if ($LASTEXITCODE -eq 0 -and $task -and $task.State -eq "Running") { return $true }
     Start-Sleep -Seconds 1
   }
@@ -191,7 +191,7 @@ function Install-GsvHost {
       }
 
       if ($taskExisted) {
-        & (Join-Path $InstallDir "gsv.exe") device start *> $null
+        & (Join-Path $InstallDir "gsv.exe") daemon start *> $null
         if ($LASTEXITCODE -ne 0 -or -not (Wait-GsvdHealthy)) {
           throw "The updated gsvd service did not become healthy"
         }

@@ -212,8 +212,8 @@ restore_service_snapshot() {
 health_check_service() {
     local attempt
     for attempt in 1 2 3 4 5 6 7 8 9 10; do
-        if "${INSTALL_DIR}/gsv" device doctor >/dev/null 2>&1 && \
-            "${INSTALL_DIR}/gsv" device status >/dev/null 2>&1; then
+        if "${INSTALL_DIR}/gsv" daemon doctor >/dev/null 2>&1 && \
+            "${INSTALL_DIR}/gsv" daemon status >/dev/null 2>&1; then
             return 0
         fi
         sleep 1
@@ -372,11 +372,11 @@ main() {
     fi
 
     if [ "$SERVICE_INSTALLED" -eq 1 ]; then
-        if ! "${INSTALL_DIR}/gsv" device start >/dev/null || ! health_check_service; then
+        if ! "${INSTALL_DIR}/gsv" daemon start >/dev/null || ! health_check_service; then
             error "The updated daemon did not become healthy"
             exit 1
         fi
-        if [ "$SERVICE_WAS_ACTIVE" -eq 0 ]; then "${INSTALL_DIR}/gsv" device stop >/dev/null; fi
+        if [ "$SERVICE_WAS_ACTIVE" -eq 0 ]; then "${INSTALL_DIR}/gsv" daemon stop >/dev/null; fi
         if [ "$OS" = "linux" ] && [ "$SERVICE_WAS_ENABLED" -eq 0 ]; then
             systemctl --user disable gsvd.service >/dev/null
         fi

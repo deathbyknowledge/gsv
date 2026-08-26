@@ -83,7 +83,7 @@ describe("machineProvision", () => {
       "gsv config --local set gateway.url \"wss://gsv.example.com/ws\"",
       "gsv config --local set gateway.username \"hank\"",
       "gsv config --local set node.token \"tok\\\"en\"",
-      "gsv device install --id \"studio-mac\" --workspace ~/",
+      "gsv daemon install --id \"studio-mac\" --workspace ~/",
     ].join("\n"));
   });
 
@@ -108,7 +108,7 @@ describe("machineProvision", () => {
       "gsv.exe config --local set gateway.url \"wss://gsv.example.com/ws\"",
       "gsv.exe config --local set gateway.username \"hank\"",
       "gsv.exe config --local set node.token \"tok\"",
-      "gsv.exe device install --id \"studio-pc\" --workspace \"$HOME\"",
+      "gsv.exe daemon install --id \"studio-pc\" --workspace \"$HOME\"",
     ].join("\n"));
   });
 

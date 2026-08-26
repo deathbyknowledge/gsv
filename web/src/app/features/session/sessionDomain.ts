@@ -202,7 +202,7 @@ export function buildNodeBootstrapCommand(
     `${cli} config --local set gateway.username "${escapedUsername}"`,
     `${cli} config --local set node.id "${deviceId}"`,
     `${cli} config --local set node.token "${escapedToken}"`,
-    `${cli} device install --id "${deviceId}" --workspace ${defaultWorkspacePath(input.platform)}`,
+    `${cli} daemon install --id "${deviceId}" --workspace ${defaultWorkspacePath(input.platform)}`,
   ].join("\n");
 }
 

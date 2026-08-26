@@ -164,7 +164,7 @@ describe("buildNodeBootstrapCommand", () => {
       "gsv.exe config --local set gateway.username \"hank\"",
       "gsv.exe config --local set node.id \"studio-pc\"",
       "gsv.exe config --local set node.token \"tok\"",
-      "gsv.exe device install --id \"studio-pc\" --workspace \"$HOME\"",
+      "gsv.exe daemon install --id \"studio-pc\" --workspace \"$HOME\"",
     ].join("\n"));
   });
 
