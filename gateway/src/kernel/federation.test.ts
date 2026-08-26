@@ -18,6 +18,7 @@ import {
 } from "./federation-crypto";
 import type {
   FederationContactRecord,
+  FederationMessagePreparation,
   FederationOutboxRecord,
 } from "./federation-store";
 import {
@@ -215,9 +216,10 @@ describe("federation outbound boundary", () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
-  it("does not enqueue retained media across a contact generation change", async () => {
+  it("persists media intent before retention and never grants it across generations", async () => {
     const contact = activeContact();
     let current = contact;
+    let outbox: FederationOutboxRecord | null = null;
     let releaseRetention!: () => void;
     const retentionGate = new Promise<void>((resolve) => {
       releaseRetention = resolve;
@@ -234,13 +236,48 @@ describe("federation outbound boundary", () => {
       },
     }];
     const retain = vi.spyOn(conversationHandlers, "retainConversationResources")
-      .mockImplementation(async () => {
+      .mockImplementation(async (_resources, _pid, _ctx, batchId) => {
+        expect(batchId).toBe(outbox?.deliveryId);
         await retentionGate;
         return media;
       });
     vi.spyOn(personalController, "ensurePersonalController").mockResolvedValue("proc:ship");
     const createGrant = vi.fn();
-    const enqueue = vi.fn();
+    const prepareMessage = vi.fn((input: {
+      deliveryId: string;
+      ownerUid: number;
+      contactId: string;
+      contactGeneration: string;
+      idempotencyKey: string;
+      fingerprint: string;
+      preparation: FederationMessagePreparation;
+      now: number;
+    }) => {
+      outbox = {
+        deliveryId: input.deliveryId,
+        ownerUid: input.ownerUid,
+        contactId: input.contactId,
+        contactGeneration: input.contactGeneration,
+        idempotencyKey: input.idempotencyKey,
+        fingerprint: input.fingerprint,
+        state: "preparing",
+        preparation: input.preparation,
+        attemptCount: 0,
+        nextAttemptAtMs: input.now,
+        createdAtMs: input.now,
+        updatedAtMs: input.now,
+      };
+      return { record: outbox, created: true };
+    });
+    const markOutboxFailed = vi.fn(() => {
+      if (!outbox || outbox.state !== "preparing") return false;
+      outbox = {
+        ...outbox,
+        state: "preparation_failed",
+        lastError: "Contact is no longer active",
+      };
+      return true;
+    });
     const scheduleFederationDelivery = vi.fn(async () => {});
     const ctx = focusedContext({
       procs: focusedFixture({ get: vi.fn(() => ({})) }),
@@ -248,12 +285,17 @@ describe("federation outbound boundary", () => {
         prune: vi.fn(),
         get: vi.fn(() => current),
         outboxByIdempotency: vi.fn(() => null),
+        outbox: vi.fn(() => outbox),
         pendingOutboxCount: vi.fn(() => 0),
         retainedOutboxCount: vi.fn(() => 0),
+        activeGrantCount: vi.fn(() => 0),
+        preparingResourceCount: vi.fn(() => 0),
+        consumeRateLimits: vi.fn(() => null),
         ensureSubject: vi.fn(() => ({ id: "subject:local", displayName: OWNER.username })),
         transaction: runTransaction,
         createGrant,
-        enqueue,
+        prepareMessage,
+        markOutboxFailed,
       }),
       scheduleFederationDelivery,
     });
@@ -265,6 +307,8 @@ describe("federation outbound boundary", () => {
       idempotencyKey: "generation-race",
     }, ctx);
     await vi.waitFor(() => expect(retain).toHaveBeenCalledOnce());
+    expect(prepareMessage).toHaveBeenCalledOnce();
+    expect(scheduleFederationDelivery).toHaveBeenCalledOnce();
     current = {
       ...contact,
       generation: "generation:replacement",
@@ -273,70 +317,9 @@ describe("federation outbound boundary", () => {
     };
     releaseRetention();
 
-    await expect(sending).rejects.toThrow("generation changed");
+    await expect(sending).resolves.toMatchObject({ state: "failed" });
     expect(createGrant).not.toHaveBeenCalled();
-    expect(enqueue).not.toHaveBeenCalled();
-    expect(scheduleFederationDelivery).not.toHaveBeenCalled();
-  });
-
-  it("does not enqueue retained media after the caller cancels", async () => {
-    const controller = new AbortController();
-    const contact = activeContact();
-    let releaseRetention!: () => void;
-    const retentionGate = new Promise<void>((resolve) => {
-      releaseRetention = resolve;
-    });
-    const media = [{
-      type: "resource" as const,
-      ref: {
-        type: "file" as const,
-        target: "gsv",
-        path: "/home/hank/archive/image.png",
-        revision: "revision:image",
-        contentType: "image/png",
-        size: 10,
-      },
-    }];
-    const retain = vi.spyOn(conversationHandlers, "retainConversationResources")
-      .mockImplementation(async () => {
-        await retentionGate;
-        return media;
-      });
-    vi.spyOn(personalController, "ensurePersonalController").mockResolvedValue("proc:ship");
-    const createGrant = vi.fn();
-    const enqueue = vi.fn();
-    const scheduleFederationDelivery = vi.fn(async () => {});
-    const ctx = focusedContext({
-      requestSignal: controller.signal,
-      procs: focusedFixture({ get: vi.fn(() => ({})) }),
-      federation: focusedFixture({
-        prune: vi.fn(),
-        get: vi.fn(() => contact),
-        outboxByIdempotency: vi.fn(() => null),
-        pendingOutboxCount: vi.fn(() => 0),
-        retainedOutboxCount: vi.fn(() => 0),
-        ensureSubject: vi.fn(() => ({ id: "subject:local", displayName: OWNER.username })),
-        transaction: runTransaction,
-        createGrant,
-        enqueue,
-      }),
-      scheduleFederationDelivery,
-    });
-
-    const sending = handleContactSend({
-      contactId: contact.id,
-      text: "See the attached image",
-      media,
-      idempotencyKey: "cancelled-retention",
-    }, ctx);
-    await vi.waitFor(() => expect(retain).toHaveBeenCalledOnce());
-    controller.abort(new Error("Send cancelled"));
-    releaseRetention();
-
-    await expect(sending).rejects.toThrow("Send cancelled");
-    expect(createGrant).not.toHaveBeenCalled();
-    expect(enqueue).not.toHaveBeenCalled();
-    expect(scheduleFederationDelivery).not.toHaveBeenCalled();
+    expect(markOutboxFailed).toHaveBeenCalledOnce();
   });
 
   it("does not create a request across a contact generation change", async () => {

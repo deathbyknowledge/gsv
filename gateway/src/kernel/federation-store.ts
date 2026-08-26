@@ -85,24 +85,53 @@ export type FederationOutboxLocalMessage = {
   createdAtMs: number;
 };
 
-export type FederationOutboxRecord = {
+export type FederationMessagePreparation = {
+  kind: "message";
+  messageId: string;
+  threadId: string;
+  text: string;
+  resources: ResourceBlock[];
+  localMessage: FederationOutboxLocalMessage;
+};
+
+type FederationOutboxBase = {
   deliveryId: string;
   ownerUid: number;
   contactId: string;
   contactGeneration: string;
   idempotencyKey: string;
   fingerprint: string;
-  payload: FederationDeliveryPayload;
-  localMessage?: FederationOutboxLocalMessage;
-  localSequence?: number;
-  state: "pending" | "delivered" | "terminal";
   attemptCount: number;
   nextAttemptAtMs?: number;
   lastError?: string;
   createdAtMs: number;
   updatedAtMs: number;
+};
+
+export type FederationPreparingOutboxRecord = FederationOutboxBase & {
+  state: "preparing" | "preparation_failed";
+  preparation: FederationMessagePreparation;
+};
+
+export type FederationReadyOutboxRecord = FederationOutboxBase & {
+  state: "pending" | "delivered" | "terminal";
+  payload: FederationDeliveryPayload;
+  localMessage?: FederationOutboxLocalMessage;
+  localSequence?: number;
   deliveredAtMs?: number;
 };
+
+export type FederationOutboxRecord =
+  | FederationPreparingOutboxRecord
+  | FederationReadyOutboxRecord;
+
+export function isReadyFederationOutbox(
+  record: FederationOutboxRecord,
+): record is FederationReadyOutboxRecord {
+  return record.state === "pending"
+    || record.state === "delivered"
+    || record.state === "terminal";
+}
 
 export type FederationInboxRecord = {
   contactId: string;
@@ -128,7 +157,12 @@ export type FederationResourceGrant = {
 };
 
 export type FederationEnqueueResult = {
-  record: FederationOutboxRecord;
+  record: FederationReadyOutboxRecord;
+  created: boolean;
+};
+
+export type FederationPrepareResult = {
+  record: FederationPreparingOutboxRecord;
   created: boolean;
 };
 
@@ -203,6 +237,15 @@ const federationOutboxLocalMessageSchema = z.strictObject({
   createdAtMs: z.number().int().nonnegative(),
 }) satisfies z.ZodType<FederationOutboxLocalMessage>;
 
+const federationMessagePreparationSchema = z.strictObject({
+  kind: z.literal("message"),
+  messageId: z.string(),
+  threadId: z.string(),
+  text: z.string(),
+  resources: z.array(resourceBlockSchema),
+  localMessage: federationOutboxLocalMessageSchema,
+}) satisfies z.ZodType<FederationMessagePreparation>;
+
 type ContactRow = {
   contact_id: string;
   owner_uid: number;
@@ -266,7 +309,9 @@ type OutboxRow = {
   contact_generation: string;
   idempotency_key: string;
   fingerprint: string;
-  payload_json: string;
+  payload_json: string | null;
+  preparation_json: string | null;
+  resource_count: number;
   local_message_json: string | null;
   local_sequence: number | null;
   state: FederationOutboxRecord["state"];
@@ -386,8 +431,8 @@ export class FederationStore {
     );
     this.sql.exec(
       `DELETE FROM federation_outbox WHERE delivery_id IN (
-         SELECT delivery_id FROM federation_outbox
-         WHERE state IN ('delivered', 'terminal') AND updated_at <= ?
+       SELECT delivery_id FROM federation_outbox
+         WHERE state IN ('preparation_failed', 'delivered', 'terminal') AND updated_at <= ?
          ORDER BY updated_at ASC LIMIT ?
        )`,
       input.receiptCutoff,
@@ -740,6 +785,15 @@ export class FederationStore {
         input.generation,
       );
       this.sql.exec(
+        `UPDATE federation_outbox SET
+           state = 'preparation_failed', next_attempt_at = NULL,
+           resource_count = 0, last_error = 'Contact generation changed', updated_at = ?
+         WHERE contact_id = ? AND state = 'preparing' AND contact_generation <> ?`,
+        now,
+        existing.id,
+        input.generation,
+      );
+      this.sql.exec(
         `DELETE FROM federation_resource_grants
          WHERE contact_id = ? AND contact_generation <> ?`,
         existing.id,
@@ -965,6 +1019,9 @@ export class FederationStore {
       ) {
         throw new Error("Contact delivery idempotency key payload changed");
       }
+      if (!isReadyFederationOutbox(existing)) {
+        throw new Error("Contact delivery idempotency key was used for message preparation");
+      }
       return { record: existing, created: false };
     }
     this.sql.exec(
@@ -985,7 +1042,89 @@ export class FederationStore {
       now,
       now,
     );
-    return { record: this.outbox(input.deliveryId)!, created: true };
+    const record = this.outbox(input.deliveryId);
+    if (!record || !isReadyFederationOutbox(record)) {
+      throw new Error("Contact delivery was not persisted");
+    }
+    return { record, created: true };
+  }
+
+  prepareMessage(input: {
+    deliveryId: string;
+    ownerUid: number;
+    contactId: string;
+    contactGeneration: string;
+    idempotencyKey: string;
+    fingerprint: string;
+    preparation: FederationMessagePreparation;
+    now?: number;
+  }): FederationPrepareResult {
+    const now = input.now ?? Date.now();
+    const existing = this.outboxByIdempotency(input.ownerUid, input.idempotencyKey);
+    if (existing) {
+      if (
+        existing.contactId !== input.contactId
+        || existing.contactGeneration !== input.contactGeneration
+        || existing.fingerprint !== input.fingerprint
+      ) {
+        throw new Error("Contact delivery idempotency key payload changed");
+      }
+      if (existing.state !== "preparing" && existing.state !== "preparation_failed") {
+        throw new Error("Contact delivery idempotency key was used for another delivery");
+      }
+      return { record: existing, created: false };
+    }
+    this.sql.exec(
+      `INSERT INTO federation_outbox (
+         delivery_id, owner_uid, contact_id, contact_generation, idempotency_key,
+         fingerprint, preparation_json, resource_count, state, next_attempt_at,
+         created_at, updated_at
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'preparing', ?, ?, ?)`,
+      input.deliveryId,
+      input.ownerUid,
+      input.contactId,
+      input.contactGeneration,
+      input.idempotencyKey,
+      input.fingerprint,
+      JSON.stringify(input.preparation),
+      input.preparation.resources.length,
+      now,
+      now,
+      now,
+    );
+    const record = this.outbox(input.deliveryId);
+    if (!record || record.state !== "preparing") {
+      throw new Error("Contact message preparation was not persisted");
+    }
+    return { record, created: true };
+  }
+
+  completeMessagePreparation(input: {
+    deliveryId: string;
+    contactGeneration: string;
+    payload: Extract<FederationDeliveryPayload, { kind: "message" }>;
+    localMessage: FederationOutboxLocalMessage;
+    now?: number;
+  }): FederationReadyOutboxRecord {
+    const now = input.now ?? Date.now();
+    this.sql.exec(
+      `UPDATE federation_outbox SET
+         payload_json = ?, preparation_json = NULL, local_message_json = ?,
+         resource_count = 0, state = 'pending', next_attempt_at = ?,
+         last_error = NULL, updated_at = ?
+       WHERE delivery_id = ? AND contact_generation = ? AND state = 'preparing'`,
+      JSON.stringify(input.payload),
+      JSON.stringify(input.localMessage),
+      now,
+      now,
+      input.deliveryId,
+      input.contactGeneration,
+    );
+    const record = this.outbox(input.deliveryId);
+    if (!record || record.state !== "pending") {
+      throw new Error("Contact message preparation did not complete");
+    }
+    return record;
   }
 
   outbox(deliveryId: string): FederationOutboxRecord | null {
@@ -1007,7 +1146,7 @@ export class FederationStore {
   }
 
   pendingOutboxCount(input: { ownerUid?: number; contactId?: string } = {}): number {
-    const conditions = ["state = 'pending'"];
+    const conditions = ["state IN ('preparing', 'pending')"];
     const values: Array<string | number> = [];
     if (input.ownerUid !== undefined) {
       conditions.push("owner_uid = ?");
@@ -1023,6 +1162,16 @@ export class FederationStore {
     ).one().count;
   }
 
+  preparingResourceCount(contactId?: string): number {
+    const scope = contactId === undefined ? "" : "AND contact_id = ?";
+    const values = contactId === undefined ? [] : [contactId];
+    return this.sql.exec<{ count: number }>(
+      `SELECT COALESCE(SUM(resource_count), 0) AS count
+       FROM federation_outbox WHERE state = 'preparing' ${scope}`,
+      ...values,
+    ).one().count;
+  }
+
   retainedOutboxCount(input: { receiptCutoff: number; ownerUid?: number }): number {
     const owner = input.ownerUid === undefined ? "" : "AND owner_uid = ?";
     const values = input.ownerUid === undefined
@@ -1030,7 +1179,7 @@ export class FederationStore {
       : [input.receiptCutoff, input.ownerUid];
     return this.sql.exec<{ count: number }>(
       `SELECT COUNT(*) AS count FROM federation_outbox
-       WHERE (state = 'pending' OR updated_at > ?) ${owner}`,
+       WHERE (state IN ('preparing', 'pending') OR updated_at > ?) ${owner}`,
       ...values,
     ).one().count;
   }
@@ -1038,7 +1187,7 @@ export class FederationStore {
   recoverableOutbox(limit: number): FederationOutboxRecord[] {
     return this.sql.exec<OutboxRow>(
       `SELECT * FROM federation_outbox
-       WHERE state = 'pending'
+       WHERE state IN ('preparing', 'pending')
        ORDER BY created_at ASC LIMIT ?`,
       limit,
     ).toArray().map(outboxFromRow);
@@ -1077,9 +1226,10 @@ export class FederationStore {
     return cursor.rowsWritten > 0;
   }
 
-  markDeliveryFailed(
+  markOutboxFailed(
     deliveryId: string,
     contactGeneration: string,
+    expectedState: "preparing" | "pending",
     error: string,
     nextAttemptAtMs: number | null,
     terminal: boolean,
@@ -1088,13 +1238,18 @@ export class FederationStore {
     const cursor = this.sql.exec(
       `UPDATE federation_outbox SET
          state = ?, attempt_count = attempt_count + 1, next_attempt_at = ?,
+         resource_count = CASE WHEN ? THEN 0 ELSE resource_count END,
          last_error = ?, updated_at = ?
-       WHERE delivery_id = ? AND state = 'pending' AND contact_generation = ?`,
-      terminal ? "terminal" : "pending",
+       WHERE delivery_id = ? AND state = ? AND contact_generation = ?`,
+      terminal
+        ? expectedState === "preparing" ? "preparation_failed" : "terminal"
+        : expectedState,
       nextAttemptAtMs,
+      terminal ? 1 : 0,
       error,
       now,
       deliveryId,
+      expectedState,
       contactGeneration,
     );
     return cursor.rowsWritten > 0;
@@ -1109,9 +1264,12 @@ export class FederationStore {
     const exception = exceptDeliveryId ? "AND delivery_id <> ?" : "";
     this.sql.exec(
       `UPDATE federation_outbox SET
-         state = 'terminal', next_attempt_at = NULL,
+         state = CASE state WHEN 'preparing' THEN 'preparation_failed' ELSE 'terminal' END,
+         resource_count = CASE state WHEN 'preparing' THEN 0 ELSE resource_count END,
+         next_attempt_at = NULL,
          last_error = 'Contact was revoked', updated_at = ?
-       WHERE contact_id = ? AND contact_generation = ? AND state = 'pending' ${exception}`,
+       WHERE contact_id = ? AND contact_generation = ?
+         AND state IN ('preparing', 'pending') ${exception}`,
       ...(exceptDeliveryId
         ? [now, contactId, contactGeneration, exceptDeliveryId]
         : [now, contactId, contactGeneration]),
@@ -1602,24 +1760,40 @@ function pairingAttemptFromRow(row: PairingAttemptRow): FederationPairingAttempt
 }
 
 function outboxFromRow(row: OutboxRow): FederationOutboxRecord {
-  return {
+  const base = {
     deliveryId: row.delivery_id,
     ownerUid: row.owner_uid,
     contactId: row.contact_id,
     contactGeneration: row.contact_generation,
     idempotencyKey: row.idempotency_key,
     fingerprint: row.fingerprint,
-    payload: federationDeliveryPayloadSchema.parse(JSON.parse(row.payload_json)),
-    ...(row.local_message_json
-      ? { localMessage: federationOutboxLocalMessageSchema.parse(JSON.parse(row.local_message_json)) }
-      : undefined),
-    ...(row.local_sequence !== null ? { localSequence: row.local_sequence } : undefined),
-    state: row.state,
     attemptCount: row.attempt_count,
     ...(row.next_attempt_at !== null ? { nextAttemptAtMs: row.next_attempt_at } : undefined),
     ...(row.last_error ? { lastError: row.last_error } : undefined),
     createdAtMs: row.created_at,
     updatedAtMs: row.updated_at,
+  };
+  if (row.state === "preparing" || row.state === "preparation_failed") {
+    if (!row.preparation_json || row.payload_json) {
+      throw new Error("Federation message preparation has invalid stored content");
+    }
+    return {
+      ...base,
+      state: row.state,
+      preparation: federationMessagePreparationSchema.parse(JSON.parse(row.preparation_json)),
+    };
+  }
+  if (!row.payload_json || row.preparation_json) {
+    throw new Error("Federation delivery has invalid stored content");
+  }
+  return {
+    ...base,
+    state: row.state,
+    payload: federationDeliveryPayloadSchema.parse(JSON.parse(row.payload_json)),
+    ...(row.local_message_json
+      ? { localMessage: federationOutboxLocalMessageSchema.parse(JSON.parse(row.local_message_json)) }
+      : undefined),
+    ...(row.local_sequence !== null ? { localSequence: row.local_sequence } : undefined),
     ...(row.delivered_at !== null ? { deliveredAtMs: row.delivered_at } : undefined),
   };
 }

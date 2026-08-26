@@ -23,7 +23,8 @@ import type {
   ProcessMessageCommitResponseFrame,
   ProcessMessageStreamSignal,
   ProcessResourceResponseFrame,
-  ProcessResourceRetainRequestFrame,
+  ProcessResourcesRetainRequestFrame,
+  ProcessResourcesRetainResponseFrame,
   ProcessResourceWriteRequestFrame,
 } from "../protocol/process-frames";
 import type { NetFetchArgs } from "@humansandmachines/gsv/protocol";
@@ -155,7 +156,12 @@ export function sendFrameToProcess(
 export function sendFrameToProcess(
   installationId: string,
   pid: string,
-  frame: ProcessResourceRetainRequestFrame | ProcessResourceWriteRequestFrame,
+  frame: ProcessResourcesRetainRequestFrame,
+): Promise<ProcessResourcesRetainResponseFrame | null>;
+export function sendFrameToProcess(
+  installationId: string,
+  pid: string,
+  frame: ProcessResourceWriteRequestFrame,
 ): Promise<ProcessResourceResponseFrame | null>;
 export function sendFrameToProcess<S extends SyscallName>(
   installationId: string,
@@ -177,6 +183,7 @@ export async function sendFrameToProcess(
   | ProcessScheduleDeliverResponseFrame
   | ProcessAdapterDeliverResponseFrame
   | ProcessRunAttachResponseFrame
+  | ProcessResourcesRetainResponseFrame
   | ProcessResourceResponseFrame
   | null
 > {

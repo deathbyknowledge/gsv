@@ -5,7 +5,11 @@ import type {
 } from "@humansandmachines/gsv/protocol";
 import type { KernelContext } from "../context";
 import { canonicalJson, sha256Base64Url } from "../federation-crypto";
-import type { FederationContactRecord, FederationOutboxRecord } from "../federation-store";
+import type {
+  FederationContactRecord,
+  FederationOutboxRecord,
+} from "../federation-store";
+import { isReadyFederationOutbox } from "../federation-store";
 import { FederationHttpError } from "./errors";
 
 export function currentFederationDeliveryContact(
@@ -16,7 +20,10 @@ export function currentFederationDeliveryContact(
   if (
     !contact
     || contact.generation !== record.contactGeneration
-    || (contact.state !== "active" && record.payload.kind !== "contact.revoked")
+    || (
+      contact.state !== "active"
+      && (!isReadyFederationOutbox(record) || record.payload.kind !== "contact.revoked")
+    )
   ) {
     return null;
   }
@@ -30,7 +37,7 @@ export function contactSendResult(
   return {
     deliveryId: record.deliveryId,
     conversationId: contact.conversationId,
-    state: record.state === "terminal"
+    state: record.state === "terminal" || record.state === "preparation_failed"
       ? "failed"
       : record.state === "delivered"
         ? "delivered"
@@ -46,7 +53,7 @@ export function contactDeliveryStatus(
     deliveryId: record.deliveryId,
     contactId: record.contactId,
     conversationId: contact.conversationId,
-    state: record.state === "pending"
+    state: record.state === "preparing" || record.state === "pending"
       ? "queued"
       : record.state === "delivered"
         ? "delivered"
@@ -54,7 +61,9 @@ export function contactDeliveryStatus(
     attemptCount: record.attemptCount,
     createdAtMs: record.createdAtMs,
     updatedAtMs: record.updatedAtMs,
-    ...(record.deliveredAtMs !== undefined ? { deliveredAtMs: record.deliveredAtMs } : undefined),
+    ...(isReadyFederationOutbox(record) && record.deliveredAtMs !== undefined
+      ? { deliveredAtMs: record.deliveredAtMs }
+      : undefined),
     ...(record.lastError ? { lastError: record.lastError } : undefined),
   };
 }
@@ -82,7 +91,7 @@ export async function rearmPendingDelivery(
   record: FederationOutboxRecord,
   ctx: KernelContext,
 ): Promise<void> {
-  if (record.state !== "pending") return;
+  if (record.state !== "preparing" && record.state !== "pending") return;
   await ctx.scheduleFederationDelivery(
     record.deliveryId,
     record.nextAttemptAtMs ?? Date.now(),

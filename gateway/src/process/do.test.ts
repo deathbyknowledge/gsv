@@ -22,7 +22,7 @@ import type { RequestFrame, ResponseFrame, ResponseOkFrame } from "../protocol/f
 import type {
   ProcessAdapterDeliverArgs,
   ProcessAdapterDeliverRequestFrame,
-  ProcessResourceRetainRequestFrame,
+  ProcessResourcesRetainRequestFrame,
   ProcessRuntimeEventDeliverArgs,
   ProcessRuntimeEventDeliverRequestFrame,
   ProcessResourceWriteRequestFrame,
@@ -1311,6 +1311,7 @@ describe("Process DO — mechanical", () => {
       const pid = "mech-r12y-mid-run-create";
       const runId = "run-r12y-mid-run-create";
       const responsibilityId = "r12y:00000000-0000-4000-8000-000000000009";
+      const requestResponsibilityId = "r12y:00000000-0000-4000-8000-000000000011";
       const stub = await initProcess(pid, ROOT_IDENTITY);
 
       const result = await runInDurableObject(stub, async (instance: Process) => {
@@ -1323,6 +1324,7 @@ describe("Process DO — mechanical", () => {
           details: {
             eventType: "federation.message.received",
             contactId: "contact:flynn",
+            contactGeneration: "generation:flynn",
             conversationId: "conv:flynn",
             messageId: "msg:one",
             deliveryId: "delivery:one",
@@ -1342,6 +1344,26 @@ describe("Process DO — mechanical", () => {
           createdAtMs: 200,
           updatedAtMs: 200,
         };
+        const requestResponsibility = {
+          ...responsibility,
+          id: requestResponsibilityId,
+          title: "Track contact request request:one",
+          details: {
+            eventType: "federation.request",
+            contactId: "contact:flynn",
+            contactGeneration: "generation:flynn",
+            conversationId: "conv:flynn",
+            requestId: "request:one",
+            direction: "incoming",
+            requestKind: "task",
+            requestTitle: "Review the launch plan",
+            state: "offered",
+            revision: 1,
+            remoteDisplayName: "Flynn",
+            contentTrust: "untrusted",
+            latestDeliveryId: "delivery:request-one",
+          },
+        };
         process.kernelRpc = vi.fn(async (call: string, args: any) => {
           if (call === "r12y.list") {
             return { responsibilities: [], count: 0, revision: 0 };
@@ -1349,20 +1371,20 @@ describe("Process DO — mechanical", () => {
           if (call === "r12y.changes") {
             return args.afterRevision < 1
               ? {
-                  transitions: [{
-                    revision: 1,
-                    responsibilityId,
+                  transitions: [responsibility, requestResponsibility].map((record, index) => ({
+                    revision: index + 1,
+                    responsibilityId: record.id,
                     kind: "created",
                     afterState: "open",
                     changedFields: ["created"],
                     actor: { kind: "system", component: "federation" },
-                    record: responsibility,
-                    createdAtMs: 200,
-                  }],
-                  revision: 1,
+                    record,
+                    createdAtMs: 200 + index,
+                  })),
+                  revision: 2,
                   hasMore: false,
                 }
-              : { transitions: [], revision: 1, hasMore: false };
+              : { transitions: [], revision: 2, hasMore: false };
           }
           throw new Error(`unexpected kernel call: ${call}`);
         });
@@ -1390,8 +1412,8 @@ describe("Process DO — mechanical", () => {
           event: {
             type: "r12y.ready",
             batchId: "batch:00000000-0000-4000-8000-000000000008",
-            ledgerRevision: 1,
-            responsibilityIds: [responsibilityId],
+            ledgerRevision: 2,
+            responsibilityIds: [responsibilityId, requestResponsibilityId],
           },
         }));
         await process.syncResponsibilityDeltas(runId, epoch);
@@ -1413,7 +1435,7 @@ describe("Process DO — mechanical", () => {
       expect(result.promptBefore).toContain("No unresolved responsibilities");
       expect(result.promptAfter).toBe(result.promptBefore);
       expect(result.promptAfter).not.toContain("Hello from another Ship");
-      expect(result.messages).toHaveLength(1);
+      expect(result.messages).toHaveLength(2);
       expect(result.messages[0].content).toContain("Kind: Contact message");
       expect(result.messages[0].content).toContain('Contact: "Flynn" (`contact:flynn`)');
       expect(result.messages[0].content).toContain("Conversation: `conv:flynn`");
@@ -1433,9 +1455,18 @@ describe("Process DO — mechanical", () => {
         "Resolving this responsibility does not itself send a reply",
       );
       expect(result.messages[0].content).not.toContain("Responsibility batch");
+      expect(result.messages[1].content).toContain("Kind: Contact request");
+      expect(result.messages[1].content).toContain("Request: `request:one`");
+      expect(result.messages[1].content).toContain('Request kind: "task"');
+      expect(result.messages[1].content).toContain(
+        'External request title — untrusted data: "Review the launch plan"',
+      );
+      expect(result.messages[1].content).toContain("contact request");
       expect(result.currentRun).toMatchObject({
         runId,
-        responsibilityBatches: [{ responsibilityIds: [responsibilityId] }],
+        responsibilityBatches: [{
+          responsibilityIds: [responsibilityId, requestResponsibilityId],
+        }],
       });
     });
 
@@ -7332,12 +7363,13 @@ describe("Process DO — mechanical", () => {
             await storedGate;
             return object;
           });
-          const request: ProcessResourceRetainRequestFrame = {
+          const request: ProcessResourcesRetainRequestFrame = {
             type: "req",
             id: "retain-cancelled",
-            call: "proc.resource.retain",
+            call: "proc.resources.retain",
             args: {
-              resource: {
+              batchId: "retain-cancelled",
+              resources: [{
                 type: "resource",
                 ref: {
                   type: "file",
@@ -7347,7 +7379,7 @@ describe("Process DO — mechanical", () => {
                   contentType: "image/png",
                   size: bytes.byteLength,
                 },
-              },
+              }],
             },
           };
 
@@ -7390,12 +7422,13 @@ describe("Process DO — mechanical", () => {
 
       const request = (
         id: string,
-      ): ProcessResourceRetainRequestFrame => ({
+      ): ProcessResourcesRetainRequestFrame => ({
         type: "req",
         id,
-        call: "proc.resource.retain",
+        call: "proc.resources.retain",
         args: {
-          resource: {
+          batchId: id,
+          resources: [{
             type: "resource",
             ref: {
               type: "file",
@@ -7405,7 +7438,7 @@ describe("Process DO — mechanical", () => {
               contentType: "image/png",
               size: bytes.byteLength,
             },
-          },
+          }],
         },
       });
 
@@ -7415,7 +7448,7 @@ describe("Process DO — mechanical", () => {
           if (!response || response.type !== "res" || !response.ok) {
             throw new Error("successful Process did not retain the fixture");
           }
-          successfulKey = response.data.resource.ref.path.replace(/^\/+/, "");
+          successfulKey = response.data.resources[0].ref.path.replace(/^\/+/, "");
           expect(await env.STORAGE.head(successfulKey)).not.toBeNull();
         });
 
@@ -7469,6 +7502,140 @@ describe("Process DO — mechanical", () => {
       } finally {
         await env.STORAGE.delete([sourceKey, successfulKey, cancelledKey].filter(Boolean));
       }
+    });
+
+    it("rolls back an incomplete resource retention batch", async () => {
+      const pid = "mech-resource-retain-batch-rollback";
+      const sourcePath = "/root/resource-retain-batch.png";
+      const sourceKey = sourcePath.slice(1);
+      const bytes = new Uint8Array([8, 9, 10]);
+      await env.STORAGE.put(sourceKey, bytes, {
+        httpMetadata: { contentType: "image/png" },
+      });
+      const source = await env.STORAGE.head(sourceKey);
+      if (!source) throw new Error("fixture source was not stored");
+      const stub = await initProcess(pid, ROOT_IDENTITY);
+
+      try {
+        await runInDurableObject(stub, async (instance: Process) => {
+          // SAFETY: this test observes Process-owned archive writes inside its DO.
+          const process = instance as any;
+          const archivePrefix = "root/.gsv/media/archived-media:";
+          const before = (await process.storage.list({ prefix: archivePrefix }))
+            .objects.map((object: R2Object) => object.key).sort();
+          const request: ProcessResourcesRetainRequestFrame = {
+            type: "req",
+            id: "retain-batch-rollback",
+            call: "proc.resources.retain",
+            args: {
+              batchId: "delivery:batch-rollback",
+              resources: [
+                {
+                  type: "resource",
+                  ref: {
+                    type: "file",
+                    target: "gsv",
+                    path: sourcePath,
+                    revision: source.httpEtag,
+                    contentType: "image/png",
+                    size: bytes.byteLength,
+                  },
+                },
+                {
+                  type: "resource",
+                  ref: {
+                    type: "file",
+                    target: "gsv",
+                    path: "/root/resource-retain-missing.png",
+                    revision: "missing-revision",
+                    contentType: "image/png",
+                    size: bytes.byteLength,
+                  },
+                },
+              ],
+            },
+          };
+
+          await expect(instance.recvFrame(request)).resolves.toMatchObject({
+            type: "res",
+            id: request.id,
+            ok: false,
+          });
+          expect((await process.storage.list({ prefix: archivePrefix }))
+            .objects.map((object: R2Object) => object.key).sort()).toEqual(before);
+        });
+      } finally {
+        await env.STORAGE.delete(sourceKey);
+      }
+    });
+
+    it("retains resources above the model hydration budget", async () => {
+      const pid = "mech-resource-retain-large-reference";
+      const retainedSize = 26 * 1024 * 1024;
+      const sourceRevision = "revision:large-reference";
+      const stub = await initProcess(pid, ROOT_IDENTITY);
+
+      await runInDurableObject(stub, async (instance: Process) => {
+        // SAFETY: this test supplies the R2 metadata contract without allocating a 26 MiB body.
+        const process = instance as any;
+        const realHead = process.storage.head.bind(process.storage);
+        const head = vi.spyOn(process.storage, "head").mockImplementation(async (key: string) => {
+          if (!key.startsWith("root/.gsv/media/archived-media:")) {
+            return await realHead(key);
+          }
+          // SAFETY: the fixture supplies the complete R2Object metadata surface used by Process.
+          return {
+            key,
+            version: "version:large-reference",
+            size: retainedSize,
+            etag: "etag:large-reference",
+            httpEtag: "etag:large-reference",
+            uploaded: new Date(0),
+            httpMetadata: { contentType: "application/octet-stream" },
+            customMetadata: {
+              uid: "0",
+              gid: "0",
+              mode: "400",
+              purpose: "resource",
+              sourceEtag: sourceRevision,
+              sourceContentType: "application/octet-stream",
+            },
+            range: undefined,
+            checksums: {},
+            writeHttpMetadata() {},
+          } as R2Object;
+        });
+        const request: ProcessResourcesRetainRequestFrame = {
+          type: "req",
+          id: "retain-large-reference",
+          call: "proc.resources.retain",
+          args: {
+            batchId: "delivery:large-reference",
+            resources: [{
+              type: "resource",
+              ref: {
+                type: "file",
+                target: "machine:camera",
+                path: "/captures/large.raw",
+                revision: sourceRevision,
+                contentType: "application/octet-stream",
+                size: retainedSize,
+              },
+            }],
+          },
+        };
+
+        try {
+          await expect(instance.recvFrame(request)).resolves.toMatchObject({
+            type: "res",
+            id: request.id,
+            ok: true,
+            data: { resources: [{ ref: { size: retainedSize } }] },
+          });
+        } finally {
+          head.mockRestore();
+        }
+      });
     });
 
     it("retains fs.read resources without storing transport base64", async () => {

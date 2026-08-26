@@ -388,9 +388,10 @@ describe("FederationStore", () => {
         pending.contactGeneration,
         3_000,
       )).toBe(false);
-      expect(store.markDeliveryFailed(
+      expect(store.markOutboxFailed(
         pending.deliveryId,
         pending.contactGeneration,
+        "pending",
         "late failure",
         4_000,
         false,
@@ -636,14 +637,50 @@ describe("FederationStore", () => {
         },
         now: 1_000,
       }).record;
-      store.markDeliveryFailed(
+      store.markOutboxFailed(
         pending.deliveryId,
         pending.contactGeneration,
+        "pending",
         "retry",
         500_000,
         false,
         2_000,
       );
+      const source = {
+        type: "resource" as const,
+        ref: {
+          type: "file" as const,
+          target: "gsv",
+          path: "/home/local/.gsv/media/archived-media:prepared",
+          revision: "revision:prepared",
+          contentType: "image/png",
+          size: 10,
+        },
+      };
+      const preparing = store.prepareMessage({
+        deliveryId: "delivery:preparing",
+        ownerUid: 1000,
+        contactId: contact.id,
+        contactGeneration: contact.generation,
+        idempotencyKey: "send:preparing",
+        fingerprint: "fingerprint:preparing",
+        preparation: {
+          kind: "message",
+          messageId: "message:preparing",
+          threadId: contact.threadId,
+          text: "Preparing",
+          resources: [source],
+          localMessage: {
+            messageId: "message:preparing",
+            text: "Preparing",
+            author: { kind: "user", uid: 1000 },
+            origin: { kind: "client" },
+            processId: "proc:ship",
+            createdAtMs: 1_500,
+          },
+        },
+        now: 1_500,
+      }).record;
       const settled = store.enqueue({
         deliveryId: "delivery:settled",
         ownerUid: 1000,
@@ -670,9 +707,40 @@ describe("FederationStore", () => {
       });
 
       expect(store.recoverableOutbox(10).map((record) => record.deliveryId))
-        .toEqual([pending.deliveryId]);
+        .toEqual([pending.deliveryId, preparing.deliveryId]);
+      expect(store.preparingResourceCount(contact.id)).toBe(1);
+      const descriptor = store.createGrant({
+        contactId: contact.id,
+        contactGeneration: contact.generation,
+        source,
+        sourceUid: 1000,
+        descriptor: {
+          revision: source.ref.revision,
+          contentType: source.ref.contentType,
+          size: source.ref.size,
+        },
+        now: 2_500,
+      });
+      expect(store.completeMessagePreparation({
+        deliveryId: preparing.deliveryId,
+        contactGeneration: preparing.contactGeneration,
+        payload: {
+          kind: "message",
+          messageId: preparing.preparation.messageId,
+          threadId: preparing.preparation.threadId,
+          text: preparing.preparation.text,
+          resources: [descriptor],
+        },
+        localMessage: {
+          ...preparing.preparation.localMessage,
+          media: [source],
+        },
+        now: 2_500,
+      })).toMatchObject({ state: "pending" });
+      expect(store.preparingResourceCount(contact.id)).toBe(0);
       store.prune({ now: 10_000, receiptCutoff: 3_000, requestCutoff: 3_000, batchSize: 100 });
       expect(store.outbox(pending.deliveryId)?.state).toBe("pending");
+      expect(store.outbox(preparing.deliveryId)?.state).toBe("pending");
       expect(store.outbox(settled.deliveryId)).toBeNull();
       expect(store.inviteByTokenHash("expired-token")).toBeNull();
     });

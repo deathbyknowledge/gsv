@@ -238,10 +238,10 @@ describe("conversation handlers", () => {
     await vi.waitFor(() => expect(sendFrameToProcessMock).toHaveBeenCalledWith(
       "singleton",
       PROCESS.processId,
-      expect.objectContaining({ call: "proc.resource.retain" }),
+      expect.objectContaining({ call: "proc.resources.retain" }),
     ));
     const retainFrame = sendFrameToProcessMock.mock.calls.find(
-      ([, , frame]) => frame.type === "req" && frame.call === "proc.resource.retain",
+      ([, , frame]) => frame.type === "req" && frame.call === "proc.resources.retain",
     )?.[2];
     if (!retainFrame || retainFrame.type !== "req") {
       throw new Error("Resource retain request was not captured");

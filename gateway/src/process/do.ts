@@ -104,7 +104,8 @@ import type {
   ProcessMessageStreamSignal,
   ProcessRequestFrame,
   ProcessResourceResponseFrame,
-  ProcessResourceRetainRequestFrame,
+  ProcessResourcesRetainRequestFrame,
+  ProcessResourcesRetainResponseFrame,
   ProcessResourceWriteRequestFrame,
   ProcessRuntimeEvent,
   ProcessRuntimeEventDeliverArgs,
@@ -542,6 +543,34 @@ const TOOL_EXECUTION_DENIED_BY_USER_MESSAGE = "Tool execution denied by user";
 const RUNTIME_EVENT_WAKE_MESSAGE =
   "A runtime event arrived while you were busy. Review the GSV event above and continue.";
 const MAX_PROCESS_MEDIA_READ_BYTES = 25 * 1024 * 1024;
+type ResourceRetentionOptions = {
+  runId?: string;
+  signal?: AbortSignal;
+  current: () => boolean;
+  targetKey?: string;
+  mediaAdmissionHeld?: boolean;
+};
+type ResourceRetentionResult = {
+  resource: ResourceBlock;
+  createdKey?: string;
+};
+function retainedResourceBlock(
+  resource: ResourceBlock,
+  path: string,
+  revision: string,
+): ResourceBlock {
+  return resourceBlockSchema.parse({
+    ...resource,
+    ref: {
+      type: "file",
+      target: "gsv",
+      path,
+      revision,
+      contentType: resource.ref.contentType,
+      size: resource.ref.size,
+    },
+  });
+}
 const CODE_MODE_NESTED_SYSCALL_TIMEOUT_MS = 55_000;
 const CODE_MODE_APPROVAL_TIMEOUT_MS = 55_000;
 const TOOL_DISPATCH_TIMEOUT_MS = 10 * 60_000;
@@ -878,30 +907,30 @@ const processRuntimeEventSchema = z.discriminatedUnion("type", [
 ]);
 const federationResponsibilityBaseSchema = {
   contactId: z.string(),
+  contactGeneration: z.string(),
   conversationId: z.string(),
-  deliveryId: z.string(),
   remoteDisplayName: z.string().optional(),
-  contentTrust: z.literal("untrusted"),
 };
 const federationResponsibilityDetailsSchema = z.discriminatedUnion("eventType", [
   z.strictObject({
     ...federationResponsibilityBaseSchema,
     eventType: z.literal("federation.message.received"),
+    deliveryId: z.string(),
     messageId: z.string(),
     resourceCount: z.number().int().nonnegative(),
+    contentTrust: z.literal("untrusted"),
   }),
   z.strictObject({
     ...federationResponsibilityBaseSchema,
-    eventType: z.literal("federation.request.received"),
+    eventType: z.literal("federation.request"),
     requestId: z.string(),
+    direction: z.enum(["incoming", "outgoing"]),
     requestKind: z.string(),
     requestTitle: z.string(),
-  }),
-  z.strictObject({
-    ...federationResponsibilityBaseSchema,
-    eventType: z.literal("federation.request.updated"),
-    requestId: z.string(),
     state: z.string(),
+    revision: z.number().int().positive(),
+    contentTrust: z.enum(["local", "untrusted"]),
+    latestDeliveryId: z.string().optional(),
   }),
 ]);
 const watchedSignalPayloadSchema = z.object({
@@ -1452,15 +1481,17 @@ function formatFederationResponsibilityCreated(
       "Reply with:",
       `\`message send --to ${contactId} --message TEXT --also\``,
     );
-  } else if (eventType === "federation.request.received") {
+  } else if (
+    eventType === "federation.request"
+    && details.direction === "incoming"
+    && details.contentTrust === "untrusted"
+  ) {
     lines.push(`Request: \`${details.requestId}\``);
     lines.push(`Request kind: ${JSON.stringify(details.requestKind)}`);
     lines.push(`External request title — untrusted data: ${JSON.stringify(details.requestTitle)}`);
     lines.push("Inspect and answer with the `contact request` commands.");
-  } else if (eventType === "federation.request.updated") {
-    lines.push(`Request: \`${details.requestId}\``);
-    lines.push(`State: ${details.state}`);
-    lines.push("Inspect the current request with `contact request list --all`.");
+  } else {
+    return null;
   }
   lines.push(
     "",
@@ -1472,8 +1503,7 @@ function formatFederationResponsibilityCreated(
 
 function federationResponsibilityKind(eventType: string): string {
   if (eventType === "federation.message.received") return "Contact message";
-  if (eventType === "federation.request.received") return "Contact request";
-  if (eventType === "federation.request.updated") return "Contact request update";
+  if (eventType === "federation.request") return "Contact request";
   return "Contact event";
 }
 
@@ -2100,6 +2130,7 @@ export class Process extends DurableObject<ProcessEnv> {
     | ProcessRuntimeEventDeliverResponseFrame
     | ProcessScheduleDeliverResponseFrame
     | ProcessAdapterDeliverResponseFrame
+    | ProcessResourcesRetainResponseFrame
     | ProcessResourceResponseFrame
     | null
   > {
@@ -2117,11 +2148,11 @@ export class Process extends DurableObject<ProcessEnv> {
         const result = await this.handleProcScheduleDeliver(frame.args);
         return { type: "res", id: frame.id, ok: true, data: result };
       }
-      if (frame.call === "proc.resource.retain") {
-        const resource = await this.handleCancellableRequest(frame.id, (signal) =>
-          this.handleProcessResourceRetain(frame, signal)
+      if (frame.call === "proc.resources.retain") {
+        const resources = await this.handleCancellableRequest(frame.id, (signal) =>
+          this.handleProcessResourcesRetain(frame, signal)
         );
-        return { type: "res", id: frame.id, ok: true, data: { resource } };
+        return { type: "res", id: frame.id, ok: true, data: { resources } };
       }
       if (frame.call === "proc.resource.write") {
         const resource = await this.handleProcessResourceWrite(frame);
@@ -2517,7 +2548,7 @@ export class Process extends DurableObject<ProcessEnv> {
 
       let resource = resourceBlockSchema.parse(candidate);
       if (!await this.isOwnedResource(resource)) {
-        resource = await this.retainResource(resource, {
+        resource = (await this.retainResource(resource, {
           current: () => (
             !this.killed
             && this.isInitialized()
@@ -2526,7 +2557,7 @@ export class Process extends DurableObject<ProcessEnv> {
             && this.identity.gid === identity.gid
             && this.identity.home === identity.home
           ),
-        });
+        })).resource;
       }
       const { ref } = resource;
       totalBytes += ref.size;
@@ -3436,11 +3467,11 @@ export class Process extends DurableObject<ProcessEnv> {
       }
       let resource: ResourceBlock;
       try {
-        resource = await this.retainResource(item, {
+        resource = (await this.retainResource(item, {
           runId,
           signal: this.runAbortSignal(runId),
           current,
-        });
+        })).resource;
       } catch (error) {
         return {
           ok: false,
@@ -3523,27 +3554,82 @@ export class Process extends DurableObject<ProcessEnv> {
     }
   }
 
-  private async handleProcessResourceRetain(
-    frame: ProcessResourceRetainRequestFrame,
+  private async handleProcessResourcesRetain(
+    frame: ProcessResourcesRetainRequestFrame,
     signal: AbortSignal,
-  ): Promise<ResourceBlock> {
+  ): Promise<ResourceBlock[]> {
     if (this.killed || !this.isInitialized()) {
       throw new Error("Process no longer exists");
     }
-    const resource = resourceBlockSchema.parse(frame.args.resource);
+    const batchId = frame.args.batchId.trim();
+    if (!batchId || batchId.length > 256) {
+      throw new Error("Resource retention batch id is invalid");
+    }
+    if (frame.args.resources.length === 0) return [];
+    if (frame.args.resources.length > MAX_MESSAGE_MEDIA_ITEMS) {
+      throw new Error(`Resource batch exceeds ${MAX_MESSAGE_MEDIA_ITEMS} items`);
+    }
+    const resources = frame.args.resources.map((resource) => resourceBlockSchema.parse(resource));
+    let totalBytes = 0;
+    for (const resource of resources) {
+      if (resource.ref.expiresAt !== undefined && resource.ref.expiresAt <= Date.now()) {
+        throw new Error(`Resource has expired: ${resource.ref.path}`);
+      }
+      if (resource.ref.size > MAX_MESSAGE_MEDIA_PART_BYTES) {
+        throw new Error(`Resource exceeds the ${MAX_MESSAGE_MEDIA_PART_BYTES}-byte limit`);
+      }
+      totalBytes += resource.ref.size;
+      if (totalBytes > MAX_MESSAGE_MEDIA_TOTAL_BYTES) {
+        throw new Error(`Resource batch exceeds the ${MAX_MESSAGE_MEDIA_TOTAL_BYTES}-byte limit`);
+      }
+    }
     const identity = this.identity;
     const lifecycleEpoch = this.lifecycleEpoch;
-    return this.retainResource(resource, {
-      signal,
-      current: () => (
-        !this.killed
-        && this.isInitialized()
-        && this.lifecycleEpoch === lifecycleEpoch
-        && this.identity.uid === identity.uid
-        && this.identity.gid === identity.gid
-        && this.identity.home === identity.home
-      ),
-    });
+    const current = () => (
+      !this.killed
+      && this.isInitialized()
+      && this.lifecycleEpoch === lifecycleEpoch
+      && this.identity.uid === identity.uid
+      && this.identity.gid === identity.gid
+      && this.identity.home === identity.home
+    );
+    const targetKeys = await Promise.all(resources.map(async (resource) =>
+      await this.resourceRetentionKey(resource)
+    ));
+    const keys = [...new Set(targetKeys.flatMap((key) => key ? [key] : []))].sort();
+    const releaseMedia = await this.acquireMediaKeyAdmissions(keys);
+    try {
+      signal.throwIfAborted();
+      if (!current()) throw new Error("Resource is no longer pending");
+      const retained: ResourceBlock[] = [];
+      const createdKeys: string[] = [];
+      try {
+        for (const [index, resource] of resources.entries()) {
+          const result = await this.retainResource(resource, {
+            signal,
+            current,
+            targetKey: targetKeys[index] ?? undefined,
+            mediaAdmissionHeld: true,
+          });
+          retained.push(result.resource);
+          if (result.createdKey) createdKeys.push(result.createdKey);
+        }
+        return retained;
+      } catch (error) {
+        if (createdKeys.length === 0) throw error;
+        try {
+          await this.storage.delete(createdKeys);
+        } catch (cleanupError) {
+          throw new AggregateError(
+            [error, cleanupError],
+            `Resource batch ${batchId} failed and could not be rolled back`,
+          );
+        }
+        throw error;
+      }
+    } finally {
+      releaseMedia();
+    }
   }
 
   private async handleProcessResourceWrite(
@@ -7636,7 +7722,7 @@ export class Process extends DurableObject<ProcessEnv> {
     ) {
       throw new Error(`Unsupported resource content type: ${source.contentType}`);
     }
-    const resource = await this.retainResource({
+    const { resource } = await this.retainResource({
       type: "resource",
       ref: source,
       mediaType: "image",
@@ -7663,133 +7749,36 @@ export class Process extends DurableObject<ProcessEnv> {
 
   private async retainResource(
     resource: ResourceBlock,
-    options: {
-      runId?: string;
-      signal?: AbortSignal;
-      current: () => boolean;
-    },
-  ): Promise<ResourceBlock> {
+    options: ResourceRetentionOptions,
+  ): Promise<ResourceRetentionResult> {
     const source = resource.ref;
     options.signal?.throwIfAborted();
     if (source.expiresAt !== undefined && source.expiresAt <= Date.now()) {
       throw new Error(`Resource has expired: ${source.path}`);
     }
-    if (source.size > MAX_PROCESS_MEDIA_READ_BYTES) {
-      throw new Error(`Resource exceeds the ${MAX_PROCESS_MEDIA_READ_BYTES}-byte limit`);
+    if (source.size > MAX_MESSAGE_MEDIA_PART_BYTES) {
+      throw new Error(`Resource exceeds the ${MAX_MESSAGE_MEDIA_PART_BYTES}-byte limit`);
     }
     if (!options.current()) throw new Error("Resource is no longer pending");
-    const identity = this.identity;
-    const sourceKey = source.path.replace(/^\/+/, "");
-    if (
-      source.target === "gsv"
-      && source.path === agentArchiveMediaPath(identity.home, sourceKey)
-    ) {
-      const archived = await this.storage.head(sourceKey);
-      if (
-        !archived
-        || archived.size !== source.size
-        || archived.httpEtag !== source.revision
-        || !this.isValidOwnedArchiveObject(sourceKey, archived, {
-          expectedContentType: source.contentType,
-        })
-      ) {
-        throw new Error(`Owned resource does not match its immutable reference: ${source.path}`);
-      }
+    const owned = await this.resolveOwnedArchiveResource(resource);
+    if (owned) {
       if (!options.current()) throw new Error("Resource is no longer pending");
-      return resource;
+      return { resource: owned };
     }
-    const archiveId = await stableOpaqueId("archived-media", [
-      this.pid,
-      source.target,
-      source.path,
-      source.revision,
-    ]);
-    const key = `${this.archiveMediaPrefix()}${archiveId}`;
+    const identity = this.identity;
+    const key = options.targetKey ?? await this.resourceRetentionKey(resource);
+    if (!key) throw new Error(`Resource retention target is invalid: ${source.path}`);
     const path = `/${key}`;
-
-    const requestId = crypto.randomUUID();
-    const request: RequestFrame<"fs.transfer.send"> = {
-      type: "req",
-      id: requestId,
-      call: "fs.transfer.send",
-      args: {
-        target: source.target,
-        path: source.path,
-        revision: source.revision,
-      },
-      runId: options.runId,
-    };
-    const pending = sendFrameToKernel(this.installationId, this.pid, request);
-    let cancellation: Promise<number> | undefined;
-    let response: Awaited<typeof pending>;
-    try {
-      response = await raceWithAbort(pending, options.signal, {
-        abortReason: () => options.signal?.reason ?? new Error("Request cancelled"),
-        onAbort: () => {
-          const reason = options.signal?.reason instanceof Error
-            ? options.signal.reason.message
-            : "Request cancelled";
-          cancellation = cancelProcessRequests(
-            this.installationId,
-            this.pid,
-            [requestId],
-            reason,
-          );
-        },
-        onLateResolve: (lateResponse) => {
-          if (lateResponse?.type === "res") {
-            void cancelResponseBody(lateResponse, "Resource request was cancelled");
-          }
-        },
-      });
-    } catch (error) {
-      await cancellation?.catch(() => 0);
-      throw error;
-    }
-    if (options.signal?.aborted) {
-      if (response?.type === "res") {
-        await cancelResponseBody(response, "Resource request was cancelled");
-      }
-      options.signal.throwIfAborted();
-    }
-    if (!response || response.type !== "res") {
-      throw new Error(`Resource source did not respond: ${source.target}:${source.path}`);
-    }
-    if (!options.current()) {
-      await cancelResponseBody(response, "Resource is no longer pending");
-      throw new Error("Resource is no longer pending");
-    }
-    if (!response.ok) {
-      throw new Error(response.error.message);
-    }
-    const result = response.data;
-    if (!result?.ok) {
-      await cancelResponseBody(response, "Resource source rejected the requested revision");
-      throw new Error(result?.error ?? "Resource source returned no result");
-    }
-    if (!response.body) {
-      throw new Error("Resource source returned no body");
-    }
-    if (
-      result.path !== source.path
-      || result.size !== source.size
-      || result.revision !== source.revision
-      || result.contentType !== source.contentType
-      || response.body.length !== source.size
-    ) {
-      await response.body.stream.cancel("Resource source changed during resolution").catch(() => {});
-      throw new Error(`Resource source changed during resolution: ${source.path}`);
-    }
-
-    let releaseMedia: (() => void) | null = null;
+    const releaseMedia = options.mediaAdmissionHeld
+      ? null
+      : await this.acquireMediaKeyAdmissions([key]);
     let createdObject = false;
+    let responseBody: ReadableStream<Uint8Array> | null = null;
     try {
-      releaseMedia = await this.acquireMediaKeyAdmissions([key]);
       options.signal?.throwIfAborted();
       let archived = await this.storage.head(key);
       options.signal?.throwIfAborted();
       if (archived) {
-        await response.body.stream.cancel("Resource is already retained").catch(() => {});
         if (
           archived.size !== source.size
           || !this.isValidOwnedArchiveObject(key, archived, {
@@ -7799,61 +7788,127 @@ export class Process extends DurableObject<ProcessEnv> {
         ) {
           throw new Error(`Retained resource collision: ${path}`);
         }
-      } else {
-        const fixed = new FixedLengthStream(source.size);
-        const stored = this.storage.put(key, fixed.readable, {
-          httpMetadata: { contentType: source.contentType },
-          customMetadata: {
-            uid: String(identity.uid),
-            gid: String(identity.gid),
-            mode: "400",
-            purpose: "resource",
-            sourceEtag: source.revision,
-            sourceContentType: source.contentType,
+        return { resource: retainedResourceBlock(resource, path, archived.httpEtag) };
+      }
+
+      const requestId = crypto.randomUUID();
+      const request: RequestFrame<"fs.transfer.send"> = {
+        type: "req",
+        id: requestId,
+        call: "fs.transfer.send",
+        args: {
+          target: source.target,
+          path: source.path,
+          revision: source.revision,
+        },
+        runId: options.runId,
+      };
+      const pending = sendFrameToKernel(this.installationId, this.pid, request);
+      let cancellation: Promise<number> | undefined;
+      let response: Awaited<typeof pending>;
+      try {
+        response = await raceWithAbort(pending, options.signal, {
+          abortReason: () => options.signal?.reason ?? new Error("Request cancelled"),
+          onAbort: () => {
+            const reason = options.signal?.reason instanceof Error
+              ? options.signal.reason.message
+              : "Request cancelled";
+            cancellation = cancelProcessRequests(
+              this.installationId,
+              this.pid,
+              [requestId],
+              reason,
+            );
+          },
+          onLateResolve: (lateResponse) => {
+            if (lateResponse?.type === "res") {
+              void cancelResponseBody(lateResponse, "Resource request was cancelled");
+            }
           },
         });
-        const piped = response.body.stream.pipeTo(fixed.writable, { signal: options.signal });
-        const [storedResult, pipedResult] = await Promise.allSettled([stored, piped]);
-        createdObject = storedResult.status === "fulfilled";
-        options.signal?.throwIfAborted();
-        if (storedResult.status === "rejected" || pipedResult.status === "rejected") {
-          const reason = storedResult.status === "rejected"
-            ? storedResult.reason
-            : pipedResult.status === "rejected"
-              ? pipedResult.reason
-              : "unknown resource retention error";
-          throw reason instanceof Error ? reason : new Error(String(reason));
+      } catch (error) {
+        await cancellation?.catch(() => 0);
+        throw error;
+      }
+      if (options.signal?.aborted) {
+        if (response?.type === "res") {
+          await cancelResponseBody(response, "Resource request was cancelled");
         }
-        archived = await this.storage.head(key);
-        options.signal?.throwIfAborted();
-        if (
-          !archived
-          || archived.size !== source.size
-          || !this.isValidOwnedArchiveObject(key, archived, {
-            sourceEtag: source.revision,
-            expectedContentType: source.contentType,
-          })
-        ) {
-          throw new Error(`Failed to verify retained resource: ${path}`);
-        }
+        options.signal.throwIfAborted();
+      }
+      if (!response || response.type !== "res") {
+        throw new Error(`Resource source did not respond: ${source.target}:${source.path}`);
+      }
+      if (!options.current()) {
+        await cancelResponseBody(response, "Resource is no longer pending");
+        throw new Error("Resource is no longer pending");
+      }
+      if (!response.ok) {
+        await cancelResponseBody(response, "Resource source rejected the request");
+        throw new Error(response.error.message);
+      }
+      const result = response.data;
+      if (!result?.ok) {
+        await cancelResponseBody(response, "Resource source rejected the requested revision");
+        throw new Error(result?.error ?? "Resource source returned no result");
+      }
+      if (!response.body) throw new Error("Resource source returned no body");
+      responseBody = response.body.stream;
+      if (
+        result.path !== source.path
+        || result.size !== source.size
+        || result.revision !== source.revision
+        || result.contentType !== source.contentType
+        || response.body.length !== source.size
+      ) {
+        throw new Error(`Resource source changed during resolution: ${source.path}`);
+      }
+
+      const fixed = new FixedLengthStream(source.size);
+      const stored = this.storage.put(key, fixed.readable, {
+        httpMetadata: { contentType: source.contentType },
+        customMetadata: {
+          uid: String(identity.uid),
+          gid: String(identity.gid),
+          mode: "400",
+          purpose: "resource",
+          sourceEtag: source.revision,
+          sourceContentType: source.contentType,
+        },
+      });
+      const piped = response.body.stream.pipeTo(fixed.writable, { signal: options.signal });
+      const [storedResult, pipedResult] = await Promise.allSettled([stored, piped]);
+      createdObject = storedResult.status === "fulfilled";
+      options.signal?.throwIfAborted();
+      if (storedResult.status === "rejected" || pipedResult.status === "rejected") {
+        const reason = storedResult.status === "rejected"
+          ? storedResult.reason
+          : pipedResult.status === "rejected"
+            ? pipedResult.reason
+            : "unknown resource retention error";
+        throw reason instanceof Error ? reason : new Error(String(reason));
+      }
+      archived = await this.storage.head(key);
+      options.signal?.throwIfAborted();
+      if (
+        !archived
+        || archived.size !== source.size
+        || !this.isValidOwnedArchiveObject(key, archived, {
+          sourceEtag: source.revision,
+          expectedContentType: source.contentType,
+        })
+      ) {
+        throw new Error(`Failed to verify retained resource: ${path}`);
       }
 
       options.signal?.throwIfAborted();
       if (!options.current()) throw new Error("Resource is no longer pending");
-
-      return resourceBlockSchema.parse({
-        ...resource,
-        ref: {
-          type: "file",
-          target: "gsv",
-          path,
-          revision: archived.httpEtag,
-          contentType: source.contentType,
-          size: source.size,
-        },
-      });
+      return {
+        resource: retainedResourceBlock(resource, path, archived.httpEtag),
+        createdKey: key,
+      };
     } catch (error) {
-      await response.body.stream.cancel(error).catch(() => {});
+      await responseBody?.cancel(error).catch(() => {});
       if (createdObject) {
         try {
           await this.storage.delete(key);
@@ -7868,6 +7923,44 @@ export class Process extends DurableObject<ProcessEnv> {
     } finally {
       releaseMedia?.();
     }
+  }
+
+  private async resolveOwnedArchiveResource(resource: ResourceBlock): Promise<ResourceBlock | null> {
+    const source = resource.ref;
+    const sourceKey = source.path.replace(/^\/+/, "");
+    if (
+      source.target !== "gsv"
+      || source.path !== agentArchiveMediaPath(this.identity.home, sourceKey)
+    ) {
+      return null;
+    }
+    const archived = await this.storage.head(sourceKey);
+    if (
+      !archived
+      || archived.size !== source.size
+      || archived.httpEtag !== source.revision
+      || !this.isValidOwnedArchiveObject(sourceKey, archived, {
+        expectedContentType: source.contentType,
+      })
+    ) {
+      throw new Error(`Owned resource does not match its immutable reference: ${source.path}`);
+    }
+    return resource;
+  }
+
+  private async resourceRetentionKey(resource: ResourceBlock): Promise<string | null> {
+    const source = resource.ref;
+    const sourceKey = source.path.replace(/^\/+/, "");
+    if (
+      source.target === "gsv"
+      && source.path === agentArchiveMediaPath(this.identity.home, sourceKey)
+    ) {
+      return null;
+    }
+    return `${this.archiveMediaPrefix()}${await stableOpaqueId(
+      "archived-media",
+      [this.pid, source.target, source.path, source.revision],
+    )}`;
   }
 
   private async deletePreparedToolResultMedia(keys: string[]): Promise<void> {

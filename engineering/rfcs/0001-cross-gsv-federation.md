@@ -310,12 +310,17 @@ Sending is a local durable workflow, not an inline best-effort fetch.
 
 ### Sender
 
-The sender atomically creates an outbox item before network I/O. The item holds
-the immutable payload, contact generation, attempt state, and any exact local
-resource grants. A Kernel durable task performs delivery with bounded backoff.
+The sender atomically creates an outbox item before resource copying or network
+I/O. A message with resources begins as `preparing`, holding the original
+intent and contact generation. The owning Process retains the complete resource
+set as one idempotent batch keyed by the existing delivery id. Only then does a
+Kernel transaction create the exact grants and immutable payload and advance
+the item to `pending`. A durable task resumes either phase with bounded backoff.
 
-The outbox state machine is `pending -> delivered | terminal`. No terminal
-record becomes pending again.
+The outbox state machine is
+`preparing -> pending | preparation_failed` and
+`pending -> delivered | terminal`. No failed or terminal record becomes
+pending again.
 
 For a user-visible message, the sender also commits its own canonical Message
 once. A retry never creates another local Message.
@@ -455,10 +460,16 @@ Resource metadata travels in the structured delivery. Bytes do not.
 When sending a resource, the source Kernel:
 
 1. verifies the caller may read the source reference;
-2. requires or creates an immutable revision;
-3. records a grant scoped to the exact contact generation and revision; and
-4. places an opaque resource id plus content type, size, immutable revision, and
+2. durably records the message intent;
+3. asks the owning Process to retain all referenced revisions as one atomic,
+   retryable batch;
+4. records grants scoped to the exact contact generation and revisions; and
+5. places opaque resource ids plus content type, size, immutable revision, and
    optional display metadata in the payload.
+
+The 48 MiB transfer-retention bound is independent of the Process model-context
+hydration budget. A retained resource may remain reference-only to the model
+while still being valid for lazy transfer.
 
 The recipient rewrites that descriptor into a local reference:
 
@@ -517,10 +528,10 @@ The staging v1 policy applies these deterministic bounds:
 | Accepted clock skew | 5 minutes |
 | Delivery retry | 12 attempts or 7 days, whichever comes first |
 
-Pending records are never pruned by the settled-record retention policy.
+Preparing and pending records are never pruned by the settled-record retention policy.
 Settled outbox and inbox records remain for eight days so delayed replays still
 return the original outcome. The Kernel prunes bounded batches during ordinary
-federation operations and recovers all admitted pending outbox work after
+federation operations and recovers all admitted preparing or pending outbox work after
 eviction, up to the installation backlog cap.
 
 Bodies are authenticated before expensive parsing or storage where possible.

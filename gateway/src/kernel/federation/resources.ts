@@ -77,8 +77,12 @@ export function assertResourceGrantCapacity(
 ): void {
   if (added === 0) return;
   if (
-    ctx.federation.activeGrantCount(contactId) + added > MAX_ACTIVE_RESOURCE_GRANTS_PER_CONTACT
-    || ctx.federation.activeGrantCount() + added > MAX_ACTIVE_RESOURCE_GRANTS_PER_INSTALLATION
+    ctx.federation.activeGrantCount(contactId)
+        + ctx.federation.preparingResourceCount(contactId)
+        + added > MAX_ACTIVE_RESOURCE_GRANTS_PER_CONTACT
+    || ctx.federation.activeGrantCount()
+        + ctx.federation.preparingResourceCount()
+        + added > MAX_ACTIVE_RESOURCE_GRANTS_PER_INSTALLATION
   ) {
     throw new Error("Contact resource grant limit reached");
   }

@@ -72,7 +72,10 @@ import {
   type FederationInviteRecord,
   type FederationOutboxLocalMessage,
   type FederationOutboxRecord,
+  type FederationPreparingOutboxRecord,
+  type FederationReadyOutboxRecord,
   type FederationResourceGrant,
+  isReadyFederationOutbox,
 } from "./federation-store";
 import {
   base64UrlDecode,
@@ -564,13 +567,16 @@ export async function handleContactSend(
       fingerprint,
     );
     await rearmPendingDelivery(existing, ctx);
-    return contactSendResult(existing, replayContact);
+    const replay = existing.state === "preparing"
+      ? await advanceFederationMessagePreparationOrRecordFailure(existing, ctx)
+      : existing;
+    ctx.requestSignal?.throwIfAborted();
+    return contactSendResult(replay, replayContact);
   }
   assertOutboundCapacity(ownerUid, contact.id, ctx, now);
   const processId = await ensurePersonalController(ownerUid, ctx);
   const process = ctx.procs.get(processId);
   if (!process) throw new Error("Personal intelligence is unavailable");
-  const retained = await retainConversationResources(requestedMedia, processId, ctx);
   ctx.requestSignal?.throwIfAborted();
   ensureLocalSubject(ownerUid, ctx);
   const deliveryId = `delivery:${crypto.randomUUID()}`;
@@ -581,7 +587,6 @@ export async function handleContactSend(
   const localMessage = localOutboundMessage({
     messageId,
     text,
-    media: retained,
     handlerPid: processId,
     ownerUid,
     contact,
@@ -590,7 +595,7 @@ export async function handleContactSend(
     now,
   });
   ctx.requestSignal?.throwIfAborted();
-  const record = ctx.federation.transaction(() => {
+  const admitted = ctx.federation.transaction(() => {
     ctx.requestSignal?.throwIfAborted();
     const admittedContact = requireOwnedActiveContactGeneration(contact, ownerUid, ctx);
     const concurrent = ctx.federation.outboxByIdempotency(ownerUid, idempotencyKey);
@@ -605,33 +610,30 @@ export async function handleContactSend(
     }
     assertOutboundCapacity(ownerUid, admittedContact.id, ctx, now);
     consumeOutboundDeliveryRate(ownerUid, admittedContact.id, ctx, now);
-    assertResourceGrantCapacity(admittedContact.id, retained?.length ?? 0, ctx);
-    const resources = retained?.map((resource) => createResourceGrant(
-      admittedContact,
-      ownerUid,
-      resource,
-      ctx,
-      now,
-    ));
-    return ctx.federation.enqueue({
+    assertResourceGrantCapacity(admittedContact.id, requestedMedia?.length ?? 0, ctx);
+    return ctx.federation.prepareMessage({
       deliveryId,
       ownerUid,
       contactId: admittedContact.id,
       contactGeneration: admittedContact.generation,
       idempotencyKey,
       fingerprint,
-      payload: {
+      preparation: {
         kind: "message",
         messageId,
         threadId: admittedContact.threadId,
         text,
-        ...(resources?.length ? { resources } : undefined),
+        resources: requestedMedia ?? [],
+        localMessage,
       },
-      localMessage,
       now,
     }).record;
   });
-  await ctx.scheduleFederationDelivery(record.deliveryId, now, true);
+  await ctx.scheduleFederationDelivery(admitted.deliveryId, now, true);
+  const record = admitted.state === "preparing"
+    ? await advanceFederationMessagePreparationOrRecordFailure(admitted, ctx)
+    : admitted;
+  ctx.requestSignal?.throwIfAborted();
   return contactSendResult(record, contact);
 }
 
@@ -691,7 +693,7 @@ export async function handleContactRequestCreate(
   }));
   const existing = ctx.federation.outboxByIdempotency(ownerUid, idempotencyKey);
   if (existing) {
-    if (existing.payload.kind !== "request") {
+    if (!isReadyFederationOutbox(existing) || existing.payload.kind !== "request") {
       throw new Error("Contact request idempotency key was used for another delivery");
     }
     const replayContact = requireOwnedActiveContactGeneration(contact, ownerUid, ctx);
@@ -775,7 +777,7 @@ export async function handleContactRequestUpdate(
   }));
   const existing = ctx.federation.outboxByIdempotency(ownerUid, idempotencyKey);
   if (existing) {
-    if (existing.payload.kind !== "request.update") {
+    if (!isReadyFederationOutbox(existing) || existing.payload.kind !== "request.update") {
       throw new Error("Contact request idempotency key was used for another delivery");
     }
     const request = ctx.federation.request(args.requestId);
@@ -851,16 +853,18 @@ export async function processFederationDelivery(
   deliveryId: string,
   ctx: KernelContext,
 ): Promise<void> {
-  const record = ctx.federation.outbox(deliveryId);
-  if (!record || record.state !== "pending") return;
+  let record = ctx.federation.outbox(deliveryId);
+  if (!record) return;
+  if (record.state === "preparing") {
+    record = await advanceFederationMessagePreparationOrRecordFailure(record, ctx);
+  }
+  if (!isReadyFederationOutbox(record) || record.state !== "pending") return;
   const contact = currentFederationDeliveryContact(record, ctx);
   if (!contact) {
-    ctx.federation.markDeliveryFailed(
-      deliveryId,
-      record.contactGeneration,
-      "Contact is no longer active",
-      null,
-      true,
+    await recordFederationOutboxFailure(
+      record,
+      new Error("Contact is no longer active"),
+      ctx,
     );
     return;
   }
@@ -926,39 +930,118 @@ export async function processFederationDelivery(
     });
     if (!committed) return;
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    const latest = ctx.federation.outbox(deliveryId);
-    const latestContact = ctx.federation.get(record.contactId);
-    if (
-      !latest
-      || latest.state !== "pending"
-      || latest.contactGeneration !== record.contactGeneration
-      || !latestContact
-      || latestContact.generation !== record.contactGeneration
-    ) {
-      return;
-    }
-    const attempt = latest.attemptCount + 1;
-    const terminal = attempt >= MAX_DELIVERY_ATTEMPTS
-      || Date.now() - record.createdAtMs >= MAX_DELIVERY_AGE_MS
-      || isTerminalFederationError(error);
-    const retryAt = terminal ? null : Date.now() + deliveryRetryDelayMs(attempt);
-    if (!ctx.federation.markDeliveryFailed(
-      deliveryId,
-      record.contactGeneration,
-      message,
-      retryAt,
-      terminal,
-    )) {
-      return;
-    }
-    if (terminal) {
+    const failure = error instanceof Error ? error : new Error(String(error));
+    await recordFederationOutboxFailure(record, failure, ctx);
+  }
+}
+
+async function advanceFederationMessagePreparationOrRecordFailure(
+  record: FederationPreparingOutboxRecord,
+  ctx: KernelContext,
+): Promise<FederationOutboxRecord> {
+  try {
+    return await advanceFederationMessagePreparation(record, ctx);
+  } catch (error) {
+    const failure = error instanceof Error ? error : new Error(String(error));
+    await recordFederationOutboxFailure(record, failure, ctx);
+    return ctx.federation.outbox(record.deliveryId) ?? record;
+  }
+}
+
+async function advanceFederationMessagePreparation(
+  record: FederationPreparingOutboxRecord,
+  ctx: KernelContext,
+): Promise<FederationOutboxRecord> {
+  if (record.state !== "preparing") return record;
+  const processId = await ensurePersonalController(record.ownerUid, ctx);
+  const retained = await retainConversationResources(
+    record.preparation.resources,
+    processId,
+    ctx,
+    record.deliveryId,
+  ) ?? [];
+  if (retained.length !== record.preparation.resources.length) {
+    throw new Error("Personal intelligence retained an incomplete resource batch");
+  }
+  const now = Date.now();
+  return ctx.federation.transaction(() => {
+    const current = ctx.federation.outbox(record.deliveryId);
+    if (!current) throw new Error("Contact message preparation disappeared");
+    if (current.state !== "preparing") return current;
+    const contact = currentFederationDeliveryContact(current, ctx);
+    if (!contact) throw new Error("Contact is no longer active");
+    const resources = retained.map((resource) => createResourceGrant(
+      contact,
+      current.ownerUid,
+      resource,
+      ctx,
+      now,
+    ));
+    const localMessage: FederationOutboxLocalMessage = {
+      ...current.preparation.localMessage,
+      ...(resources.length ? { media: retained } : undefined),
+      ...(current.preparation.localMessage.author.kind === "user"
+        ? { processId }
+        : undefined),
+    };
+    return ctx.federation.completeMessagePreparation({
+      deliveryId: current.deliveryId,
+      contactGeneration: current.contactGeneration,
+      payload: {
+        kind: "message",
+        messageId: current.preparation.messageId,
+        threadId: current.preparation.threadId,
+        text: current.preparation.text,
+        ...(resources.length ? { resources } : undefined),
+      },
+      localMessage,
+      now,
+    });
+  });
+}
+
+async function recordFederationOutboxFailure(
+  record: FederationOutboxRecord,
+  error: Error,
+  ctx: KernelContext,
+): Promise<void> {
+  if (record.state !== "preparing" && record.state !== "pending") return;
+  const latest = ctx.federation.outbox(record.deliveryId);
+  if (
+    !latest
+    || latest.state !== record.state
+    || latest.contactGeneration !== record.contactGeneration
+  ) {
+    return;
+  }
+  const contact = ctx.federation.get(record.contactId);
+  const contactActive = contact?.state === "active"
+    && contact.generation === record.contactGeneration;
+  const attempt = latest.attemptCount + 1;
+  const terminal = !contactActive
+    || attempt >= MAX_DELIVERY_ATTEMPTS
+    || Date.now() - record.createdAtMs >= MAX_DELIVERY_AGE_MS
+    || isTerminalFederationError(error);
+  const retryAt = terminal ? null : Date.now() + deliveryRetryDelayMs(attempt);
+  const message = error.message;
+  if (!ctx.federation.markOutboxFailed(
+    record.deliveryId,
+    record.contactGeneration,
+    record.state,
+    message,
+    retryAt,
+    terminal,
+  )) {
+    return;
+  }
+  if (terminal) {
+    if (contactActive) {
       createDeliveryDebtResponsibility(record, message, ctx);
       await ctx.reconcileResponsibilityWake(record.ownerUid);
-      return;
     }
-    await ctx.scheduleFederationDelivery(deliveryId, retryAt!, false);
+    return;
   }
+  await ctx.scheduleFederationDelivery(record.deliveryId, retryAt!, false);
 }
 
 export async function handleFederationHttpRequest(
@@ -1885,7 +1968,7 @@ async function openGrantedResource(
 }
 
 async function commitLocalOutboxMessage(
-  outbox: FederationOutboxRecord,
+  outbox: FederationReadyOutboxRecord,
   contact: FederationContactRecord,
   ctx: KernelContext,
 ): Promise<void> {

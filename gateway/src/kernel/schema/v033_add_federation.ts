@@ -186,28 +186,41 @@ export const KERNEL_V033_ADD_FEDERATION: SqlMigration = {
         contact_generation TEXT NOT NULL,
         idempotency_key TEXT NOT NULL,
         fingerprint TEXT NOT NULL,
-        payload_json TEXT NOT NULL,
+        payload_json TEXT,
+        preparation_json TEXT,
+        resource_count INTEGER NOT NULL DEFAULT 0,
         local_message_json TEXT,
         local_sequence INTEGER,
-        state TEXT NOT NULL CHECK (state IN ('pending', 'delivered', 'terminal')),
+        state TEXT NOT NULL CHECK (
+          state IN ('preparing', 'preparation_failed', 'pending', 'delivered', 'terminal')
+        ),
         attempt_count INTEGER NOT NULL DEFAULT 0,
         next_attempt_at INTEGER,
         last_error TEXT,
         created_at INTEGER NOT NULL,
         updated_at INTEGER NOT NULL,
         delivered_at INTEGER,
+        CHECK (
+          (state IN ('preparing', 'preparation_failed')
+            AND preparation_json IS NOT NULL AND payload_json IS NULL)
+          OR
+          (state IN ('pending', 'delivered', 'terminal')
+            AND preparation_json IS NULL AND payload_json IS NOT NULL)
+        ),
+        CHECK (resource_count >= 0),
+        CHECK (state = 'preparing' OR resource_count = 0),
         UNIQUE (owner_uid, idempotency_key)
       )
     `,
     `
       CREATE INDEX federation_outbox_pending_idx
       ON federation_outbox (state, next_attempt_at, created_at)
-      WHERE state = 'pending'
+      WHERE state IN ('preparing', 'pending')
     `,
     `
       CREATE INDEX federation_outbox_retention_idx
       ON federation_outbox (updated_at)
-      WHERE state IN ('delivered', 'terminal')
+      WHERE state IN ('preparation_failed', 'delivered', 'terminal')
     `,
     `
       CREATE TABLE federation_inbox (
