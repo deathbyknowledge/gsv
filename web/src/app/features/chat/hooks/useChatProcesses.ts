@@ -10,6 +10,7 @@ import type {
   ProcHistoryArgs,
   ProcListArgs,
   ProcSpawnArgs,
+  ProcTraceArgs,
   FileResourceReference,
 } from "@humansandmachines/gsv/protocol";
 import { useGateway } from "../../../services/gateway/GatewayProvider";
@@ -20,6 +21,7 @@ import {
   forkChatProcess,
   getChatProcessAiConfig,
   getChatHistory,
+  getProcessTrace,
   listChatHistorySegments,
   listChatProcesses,
   readChatProcessMedia,
@@ -46,6 +48,12 @@ export const chatProcessHistoryQueryKey = (args: ProcHistoryArgs = {}) => [
 ] as const;
 
 export const chatProcessHistoryQueryKeyRoot = ["process", "chat", "history"] as const;
+
+export const chatProcessTraceQueryKey = (args: ProcTraceArgs) => [
+  "process",
+  "trace",
+  args,
+] as const;
 
 export const chatProcessMediaQueryKey = (args: ChatStoredMediaReadArgs) => [
   "process",
@@ -96,6 +104,10 @@ type UseChatProcessHistoryOptions = ChatQueryOptions & {
   args?: ProcHistoryArgs;
 };
 
+type UseChatProcessTraceOptions = ChatQueryOptions & {
+  args: ProcTraceArgs;
+};
+
 type UseChatProcessMediaOptions = ChatQueryOptions & {
   args: ChatStoredMediaReadArgs;
 };
@@ -127,6 +139,18 @@ export function useChatProcessHistory(options: UseChatProcessHistoryOptions = {}
     queryKey: chatProcessHistoryQueryKey(args),
     enabled: connected && options.enabled !== false && hasHistoryTarget(args),
     queryFn: () => getChatHistory(client, args),
+  });
+}
+
+export function useChatProcessTrace(options: UseChatProcessTraceOptions) {
+  const { client, connected } = useGateway();
+  const pid = options.args.pid?.trim() ?? "";
+
+  return useQuery({
+    queryKey: chatProcessTraceQueryKey(options.args),
+    enabled: connected && options.enabled !== false && pid.length > 0,
+    queryFn: () => getProcessTrace(client, options.args),
+    refetchInterval: (query) => query.state.data?.activeRunId ? 1_000 : false,
   });
 }
 

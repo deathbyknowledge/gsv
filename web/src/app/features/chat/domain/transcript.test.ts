@@ -153,6 +153,45 @@ describe("chat transcript rows", () => {
     });
   });
 
+  it("does not render an empty assistant envelope as raw JSON", () => {
+    const rows = transcriptRowsFromHistory(history([{
+      id: 1,
+      clientId: "1",
+      role: "assistant",
+      runId: "run-1",
+      content: {
+        text: "",
+        thinking: [{ type: "thinking", thinking: "Inspect the contact message." }],
+        toolCalls: [{
+          id: "call-1",
+          name: "Shell",
+          arguments: { input: "message history --json" },
+        }],
+      },
+      text: JSON.stringify({
+        text: "",
+        thinking: [{ type: "thinking", thinking: "Inspect the contact message." }],
+      }),
+      timestamp: 1,
+      origin: undefined,
+      metadata: undefined,
+    }]));
+
+    expect(rows).toEqual([
+      expect.objectContaining({
+        role: "assistant",
+        text: "",
+        thinking: ["Inspect the contact message."],
+      }),
+      expect.objectContaining({
+        role: "tool",
+        toolCallId: "call-1",
+        toolName: "Shell",
+      }),
+    ]);
+    expect(rows.some((row) => row.text.includes("\"thinking\""))).toBe(false);
+  });
+
   it("keeps tool result media available to the transcript", () => {
     const media = [{
       type: "image",

@@ -411,6 +411,65 @@ export type ProcHistoryResult =
     }
   | { ok: false; error: string };
 
+export type ProcTraceSpanKind =
+  | "run"
+  | "context"
+  | "inference"
+  | "reasoning"
+  | "output"
+  | "tool"
+  | "approval"
+  | "delivery";
+
+export type ProcTraceSpanStatus =
+  | "running"
+  | "ok"
+  | "error"
+  | "aborted"
+  | "denied";
+
+export type ProcTraceSpanReference =
+  | { kind: "run" }
+  | { kind: "message"; messageId: number }
+  | { kind: "tool"; callId: string; executionId: string }
+  | { kind: "approval"; requestId: string; callId: string }
+  | {
+      kind: "delivery";
+      callId?: string;
+      conversationId?: string;
+      messageId?: string;
+    };
+
+export type ProcTraceSpan = {
+  id: string;
+  runId: string;
+  parentId?: string;
+  kind: ProcTraceSpanKind;
+  name: string;
+  status: ProcTraceSpanStatus;
+  startedAt: number;
+  endedAt?: number;
+  reference?: ProcTraceSpanReference;
+  attributes?: JsonObject;
+};
+
+export type ProcTraceArgs = {
+  pid?: string;
+  runId?: string;
+  limit?: number;
+};
+
+export type ProcTraceResult =
+  | {
+      ok: true;
+      pid: string;
+      spans: ProcTraceSpan[];
+      spanCount: number;
+      truncated: boolean;
+      activeRunId: string | null;
+    }
+  | { ok: false; error: string };
+
 export type ProcHistoryOverflowPolicy = "auto-compact" | "fail";
 
 export type ProcHistoryContextPolicy = {

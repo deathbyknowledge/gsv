@@ -90,6 +90,9 @@ specific client in addition to any connection that owns the active run. Closing 
 `proc.unobserve`. Observation is explicit so every connected client does not receive every model
 token, reasoning block, and tool event. Idle owner clients may receive a content-free `proc.changed`
 invalidation so process inventories refresh; private activity fields remain routed or observed only.
+The inspector combines `proc.history` values with the bounded `proc.trace` span tree: timing stays a
+small Process-owned index, while reasoning, tool arguments, results, and messages retain one storage
+owner and are resolved only when a user inspects a span.
 
 ## Storage and retention
 

@@ -1,4 +1,4 @@
-export type ConsoleProcessState = "running" | "queued" | "idle" | "unknown";
+export type ConsoleProcessState = "running" | "queued" | "waiting_hil" | "idle" | "unknown";
 
 export type ConsoleProcess = {
   pid: string;

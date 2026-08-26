@@ -19,6 +19,7 @@ import {
 
 type UseChatRuntimeOptions = {
   enabled?: boolean;
+  historyLimit?: number;
   observe?: boolean;
   processId: string;
 };
@@ -319,6 +320,7 @@ function errorMessage(error: Error | string | null): string {
 
 export function useChatRuntime({
   enabled = true,
+  historyLimit = HISTORY_PAGE_SIZE,
   observe = false,
   processId,
 }: UseChatRuntimeOptions) {
@@ -332,7 +334,7 @@ export function useChatRuntime({
         ? {
           pid: processId,
           includeMessages: observe,
-          limit: HISTORY_PAGE_SIZE,
+          limit: historyLimit,
           tail: true,
         }
       : {},

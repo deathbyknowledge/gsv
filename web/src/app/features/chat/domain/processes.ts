@@ -18,6 +18,8 @@ import type {
   ProcHistoryResult,
   ProcHilRequest,
   ProcListEntry,
+  ProcTraceArgs,
+  ProcTraceResult,
 } from "@humansandmachines/gsv/protocol";
 import { normalizeHilRequest } from "./hil";
 import { z } from "zod";
@@ -49,7 +51,7 @@ export type ChatHistoryMessage = {
   clientId: string;
   runId: string | null;
   role: ChatHistoryMessageRole;
-  content: unknown;
+  content: HistoryValue;
   text: string;
   timestamp: number | null;
   origin: ProcHistoryMessage["origin"];
@@ -68,6 +70,9 @@ export type ChatHistory = {
   pendingHil: ProcHilRequest | null;
   context: Extract<ProcHistoryResult, { ok: true }>["context"];
 };
+
+export type ChatProcessTraceArgs = ProcTraceArgs;
+export type ChatProcessTrace = Extract<ProcTraceResult, { ok: true }>;
 
 export type ChatSendDraft = {
   pid?: string;
@@ -102,8 +107,8 @@ export type ChatProcessAiConfig = Extract<ProcAiConfigGetResult, { ok: true }>["
 export type ChatProcessAiConfigSetArgs = ProcAiConfigSetArgs;
 export type ChatProcessAiConfigSetResult = Extract<ProcAiConfigSetResult, { ok: true }>;
 
-type HistoryValue = string | number | boolean | null | HistoryValue[] | HistoryRecord;
-type HistoryRecord = { [key: string]: HistoryValue };
+export type HistoryValue = string | number | boolean | null | HistoryValue[] | HistoryRecord;
+export type HistoryRecord = { [key: string]: HistoryValue };
 const historyValueSchema: z.ZodType<HistoryValue> = z.lazy(() => z.union([
   z.string(),
   z.number(),

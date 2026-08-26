@@ -10,6 +10,7 @@ import { PROCESS_V008_SINGLE_PROCESS_HISTORY } from "./v008_single_process_histo
 import { PROCESS_V009_TYPED_MESSAGE_QUEUE } from "./v009_typed_message_queue";
 import { PROCESS_V010_OWN_DURABLE_TASKS } from "./v010_own_durable_tasks";
 import { PROCESS_V011_ADD_CONTEXT_EPOCHS } from "./v011_add_context_epochs";
+import { PROCESS_V012_ADD_PROCESS_TRACE } from "./v012_add_process_trace";
 
 // Used by Process DO startup before ProcessStore reads or writes rows.
 export const PROCESS_SCHEMA_COMPONENT = "process";
@@ -26,6 +27,7 @@ export const PROCESS_MIGRATIONS: readonly SqlMigration[] = [
   PROCESS_V009_TYPED_MESSAGE_QUEUE,
   PROCESS_V010_OWN_DURABLE_TASKS,
   PROCESS_V011_ADD_CONTEXT_EPOCHS,
+  PROCESS_V012_ADD_PROCESS_TRACE,
 ];
 
 export function runProcessSqlMigrations(storage: DurableObjectStorage): void {

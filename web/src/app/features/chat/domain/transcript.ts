@@ -20,9 +20,9 @@ export type ChatTranscriptRowStatus =
 
 export type ChatToolOutcome = ProcToolResultOutcome;
 
-type TranscriptWireValue = string | number | boolean | null | TranscriptWireValue[] | TranscriptWireRecord;
-interface TranscriptWireRecord { [key: string]: TranscriptWireValue }
-const transcriptWireValueSchema: z.ZodType<TranscriptWireValue> = z.lazy(() => z.union([
+export type ChatTranscriptValue = string | number | boolean | null | ChatTranscriptValue[] | ChatTranscriptRecord;
+export interface ChatTranscriptRecord { [key: string]: ChatTranscriptValue }
+const transcriptWireValueSchema: z.ZodType<ChatTranscriptValue> = z.lazy(() => z.union([
   z.string(), z.number(), z.boolean(), z.null(),
   z.array(transcriptWireValueSchema),
   z.record(z.string(), transcriptWireValueSchema),
@@ -142,11 +142,11 @@ export type ChatTranscriptRow = {
   delivery?: "directed" | "sync";
   conversationSequence?: number;
   origin?: InteractionOrigin;
-  toolArgs?: unknown;
+  toolArgs?: ChatTranscriptValue;
   toolCallId?: string;
   toolName?: string;
   toolOutcome?: ChatToolOutcome;
-  toolOutput?: unknown;
+  toolOutput?: ChatTranscriptValue;
   toolSyscall?: string | null;
   role?: ChatTranscriptRowRole;
   meta?: string;
@@ -180,7 +180,7 @@ type AssistantHistory = {
   text: string;
   thinking: string[];
   toolCalls: Array<{
-    args: unknown;
+    args: ChatTranscriptValue;
     callId: string;
     syscall: string | null;
     toolName: string;
@@ -192,7 +192,7 @@ type ToolResultHistory = {
   error: string | null;
   ok: boolean;
   outcome: ChatToolOutcome | null;
-  output: unknown;
+  output: ChatTranscriptValue;
   media: unknown[];
   syscall: string | null;
   toolName: string;
@@ -649,7 +649,7 @@ function applyProcChanged(state: ChatRuntimeState, payload: TranscriptRpcPayload
   return { matched: true, refreshHistory, state: next };
 }
 
-function rowFromProcChangedMessage(record: TranscriptWireRecord | null): ChatTranscriptRow | null {
+function rowFromProcChangedMessage(record: ChatTranscriptRecord | null): ChatTranscriptRow | null {
   if (!record) {
     return null;
   }
@@ -729,7 +729,7 @@ function timestampCloseEnough(left: number | null | undefined, right: number | n
 
 function applyAssistantOutput(
   rows: ChatTranscriptRow[],
-  record: TranscriptWireRecord | null,
+  record: ChatTranscriptRecord | null,
   runId: string | null,
 ): ChatTranscriptRow[] {
   const text = asString(record?.text) ?? "";
@@ -773,7 +773,7 @@ function applyAssistantOutput(
 function applyStreamEvent(
   rows: ChatTranscriptRow[],
   runId: string,
-  event: TranscriptWireRecord,
+  event: ChatTranscriptRecord,
 ): ChatTranscriptRow[] {
   const eventType = asString(event.type);
   if (eventType === "thinking_start") {
@@ -881,7 +881,7 @@ function setAssistantStreamText(rows: ChatTranscriptRow[], runId: string, text: 
   return next;
 }
 
-function extractStreamPartialText(event: TranscriptWireRecord): string | null {
+function extractStreamPartialText(event: ChatTranscriptRecord): string | null {
   const partial = asRecord(event.partial);
   const content = Array.isArray(partial?.content) ? partial.content : [];
   const textBlocks = content.flatMap((block) => {
@@ -1020,7 +1020,7 @@ function upsertBackupModelRow(
   return next;
 }
 
-function toolRowFromStarted(record: TranscriptWireRecord | null): ChatTranscriptRow {
+function toolRowFromStarted(record: ChatTranscriptRecord | null): ChatTranscriptRow {
   const now = Date.now();
   const callId = asString(record?.callId) ?? `tool:${now}`;
   const toolName = asString(record?.name) ?? "Tool";
@@ -1041,7 +1041,7 @@ function toolRowFromStarted(record: TranscriptWireRecord | null): ChatTranscript
   };
 }
 
-function toolRowFromStreamEvent(event: TranscriptWireRecord, runId: string): ChatTranscriptRow | null {
+function toolRowFromStreamEvent(event: ChatTranscriptRecord, runId: string): ChatTranscriptRow | null {
   const contentIndex = asNumber(event.contentIndex);
   const rawToolCall = asRecord(event.toolCall) ?? streamToolCallBlock(event);
   if (!rawToolCall) {
@@ -1072,7 +1072,7 @@ function toolRowFromStreamEvent(event: TranscriptWireRecord, runId: string): Cha
   };
 }
 
-function streamToolCallBlock(event: TranscriptWireRecord): TranscriptWireRecord | null {
+function streamToolCallBlock(event: ChatTranscriptRecord): ChatTranscriptRecord | null {
   const contentIndex = asNumber(event.contentIndex);
   if (contentIndex === null) {
     return null;
@@ -1135,7 +1135,8 @@ function extractAssistantHistory(content: TranscriptRpcPayload, fallbackText: st
     };
   }
 
-  const text = asString(record.text) ?? fallbackText;
+  const storedText = z.string().safeParse(record.text);
+  const text = storedText.success ? storedText.data : fallbackText;
   const thinking = (Array.isArray(record.thinking) ? record.thinking : [])
     .map((item) => {
       const text = asString(item);
@@ -1333,7 +1334,7 @@ function prettyJson(value: TranscriptRpcPayload): string {
   }
 }
 
-function asRecord(value: TranscriptRpcPayload): TranscriptWireRecord | null {
+function asRecord(value: TranscriptRpcPayload): ChatTranscriptRecord | null {
   const parsed = z.record(z.string(), transcriptWireValueSchema).safeParse(value);
   return parsed.success ? parsed.data : null;
 }

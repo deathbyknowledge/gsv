@@ -53,6 +53,11 @@ import type {
   ProcHilRequest,
   ProcHistoryArgs,
   ProcHistoryResult,
+  ProcTraceArgs,
+  ProcTraceResult,
+  ProcTraceSpanKind,
+  ProcTraceSpanReference,
+  ProcTraceSpanStatus,
   ProcHistoryMessage,
   ProcHistoryToolResultContent,
   ProcMediaInput,
@@ -313,6 +318,12 @@ type ProcessRunEventSink = {
   close(): Promise<void>;
 };
 
+type GenerationTracePhase = {
+  runId: string;
+  kind: Extract<ProcTraceSpanKind, "reasoning" | "output">;
+  spanId: string;
+};
+
 type MessageStreamProjection = {
   id: string;
   started: boolean;
@@ -543,6 +554,7 @@ const TOOL_EXECUTION_DENIED_BY_USER_MESSAGE = "Tool execution denied by user";
 const RUNTIME_EVENT_WAKE_MESSAGE =
   "A runtime event arrived while you were busy. Review the GSV event above and continue.";
 const MAX_PROCESS_MEDIA_READ_BYTES = 25 * 1024 * 1024;
+const MAX_PROCESS_TRACE_READ_LIMIT = 2_000;
 type ResourceRetentionOptions = {
   runId?: string;
   signal?: AbortSignal;
@@ -1866,6 +1878,7 @@ export class Process extends DurableObject<ProcessEnv> {
   private readonly activeTickRunIds = new Set<string>();
   private readonly deferredTickRunIds = new Set<string>();
   private readonly messageStreamProjections = new Map<string, MessageStreamProjection>();
+  private readonly generationTracePhases = new Map<string, GenerationTracePhase>();
   private readonly mediaWriteAdmissions = new Map<string, Promise<void>>();
   private readonly mediaUploadAbortControllers = new Map<string, AbortController>();
   private taskTitleAbortController: AbortController | null = null;
@@ -1979,6 +1992,14 @@ export class Process extends DurableObject<ProcessEnv> {
 
   private set currentRun(state: RunState | null) {
     if (state) {
+      this.store.startTraceSpan({
+        id: `run:${state.runId}`,
+        runId: state.runId,
+        kind: "run",
+        name: "Run",
+        startedAt: Date.now(),
+        reference: { kind: "run" },
+      });
       this.store.setValue("currentRun", JSON.stringify(state));
     } else {
       this.store.deleteValue("currentRun");
@@ -2209,6 +2230,9 @@ export class Process extends DurableObject<ProcessEnv> {
           data = await this.handleProcHistory(
             frame.args,
           );
+          break;
+        case "proc.trace":
+          data = this.handleProcTrace(frame.args);
           break;
         case "proc.ai.config.get":
           data = this.handleProcAiConfigGet(
@@ -3088,7 +3112,7 @@ export class Process extends DurableObject<ProcessEnv> {
       : pendingHil.toolName;
     if (args.decision === "approve" && !this.wasToolOffered(run, offeredToolName)) {
       const error = `Tool "${offeredToolName}" was not offered for this generation`;
-      this.store.clearPendingHil();
+      this.store.clearPendingHil("error");
       if (codeModeOwnerDispatchId) {
         if (this.store.getPending(codeModeOwnerDispatchId)) {
           this.store.fail(codeModeOwnerDispatchId, error);
@@ -3107,7 +3131,7 @@ export class Process extends DurableObject<ProcessEnv> {
       const remembered = args.decision === "approve" && args.remember === true
         ? this.rememberToolApproval(pendingHil, run)
         : false;
-      this.store.clearPendingHil();
+      this.store.clearPendingHil(args.decision === "approve" ? "ok" : "denied");
       if (args.decision === "deny") {
         const executionId = pendingHil.ownerDispatchId ?? codeModeApproval.dispatchId;
         await this.failStartedTool(
@@ -3131,7 +3155,7 @@ export class Process extends DurableObject<ProcessEnv> {
     }
 
     if (!toolCall) {
-      this.store.clearPendingHil();
+      this.store.clearPendingHil(args.decision === "deny" ? "denied" : "error");
       const outerCodeMode = pendingHil.ownerDispatchId
         ? toolCalls.find((result) => (
             result.dispatchId === pendingHil.ownerDispatchId
@@ -3171,7 +3195,7 @@ export class Process extends DurableObject<ProcessEnv> {
       ? this.rememberToolApproval(pendingHil, run)
       : false;
 
-    this.store.clearPendingHil();
+    this.store.clearPendingHil(args.decision === "approve" ? "ok" : "denied");
     if (args.decision === "approve") {
       const dispatchReady = await this.beginToolDispatch(
         pendingHil.runId,
@@ -3400,6 +3424,29 @@ export class Process extends DurableObject<ProcessEnv> {
       activeRunId: activeRun?.runId ?? null,
       pendingHil: this.toProcHilRequest(this.store.getPendingHil()),
       context: this.getContextStateForHistory(),
+    };
+  }
+
+  private handleProcTrace(args: ProcTraceArgs): ProcTraceResult {
+    const limit = args.limit ?? 1_000;
+    if (!isPositiveInteger(limit) || limit > MAX_PROCESS_TRACE_READ_LIMIT) {
+      return {
+        ok: false,
+        error: `proc.trace limit must be between 1 and ${MAX_PROCESS_TRACE_READ_LIMIT}`,
+      };
+    }
+    const runId = normalizeOptionalString(args.runId);
+    const trace = this.store.listTraceSpans({
+      ...(runId ? { runId } : undefined),
+      limit,
+    });
+    return {
+      ok: true,
+      pid: this.pid,
+      spans: trace.spans,
+      spanCount: trace.count,
+      truncated: trace.spans.length < trace.count,
+      activeRunId: this.currentRun?.runId ?? null,
     };
   }
 
@@ -5993,30 +6040,50 @@ export class Process extends DurableObject<ProcessEnv> {
     const buildGenerationContext = async (
       recoverResponsibilities = true,
     ): Promise<Context | null> => {
-      const epoch = await this.ensureContextEpoch(runId, run, activeConfig);
-      if (!epoch || this.handleRunStopped(runId)) {
-        return null;
-      }
-      if (recoverResponsibilities) {
-        const synced = await this.syncResponsibilityDeltas(runId, epoch);
-        if (!synced || this.handleRunStopped(runId)) {
+      const spanId = this.startTraceSpan({
+        runId,
+        kind: "context",
+        name: "Build context",
+      });
+      let status: Exclude<ProcTraceSpanStatus, "running"> = "aborted";
+      let attributes: JsonObject | undefined;
+      try {
+        const epoch = await this.ensureContextEpoch(runId, run, activeConfig);
+        if (!epoch || this.handleRunStopped(runId)) {
           return null;
         }
+        if (recoverResponsibilities) {
+          const synced = await this.syncResponsibilityDeltas(runId, epoch);
+          if (!synced || this.handleRunStopped(runId)) {
+            return null;
+          }
+        }
+        const generationSystemPrompt = run.returnToCaller
+          ? `${epoch.systemPrompt}\n\n${GSV_DELEGATED_TASK_CONTEXT}`
+          : epoch.systemPrompt;
+        const activeRun = this.killed ? null : this.currentRun;
+        const pendingRuntimeEventsInContext = activeRun?.runId === runId
+          ? activeRun.pendingRuntimeEvents ?? 0
+          : 0;
+        const messages = await this.buildContextMessages();
+        this.consumeRuntimeEventsInContext(runId, pendingRuntimeEventsInContext);
+        attributes = {
+          messages: messages.length,
+          tools: tools.length,
+          systemPromptChars: generationSystemPrompt.length,
+        };
+        status = "ok";
+        return {
+          systemPrompt: generationSystemPrompt,
+          messages,
+          tools: tools.length > 0 ? tools : undefined,
+        };
+      } catch (error) {
+        status = "error";
+        throw error;
+      } finally {
+        this.finishTraceSpan(spanId, status, { attributes });
       }
-      const generationSystemPrompt = run.returnToCaller
-        ? `${epoch.systemPrompt}\n\n${GSV_DELEGATED_TASK_CONTEXT}`
-        : epoch.systemPrompt;
-      const activeRun = this.killed ? null : this.currentRun;
-      const pendingRuntimeEventsInContext = activeRun?.runId === runId
-        ? activeRun.pendingRuntimeEvents ?? 0
-        : 0;
-      const messages = await this.buildContextMessages();
-      this.consumeRuntimeEventsInContext(runId, pendingRuntimeEventsInContext);
-      return {
-        systemPrompt: generationSystemPrompt,
-        messages,
-        tools: tools.length > 0 ? tools : undefined,
-      };
     };
 
     let context: Context = {
@@ -6206,7 +6273,18 @@ export class Process extends DurableObject<ProcessEnv> {
       return retryState === "stopped" ? "stopped" : "retry";
     };
     let attempt = 1;
+    let completedInferenceSpanId: string | null = null;
     while (attempt <= MAX_RETRYABLE_GENERATION_ATTEMPTS) {
+      const inferenceSpanId = this.startTraceSpan({
+        runId,
+        kind: "inference",
+        name: `${activeConfig.provider} · ${activeConfig.model}`,
+        attributes: {
+          provider: activeConfig.provider,
+          model: activeConfig.model,
+          attempt,
+        },
+      });
       try {
         response = await this.generateAssistantResponse({
           runId,
@@ -6215,11 +6293,19 @@ export class Process extends DurableObject<ProcessEnv> {
           context,
           sessionAffinityKey: this.pid,
           streamSeq,
+          traceSpanId: inferenceSpanId ?? undefined,
         });
         if (this.handleRunStopped(runId)) {
+          this.finishTraceSpan(inferenceSpanId, "aborted");
           return;
         }
+        const inferenceFailure = response
+          ? describeAssistantResponseFailure(response)
+          : "Provider returned no response";
+        this.finishTraceSpan(inferenceSpanId, inferenceFailure ? "error" : "ok");
+        if (!inferenceFailure) completedInferenceSpanId = inferenceSpanId;
       } catch (e) {
+        this.finishTraceSpan(inferenceSpanId, "error");
         if (this.handleRunStopped(runId)) {
           return;
         }
@@ -6283,6 +6369,8 @@ export class Process extends DurableObject<ProcessEnv> {
           error: displayError,
         });
         return;
+      } finally {
+        this.finishGenerationTracePhase(inferenceSpanId);
       }
 
       if (!response) {
@@ -6432,6 +6520,7 @@ export class Process extends DurableObject<ProcessEnv> {
     }
 
     const assistantMetadata = buildAssistantMessageMetadata(response, activeConfig, activeFallbackMetadata);
+    let assistantMessageId: number | null = null;
     this.ctx.storage.transactionSync(() => {
       const messageOptions: Parameters<ProcessStore["appendMessage"]>[2] = {
         runId,
@@ -6444,7 +6533,7 @@ export class Process extends DurableObject<ProcessEnv> {
       if (outputMedia.length > 0) {
         messageOptions.media = stringifyStoredProcessMedia(outputMedia) ?? undefined;
       }
-      this.store.appendMessage("assistant", text, messageOptions);
+      assistantMessageId = this.store.appendMessage("assistant", text, messageOptions);
       if (outputMedia.length > 0) {
         const activeRun = this.currentRun;
         if (activeRun?.runId === runId) {
@@ -6505,6 +6594,12 @@ export class Process extends DurableObject<ProcessEnv> {
         }
       }
     });
+    if (completedInferenceSpanId && assistantMessageId !== null) {
+      this.store.setTraceSpanReference(completedInferenceSpanId, {
+        kind: "message",
+        messageId: assistantMessageId,
+      });
+    }
     if (outputMedia.length > 0) {
       const stagedKeys = this.currentRun?.runId === runId
         ? [...(this.currentRun.stagedOutputMediaKeys ?? [])]
@@ -6643,6 +6738,7 @@ export class Process extends DurableObject<ProcessEnv> {
     context: Context;
     sessionAffinityKey?: string;
     streamSeq?: StreamSeqCounter;
+    traceSpanId?: string;
   }): Promise<AssistantMessage | null> {
     const executor = options.config.executor;
     const attribution = await this.buildInferenceAttribution(
@@ -6767,11 +6863,33 @@ export class Process extends DurableObject<ProcessEnv> {
           call: "proc.message.commit",
           args: commitArgs,
         };
-        const response = await sendFrameToKernel(this.installationId, this.pid, request);
-        if (!response || response.type !== "res" || response.id !== request.id) {
-          throw new Error("Kernel returned no valid message response");
+        const deliverySpanId = this.startTraceSpan({
+          runId,
+          kind: "delivery",
+          name: "Send message",
+          reference: { kind: "delivery", callId: actionId },
+        });
+        let committedMessage: { conversationId: string; id: string } | null = null;
+        try {
+          const response = await sendFrameToKernel(this.installationId, this.pid, request);
+          if (!response || response.type !== "res" || response.id !== request.id) {
+            throw new Error("Kernel returned no valid message response");
+          }
+          if (!response.ok) throw new Error(response.error.message);
+          committedMessage = response.data.message;
+          this.finishTraceSpan(deliverySpanId, "ok", {
+            reference: {
+              kind: "delivery",
+              callId: actionId,
+              conversationId: committedMessage.conversationId,
+              messageId: committedMessage.id,
+            },
+          });
+        } catch (error) {
+          this.finishTraceSpan(deliverySpanId, "error");
+          throw error;
         }
-        if (!response.ok) throw new Error(response.error.message);
+        if (!committedMessage) throw new Error("Kernel returned no committed message");
         this.consumeRunOutputMedia(runId, media);
         this.messageStreamProjections.delete(this.messageStreamProjectionKey(runId, actionId));
         return {
@@ -6781,8 +6899,8 @@ export class Process extends DurableObject<ProcessEnv> {
           text,
           delivery: {
             kind: "message",
-            conversationId: response.data.message.conversationId,
-            messageId: response.data.message.id,
+            conversationId: committedMessage.conversationId,
+            messageId: committedMessage.id,
           },
         };
       } finally {
@@ -6894,6 +7012,7 @@ export class Process extends DurableObject<ProcessEnv> {
     context: Context;
     sessionAffinityKey?: string;
     streamSeq?: StreamSeqCounter;
+    traceSpanId?: string;
   }, attribution: InferenceAttribution): Promise<AssistantMessage | null> {
     const routedFetch = this.createGenerationFetch(options.config, options.runId);
     const signal = this.runAbortSignal(options.runId);
@@ -6922,6 +7041,7 @@ export class Process extends DurableObject<ProcessEnv> {
         if (options.streamSeq) {
           options.streamSeq.value = seq;
         }
+        this.recordGenerationTraceEvent(options.runId, options.traceSpanId, event);
         await eventSink?.emit(seq, event);
         if (event.type === "done") {
           response = event.message;
@@ -7529,6 +7649,45 @@ export class Process extends DurableObject<ProcessEnv> {
     await sendFrameToKernel(this.installationId, pid, frame);
   }
 
+  private startTraceSpan(input: {
+    runId: string;
+    parentId?: string;
+    kind: ProcTraceSpanKind;
+    name: string;
+    reference?: ProcTraceSpanReference;
+    attributes?: JsonObject;
+    id?: string;
+    startedAt?: number;
+  }): string | null {
+    if (this.killed) return null;
+    const id = input.id ?? `trace:${crypto.randomUUID()}`;
+    return this.store.startTraceSpan({
+        id,
+        runId: input.runId,
+        parentId: input.parentId ?? `run:${input.runId}`,
+        kind: input.kind,
+        name: input.name,
+        startedAt: input.startedAt ?? Date.now(),
+        ...(input.reference ? { reference: input.reference } : undefined),
+        ...(input.attributes ? { attributes: input.attributes } : undefined),
+      })
+      ? id
+      : null;
+  }
+
+  private finishTraceSpan(
+    id: string | null,
+    status: Exclude<ProcTraceSpanStatus, "running">,
+    options: {
+      reference?: ProcTraceSpanReference;
+      attributes?: JsonObject;
+      endedAt?: number;
+    } = {},
+  ): void {
+    if (!id || this.killed) return;
+    this.store.finishTraceSpan(id, status, options.endedAt ?? Date.now(), options);
+  }
+
   private async announceRun(
     runId: string,
     reason: string,
@@ -8062,6 +8221,56 @@ export class Process extends DurableObject<ProcessEnv> {
     };
   }
 
+  private recordGenerationTraceEvent(
+    runId: string,
+    inferenceSpanId: string | undefined,
+    event: AssistantMessageEvent,
+  ): void {
+    if (!inferenceSpanId) return;
+    if (event.type === "done" || event.type === "error") {
+      this.finishGenerationTracePhase(
+        inferenceSpanId,
+        event.type === "error" ? "error" : "ok",
+      );
+      return;
+    }
+    const kind = event.type === "thinking_delta"
+      ? "reasoning"
+      : event.type === "text_delta"
+        || event.type === "toolcall_start"
+        || event.type === "toolcall_delta"
+        || event.type === "toolcall_end"
+        ? "output"
+        : null;
+    if (!kind) return;
+
+    const current = this.generationTracePhases.get(inferenceSpanId);
+    if (current?.kind === kind) return;
+    const now = Date.now();
+    if (current) this.finishTraceSpan(current.spanId, "ok", { endedAt: now });
+    const spanId = this.startTraceSpan({
+      runId,
+      parentId: inferenceSpanId,
+      kind,
+      name: kind === "reasoning" ? "Reasoning" : "Model output",
+      startedAt: now,
+    });
+    if (spanId) {
+      this.generationTracePhases.set(inferenceSpanId, { runId, kind, spanId });
+    }
+  }
+
+  private finishGenerationTracePhase(
+    inferenceSpanId: string | null,
+    status: Exclude<ProcTraceSpanStatus, "running"> = "ok",
+  ): void {
+    if (!inferenceSpanId) return;
+    const phase = this.generationTracePhases.get(inferenceSpanId);
+    if (!phase) return;
+    this.generationTracePhases.delete(inferenceSpanId);
+    this.finishTraceSpan(phase.spanId, status);
+  }
+
   private messageStreamProjectionKey(runId: string, actionId: string): string {
     return `${runId}:${actionId}`;
   }
@@ -8259,6 +8468,14 @@ export class Process extends DurableObject<ProcessEnv> {
       }));
     }
     const payload = this.runFinishedPayload(run, options);
+    this.store.finishRunTrace(
+      run.runId,
+      payload.status === "ok" ? "ok" : payload.status === "error" ? "error" : "aborted",
+      payload.timestamp,
+    );
+    for (const [inferenceId, phase] of this.generationTracePhases) {
+      if (phase.runId === run.runId) this.generationTracePhases.delete(inferenceId);
+    }
     this.store.recordContextEpochRun(
       run.runId,
       jsonObjectSchema.parse(JSON.parse(JSON.stringify(payload))),

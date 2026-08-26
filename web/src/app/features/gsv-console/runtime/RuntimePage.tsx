@@ -1,5 +1,5 @@
 import type { ComponentChildren } from "preact";
-import { useEffect, useMemo, useState } from "preact/hooks";
+import { useMemo, useState } from "preact/hooks";
 import { ListTemplate } from "../list-template/ListTemplate";
 import {
   ConsolePage,
@@ -8,8 +8,8 @@ import {
 import type { ConsoleListSelection } from "../domain/consoleListTypes";
 import type { ConsoleProcess, ConsoleResourceState } from "../domain/consoleModels";
 import {
-  consoleWorkProcesses,
-  findConsoleWorkProcess,
+  consoleActivityProcesses,
+  findConsoleProcess,
 } from "../domain/consoleProcesses";
 import { useConsoleListSelection } from "../hooks/useConsoleListSelection";
 import { useConsoleProcesses } from "../hooks/useConsoleData";
@@ -77,10 +77,10 @@ function RuntimeConsoleSection({
   ListTemplate: RuntimePageDependencies["ListTemplate"];
 }) {
   const [query, setQuery] = useState("");
-  const workProcesses = useMemo(() => consoleWorkProcesses(processes), [processes]);
+  const activityProcesses = useMemo(() => consoleActivityProcesses(processes), [processes]);
   const rows = useMemo(() => {
     const q = query.trim().toLowerCase();
-    return workProcesses
+    return activityProcesses
       .filter((process) => !q || process.label.toLowerCase().includes(q))
       .map((process) => ({
         id: process.pid,
@@ -91,18 +91,18 @@ function RuntimeConsoleSection({
         statusLabel: statusForProcess(process),
         onOpen: () => onOpenDetail(process),
       }));
-  }, [workProcesses, query, onOpenDetail]);
+  }, [activityProcesses, query, onOpenDetail]);
 
   return (
     <ListTemplateComponent
-      listTitle="WORK"
-      listMeta={refreshing ? "REFRESHING" : `${workProcesses.filter(isActiveProcess).length}/${workProcesses.length} ACTIVE`}
-      emptyObject="WORK"
+      listTitle="PROCESS ACTIVITY"
+      listMeta={refreshing ? "REFRESHING" : `${activityProcesses.filter(isActiveProcess).length}/${activityProcesses.length} ACTIVE`}
+      emptyObject="PROCESS ACTIVITY"
       rows={rows}
       connectLabel="NEW WORK"
       connectDisabled={!onNewTask}
       onConnect={onNewTask}
-      search={{ value: query, placeholder: "Search work…", onChange: setQuery }}
+      search={{ value: query, placeholder: "Search processes…", onChange: setQuery }}
     />
   );
 }
@@ -113,7 +113,7 @@ function renderRuntimeDetail(
   onBack: () => void,
   RuntimeDetailPageComponent: RuntimePageDependencies["RuntimeDetailPage"],
 ) {
-  const process = findConsoleWorkProcess(processes, id);
+  const process = findConsoleProcess(processes, id);
   return process ? <RuntimeDetailPageComponent process={process} onBack={onBack} /> : null;
 }
 
@@ -133,26 +133,15 @@ export function RuntimePage({
     kind: "tasks",
     onSelectionChange,
   });
-  const selectedProcessId = selectedDetail?.kind === "tasks" ? selectedDetail.id : null;
   const ConsolePageComponent = dependencies.ConsolePage;
   const ResourceBoundary = dependencies.ConsoleResourceBoundary;
-
-  useEffect(() => {
-    if (!selectedProcessId) {
-      return;
-    }
-    const selectedProcess = processes.data?.find((process) => process.pid === selectedProcessId);
-    if (selectedProcess?.personal) {
-      selectDetail(null);
-    }
-  }, [processes.data, selectDetail, selectedProcessId]);
 
   return (
     <ConsolePageComponent flush>
       <ResourceBoundary
         resource={resourceWithLocalEmptyState(processes.resource)}
-        emptyLabel="NO WORK"
-        errorLabel="WORK"
+        emptyLabel="NO PROCESS ACTIVITY"
+        errorLabel="PROCESS ACTIVITY"
         render={(data) => (
           selectedDetail?.kind === "tasks"
             ? renderRuntimeDetail(data, selectedDetail.id, () => selectDetail(null), dependencies.RuntimeDetailPage) ?? (

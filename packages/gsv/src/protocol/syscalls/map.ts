@@ -53,6 +53,8 @@ import type {
   ProcHilResult,
   ProcHistoryArgs,
   ProcHistoryResult,
+  ProcTraceArgs,
+  ProcTraceResult,
   ProcIpcCallArgs,
   ProcIpcCallResult,
   ProcIpcDeliverArgs,
@@ -339,6 +341,7 @@ export type SyscallDomains = {
   "proc.abort": { args: ProcAbortArgs; result: ProcAbortResult };
   "proc.hil": { args: ProcHilArgs; result: ProcHilResult };
   "proc.history": { args: ProcHistoryArgs; result: ProcHistoryResult };
+  "proc.trace": { args: ProcTraceArgs; result: ProcTraceResult };
   "proc.history.policy.get": { args: ProcHistoryPolicyGetArgs; result: ProcHistoryPolicyGetResult };
   "proc.history.policy.set": { args: ProcHistoryPolicySetArgs; result: ProcHistoryPolicySetResult };
   "proc.history.compact": { args: ProcHistoryCompactArgs; result: ProcHistoryCompactResult };

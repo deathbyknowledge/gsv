@@ -365,6 +365,7 @@ const SYSCALL_NAMES = [
   "proc.abort",
   "proc.hil",
   "proc.history",
+  "proc.trace",
   "proc.history.policy.get",
   "proc.history.policy.set",
   "proc.history.compact",

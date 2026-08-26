@@ -18,6 +18,10 @@ import type {
   ProcMessageMetadata,
   ProcMessageModelMetadata,
   ProcMessageProviderMetadata,
+  ProcTraceSpan,
+  ProcTraceSpanKind,
+  ProcTraceSpanReference,
+  ProcTraceSpanStatus,
   ProcToolResultOutcome,
   ProcUsageCost,
   ProcUsageState,
@@ -55,6 +59,8 @@ import { materializeLegacyToolResultImages } from "./tool-result-media";
 import { z } from "zod";
 
 const DEFAULT_MESSAGE_READ_LIMIT = 200;
+const MAX_TRACE_RUNS = 32;
+const MAX_TRACE_SPANS_PER_RUN = 512;
 
 export type ToolCallStatus = "registered" | "pending" | "completed" | "error";
 
@@ -75,6 +81,11 @@ export type PendingToolCallRecord = {
   call: string;
   args: JsonValue;
   status: "registered" | "pending";
+};
+
+export type ProcessTraceSpanList = {
+  spans: ProcTraceSpan[];
+  count: number;
 };
 
 export type MessageRole = "user" | "assistant" | "system" | "toolResult";
@@ -184,6 +195,40 @@ type ContextEpochRow = {
   close_reason: string | null;
   archive_path: string | null;
 };
+
+type ProcessTraceSpanRow = {
+  span_id: string;
+  run_id: string;
+  parent_span_id: string | null;
+  kind: ProcTraceSpanKind;
+  name: string;
+  status: ProcTraceSpanStatus;
+  started_at: number;
+  ended_at: number | null;
+  reference_json: string | null;
+  attributes_json: string | null;
+};
+
+const traceReferenceSchema: z.ZodType<ProcTraceSpanReference> = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("run") }),
+  z.object({ kind: z.literal("message"), messageId: z.number().int().positive() }),
+  z.object({
+    kind: z.literal("tool"),
+    callId: z.string(),
+    executionId: z.string(),
+  }),
+  z.object({
+    kind: z.literal("approval"),
+    requestId: z.string(),
+    callId: z.string(),
+  }),
+  z.object({
+    kind: z.literal("delivery"),
+    callId: z.string().optional(),
+    conversationId: z.string().optional(),
+    messageId: z.string().optional(),
+  }),
+]);
 
 type ToolResultMetadata = {
   toolName: string;
@@ -345,8 +390,129 @@ export class ProcessStore {
   resetHistory(): number {
     const generation = this.getHistoryGeneration() + 1;
     this.clearMessages();
+    this.clearTraceSpans();
     this.setValue("historyGeneration", String(generation));
     return generation;
+  }
+
+  startTraceSpan(input: {
+    id: string;
+    runId: string;
+    parentId?: string;
+    kind: ProcTraceSpanKind;
+    name: string;
+    startedAt: number;
+    reference?: ProcTraceSpanReference;
+    attributes?: JsonObject;
+  }): boolean {
+    const count = this.sql.exec<{ count: number }>(
+      "SELECT COUNT(*) AS count FROM process_trace_spans WHERE run_id = ?",
+      input.runId,
+    ).toArray()[0]?.count ?? 0;
+    if (count >= MAX_TRACE_SPANS_PER_RUN) return false;
+
+    const cursor = this.sql.exec(
+      `INSERT OR IGNORE INTO process_trace_spans (
+        span_id, run_id, parent_span_id, kind, name, status,
+        started_at, ended_at, reference_json, attributes_json
+      ) VALUES (?, ?, ?, ?, ?, 'running', ?, NULL, ?, ?)`,
+      input.id,
+      input.runId,
+      input.parentId ?? null,
+      input.kind,
+      input.name,
+      input.startedAt,
+      input.reference ? JSON.stringify(input.reference) : null,
+      input.attributes ? JSON.stringify(input.attributes) : null,
+    );
+    return cursor.rowsWritten > 0;
+  }
+
+  finishTraceSpan(
+    id: string,
+    status: Exclude<ProcTraceSpanStatus, "running">,
+    endedAt: number,
+    options: {
+      reference?: ProcTraceSpanReference;
+      attributes?: JsonObject;
+    } = {},
+  ): boolean {
+    const cursor = this.sql.exec(
+      `UPDATE process_trace_spans
+       SET status = ?, ended_at = ?,
+           reference_json = COALESCE(?, reference_json),
+           attributes_json = COALESCE(?, attributes_json)
+       WHERE span_id = ? AND status = 'running'`,
+      status,
+      endedAt,
+      options.reference ? JSON.stringify(options.reference) : null,
+      options.attributes ? JSON.stringify(options.attributes) : null,
+      id,
+    );
+    return cursor.rowsWritten > 0;
+  }
+
+  setTraceSpanReference(id: string, reference: ProcTraceSpanReference): void {
+    this.sql.exec(
+      "UPDATE process_trace_spans SET reference_json = ? WHERE span_id = ?",
+      JSON.stringify(reference),
+      id,
+    );
+  }
+
+  finishRunTrace(
+    runId: string,
+    status: Exclude<ProcTraceSpanStatus, "running" | "denied">,
+    endedAt: number,
+  ): void {
+    this.sql.exec(
+      `UPDATE process_trace_spans
+       SET status = ?, ended_at = ?
+       WHERE run_id = ? AND status = 'running' AND kind != 'run'`,
+      status === "ok" ? "aborted" : status,
+      endedAt,
+      runId,
+    );
+    this.finishTraceSpan(`run:${runId}`, status, endedAt);
+    this.pruneTraceRuns();
+  }
+
+  listTraceSpans(options: { runId?: string; limit: number }): ProcessTraceSpanList {
+    const filter = options.runId ? "WHERE run_id = ?" : "";
+    const args = options.runId ? [options.runId] : [];
+    const count = this.sql.exec<{ count: number }>(
+      `SELECT COUNT(*) AS count FROM process_trace_spans ${filter}`,
+      ...args,
+    ).toArray()[0]?.count ?? 0;
+    const rows = this.sql.exec<ProcessTraceSpanRow>(
+      `SELECT * FROM process_trace_spans ${filter}
+       ORDER BY started_at DESC, span_id DESC
+       LIMIT ?`,
+      ...args,
+      options.limit,
+    ).toArray().reverse();
+    return {
+      count,
+      spans: rows.map(processTraceSpanFromRow),
+    };
+  }
+
+  clearTraceSpans(): void {
+    this.sql.exec("DELETE FROM process_trace_spans");
+  }
+
+  private pruneTraceRuns(): void {
+    this.sql.exec(
+      `DELETE FROM process_trace_spans
+       WHERE run_id NOT IN (
+         SELECT run_id
+         FROM process_trace_spans
+         GROUP BY run_id
+         ORDER BY MIN(started_at) DESC, run_id DESC
+         LIMIT ?
+       )`,
+      MAX_TRACE_RUNS,
+    );
   }
 
   getLiveContextEpoch(): ContextEpochRecord | null {
@@ -684,6 +850,7 @@ export class ProcessStore {
     call: string,
     args: JsonValue,
   ): void {
+    const createdAt = Date.now();
     this.sql.exec(
       `INSERT INTO pending_tool_calls (
         dispatch_id, id, run_id, call, args_json, status, created_at
@@ -693,8 +860,18 @@ export class ProcessStore {
       runId,
       call,
       JSON.stringify(args),
-      Date.now(),
+      createdAt,
     );
+    this.startTraceSpan({
+      id: `tool:${dispatchId}`,
+      runId,
+      parentId: `run:${runId}`,
+      kind: "tool",
+      name: syscallToolName(call) ?? call,
+      startedAt: createdAt,
+      reference: { kind: "tool", callId: id, executionId: dispatchId },
+      attributes: { syscall: call },
+    });
   }
 
   resolve(
@@ -710,6 +887,12 @@ export class ProcessStore {
       outcome,
       dispatchId,
     );
+    if (cursor.rowsWritten > 0) {
+      const status = outcome === "completed" ? "ok" : "error";
+      const endedAt = Date.now();
+      this.finishTraceSpan(`execution:${dispatchId}`, status, endedAt);
+      this.finishTraceSpan(`tool:${dispatchId}`, status, endedAt);
+    }
     return cursor.rowsWritten > 0;
   }
 
@@ -726,6 +909,16 @@ export class ProcessStore {
       outcome,
       dispatchId,
     );
+    if (cursor.rowsWritten > 0) {
+      const status = outcome === "cancelled"
+        ? "aborted"
+        : outcome === "denied"
+          ? "denied"
+          : "error";
+      const endedAt = Date.now();
+      this.finishTraceSpan(`execution:${dispatchId}`, status, endedAt);
+      this.finishTraceSpan(`tool:${dispatchId}`, status, endedAt);
+    }
     return cursor.rowsWritten > 0;
   }
 
@@ -736,6 +929,32 @@ export class ProcessStore {
         WHERE dispatch_id = ? AND status = 'registered'`,
       dispatchId,
     );
+    if (cursor.rowsWritten > 0) {
+      const record = this.sql.exec<{
+        id: string;
+        run_id: string;
+        call: string;
+      }>(
+        "SELECT id, run_id, call FROM pending_tool_calls WHERE dispatch_id = ?",
+        dispatchId,
+      ).toArray()[0];
+      if (record) {
+        this.startTraceSpan({
+          id: `execution:${dispatchId}`,
+          runId: record.run_id,
+          parentId: `tool:${dispatchId}`,
+          kind: "tool",
+          name: "Execute",
+          startedAt: Date.now(),
+          reference: {
+            kind: "tool",
+            callId: record.id,
+            executionId: dispatchId,
+          },
+          attributes: { syscall: record.call },
+        });
+      }
+    }
     return cursor.rowsWritten > 0;
   }
 
@@ -828,6 +1047,29 @@ export class ProcessStore {
       JSON.stringify(record.args),
       record.createdAt,
     );
+    const dispatchId = record.ownerDispatchId ?? this.sql.exec<{ dispatch_id: string }>(
+      `SELECT dispatch_id FROM pending_tool_calls
+       WHERE run_id = ? AND id = ?
+       ORDER BY created_at DESC LIMIT 1`,
+      record.runId,
+      record.toolCallId,
+    ).toArray()[0]?.dispatch_id;
+    this.startTraceSpan({
+      id: `approval:${record.requestId}`,
+      runId: record.runId,
+      parentId: dispatchId ? `tool:${dispatchId}` : `run:${record.runId}`,
+      kind: "approval",
+      name: `Approve ${record.toolName}`,
+      startedAt: record.createdAt,
+      reference: {
+        kind: "approval",
+        requestId: record.requestId,
+        callId: record.toolCallId,
+      },
+      attributes: {
+        syscall: record.syscall,
+      },
+    });
   }
 
   getPendingHil(requestId?: string): PendingHilRecord | null {
@@ -876,8 +1118,17 @@ export class ProcessStore {
     return record;
   }
 
-  clearPendingHil(): void {
+  clearPendingHil(
+    status: Exclude<ProcTraceSpanStatus, "running"> = "aborted",
+  ): void {
+    const approvals = this.sql.exec<{ request_id: string }>(
+      "SELECT request_id FROM pending_hil",
+    ).toArray();
     this.sql.exec("DELETE FROM pending_hil");
+    const endedAt = Date.now();
+    for (const approval of approvals) {
+      this.finishTraceSpan(`approval:${approval.request_id}`, status, endedAt);
+    }
   }
 
   appendMessage(
@@ -1749,6 +2000,26 @@ function normalizeAssistantStopReason(
   return value === "length" || value === "toolUse" || value === "error" || value === "aborted"
     ? value
     : "stop";
+}
+
+function processTraceSpanFromRow(row: ProcessTraceSpanRow): ProcTraceSpan {
+  const span: ProcTraceSpan = {
+    id: row.span_id,
+    runId: row.run_id,
+    kind: row.kind,
+    name: row.name,
+    status: row.status,
+    startedAt: row.started_at,
+  };
+  if (row.parent_span_id) span.parentId = row.parent_span_id;
+  if (row.ended_at !== null) span.endedAt = row.ended_at;
+  if (row.reference_json) {
+    span.reference = traceReferenceSchema.parse(JSON.parse(row.reference_json));
+  }
+  if (row.attributes_json) {
+    span.attributes = jsonObjectSchema.parse(JSON.parse(row.attributes_json));
+  }
+  return span;
 }
 
 function contextEpochFromRow(row: ContextEpochRow): ContextEpochRecord {

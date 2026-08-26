@@ -21,6 +21,8 @@ import type {
   ProcListArgs,
   ProcSpawnArgs,
   ProcSpawnResult,
+  ProcTraceArgs,
+  ProcTraceResult,
   ConversationForProcessResult,
   ConversationHistoryResult,
   ConversationMediaReadArgs,
@@ -64,6 +66,7 @@ import {
   type ChatProcessAiConfig,
   type ChatProcessAiConfigSetResult,
   type ChatProcessSummary,
+  type ChatProcessTrace,
   type ChatSendDraft,
   MAX_CHAT_PROCESS_MEDIA_BYTES,
 } from "../domain/processes";
@@ -181,6 +184,15 @@ export async function getChatHistory(
     await client.proc.history(args),
   );
   return normalizeHistory(result);
+}
+
+export async function getProcessTrace(
+  client: ChatGsvClient,
+  args: ProcTraceArgs,
+): Promise<ChatProcessTrace> {
+  return throwIfFailed<Extract<ProcTraceResult, { ok: true }>>(
+    await client.proc.trace(args),
+  );
 }
 
 export async function readChatProcessMedia(

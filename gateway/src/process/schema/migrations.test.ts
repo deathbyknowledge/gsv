@@ -8,6 +8,7 @@ import { PROCESS_V006_PENDING_HIL_OWNER } from "./v006_pending_hil_owner";
 import { PROCESS_V008_SINGLE_PROCESS_HISTORY } from "./v008_single_process_history";
 import { PROCESS_V009_TYPED_MESSAGE_QUEUE } from "./v009_typed_message_queue";
 import { PROCESS_V011_ADD_CONTEXT_EPOCHS } from "./v011_add_context_epochs";
+import { PROCESS_V012_ADD_PROCESS_TRACE } from "./v012_add_process_trace";
 
 function normalizedStatements(): string[] {
   return PROCESS_MIGRATIONS.flatMap((migration) => migration.statements)
@@ -39,7 +40,7 @@ function createTableStatement(name: string): string {
 describe("process schema migrations", () => {
   it("starts the process component at a v1 baseline with ordered migrations", () => {
     expect(PROCESS_SCHEMA_COMPONENT).toBe("process");
-    expect(PROCESS_MIGRATIONS).toHaveLength(11);
+    expect(PROCESS_MIGRATIONS).toHaveLength(12);
     expect(PROCESS_MIGRATIONS[0]).toMatchObject({
       id: 1,
       name: "initial_process_schema",
@@ -83,6 +84,10 @@ describe("process schema migrations", () => {
     expect(PROCESS_MIGRATIONS[10]).toMatchObject({
       id: 11,
       name: "add_context_epochs",
+    });
+    expect(PROCESS_MIGRATIONS[11]).toMatchObject({
+      id: 12,
+      name: "add_process_trace",
     });
   });
 
@@ -234,6 +239,20 @@ describe("process schema migrations", () => {
     ))).toBe(true);
     expect(statements).toContain(
       "CREATE UNIQUE INDEX context_epochs_live_idx ON context_epochs (state) WHERE state = 'live'",
+    );
+  });
+
+  it("adds bounded process trace spans in v12", () => {
+    const statements = PROCESS_V012_ADD_PROCESS_TRACE.statements
+      .map((statement) => statement.trim().replace(/\s+/g, " "));
+    const table = statements.find((statement) => (
+      statement.startsWith("CREATE TABLE process_trace_spans")
+    ));
+    expect(table).toContain("span_id TEXT PRIMARY KEY");
+    expect(table).toContain("run_id TEXT NOT NULL");
+    expect(table).toContain("started_at INTEGER NOT NULL");
+    expect(statements).toContain(
+      "CREATE INDEX process_trace_spans_run_idx ON process_trace_spans (run_id, started_at, span_id)",
     );
   });
 });

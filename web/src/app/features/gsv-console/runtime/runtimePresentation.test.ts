@@ -1,6 +1,12 @@
 import { describe, expect, it } from "vitest";
 import type { ConsoleProcess } from "../domain/consoleModels";
-import { iconForProcess, processBlurb, processDetailSections } from "./runtimePresentation";
+import {
+  iconForProcess,
+  processBlurb,
+  processDetailSections,
+  statusForProcess,
+  toneForProcess,
+} from "./runtimePresentation";
 
 function process(input: Partial<ConsoleProcess> = {}): ConsoleProcess {
   return {
@@ -36,8 +42,16 @@ describe("runtime work presentation", () => {
 
     expect(iconForProcess(process({ interactive: true }))).toBe("chat");
     expect(ownerRows).toEqual(expect.arrayContaining([
-      expect.objectContaining({ label: "HIL APPROVALS", sub: "YES" }),
+      expect.objectContaining({ label: "DIRECT CONVERSATION", sub: "YES" }),
       expect.objectContaining({ label: "PARENT WORK", sub: "proc:parent" }),
     ]));
+  });
+
+  it("presents pending approval and the Ship as first-class process state", () => {
+    const ship = process({ personal: true, state: "waiting_hil", activeRunId: "run:ship" });
+
+    expect(processBlurb(ship)).toContain("approval Ship process");
+    expect(statusForProcess(ship)).toBe("APPROVAL");
+    expect(toneForProcess(ship)).toBe("warn");
   });
 });
