@@ -548,7 +548,70 @@ describe("Process DO — mechanical", () => {
       expect(scheduleTick).toHaveBeenCalledWith(
         runId,
         MANAGED_LIFECYCLE_RECHECK_MS,
+        false,
       );
+    });
+  });
+
+  it("retains a successor tick after a scheduled tick pauses for managed lifecycle", async () => {
+    const runId = "run-managed-scheduled-suspended";
+    const name = processDurableObjectName(
+      "inst_managed_scheduled_suspended",
+      "mech-managed-scheduled-suspended",
+    );
+    const stub = env.PROCESS.get(env.PROCESS.idFromName(name));
+
+    await runInDurableObject(stub, async (instance: Process, state) => {
+      // SAFETY: the Process test fixture exposes these private scheduler seams.
+      const process = instance as {
+        managedWorkGate(): Promise<{
+          allowed: false;
+          code: 423;
+          message: string;
+        }>;
+        schedule(
+          when: Date,
+          callback: "tick",
+          payload: { runId: string; generation: number },
+          options: { idempotent: true },
+        ): Promise<{ id: string }>;
+        store: {
+          setValue(key: string, value: string): void;
+        };
+        tasks: {
+          alarm(): Promise<void>;
+        };
+      };
+      process.managedWorkGate = async () => ({
+        allowed: false,
+        code: 423,
+        message: "Managed installation is suspended",
+      });
+      process.store.setValue("currentRun", JSON.stringify({ runId }));
+      const executing = await process.schedule(
+        new Date(Date.now() - 1_000),
+        "tick",
+        { runId, generation: 0 },
+        { idempotent: true },
+      );
+
+      await process.tasks.alarm();
+
+      const successors = state.storage.sql.exec<{
+        id: string;
+        callback: string;
+        payload: string;
+      }>(
+        `SELECT id, callback, payload
+         FROM cf_agents_schedules
+         WHERE callback = 'tick'`,
+      ).toArray();
+      expect(successors).toHaveLength(1);
+      expect(successors[0]).toMatchObject({
+        callback: "tick",
+        payload: JSON.stringify({ runId, generation: 0 }),
+      });
+      expect(successors[0]?.id).not.toBe(executing.id);
     });
   });
 

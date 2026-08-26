@@ -1852,7 +1852,7 @@ export class Process extends DurableObject<ProcessEnv> {
         await this.onToolDispatchTimeout(task.payload);
         return;
       case "tick":
-        await this.tick(task.payload);
+        await this.tick(task.payload, true);
         return;
     }
   }
@@ -4991,6 +4991,7 @@ export class Process extends DurableObject<ProcessEnv> {
   private async scheduleTick(
     runId: string,
     delayMs = 10,
+    requireSuccessor = false,
   ): Promise<void> {
     if (this.killed) {
       return;
@@ -5003,14 +5004,21 @@ export class Process extends DurableObject<ProcessEnv> {
     await this.schedule(next, "tick", {
       runId,
       generation: run.tickGeneration ?? 0,
-    }, { idempotent: true });
+    }, { idempotent: !requireSuccessor });
   }
 
-  private async pauseManagedRun(runId: string): Promise<boolean> {
+  private async pauseManagedRun(
+    runId: string,
+    requireTickSuccessor = false,
+  ): Promise<boolean> {
     const gate = await this.managedWorkGate();
     if (this.killed || this.currentRun?.runId !== runId) return true;
     if (gate.allowed) return false;
-    await this.scheduleTick(runId, MANAGED_LIFECYCLE_RECHECK_MS);
+    await this.scheduleTick(
+      runId,
+      MANAGED_LIFECYCLE_RECHECK_MS,
+      requireTickSuccessor,
+    );
     return true;
   }
 
@@ -5463,7 +5471,10 @@ export class Process extends DurableObject<ProcessEnv> {
     this.store.setValue(RUNTIME_EVENT_IDS_KEY, JSON.stringify(ids));
   }
 
-  async tick(input: { runId: string; generation: number }): Promise<void> {
+  async tick(
+    input: { runId: string; generation: number },
+    requireRestrictionSuccessor = false,
+  ): Promise<void> {
     const { runId, generation } = input;
     if (this.killed) {
       return;
@@ -5477,7 +5488,7 @@ export class Process extends DurableObject<ProcessEnv> {
       return;
     }
 
-    if (await this.pauseManagedRun(runId)) {
+    if (await this.pauseManagedRun(runId, requireRestrictionSuccessor)) {
       return;
     }
 
