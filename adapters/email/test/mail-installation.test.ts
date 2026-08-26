@@ -7,7 +7,7 @@ import {
   bodyFromBytes,
   type AdapterInstallationContext,
 } from "@humansandmachines/gsv/protocol";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type { MailInstallation } from "../src/mail-installation";
 
 const encoder = new TextEncoder();
@@ -530,8 +530,24 @@ describe("managed mail installation transport", () => {
   it("isolates a corrupt retry row so later mail still completes", async () => {
     const installationId = "installation_mail_corrupt_retry";
     const stub = env.MAIL_INSTALLATIONS.getByName(installationId);
-    const corrupt = await intake(stub, installationId, "corrupt retry");
-    const healthy = await intake(stub, installationId, "healthy after corrupt");
+    let restoreAlarmScheduling = () => {};
+    await runInDurableObject(stub, (_instance, state) => {
+      const setAlarm = state.storage.setAlarm.bind(state.storage);
+      const alarm = vi.spyOn(state.storage, "setAlarm").mockImplementation(
+        async () => await setAlarm(Date.now() + 60_000),
+      );
+      restoreAlarmScheduling = () => alarm.mockRestore();
+    });
+    const { corrupt, healthy } = await (async () => {
+      try {
+        return {
+          corrupt: await intake(stub, installationId, "corrupt retry"),
+          healthy: await intake(stub, installationId, "healthy after corrupt"),
+        };
+      } finally {
+        restoreAlarmScheduling();
+      }
+    })();
     if (
       corrupt.result.status !== "accepted"
       || healthy.result.status !== "accepted"
